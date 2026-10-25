@@ -92,3 +92,25 @@ models:
     cache_read: 0.30
     cache_write: 3.00
     source: "https://openrouter.ai/api/v1/models/moonshotai/kimi-k3/endpoints (read 2026-09-09), Together endpoint"
+  # NVIDIA Nemotron and GLM 5.3 via OpenRouter, each pinned to one host (`--provider-order`).
+  # OpenRouter serves these from several hosts at different rates; a row holds the pinned
+  # host's rate. None of the hosts quotes a separate cache-write price; cache_write is the
+  # plain input price, as for the Together rows above.
+  "openrouter:nvidia/nemotron-3-ultra-550b-a55b":
+    input: 0.60
+    output: 2.40
+    cache_read: 0.12
+    cache_write: 0.60
+    source: "https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b/endpoints (read 2026-10-01), BaseTen endpoint"
+  "openrouter:nvidia/nemotron-3.5-lightning":
+    input: 0.07
+    output: 0.20
+    cache_read: 0.04
+    cache_write: 0.07
+    source: "https://openrouter.ai/api/v1/models/nvidia/nemotron-3.5-lightning/endpoints (read 2026-10-01), CoreWeave endpoint"
+  "openrouter:z-ai/glm-5.3":
+    input: 1.40
+    output: 4.40
+    cache_read: 0.26
+    cache_write: 1.40
+    source: "https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints (read 2026-10-01), Z.AI endpoint"

@@ -22,19 +22,27 @@ when they exit or via `shell_task_kill`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 import aisuite as ai
 
-from ..sandbox.runner.executor import (  # noqa: F401  (re-exported: the executor moved)
+from ..sandbox.runner.executor import (
     _DEFAULT_TIMEOUT,
     _MAX_TIMEOUT,
-    Executor,
     filter_ambient_env,
     is_sensitive_env,
-    LocalExecutor as _StdlibLocalExecutor,
 )
+from ..sandbox.runner.executor import Executor as Executor
+from ..sandbox.runner.executor import LocalExecutor as _StdlibLocalExecutor
+
+_SIDECAR_ENV_VARS = ("COWORKER_API_TOKEN",)
+
+
+def _shell_base_env() -> dict[str, str]:
+    """The parent environment without OpenWorker's own API credential."""
+    return {k: v for k, v in os.environ.items() if k not in _SIDECAR_ENV_VARS}
 
 
 class LocalExecutor(_StdlibLocalExecutor):
@@ -50,8 +58,10 @@ class LocalExecutor(_StdlibLocalExecutor):
 
         extra = [*kwargs.pop("extra_path_dirs", ()), str(toolchain.bin_dir())]
         if kwargs.get("allowed_env") is None:
-            kwargs["allowed_env"] = []  # direct mode inherits the raw host environment
-        super().__init__(cwd=cwd, extra_path_dirs=extra, **kwargs)
+            kwargs["allowed_env"] = []
+        super().__init__(
+            cwd=cwd, base_env=_shell_base_env(), extra_path_dirs=extra, **kwargs
+        )
 
 
 _RUN_SHELL_SCHEMA = {

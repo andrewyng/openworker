@@ -89,6 +89,7 @@ def test_agent_steps_carry_raw_counts_host_and_a_priced_total():
     # Sonnet 5: 1000*2 + 100*10 + 500*0.2 + 200*2.5 per million.
     assert step["metrics"]["cost_usd"] == round((2000 + 1000 + 100 + 500) / 1e6, 6)
     assert traj["final_metrics"]["total_cost_usd"] == step["metrics"]["cost_usd"]
+    assert traj["final_metrics"]["extra"]["cost_complete"] is True
 
 
 def test_an_unpriced_model_gets_counts_but_no_cost():
@@ -101,3 +102,43 @@ def test_an_unpriced_model_gets_counts_but_no_cost():
     step = [s for s in traj["steps"] if s["source"] == "agent"][0]
     assert "cost_usd" not in step["metrics"] and step["metrics"]["prompt_tokens"] == 10
     assert "total_cost_usd" not in traj["final_metrics"]
+
+
+def test_mixed_priced_and_unpriced_calls_keep_a_partial_total_marked_incomplete():
+    traj = build_trajectory(
+        [
+            {"role": "assistant", "usage": {"input": 100, "model": "priced"}},
+            {"role": "assistant", "usage": {"input": 200, "model": "unpriced"}},
+        ],
+        agent_name="openworker",
+        agent_version="test",
+        model_name="priced",
+        session_id="s",
+        outcome="completed",
+        prices={"priced": {"input": 1}},
+    )
+    assert traj["steps"][0]["metrics"]["cost_usd"] == 0.0001
+    assert "cost_usd" not in traj["steps"][1]["metrics"]
+    assert traj["final_metrics"]["total_prompt_tokens"] == 300
+    # The priced part is reported, and the flag says it is not the whole run.
+    assert traj["final_metrics"]["total_cost_usd"] == 0.0001
+    assert traj["final_metrics"]["extra"]["cost_complete"] is False
+
+
+def test_call_without_usage_keeps_a_partial_total_marked_incomplete():
+    traj = build_trajectory(
+        [
+            {"role": "assistant", "usage": {"input": 100, "model": "priced"}},
+            {"role": "assistant", "content": "done"},
+        ],
+        agent_name="openworker",
+        agent_version="test",
+        model_name="priced",
+        session_id="s",
+        outcome="completed",
+        prices={"priced": {"input": 1}},
+    )
+    assert traj["steps"][0]["metrics"]["cost_usd"] == 0.0001
+    assert "metrics" not in traj["steps"][1]
+    assert traj["final_metrics"]["total_cost_usd"] == 0.0001
+    assert traj["final_metrics"]["extra"]["cost_complete"] is False

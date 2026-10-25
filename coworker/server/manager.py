@@ -30,7 +30,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import VIS_INBOX, InboxStore, args_preview
+from ..inbox import KIND_APPROVAL, VIS_INBOX, InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
@@ -190,6 +190,17 @@ def _grant_offered(outcome, request) -> bool:
             return False
         return name != "save_skill"
     return True
+
+
+def _reply_hint(item, buttons) -> str:
+    """How to answer this item in a chat that can't draw buttons. Naming the words the
+    reply parser accepts is the difference between a prompt and a dead end."""
+    if not buttons:
+        return "(Open the app to respond.)"
+    if getattr(item, "kind", "") == KIND_APPROVAL:
+        return "Reply `approve` or `deny`, keeping the tag below."
+    labels = ", ".join(b.label for b in buttons)
+    return f"Reply with one of: {labels} — keeping the tag below."
 
 
 def _approval_body(request) -> str:
@@ -4052,10 +4063,17 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
+            env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
             row = {
                 **d.to_dict(),
                 "configured": configured,
                 "values": values,
+                # Where the key comes from: a key saved in Settings ("store"), the
+                # provider's environment variable ("env"), or nowhere. A stored key wins
+                # over the variable, as resolve_api_key does. The Settings card uses this
+                # to hide "Remove key" for a key it cannot remove (#742).
+                "key_source": "store" if profile.get("api_key") else ("env" if env_var else None),
+                "env_key": env_var,
                 "suggested_models": self._suggested_models(d.name),
                 # Key hygiene for the Settings pane: when the key was saved (date, stamped
                 # by set_provider) and when the provider last served a completion (epoch,
@@ -4065,10 +4083,6 @@ class SessionManager:
                     d.name
                 ),
             }
-            if d.name == "openrouter":
-                row["api_key_configured"] = bool(
-                    profile.get("api_key") or os.environ.get("OPENROUTER_API_KEY")
-                )
             if d.kind == "local":
                 # A keyless server is "connected" when it answers (cached probes), not
                 # when a form was saved; the page groups connected providers first.
@@ -4189,10 +4203,7 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [
-            f.label for f in d.fields if f.required and not profile.get(f.key)
-            and not (name == "openrouter" and f.key == "api_key" and os.environ.get("OPENROUTER_API_KEY"))
-        ]
+        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
@@ -4201,8 +4212,6 @@ class SessionManager:
             from datetime import date
 
             profile["key_set_at"] = date.today().isoformat()
-        if name == "openrouter" and "api_key" in fields:
-            profile["auth_method"] = "api_key"
         self.secrets.put(f"provider:{name}", profile)
         self.adopt_provider_default(name)
         return {"ok": True, "provider": name, "recommended_model": d.recommended_model}
@@ -4245,16 +4254,29 @@ class SessionManager:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        if name == "openrouter":
-            profile = self.secrets.get("provider:openrouter") or {}
-            self.secrets.put("provider:openrouter", {
-                key: value for key, value in profile.items()
-                if key in {"auth_method", "account_connected"}
-            })
-        else:
-            self.secrets.delete(f"provider:{name}")
+        env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
+        stored = bool((self.secrets.get(f"provider:{name}") or {}).get("api_key"))
+        if env_var and not stored:
+            # Nothing of ours to remove: the key is the environment variable, which only
+            # the user can unset. Say so instead of reporting a removal that changes
+            # nothing (#742).
+            return {
+                "ok": False,
+                "provider": name,
+                "env_key": env_var,
+                "error": (
+                    f"The {d.title} key comes from {env_var} in the server's environment. "
+                    "Unset it and restart the server to remove it."
+                ),
+            }
+        self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
-        return {"ok": True, "provider": name}
+        out: dict[str, Any] = {"ok": True, "provider": name}
+        if env_var:
+            # The stored key is gone but the variable still configures the provider.
+            out["env_key"] = env_var
+            out["configured"] = True
+        return out
 
     # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
     def begin_codex_signin(self) -> None:
@@ -4761,6 +4783,9 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # #611: collapse/hide the live thinking stream while a turn runs (OFF by default so
+            # existing users keep seeing it; the finalized reasoning still shows after the turn).
+            "hide_reasoning_running": self.hide_reasoning_running(),
             # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
@@ -4837,6 +4862,19 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    # -- Hide live reasoning while running (#611) ---------------------------------------
+    # The GUI streams the model's reasoning live during a turn; at full write speed it's a
+    # wall of fast-moving text. This pref collapses that live stream to a quiet one-line
+    # indicator (the finalized reasoning still appears after the turn). OFF by default.
+
+    def hide_reasoning_running(self) -> bool:
+        return bool(self._prefs.get("hide_reasoning_running", False))
+
+    def set_hide_reasoning_running(self, hidden: Any) -> dict[str, Any]:
+        self._prefs["hide_reasoning_running"] = bool(hidden)
+        self._save_prefs()
+        return {"ok": True, "hide_reasoning_running": self.hide_reasoning_running()}
 
     # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
     # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling
@@ -5137,6 +5175,80 @@ class SessionManager:
             if str(user_id).strip()
         }
 
+    # -- Telegram approval owners (OPE-217 / #712) -------------------------------
+    # Telegram has no OAuth installer, so like manual Slack Socket Mode the humans who may
+    # resolve consequential prompts are listed explicitly on the connector profile.
+    def telegram_approval_owner_ids(self) -> set[str]:
+        profile = self.secrets.get("telegram:default") or {}
+        return {
+            str(user_id).strip()
+            for user_id in (profile.get("approval_owner_ids") or [])
+            if str(user_id).strip()
+        }
+
+    def set_telegram_approval_owner(
+        self, user_id: str, *, add: bool, display_name: str = ""
+    ) -> dict[str, Any]:
+        """Edit the Telegram approval owners. Owner status implies inbound permission."""
+        user_id = str(user_id).strip()
+        if not user_id:
+            return {"ok": False, "error": "user_id required"}
+        profile = self.secrets.get("telegram:default")
+        if not profile:
+            return {"ok": False, "error": "Telegram is not connected."}
+        owners = self.telegram_approval_owner_ids()
+        if add:
+            owners.add(user_id)
+        else:
+            owners.discard(user_id)
+        profile["approval_owner_ids"] = sorted(owners)
+        if add:
+            allowed = set(profile.get("allowed_users") or [])
+            allowed.add(user_id)
+            profile["allowed_users"] = sorted(allowed)
+        self.secrets.put("telegram:default", profile)
+        if display_name:
+            self._note_person("telegram", user_id, display_name)
+        if self.gateway is not None and "telegram" in self.gateway.settings:
+            self.gateway.settings["telegram"].allowed_users = set(
+                profile.get("allowed_users") or []
+            )
+        return {
+            "ok": True,
+            "approval_owner_ids": sorted(owners),
+            "allowed_users": list(profile.get("allowed_users") or []),
+        }
+
+    def _telegram_actor_owns_item(
+        self, item, *, actor_id: str, chat_id: str
+    ) -> bool:
+        """Authorize a Telegram resolution of a protected item.
+
+        Two conditions, mirroring the Slack rule (owner + bound channel):
+
+        - the reply must arrive in the chat the item's inbox is bound to — a reply from any
+          other chat is refused whoever sent it (an in-app-only inbox is not remotely
+          resolvable at all);
+        - the sender must be an approval owner. With owners configured that is the list.
+          With none configured, a binding to a private chat means exactly one allowed
+          human lives there (a Telegram DM's chat id IS the user's id), so that person is
+          the owner — single-user bots need no setup. A group binding (negative chat id)
+          with no owners configured refuses: a whole group never gains approval rights by
+          accident.
+        """
+        binding = self.inbox_routing.binding_for(item.inbox)
+        if binding.channel != "telegram" or not binding.target:
+            return False
+        bound_chat = str(binding.target).strip()
+        if str(chat_id or "").strip() != bound_chat or not actor_id:
+            return False
+        owners = self.telegram_approval_owner_ids()
+        if owners:
+            return actor_id in owners
+        if bound_chat.startswith("-"):
+            return False  # group/supergroup: owners must be chosen explicitly
+        return actor_id == bound_chat
+
     def set_slack_approval_owner(
         self, user_id: str, *, add: bool, display_name: str = ""
     ) -> dict[str, Any]:
@@ -5240,8 +5352,9 @@ class SessionManager:
         - cross-transport is refused: an item bound to one channel can only be resolved from
           that same channel (an in-app-only item is not remotely resolvable at all);
         - Slack defers to the existing owner + bound-channel check;
-        - no other transport (e.g. Telegram) has an approval-owner model, so it cannot
-          resolve protected items remotely — they stay pending for in-app resolution.
+        - Telegram checks the bound chat and its own approval-owner list (OPE-217);
+        - any other transport has no approval-owner model, so it cannot resolve protected
+          items remotely — they stay pending for in-app resolution.
         """
         binding = self.inbox_routing.binding_for(item.inbox)
         if binding.channel and binding.channel != platform:
@@ -5250,7 +5363,33 @@ class SessionManager:
             return self._slack_actor_owns_item(
                 item, actor_id=actor_id, chat_id=chat_id, team_id=team_id
             )
+        if platform == "telegram":
+            return self._telegram_actor_owns_item(
+                item, actor_id=actor_id, chat_id=chat_id
+            )
         return False
+
+    def _notify_refused_reply(self, platform: str, chat_id: str, thread_id=None) -> None:
+        """Tell a human their tagged reply was refused by the owner check. Best-effort and
+        off the caller's path: the resolver runs synchronously inside the gateway's loop, so
+        the send is scheduled as a task; with no running loop (tests, CLI) it is skipped."""
+        if self.gateway is None or not platform or not chat_id:
+            return
+        from ..connectors.base import format_target
+        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+        target = format_target(platform, str(chat_id), thread_id)
+
+        async def _send() -> None:
+            try:
+                await self.gateway.deliver(target, APPROVAL_OWNER_REQUIRED)
+            except Exception:
+                logger.debug("refusal reply to %s failed", target, exc_info=True)
+
+        try:
+            asyncio.get_running_loop().create_task(_send())
+        except RuntimeError:
+            pass
 
     def set_inbox_binding(
         self, name: str, *, channel: Optional[str], target: str
@@ -6026,21 +6165,34 @@ class SessionManager:
     ) -> bool:
         """Persist a standing rule a human minted via "Allow every time" on a run's
         approval card (§25's retrofit path). Server-side validation, not trust in the
-        card: the session must be an automation run and the call must be rule-eligible
-        (external risk, declared target argument, non-empty target). Also applies the
-        rule to the live engine so the run's next call auto-allows."""
-        from ..permissions import standing_rule_candidate
+        card: the session must be an automation run, and the call either names a target
+        (external risk, declared target argument) or is a tool eligible for a
+        target-less grant (egress — see standing_tool_candidate). Also applies the rule
+        to the live engine so the run's next call auto-allows."""
+        from ..permissions import standing_rule_candidate, standing_tool_candidate
 
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return False
         target = standing_rule_candidate(tool_name, arguments or {}, metadata)
-        if not target or not task.add_rule(tool_name, target):
+        if target:
+            minted = task.add_rule(tool_name, target)
+        elif standing_tool_candidate(tool_name, metadata):
+            # No target to bind (web_search takes a query, not a destination). Grant the
+            # tool for this task instead of downgrading to a one-off — otherwise the
+            # routine asks the same question on every run and "Always" means nothing.
+            target, minted = None, task.add_tool_rule(tool_name)
+        else:
+            return False
+        if not minted:
             return False
         self.task_store.save(task)
         engine = self._engines.get(session_id)
         if engine is not None:
-            engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
+            if target is None:
+                engine.permissions.allow_tool_for_session(tool_name)
+            else:
+                engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
         try:
             self.audit_store.append(
                 {
@@ -6049,7 +6201,11 @@ class SessionManager:
                     "arguments": arguments or {},
                     "stage": "standing_rule_minted",
                     "status": "granted",
-                    "reason": f"allow every time: {tool_name} → {target} (task {task.id})",
+                    "reason": (
+                        f"allow every time: {tool_name} → {target} (task {task.id})"
+                        if target
+                        else f"allow every time: {tool_name}, any arguments (task {task.id})"
+                    ),
                 }
             )
         except Exception:
@@ -6162,57 +6318,102 @@ class SessionManager:
             pass
 
     def set_session_model_settings(self, session_id: str, values: dict[str, Any]) -> dict[str, Any]:
-        """This session's thinking switch or effort level (UX-055: the ⚙ beside the model
-        in the composer). Overrides the model's saved setting for this session only;
-        None puts the model's setting back. Other sessions are untouched."""
+        """This session's thinking switch or reasoning effort (UX-056: the brain and the
+        effort pill in the composer). Overrides the model's setting for this session only;
+        None puts the model's setting back. Other sessions are untouched. A value the model
+        does not take is refused."""
         engine = self._engines.get(session_id)
         if engine is None:
             return {"ok": False, "error": "session not running"}
+        controls = self.model_controls(engine.model)
+        defaults = _model_config.model_settings_for(engine.model)
         settings = dict(engine.model_settings)
         if "reasoning_effort" in values:
             effort = values["reasoning_effort"]
             if effort is None:
-                settings.pop("reasoning_effort", None)
-            elif isinstance(effort, str) and effort.strip():
-                settings["reasoning_effort"] = effort.strip()
+                if defaults.get("reasoning_effort"):
+                    settings["reasoning_effort"] = defaults["reasoning_effort"]
+                else:
+                    settings.pop("reasoning_effort", None)
+            elif controls["reasoning"]["support"] == "supported" and effort in controls["reasoning"]["levels"]:
+                settings["reasoning_effort"] = effort
             else:
-                return {"ok": False, "error": "reasoning_effort must be text"}
+                return {"ok": False, "error": f"{engine.model} does not take reasoning effort {effort!r}"}
         if "thinking" in values:
             think = values["thinking"]
             extra = dict(settings.get("extra_body") or {})
             if think is None:
-                extra.pop("think", None)
-            elif isinstance(think, bool):
+                default_think = (defaults.get("extra_body") or {}).get("think")
+                if isinstance(default_think, bool):
+                    extra["think"] = default_think
+                else:
+                    extra.pop("think", None)
+            elif isinstance(think, bool) and controls["thinking"]["support"] == "supported":
                 extra["think"] = think
             else:
-                return {"ok": False, "error": "thinking must be true or false"}
+                return {"ok": False, "error": f"{engine.model} has no thinking switch"}
             if extra:
                 settings["extra_body"] = extra
             else:
                 settings.pop("extra_body", None)
-        if "thinking" in values or "reasoning_effort" in values:
-            session_model = _model_config.model_settings_for(engine.model)
-            # Nothing overridden any more → back to the model's own settings.
-            if "reasoning_effort" not in settings and not (settings.get("extra_body") or {}).get("think") in (True, False):
-                for key in ("reasoning_effort",):
-                    if key in session_model:
-                        settings[key] = session_model[key]
-                if "extra_body" in session_model and "extra_body" not in settings:
-                    settings["extra_body"] = session_model["extra_body"]
         engine.model_settings = settings
         return {"ok": True, "session_id": session_id, **self.session_model_settings(session_id)}
 
-    def session_model_settings(self, session_id: str) -> dict[str, Any]:
-        """What this session sends for thinking and effort right now."""
+    def session_model_settings(self, session_id: str, model: str = "") -> dict[str, Any]:
+        """What this session sends for thinking and reasoning effort right now (None = the
+        model's default), and which of the two controls the model has (UX-056). `model`
+        is asked about when the session has not started yet."""
         engine = self._engines.get(session_id)
-        if engine is None:
-            return {"thinking": None, "reasoning_effort": None}
-        settings = engine.model_settings or {}
+        settings = (engine.model_settings if engine else None) or {}
         think = (settings.get("extra_body") or {}).get("think")
+        controls = self.model_controls((engine.model if engine else "") or model)
+        session_model = _model_config.model_settings_for(engine.model) if engine else {}
+        default_think = (session_model.get("extra_body") or {}).get("think")
         return {
-            "thinking": think if isinstance(think, bool) else None,
-            "reasoning_effort": settings.get("reasoning_effort"),
+            # Only what this session changed; the model's own setting reads as None.
+            "thinking": think if isinstance(think, bool) and think != default_think else None,
+            "reasoning_effort": (
+                settings.get("reasoning_effort")
+                if settings.get("reasoning_effort") != session_model.get("reasoning_effort")
+                else None
+            ),
+            "controls": controls,
         }
+
+    def model_controls(self, model: str) -> dict[str, Any]:
+        """The thinking switch and reasoning-effort levels a model has, with its defaults
+        (providers/model_controls.py). Local models: from what their server reports."""
+        from ..providers import local_server, model_controls, ollama_facts
+        from ..providers.recommended import recommendation_for
+
+        if not model:
+            return model_controls.NONE.as_dict()
+        provider = self._model_provider(model)
+        bare = model.split(":", 1)[1] if (provider != "openai" or model.startswith("openai:")) else model
+        d = get_descriptor(provider)
+        local = d is not None and d.kind == "local"
+        server_thinking = None
+        if local:
+            try:
+                profile = self.secrets.get(f"provider:{provider}") or {}
+                rows = (
+                    ollama_facts.model_facts(profile.get("base_url"))
+                    if provider == "ollama"
+                    else local_server.model_facts(provider, profile.get("base_url"), profile.get("api_key"))
+                )
+                server_thinking = next((r.get("thinking") for r in rows if r.get("model") == model), None)
+            except Exception:
+                server_thinking = None
+        rec = recommendation_for(model)
+        controls = model_controls.controls_for(
+            provider,
+            bare,
+            local=local,
+            server_thinking=server_thinking,
+            recommended_thinking=(rec.thinking_available, rec.thinking_default) if rec else None,
+            saved=_model_config.get(model),
+        )
+        return controls.as_dict()
 
     def set_unattended(self, session_id: str, value: Any) -> dict[str, Any]:
         """Set the session's attendance (attended / inbox / auto, or the legacy boolean),
@@ -6288,6 +6489,8 @@ class SessionManager:
         engine.permissions.task_rules = task.standing_rules()
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
+        for cmd in task.always_allowed_commands:
+            engine.permissions.allow_command_for_session(cmd)
 
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
@@ -6332,8 +6535,12 @@ class SessionManager:
     # -- mirroring inbox items to a bound channel -------------------------------
     async def mirror_inbox_item(self, item) -> None:
         """Mirror an Inbox item to its bound channel. Discrete choices (approve/deny, ask_user
-        options) render as BUTTONS — the item id rides in each, so a click resolves it
-        unambiguously. Free-text answers aren't offered over messaging (open the app).
+        options) render as BUTTONS where the platform has them — the item id rides in each, so a
+        click resolves it unambiguously. Where it doesn't (any adapter that hasn't implemented
+        `send_interactive`, Telegram included), the same choice goes out as text carrying the
+        `[ow:id]` tag and a line saying how to answer, because `_resolve_inbox_reply` needs that
+        tag to correlate a reply. Without it the reader is shown a question they cannot answer
+        from the surface it arrived on, and an agent suspended on that prompt waits forever.
         """
         from ..interactions import buttons_for
 
@@ -6350,12 +6557,12 @@ class SessionManager:
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
         try:
-            if buttons:
+            if buttons and self.gateway.supports_interactive(target):
                 await self.gateway.deliver_interactive(target, body, buttons)
             else:
                 await self.gateway.deliver(
                     target,
-                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
+                    f"{body}\n{_reply_hint(item, buttons)}\n[ow:{item.id}]".strip(),
                 )
         except Exception:
             pass
@@ -6382,8 +6589,22 @@ class SessionManager:
                 chat_id=getattr(event, "chat_id", "") or "",
                 team_id=getattr(event, "team_id", None),
             ):
+                platform = str(getattr(event, "platform", "") or "")
                 if self.gateway is not None:
+                    # Slack answers with an ephemeral; everywhere else the gateway's
+                    # reject path is a no-op, so send the same sentence as a plain reply.
                     await self.gateway.reject_interaction(event)
+                    if platform != "slack":
+                        from ..connectors.base import format_target
+                        from ..connectors.gateway import APPROVAL_OWNER_REQUIRED
+
+                        try:
+                            await self.gateway.deliver(
+                                format_target(platform, str(getattr(event, "chat_id", "") or "")),
+                                APPROVAL_OWNER_REQUIRED,
+                            )
+                        except Exception:
+                            logger.debug("refusal reply failed", exc_info=True)
                 return
         already = item is not None and item.state != "pending"
         resolved = await self.resolve_inbox(item_id, resolution)
@@ -6416,6 +6637,13 @@ class SessionManager:
             item = self.inbox.get(item_id)
             if item is None:
                 return False
+            # Plan and directory items need a structured JSON payload (approved/granted,
+            # mode/path/writable) that a bare chat reply cannot provide. The mirrored
+            # message already says "(Open the app to respond.)" and buttons_for returns
+            # [] for these kinds — honour that by leaving them pending instead of
+            # consuming them into a silent refusal.
+            if item.kind in {"plan", "directory"}:
+                return False
             if item.kind in self._PROTECTED_ITEM_KINDS:
                 if not self._actor_owns_protected_item(
                     item,
@@ -6424,6 +6652,11 @@ class SessionManager:
                     chat_id=getattr(event.source, "chat_id", "") or "",
                     team_id=getattr(event.source, "team_id", None),
                 ):
+                    self._notify_refused_reply(
+                        str(getattr(event.source, "platform", "") or ""),
+                        getattr(event.source, "chat_id", "") or "",
+                        getattr(event.source, "thread_id", None),
+                    )
                     return False
             return self.inbox.resolve(item_id, resolution)
 
@@ -7109,58 +7342,69 @@ class SessionManager:
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
-        # UX-026: tell every open app window a SCHEDULED run just started (the 5s
-        # top-right toast). Manual runs never come through here — the user is
-        # already watching those live.
-        await self.broadcast_event(
-            {
-                "type": "automation_run_started",
-                "data": {
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "session_id": run.session_id,
-                    "workspace": task.workspace,
-                    "agent": task.agent,
-                    "trigger": trigger,
-                },
-            }
-        )
-        # Each run is a real, persisted conversation thread: it runs the instructions under its
-        # own session id, then saves the transcript. The user can reopen that session and ask a
-        # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
-        # Register the live engine up-front: a parked approval persists the session
-        # mid-run (durable suspend), and resolving from the Inbox must find this engine.
-        self._engines[run.session_id] = engine
-        # The first turn is the task itself. The framing matters: instructions often restate the
-        # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
-        # the job now is to execute, not to (re)schedule.
-        opening = (
-            f"⏰ Scheduled run — {task.title}\n\n"
-            "This automation is due now: carry out the task below immediately and produce the "
-            "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
-            f"{task.instructions}"
-        )
+        engine = None
         try:
+            # UX-026: tell every open app window a SCHEDULED run just started (the 5s
+            # top-right toast). Manual runs never come through here — the user is
+            # already watching those live.
+            await self.broadcast_event(
+                {
+                    "type": "automation_run_started",
+                    "data": {
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "session_id": run.session_id,
+                        "workspace": task.workspace,
+                        "agent": task.agent,
+                        "trigger": trigger,
+                    },
+                }
+            )
+            # Each run is a real, persisted conversation thread: it runs the instructions under
+            # its own session id, then saves the transcript. The user can reopen that session and
+            # ask a follow-up — the scheduled agent is no longer fire-and-forget.
+            engine = self._build_task_engine(task, session_id=run.session_id)
+            # Register the live engine up-front: a parked approval persists the session
+            # mid-run (durable suspend), and resolving from the Inbox must find this engine.
+            self._engines[run.session_id] = engine
+            # Instructions often restate the schedule, so make explicit that it already fired.
+            opening = (
+                f"⏰ Scheduled run — {task.title}\n\n"
+                "This automation is due now: carry out the task below immediately and produce "
+                "the result. The schedule already exists — do not create or modify any "
+                "scheduled tasks.\n\n"
+                f"{task.instructions}"
+            )
             async for _event in engine.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
-            if task.notify_on_completion:
-                await self._notify_task_done(task, run)
+        except asyncio.CancelledError:
+            if engine is not None:
+                engine.request_interrupt()
+            run.status, run.error = "error", "cancelled during scheduler shutdown"
+            raise
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
-            try:
-                self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
-            except Exception:
-                pass
+            if engine is not None:
+                try:
+                    self.save(run.session_id, engine)
+                    self._engines[run.session_id] = engine
+                except Exception:
+                    pass
             self.task_store.add_run(run)
+        if task.notify_on_completion and run.status == "ok":
+            try:
+                await self._notify_task_done(task, run)
+            except asyncio.CancelledError:
+                # Execution and persistence completed. Preserve success so Scheduler.run_task
+                # advances the task instead of repeating side effects after restart.
+                pass
         return run
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
@@ -7421,13 +7665,20 @@ class SessionManager:
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
+    # The title must speak the user's language: with no language pinned, an English
+    # instruction ("4-5 word title") yields English titles for Chinese/Japanese/…
+    # sessions. Same-language also relaxes the word count to a length that is natural
+    # for the opener's script (CJK titles are a few characters, not 4-5 "words").
     _AUTOTITLE_PROMPT = (
         "You title chat sessions. Given the user's opening message(s) — and, when "
-        "present, the assistant's first reply for context — reply with ONLY a 4-5 word "
-        "title for the session, named after what the session is actually about — no "
-        "quotes or punctuation wrapping it. If there is no topic at all ("
-        '"hey", "how are you", "hi there" and a generic reply), reply with exactly: '
-        "small-talk"
+        "present, the assistant's first reply for context — reply with ONLY a short "
+        "title for the session, named after what the session is actually about. "
+        "Write the title in the same language as the user's opening message "
+        "(4-5 words for English; the natural equivalent brevity for other "
+        "languages) — no quotes or punctuation wrapping it. If there is no topic "
+        "at all ("
+        '"hey", "how are you", "hi there" and a generic reply), reply with '
+        "exactly: small-talk"
     )
 
     def _maybe_autotitle(self, session_id: str) -> None:
@@ -7966,6 +8217,30 @@ class SessionManager:
                     shutil.rmtree(resolved)
             except OSError:
                 pass  # a stale/foreign path must not fail the delete
+        # Project-backed sessions keep their primary folder, but PDF originals copied
+        # into conversation scratch must go away when the conversation is deleted.
+        if (
+            ok
+            and record
+            and self._SESSION_ID_RE.fullmatch(session_id)
+            and session_id not in {".", ".."}
+        ):
+            team = record.team or {}
+            lead = str(team.get("lead_session") or "")
+            scratch = self.scratch_base().resolve()
+            if (
+                team.get("role") == "worker"
+                and self._SESSION_ID_RE.fullmatch(lead)
+                and lead not in {".", "..", session_id}
+            ):
+                attachment_dir = scratch / lead / "workers" / session_id / "attachments"
+            else:
+                attachment_dir = scratch / session_id / "attachments"
+            try:
+                if attachment_dir.is_dir() and attachment_dir.resolve() == attachment_dir:
+                    shutil.rmtree(attachment_dir)
+            except OSError:
+                pass  # a missing or inaccessible scratch folder must not fail deletion
         return {"ok": ok, "session_id": session_id}
 
     # -- provider proxy ---------------------------------------------------------

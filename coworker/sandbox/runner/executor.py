@@ -201,6 +201,7 @@ class LocalExecutor(Executor):
         *,
         cwd: str | Path,
         env: Optional[dict[str, str]] = None,
+        base_env: Optional[dict[str, str]] = None,
         allowed_env: Optional[list[str] | set[str]] = None,
         shell_path: Optional[str] = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
@@ -229,13 +230,11 @@ class LocalExecutor(Executor):
         if shell_path is None:
             shell_path = "powershell.exe" if self._is_windows else "/bin/bash"
         self._shell_path = shell_path
-        # Providers already scope the runner environment, including approved
-        # credential copies. Raw-host callers opt into filtering at their boundary.
-        inherited = (
-            os.environ
-            if allowed_env is None
-            else filter_ambient_env(os.environ, allowed_env=allowed_env)
-        )
+        # Providers may pass an already-scoped base environment. Direct callers
+        # can additionally filter inherited credentials through allowed_env.
+        inherited = os.environ if base_env is None else base_env
+        if allowed_env is not None:
+            inherited = filter_ambient_env(inherited, allowed_env=allowed_env)
         self._env = {**inherited, **_NONINTERACTIVE_ENV, **(env or {})}
         for extra in extra_path_dirs:
             path = self._env.get("PATH", "")

@@ -50,7 +50,7 @@ export function OpenRouterSignIn({
 
   useEffect(() => {
     if (status && !status.authorizing) void onChanged();
-  }, [status?.connected, status?.active, status?.authorizing]);
+  }, [status?.connected, status?.authorizing]);
 
   const action = async (
     name: "signin" | "complete" | "cancel" | "disconnect",
@@ -92,20 +92,13 @@ export function OpenRouterSignIn({
   const button =
     "rounded-lg border border-line px-3 py-2 text-[13px] text-ink hover:border-lineStrong disabled:opacity-40";
   return (
-    <section
-      className="mt-4 border-t border-line pt-4"
-      aria-label={t("openrouter.title")}
-    >
-      <p className="text-[13px] font-medium text-ink">
-        {t("openrouter.title")}
-      </p>
-      <p className="text-[12px] text-faint mt-1 mb-3">{t("openrouter.note")}</p>
+    <section className="mt-4" aria-label={t("openrouter.title")}>
       {status?.connected && (
         <p
           className="text-[12px] text-ok mb-2"
           data-testid={`${tp}-openrouter-connected`}
         >
-          {t(status.active ? "openrouter.active" : "openrouter.saved")}
+          ✓ {t("openrouter.connected")}
         </p>
       )}
       {status?.authorizing ? (

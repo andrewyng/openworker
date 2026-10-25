@@ -177,12 +177,16 @@ def _row(name: str, item: dict[str, Any], props: dict[str, Any], tools: Optional
         size = None
     rec = recommendation_for(model_id)
     chosen = model_config.context_size_for(model_id)
+    # A chat template that reads `enable_thinking` has a thinking switch (Nemotron, Qwen3);
+    # the recommendation table says so for the models it knows.
+    template = str(props.get("chat_template") or "")
+    thinking = True if "enable_thinking" in template else (rec.thinking_available if rec else None)
     return {
         "model": model_id,
         "name": served_id,
         "size_bytes": size,
         "tools": tools,
-        "thinking": rec.thinking_available if rec else None,
+        "thinking": thinking,
         "vision": None,
         "remote": False,
         "parameter_size": None,
@@ -198,3 +202,24 @@ def _row(name: str, item: dict[str, Any], props: dict[str, Any], tools: Optional
 
 def _int(value: Any) -> Optional[int]:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0 else None
+
+
+def thinking_as_template_kwargs(settings: dict[str, Any]) -> dict[str, Any]:
+    """The thinking switch travels as Ollama's `think` field (model_config.py); llama.cpp
+    and vLLM read it from the chat template's `enable_thinking` instead. Rewrites one into
+    the other and leaves everything else alone."""
+    extra = settings.get("extra_body")
+    if not isinstance(extra, dict) or "think" not in extra:
+        return settings
+    extra = dict(extra)
+    think = extra.pop("think")
+    if isinstance(think, bool):
+        kwargs = dict(extra.get("chat_template_kwargs") or {})
+        kwargs["enable_thinking"] = think
+        extra["chat_template_kwargs"] = kwargs
+    out = dict(settings)
+    if extra:
+        out["extra_body"] = extra
+    else:
+        out.pop("extra_body", None)
+    return out

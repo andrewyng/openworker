@@ -19,7 +19,6 @@ const translate = (key: string) => key;
 
 const idle: OpenRouterAuthStatus = {
   connected: false,
-  active: false,
   authorizing: false,
   attempt_id: null,
   authorize_url: null,
@@ -34,7 +33,6 @@ const pending: OpenRouterAuthStatus = {
 const connected: OpenRouterAuthStatus = {
   ...idle,
   connected: true,
-  active: true,
 };
 
 beforeEach(() => {
@@ -43,31 +41,24 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("places account sign-in below the API key in the shared provider form", async () => {
+it("is the account card's whole form: sign-in, no key field", async () => {
   const info = {
-    name: "openrouter",
-    title: "OpenRouter",
-    needs_key: true,
+    name: "openrouter-account",
+    title: "OpenRouter account",
+    kind: "subscription" as const,
+    auth: "oauth" as const,
+    needs_key: false,
     configured: false,
     values: {},
     suggested_models: [],
     recommended_model: null,
-    fields: [
-      {
-        key: "api_key",
-        label: "API key",
-        secret: true,
-        required: true,
-        help: "",
-        placeholder: "sk-or-…",
-      },
-    ],
+    fields: [],
   };
   const ps: ProviderSetupState = {
     providers: [info],
     ordered: [info],
     info,
-    sel: "openrouter",
+    sel: "openrouter-account",
     fields: {},
     refreshProviders: async () => {},
     setFieldValue: vi.fn(),
@@ -89,11 +80,8 @@ it("places account sign-in below the API key in the shared provider form", async
     fieldSaved: null,
   };
   render(<ProviderForm ps={ps} tp="shared" />);
-  const key = screen.getByTestId("shared-field-api_key");
-  const signIn = screen.getByTestId("shared-openrouter-signin");
-  expect(
-    key.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  expect(screen.getByTestId("shared-openrouter-signin")).toBeTruthy();
+  expect(screen.queryByTestId("shared-field-api_key")).toBeNull();
   await waitFor(() => expect(openRouterAuth).toHaveBeenCalledWith("status"));
 });
 
@@ -206,7 +194,7 @@ it("submits a manual code bound to its attempt and shows connected state", async
     code: "returned-code",
     attempt_id: "attempt-1",
   });
-  expect(screen.getByText("openrouter.active")).toBeTruthy();
+  expect(screen.getByText(/openrouter\.connected/)).toBeTruthy();
   expect(changed).toHaveBeenCalled();
 });
 

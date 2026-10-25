@@ -2153,6 +2153,12 @@ class TurnEngine:
             **self.audit_context,
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
+            # Every row carries the tool call's own ID so an external sink can join a
+            # `started` to its matching `finished` when the same tool+arguments runs more
+            # than once in a turn. Stamped here, at the one common boundary, so a new call
+            # site can't forget it. `**event` spreads last: a call site that means
+            # something else by `call_id` still wins.
+            "call_id": tool_call.id,
             **event,
         }
         try:
@@ -2651,7 +2657,17 @@ class TurnEngine:
                 "error": "no response",
             }
 
-        status = "ok" if (result.get("answer") or result.get("answers")) else "denied"
+        # A skipped question answers None (OPE-153), so an all-skipped card is "denied" like an
+        # unanswered one — `answers` being non-empty isn't enough on its own.
+        replies = result.get("answers")
+        status = (
+            "ok"
+            if (
+                result.get("answer")
+                or (isinstance(replies, dict) and any(v is not None for v in replies.values()))
+            )
+            else "denied"
+        )
         if status == "ok":
             self._note_ask_replies(result, question)
         self.messages.append(self._timed_result(tool_call, result))
@@ -2686,8 +2702,10 @@ class TurnEngine:
         self._reviewer_denials = 0
         anchor = sum(1 for m in self.messages if m.get("role") == "user" and not m.get("source"))
         answers = result.get("answers")
+        # Skipped questions answer None (OPE-153) — dropped here, else str(None) files "None"
+        # as something the user actually said.
         values = (
-            [str(v) for v in answers.values()]
+            [str(v) for v in answers.values() if v is not None]
             if isinstance(answers, dict)
             else [str(result.get("answer") or "")]
         )
@@ -2718,8 +2736,10 @@ class TurnEngine:
         `ts` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
-        last user message. Never mutates `self.messages`, so neither the strip nor the block is
-        persisted/replayed.
+        last user message. A partial assistant turn abandoned by a turn that died mid-stream —
+        identified by the error/interrupted notice that follows it — is dropped too: display-only
+        like the notices, and rejected outright by several providers as the final message.
+        Never mutates `self.messages`, so none of this is persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
@@ -2757,6 +2777,35 @@ class TurnEngine:
                 expanded.append({"role": "assistant", "content": context})
             expanded.append(msg)
         source_messages = expanded
+        # A turn that dies mid-stream (provider error, interrupt) leaves its partial assistant
+        # message in the transcript — so the user can still see what streamed — followed by the
+        # notice saying why it stopped. That partial is display-only in the same sense the
+        # notices are: not a turn the model finished, and several providers reject it as the
+        # FINAL message. Gemini 400s ("Requests ending with a model turn are not supported"),
+        # Claude 4.6+ 400s ("does not support assistant message prefill"), and one ending in
+        # whitespace 400s on older Claude ("final assistant content cannot end with trailing
+        # whitespace"). `retry()` replays the same tail, so the session wedges for good.
+        # The trailing notice is what identifies it: a COMPLETED turn's assistant message looks
+        # identical but has no error/interrupted notice after it, and must be kept (its `extras`
+        # sidecar is replayed back to the owning provider). Trailing `tool_calls` mean a turn
+        # suspended awaiting durable resume (see `resume`), never an abandoned one. Consecutive
+        # failed retries stack one partial each, so walk back through the whole run.
+        abandoned: set[int] = set()
+        failed = False
+        for i in range(len(source_messages) - 1, -1, -1):
+            message = source_messages[i]
+            if message.get("role") == "notice":
+                failed = failed or message.get("kind") in ("error", "interrupted")
+                continue
+            if (
+                failed
+                and message.get("role") == "assistant"
+                and not message.get("tool_calls")
+            ):
+                abandoned.add(i)
+                failed = False  # that notice belongs to this partial
+                continue
+            break
         out = [
             (
                 # OPE-171: a length-truncated, action-free reply is replayed as a stub.
@@ -2766,8 +2815,8 @@ class TurnEngine:
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for msg in source_messages
-            if msg.get("role") != "notice"
+            for i, msg in enumerate(source_messages)
+            if msg.get("role") != "notice" and i not in abandoned
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always

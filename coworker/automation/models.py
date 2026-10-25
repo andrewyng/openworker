@@ -183,6 +183,22 @@ class ScheduledTask:
         self.always_allowed_tools.append(entry)
         return True
 
+    def add_tool_rule(self, tool: str) -> bool:
+        """Grant a tool for this task with no target binding — "this routine may search
+        the web", as opposed to "…may message this one chat".
+
+        Needed because a target binding is not always available to bind. A tool that
+        takes no target argument can never earn a standing rule through add_rule, so a
+        routine using one asks again on every single run: the session-scoped "always"
+        dies with the run, and a scheduled task is a fresh session each time. Callers
+        gate which tools may take this path (see standing_tool_candidate).
+        """
+        entry = rule_entry(tool)
+        if not tool or entry in self.always_allowed_tools:
+            return False
+        self.always_allowed_tools.append(entry)
+        return True
+
     def revoke_rule(self, entry: str) -> bool:
         if entry in self.always_allowed_tools:
             self.always_allowed_tools.remove(entry)

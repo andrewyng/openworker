@@ -504,3 +504,39 @@ def test_ask_is_the_default_and_the_engine_gets_its_own_name_for_it(tmp_path: Pa
     assert parse_args([*base, "--approval-mode", "auto-approve"]).mode == "auto-approve"
     with pytest.raises(SystemExit):
         parse_args([*base, "--approval-mode", "plan"])
+
+
+# -- --no-web-tools ------------------------------------------------------------------------
+
+WEB_SCRIPT = [
+    {"text": "Let me look that up.", "tool_calls": [{"name": "web_fetch", "arguments": {"url": "not-a-url"}}]},
+    {"text": "And search.", "tool_calls": [{"name": "web_search", "arguments": {"query": "anything"}}]},
+    {"text": "Done.", "usage": {"input": 100, "output": 10}},
+]
+
+
+def _tool_results(out: Path) -> list[str]:
+    return [str(m.get("content")) for m in _messages(out) if m["role"] == "tool"]
+
+
+def test_no_web_tools_withholds_web_search_and_web_fetch(tmp_path: Path) -> None:
+    proc, _ws, out = _run(tmp_path, "bypass-approvals", WEB_SCRIPT, extra=["--no-web-tools"])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # Both calls meet the engine's unknown-tool answer: the tools were never registered.
+    results = _tool_results(out)
+    assert sum("unknown tool" in r for r in results) == 2, results
+    # The record says so, in both places a reader looks.
+    assert _summary(out)["args"]["web_tools"] is False
+    traj = json.loads((tmp_path / "logs" / "trajectory.json").read_text(encoding="utf-8"))
+    assert json.dumps(traj).count('"web_tools": false') >= 1
+
+
+def test_web_tools_are_offered_unless_withheld(tmp_path: Path) -> None:
+    # web_fetch rejects a non-URL before any network I/O, which proves the tool is present
+    # without the test reaching the internet.
+    proc, _ws, out = _run(tmp_path, "bypass-approvals", WEB_SCRIPT[:1] + WEB_SCRIPT[2:])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    results = _tool_results(out)
+    assert not any("unknown tool" in r for r in results), results
+    assert any("http://" in r for r in results), results
+    assert _summary(out)["args"]["web_tools"] is True
