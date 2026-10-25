@@ -31,8 +31,6 @@ import aisuite as ai
 from ..sandbox.runner.executor import (
     _DEFAULT_TIMEOUT,
     _MAX_TIMEOUT,
-    filter_ambient_env,
-    is_sensitive_env,
 )
 from ..sandbox.runner.executor import Executor as Executor
 from ..sandbox.runner.executor import LocalExecutor as _StdlibLocalExecutor

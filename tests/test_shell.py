@@ -257,7 +257,7 @@ def test_background_unknown_task_errors(executor):
 
 
 def test_is_sensitive_env():
-    from coworker.tools.shell import is_sensitive_env
+    from coworker.sandbox.runner.executor import is_sensitive_env
 
     assert is_sensitive_env("AWS_SECRET_ACCESS_KEY") is True
     assert is_sensitive_env("AWS_ACCESS_KEY_ID") is True
