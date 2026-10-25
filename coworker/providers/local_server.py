@@ -250,16 +250,19 @@ def _int(value: Any) -> Optional[int]:
 def thinking_as_template_kwargs(settings: dict[str, Any]) -> dict[str, Any]:
     """The thinking switch travels as Ollama's `think` field (model_config.py); llama.cpp,
     vLLM, LM Studio and the other OpenAI-compatible local servers read it from the chat
-    template's `enable_thinking` instead. Rewrites one into the other and leaves everything
-    else alone."""
+    template's `enable_thinking` or `thinking` instead. Rewrites one into the others and
+    leaves everything else alone."""
     extra = settings.get("extra_body")
     if not isinstance(extra, dict) or "think" not in extra:
         return settings
     extra = dict(extra)
     think = extra.pop("think")
     if isinstance(think, bool):
+        # Qwen3/Nemotron read enable_thinking; DeepSeek V3.1+/V4 read thinking.
+        # Jinja ignores context variables a template does not use, so both are safe.
         kwargs = dict(extra.get("chat_template_kwargs") or {})
         kwargs["enable_thinking"] = think
+        kwargs["thinking"] = think
         extra["chat_template_kwargs"] = kwargs
     out = dict(settings)
     if extra:
