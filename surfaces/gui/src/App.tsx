@@ -25,6 +25,10 @@ import {
   routeInboxItemLike,
   deleteSession,
   getAllSessions,
+  CLOUD_CHANGED,
+  SESSION_SCOPE_CHANGED,
+  getSessionScopeGeneration,
+  isCloudMachineId,
   getCapabilities,
   getCloudMachines,
   getMachines,
@@ -296,6 +300,16 @@ export function App() {
   };
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const sessionsSnapshot = useRef<SessionInfo[]>([]);
+  sessionsSnapshot.current = sessions;
+  const [sessionListReady, setSessionListReady] = useState(false);
+  const [remoteSessionState, setRemoteSessionState] = useState<"loading" | "idle" | "error">("idle");
+  const [localSessionError, setLocalSessionError] = useState(false);
+  const sessionRefreshSequence = useRef(0);
+  const sessionRefreshLifecycle = useRef(0);
+  const localRefreshCompleted = useRef(0);
+  const remoteRefreshCompleted = useRef(0);
+  const bootSelectionChanged = useRef(false);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
   // Remote homes (UX-045): which joined machine the CURRENT session runs on
@@ -619,9 +633,39 @@ export function App() {
 
   // Fetch ALL sessions + known projects so the sidebar can group them.
   const refreshSessions = useCallback(() => {
+    const request = ++sessionRefreshSequence.current;
+    const scope = getSessionScopeGeneration();
+    const lifecycle = sessionRefreshLifecycle.current;
+    const currentScope = () => scope === getSessionScopeGeneration() && lifecycle === sessionRefreshLifecycle.current;
     // Machine-aware: local sessions + every connected machine's, tagged ⌂.
-    getAllSessions().then(setSessions).catch(() => setSessions([]));
-    getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
+    getAllSessions(progress => {
+      if (!currentScope()) return;
+      if (progress.type === "local") {
+        if (request < localRefreshCompleted.current) return;
+        localRefreshCompleted.current = request;
+        setSessions(previous => [...progress.sessions, ...previous.filter(s => s.machine)]);
+        setLocalSessionError(false);
+        setSessionListReady(true);
+      } else if (progress.state === "loading") {
+        if (request < remoteRefreshCompleted.current) return;
+        // Keep a failed-refresh message visible during automatic retries.
+        setRemoteSessionState(previous => previous === "error" ? previous : "loading");
+      } else if (request >= remoteRefreshCompleted.current) {
+        remoteRefreshCompleted.current = request;
+        setRemoteSessionState(progress.state);
+      }
+    }, sessionsSnapshot.current).then(rows => {
+      if (!currentScope() || request < remoteRefreshCompleted.current) return;
+      remoteRefreshCompleted.current = request;
+      setSessions(previous => [...previous.filter(s => !s.machine), ...rows.filter(s => s.machine)]);
+    }).catch(() => {
+      if (!currentScope() || request < localRefreshCompleted.current) return;
+      localRefreshCompleted.current = request;
+      setLocalSessionError(true);
+      setRemoteSessionState("idle");
+      setSessionListReady(true);
+    });
+    getRecentWorkspaces().then(rows => { if (currentScope() && request === sessionRefreshSequence.current) setProjects(rows); }).catch(() => {});
     // Union view: local registry + (on a signed-in desktop) the cloud's rows,
     // origin-tagged. A cloud-session problem yields zero cloud rows — the
     // local list is never blocked by it.
@@ -632,15 +676,37 @@ export function App() {
         : getCloudMachines().catch(() => ({ machines: [] as Machine[] })),
     ])
       .then(([local, cloud]) =>
-        setMachines([...(local.machines ?? []), ...(cloud.machines ?? [])]),
+        currentScope() && request === sessionRefreshSequence.current && setMachines([...(local.machines ?? []), ...(cloud.machines ?? [])]),
       )
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const reset = (event: Event) => {
+      // Do not reuse an old account/org's remote rows as failure fallback.
+      sessionRefreshSequence.current++;
+      const rows = event.type === SESSION_SCOPE_CHANGED ? [] : sessionsSnapshot.current.filter(s => !s.machine || !isCloudMachineId(s.machine));
+      sessionsSnapshot.current = rows;
+      setSessions(rows);
+      setLocalSessionError(false);
+      setRemoteSessionState("idle");
+      refreshSessions();
+    };
+    window.addEventListener(CLOUD_CHANGED, reset);
+    window.addEventListener(SESSION_SCOPE_CHANGED, reset);
+    return () => {
+      sessionRefreshSequence.current++;
+      sessionRefreshLifecycle.current++;
+      window.removeEventListener(CLOUD_CHANGED, reset);
+      window.removeEventListener(SESSION_SCOPE_CHANGED, reset);
+    };
+  }, [refreshSessions]);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
   // Retry health for a while: the desktop shell starts its sidecar in parallel, so the
   // server may not answer for a second or two. Only fall back to the gate once it's truly up.
   const [booting, setBooting] = useState(true);
+  const [backendReady, setBackendReady] = useState(false);
   const [onboarding, setOnboarding] = useState(false);
   // True once we've resumed a prior conversation on boot (drives the splash wording).
   const [resumedExisting, setResumedExisting] = useState(false);
@@ -659,11 +725,13 @@ export function App() {
   // On boot with no seeded workspace, reopen the last thing the user had — most recent
   // conversation (restores its folder + agent + transcript), else the most recent project
   // folder. Only a true first run (nothing to resume) falls through to the folder gate.
-  const resumeLastOrGate = async () => {
+  const resumeLastOrGate = async (cancelled: () => boolean) => {
+    const scope = getSessionScopeGeneration();
+    const superseded = () => cancelled() || bootSelectionChanged.current || scope !== getSessionScopeGeneration();
     let loadedSessions: SessionInfo[] = [];
     try {
       loadedSessions = (await getAllSessions()).filter((s) => s.session_id && !s.session_id.startsWith("__"));
-      setSessions(loadedSessions);
+      if (superseded()) return;
       const sess = loadedSessions;
       const ts = (s: SessionInfo) => Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
       // Deep link: #/s/{id} names the session to land on (bookmark/refresh);
@@ -682,9 +750,11 @@ export function App() {
         }
         try {
           const messages = await getSessionMessages(last.session_id);
+          if (superseded()) return;
           setItems(itemsFromMessages(messages));
           setUsage(usageFromMessages(messages));
         } catch {
+          if (superseded()) return;
           setItems([]);
           setUsage(emptyUsage());
         }
@@ -695,8 +765,10 @@ export function App() {
     } catch {
       /* fall through */
     }
+    if (superseded()) return;
     try {
       const recents = await getRecentWorkspaces();
+      if (superseded()) return;
       setProjects(recents);
       // Only auto-adopt a recent folder for gated surfaces (Code). Cowork starts orphan.
       if (gatesWorkspace(agent)) {
@@ -726,6 +798,7 @@ export function App() {
           setAppMode(caps.mode);
           setWalletAvailable(caps.wallet);
           setCloudMode(caps.mode === "cloud");
+          setBackendReady(true);
           // #/approve/CODE deep link (the joiner prints it): land on the
           // approval surface before anything else grabs attention. Otherwise
           // a #/settings/{page} link opens Settings on that page.
@@ -744,7 +817,7 @@ export function App() {
           // would provision a junk per-conversation scratch dir for it before resume could
           // flip to the real session. Cowork ignores default_workspace (a Code concept).
           if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
-          else await resumeLastOrGate();
+          else await resumeLastOrGate(() => cancelled);
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
           // on a cold start that left "Loading models…" stuck until the user visited
           // Settings (owner-hit 2026-07-23). Health just answered, so this one lands.
@@ -1489,6 +1562,7 @@ export function App() {
   };
 
   const startNewSession = (forAgent?: string) => {
+    if (booting) { bootSelectionChanged.current = true; setBooting(false); }
     const target = forAgent || agent;
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setMachine(null); // a fresh draft starts on This Mac; the runs-on chip re-targets it
@@ -1638,6 +1712,7 @@ export function App() {
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   const selectSession = async (id: string, ws: string, ag: string) => {
+    if (booting) { bootSelectionChanged.current = true; setBooting(false); }
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
     setStreaming("");
@@ -1912,7 +1987,7 @@ export function App() {
     );
   }
 
-  if (booting || !uiReady) {
+  if ((booting || !uiReady) && (!sessionListReady || !backendReady)) {
     return (
       <div className={"app boot-splash" + overlayClass}>
         {/* overlay (not desktop): ?overlay=1 previews the splash's top-left in the browser
@@ -2043,6 +2118,26 @@ export function App() {
         />
       )}
       <Sidebar
+        sessionStatus={(
+          <div className="text-meta text-muted px-1.5" data-testid="session-refresh-status">
+            {remoteSessionState === "loading" && (
+              <div role="status" className="flex items-center gap-2 py-1.5" data-testid="remote-sessions-loading">
+                <span aria-hidden="true" className="w-[11px] h-[11px] rounded-full border-[1.5px] border-faint border-t-transparent animate-spin shrink-0" />
+                {t("sidebar.refresh_remote")}
+              </div>
+            )}
+            {(localSessionError || remoteSessionState === "error") && (
+              <div role="status" className="py-1.5" data-testid="sessions-refresh-error">
+                {t(localSessionError ? "sidebar.refresh_local_error" : "sidebar.refresh_remote_error")}
+                <button className="block text-accent mt-1" onClick={() => {
+                  setLocalSessionError(false);
+                  setRemoteSessionState("loading");
+                  refreshSessions();
+                }}>{t("sidebar.refresh_retry")}</button>
+              </div>
+            )}
+          </div>
+        )}
         settingsRail={surface === "settings"}
         machines={machines}
         agent={agent}
@@ -2080,7 +2175,11 @@ export function App() {
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
       />
-      {surface === "scheduled" ? (
+      {booting && surface === "session" ? (
+        <main className="flex-1 grid place-items-center text-ui text-muted" role="status" data-testid="session-restore-pending">
+          {t("sidebar.restoring_session")}
+        </main>
+      ) : surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
           onRunNow={runTaskNow}
