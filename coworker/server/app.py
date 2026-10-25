@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 import secrets
@@ -23,6 +24,8 @@ from typing import Any, Optional
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("coworker.server.app")
 
 # Origins allowed to talk to the local sidecar. It binds to 127.0.0.1, but a page in the
 # user's own browser can still reach loopback — so without an origin gate, any website they
@@ -160,6 +163,7 @@ from ..attachments import (
     MAX_TEXT_CHARS,
     build_user_content,
 )
+from ..attachment_workspace import materialize_pdf_attachments
 from ..engine import ApprovalOutcome
 from ..events import EventType
 from ..connectors import connector_list
@@ -188,13 +192,13 @@ def create_app(manager: SessionManager) -> FastAPI:
     from ..providers.openrouter_auth import OpenRouterAuth
 
     def openrouter_changed() -> None:
-        manager._refresh_provider("openrouter")
-        if manager._provider_configured("openrouter"):
+        manager._refresh_provider("openrouter-account")
+        if manager._provider_configured("openrouter-account"):
             from ..providers.registry import get_descriptor
 
-            model = get_descriptor("openrouter").recommended_model
+            model = get_descriptor("openrouter-account").recommended_model
             if model:
-                qualified = f"openrouter:{model}"
+                qualified = f"openrouter-account:{model}"
                 manager.add_model(qualified)
                 if not manager._provider_configured(manager._model_provider(manager.model)):
                     manager.set_default_model(qualified)
@@ -250,7 +254,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
-        if request.url.path.startswith("/v1/providers/openrouter/") and not _origin_allowed(
+        if request.url.path.startswith("/v1/providers/openrouter-account/") and not _origin_allowed(
             request.headers.get("origin")
         ):
             return JSONResponse({"error": "origin not allowed"}, status_code=403)
@@ -481,8 +485,8 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.set_unattended(session_id, value)
 
     @app.get("/v1/sessions/{session_id}/model-settings")
-    def session_model_settings(session_id: str) -> dict[str, Any]:
-        return manager.session_model_settings(session_id)
+    def session_model_settings(session_id: str, model: str = "") -> dict[str, Any]:
+        return manager.session_model_settings(session_id, model)
 
     @app.post("/v1/sessions/{session_id}/model-settings")
     def set_session_model_settings(session_id: str, body: dict) -> dict[str, Any]:
@@ -578,14 +582,21 @@ def create_app(manager: SessionManager) -> FastAPI:
                         "error": "gallery requires cloud sign-in (or the cloud is unreachable)",
                     }
                 markdown = manifest.get("manifest_markdown", "")
-                digest = "sha256:" + hashlib.sha256(markdown.encode()).hexdigest()
+                digest = (
+                    "sha256:" + hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+                )
                 if (
                     manifest.get("manifest_hash")
                     and manifest["manifest_hash"] != digest
                 ):
                     return {"ok": False, "error": "manifest hash mismatch"}
                 with tempfile.TemporaryDirectory() as td:
-                    (Path(td) / f"{slug}.md").write_text(markdown)
+                    # UTF-8 explicitly: the hash above and `load_manifest_file` both
+                    # treat this markdown as UTF-8, so the file between them must match.
+                    # Defaulting to the locale encoding breaks on Windows (cp1252),
+                    # where CJK/emoji fail to encode and an em-dash writes as a byte the
+                    # UTF-8 read then rejects.
+                    (Path(td) / f"{slug}.md").write_text(markdown, encoding="utf-8")
                     summaries = reg.install_from_dir(td)
                 cloud.gallery_install_event(manager.secrets, load_config(), slug)
             else:
@@ -2293,6 +2304,20 @@ def create_app(manager: SessionManager) -> FastAPI:
             str(body.get("user_id", "")), add=False
         )
 
+    @app.post("/v1/connectors/telegram/approval-owners/add")
+    def telegram_approval_owner_add(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")),
+            add=True,
+            display_name=str(body.get("name", "")),
+        )
+
+    @app.post("/v1/connectors/telegram/approval-owners/remove")
+    def telegram_approval_owner_remove(body: dict) -> dict[str, Any]:
+        return manager.set_telegram_approval_owner(
+            str(body.get("user_id", "")), add=False
+        )
+
     # -- audit / browser observability ------------------------------------------
     @app.get("/v1/audit")
     def audit_list(
@@ -2341,14 +2366,14 @@ def create_app(manager: SessionManager) -> FastAPI:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
-        if name == "openrouter":
+        if name == "openrouter-account":
             openrouter_auth.cancel()
             return manager.set_provider(name, (body or {}).get("fields"))
         return await asyncio.to_thread(manager.set_provider, name, (body or {}).get("fields"))
 
     @app.delete("/v1/providers/{name}")
     async def providers_remove(name: str) -> dict[str, Any]:
-        if name == "openrouter":
+        if name == "openrouter-account":
             openrouter_auth.cancel()
             return manager.remove_provider(name)
         return await asyncio.to_thread(manager.remove_provider, name)
@@ -2379,23 +2404,23 @@ def create_app(manager: SessionManager) -> FastAPI:
         asyncio.create_task(manager.codex_signin())
         return {"ok": True, "started": True}
 
-    @app.get("/v1/providers/openrouter/status")
+    @app.get("/v1/providers/openrouter-account/status")
     async def openrouter_status():
         return openrouter_auth.status()
 
-    @app.post("/v1/providers/openrouter/signin")
+    @app.post("/v1/providers/openrouter-account/signin")
     async def openrouter_signin(body: dict):
         return await openrouter_auth.start(manual=body.get("manual") is True)
 
-    @app.post("/v1/providers/openrouter/complete")
+    @app.post("/v1/providers/openrouter-account/complete")
     async def openrouter_complete(body: dict):
         return await openrouter_auth.complete(body.get("code"), body.get("attempt_id"))
 
-    @app.post("/v1/providers/openrouter/cancel")
+    @app.post("/v1/providers/openrouter-account/cancel")
     async def openrouter_cancel():
         return openrouter_auth.cancel()
 
-    @app.post("/v1/providers/openrouter/disconnect")
+    @app.post("/v1/providers/openrouter-account/disconnect")
     async def openrouter_disconnect():
         return openrouter_auth.disconnect()
 
@@ -2472,6 +2497,11 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_context_bar(body: dict) -> dict[str, Any]:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
+
+    @app.post("/v1/settings/hide-reasoning")
+    def settings_set_hide_reasoning(body: dict) -> dict[str, Any]:
+        # #611: collapse the live reasoning stream to a quiet indicator while a turn runs.
+        return manager.set_hide_reasoning_running((body or {}).get("hide_reasoning_running", False))
 
     @app.post("/v1/settings/auto-approve")
     def settings_set_auto_approve(body: dict) -> dict[str, Any]:
@@ -3085,6 +3115,25 @@ def create_app(manager: SessionManager) -> FastAPI:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
+                if not retry and isinstance(content, list) and any(
+                    isinstance(part, dict) and part.get("type") == "file"
+                    for part in content
+                ):
+                    try:
+                        content = await asyncio.to_thread(
+                            materialize_pdf_attachments,
+                            content,
+                            manager._provision_scratch(session_id),
+                        )
+                    except (OSError, ValueError) as exc:
+                        await manager.broadcast_session(
+                            session_id,
+                            {
+                                "type": "input_rejected",
+                                "data": {"error": f"Could not save PDF attachment: {exc}"},
+                            },
+                        )
+                        return
                 events = (
                     engine.retry()
                     if retry
@@ -3104,6 +3153,14 @@ def create_app(manager: SessionManager) -> FastAPI:
                         # Title on the user's words the moment they land — never behind
                         # a long agentic turn (owner catch 2026-08-24).
                         manager._maybe_autotitle(session_id)
+            except Exception as exc:
+                # An unexpected raise out of the turn must not vanish: the task would otherwise
+                # die silently ("Task exception was never retrieved") and the GUI would only see
+                # turn_done. Surface it as an error event like the background-turn path does.
+                logger.warning("ws turn crashed for %s: %s", session_id, exc)
+                await manager.broadcast_session(
+                    session_id, {"type": "error", "data": {"error": str(exc)}}
+                )
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)

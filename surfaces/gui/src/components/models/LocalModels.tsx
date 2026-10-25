@@ -78,18 +78,37 @@ export function LocalModelsTable({
   const { t } = useTranslation();
   const [rows, setRows] = useState<LocalModelRow[] | null>(null);
   const [alive, setAlive] = useState<boolean | undefined>(undefined);
-  const load = () =>
+  const [failed, setFailed] = useState(false);
+  const load = () => {
+    setFailed(false);
+    setRows(null);
     getLocalModels(provider)
       .then((r) => {
         setRows(r.models || []);
         setAlive(r.alive);
       })
-      .catch(() => setRows([]));
+      .catch(() => setFailed(true));
+  };
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
-  if (rows === null) return null;
+  // Never a blank page: say we are asking, or that the answer did not come, with Retry.
+  if (rows === null)
+    return (
+      <div className="mt-6 text-meta" data-testid="local-models-status">
+        {failed ? (
+          <span className="text-warnInk">
+            {t(provider === "ollama" ? "manage.local_models_failed_ollama" : "manage.local_models_failed")}{" "}
+            <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={load} data-testid="local-models-retry">
+              {t("manage.retry")}
+            </button>
+          </span>
+        ) : (
+          <span className="text-faint">{t("manage.local_models_loading")}</span>
+        )}
+      </div>
+    );
   const inPicker = (id: string) => curated.includes(id);
   const toggle = async (row: LocalModelRow) => {
     if (inPicker(row.model)) {

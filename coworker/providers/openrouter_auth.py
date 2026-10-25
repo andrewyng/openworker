@@ -1,4 +1,5 @@
-"""OpenRouter PKCE login. Account keys stay server-side; no refresh token is issued."""
+"""OpenRouter PKCE login for the `openrouter-account` provider. The key OpenRouter issues
+lives in that provider's own profile; no refresh token is involved."""
 
 from __future__ import annotations
 
@@ -53,11 +54,8 @@ class OpenRouterAuth:
         self.exchanging = False
 
     def status(self) -> dict[str, Any]:
-        profile = self.secrets.get("provider:openrouter") or {}
         return {
             "connected": bool((self.secrets.get(PROFILE) or {}).get("api_key")),
-            "active": profile.get("auth_method") == "account"
-            and bool(profile.get("account_connected")),
             "authorizing": self.attempt_id is not None,
             "attempt_id": self.attempt_id,
             "authorize_url": self.authorize_url,
@@ -175,9 +173,6 @@ class OpenRouterAuth:
             if attempt_id != self.attempt_id:
                 return self.status()
             self.secrets.put(PROFILE, {"api_key": key})
-            profile = dict(self.secrets.get("provider:openrouter") or {})
-            profile.update(auth_method="account", account_connected=True)
-            self.secrets.put("provider:openrouter", profile)
             self.cancel()
             self.on_changed()
         except Exception:
@@ -190,8 +185,5 @@ class OpenRouterAuth:
         self.cancel()
         self.error = None
         self.secrets.delete(PROFILE)
-        profile = dict(self.secrets.get("provider:openrouter") or {})
-        profile["account_connected"] = False
-        self.secrets.put("provider:openrouter", profile)
         self.on_changed()
         return self.status()

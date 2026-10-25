@@ -47,6 +47,27 @@ def test_connect_managed_requires_sign_in(client):
     assert "not signed in" in body["error"]
 
 
+def test_connect_managed_reports_signed_in_false_on_expired_session(client, monkeypatch):
+    """GitHub issue #658: /v1/cloud/status can still say signed_in=True from a
+    stale-but-present access_token (cloud.status only checks presence, not
+    freshness) while the actual connect attempt — which needs a token it can use
+    right now — correctly fails. The GUI (AddConnectionModal's SlackOneClick)
+    relies on this route's `signed_in: False` to recover into a sign-in prompt
+    instead of dead-ending on the bare error text."""
+    import time
+
+    from coworker import cloud
+
+    client.manager.secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert client.get("/v1/cloud/status").json()["signed_in"] is True
+
+    body = client.post("/v1/connectors/slack/connect-managed").json()
+    assert body == {"ok": False, "error": "not signed in", "signed_in": False}
+
+
 def test_oauth_callback_writes_profile_and_returns_page(client):
     _allow_managed_state()
     resp = client.post(
@@ -176,6 +197,36 @@ def test_gallery_install_runs_consent_flow(client, monkeypatch):
     # lands disabled + unsurfaced pending explicit user approval (trust model)
     assert installed["sales"]["enabled"] is False
     assert events == ["sales"]  # install event fired
+
+
+NON_ASCII_MANIFEST = """---
+id: sales
+name: Sales Coworker — 销售
+icon: chart
+tagline: It’s a “quality” pitch — 你好
+family: knowledge
+workspace: deliverable
+tools: [files, search, todo]
+description: d
+---
+You are the Sales Coworker. \U0001f680"""
+
+
+def test_gallery_install_handles_non_ascii_manifest(client, monkeypatch):
+    """Gallery copy carries em-dashes, curly quotes, CJK and emoji.
+
+    The install path hashes the markdown as UTF-8 and `personas/manifest.py` reads it
+    back as UTF-8, so the temp file in between must be written as UTF-8 too. Writing it
+    with the locale encoding works on Linux/macOS but not on Windows, where the default
+    is cp1252: CJK and emoji fail to encode outright, while an em-dash silently writes
+    as a single cp1252 byte that the UTF-8 read then rejects.
+    """
+    _stub_gallery(monkeypatch, markdown=NON_ASCII_MANIFEST)
+    body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()
+    assert body["ok"], body
+    installed = {p["id"]: p for p in body["personas"]}
+    assert installed["sales"]["name"] == "Sales Coworker — 销售"
+    assert installed["sales"]["tagline"] == "It’s a “quality” pitch — 你好"
 
 
 def test_gallery_install_rejects_hash_mismatch(client, monkeypatch):

@@ -639,7 +639,6 @@ def test_automations_rest_force_stop_and_settings(tmp_path, monkeypatch):
     assert stop_res["task_id"] == t.id
 
 
-
 async def test_manager_timeout_finishes_the_original_run(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
@@ -687,3 +686,128 @@ async def test_force_stop_keeps_overlap_guard_through_cleanup(tmp_path):
     release.set()
     assert (await pending).status == "cancelled"
     assert task.id not in sched._running_ids
+
+
+@pytest.mark.asyncio
+async def test_cancelled_scheduled_run_is_not_left_running(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = manager.task_store.save(_task(workspace=str(workspace)))
+    started = asyncio.Event()
+    interrupted = False
+
+    class BlockingEngine:
+        messages = []
+
+        async def run(self, _opening):
+            started.set()
+            await asyncio.Event().wait()
+            yield
+
+        def request_interrupt(self):
+            nonlocal interrupted
+            interrupted = True
+
+    monkeypatch.setattr(
+        manager,
+        "_build_task_engine",
+        lambda _task, *, session_id: BlockingEngine(),
+    )
+
+    pending = asyncio.create_task(
+        manager._run_scheduled_task(task, trigger="schedule")
+    )
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    (initial,) = manager.task_store.runs(task.id)
+    assert initial.status == "running"
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    (stored,) = manager.task_store.runs(task.id)
+    assert stored.run_id == initial.run_id
+    assert stored.status == "error"
+    assert stored.finished_at is not None
+    assert stored.error == "cancelled during scheduler shutdown"
+    assert interrupted is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_broadcast_is_not_left_running(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = manager.task_store.save(_task(workspace=str(workspace)))
+    broadcast_started = asyncio.Event()
+
+    async def blocking_listener(_message):
+        broadcast_started.set()
+        await asyncio.Event().wait()
+
+    manager.register_event_client(blocking_listener)
+    pending = asyncio.create_task(
+        manager._run_scheduled_task(task, trigger="schedule")
+    )
+    await asyncio.wait_for(broadcast_started.wait(), timeout=1.0)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    (stored,) = manager.task_store.runs(task.id)
+    assert stored.status == "error"
+    assert stored.finished_at is not None
+    assert stored.error == "cancelled during scheduler shutdown"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_completion_notification_preserves_success(
+    tmp_path, monkeypatch
+):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    manager = SessionManager(data_dir=tmp_path / "data")
+    task = manager.task_store.save(_task(workspace=str(workspace)))
+    notify_started = asyncio.Event()
+
+    class CompletingEngine:
+        messages = [{"role": "assistant", "content": "done"}]
+
+        async def run(self, _opening):
+            if False:
+                yield
+
+    async def blocking_notify(_task, _run):
+        notify_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        manager,
+        "_build_task_engine",
+        lambda _task, *, session_id: CompletingEngine(),
+    )
+    monkeypatch.setattr(manager, "_notify_task_done", blocking_notify)
+    scheduler = Scheduler(manager.task_store, manager._run_scheduled_task)
+    pending = asyncio.create_task(scheduler.run_task(task, trigger="schedule"))
+
+    await asyncio.wait_for(notify_started.wait(), timeout=1.0)
+    pending.cancel()
+    run = await pending
+
+    assert run is not None and run.status == "ok"
+    stored = manager.task_store.find_run(run.run_id)
+    assert stored is not None and stored.status == "ok"
+    updated = manager.task_store.get(task.id)
+    assert updated is not None
+    assert updated.run_count == 1
+    assert updated.last_status == "ok"

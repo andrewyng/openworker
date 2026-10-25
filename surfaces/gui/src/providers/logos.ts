@@ -44,6 +44,8 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   bedrock,
   vertex,
   openrouter,
+  // Same mark for the signed-in OpenRouter provider: same models, billed to the account.
+  "openrouter-account": openrouter,
   fireworks,
   together,
   zai,
@@ -68,6 +70,7 @@ export const PROVIDER_ORDER = [
   "bedrock",
   "vertex",
   "openrouter",
+  "openrouter-account",
   "fireworks",
   "together",
   "zai",

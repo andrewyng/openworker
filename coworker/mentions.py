@@ -16,10 +16,13 @@ clears its records (same contract as subscriptions).
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,17 +46,34 @@ class MentionSessionStore:
                 self._threads = [
                     MentionThread(**raw) for raw in data.get("threads", [])
                 ]
-            except (OSError, ValueError, TypeError):
-                self._threads = []  # a corrupt file must never block startup
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup. AttributeError covers a
+                # file that is valid JSON but not an object (`[]`, `null`, a string).
+                logger.warning(
+                    "mention_threads.json at %s is unreadable; starting empty", self.path
+                )
+                self._threads = []
 
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"threads": [asdict(t) for t in self._threads]}, indent=2),
-            encoding="utf-8",
-        )
+        # Write a sibling .tmp and rename it over the real file, so a crash mid-write
+        # leaves the previous complete file instead of a truncated one (#709).
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps({"threads": [asdict(t) for t in self._threads]}, indent=2),
+                encoding="utf-8",
+            )
+            temporary.replace(self.path)
+        except OSError as exc:
+            # Persistence is best-effort; memory stays authoritative for this process.
+            logger.warning("could not save %s: %s", self.path, exc)
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
     # -- mutations --------------------------------------------------------------
     def set(self, thread_target: str, session_id: str, channel: str) -> MentionThread:

@@ -167,12 +167,62 @@ export function RightRail({
   const [journal, setJournal] = useState<JournalCase[]>([]);
   const [selected, setSelected] = useState<ArtifactInfo | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
+  const artifactListRequest = useRef(0);
+  const artifactContentRequest = useRef(0);
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
 
-  const refreshArtifacts = () => getArtifacts(sessionId).then(setArtifacts).catch(() => setArtifacts([]));
+  // Every refresh owns a monotonically increasing request id. Session switches, live refreshes,
+  // and manual refreshes can overlap; only the newest response may update this rail.
+  const refreshArtifacts = (
+    onLoaded?: (list: ArtifactInfo[]) => void,
+    onError?: () => void,
+  ) => {
+    const request = ++artifactListRequest.current;
+    return getArtifacts(sessionId)
+      .then((list) => {
+        if (request !== artifactListRequest.current) return;
+        setArtifacts(list);
+        onLoaded?.(list);
+      })
+      .catch(() => {
+        if (request !== artifactListRequest.current) return;
+        setArtifacts([]);
+        onError?.();
+      });
+  };
+
+  const loadArtifactContent = (artifact: ArtifactInfo) => {
+    const request = ++artifactContentRequest.current;
+    setContent(null);
+    return readArtifact(sessionId, artifact.path)
+      .then((next) => {
+        if (request === artifactContentRequest.current) setContent(next);
+      })
+      .catch(() => {
+        if (request === artifactContentRequest.current) setContent(null);
+      });
+  };
+
+  // Artifacts are session-owned. Drop the previous session's visible state before starting
+  // this session's fetch so filenames never linger while the replacement request is pending.
+  useEffect(() => {
+    artifactListRequest.current += 1;
+    artifactContentRequest.current += 1;
+    setArtifacts([]);
+    setSelected(null);
+    setContent(null);
+  }, [sessionId]);
 
   useEffect(() => {
-    if (!active) return;
-    if (showArtifacts) refreshArtifacts();
+    if (!active || !showArtifacts) {
+      artifactListRequest.current += 1;
+      return;
+    }
+    refreshArtifacts();
+    return () => {
+      artifactListRequest.current += 1;
+    };
   }, [active, sessionId, refreshKey, showArtifacts]);
 
   useEffect(() => {
@@ -190,17 +240,15 @@ export function RightRail({
     getJournalCases(sessionId).then(setJournal).catch(() => setJournal([]));
   }, [active, sessionId, refreshKey, board?.space]);
 
-  // Switching conversations closes any open artifact — it belongs to the previous session's
-  // workspace, which the new session can't (and shouldn't) read.
   useEffect(() => {
-    setSelected(null);
-    setContent(null);
-  }, [sessionId]);
-
-  useEffect(() => {
-    setContent(null);
-    if (!selected) return;
-    readArtifact(sessionId, selected.path).then(setContent).catch(() => setContent(null));
+    if (selected) loadArtifactContent(selected);
+    else {
+      artifactContentRequest.current += 1;
+      setContent(null);
+    }
+    return () => {
+      artifactContentRequest.current += 1;
+    };
   }, [selected?.path, sessionId]);
 
   // Notify the app when a preview opens/closes (drives the left-nav auto-collapse).
@@ -219,8 +267,7 @@ export function RightRail({
 
   const reloadSelected = () => {
     if (!selected) return Promise.resolve();
-    setContent(null);
-    return readArtifact(sessionId, selected.path).then(setContent).catch(() => setContent(null));
+    return loadArtifactContent(selected);
   };
 
   // §34 (UX-016): [Title](artifact:path) chips in the transcript open the viewer directly.
@@ -248,12 +295,19 @@ export function RightRail({
         setSelected(found);
         return;
       }
-      getArtifacts(sessionId)
+      // Not routed through the list request id: App unhides the rail on this same
+      // event, and that refresh would supersede this one and drop the selection
+      // (owner-hit 2026-10-25). Only a session switch mid-flight discards the answer.
+      const owner = sessionId;
+      getArtifacts(owner)
         .then((list) => {
+          if (owner !== sessionRef.current) return;
           setArtifacts(list);
           setSelected(match(list, path) ?? minimal(path));
         })
-        .catch(() => setSelected(minimal(path)));
+        .catch(() => {
+          if (owner === sessionRef.current) setSelected(minimal(path));
+        });
     };
     window.addEventListener(OPEN_ARTIFACT_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_ARTIFACT_EVENT, onOpen);

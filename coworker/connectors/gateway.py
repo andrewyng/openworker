@@ -30,6 +30,11 @@ logger = logging.getLogger("coworker.connectors")
 
 _RECENT_CAP = 20  # most-recent distinct senders kept for chat-ID auto-capture
 
+# One sentence for a human whose approve/deny was refused by the owner check — sent as a
+# Slack ephemeral for button clicks and as a plain reply for tagged text replies on any
+# transport, so a refusal never looks like the bot ignoring them (OPE-217 / #712).
+APPROVAL_OWNER_REQUIRED = "Only a designated approval owner can respond to this request."
+
 
 class Gateway:
     def __init__(
@@ -93,7 +98,7 @@ class Gateway:
     async def reject_interaction(
         self,
         event: InteractionEvent,
-        text: str = "Only a designated approval owner can respond to this request.",
+        text: str = APPROVAL_OWNER_REQUIRED,
     ) -> None:
         """Best-effort private feedback for a rejected Slack button click."""
         response_url = str(event.response_url or "")
@@ -196,6 +201,15 @@ class Gateway:
         if adapter is None:
             return SendResult(False, error=f"no adapter for {platform}")
         return await adapter.send(chat_id, text, thread_id=thread_id)
+
+    def supports_interactive(self, target: str) -> bool:
+        """Whether this target's platform actually renders buttons. Callers that offer a
+        choice need to know: `deliver_interactive` silently degrades to plain text on an
+        adapter without button support, which would strand the reader with a question and
+        no way to answer it."""
+        platform, _chat_id, _thread_id = parse_target(target)
+        adapter = self._adapters.get(platform)
+        return bool(getattr(adapter, "supports_interactive", False))
 
     async def deliver_interactive(self, target: str, text: str, buttons) -> SendResult:
         """Send a prompt with choice buttons (adapters without interactive support show text only)."""
