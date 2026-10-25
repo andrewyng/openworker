@@ -70,6 +70,28 @@ test("Settings: the flag escape hatch hides the Coworkers tab", async ({ page })
   await expect(page.getByRole("button", { name: "Coworkers", exact: true })).toHaveCount(0);
 });
 
+// The server can take seconds to answer /v1/providers (it probes local model servers); until
+// it does, the page says so instead of "No providers match.", which reads as "nothing here".
+test("Models & Keys says it is loading while the provider list is on its way", async ({ page }) => {
+  let release!: () => void;
+  const answered = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/v1\/providers$/, async (route) => {
+    if (route.request().method() === "GET") await answered;
+    await route.fallback();
+  });
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
+
+  await expect(page.getByTestId("provider-loading")).toHaveText("Loading providers…");
+  await expect(page.getByTestId("provider-search-empty")).toHaveCount(0);
+
+  release();
+  await expect(page.getByTestId("set-provider-openai")).toBeVisible();
+  await expect(page.getByTestId("provider-loading")).toHaveCount(0);
+});
+
 // UX-021: Settings ▸ Models is the shared provider gallery (§39 components). Cards wear
 // their own state (✓ Connected · used …); a vendor card opens the shared key form with the
 // prefilled endpoint behind the disclosure; unconfigured providers preview their models.

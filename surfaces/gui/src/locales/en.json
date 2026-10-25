@@ -1354,6 +1354,7 @@
     "group_subscription": "Subscriptions",
     "group_api_key": "API keys",
     "no_providers_match": "No providers match.",
+    "loading_providers": "Loading providers…",
     "show_more": "Show {{count}} more",
     "show_fewer": "Show fewer",
     "search_providers": "Search providers…",

@@ -377,6 +377,91 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
 
 
+def _local_provider_names() -> list[str]:
+    from coworker.providers.registry import provider_descriptors
+
+    return [d.name for d in provider_descriptors() if d.kind == "local"]
+
+
+def test_get_providers_skips_model_lists_of_local_servers_that_do_not_answer(tmp_path, monkeypatch):
+    """A local server that does not answer has no models to suggest. Asking anyway cost one more
+    refused connection per server (~2 s each on Windows), so the Models & Keys page waited ~18 s
+    on a machine with no local server installed."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    asked: list[str] = []
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    monkeypatch.setattr(SessionManager, "_local_server_alive", lambda self, name: False)
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: asked.append("ollama") or [])
+    monkeypatch.setattr(SessionManager, "_local_server_models", lambda self, name: asked.append(name) or [])
+
+    provs = {p["name"]: p for p in SessionManager(data_dir=tmp_path).get_providers()}
+    assert asked == []
+    for name in _local_provider_names():
+        assert provs[name]["alive"] is False
+        assert provs[name]["suggested_models"] == []
+
+
+def test_get_providers_lists_models_of_a_local_server_that_answers(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    monkeypatch.setattr(SessionManager, "_local_server_alive", lambda self, name: name == "llamacpp")
+    monkeypatch.setattr(SessionManager, "_local_server_models", lambda self, name: [f"{name}:qwen3-coder"])
+
+    provs = {p["name"]: p for p in SessionManager(data_dir=tmp_path).get_providers()}
+    assert provs["llamacpp"]["alive"] is True
+    assert provs["llamacpp"]["suggested_models"] == ["qwen3-coder"]
+    assert provs["vllm"]["suggested_models"] == []
+
+
+def test_get_providers_probes_local_servers_side_by_side(tmp_path, monkeypatch):
+    """Each liveness probe can take seconds against a closed port, so they run together and
+    the page waits for the slowest one, not the sum. Every probe meets the others at a
+    barrier: probed one after another, the first waits alone and the barrier breaks."""
+    import threading
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    local = _local_provider_names()
+    barrier = threading.Barrier(len(local), timeout=5)
+
+    def meet() -> bool:
+        try:
+            barrier.wait()
+            return True
+        except threading.BrokenBarrierError:
+            return False
+
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: meet())
+    monkeypatch.setattr(SessionManager, "_local_server_alive", lambda self, name: meet())
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: [])
+    monkeypatch.setattr(SessionManager, "_local_server_models", lambda self, name: [])
+
+    provs = {p["name"]: p for p in SessionManager(data_dir=tmp_path).get_providers()}
+    assert {name: provs[name]["alive"] for name in local} == {name: True for name in local}
+
+
+def test_local_server_probes_share_one_cache(tmp_path, monkeypatch):
+    """Probed from parallel threads, every server's answer lands in the same 30 s cache — a
+    second page load inside the window probes nothing."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.providers import local_server
+    from coworker.server.manager import SessionManager
+
+    probed: list[str] = []
+    monkeypatch.setattr(local_server, "alive", lambda name, base_url, api_key=None: probed.append(name) or False)
+    mgr = SessionManager(data_dir=tmp_path)
+    servers = [n for n in _local_provider_names() if n != "ollama"]
+
+    assert mgr._local_servers_alive(servers) == {n: False for n in servers}
+    assert mgr._local_servers_alive(servers) == {n: False for n in servers}
+    assert sorted(probed) == sorted(servers)
+
+
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.

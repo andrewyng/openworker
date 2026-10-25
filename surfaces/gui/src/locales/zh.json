@@ -1337,6 +1337,7 @@
     "group_subscription": "订阅",
     "group_api_key": "API 密钥",
     "no_providers_match": "没有匹配的提供商。",
+    "loading_providers": "正在加载提供商…",
     "show_more": "再显示 {{count}} 个",
     "show_fewer": "收起",
     "search_providers": "搜索提供商…",
