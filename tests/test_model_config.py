@@ -230,7 +230,7 @@ def test_only_tool_capable_ollama_models_join_the_picker(tmp_path, monkeypatch):
     assert mgr._ollama_models() == ["ollama:qwen3-coder:30b", "ollama:old-server-model"]
 
 
-def test_a_session_can_switch_thinking_and_effort_for_itself(tmp_path):
+def test_a_session_can_switch_thinking_for_itself(tmp_path):
     from types import SimpleNamespace
 
     from coworker.server.manager import SessionManager
@@ -238,15 +238,39 @@ def test_a_session_can_switch_thinking_and_effort_for_itself(tmp_path):
     mgr = SessionManager(data_dir=tmp_path)
     engine = SimpleNamespace(model="ollama:nemotron-3.5-lightning:30b", model_settings={"max_tokens": 16000, "extra_body": {"think": True}})
     mgr._engines["s1"] = engine
-    assert mgr.session_model_settings("s1") == {"thinking": True, "reasoning_effort": None}
+    got = mgr.session_model_settings("s1")
+    assert (got["thinking"], got["reasoning_effort"]) == (None, None)  # at the model's default
+    assert got["controls"]["thinking"] == {"support": "supported", "default": True}
     out = mgr.set_session_model_settings("s1", {"thinking": False})
-    assert out["ok"] and engine.model_settings["extra_body"] == {"think": False}
+    assert out["ok"] and out["thinking"] is False
+    assert engine.model_settings["extra_body"] == {"think": False}
     assert engine.model_settings["max_tokens"] == 16000  # the rest stays
-    out = mgr.set_session_model_settings("s1", {"reasoning_effort": "high"})
-    assert out["reasoning_effort"] == "high"
-    # Back to the model's own settings.
-    mgr.set_session_model_settings("s1", {"thinking": None, "reasoning_effort": None})
-    assert engine.model_settings.get("extra_body") == {"think": True}
-    assert "reasoning_effort" not in engine.model_settings
+    # Nemotron has no effort levels: refused, nothing changes.
+    assert mgr.set_session_model_settings("s1", {"reasoning_effort": "high"})["ok"] is False
+    # Back to the model's own setting.
+    out = mgr.set_session_model_settings("s1", {"thinking": None})
+    assert out["thinking"] is None and engine.model_settings["extra_body"] == {"think": True}
     assert mgr.set_session_model_settings("nope", {"thinking": True}) == {"ok": False, "error": "session not running"}
     assert mgr.set_session_model_settings("s1", {"thinking": "yes"})["ok"] is False
+
+
+def test_a_session_can_set_reasoning_effort_within_the_model_levels(tmp_path):
+    from types import SimpleNamespace
+
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    engine = SimpleNamespace(model="anthropic:claude-fable-5-1", model_settings={})
+    mgr._engines["s1"] = engine
+    controls = mgr.session_model_settings("s1")["controls"]
+    assert controls["reasoning"] == {"support": "supported", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "high"}
+    assert controls["thinking"] == {"support": "not_supported"}
+    out = mgr.set_session_model_settings("s1", {"reasoning_effort": "low"})
+    assert out["ok"] and out["reasoning_effort"] == "low" and engine.model_settings["reasoning_effort"] == "low"
+    assert mgr.set_session_model_settings("s1", {"reasoning_effort": "none"})["ok"] is False  # no Off
+    assert mgr.set_session_model_settings("s1", {"thinking": False})["ok"] is False  # no switch
+    out = mgr.set_session_model_settings("s1", {"reasoning_effort": None})
+    assert out["reasoning_effort"] is None and "reasoning_effort" not in engine.model_settings
+    # A level saved for the model becomes its default, and Reset goes back to it.
+    model_config.set("anthropic:claude-fable-5-1", {"reasoning_effort": "max"})
+    assert mgr.model_controls("anthropic:claude-fable-5-1")["reasoning"]["default"] == "max"

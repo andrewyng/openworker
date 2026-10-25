@@ -1,12 +1,15 @@
 """MentionSessionStore: a corrupt mention_threads.json must not brick server startup.
 
-An append interrupted mid-write (crash, SIGKILL, full disk) leaves a truncated JSON
+A save interrupted mid-write (crash, SIGKILL, full disk) leaves a truncated JSON
 document, and a field added to ``MentionThread`` makes every older record fail to
-construct. Both raise straight out of ``__init__``, and the store is built eagerly by
-``SessionManager.__init__`` — so ``openworker-server`` dies on every start until the user
-finds and deletes the file by hand. Every sibling store in that constructor already treats
-a corrupt file as "start empty" (``ParkedStore``, ``ChannelBuffer``, the people
-directory); this one was the outlier.
+construct. Both used to raise straight out of ``__init__``, and the store is built
+eagerly by ``SessionManager.__init__`` — so ``openworker-server`` died on every start
+until the user found and deleted the file by hand. ``ParkedStore`` in the same
+constructor already treats a corrupt file as "start empty"; the other JSON stores
+listed in #204 still do not.
+
+#709: the guard also has to cover a file that is valid JSON but not an object, and
+the save has to be atomic so it stops producing the torn file in the first place.
 """
 
 from __future__ import annotations
@@ -47,3 +50,35 @@ def test_load_survives_a_record_with_a_missing_field(tmp_path):
     older = {k: v for k, v in _RECORD.items() if k != "channel"}
     path = _write(tmp_path, json.dumps({"threads": [older]}))
     assert MentionSessionStore(path).all() == []
+
+
+def test_load_survives_valid_json_that_is_not_an_object(tmp_path):
+    # `[]`, `null` and a bare string all parse, then fail on `.get` (#709).
+    for body in ("[]", "null", '"hello"'):
+        path = _write(tmp_path, body)
+        assert MentionSessionStore(path).all() == []
+
+
+def test_save_leaves_no_temp_file_behind(tmp_path):
+    path = tmp_path / "mention_threads.json"
+    store = MentionSessionStore(path)
+    store.set(_RECORD["thread_target"], _RECORD["session_id"], _RECORD["channel"])
+    assert json.loads(path.read_text(encoding="utf-8")) == {"threads": [_RECORD]}
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+def test_save_failure_keeps_the_previous_file_and_the_in_memory_record(tmp_path, monkeypatch):
+    path = _write(tmp_path, json.dumps({"threads": [_RECORD]}))
+    store = MentionSessionStore(path)
+
+    def refuse(self, target):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(path), "replace", refuse)
+    # The failed save must not raise into the caller (a Slack message handler)...
+    store.set("slack:C0123:1700.000200", "sid2", "slack:C0123")
+    # ...memory still has both records, the file on disk is the old complete one,
+    # and no .tmp is left beside it.
+    assert len(store.all()) == 2
+    assert json.loads(path.read_text(encoding="utf-8")) == {"threads": [_RECORD]}
+    assert not path.with_suffix(".json.tmp").exists()

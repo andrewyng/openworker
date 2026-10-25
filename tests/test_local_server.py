@@ -111,3 +111,35 @@ def test_the_server_offers_and_adopts_a_local_servers_model(tmp_path, monkeypatc
     # A server started without tool calling offers nothing to the picker.
     rows[0]["tools"] = False
     assert mgr._local_server_models("llamacpp") == []
+
+
+def test_thinking_switch_reaches_llama_cpp_and_vllm_as_template_kwargs(monkeypatch):
+    """Ollama reads `think`; llama.cpp and vLLM read the chat template's enable_thinking."""
+    from coworker.providers import openai_provider
+
+    sent = {}
+    monkeypatch.setattr(openai_provider.OpenAIProvider, "complete", lambda self, **kw: sent.update(kw) or "ok")
+    for name in ("llamacpp", "vllm"):
+        client = get_descriptor(name).build({}, None)
+        client.complete(model="m", messages=[], max_tokens=10, extra_body={"think": False})
+        assert sent["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+        assert sent["max_tokens"] == 10
+        sent.clear()
+        client.complete(model="m", messages=[])
+        assert "extra_body" not in sent
+    assert local_server.thinking_as_template_kwargs(
+        {"extra_body": {"think": True, "chat_template_kwargs": {"x": 1}}}
+    ) == {"extra_body": {"chat_template_kwargs": {"x": 1, "enable_thinking": True}}}
+
+
+def test_a_chat_template_with_enable_thinking_means_a_thinking_switch(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "some-unlisted-model.gguf", "meta": {}}]})
+        if request.url.path == "/props":
+            return httpx.Response(200, json={"chat_template": "{% if enable_thinking %}<think>{% endif %}"})
+        return httpx.Response(404)
+
+    _fake_http(monkeypatch, handler)
+    (row,) = local_server.model_facts("llamacpp", "http://localhost:8080", fresh=True)
+    assert row["thinking"] is True and row["recommendation"] is None

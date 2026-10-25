@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openworker"
-version = "0.3.3"
+version = "0.3.4"
 description = "OpenWorker — an open-source AI coworker you govern. The headless runtime and CLI."
 readme = "README.md"
 license = { text = "MIT" }
@@ -72,6 +72,7 @@ coworker = [
     "personas/builtin/*/manifest.md",
     "personas/builtin/*/skills/*/SKILL.md",
     "headless/*.yaml",
+    "providers/*.json",
 ]
 
 [tool.pytest.ini_options]

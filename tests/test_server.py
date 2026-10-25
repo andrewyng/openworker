@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+from conftest import assert_user_only
 from fastapi.testclient import TestClient
 
 from coworker.providers import (
@@ -536,7 +537,7 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
         assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
         assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
-        assert (path.stat().st_mode & 0o777) == 0o600
+        assert_user_only(path)
     finally:
         path.unlink(missing_ok=True)
         os.environ.pop("COWORKER_API_TOKEN", None)
@@ -572,6 +573,40 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
     messages = client.get("/v1/sessions/flaky/messages").json()["messages"]
     assert messages[-1]["role"] == "assistant" and messages[-1]["content"] == "recovered"
     assert sum(1 for m in messages if m["role"] == "user") == 1
+
+
+def test_ws_turn_crash_broadcasts_error_event(tmp_path):
+    """An exception escaping engine.run() (not a provider error the engine converts into an
+    error event) must surface as an error event + turn_done — not die silently as an
+    unretrieved task exception with only a bare turn_done (#367)."""
+    import asyncio
+
+    from coworker.engine import Event
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    engine = manager.get_engine("boom", workspace=tmp_path)
+    assert engine is not None
+
+    async def exploding_run(*args, **kwargs):
+        raise RuntimeError("engine blew up")
+        yield  # pragma: no cover - makes this an async generator
+
+    engine.run = exploding_run  # type: ignore[method-assign]
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/boom") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello"})
+        types, errors = [], []
+        while True:
+            event = ws.receive_json()
+            types.append(event["type"])
+            if event["type"] == "error":
+                errors.append(event["data"].get("error"))
+            if event["type"] == "turn_done":
+                break
+        assert len(errors) == 1 and "engine blew up" in errors[0]
+        assert "turn_done" in types
+        assert "assistant_message" not in types  # the crashed turn produced no reply
 
 
 # -- origin gate (local-API hardening): a browser page on a foreign origin must not be able to

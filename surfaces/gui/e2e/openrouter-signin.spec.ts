@@ -13,26 +13,33 @@ async function mockOpenRouter(page: Page) {
         {
           name: "openrouter",
           title: "OpenRouter",
+          kind: "api_key",
           needs_key: true,
-          configured: connected,
+          configured: false,
           values: {},
           suggested_models: [],
           recommended_model: null,
           fields: [
-            {
-              key: "api_key",
-              label: "API key",
-              secret: true,
-              required: true,
-              help: "",
-              placeholder: "sk-or-…",
-            },
+            { key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-or-…" },
           ],
+        },
+        {
+          name: "openrouter-account",
+          title: "OpenRouter account",
+          kind: "subscription",
+          auth: "oauth",
+          needs_key: false,
+          configured: connected,
+          signed_in: connected,
+          values: {},
+          suggested_models: [],
+          recommended_model: null,
+          fields: [],
         },
       ],
     }),
   );
-  await page.route("**/v1/providers/openrouter/**", async (route) => {
+  await page.route("**/v1/providers/openrouter-account/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").pop();
     if (action === "signin") {
       expect(route.request().postDataJSON()).toEqual({ manual: true });
@@ -51,7 +58,6 @@ async function mockOpenRouter(page: Page) {
     await route.fulfill({
       json: {
         connected,
-        active: connected,
         authorizing,
         error: null,
         attempt_id: authorizing ? "attempt-1" : null,
@@ -64,7 +70,7 @@ async function mockOpenRouter(page: Page) {
 }
 
 for (const surface of ["settings", "onboarding"] as const) {
-  test(`${surface}: OpenRouter API key precedes account login, manual login and disconnect work`, async ({
+  test(`${surface}: OpenRouter account is its own card; manual login and disconnect work`, async ({
     page,
   }) => {
     await mockOpenRouter(page);
@@ -77,14 +83,11 @@ for (const surface of ["settings", "onboarding"] as const) {
       await page.getByRole("button", { name: "Run setup again" }).click();
     }
     const prefix = surface === "settings" ? "set" : "ob";
-    await page.getByTestId(`${prefix}-provider-openrouter`).click();
-    const key = page.getByTestId(`${prefix}-field-api_key`);
+    await page.getByTestId(`${prefix}-provider-openrouter-account`).click();
     const signIn = page.getByTestId(`${prefix}-openrouter-signin`);
-    await expect(key).toBeVisible();
     await expect(signIn).toBeVisible();
-    const keyBox = await key.boundingBox();
-    const signInBox = await signIn.boundingBox();
-    expect(keyBox!.y + keyBox!.height).toBeLessThan(signInBox!.y);
+    // The account card has no key field; the key lives on the API-key card.
+    await expect(page.getByTestId(`${prefix}-field-api_key`)).toHaveCount(0);
     await page
       .getByRole("button", { name: "Use a manual code", exact: true })
       .click();
@@ -94,8 +97,7 @@ for (const surface of ["settings", "onboarding"] as const) {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(
       page.getByTestId(`${prefix}-openrouter-connected`),
-    ).toContainText("account credentials active");
-    await expect(key).toHaveValue("");
+    ).toContainText("Connected to your OpenRouter account");
     await page
       .getByRole("button", { name: "Disconnect account", exact: true })
       .click();

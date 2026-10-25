@@ -137,7 +137,27 @@ def memory_tools(
             return {"deleted": True, "id": memory_id}
         return {"deleted": False, "error": f"no memory with id {memory_id}"}
 
+    def memory_search(query: str, limit: int = 5) -> dict:
+        """Search memories by keyword or topic.
+
+        Args:
+            query (str): Words or phrase to search for.
+            limit (int): Maximum number of memories to return (default 5).
+        """
+        items = store.search(query, limit=limit, workspace=workspace)
+        return {
+            "memories": [
+                {
+                    "id": item.id,
+                    "scope": item.scope.value,
+                    "content": item.content,
+                    "summary": item.summary,
+                }
+                for item in items
+            ]
+        }
+
     return [
         ai.tool(fn, metadata=ai.ToolMetadata(**_META))
-        for fn in (remember, memory_read, memory_update, memory_forget)
+        for fn in (remember, memory_read, memory_update, memory_forget, memory_search)
     ]

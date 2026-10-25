@@ -74,6 +74,7 @@ def build_trajectory(
     totals = {"prompt": 0, "completion": 0, "cached": 0}
     cost_total = 0.0
     cost_known = False
+    cost_unknown = False
 
     for msg in messages:
         role = msg.get("role")
@@ -135,10 +136,14 @@ def build_trajectory(
                     metrics["cost_usd"] = cost
                     cost_total += cost
                     cost_known = True
+                else:
+                    cost_unknown = True
                 step["metrics"] = metrics
                 totals["prompt"] += prompt
                 totals["completion"] += completion
                 totals["cached"] += cached
+            else:
+                cost_unknown = True
             steps.append(step)
             pending = step
             continue
@@ -195,7 +200,10 @@ def build_trajectory(
         "extra": {"outcome": outcome},
     }
     if cost_known:
+        # The priced part of the run. When a call could not be priced (unknown model,
+        # or no usage block) the total is a lower bound, and `cost_complete` says so.
         final_metrics["total_cost_usd"] = round(cost_total, 6)
+        final_metrics["extra"]["cost_complete"] = not cost_unknown
 
     return {
         "schema_version": SCHEMA_VERSION,

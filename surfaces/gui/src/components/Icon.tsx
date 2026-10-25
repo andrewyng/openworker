@@ -15,6 +15,7 @@ export type IconName =
   | "folder"
   | "folderPlus"
   | "plus"
+  | "brain"
   | "clock"
   | "sliders"
   | "gear"
@@ -231,6 +232,15 @@ export function Icon({
         <svg {...s}>
           <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-.81-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h8.5" />
           <path d="M19 14v6M16 17h6" />
+        </svg>
+      );
+    case "brain":
+      // Adapted from Lucide's "brain" (ISC licence).
+      return (
+        <svg {...s}>
+          <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+          <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+          <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
         </svg>
       );
     case "plus":

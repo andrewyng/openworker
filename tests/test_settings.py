@@ -245,3 +245,46 @@ def test_ollama_adoption_never_steals_a_working_default(tmp_path, monkeypatch):
     before = manager.get_settings()["model"]
     assert manager.adopt_provider_default("ollama") is None
     assert manager.get_settings()["model"] == before
+
+
+def test_env_key_provider_reports_its_source_and_refuses_removal(tmp_path, monkeypatch):
+    """#742: a key that comes from the provider's environment variable is not ours to
+    remove. The provider row says where the key comes from, and remove_provider answers
+    truthfully instead of reporting a removal that changes nothing."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+    mgr = SessionManager(data_dir=tmp_path)
+
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["configured"] is True
+    assert row["key_source"] == "env" and row["env_key"] == "ANTHROPIC_API_KEY"
+
+    res = mgr.remove_provider("anthropic")
+    assert res["ok"] is False and res["env_key"] == "ANTHROPIC_API_KEY"
+    assert "ANTHROPIC_API_KEY" in res["error"]
+    assert {p["name"]: p for p in mgr.get_providers()}["anthropic"]["configured"] is True
+
+    # A key saved in Settings wins over the variable and can be removed; the provider
+    # then stays configured by the variable, and the answer says so.
+    mgr.set_provider("anthropic", {"api_key": "sk-ant-stored"})
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "store" and row["env_key"] == "ANTHROPIC_API_KEY"
+    res = mgr.remove_provider("anthropic")
+    assert res == {"ok": True, "provider": "anthropic", "env_key": "ANTHROPIC_API_KEY", "configured": True}
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "env" and row["configured"] is True
+
+
+def test_stored_key_provider_removes_cleanly(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mgr = SessionManager(data_dir=tmp_path)
+    assert {p["name"]: p for p in mgr.get_providers()}["anthropic"]["key_source"] is None
+    mgr.set_provider("anthropic", {"api_key": "sk-ant-stored"})
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "store" and row["env_key"] is None
+    assert mgr.remove_provider("anthropic") == {"ok": True, "provider": "anthropic"}
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["configured"] is False and row["key_source"] is None
