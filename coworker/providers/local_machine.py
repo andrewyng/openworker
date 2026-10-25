@@ -80,13 +80,7 @@ def nvidia_gpu_memory_bytes() -> Optional[int]:
     exe = shutil.which("nvidia-smi")
     if not exe:
         return None
-    try:
-        out = subprocess.run(
-            [exe, "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5, check=False,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
+    out = _run([exe, "--query-gpu=memory.total", "--format=csv,noheader,nounits"])
     best = 0
     for line in out.splitlines():
         try:
@@ -140,10 +134,32 @@ def _read(path: str) -> str:
         return ""
 
 
+# Windows: a console program started from the desktop app would flash a black window.
+_NO_WINDOW: dict[str, Any] = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
+
+
 def _run(args: list[str]) -> str:
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=5, check=False).stdout.strip()
+        return subprocess.run(
+            args, capture_output=True, text=True, timeout=5, check=False, **_NO_WINDOW
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _windows_processor() -> str:
+    """The marketing name Windows keeps in the registry ("Intel(R) Core(TM) i7-12700H");
+    platform.processor() gives "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel"."""
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        try:
+            value, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+        finally:
+            winreg.CloseKey(key)
+        return " ".join(str(value).split())
+    except Exception:
         return ""
 
 
@@ -182,6 +198,8 @@ def _static_facts() -> dict[str, Any]:
         elif re.search(r"Jetson|Tegra|Orin|Thor", product, re.IGNORECASE):
             kind = "jetson"
             graphics = product.strip() + ", shares the memory"
+    elif sys.platform == "win32":
+        processor = _windows_processor() or platform.processor() or ""
     else:
         processor = platform.processor() or ""
     if kind == "cpu":

@@ -78,6 +78,8 @@ export function PickModelDialog({
 
   const connected = providers.filter((p) => providerConnected(p, keylessOk) && kinds.has(providerKind(p)));
   const isLocal = provider ? providerKind(provider) === "local" : false;
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reload, setReload] = useState(0);
   const fixedContext = provider?.name === "llamacpp" || provider?.name === "vllm";
 
   // Step 2: the models the chosen provider offers. Also read when the dialog opens on
@@ -86,7 +88,13 @@ export function PickModelDialog({
     if (!provider || (step !== 2 && !(step === 3 && providerKind(provider) === "local" && rows === null))) return;
     setRows(null);
     if (providerKind(provider) === "local") {
-      getLocalModels(provider.name).then((r) => setRows((r.models || []).filter((m) => m.tools !== false))).catch(() => setRows([]));
+      setLoadFailed(false);
+      getLocalModels(provider.name)
+        .then((r) => setRows((r.models || []).filter((m) => m.tools !== false)))
+        .catch(() => {
+          setLoadFailed(true);
+          setRows([]);
+        });
     } else {
       setRows(provider.suggested_models.map((bare) => ({
         model: fullModelId(provider, bare), name: bare, size_bytes: null, tools: true, thinking: null, vision: null, remote: true,
@@ -94,7 +102,7 @@ export function PickModelDialog({
       })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, step]);
+  }, [provider, step, reload]);
 
   // Step 3: the settings in force for the chosen model.
   useEffect(() => {
@@ -287,6 +295,14 @@ export function PickModelDialog({
                       </button>
                     ))}
                     {rows === null && <div className="px-3 py-3 text-meta text-faint">{t("manage.loading")}</div>}
+                    {loadFailed && (
+                      <div className="px-3 py-3 text-meta text-warnInk" data-testid="pick-models-failed">
+                        {t("manage.local_models_failed")}{" "}
+                        <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={() => setReload((n) => n + 1)}>
+                          {t("manage.retry")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {typed.trim() && provider && !isLocal && (
                     <button className="mt-2 text-meta text-accent" onClick={() => { setModel(fullModelId(provider, typed.trim())); setStep(3); }} data-testid="pick-model-typed">

@@ -183,6 +183,12 @@ def _shell_download_paths(command: str) -> list[str]:
             probe = token.lower() if folded else token
             if probe in flags and i + 1 < len(argv):
                 out.append(argv[i + 1])
+            elif probe.startswith("--") and "=" in probe:
+                # Long flags accept an attached value (`--output=FILE`); token comparison
+                # alone missed those spellings, dropping the download from the record.
+                flag, _, value = probe.partition("=")
+                if flag in flags and value:
+                    out.append(value)
         if program == "curl" and "-O" in argv[1:]:
             # curl -O saves under the URL's own basename.
             for candidate in argv[1:]:

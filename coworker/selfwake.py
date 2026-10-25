@@ -231,6 +231,11 @@ class WakeStore:
             ]
 
 
+# Returned with every scheduled sleep so the model reads the contract where it
+# looks: the tool only books the wake-up; waiting happens while the turn is over.
+_END_TURN_HINT = "wake scheduled — end your turn now; the wake-up at fire_at starts a new turn"
+
+
 def selfwake_tools(store: WakeStore, session_id: str) -> list:
     """Tools an agent calls to schedule its own resumption."""
 
@@ -239,12 +244,15 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         5 minutes" is sleep_for(300)). Use for an explicit timed check, not routine
         team polling: board decisions already wake a lead that finishes its turn.
         Replaces the previous sleep. Earlier board/user activity cancels
-        it and carries your optional reminder note forward. No clock arithmetic needed."""
+        it and carries your optional reminder note forward. No clock arithmetic needed.
+        End your turn right after this call: say anything the user needs to know in the
+        same message, then stop — the wake-up starts a new turn, and working on past
+        the call defeats the wait."""
         secs = int(seconds)
         if secs <= 0:
             raise ValueError("sleep_for needs a positive number of seconds")
         w = store.add_timer(session_id, _now() + timedelta(seconds=secs), note=note)
-        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at, "next": _END_TURN_HINT}
 
     def sleep_until(when_iso: str, note: str = "") -> dict:
         """Suspend and wake this session at an ISO-8601 timestamp (timezone-aware; bare
@@ -252,12 +260,14 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         `current_time` first if you need today's date or the timezone; for a relative wait
         use sleep_for instead. Replaces the previous sleep and cancels on earlier
         board/user activity, carrying the optional reminder note into that activity.
-        This is an idle check-in deadline, not a persistent appointment."""
+        This is an idle check-in deadline, not a persistent appointment. End your turn
+        right after this call: say anything the user needs to know in the same message,
+        then stop — the wake-up starts a new turn (see sleep_for)."""
         when = datetime.fromisoformat(when_iso)
         if when.tzinfo is None:
             when = when.replace(tzinfo=timezone.utc)
         w = store.add_timer(session_id, when, note=note)
-        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at}
+        return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at, "next": _END_TURN_HINT}
 
     def wake_on(job_id: str, note: str = "") -> dict:
         """Suspend and wake this session when a backgrounded job (`job_id`) completes."""

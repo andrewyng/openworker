@@ -1,7 +1,6 @@
 {
   "openrouter": {
-    "title": "Or connect your OpenRouter account",
-    "note": "Uses your OpenRouter credits. Signing in selects account billing; testing and saving an API key selects that key instead.",
+    "title": "OpenRouter account",
     "signin": "Sign in with OpenRouter",
     "manual": "Use a manual code",
     "waiting": "Complete sign-in in your browser.",
@@ -9,8 +8,7 @@
     "cancel": "Cancel",
     "code": "Authorization code",
     "connect": "Connect",
-    "active": "Connected · account credentials active",
-    "saved": "Account saved · API key active",
+    "connected": "Connected to your OpenRouter account",
     "disconnect": "Disconnect account",
     "manage": "Manage or revoke keys on OpenRouter",
     "unreachable": "Could not complete the request. Check the connection and try again."
@@ -201,19 +199,22 @@
       "thinking": "thinking",
       "search": "Search models…",
       "pick_or_configure": "Pick or configure a model…",
-      "session_settings": "Settings for this session",
-      "this_session": "This session",
       "thinking_label": "Thinking",
-      "effort_label": "Effort",
-      "on": "On",
-      "off": "Off",
-      "models_setting": "Default",
+      "effort_label": "Reasoning effort",
       "effort_low": "Low",
       "effort_medium": "Medium",
       "effort_high": "High",
-      "session_only_note": "Other sessions keep the model's own setting.",
-      "change_defaults": "Change the model's defaults…"
+      "effort_xhigh": "Extra high",
+      "effort_max": "Max",
+      "faster": "Faster",
+      "smarter": "Smarter",
+      "default": "Default",
+      "reset_to": "Reset to {{level}}",
+      "model_defaults": "Model defaults…",
+      "thinking_on": "Thinking on",
+      "thinking_off": "Thinking off"
     },
+    "placeholder_question": "Type your answer — or pick an option above",
     "placeholder_gate": "Reply to adjust the proposal — or use the buttons above",
     "attach_this_message": "This message",
     "attach_this_session": "This session",
@@ -466,7 +467,9 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context ring on the model pill",
-    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way."
+    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way.",
+    "hide_reasoning_title": "Hide thinking while I work",
+    "hide_reasoning_desc": "Collapse the fast-scrolling reasoning trace to a quiet “Thinking…” line while a turn runs. The full reasoning still appears after the turn finishes."
   },
   "cloud": {
     "check_browser": "Check your browser…",
@@ -525,7 +528,8 @@
       "talk_anytime": "Talk to it anytime.",
       "ask_status": "Ask for a status",
       "status_prompt": "Quick status check, please — what's moving, what's blocked, and does anything need me?"
-    }
+    },
+    "thinking_hidden": "Thinking…"
   },
   "run_banner": {
     "scheduled_run": "Scheduled run",
@@ -883,6 +887,9 @@
     "send_count": "Send ({{count}})",
     "or_type_answer": "Or type your own answer…",
     "your_answer": "Your answer…",
+    "skip": "Skip",
+    "skip_question": "Skip question",
+    "skip_all": "Skip all",
     "grant": "Grant",
     "grant_no_folder": "Grant (no folder)",
     "no_folder_suggested": "No folder was suggested",
@@ -1275,6 +1282,11 @@
     "add_btn": "Add",
     "allowed_empty": "nobody yet — Allow a recent sender →",
     "allowed_to_message": "Allowed to message",
+    "approval_owners": "Allowed to approve",
+    "approval_owners_empty": "Nobody chosen. In a private chat, the person the Inbox is mirrored to may approve. In a group, choose owners here first.",
+    "approval_owners_help": "Who may approve commands, folder access and plans from this bot. Everyone else allowed to message can still chat and answer questions.",
+    "approval_owners_pick": "Choose an allowed user…",
+    "owners_update_failed": "could not update approval owners",
     "cancel": "cancel",
     "check_browser": "Check your browser…",
     "coming_soon": "Coming soon",
@@ -1286,8 +1298,11 @@
     "could_not_connect": "could not connect",
     "could_not_start_connect": "could not start the connect",
     "could_not_start_managed": "could not start the connect",
+    "env_key_fallback_help": "A key is also set by {{var}} in the server's environment. Removing the key saved here falls back to it.",
+    "env_key_help": "This key is set by {{var}} in the server's environment, so it can't be removed here. Add a different key above to override it for this computer, or unset the variable and restart the server.",
     "id_title": "ID: {{id}}",
     "included_models": "Included models",
+    "included_models_help_signin": "Curated, agent-capable models this provider serves — sign in above to enable them.",
     "included_models_help": "Curated, agent-capable models this provider serves — add your key above to enable them.",
     "listening_empty": "None yet — open a session's Sources ▸ Channels to subscribe it to a channel.",
     "listening_title": "Sessions listening to {{title}} channels · {{n}}",
@@ -1315,7 +1330,6 @@
     "models": "Models",
     "models_help": "Ticked models show in the composer's picker; the black badge marks the default for new sessions.",
     "one_click_coming": "One-click sign-in is coming soon — connect manually below for now:",
-    "openai_env_help": "A key is set via OPENAI_API_KEY in this server's environment. Add a different key here to override it for this computer.",
     "optional": "(optional)",
     "or_connect_manually": "or connect manually:",
     "parked_allow_deliver": "Allow & deliver",
@@ -1379,7 +1393,12 @@
     "local_server_not_answering": "Nothing answers at this address.",
     "vllm_tools_off": "This server cannot use tools yet, so coworkers cannot work with it. Start vLLM with tool calling turned on, then check again.",
     "configure_model": "Settings for this model",
-    "remove_from_picker_btn": "Remove from the picker"
+    "remove_from_picker_btn": "Remove from the picker",
+    "local_models_loading": "Asking the server which models it has…",
+    "local_models_failed": "Couldn't reach the server to list its models.",
+    "local_models_failed_ollama": "Couldn't reach Ollama to list its models.",
+    "settings_failed": "Couldn't reach the server to load settings — make sure OpenWorker is running.",
+    "retry": "Retry"
   },
   "models": {
     "add_btn": "Add",
@@ -1601,7 +1620,11 @@
     "test_save_btn": "Test & save",
     "connected_count": "✓ Connected · {{count}} models",
     "running_count": "✓ Running · {{count}} models",
-    "not_connected": "Not connected"
+    "not_connected": "Not connected",
+    "llamacpp_desc": "No API key needed unless your llama-server was started with one.",
+    "install_llamacpp": "Install llama.cpp",
+    "vllm_desc": "vLLM runs on Linux with an NVIDIA GPU. A key is needed only if the server was started with one.",
+    "install_vllm": "Install vLLM"
   },
   "workspace_trust": {
     "title": "Trust this workspace’s commands?",

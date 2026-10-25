@@ -120,6 +120,7 @@ import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { shouldStartWindowDrag } from "./windowDrag";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -248,6 +249,9 @@ export function App() {
   // Settings: show the composer's context-window fill bar. OFF by default (owner ask),
   // so an older backend without the field also shows the session total.
   const [contextBar, setContextBar] = useState(false);
+  // #611: when on, the live reasoning stream is collapsed to a quiet indicator while a
+  // turn runs; the finalized reasoning still appears after. Loaded from Settings.
+  const [hideReasoningRunning, setHideReasoningRunning] = useState(false);
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
@@ -802,6 +806,7 @@ export function App() {
         setModelConfig(s.model_config || {});
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
+        setHideReasoningRunning(s.hide_reasoning_running === true);
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
@@ -1416,6 +1421,14 @@ export function App() {
       respondItemsReq(false, text);
       return;
     }
+    // The same for an open ask_user question: what the user types in the composer is
+    // the answer. Before this, Enter did nothing while a question was up, and a
+    // question sent with allow_text false left no other place to type (owner-hit
+    // 2026-10-06).
+    if (!unattended && pendingQuestion?.kind === "question" && !attachments?.length && !skill) {
+      answerQuestion(text);
+      return;
+    }
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
     // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
     const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
@@ -1933,7 +1946,7 @@ export function App() {
     overlay && (macosMajor() >= 26 || new URLSearchParams(window.location.search).get("overlay") === "26");
   const overlayClass = overlay ? " tauri-overlay" + (lightsHigh ? " macos-26" : "") : "";
   const beginWindowDrag = (event: PointerEvent) => {
-    if (!desktop || event.button !== 0) return;
+    if (!desktop || !shouldStartWindowDrag(event)) return;
     startWindowDrag();
   };
 
@@ -2368,10 +2381,19 @@ export function App() {
                   {/* Live thinking (reasoning models): a quiet collapsed block that streams the
                       trace for anyone who expands it; folds into the answer's disclosure when
                       the message finalizes. */}
-                  {running && reasoningStream && !streaming && (
-                    <div className="transcript">
-                      <ThinkingBlock text={reasoningStream} live />
-                    </div>
+                  {running &&
+                    reasoningStream &&
+                    !streaming &&
+                    !hideReasoningRunning && (
+                      <div className="transcript">
+                        <ThinkingBlock text={reasoningStream} live />
+                      </div>
+                    )}
+                  {/* #611: "Hide thinking while running" collapses the fast-scrolling live trace
+                      to a quiet one-line indicator — the finalized reasoning still appears in the
+                      assistant item after the turn, so no signal is lost. */}
+                  {running && reasoningStream && !streaming && hideReasoningRunning && (
+                    <WaitingForAgent label={t("app.thinking_hidden")} />
                   )}
                   {/* OPE-206: the sandbox for this session is being built (a container, its
                       runner, its mounts). Not a turn, so `running` is false; the row says so. */}
@@ -2501,7 +2523,8 @@ export function App() {
                 openSettings("models");
               }}
               running={running}
-              gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq)}
+              gateOpen={!unattended && (!!pendingTeam || !!pendingItemsReq || !!pendingQuestion)}
+              gateKind={!unattended && pendingQuestion && !pendingTeam && !pendingItemsReq ? "question" : "proposal"}
               // An offline machine's cached transcript is read-only: the send
               // path is dead by construction, so say so explicitly rather than
               // letting a hopeful socket state enable the button.

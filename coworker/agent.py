@@ -259,6 +259,11 @@ def build_engine(
     memory_saving_enabled: Optional[Any] = None,
     messages: Optional[list[dict[str, Any]]] = None,
     extra_tools: Optional[list[Any]] = None,
+    # False withholds web_search and web_fetch from the registry altogether. For sealed
+    # evaluation runs and air-gapped work, where "the tool was never offered" is the
+    # property that matters: a network block only stops the call, the model still sees
+    # the tool and may spend turns on it. Default True keeps every existing caller as is.
+    web_tools: bool = True,
     secrets: Optional[SecretStore] = None,
     task_store: Optional[Any] = None,
     wake_store: Optional[Any] = None,
@@ -433,9 +438,11 @@ def build_engine(
                 roots=root_list or None,
             )
         )
-    # Web search + fetch: research tools for every agent (keyless DuckDuckGo default).
-    registry.register(make_web_search_tool(secrets))
-    registry.register(make_web_fetch_tool())
+    # Web search + fetch: research tools for every agent (keyless DuckDuckGo default),
+    # unless the caller withheld them (`openworker run --no-web-tools`).
+    if web_tools:
+        registry.register(make_web_search_tool(secrets))
+        registry.register(make_web_fetch_tool())
     # ask_user: the universal human-in-the-loop Q&A primitive (every agent; engine-intercepted).
     if question_asker is not None:
         registry.register(ask_user_tool())

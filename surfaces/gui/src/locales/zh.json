@@ -1,7 +1,6 @@
 {
   "openrouter": {
-    "title": "或连接您的 OpenRouter 账户",
-    "note": "使用您的 OpenRouter 额度。登录后使用账户凭据；测试并保存 API 密钥后改用该密钥。",
+    "title": "OpenRouter 账户",
     "signin": "使用 OpenRouter 登录",
     "manual": "手动输入授权码",
     "waiting": "请在浏览器中完成登录。",
@@ -9,8 +8,7 @@
     "cancel": "取消",
     "code": "授权码",
     "connect": "连接",
-    "active": "已连接 · 正在使用账户凭据",
-    "saved": "账户已保存 · 正在使用 API 密钥",
+    "connected": "已连接到你的 OpenRouter 账户",
     "disconnect": "断开账户连接",
     "manage": "在 OpenRouter 管理或撤销密钥",
     "unreachable": "无法完成请求。请检查连接后重试。"
@@ -199,19 +197,22 @@
       "thinking": "思考",
       "search": "搜索模型…",
       "pick_or_configure": "选择或配置模型…",
-      "session_settings": "此会话的设置",
-      "this_session": "此会话",
       "thinking_label": "思考",
       "effort_label": "推理强度",
-      "on": "开",
-      "off": "关",
-      "models_setting": "默认",
       "effort_low": "低",
       "effort_medium": "中",
       "effort_high": "高",
-      "session_only_note": "其他会话保持模型自身的设置。",
-      "change_defaults": "更改模型的默认设置…"
+      "effort_xhigh": "超高",
+      "effort_max": "最高",
+      "faster": "更快",
+      "smarter": "更聪明",
+      "default": "默认",
+      "reset_to": "恢复为{{level}}",
+      "model_defaults": "模型默认设置…",
+      "thinking_on": "思考：开",
+      "thinking_off": "思考：关"
     },
+    "placeholder_question": "输入你的回答 —— 或选择上方的选项",
     "placeholder_gate": "回复以调整提案 —— 或使用上方按钮",
     "attach_this_message": "本条消息",
     "attach_this_session": "本次会话",
@@ -458,7 +459,9 @@
     "personas_desc": "同事是专精于特定角色或任务的 agent，自带胜任该角色所需的工具与技能。启用同事后，即可在开始会话时选择它。",
     "composer_section": "输入框",
     "context_bar_title": "在模型标签上显示上下文占用环",
-    "context_bar_desc": "一个小圆环，显示模型上下文窗口的占用程度。无论开关，标签的悬停提示都会给出具体数字。"
+    "context_bar_desc": "一个小圆环，显示模型上下文窗口的占用程度。无论开关，标签的悬停提示都会给出具体数字。",
+    "hide_reasoning_title": "工作时隐藏思考过程",
+    "hide_reasoning_desc": "任务运行期间，将快速滚动的思考文本折叠成一行安静的“思考中…”提示。完整思考内容仍会在任务结束后显示。"
   },
   "cloud": {
     "check_browser": "请查看你的浏览器…",
@@ -517,7 +520,8 @@
       "talk_anytime": "随时可以和它对话。",
       "ask_status": "询问状态",
       "status_prompt": "请快速汇报一下状态 —— 哪些在推进、哪些被卡住、有没有需要我处理的？"
-    }
+    },
+    "thinking_hidden": "思考中…"
   },
   "run_banner": {
     "scheduled_run": "定时任务",
@@ -871,6 +875,9 @@
     "send_count": "发送 ({{count}})",
     "or_type_answer": "或输入你自己的回答…",
     "your_answer": "你的回答…",
+    "skip": "跳过",
+    "skip_question": "跳过此问题",
+    "skip_all": "全部跳过",
     "grant": "授权",
     "grant_no_folder": "授权（无文件夹）",
     "no_folder_suggested": "未建议文件夹",
@@ -1258,6 +1265,11 @@
     "add_btn": "添加",
     "allowed_empty": "暂无 —— 允许一位近期发送者 →",
     "allowed_to_message": "允许发送消息",
+    "approval_owners": "允许批准",
+    "approval_owners_empty": "尚未选择。私聊中，收件箱镜像到的那个人可以批准。群组请先在此选择负责人。",
+    "approval_owners_help": "谁可以通过此机器人批准命令、文件夹访问和计划。其他允许发送消息的人仍可聊天和回答问题。",
+    "approval_owners_pick": "选择一位已允许的用户…",
+    "owners_update_failed": "无法更新批准负责人",
     "cancel": "取消",
     "check_browser": "请查看你的浏览器…",
     "coming_soon": "即将推出",
@@ -1269,8 +1281,11 @@
     "could_not_connect": "无法连接",
     "could_not_start_connect": "无法启动连接",
     "could_not_start_managed": "无法启动连接",
+    "env_key_fallback_help": "服务器环境中的 {{var}} 也设置了密钥。移除此处保存的密钥后将回退到该环境变量。",
+    "env_key_help": "此密钥由服务器环境中的 {{var}} 设置，无法在此移除。在上方添加其他密钥可覆盖本机设置，或取消该环境变量并重启服务器。",
     "id_title": "ID：{{id}}",
     "included_models": "内置模型",
+    "included_models_help_signin": "此提供方精选的 agent 模型 —— 在上方登录即可启用。",
     "included_models_help": "此提供方精选的 agent 模型 —— 在上方添加密钥即可启用。",
     "listening_empty": "暂无 —— 打开会话的「来源 ▸ 频道」即可订阅频道。",
     "listening_title": "正在监听 {{title}} 频道的会话 · {{n}}",
@@ -1298,7 +1313,6 @@
     "models": "模型",
     "models_help": "已勾选的模型会显示在输入框的选择器中；黑色徽标表示新会话的默认模型。",
     "one_click_coming": "一键登录即将推出 —— 目前请在下方手动连接：",
-    "openai_env_help": "此服务器的环境中已通过 OPENAI_API_KEY 设置密钥。在此添加其他密钥可覆盖本机设置。",
     "optional": "（可选）",
     "or_connect_manually": "或手动连接：",
     "parked_allow_deliver": "允许并送达",
@@ -1362,7 +1376,12 @@
     "local_server_not_answering": "该地址没有响应。",
     "vllm_tools_off": "此服务器尚不能使用工具，因此同事无法使用它。请开启工具调用后重新启动 vLLM，然后再检查。",
     "configure_model": "此模型的设置",
-    "remove_from_picker_btn": "从选择器中移除"
+    "remove_from_picker_btn": "从选择器中移除",
+    "local_models_loading": "正在向服务器查询可用模型…",
+    "local_models_failed": "无法连接服务器以列出模型。",
+    "local_models_failed_ollama": "无法连接 Ollama 以列出模型。",
+    "settings_failed": "无法连接服务器以加载设置，请确认 OpenWorker 正在运行。",
+    "retry": "重试"
   },
   "models": {
     "add_btn": "添加",
@@ -1581,7 +1600,11 @@
     "test_save_btn": "测试并保存",
     "connected_count": "✓ 已连接 · {{count}} 个模型",
     "running_count": "✓ 运行中 · {{count}} 个模型",
-    "not_connected": "未连接"
+    "not_connected": "未连接",
+    "llamacpp_desc": "无需 API 密钥，除非你的 llama-server 启动时设置了密钥。",
+    "install_llamacpp": "安装 llama.cpp",
+    "vllm_desc": "vLLM 运行在带 NVIDIA GPU 的 Linux 上。仅当服务器启动时设置了密钥才需要填写。",
+    "install_vllm": "安装 vLLM"
   },
   "workspace_trust": {
     "title": "信任此工作区的命令？",
