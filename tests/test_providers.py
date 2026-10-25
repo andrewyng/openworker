@@ -498,6 +498,7 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "cheaperinference:glm-5.2",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -561,7 +562,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in ("together", "fireworks", "openrouter", "cheaperinference"):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -569,6 +570,24 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
         # full ids in the matrix must round-trip: prefix + bare == matrix key
         base = next(f for f in d.fields if f.key == "base_url")
         assert base.default.startswith("https://")
+
+
+def test_cheaperinference_builder_uses_its_own_key_and_endpoint(monkeypatch):
+    """Cheaper Inference resolves CHEAPER_INFERENCE_API_KEY (never the OpenAI key) and
+    defaults to its own endpoint."""
+    import pytest
+
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("CHEAPER_INFERENCE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="Cheaper Inference"):
+        build_provider_client("cheaperinference", {}, None)
+
+    monkeypatch.setenv("CHEAPER_INFERENCE_API_KEY", "ci-key")
+    p = build_provider_client("cheaperinference", {}, None)
+    assert isinstance(p, OpenAIProvider)
+    assert (p._api_key, p._base_url) == ("ci-key", "https://api.cheaperinference.com/v1")
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():

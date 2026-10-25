@@ -729,6 +729,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "paste. The key OpenRouter issues stays on this machine.",
         auth="oauth",
     ),
+    _compat(
+        "cheaperinference",
+        "Cheaper Inference",
+        base_url="https://api.cheaperinference.com/v1",
+        recommended_model="glm-5.2",
+        env_key="CHEAPER_INFERENCE_API_KEY",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama",

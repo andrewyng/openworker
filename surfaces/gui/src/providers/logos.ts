@@ -71,6 +71,7 @@ export const PROVIDER_ORDER = [
   "vertex",
   "openrouter",
   "openrouter-account",
+  "cheaperinference",
   "fireworks",
   "together",
   "zai",

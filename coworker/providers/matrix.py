@@ -321,6 +321,11 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
     ),
+    # Cheaper Inference ids are bare (api.cheaperinference.com/v1/models, read
+    # 2026-10-13: 1,048,576 context_length; parallel tool calls checked).
+    "cheaperinference:glm-5.2": ModelEntry(
+        "GLM-5.2 · via Cheaper Inference", _AGENTIC, 1_048_576
+    ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
