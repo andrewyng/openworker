@@ -29,19 +29,10 @@ afterEach(() => {
 });
 
 describe("Composer / message queue (#608)", () => {
-  it("removes a persisted draft after queueing it", () => {
-    saveDraft("s1", { text: "queued draft", attachments: [], skill: null });
+  it("while running, submit holds the follow-up via onQueue and clears the draft (no onSend)", () => {
+    saveDraft("s1", { text: "follow up after the task", attachments: [], skill: null });
     const p = props({ resetKey: "s1", running: true, gateOpen: false, onQueue: vi.fn() });
     render(<Composer {...p} />);
-    fireEvent.click(screen.getByRole("button", { name: /queue/i }));
-    expect(p.onQueue).toHaveBeenCalledWith("queued draft", [], undefined);
-    expect(loadDraft("s1")).toBeUndefined();
-  });
-
-  it("while running, submit holds the follow-up via onQueue and clears the draft (no onSend)", () => {
-    const p = props({ running: true, gateOpen: false, onQueue: vi.fn() });
-    render(<Composer {...p} />);
-    fireEvent.change(box(), { target: { value: "follow up after the task" } });
     const queueBtn = screen.getByRole("button", { name: /queue/i });
     expect(queueBtn).toBeTruthy();
     fireEvent.click(queueBtn);
@@ -49,6 +40,7 @@ describe("Composer / message queue (#608)", () => {
     expect(p.onQueue).toHaveBeenCalledWith("follow up after the task", [], undefined);
     expect(p.onSend).not.toHaveBeenCalled();
     expect((box() as HTMLTextAreaElement).value).toBe("");
+    expect(loadDraft("s1")).toBeUndefined();
   });
 
   it("without an onQueue handler, the running state renders Stop-only (old behavior)", () => {
