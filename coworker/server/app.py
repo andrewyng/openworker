@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 import secrets
@@ -23,6 +24,8 @@ from typing import Any, Optional
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("coworker.server.app")
 
 # Origins allowed to talk to the local sidecar. It binds to 127.0.0.1, but a page in the
 # user's own browser can still reach loopback — so without an origin gate, any website they
@@ -160,6 +163,7 @@ from ..attachments import (
     MAX_TEXT_CHARS,
     build_user_content,
 )
+from ..attachment_workspace import materialize_pdf_attachments
 from ..engine import ApprovalOutcome
 from ..events import EventType
 from ..connectors import connector_list
@@ -578,14 +582,21 @@ def create_app(manager: SessionManager) -> FastAPI:
                         "error": "gallery requires cloud sign-in (or the cloud is unreachable)",
                     }
                 markdown = manifest.get("manifest_markdown", "")
-                digest = "sha256:" + hashlib.sha256(markdown.encode()).hexdigest()
+                digest = (
+                    "sha256:" + hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+                )
                 if (
                     manifest.get("manifest_hash")
                     and manifest["manifest_hash"] != digest
                 ):
                     return {"ok": False, "error": "manifest hash mismatch"}
                 with tempfile.TemporaryDirectory() as td:
-                    (Path(td) / f"{slug}.md").write_text(markdown)
+                    # UTF-8 explicitly: the hash above and `load_manifest_file` both
+                    # treat this markdown as UTF-8, so the file between them must match.
+                    # Defaulting to the locale encoding breaks on Windows (cp1252),
+                    # where CJK/emoji fail to encode and an em-dash writes as a byte the
+                    # UTF-8 read then rejects.
+                    (Path(td) / f"{slug}.md").write_text(markdown, encoding="utf-8")
                     summaries = reg.install_from_dir(td)
                 cloud.gallery_install_event(manager.secrets, load_config(), slug)
             else:
@@ -2487,6 +2498,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Composer: show the context-window fill bar, or just the popover (owner ask).
         return manager.set_context_bar((body or {}).get("context_bar", True))
 
+    @app.post("/v1/settings/hide-reasoning")
+    def settings_set_hide_reasoning(body: dict) -> dict[str, Any]:
+        # #611: collapse the live reasoning stream to a quiet indicator while a turn runs.
+        return manager.set_hide_reasoning_running((body or {}).get("hide_reasoning_running", False))
+
     @app.post("/v1/settings/auto-approve")
     def settings_set_auto_approve(body: dict) -> dict[str, Any]:
         # Auto-Approve feature flag (spec §1.5): when on, Mode.AUTO_APPROVE gets an LLM
@@ -3095,6 +3111,25 @@ def create_app(manager: SessionManager) -> FastAPI:
             # The receive loop atomically claims this session before scheduling the task.
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
+                if not retry and isinstance(content, list) and any(
+                    isinstance(part, dict) and part.get("type") == "file"
+                    for part in content
+                ):
+                    try:
+                        content = await asyncio.to_thread(
+                            materialize_pdf_attachments,
+                            content,
+                            manager._provision_scratch(session_id),
+                        )
+                    except (OSError, ValueError) as exc:
+                        await manager.broadcast_session(
+                            session_id,
+                            {
+                                "type": "input_rejected",
+                                "data": {"error": f"Could not save PDF attachment: {exc}"},
+                            },
+                        )
+                        return
                 events = (
                     engine.retry()
                     if retry
@@ -3114,6 +3149,14 @@ def create_app(manager: SessionManager) -> FastAPI:
                         # Title on the user's words the moment they land — never behind
                         # a long agentic turn (owner catch 2026-08-24).
                         manager._maybe_autotitle(session_id)
+            except Exception as exc:
+                # An unexpected raise out of the turn must not vanish: the task would otherwise
+                # die silently ("Task exception was never retrieved") and the GUI would only see
+                # turn_done. Surface it as an error event like the background-turn path does.
+                logger.warning("ws turn crashed for %s: %s", session_id, exc)
+                await manager.broadcast_session(
+                    session_id, {"type": "error", "data": {"error": str(exc)}}
+                )
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)

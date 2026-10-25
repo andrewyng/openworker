@@ -28,12 +28,26 @@ ACCEPT = [
     "git remote -v",
     "jq '.results | length' /tmp/report.json",
     "find . -name '*.py'",
+    "find . -newer build.log",
     "LC_ALL=C grep -c uses .github/workflows/ci.yml",
     "command -v semgrep",
     "wc -l file.txt | sort",
     "printf 'a: '",
     "awk '{print $1}' data.txt",
+    "awk -F'|' '{print $1}' data.txt",
     "head -20 x | tail -5 | uniq -c",
+    # -- the write/exec flags stay denied without taking the plain reads away ---------
+    "sort data.txt",
+    "xxd dump.bin",
+    "xxd -p dump.bin",
+    "file magic",
+    "date -u +%Y",
+    "du -sh .",
+    "sed --expression='s/a/b/' data.txt",
+    "sed -ne 's/a/b/' data.txt",
+    "sed 's/wide/X/' wide.txt",
+    "git grep -c needle",
+    "git grep --cached needle",
 ]
 
 REJECT = [
@@ -69,6 +83,9 @@ REJECT = [
     "git config user.name evil",              # writes
     "git -c core.pager='touch x' log",        # exec hook via -c
     "git log --output=/tmp/f",                # write via flag
+    "git grep -O./pwn.sh needle",             # exec via pager
+    "git grep --open-files-in-pager=sh needle",
+    "git grep --open-files-in-pager needle",  # pager defaults to less, still exec-shaped
     "/tmp/evil/cat file",                     # path-invoked binary
     "env FOO=1 rm x",
     "tee /tmp/x",
@@ -76,6 +93,34 @@ REJECT = [
     "ls | tee /tmp/x",                        # every pipeline stage must classify
     "ls |",                                   # dangling pipe
     "sudo cat /etc/shadow",
+    # -- flags that turn a listed reader into a writer or an executor ---------------
+    "sort -o /tmp/f data.txt",                # writes the sorted output
+    "sort -o/tmp/f data.txt",                 # attached value
+    "sort --output=/tmp/f data.txt",
+    "sort --output /tmp/f data.txt",
+    "sort -ro /tmp/f data.txt",               # cluster
+    "sort --compress-program=./p data.txt",   # executes the compressor
+    "xxd -r dump.hex out.bin",                # reverse mode writes the outfile
+    "xxd payload.txt direct.bin",             # the outfile needs no flag at all
+    "rg --pre ./pwn.sh pattern file.txt",     # executes the preprocessor
+    "rg --pre=./pwn.sh pattern file.txt",
+    "rg --hostname-bin=./pwn.sh pattern file.txt",
+    "rg --pager ./pwn.sh pattern file.txt",
+    "file -C -m magic",                       # compiles magic.mgc
+    "file --compile -m magic",
+    "date -s 2020-01-01",                     # sets the system clock
+    "date --set=2020-01-01",
+    "du --files0-from=/etc/list",             # reads filenames the scoper cannot see
+    "sed -e'w /tmp/f' data.txt",              # attached -e script carries the write
+    "sed --expression='w /tmp/f' data.txt",
+    "sed -n '1wout.txt' data.txt",            # attached filename after an address
+    "sed 's/a/b/w out.txt' data.txt",         # substitution flag
+    "sed 's/a/b/wout.txt' data.txt",
+    "sed '1w w1.txt' data.txt",
+    "awk 'BEGIN{print \"x\" | \"sh\"}'",      # pipe to a command executes
+    "awk 'BEGIN{\"id\" | getline x}'",
+    "awk -f prog.awk data.txt",               # program file can carry system()/pipes
+    "awk --file=prog.awk data.txt",
 ]
 
 

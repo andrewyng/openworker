@@ -130,6 +130,7 @@ terminal and installed by rule otherwise.
 | `--isolated` | read nothing from this computer; see below |
 | `--reasoning-effort` | `low` … `max`, sent to the provider; unset = provider default, recorded |
 | `--max-output-tokens`, `--max-iterations`, `--timeout-seconds` | ceilings; `--timeout-seconds 0` when an outer runner enforces its own |
+| `--no-web-tools` | never offer `web_search` / `web_fetch`; for sealed evaluation runs and air-gapped work (a firewall only refuses the call, this removes the tool, and `summary.json` records `web_tools: false`) |
 | `--tool-result-max-bytes` | bound each tool result (default 10,000; 0 = off); full text spilled under `out/tool-output/` |
 | `--provider-order` | OpenRouter only: pin the upstream host, no fallback |
 | `--trajectory-atif PATH` | also write the trajectory here |

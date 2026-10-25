@@ -30,7 +30,7 @@ from ..connections import (
     SessionConnectionStore,
     effective as effective_connections,
 )
-from ..inbox import VIS_INBOX, InboxStore, args_preview
+from ..inbox import KIND_APPROVAL, VIS_INBOX, InboxStore, args_preview
 from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
@@ -190,6 +190,17 @@ def _grant_offered(outcome, request) -> bool:
             return False
         return name != "save_skill"
     return True
+
+
+def _reply_hint(item, buttons) -> str:
+    """How to answer this item in a chat that can't draw buttons. Naming the words the
+    reply parser accepts is the difference between a prompt and a dead end."""
+    if not buttons:
+        return "(Open the app to respond.)"
+    if getattr(item, "kind", "") == KIND_APPROVAL:
+        return "Reply `approve` or `deny`, keeping the tag below."
+    labels = ", ".join(b.label for b in buttons)
+    return f"Reply with one of: {labels} — keeping the tag below."
 
 
 def _approval_body(request) -> str:
@@ -4806,6 +4817,9 @@ class SessionManager:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self.sessions_peek(),
             "context_bar": self.context_bar(),
+            # #611: collapse/hide the live thinking stream while a turn runs (OFF by default so
+            # existing users keep seeing it; the finalized reasoning still shows after the turn).
+            "hide_reasoning_running": self.hide_reasoning_running(),
             # Auto-Approve feature flag + its shadow-eval sibling (spec §1.5). Drive the
             # Settings toggles and gate the composer's Auto-Approve mode entry.
             "auto_approve": self.auto_approve(),
@@ -4882,6 +4896,19 @@ class SessionManager:
         self._prefs["context_bar"] = bool(shown)
         self._save_prefs()
         return {"ok": True, "context_bar": self.context_bar()}
+
+    # -- Hide live reasoning while running (#611) ---------------------------------------
+    # The GUI streams the model's reasoning live during a turn; at full write speed it's a
+    # wall of fast-moving text. This pref collapses that live stream to a quiet one-line
+    # indicator (the finalized reasoning still appears after the turn). OFF by default.
+
+    def hide_reasoning_running(self) -> bool:
+        return bool(self._prefs.get("hide_reasoning_running", False))
+
+    def set_hide_reasoning_running(self, hidden: Any) -> dict[str, Any]:
+        self._prefs["hide_reasoning_running"] = bool(hidden)
+        self._save_prefs()
+        return {"ok": True, "hide_reasoning_running": self.hide_reasoning_running()}
 
     # -- Auto-Approve (spec §1.5, Part 6 step 3) --------------------------------
     # The feature flag and its shadow-eval sibling live in prefs (GUI-writable), falling
@@ -6172,21 +6199,34 @@ class SessionManager:
     ) -> bool:
         """Persist a standing rule a human minted via "Allow every time" on a run's
         approval card (§25's retrofit path). Server-side validation, not trust in the
-        card: the session must be an automation run and the call must be rule-eligible
-        (external risk, declared target argument, non-empty target). Also applies the
-        rule to the live engine so the run's next call auto-allows."""
-        from ..permissions import standing_rule_candidate
+        card: the session must be an automation run, and the call either names a target
+        (external risk, declared target argument) or is a tool eligible for a
+        target-less grant (egress — see standing_tool_candidate). Also applies the rule
+        to the live engine so the run's next call auto-allows."""
+        from ..permissions import standing_rule_candidate, standing_tool_candidate
 
         task = self.task_store.task_for_run_session(session_id)
         if task is None:
             return False
         target = standing_rule_candidate(tool_name, arguments or {}, metadata)
-        if not target or not task.add_rule(tool_name, target):
+        if target:
+            minted = task.add_rule(tool_name, target)
+        elif standing_tool_candidate(tool_name, metadata):
+            # No target to bind (web_search takes a query, not a destination). Grant the
+            # tool for this task instead of downgrading to a one-off — otherwise the
+            # routine asks the same question on every run and "Always" means nothing.
+            target, minted = None, task.add_tool_rule(tool_name)
+        else:
+            return False
+        if not minted:
             return False
         self.task_store.save(task)
         engine = self._engines.get(session_id)
         if engine is not None:
-            engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
+            if target is None:
+                engine.permissions.allow_tool_for_session(tool_name)
+            else:
+                engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
         try:
             self.audit_store.append(
                 {
@@ -6195,7 +6235,11 @@ class SessionManager:
                     "arguments": arguments or {},
                     "stage": "standing_rule_minted",
                     "status": "granted",
-                    "reason": f"allow every time: {tool_name} → {target} (task {task.id})",
+                    "reason": (
+                        f"allow every time: {tool_name} → {target} (task {task.id})"
+                        if target
+                        else f"allow every time: {tool_name}, any arguments (task {task.id})"
+                    ),
                 }
             )
         except Exception:
@@ -6479,6 +6523,8 @@ class SessionManager:
         engine.permissions.task_rules = task.standing_rules()
         for tool in task.name_allowed_tools():
             engine.permissions.allow_tool_for_session(tool)
+        for cmd in task.always_allowed_commands:
+            engine.permissions.allow_command_for_session(cmd)
 
     def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
         ag = get_agent(task.agent)
@@ -6523,8 +6569,12 @@ class SessionManager:
     # -- mirroring inbox items to a bound channel -------------------------------
     async def mirror_inbox_item(self, item) -> None:
         """Mirror an Inbox item to its bound channel. Discrete choices (approve/deny, ask_user
-        options) render as BUTTONS — the item id rides in each, so a click resolves it
-        unambiguously. Free-text answers aren't offered over messaging (open the app).
+        options) render as BUTTONS where the platform has them — the item id rides in each, so a
+        click resolves it unambiguously. Where it doesn't (any adapter that hasn't implemented
+        `send_interactive`, Telegram included), the same choice goes out as text carrying the
+        `[ow:id]` tag and a line saying how to answer, because `_resolve_inbox_reply` needs that
+        tag to correlate a reply. Without it the reader is shown a question they cannot answer
+        from the surface it arrived on, and an agent suspended on that prompt waits forever.
         """
         from ..interactions import buttons_for
 
@@ -6541,12 +6591,12 @@ class SessionManager:
         body = "\n".join(p for p in (item.title, item.body) if p).strip()
         buttons = buttons_for(item)
         try:
-            if buttons:
+            if buttons and self.gateway.supports_interactive(target):
                 await self.gateway.deliver_interactive(target, body, buttons)
             else:
                 await self.gateway.deliver(
                     target,
-                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
+                    f"{body}\n{_reply_hint(item, buttons)}\n[ow:{item.id}]".strip(),
                 )
         except Exception:
             pass
@@ -6620,6 +6670,13 @@ class SessionManager:
         def _resolve(item_id: str, resolution: str) -> bool:
             item = self.inbox.get(item_id)
             if item is None:
+                return False
+            # Plan and directory items need a structured JSON payload (approved/granted,
+            # mode/path/writable) that a bare chat reply cannot provide. The mirrored
+            # message already says "(Open the app to respond.)" and buttons_for returns
+            # [] for these kinds — honour that by leaving them pending instead of
+            # consuming them into a silent refusal.
+            if item.kind in {"plan", "directory"}:
                 return False
             if item.kind in self._PROTECTED_ITEM_KINDS:
                 if not self._actor_owns_protected_item(
@@ -7319,58 +7376,69 @@ class SessionManager:
             task_id=task.id, trigger=trigger
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
-        # UX-026: tell every open app window a SCHEDULED run just started (the 5s
-        # top-right toast). Manual runs never come through here — the user is
-        # already watching those live.
-        await self.broadcast_event(
-            {
-                "type": "automation_run_started",
-                "data": {
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "session_id": run.session_id,
-                    "workspace": task.workspace,
-                    "agent": task.agent,
-                    "trigger": trigger,
-                },
-            }
-        )
-        # Each run is a real, persisted conversation thread: it runs the instructions under its
-        # own session id, then saves the transcript. The user can reopen that session and ask a
-        # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
-        # Register the live engine up-front: a parked approval persists the session
-        # mid-run (durable suspend), and resolving from the Inbox must find this engine.
-        self._engines[run.session_id] = engine
-        # The first turn is the task itself. The framing matters: instructions often restate the
-        # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
-        # the job now is to execute, not to (re)schedule.
-        opening = (
-            f"⏰ Scheduled run — {task.title}\n\n"
-            "This automation is due now: carry out the task below immediately and produce the "
-            "result. The schedule already exists — do not create or modify any scheduled tasks.\n\n"
-            f"{task.instructions}"
-        )
+        engine = None
         try:
+            # UX-026: tell every open app window a SCHEDULED run just started (the 5s
+            # top-right toast). Manual runs never come through here — the user is
+            # already watching those live.
+            await self.broadcast_event(
+                {
+                    "type": "automation_run_started",
+                    "data": {
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "session_id": run.session_id,
+                        "workspace": task.workspace,
+                        "agent": task.agent,
+                        "trigger": trigger,
+                    },
+                }
+            )
+            # Each run is a real, persisted conversation thread: it runs the instructions under
+            # its own session id, then saves the transcript. The user can reopen that session and
+            # ask a follow-up — the scheduled agent is no longer fire-and-forget.
+            engine = self._build_task_engine(task, session_id=run.session_id)
+            # Register the live engine up-front: a parked approval persists the session
+            # mid-run (durable suspend), and resolving from the Inbox must find this engine.
+            self._engines[run.session_id] = engine
+            # Instructions often restate the schedule, so make explicit that it already fired.
+            opening = (
+                f"⏰ Scheduled run — {task.title}\n\n"
+                "This automation is due now: carry out the task below immediately and produce "
+                "the result. The schedule already exists — do not create or modify any "
+                "scheduled tasks.\n\n"
+                f"{task.instructions}"
+            )
             async for _event in engine.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
-            if task.notify_on_completion:
-                await self._notify_task_done(task, run)
+        except asyncio.CancelledError:
+            if engine is not None:
+                engine.request_interrupt()
+            run.status, run.error = "error", "cancelled during scheduler shutdown"
+            raise
         except Exception as exc:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
             # Persist the run as a continuable session + keep the live engine for an immediate
             # follow-up; record the run (now carrying its session_id).
-            try:
-                self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
-            except Exception:
-                pass
+            if engine is not None:
+                try:
+                    self.save(run.session_id, engine)
+                    self._engines[run.session_id] = engine
+                except Exception:
+                    pass
             self.task_store.add_run(run)
+        if task.notify_on_completion and run.status == "ok":
+            try:
+                await self._notify_task_done(task, run)
+            except asyncio.CancelledError:
+                # Execution and persistence completed. Preserve success so Scheduler.run_task
+                # advances the task instead of repeating side effects after restart.
+                pass
         return run
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
@@ -7631,13 +7699,20 @@ class SessionManager:
         ]
 
     # -- LLM auto-titles (FB-010) -------------------------------------------------
+    # The title must speak the user's language: with no language pinned, an English
+    # instruction ("4-5 word title") yields English titles for Chinese/Japanese/…
+    # sessions. Same-language also relaxes the word count to a length that is natural
+    # for the opener's script (CJK titles are a few characters, not 4-5 "words").
     _AUTOTITLE_PROMPT = (
         "You title chat sessions. Given the user's opening message(s) — and, when "
-        "present, the assistant's first reply for context — reply with ONLY a 4-5 word "
-        "title for the session, named after what the session is actually about — no "
-        "quotes or punctuation wrapping it. If there is no topic at all ("
-        '"hey", "how are you", "hi there" and a generic reply), reply with exactly: '
-        "small-talk"
+        "present, the assistant's first reply for context — reply with ONLY a short "
+        "title for the session, named after what the session is actually about. "
+        "Write the title in the same language as the user's opening message "
+        "(4-5 words for English; the natural equivalent brevity for other "
+        "languages) — no quotes or punctuation wrapping it. If there is no topic "
+        "at all ("
+        '"hey", "how are you", "hi there" and a generic reply), reply with '
+        "exactly: small-talk"
     )
 
     def _maybe_autotitle(self, session_id: str) -> None:
@@ -8176,6 +8251,30 @@ class SessionManager:
                     shutil.rmtree(resolved)
             except OSError:
                 pass  # a stale/foreign path must not fail the delete
+        # Project-backed sessions keep their primary folder, but PDF originals copied
+        # into conversation scratch must go away when the conversation is deleted.
+        if (
+            ok
+            and record
+            and self._SESSION_ID_RE.fullmatch(session_id)
+            and session_id not in {".", ".."}
+        ):
+            team = record.team or {}
+            lead = str(team.get("lead_session") or "")
+            scratch = self.scratch_base().resolve()
+            if (
+                team.get("role") == "worker"
+                and self._SESSION_ID_RE.fullmatch(lead)
+                and lead not in {".", "..", session_id}
+            ):
+                attachment_dir = scratch / lead / "workers" / session_id / "attachments"
+            else:
+                attachment_dir = scratch / session_id / "attachments"
+            try:
+                if attachment_dir.is_dir() and attachment_dir.resolve() == attachment_dir:
+                    shutil.rmtree(attachment_dir)
+            except OSError:
+                pass  # a missing or inaccessible scratch folder must not fail deletion
         return {"ok": ok, "session_id": session_id}
 
     # -- provider proxy ---------------------------------------------------------

@@ -187,15 +187,31 @@ MATRIX: dict[str, ModelEntry] = {
     # GLM-5.2 shipped with a 1M window (docs.z.ai, read 2026-09-08: "1M" context,
     # 128K output); the 128,000 here was stale and compacted it at 102,400 (OPE-170).
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 1_000_000),
+    # DeepSeek's native API exposes the full 1M context for both V4 variants
+    # (verified against the official model table 2026-08-10).
     "deepseek:deepseek-v4-flash": ModelEntry(
-        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 1_000_000
     ),
     "deepseek:deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 1_000_000
     ),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba", _AGENTIC, 256_000),
+    # Qwen3.8 Max: multimodal (text/image/video/document) per Alibaba's model card, unlike
+    # the text-only Qwen3 Max above — needs its own entry so the qwen prefix heuristic in
+    # capabilities.py (vision=False for the whole family) doesn't strip images client-side
+    # (owner report 2026-08-02). PDF unverified over the compat surface, same caveat as
+    # Muse Spark, so it falls back via pdf_support.py too. Model Studio lists the GA id
+    # `qwen3.8-max` with a 1,000,000 context window (read 2026-10-17); the earlier
+    # `qwen3.8-max-preview` id is no longer listed.
+    "qwen:qwen3.8-max": ModelEntry(
+        "Qwen3.8 Max · Alibaba",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI", _AGENTIC, 256_000),
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
@@ -223,6 +239,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via Together", _AGENTIC, 262_144
     ),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
+        # Together's serverless deployment exposes 512K, not the model-level 1M.
         "DeepSeek V4 Pro · via Together", _AGENTIC, 512_000
     ),
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
@@ -235,14 +252,18 @@ MATRIX: dict[str, ModelEntry] = {
     "fireworks:accounts/fireworks/models/kimi-k2p6": ModelEntry(
         "Kimi K2.6 · via Fireworks", _AGENTIC, 256_000
     ),
+    # fireworks.ai/models/fireworks/deepseek-v4-pro lists "1040k tokens" (read 2026-10-17),
+    # a little under the model-level 1M.
     "fireworks:accounts/fireworks/models/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 1_040_000
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks", _AGENTIC, 1_000_000
     ),
     # OpenRouter slugs are lowercase `<lab>/<model>` (checked against their catalog
-    # 2026-07-25); same labs as above, one key for all of them.
+    # 2026-07-25); same labs as above, one key for all of them. Kimi K2.6 and Llama 4
+    # Maverick declare image input (architecture.input_modalities, 2026-08-09); PDFs
+    # unverified over the compat surface, like Kimi K3 below.
     # openrouter.ai/z-ai/glm-5.2: 1,048,576 context, 163,840 completion (read 2026-09-08).
     "openrouter:z-ai/glm-5.2": ModelEntry(
         "GLM-5.2 · via OpenRouter", _AGENTIC, 1_048_576
@@ -258,13 +279,21 @@ MATRIX: dict[str, ModelEntry] = {
         1_048_576,
     ),
     "openrouter:moonshotai/kimi-k2.6": ModelEntry(
-        "Kimi K2.6 · via OpenRouter", _AGENTIC, 256_000
+        "Kimi K2.6 · via OpenRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        256_000,
     ),
     "openrouter:deepseek/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 1_048_576
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
-        "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+        "Llama 4 Maverick · via OpenRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
     ),
     # NVIDIA Nemotron via OpenRouter (openrouter.ai/api/v1/models/<id>/endpoints, read
     # 2026-10-01). Paid endpoints only; the `:free` variants are left out on purpose (they
@@ -296,6 +325,19 @@ MATRIX: dict[str, ModelEntry] = {
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
     # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
+    # Claude 5 generation: ids from the AWS model cards (docs.aws.amazon.com/bedrock/
+    # latest/userguide/model-card-anthropic-claude-{fable-5,opus-5,sonnet-5}.html, read
+    # 2026-10-25). AWS publishes these without a `-v<n>:<m>` suffix; 1M context, image
+    # input, tool use — same as the native `anthropic:` rows above.
+    "bedrock:claude/anthropic.claude-fable-5": ModelEntry(
+        "Claude Fable 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/anthropic.claude-opus-5": ModelEntry(
+        "Claude Opus 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/anthropic.claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
     "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
         "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),

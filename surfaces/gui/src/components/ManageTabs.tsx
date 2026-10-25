@@ -96,7 +96,16 @@ export function ModelsTab() {
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   // The Pick a model dialog (UX-055): "" closed, "+" picking, else the model to configure.
   const [dialog, setDialog] = useState<string>("");
-  const refreshSettings = () => getSettings().then(setSettings).catch(() => setSettings(null));
+  const [settingsError, setSettingsError] = useState(false);
+  const refreshSettings = () => {
+    setSettingsError(false);
+    getSettings()
+      .then(setSettings)
+      .catch(() => {
+        setSettings(null);
+        setSettingsError(true);
+      });
+  };
   const ps = useProviderSetup({ onSaved: refreshSettings });
   useEffect(() => {
     refreshSettings();
@@ -108,6 +117,19 @@ export function ModelsTab() {
       }
     } catch { /* private window */ }
   }, []);
+
+  // #43: a failed or hung settings fetch says so and offers Retry (same shape as the
+  // local-models status line below) instead of sitting on "Loading…" forever.
+  if (settingsError) {
+    return (
+      <div className="text-ui text-warnInk" data-testid="settings-error">
+        {t("manage.settings_failed")}{" "}
+        <button className="text-muted underline underline-offset-2 hover:text-ink" onClick={refreshSettings} data-testid="settings-retry">
+          {t("manage.retry")}
+        </button>
+      </div>
+    );
+  }
 
   if (!settings) return <div className="text-ui text-muted">{t("manage.loading")}</div>;
 
