@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
+Resellers: Together + Fireworks + OpenRouter + Atlas Cloud. TODO: add Groq entries here AND its
 descriptor in ``registry.py`` once the current provider surface is tested — deliberately
 deferred to bound how much needs verifying at once.
 """
@@ -320,6 +320,14 @@ MATRIX: dict[str, ModelEntry] = {
     # the real model; keep it until OpenRouter retires it.
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
+    ),
+    # Atlas Cloud ids are lowercase `<lab>/<model>` (api.atlascloud.ai/v1/models, read
+    # 2026-10-19: 1,048,576 context for both).
+    "atlascloud:deepseek-ai/deepseek-v4-flash": ModelEntry(
+        "DeepSeek V4 Flash · via Atlas Cloud", _AGENTIC, 1_048_576
+    ),
+    "atlascloud:zai-org/glm-5.2": ModelEntry(
+        "GLM-5.2 · via Atlas Cloud", _AGENTIC, 1_048_576
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
