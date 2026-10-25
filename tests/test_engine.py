@@ -319,6 +319,88 @@ def test_streaming_emits_deltas(tmp_path):
     assert events[-1].type == EventType.TURN_END
 
 
+class DyingStreamProvider(ProviderClient):
+    """Streams a delta, then dies — the shape of a provider 503 landing mid-turn."""
+
+    def __init__(self):
+        self.payloads = []
+
+    def complete(self, **kwargs):  # pragma: no cover - streamed instead
+        raise NotImplementedError
+
+    def capabilities(self, model):
+        return ModelCapabilities()
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        self.payloads.append(messages)
+        yield StreamChunk(text_delta="I will request permission to ")
+        raise RuntimeError("Error code: 503 - {'error': {'type': 'overloaded_error'}}")
+
+
+def test_retry_after_mid_stream_death_does_not_replay_the_partial(tmp_path):
+    # The partial stays in the transcript so the user can see what streamed, but several
+    # providers reject a payload whose FINAL message is an assistant turn — Gemini ("Requests
+    # ending with a model turn are not supported"), Claude 4.6+ ("does not support assistant
+    # message prefill"), older Claude when it ends in whitespace. Replaying it wedges retry.
+    provider = DyingStreamProvider()
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+    _collect(engine, "arrange my visa documents")
+
+    # kept in history (display), followed by the error notice
+    assert engine.messages[-2]["role"] == "assistant"
+    assert engine.messages[-2]["content"] == "I will request permission to "
+    assert engine.messages[-1]["role"] == "notice"
+
+    async def _retry():
+        return [ev async for ev in engine.retry()]
+
+    asyncio.run(_retry())
+
+    sent = provider.payloads[-1]
+    assert sent, "retry never reached the provider"
+    assert sent[-1]["role"] != "assistant"
+    assert all(m.get("content") != "I will request permission to " for m in sent)
+
+
+def test_completed_assistant_turn_is_never_dropped(tmp_path):
+    # The counterpart to the test above: a finished turn's assistant message is structurally
+    # identical to an abandoned partial (trailing, no tool_calls). Only the error notice tells
+    # them apart, so a completed turn with no notice after it must survive intact.
+    engine, _ = _engine(tmp_path, [_text_turn("all done")])
+    _collect(engine, "hi")
+
+    assert engine.messages[-1]["role"] == "assistant"
+    outbound = engine._outbound_messages()
+    assert outbound[-1]["role"] == "assistant"
+    assert outbound[-1]["content"] == "all done"
+
+
+def test_consecutive_deaths_do_not_stack_partials_in_the_payload(tmp_path):
+    # Each failed retry appends its own partial, so one drop is not enough.
+    provider = DyingStreamProvider()
+    engine = TurnEngine(
+        provider=provider,
+        registry=ToolRegistry(),
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+    )
+    _collect(engine, "go")
+
+    async def _retry():
+        return [ev async for ev in engine.retry()]
+
+    asyncio.run(_retry())
+    asyncio.run(_retry())
+
+    assert sum(1 for m in engine.messages if m.get("role") == "assistant") == 3
+    assert provider.payloads[-1][-1]["role"] != "assistant"
+
+
 def _pdf_file_part():
     import base64
     import io
@@ -508,3 +590,79 @@ def test_ordinary_text_answer_still_completes(tmp_path):
     events = _collect(engine, "how does qwen format tool calls?")
     assert EventType.ERROR not in _types(events)
     assert next(ev for ev in events if ev.type == EventType.TURN_END).data["status"] == "completed"
+
+
+# -- audit correlation -------------------------------------------------------------
+
+
+def test_every_audit_row_carries_the_tool_call_id(tmp_path):
+    """#670: an external audit sink can only join a `started` to its `finished` if each
+    row names the call it belongs to. The ID is stamped at the shared `_audit` boundary,
+    so this covers the lifecycle stages that never pass it themselves."""
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    rows: list[dict] = []
+    provider = ScriptedProvider(
+        [_tool_turn("read_file", {"path": "a.txt"}, call_id="call_a"), _text_turn("done")]
+    )
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        audit_sink=rows.append,
+    )
+    _collect(engine, "read a.txt")
+
+    tool_rows = [r for r in rows if r.get("stage") in {"proposed", "started", "finished"}]
+    assert tool_rows, rows
+    assert {r["call_id"] for r in tool_rows} == {"call_a"}
+    # The `started`/`finished` pair for this call is unambiguous even when the same
+    # tool and arguments run twice: each row names which invocation it is.
+    assert [r["stage"] for r in tool_rows] == ["proposed", "started", "finished"]
+
+
+def test_repeated_identical_calls_stay_distinguishable(tmp_path):
+    """The regression that motivated #670: the same tool with the same arguments invoked
+    twice in one turn produces audit rows a sink can tell apart only by call_id."""
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    rows: list[dict] = []
+    provider = ScriptedProvider(
+        [
+            _tool_turn("read_file", {"path": "a.txt"}, call_id="call_1"),
+            _tool_turn("read_file", {"path": "a.txt"}, call_id="call_2"),
+            _text_turn("done"),
+        ]
+    )
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(workspace_root=tmp_path),
+        model="gpt-5.5",
+        audit_sink=rows.append,
+    )
+    _collect(engine, "read a.txt twice")
+
+    finished = [r for r in rows if r.get("stage") == "finished"]
+    assert len(finished) == 2
+    assert all(r["status"] == "ok" for r in finished), finished
+    assert [r["call_id"] for r in finished] == ["call_1", "call_2"]
+
+
+def test_audit_call_id_is_overridable_by_a_call_site(tmp_path):
+    """`**event` still wins: a call site that means something else by `call_id` is not
+    clobbered by the default stamp."""
+    engine, _ = _engine(tmp_path, [_text_turn("hi")])
+    seen: list[dict] = []
+    engine.audit_sink = seen.append
+    engine._audit(ToolCall(id="real_call", name="read_file", arguments={}), stage="proposed")
+    assert seen[0]["call_id"] == "real_call"
+    engine._audit(
+        ToolCall(id="real_call", name="read_file", arguments={}),
+        stage="custom",
+        call_id="other_id",
+    )
+    assert seen[1]["call_id"] == "other_id"

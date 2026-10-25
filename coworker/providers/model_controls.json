@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "about": "Which per-session controls a cloud model has: a thinking switch and/or reasoning-effort levels. Read by coworker/providers/model_controls.py. Patterns match the model id without its provider prefix; `providers` limits a row to those providers; the first matching row wins. Local models (Ollama, llama.cpp, vLLM) are filled in from what their server reports, so they are listed here only where the server's answer is not enough. Anything not listed has neither control. Edit in git; give a source.",
+  "models": [
+    {
+      "match": ["claude-fable-5*", "claude-mythos-5*", "claude-opus-5*", "claude-sonnet-5*", "claude-opus-4-8*", "claude-opus-4-7*"],
+      "providers": ["anthropic"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high", "xhigh", "max"], "default": "high"},
+      "notes": "Adaptive thinking is always on; effort sets how much. The API's default effort is high.",
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+    },
+    {
+      "match": ["claude-mythos-preview*", "claude-opus-4-6*", "claude-sonnet-4-6*"],
+      "providers": ["anthropic"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high", "max"], "default": "high"},
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+    },
+    {
+      "match": ["claude-opus-4-5*"],
+      "providers": ["anthropic"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high"], "default": "high"},
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+    },
+    {
+      "match": ["gpt-5*"],
+      "providers": ["openai", "openai-codex"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high"], "default": "medium"},
+      "notes": "Native OpenAI runs through the Responses API, where effort applies with tools. The server's default is medium.",
+      "source": "https://platform.openai.com/docs/guides/reasoning"
+    },
+    {
+      "match": ["moonshotai/kimi-k3*", "kimi-k3*"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "high", "max"], "default": "max"},
+      "notes": "Moonshot and Together document low, high and max; the default is max.",
+      "source": "https://platform.moonshot.ai/docs"
+    },
+    {
+      "match": ["gpt-oss*", "openai/gpt-oss*"],
+      "providers": ["ollama"],
+      "thinking": {"support": "not_supported"},
+      "reasoning": {"support": "supported", "levels": ["low", "medium", "high"], "default": "medium"},
+      "notes": "gpt-oss takes a reasoning level, not an on/off switch (Ollama's think accepts low, medium, high).",
+      "source": "https://docs.ollama.com/capabilities/thinking"
+    }
+  ]
+}

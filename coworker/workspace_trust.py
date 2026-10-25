@@ -9,11 +9,10 @@ accepted until the user revokes trust.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
-from .secrets import state_dir
+from .secrets import state_dir, write_private_text
 
 
 class WorkspaceTrustStore:
@@ -45,24 +44,11 @@ class WorkspaceTrustStore:
         return sorted(self._load())
 
     def revoke_trust(self, workspace: str | Path) -> bool:
-        """Revoke trust for a workspace root. Returns True if the path was trusted and removed."""
-        canonical = self.canonical(workspace)
-        values = self._load()
-        if canonical not in values:
+        """Remove a trusted root using the same private writer as trust grants."""
+        if not self.is_trusted(workspace):
             return False
-        values.discard(canonical)
-        self._write(values)
+        self.set_trusted(workspace, False)
         return True
-
-    def _write(self, values: set[str]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        tmp.write_text(
-            json.dumps({"trusted_workspaces": sorted(values)}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.path)
 
     def set_trusted(self, workspace: str | Path, trusted: bool) -> str:
         canonical = self.canonical(workspace)
@@ -71,5 +57,14 @@ class WorkspaceTrustStore:
             values.add(canonical)
         else:
             values.discard(canonical)
-        self._write(values)
+        # `write_private_text` owns the atomic temp-write plus the platform-correct
+        # restriction. A bare `os.chmod(0o600)` here was a silent no-op on Windows,
+        # where os.chmod only toggles the read-only bit, leaving this file with the
+        # inherited SYSTEM/Administrators ACEs its parent carries. Since this file is
+        # the allowlist governing auto-approved command execution, it needs the same
+        # protection the SecretStore already applies to the sidecar token.
+        write_private_text(
+            self.path,
+            json.dumps({"trusted_workspaces": sorted(values)}, indent=2) + "\n",
+        )
         return canonical

@@ -227,6 +227,35 @@ async def test_bridge_invokes_session_on_loop():
     assert seen == [("read_file", {"path": "a.txt"})]
 
 
+async def test_remote_tool_routing_is_not_overridable_by_arguments():
+    """A model-supplied ``_remote`` argument must not re-route an approved,
+    filtered tool call to a different remote tool.
+
+    The approval gate and the include/exclude filter both vet the *visible*
+    tool name (``mcp__fs__read_file``). If ``_remote`` were a bindable
+    parameter, ``{"_remote": "delete_file"}`` in the call arguments would run
+    ``delete_file`` while the gate only ever saw ``read_file``.
+    """
+    loop = asyncio.get_running_loop()
+    seen = []
+
+    async def call_async(tool, args):
+        seen.append((tool, args))
+        return {"echo": args}
+
+    server = MCPServerDef(name="fs", transport="stdio")
+    fn = build_callables(server, [_fake_tool("read_file")], call_async, loop)[0]
+
+    # Simulate the model emitting a `_remote` key in the tool-call arguments.
+    await asyncio.to_thread(fn, _remote="delete_file", path="a.txt")
+
+    routed_tool = seen[0][0]
+    assert routed_tool == "read_file", (
+        f"routing hijacked: call reached {routed_tool!r} instead of the "
+        "approved 'read_file'"
+    )
+
+
 # -- REST ----------------------------------------------------------------------
 def test_rest_crud(tmp_path, monkeypatch):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))

@@ -138,6 +138,20 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ),
     ConnectorToolDef(
         "browser",
+        "browser_list_tabs",
+        "List tabs",
+        "read",
+        "List open browser tabs and identify the active tab.",
+    ),
+    ConnectorToolDef(
+        "browser",
+        "browser_switch_tab",
+        "Switch tab",
+        "write",
+        "Switch subsequent browser actions to another tab.",
+    ),
+    ConnectorToolDef(
+        "browser",
         # Writes an image file to a resolved path (creating parents) — a local write,
         # whatever the pane shows (OPE-111).
         "browser_screenshot",
@@ -323,6 +337,13 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "Search Outlook",
         "read",
         "Search Outlook messages.",
+    ),
+    ConnectorToolDef(
+        "outlook",
+        "outlook_get_message",
+        "Read Outlook message",
+        "read",
+        "Read one Outlook message by ID.",
     ),
     ConnectorToolDef(
         "outlook",

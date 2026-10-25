@@ -213,14 +213,35 @@ def _local_server(name: str):
     """Builder for llama.cpp and vLLM (providers/local_server.py): the user's own server,
     reached through its `/v1`, with an optional key. Without a key the server takes any
     value, so a placeholder goes out."""
-    from .local_server import PLACEHOLDER_KEY, remember_server, v1_base
+    from .local_server import PLACEHOLDER_KEY, remember_server, thinking_as_template_kwargs, v1_base
+
+    class _LocalServerProvider(OpenAIProvider):
+        # The thinking switch, in the form these servers read.
+        def complete(self, **kwargs: Any):
+            return super().complete(**thinking_as_template_kwargs(kwargs))
+
+        def stream(self, **kwargs: Any):
+            return super().stream(**thinking_as_template_kwargs(kwargs))
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
         key = ((profile or {}).get("api_key") or "").strip() or PLACEHOLDER_KEY
         remember_server(name, (profile or {}).get("base_url"), key if key != PLACEHOLDER_KEY else None)
-        return OpenAIProvider(api_key=key, base_url=v1_base(name, (profile or {}).get("base_url")))
+        return _LocalServerProvider(api_key=key, base_url=v1_base(name, (profile or {}).get("base_url")))
 
     return build
+
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    """The `openrouter-account` provider: the key OpenRouter issued at sign-in
+    (providers/openrouter_auth.py), always against OpenRouter's own endpoint — a
+    browser credential is never sent to a custom gateway."""
+    api_key = ((profile or {}).get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("OpenRouter account not signed in — sign in under Models & Keys.")
+    return OpenAIProvider(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
@@ -232,16 +253,6 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = 
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-        if vendor == "OpenRouter" and profile.get("auth_method") == "account":
-            account = (secrets.get("provider:openrouter-account") or {}) if secrets else {}
-            if not profile.get("account_connected") or not account.get("api_key"):
-                raise RuntimeError(
-                    "OpenRouter account disconnected — sign in or explicitly save an API key."
-                )
-            # Browser credentials must never be sent to a custom gateway.
-            return OpenAIProvider(
-                api_key=account["api_key"], base_url="https://openrouter.ai/api/v1"
-            )
         base_url = ((profile or {}).get("base_url") or "").strip() or default_base_url
         api_key = ((profile or {}).get("api_key") or "").strip() or (
             os.environ.get(env_key, "").strip() if env_key else ""
@@ -652,7 +663,12 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         recommended_model="qwen3-max",
         env_key="DASHSCOPE_API_KEY",
-        endpoint_help="Prefilled with Alibaba Model Studio's international endpoint. China (Beijing): https://dashscope.aliyuncs.com/compatible-mode/v1",
+        endpoint_help=(
+            "Prefilled with the international endpoint. If your key was issued on the "
+            "China mainland portal (qwencloud.com), switch to "
+            "https://dashscope.aliyuncs.com/compatible-mode/v1 — keys only work against "
+            "the endpoint in the region where they were created."
+        ),
     ),
     _compat(
         "xai",
@@ -700,6 +716,18 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://openrouter.ai/api/v1",
         recommended_model="z-ai/glm-5.2",
         env_key="OPENROUTER_API_KEY",
+    ),
+    ProviderDescriptor(
+        name="openrouter-account",
+        kind="subscription",
+        title="OpenRouter account",
+        needs_key=False,
+        fields=[],
+        build=_build_openrouter_account,
+        recommended_model="z-ai/glm-5.2",
+        blurb="Sign in with your OpenRouter account and use its credits — nothing to "
+        "paste. The key OpenRouter issues stays on this machine.",
+        auth="oauth",
     ),
     ProviderDescriptor(
         name="ollama",
@@ -799,11 +827,10 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     a stored or env key. Multi-field cloud providers (no `api_key` field, e.g. Bedrock):
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
-    if d.name == "openrouter" and profile.get("auth_method") == "account":
-        return bool(profile.get("account_connected"))
     if d.auth == "oauth":
-        # A stored token set = signed in (the tokens live in the same profile).
-        return bool((profile or {}).get("tokens"))
+        # Signed in = a stored token set, or the key a sign-in issued (OpenRouter).
+        profile = profile or {}
+        return bool(profile.get("tokens") or profile.get("api_key"))
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
@@ -916,7 +943,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             if code == "ExpiredTokenException":
                 return {"ok": False, "error": "The credentials have expired — generate a new key."}
             return {"ok": False, "error": f"AWS Bedrock returned {code}."}
-        return {"ok": False, "error": f"Couldn't reach AWS Bedrock ({kind})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach AWS Bedrock ({_describe_transport_error(exc)})."
+        }
     return {"ok": True}
 
 
@@ -955,7 +985,7 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         except Exception as exc:
             return {
                 "ok": False,
-                "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__}).",
+                "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
             }
         if resp.status_code < 300:
             return {"ok": True}
@@ -1000,7 +1030,10 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             timeout=timeout,
         )
     except Exception as exc:
-        return {"ok": False, "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
+        }
     if resp.status_code < 300:
         return {"ok": True}
     if resp.status_code in (401, 403):
@@ -1011,6 +1044,37 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     if resp.status_code == 404:
         return {"ok": False, "error": "Project or location not found on Vertex AI."}
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
+
+
+def _describe_transport_error(exc: Exception) -> str:
+    """Turn a verify probe's transport failure into one actionable line.
+
+    The bare class name ("ConnectError") cost a real user round-trips of
+    diagnosis while the exception carried the answer all along — TLS
+    verification, DNS, refusal and timeout each read differently (#505).
+    """
+    msg = " ".join(str(exc).split()).rstrip(".")[:200]
+    lowered = msg.lower()
+    for signature, hint in (
+        (
+            "certificate_verify_failed",
+            "TLS certificate verification failed; the app's CA bundle may be missing or stale",
+        ),
+        ("ssl:", "TLS handshake failed"),
+        ("gaierror", "DNS could not resolve the endpoint"),
+        ("nodename", "DNS could not resolve the endpoint"),
+        ("name or service", "DNS could not resolve the endpoint"),
+        ("getaddrinfo", "DNS could not resolve the endpoint"),
+        ("refused", "the endpoint refused the connection"),
+        ("timed out", "the connection timed out"),
+    ):
+        if signature in lowered:
+            if not msg:
+                return f"{exc.__class__.__name__} — {hint}"
+            return f"{exc.__class__.__name__}: {msg} — looks like {hint}"
+    if not msg:
+        return exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {msg}"
 
 
 def verify_provider_key(
@@ -1112,7 +1176,7 @@ def verify_provider_key(
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
-            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
+            "error": f"Couldn't reach {d.title} ({_describe_transport_error(exc)}).",
         }
 
     if resp.status_code < 300:
