@@ -7510,56 +7510,87 @@ class SessionManager:
         if self._loop is None:
             return {"ok": False, "error": "Side tasks need the running server."}
         child = uuid.uuid4().hex[:12]
+        # The row first, synchronously: the sidebar's next refresh shows the side chat
+        # while its engine is still being built.
+        if not self._create_side_task_row(parent_sid, child, title):
+            return {"ok": False, "error": "This chat has no session to start from yet."}
         self._spawning_side_tasks[child] = parent_sid
         asyncio.run_coroutine_threadsafe(
             self._spawn_side_task(parent_sid, child, title, brief), self._loop
         )
         return {"ok": True, "side_task_id": child, "title": title, "next": SIDE_TASK_STARTED_HINT}
 
-    async def _spawn_side_task(
-        self, parent_sid: str, child: str, title: str, brief: str
-    ) -> bool:
-        """Create the child on the parent's coworker, folder and model, then run its
-        opening turn in the background (nobody is watching, so its approvals park in the
-        Inbox like any background turn's)."""
-        # Before the child's first engine build: its row has no side_task yet, and this
-        # is what gives it `report_back` instead of `start_side_task`.
-        self._spawning_side_tasks[child] = parent_sid
+    def _create_side_task_row(self, parent_sid: str, child: str, title: str) -> bool:
+        """The child's session row — on the parent's coworker, folder and model, tied to
+        the parent — written BEFORE its engine is built, so the sidebar shows the side
+        chat at once (a build can take seconds while connectors and skills load; the
+        owner saw the chat appear only after a page reload, 2026-10-26)."""
         parent = self.session_store.load(parent_sid)
         parent_engine = self._engines.get(parent_sid)
         if parent is None and parent_engine is None:
-            self._spawning_side_tasks.pop(child, None)
             return False
         agent = (parent.agent if parent else getattr(parent_engine, "agent_name", "")) or "cowork"
         if parent is not None and parent.workspace:
-            workspace: Optional[str] = parent.workspace
+            workspace = parent.workspace
         else:
             executor = getattr(parent_engine, "executor", None)
-            workspace = os.path.realpath(str(executor.cwd)) if executor else None
+            workspace = os.path.realpath(str(executor.cwd)) if executor else ""
         model = parent_engine.model if parent_engine is not None else (parent.model if parent else "")
+        mode = (
+            parent_engine.permissions.mode.value
+            if parent_engine is not None
+            else (parent.mode if parent else Mode.INTERACTIVE.value)
+        )
+        self.session_store.save(
+            SessionRecord(
+                session_id=child,
+                workspace=workspace,
+                model=model or self.resolve_persona_model(agent),
+                mode=mode,
+                agent=agent,
+                title=title,
+            ),
+            touch=bool(workspace),
+        )
+        self.session_store.rename(child, title)
+        self.session_store.set_side_task(
+            child,
+            {
+                "parent_session": parent_sid,
+                "title": title,
+                "status": "running",
+                "started_at": time.time(),
+            },
+        )
+        return True
+
+    async def _spawn_side_task(
+        self, parent_sid: str, child: str, title: str, brief: str
+    ) -> bool:
+        """Build the child's engine from its row (written by `_create_side_task_row`,
+        here when a caller skipped it) and run its opening turn in the background —
+        nobody is watching, so its approvals park in the Inbox like any background
+        turn's."""
+        # Belt and braces for the first engine build: the row normally already carries
+        # side_task, and this covers a build that races the row.
+        self._spawning_side_tasks[child] = parent_sid
         try:
-            engine = self.get_engine(child, workspace=workspace, agent=agent)
-            if engine is None:
-                logger.warning("side task %s: no engine for %s on %s", child, agent, workspace)
+            if self.session_store.load(child) is None and not self._create_side_task_row(
+                parent_sid, child, title
+            ):
                 return False
-            if model:
-                engine.switch_model(model)  # fresh session: no notice, just the bind
+            engine = self.get_engine(child)
+            if engine is None:
+                logger.warning("side task %s: no engine for its row", child)
+                return False
             # Nobody watches a side task run, so web research works without a card.
             # Everything else — shell, writes, connectors — asks as usual (Inbox).
             engine.permissions.session_allow_tools.update({"web_search", "web_fetch"})
-            self.save(child, engine)  # the row must exist before rename/set_side_task
-            self.session_store.rename(child, title)
-            self.session_store.set_side_task(
-                child,
-                {
-                    "parent_session": parent_sid,
-                    "title": title,
-                    "status": "running",
-                    "started_at": time.time(),
-                },
-            )
+            self.save(child, engine)
         finally:
             self._spawning_side_tasks.pop(child, None)
+        parent = self.session_store.load(parent_sid)
+        parent_engine = self._engines.get(parent_sid)
         parent_title = (
             (parent.title if parent else "")
             or (title_from(parent_engine.messages) if parent_engine is not None else "")

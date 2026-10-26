@@ -177,6 +177,14 @@ def test_direct_start_leaves_a_started_line_on_an_idle_parent(tmp_path, monkeypa
     res = mgr.start_side_task_direct("p1", " Pi 4 study ", " How would the design change? ")
     assert res["ok"] and res["title"] == "Pi 4 study"
     assert scheduled and scheduled[0][0] == "p1" and scheduled[0][2:] == ("Pi 4 study", "How would the design change?")
+    # The side chat's row exists before its engine is built: the sidebar's next
+    # refresh shows it under the parent (owner-hit 2026-10-26: it needed a reload).
+    row = {r["session_id"]: r for r in mgr.list_sessions()}[res["side_task_id"]]
+    assert row["title"] == "Pi 4 study"
+    assert row["side_task"] == {"parent_session": "p1", "title": "Pi 4 study", "status": "running"}
+    parent = mgr.session_store.load("p1")
+    child = mgr.session_store.load(res["side_task_id"])
+    assert (child.workspace, child.model, child.agent) == (parent.workspace, parent.model, parent.agent)
     (line,) = [m for m in mgr.get_engine("p1").messages if m.get("kind") == "side_task_started"]
     assert line["text"] == "Side task started: Pi 4 study"
     assert line["side_task"] == {"id": res["side_task_id"], "title": "Pi 4 study"}
