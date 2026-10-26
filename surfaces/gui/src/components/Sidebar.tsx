@@ -360,7 +360,15 @@ export function Sidebar(props: Props) {
   // Pinned sessions across ALL personas — the cross-persona band at the top (manual pins only).
   // Side tasks (coworker/sidetasks.py) nest under the chat that started them — never
   // top-level, like team workers. Archived ones list with the archived rows as usual.
-  const isSideChild = (s: SessionInfo) => Boolean(s.side_task?.parent_session) && !s.archived;
+  // A side chat is never hidden: when its parent is gone (deleted) or archived, there is
+  // no row to nest under, so it lists as an ordinary chat instead.
+  const liveParents = new Set(
+    props.sessions.filter((s) => !s.archived).map((s) => s.session_id),
+  );
+  const isSideChild = (s: SessionInfo) =>
+    Boolean(s.side_task?.parent_session) &&
+    liveParents.has(String(s.side_task?.parent_session)) &&
+    !s.archived;
   const sideChildren = new Map<string, SessionInfo[]>();
   for (const s of props.sessions) {
     if (!isSideChild(s) || s.session_id.startsWith("__")) continue;

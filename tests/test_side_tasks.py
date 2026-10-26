@@ -193,6 +193,24 @@ async def _noop():
     return True
 
 
+def test_deleting_the_parent_detaches_its_side_chats_and_drops_late_reports(tmp_path, monkeypatch):
+    """Owner-hit 2026-10-26: deleting the parent left its side chat an invisible orphan."""
+    mgr = _mgr(tmp_path, monkeypatch, [_text_turn("findings")])
+    _parent(mgr, tmp_path)
+    asyncio.run(mgr._spawn_side_task("p1", "c1", "Hoop sensing", "brief"))
+    assert mgr.session_store.load("c1").side_task["parent_session"] == "p1"
+
+    assert mgr.delete_session("p1")["ok"]
+    child = mgr.session_store.load("c1")
+    assert child is not None and child.side_task == {}  # an ordinary chat now, history kept
+    assert child.title == "Hoop sensing"
+    rows = {r["session_id"]: r for r in mgr.list_sessions()}
+    assert "p1" not in rows and rows["c1"]["side_task"] == {}
+    # A report that arrives after the deletion is dropped, not delivered to a ghost parent.
+    mgr._deliver_side_task_report("p1", {"id": "x", "summary": "late", "title": "t", "session_id": "c1", "status": "new", "ts": 0})
+    assert mgr.session_store.load("p1") is None
+
+
 def test_report_back_refuses_outside_a_side_task(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path, monkeypatch)
     _parent(mgr, tmp_path)

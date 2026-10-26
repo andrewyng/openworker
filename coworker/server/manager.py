@@ -7643,9 +7643,30 @@ class SessionManager:
             return
         self._deliver_side_task_report(parent, payload)
 
+    def _detach_side_tasks(self, parent_sid: str, record: Optional[SessionRecord]) -> bool:
+        """A deleted parent's side chats become ordinary chats (their work and history
+        stay). Returns True when one of them still works in the parent's folder, so the
+        caller keeps that folder."""
+        keep = False
+        parent_ws = os.path.realpath(record.workspace) if record and record.workspace else ""
+        for child in self.session_store.list():
+            if (child.side_task or {}).get("parent_session") != parent_sid:
+                continue
+            self.session_store.set_side_task(child.session_id, {})
+            self._side_task_children.discard(child.session_id)
+            if parent_ws and child.workspace and os.path.realpath(child.workspace) == parent_ws:
+                keep = True
+        self._pending_side_reports.pop(parent_sid, None)
+        return keep
+
     def _deliver_side_task_report(self, parent: str, payload: dict[str, Any]) -> None:
         """Append the report card to the parent's transcript — a `notice`, so it survives
         reload and `_outbound_messages` never sends it — and show it to anyone viewing."""
+        if parent not in self._engines and self.session_store.load(parent) is None:
+            # The parent was deleted meanwhile: building an engine for it would resurrect
+            # it as an empty chat holding one card. The side chat keeps the report itself.
+            logger.warning("side task report for %s dropped: parent chat is gone", parent)
+            return
         engine = self.get_engine(parent)
         if engine is None:
             logger.warning("side task report for %s dropped: no engine", parent)
@@ -8590,6 +8611,9 @@ class SessionManager:
                 pass
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
+        # Side tasks (sidetasks.py): the children outlive their parent as ordinary chats —
+        # detach them, and keep the parent's scratch dir while a child still works in it.
+        keep_scratch = self._detach_side_tasks(session_id, record)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         held = [sub.channel for sub in self.subscriptions.for_session(session_id)]
@@ -8607,7 +8631,7 @@ class SessionManager:
         self.inbox.resolve_session(session_id)
         # ...and its scratch dir. STRICTLY scoped: only a directory inside scratch_base is
         # removed — a real project folder the user picked is never touched.
-        if ok and record and record.workspace:
+        if ok and record and record.workspace and not keep_scratch:
             scratch = self.scratch_base().resolve()
             ws = Path(record.workspace)
             try:
