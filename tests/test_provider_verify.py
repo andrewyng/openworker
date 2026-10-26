@@ -118,6 +118,15 @@ def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     assert cap["headers"]["Authorization"] == "Bearer sk-nov"
 
 
+def test_verify_opper_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("opper", api_key="op-x") == {"ok": True}
+    # OpenAI-compatible branch: prefilled vendor endpoint, bearer key
+    assert cap["url"] == "https://api.opper.ai/v3/compat/models"
+    assert cap["headers"]["Authorization"] == "Bearer op-x"
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {

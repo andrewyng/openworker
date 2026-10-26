@@ -16,7 +16,7 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter + Nebius + OrcaRouter + NVIDIA NIM
+Resellers: Together + Fireworks + OpenRouter + Nebius + OrcaRouter + NVIDIA NIM + Opper
 + Groq (landed 2026-10-25, after the deferral of 2026-07-04) + Cerebras, Hugging Face
 Inference Providers and SiliconFlow (2026-10-26).
 """
@@ -393,6 +393,21 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b": ModelEntry(
         "Nemotron 3.5 Lightning · via NVIDIA", _AGENTIC, 1_000_000
+    ),
+    # Opper: bare pool names, Opper picks the route per request (a `provider/model` id such
+    # as `anthropic/claude-sonnet-4-6` pins one). Ids, windows and tool support from
+    # api.opper.ai/v3/models (keyless, read 2026-10-26: `context_window` 1,000,000 on every
+    # pooled route of Sonnet 4.6, 1,000,000 the smallest across DeepSeek V4 Pro's; both list
+    # `tools`; Sonnet 4.6 lists `vision`, PDFs unverified over the compat surface).
+    "opper:claude-sonnet-4-6": ModelEntry(
+        "Claude Sonnet 4.6 · via Opper",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "opper:deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via Opper", _AGENTIC, 1_000_000
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →

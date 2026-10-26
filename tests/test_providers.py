@@ -481,6 +481,7 @@ def test_compat_models_route_and_get_tool_capabilities():
         "orcarouter:anthropic/claude-sonnet-5",
         "atlascloud:zai-org/glm-5.2",
         "upstage:solar-pro4",
+        "opper:claude-sonnet-4-6",
         "cerebras:gpt-oss-120b",
         "huggingface:zai-org/GLM-5.2",
         "cohere:command-a-plus-05-2026",
@@ -522,6 +523,7 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         # routed id. Deliberate: the `z-ai/` and `deepseek-ai/` rows in matrix.py don't.
         "nvidia:nvidia/nemotron-3-super-120b-a12b",
         "groq:llama-3.3-70b-versatile",
+        "opper:claude-sonnet-4-6",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -599,7 +601,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
 
     for name in (
         "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
-        "novita", "groq",
+        "novita", "groq", "opper",
     ):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
