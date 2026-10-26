@@ -27,7 +27,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "simple-icons": "^16.26.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
