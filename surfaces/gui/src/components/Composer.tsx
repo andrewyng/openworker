@@ -151,7 +151,9 @@ interface Props {
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
   // repeated identical prefills re-apply; the user can still edit before sending.
   prefill?: { text: string; attachments?: Attachment[]; nonce: number };
-  // Changes when the active conversation changes; clears any unsent draft.
+  // Draft slot of the active conversation (its session id, or NEW_CHAT_DRAFT_KEY for a chat
+  // with no message yet). On change the unsent draft is saved under the old key and the new
+  // key's draft is restored.
   resetKey?: string;
   // Surface-specific hint shown in the empty textarea.
   placeholder?: string;
