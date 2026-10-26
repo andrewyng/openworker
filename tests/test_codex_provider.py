@@ -9,7 +9,9 @@ import asyncio
 import base64
 import json
 import socket
+import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -573,6 +575,120 @@ def test_discover_models_rejects_malformed_catalog(tmp_path, monkeypatch):
         codex_auth.discover_models(secrets)
 
 
+@pytest.mark.parametrize("optional", [None, 42, "unexpected", {"future": True}])
+def test_catalog_ignores_unrecognized_optional_metadata(optional):
+    rows = codex_auth._parse_catalog({"models": [{
+        "slug": "gpt-live", "visibility": "list",
+        "supported_reasoning_levels": optional, "input_modalities": optional,
+        "future_field": {"instructions": "not picker metadata"},
+    }]})
+    assert rows == [{"slug": "gpt-live", "display_name": "gpt-live", "priority": 0}]
+
+
+def test_account_change_discards_previous_catalog(tmp_path):
+    secrets = SecretStore(tmp_path / "s.json")
+    _seed(secrets)
+    profile = secrets.get(codex_auth.PROFILE)
+    profile["model_catalog"] = {"models": [{"slug": "account-a-only"}]}
+    secrets.put(codex_auth.PROFILE, profile)
+    store = CodexTokenStore(secrets)
+
+    store.save({"access_token": _access(), "refresh_token": "rt-new"})
+    assert secrets.get(codex_auth.PROFILE)["model_catalog"]["models"]
+    store.save({
+        "access_token": _access(account="acct_2"),
+        "id_token": _id_token("other@example.com", "acct_2"),
+        "refresh_token": "rt-other",
+    })
+    assert not secrets.get(codex_auth.PROFILE).get("model_catalog")
+
+
+@pytest.mark.parametrize("change", ["signout", "rotate", "switch"])
+def test_catalog_commit_preserves_concurrent_auth_changes(tmp_path, monkeypatch, change):
+    manager, _ = _rest(tmp_path)
+    _seed(manager.secrets)
+    monkeypatch.setattr(codex_auth, "discover_models", lambda secrets: {
+        "models": [{"slug": "gpt-live"}], "expires_at": time.time() + 300,
+    })
+    committing = threading.Event()
+    exclusive = manager.secrets.exclusive
+    result = []
+    worker = threading.Thread(target=lambda: result.append(manager.refresh_codex_catalog(True)))
+
+    @contextmanager
+    def observed_exclusive(*args, **kwargs):
+        if threading.current_thread() is worker:
+            committing.set()
+        with exclusive(*args, **kwargs) as store:
+            yield store
+
+    monkeypatch.setattr(manager.secrets, "exclusive", observed_exclusive)
+    with exclusive():
+        worker.start()
+        assert committing.wait(5), "catalog did not reach its commit"
+        if change == "signout":
+            CodexTokenStore(manager.secrets).clear()
+        else:
+            account = "acct_2" if change == "switch" else "acct_1"
+            CodexTokenStore(manager.secrets).save({
+                "access_token": _access(account=account),
+                "id_token": _id_token(account=account), "refresh_token": "rt-new",
+            })
+    worker.join(5)
+    assert not worker.is_alive()
+    profile = manager.secrets.get(codex_auth.PROFILE)
+    if change == "signout":
+        assert profile is None
+    else:
+        assert profile["tokens"]["refresh_token"] == "rt-new"
+        assert profile["account_id"] == account
+    assert result == [change == "rotate"]
+
+
+def test_picker_derives_discoveries_without_persisting_them_as_manual_models(tmp_path, monkeypatch):
+    manager, _ = _rest(tmp_path)
+    _seed(manager.secrets)
+    monkeypatch.setattr(codex_auth, "discover_models", lambda secrets: {
+        "models": [{"slug": "gpt-live"}], "expires_at": time.time() + 300,
+    })
+    assert manager.refresh_codex_catalog(True)
+    assert "openai-codex:gpt-live" in manager.get_settings()["models"]
+    assert "openai-codex:gpt-live" not in manager._prefs.get("models", [])
+    manager.add_model("openai-codex:my-manual-model")
+    monkeypatch.setattr(codex_auth, "discover_models", lambda secrets: {
+        "models": [{"slug": "gpt-next"}], "expires_at": time.time() + 300,
+    })
+    assert manager.refresh_codex_catalog(True)
+    models = manager.get_settings()["models"]
+    assert "openai-codex:gpt-live" not in models
+    assert "openai-codex:gpt-next" in models
+    assert "openai-codex:my-manual-model" in models
+
+
+def test_catalog_cache_survives_outage_and_skips_fresh_fetches(tmp_path, monkeypatch):
+    manager, _ = _rest(tmp_path)
+    _seed(manager.secrets)
+    catalog = {
+        "models": [{"slug": "gpt-live"}],
+        "expires_at": time.time() + 300,
+    }
+    monkeypatch.setattr(codex_auth, "discover_models", lambda secrets: catalog)
+    assert manager.refresh_codex_catalog(True)
+    calls = []
+
+    def unavailable(secrets):
+        calls.append(True)
+        raise CodexAuthError("catalog unavailable")
+
+    monkeypatch.setattr(codex_auth, "discover_models", unavailable)
+    assert manager.refresh_codex_catalog() is False
+    assert not calls
+    assert manager.refresh_codex_catalog(True) is False
+    assert len(calls) == 1
+    assert manager.secrets.get(codex_auth.PROFILE)["model_catalog"] == catalog
+    assert "openai-codex:gpt-live" in manager.get_settings()["models"]
+
+
 # -- verify probe --------------------------------------------------------------------
 
 
@@ -609,6 +725,9 @@ def test_verify_ok_probes_backend(tmp_path, monkeypatch):
     assert probes["headers"]["chatgpt-account-id"] == "acct_1"
     assert probes["body"]["model"] == "gpt-current"
     assert probes["body"]["store"] is False and probes["body"]["stream"] is True
+    assert probes["body"]["instructions"]
+    assert isinstance(probes["body"]["input"], list)
+    assert "max_output_tokens" not in probes["body"]
 
 
 def test_verify_expired_and_plan_limited(tmp_path, monkeypatch):
@@ -741,8 +860,14 @@ def test_verify_route_reports_signed_out(tmp_path):
     assert result["ok"] is False and result["state"] == "signed_out"
 
 
-async def test_manager_signin_stores_and_promotes_model(tmp_path, monkeypatch):
+@pytest.mark.parametrize("working_default, hidden", [(False, False), (True, False), (True, True)])
+async def test_manager_signin_stores_and_promotes_model(tmp_path, monkeypatch, working_default, hidden):
     manager, _ = _rest(tmp_path)
+    previous_default = manager.model
+    if working_default:
+        manager.secrets.put("provider:openai", {"api_key": "test-key"})
+    if hidden:
+        manager._prefs["hidden_models"] = ["openai-codex:gpt-6.1-sol"]
 
     async def fake_sign_in(secrets, **kwargs):
         CodexTokenStore(secrets).save(
@@ -771,7 +896,10 @@ async def test_manager_signin_stores_and_promotes_model(tmp_path, monkeypatch):
     assert result["ok"] is True
     assert manager._codex_authorizing is False
     settings = manager.get_settings()
-    assert "openai-codex:gpt-6.1-sol" in settings["models"]
+    assert ("openai-codex:gpt-6.1-sol" in settings["models"]) is not hidden
+    assert "openai-codex:gpt-6.1-sol" not in manager._prefs.get("models", [])
+    if working_default:
+        assert manager.model == previous_default
 
 
 async def test_manager_signin_failure_lands_in_status(tmp_path, monkeypatch):

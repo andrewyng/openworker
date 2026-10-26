@@ -31,6 +31,7 @@ import os
 import secrets as pysecrets
 import time
 import uuid
+from contextlib import nullcontext
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -57,10 +58,7 @@ ORIGINATOR = "openworker"
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 PROFILE = "provider:openai-codex"
 FLOW_TIMEOUT_SECONDS = 300
-# The catalog schema OpenWorker understands. The Codex backend uses this value to
-# exclude models that require a newer wire contract; update it only after checking
-# the public `codex-protocol` ModelInfo schema for that release. Unknown response
-# fields are deliberately ignored by `discover_models` below.
+# Catalog protocol version, independent of any locally installed Codex CLI.
 CODEX_CATALOG_CLIENT_VERSION = "0.162.1"
 CATALOG_DEFAULT_TTL_SECONDS = 300
 CATALOG_MIN_TTL_SECONDS = 60
@@ -213,7 +211,12 @@ class CodexTokenStore:
         return self._secrets.get(PROFILE) or {}
 
     def _merge(self, patch: dict[str, Any]) -> None:
-        self._secrets.put(PROFILE, {**self._data(), **patch})
+        exclusive = getattr(self._secrets, "exclusive", nullcontext)
+        with exclusive():
+            data = self._data()
+            if patch.get("account_id") != data.get("account_id"):
+                data.pop("model_catalog", None)
+            self._secrets.put(PROFILE, {**data, **patch})
 
     def signed_in(self) -> bool:
         return bool(self._data().get("tokens"))
@@ -333,12 +336,7 @@ def _catalog_ttl(cache_control: str) -> int:
 
 
 def _parse_catalog(body: Any) -> list[dict[str, Any]]:
-    """Reduce Codex ModelInfo rows to safe metadata used by OpenWorker's UI.
-
-    The remote catalog is account-scoped and untrusted. Only picker-visible rows
-    with unique, non-empty slugs survive; no instructions or opaque backend data
-    are persisted. Priority order is the backend's recommended picker order.
-    """
+    """Keep picker metadata only; ignore backend instructions and unknown fields."""
     raw_models = body.get("models") if isinstance(body, dict) else None
     if not isinstance(raw_models, list):
         raise CodexAuthError("ChatGPT returned an invalid model catalog.")
@@ -359,7 +357,8 @@ def _parse_catalog(body: Any) -> list[dict[str, Any]]:
         if not isinstance(context, int) or isinstance(context, bool) or context <= 0:
             context = None
         levels: list[str] = []
-        for level in raw.get("supported_reasoning_levels") or []:
+        raw_levels = raw.get("supported_reasoning_levels")
+        for level in raw_levels if isinstance(raw_levels, list) else []:
             effort = level.get("effort") if isinstance(level, dict) else level
             if isinstance(effort, str) and effort and effort not in levels:
                 levels.append(effort)
@@ -375,9 +374,10 @@ def _parse_catalog(body: Any) -> list[dict[str, Any]]:
             row["reasoning_levels"] = levels
         if isinstance(default_effort, str) and default_effort in levels:
             row["default_reasoning_level"] = default_effort
+        raw_modalities = raw.get("input_modalities")
         modalities = [
             value
-            for value in (raw.get("input_modalities") or [])
+            for value in (raw_modalities if isinstance(raw_modalities, list) else [])
             if isinstance(value, str) and value in ("text", "image")
         ]
         if modalities:
@@ -388,11 +388,7 @@ def _parse_catalog(body: Any) -> list[dict[str, Any]]:
 
 
 def discover_models(secrets: Any, timeout: float = 5.0) -> dict[str, Any]:
-    """Fetch the models this signed-in ChatGPT account can use.
-
-    Returns a small, persistence-safe catalog plus its account-scoped expiry.
-    A bearer rejected mid-request gets the same single refresh retry as inference.
-    """
+    """Fetch account-specific picker metadata, retrying one rejected bearer."""
     import httpx
 
     store = CodexTokenStore(secrets)
@@ -600,12 +596,12 @@ def verify(secrets: Any, timeout: float = 10.0) -> dict[str, Any]:
     """
     import httpx
 
+    from .codex_provider import CodexProvider
+
     store = CodexTokenStore(secrets)
     if not store.signed_in():
         return {"ok": False, "error": SIGNED_OUT_ERROR, "state": "signed_out"}
     try:
-        # Never probe a hard-coded model: retired ids made a healthy subscription look
-        # broken. Discovery is account-scoped and supplies a currently selectable id.
         catalog = discover_models(secrets, timeout=min(timeout, 5.0))
         verify_model = catalog["models"][0]["slug"]
         token, account = store.access_token()
@@ -621,11 +617,13 @@ def verify(secrets: Any, timeout: float = 10.0) -> dict[str, Any]:
                 **backend_headers(account, str(uuid.uuid4())),
             },
             json={
-                "model": verify_model,
-                "input": "Reply with OK.",
-                "store": False,
+                **CodexProvider(reasoning_summary=False)._request_kwargs(
+                    model=verify_model,
+                    messages=[{"role": "user", "content": "Reply with OK."}],
+                    tools=None,
+                    settings={},
+                ),
                 "stream": True,
-                "max_output_tokens": 16,
             },
             timeout=timeout,
         )
