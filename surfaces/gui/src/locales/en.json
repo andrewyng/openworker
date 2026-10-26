@@ -2648,6 +2648,27 @@
       "no_cloud_api": "no cloud API configured"
     }
   },
+  "sidetask": {
+    "report_arrived": "Side task report",
+    "full_report": "Full report:",
+    "add_to_chat": "Add to chat",
+    "dismiss": "Dismiss",
+    "open_chat": "Open side chat",
+    "added": "Added to chat",
+    "dismissed": "Dismissed",
+    "note": "Only you see this card. The report enters this chat when you add it and send.",
+    "menu": "Side task…",
+    "dialog_title": "Start a side task",
+    "dialog_sub": "A separate chat on this coworker, folder and model does the job in the background. Its report comes back here as a card; only you see it until you add it to the chat.",
+    "dialog_name": "Name",
+    "dialog_name_placeholder": "Raspberry Pi 4 design study",
+    "dialog_brief": "Brief",
+    "dialog_brief_placeholder": "Everything the side chat needs and nothing more: the question, the context it must know, and what to deliver.",
+    "dialog_cancel": "Cancel",
+    "dialog_start": "Start",
+    "dialog_starting": "Starting…",
+    "dialog_error": "The side task could not be started."
+  },
   "teamview": {
     "pending_requests_one": "1 request needs your answer",
     "pending_requests_other": "{{count}} requests need your answer",

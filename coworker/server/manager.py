@@ -35,6 +35,17 @@ from ..inbox_routing import InboxRouting
 from ..personas import PersonaRegistry
 from ..personas.registry import set_registry as set_persona_registry
 from ..selfwake import WakeStore
+from ..sidetasks import (
+    MAX_RUNNING_SIDE_TASKS,
+    MAX_SUMMARY_CHARS,
+    SIDE_TASK_REPORT_KIND,
+    SIDE_TASK_STARTED_HINT,
+    SIDE_TASK_STARTED_KIND,
+    SIDE_TASK_STATUS_KIND,
+    report_back_tool,
+    side_task_opening,
+    start_side_task_tool,
+)
 from ..mentions import MentionSessionStore
 from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..teams.store import WORKER_WAITING
@@ -460,6 +471,15 @@ class SessionManager:
         self._team_last_alive: dict[str, float] = {}
         self._team_watchdog_alerted: dict[str, tuple] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Side tasks (sidetasks.py). `_spawning_side_tasks`: child id → parent id while
+        # the child's first engine build is in flight (its row has no side_task yet, but
+        # its tools must already be the child's). `_side_task_children`: ids known to be
+        # side tasks, so mark_idle's silent-child fallback costs nothing for other
+        # sessions. `_pending_side_reports`: reports that arrived while the parent was
+        # mid-turn, delivered on its mark_idle so a card never lands inside a reply.
+        self._spawning_side_tasks: dict[str, str] = {}
+        self._side_task_children: set[str] = set()
+        self._pending_side_reports: dict[str, list[dict[str, Any]]] = {}
         # Personas: registry + lifecycle state under this manager's data dir. Installed as the
         # process singleton so agents.get_agent resolves persona ids (incl. third-party) here.
         self.personas = PersonaRegistry(state_path=base / "personas.json")
@@ -925,6 +945,7 @@ class SessionManager:
             extra_tools=[
                 *(extra_tools or []),
                 *self._team_tools_for(session_id, ag, record, ws),
+                *self._side_task_tools_for(session_id, record),
             ]
             or None,
             secrets=self.secrets,
@@ -5716,6 +5737,7 @@ class SessionManager:
         (else parked). Returns the platforms whose listeners came up."""
         # Team steering/kicks are dispatched from tool threads; they need the app loop.
         self._loop = asyncio.get_running_loop()
+        self._settle_interrupted_side_tasks()
         self.scheduler.start()  # tick scheduler for automations (independent of connectors)
         return await self._build_and_start_gateway()
 
@@ -6846,6 +6868,12 @@ class SessionManager:
         # finishes — the one shared post-turn moment, so auto-titling hooks in here and
         # can never add latency to the response itself.
         self._maybe_autotitle(session_id)
+        # Side tasks: a report that arrived while this chat was mid-turn lands now, never
+        # inside a reply; a side task that ended its turn without `report_back` reports
+        # its last message, so the parent is never left waiting on a silent child.
+        for payload in self._pending_side_reports.pop(session_id, []):
+            self._deliver_side_task_report(session_id, payload)
+        self._finish_silent_side_task(session_id)
         # Team sessions: a finished turn is the moment new board events exist (an
         # assign, a review transition) — kick the queue drain now instead of waiting
         # for the next scheduler tick. Cheap no-op for teamless sessions.
@@ -7430,6 +7458,335 @@ class SessionManager:
             await self.deliver_to_session(sid, opening, source=ms.to_dict())
         except Exception:
             logger.exception("mention session %s opening turn failed", sid)
+
+    # ---- Side tasks (sidetasks.py) -------------------------------------------------
+
+    def _side_task_tools_for(self, session_id: str, record: Any) -> list[Any]:
+        """The parent's `start_side_task`, or the child's `report_back`. A side task never
+        starts another (no nesting, as with `explore`), and a team worker gets neither:
+        its hand-offs go through the board."""
+        info = (getattr(record, "side_task", None) if record is not None else None) or {}
+        parent = str(
+            info.get("parent_session") or self._spawning_side_tasks.get(session_id) or ""
+        )
+        if parent:
+            self._side_task_children.add(session_id)
+            return [
+                report_back_tool(
+                    lambda summary, report_path="", sid=session_id: self.report_side_task(
+                        sid, summary, report_path
+                    )
+                )
+            ]
+        if record is not None and (record.team or {}).get("role") == "worker":
+            return []
+        return [
+            start_side_task_tool(
+                lambda title, brief, sid=session_id: self.start_side_task(sid, title, brief)
+            )
+        ]
+
+    def start_side_task(self, parent_sid: str, title: str, brief: str) -> dict[str, Any]:
+        """`start_side_task` for `parent_sid` (tool thread): validate, cap, and schedule the
+        spawn on the server loop. Returns at once so the parent's turn carries on; the
+        child's first turn runs as its own task."""
+        if not title:
+            return {"ok": False, "error": "start_side_task needs a title."}
+        if not brief:
+            return {"ok": False, "error": "start_side_task needs a brief."}
+        running = [
+            r
+            for r in self.session_store.list()
+            if (r.side_task or {}).get("parent_session") == parent_sid
+            and (r.side_task or {}).get("status") == "running"
+        ]
+        if len(running) >= MAX_RUNNING_SIDE_TASKS:
+            return {
+                "ok": False,
+                "error": (
+                    f"{len(running)} side tasks are already running for this chat. "
+                    "Wait for a report before starting another."
+                ),
+            }
+        if self._loop is None:
+            return {"ok": False, "error": "Side tasks need the running server."}
+        child = uuid.uuid4().hex[:12]
+        # The row first, synchronously: the sidebar's next refresh shows the side chat
+        # while its engine is still being built.
+        if not self._create_side_task_row(parent_sid, child, title):
+            return {"ok": False, "error": "This chat has no session to start from yet."}
+        self._spawning_side_tasks[child] = parent_sid
+        asyncio.run_coroutine_threadsafe(
+            self._spawn_side_task(parent_sid, child, title, brief), self._loop
+        )
+        return {"ok": True, "side_task_id": child, "title": title, "next": SIDE_TASK_STARTED_HINT}
+
+    def _create_side_task_row(self, parent_sid: str, child: str, title: str) -> bool:
+        """The child's session row — on the parent's coworker, folder and model, tied to
+        the parent — written BEFORE its engine is built, so the sidebar shows the side
+        chat at once (a build can take seconds while connectors and skills load; the
+        owner saw the chat appear only after a page reload, 2026-10-26)."""
+        parent = self.session_store.load(parent_sid)
+        parent_engine = self._engines.get(parent_sid)
+        if parent is None and parent_engine is None:
+            return False
+        agent = (parent.agent if parent else getattr(parent_engine, "agent_name", "")) or "cowork"
+        if parent is not None and parent.workspace:
+            workspace = parent.workspace
+        else:
+            executor = getattr(parent_engine, "executor", None)
+            workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+        model = parent_engine.model if parent_engine is not None else (parent.model if parent else "")
+        mode = (
+            parent_engine.permissions.mode.value
+            if parent_engine is not None
+            else (parent.mode if parent else Mode.INTERACTIVE.value)
+        )
+        self.session_store.save(
+            SessionRecord(
+                session_id=child,
+                workspace=workspace,
+                model=model or self.resolve_persona_model(agent),
+                mode=mode,
+                agent=agent,
+                title=title,
+            ),
+            touch=bool(workspace),
+        )
+        self.session_store.rename(child, title)
+        self.session_store.set_side_task(
+            child,
+            {
+                "parent_session": parent_sid,
+                "title": title,
+                "status": "running",
+                "started_at": time.time(),
+            },
+        )
+        return True
+
+    async def _spawn_side_task(
+        self, parent_sid: str, child: str, title: str, brief: str
+    ) -> bool:
+        """Build the child's engine from its row (written by `_create_side_task_row`,
+        here when a caller skipped it) and run its opening turn in the background —
+        nobody is watching, so its approvals park in the Inbox like any background
+        turn's."""
+        # Belt and braces for the first engine build: the row normally already carries
+        # side_task, and this covers a build that races the row.
+        self._spawning_side_tasks[child] = parent_sid
+        try:
+            if self.session_store.load(child) is None and not self._create_side_task_row(
+                parent_sid, child, title
+            ):
+                return False
+            engine = self.get_engine(child)
+            if engine is None:
+                logger.warning("side task %s: no engine for its row", child)
+                return False
+            # Nobody watches a side task run, so web research works without a card.
+            # Everything else — shell, writes, connectors — asks as usual (Inbox).
+            engine.permissions.session_allow_tools.update({"web_search", "web_fetch"})
+            self.save(child, engine)
+        finally:
+            self._spawning_side_tasks.pop(child, None)
+        parent = self.session_store.load(parent_sid)
+        parent_engine = self._engines.get(parent_sid)
+        parent_title = (
+            (parent.title if parent else "")
+            or (title_from(parent_engine.messages) if parent_engine is not None else "")
+            or "your chat"
+        )
+        try:
+            await self.deliver_to_session(child, side_task_opening(title, brief, parent_title))
+        except Exception:
+            logger.exception("side task %s opening turn failed", child)
+        return True
+
+    def start_side_task_direct(
+        self, parent_sid: str, title: str, brief: str
+    ) -> dict[str, Any]:
+        """The composer's "+ ▸ Side task…": the user starts one without the model (a
+        model may read "in a separate chat" as a figure of speech and do the work here).
+        Same checks and spawn as the tool. An idle parent gets a quiet started line; a
+        parent mid-turn gets none — the side chat shows in the sidebar either way."""
+        title = (title or "").strip()
+        brief = (brief or "").strip()
+        res = self.start_side_task(parent_sid, title, brief)
+        if not res.get("ok"):
+            return res
+        engine = self._engines.get(parent_sid)
+        payload = {"id": res["side_task_id"], "title": title}
+        if engine is not None and parent_sid not in self._running_sessions:
+            engine._append_notice(
+                SIDE_TASK_STARTED_KIND, f"Side task started: {title}", side_task=payload
+            )
+            self.save(parent_sid, engine, touch=False)
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_session(
+                        parent_sid, {"type": "side_task_started", "data": payload}
+                    ),
+                    self._loop,
+                )
+        return {"ok": True, "side_task_id": res["side_task_id"], "title": title}
+
+    def report_side_task(
+        self, child: str, summary: str, report_path: str = ""
+    ) -> dict[str, Any]:
+        """`report_back` for side task `child` (tool thread, or mark_idle's silent-child
+        fallback): mark it done and hand the report to the parent as a display-only card.
+        The parent's model never sees it unless the user adds it to the chat."""
+        record = self.session_store.load(child)
+        info = dict((record.side_task if record else None) or {})
+        parent = str(info.get("parent_session") or "")
+        if not parent:
+            return {"ok": False, "error": "This chat is not a side task."}
+        summary = (summary or "").strip()
+        if not summary:
+            return {"ok": False, "error": "report_back needs a summary."}
+        if len(summary) > MAX_SUMMARY_CHARS:
+            summary = summary[:MAX_SUMMARY_CHARS].rstrip() + " …"
+        payload: dict[str, Any] = {
+            "id": uuid.uuid4().hex[:12],
+            "session_id": child,
+            "title": str(info.get("title") or (record.title if record else "") or "Side task"),
+            "summary": summary,
+            "report_path": (report_path or "").strip(),
+            "status": "new",
+            "ts": time.time(),
+        }
+        info.update(
+            status="done",
+            report={k: payload[k] for k in ("id", "summary", "report_path", "ts")},
+        )
+        self.session_store.set_side_task(child, info)
+        if self._loop is not None:
+            # On the loop: the running check and the append then serialize with the
+            # parent's turn start/end, so a card never lands inside its reply.
+            self._loop.call_soon_threadsafe(self._queue_side_task_report, parent, payload)
+        else:
+            self._queue_side_task_report(parent, payload)
+        return {"ok": True, "next": "Report sent. End your turn now."}
+
+    def _queue_side_task_report(self, parent: str, payload: dict[str, Any]) -> None:
+        if parent in self._running_sessions:
+            self._pending_side_reports.setdefault(parent, []).append(payload)
+            return
+        self._deliver_side_task_report(parent, payload)
+
+    def _settle_interrupted_side_tasks(self) -> None:
+        """Side tasks still marked running at startup were cut off by a restart — a turn
+        never survives the process. Report that to their parents, so nobody waits on a
+        card that would never come; the user can open the side chat and tell it to
+        continue."""
+        for child in self.session_store.list():
+            info = child.side_task or {}
+            if not info.get("parent_session") or info.get("status") != "running":
+                continue
+            self._side_task_children.add(child.session_id)
+            self.report_side_task(
+                child.session_id,
+                "The side task was interrupted by a restart before it reported. Open the "
+                "side chat and ask it to continue.",
+            )
+
+    def _detach_side_tasks(self, parent_sid: str, record: Optional[SessionRecord]) -> bool:
+        """A deleted parent's side chats become ordinary chats (their work and history
+        stay). Returns True when one of them still works in the parent's folder, so the
+        caller keeps that folder."""
+        keep = False
+        parent_ws = os.path.realpath(record.workspace) if record and record.workspace else ""
+        for child in self.session_store.list():
+            if (child.side_task or {}).get("parent_session") != parent_sid:
+                continue
+            self.session_store.set_side_task(child.session_id, {})
+            self._side_task_children.discard(child.session_id)
+            if parent_ws and child.workspace and os.path.realpath(child.workspace) == parent_ws:
+                keep = True
+        self._pending_side_reports.pop(parent_sid, None)
+        return keep
+
+    def _deliver_side_task_report(self, parent: str, payload: dict[str, Any]) -> None:
+        """Append the report card to the parent's transcript — a `notice`, so it survives
+        reload and `_outbound_messages` never sends it — and show it to anyone viewing."""
+        if parent not in self._engines and self.session_store.load(parent) is None:
+            # The parent was deleted meanwhile: building an engine for it would resurrect
+            # it as an empty chat holding one card. The side chat keeps the report itself.
+            logger.warning("side task report for %s dropped: parent chat is gone", parent)
+            return
+        engine = self.get_engine(parent)
+        if engine is None:
+            logger.warning("side task report for %s dropped: no engine", parent)
+            return
+        engine._append_notice(SIDE_TASK_REPORT_KIND, payload["summary"], side_task=payload)
+        self.save(parent, engine)
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(
+                    parent, {"type": "side_task_report", "data": payload}
+                ),
+                self._loop,
+            )
+
+    def _finish_silent_side_task(self, session_id: str) -> None:
+        """A side task whose turn ended without `report_back` still reports — its last
+        message, or what stopped it — so the parent is never left waiting on a silent
+        child."""
+        if session_id not in self._side_task_children:
+            return
+        record = self.session_store.load(session_id)
+        info = (record.side_task if record else None) or {}
+        if info.get("status") != "running":
+            return
+        engine = self._engines.get(session_id)
+        last = next(
+            (
+                m
+                for m in reversed(engine.messages if engine is not None else [])
+                if m.get("role") in ("assistant", "notice")
+            ),
+            None,
+        )
+        summary = ""
+        if last is not None and last.get("role") == "assistant":
+            content = last.get("content")
+            summary = content.strip() if isinstance(content, str) else ""
+        elif last is not None and last.get("kind") == "error":
+            summary = f"The side task stopped with an error: {last.get('text') or 'unknown error'}"
+        elif last is not None and last.get("kind") == "interrupted":
+            summary = "The side task was stopped before it reported."
+        if not summary:
+            summary = (
+                "The side task ended without a report. Open the side chat to see where it "
+                "stopped."
+            )
+        self.report_side_task(session_id, summary)
+
+    def set_side_task_report_status(
+        self, parent: str, report_id: str, status: str
+    ) -> dict[str, Any]:
+        """The user's verdict on a report card — added to the chat, dismissed, or back to
+        new. The transcript log is append-only, so the verdict is its own marker notice
+        (the GUI folds it into the card); the live card is updated in place as well."""
+        if status not in ("new", "added", "dismissed"):
+            return {"ok": False, "error": "unknown status"}
+        engine = self.get_engine(parent)
+        if engine is None:
+            return {"ok": False, "error": "unknown session"}
+        for m in engine.messages:
+            if (
+                m.get("role") == "notice"
+                and m.get("kind") == SIDE_TASK_REPORT_KIND
+                and (m.get("side_task") or {}).get("id") == report_id
+            ):
+                m["side_task"] = {**m["side_task"], "status": status}
+                engine._append_notice(
+                    SIDE_TASK_STATUS_KIND, side_task={"id": report_id, "status": status}
+                )
+                self.save(parent, engine, touch=False)
+                return {"ok": True}
+        return {"ok": False, "error": "unknown report"}
 
     @staticmethod
     def _wake_message(wake) -> str:
@@ -8302,6 +8659,9 @@ class SessionManager:
                 pass
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
+        # Side tasks (sidetasks.py): the children outlive their parent as ordinary chats —
+        # detach them, and keep the parent's scratch dir while a child still works in it.
+        keep_scratch = self._detach_side_tasks(session_id, record)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         held = [sub.channel for sub in self.subscriptions.for_session(session_id)]
@@ -8319,7 +8679,7 @@ class SessionManager:
         self.inbox.resolve_session(session_id)
         # ...and its scratch dir. STRICTLY scoped: only a directory inside scratch_base is
         # removed — a real project folder the user picked is never touched.
-        if ok and record and record.workspace:
+        if ok and record and record.workspace and not keep_scratch:
             scratch = self.scratch_base().resolve()
             ws = Path(record.workspace)
             try:
@@ -8407,6 +8767,9 @@ class SessionManager:
                 # (+ a computed current-item line); leads carry role/team_id — drives
                 # the sidebar's ONE expandable team entry.
                 "team": self._session_team_row(r),
+                # Side tasks: {} for ordinary sessions; a child carries its parent's id,
+                # its title and running/done — drives the sidebar's nesting.
+                "side_task": self._session_side_task_row(r),
                 # Per-model token totals (spec §5) — the lead's side panel rolls a
                 # team's rows up; no dollars anywhere.
                 "usage": r.usage or {},
@@ -8416,6 +8779,17 @@ class SessionManager:
             for r in self.session_store.list(workspace=ws)
             if not r.session_id.startswith("__")  # hide internal threads
         ]
+
+    @staticmethod
+    def _session_side_task_row(record: SessionRecord) -> dict[str, Any]:
+        info = record.side_task or {}
+        if not info.get("parent_session"):
+            return {}
+        return {
+            "parent_session": str(info.get("parent_session", "")),
+            "title": str(info.get("title", "")),
+            "status": str(info.get("status", "")),
+        }
 
     def _session_team_row(self, record: SessionRecord) -> dict[str, Any]:
         info = record.team or {}

@@ -148,6 +148,9 @@ interface Props {
   teamSlot?: ReactNode;
   // UX-044: "View & edit…" in the Project memory submenu routes to the memory panel.
   onOpenMemory?: () => void;
+  // "+ ▸ Side task…" (coworker/sidetasks.py): start a side task from the user's own brief,
+  // without the model. Absent in side chats themselves (no nesting) and in compact mode.
+  onStartSideTask?: () => void;
   // Push text + attachments into the composer (e.g. a start-panel task card). The `nonce` makes
   // repeated identical prefills re-apply; the user can still edit before sending.
   prefill?: { text: string; attachments?: Attachment[]; nonce: number };
@@ -762,6 +765,17 @@ export function Composer(props: Props) {
                     t("composer.attach_other"),
                     () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
                   )}
+                  {/* Side task (coworker/sidetasks.py): hand a job to a separate chat from the
+                      user's own brief — no model in the loop. Hidden in side chats (no nesting). */}
+                  {props.onStartSideTask && (
+                    <>
+                      <div className="my-1 border-t border-line" />
+                      {attachItem("branch", t("sidetask.menu"), () => {
+                        setAttachMenuOpen(false);
+                        props.onStartSideTask?.();
+                      })}
+                    </>
+                  )}
                   {sessionRows && (
                     <>
                       <div className="my-1 border-t border-line" />
@@ -1126,7 +1140,7 @@ function ModeMenu({
 }
 
 // A row in the "+" attach menu.
-function attachItem(icon: "image" | "file" | "fileCode", label: string, onClick: () => void) {
+function attachItem(icon: "image" | "file" | "fileCode" | "branch", label: string, onClick: () => void) {
   return (
     <button
       className="w-full flex items-center gap-2.5 px-3 py-1.5 text-ui text-left hover:bg-paper"

@@ -24,6 +24,8 @@ export type EventType =
   | "model_changed"
   | "mode_notice"
   | "memory_saved"
+  | "side_task_report"
+  | "side_task_started"
   | "compacting"
   | "compacted"
   | "continuation"
@@ -132,6 +134,13 @@ export interface SessionInfo {
     status?: string;
     chat_enabled?: boolean;
     chat_unread?: number;
+  };
+  // Side tasks: absent/{} for ordinary sessions. A chat started by another chat's
+  // `start_side_task` carries its parent's id — it nests under the parent in the sidebar.
+  side_task?: {
+    parent_session?: string;
+    title?: string;
+    status?: "running" | "done" | string;
   };
 }
 
@@ -329,7 +338,20 @@ export type Item =
   // owner-hit 2026-07-28). Stays put. `previous` is set when an existing memory was
   // EDITED rather than a new one added (the update-don't-duplicate rule sends many
   // saves that way) — Undo restores that text instead of deleting the memory.
-  | { kind: "memory"; id: number; text: string; previous?: string; undone?: boolean };
+  | { kind: "memory"; id: number; text: string; previous?: string; undone?: boolean }
+  // A side task's report (coworker/sidetasks.py): display-only — this chat's model never
+  // saw it. The user adds it to the chat (composer attachment), dismisses it, or opens the
+  // side chat; `status` is that verdict, persisted as a marker notice after the card.
+  | {
+      kind: "sidetask";
+      id: string;
+      title: string;
+      summary: string;
+      reportPath?: string;
+      childSession: string;
+      status: "new" | "added" | "dismissed";
+      ts?: number;
+    };
 
 // -- ask_user question metadata (OPE-51) --------------------------------------
 // An option is a plain string (renders as today's pill) or a rich object: `label` is the answer

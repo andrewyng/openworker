@@ -358,8 +358,30 @@ export function Sidebar(props: Props) {
   };
 
   // Pinned sessions across ALL personas — the cross-persona band at the top (manual pins only).
+  // Side tasks (coworker/sidetasks.py) nest under the chat that started them — never
+  // top-level, like team workers. Archived ones list with the archived rows as usual.
+  // A side chat is never hidden: when its parent is gone (deleted) or archived, there is
+  // no row to nest under, so it lists as an ordinary chat instead.
+  const liveParents = new Set(
+    props.sessions.filter((s) => !s.archived).map((s) => s.session_id),
+  );
+  const isSideChild = (s: SessionInfo) =>
+    Boolean(s.side_task?.parent_session) &&
+    liveParents.has(String(s.side_task?.parent_session)) &&
+    !s.archived;
+  const sideChildren = new Map<string, SessionInfo[]>();
+  for (const s of props.sessions) {
+    if (!isSideChild(s) || s.session_id.startsWith("__")) continue;
+    const parent = String(s.side_task?.parent_session);
+    sideChildren.set(parent, [...(sideChildren.get(parent) || []), s]);
+  }
+  const withSideTasks = (
+    s: SessionInfo,
+    row: (s: SessionInfo, child: boolean) => JSX.Element,
+  ): JSX.Element[] => [row(s, false), ...(sideChildren.get(s.session_id) || []).map((k) => row(k, true))];
+
   const pinnedSessions = props.sessions.filter(
-    (s) => s.pinned && !s.session_id.startsWith("__") && !s.archived,
+    (s) => s.pinned && !s.session_id.startsWith("__") && !s.archived && !isSideChild(s),
   );
   // §31 (revised 2026-07-21): mention-spawned sessions list chronologically in Recent like any
   // other session — the OriginIcon in the row's indicator cluster marks where they came from.
@@ -434,7 +456,8 @@ export function Sidebar(props: Props) {
     (s) =>
       s.agent === browseKey &&
       !s.session_id.startsWith("__") &&
-      s.team?.role !== "worker", // workers nest under their lead, never top-level
+      s.team?.role !== "worker" && // workers nest under their lead, never top-level
+      !isSideChild(s),
   );
   const mine = all.filter((s) => !s.archived && !s.pinned);
   const archived = all.filter((s) => s.archived);
@@ -455,6 +478,7 @@ export function Sidebar(props: Props) {
   const recentSessions = [...props.sessions]
     .filter((s) => !s.archived && !s.session_id.startsWith("__") && !s.pinned)
     .filter((s) => s.team?.role !== "worker")
+    .filter((s) => !isSideChild(s))
     .filter((s) => personaVisible(s.agent))
     .filter(matches)
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
@@ -558,7 +582,7 @@ export function Sidebar(props: Props) {
 
   // A compact session row (mock §141 grouped/recent rows): one-line title + right-side indicators,
   // with the ⋮ actions kebab revealed on hover. Used in accordion bodies + grouped cards.
-  const sessionRow = (s: SessionInfo, opts: { showTime?: boolean } = {}) => {
+  const sessionRow = (s: SessionInfo, opts: { showTime?: boolean; child?: boolean } = {}) => {
     const title = s.title || s.session_id;
     const editing = editingId === s.session_id;
     const active = s.session_id === props.activeSession;
@@ -572,6 +596,7 @@ export function Sidebar(props: Props) {
         key={s.session_id}
         className={
           "group flex items-center gap-2 px-2 py-1.5 rounded-[7px] text-left cursor-pointer " +
+          (opts.child ? "sidetask-child ml-4 " : "") +
           (active
             ? "bg-chromeHover"
             : "hover:bg-panel") +
@@ -636,7 +661,7 @@ export function Sidebar(props: Props) {
   // right-side indicators, with the ⋮ actions kebab revealed on hover. Shared by the flat
   // layout's Pinned and Recent sections. Personas are disabled for the first release; when
   // they return, surface the persona on hover (e.g. in the row tooltip) — not as a subtitle.
-  const cardRow = (s: SessionInfo) => {
+  const cardRow = (s: SessionInfo, opts: { child?: boolean } = {}) => {
     const active = s.session_id === props.activeSession;
     const title = s.title || s.session_id;
     const editing = editingId === s.session_id;
@@ -650,6 +675,7 @@ export function Sidebar(props: Props) {
         key={s.session_id}
         className={
           "group w-full flex items-center gap-2.5 px-2 py-1.5 rounded-[7px] cursor-pointer text-left " +
+          (opts.child ? "sidetask-child ml-4 " : "") +
           (active
             ? "bg-chromeHover"
             : "hover:bg-chromeHover") +
@@ -718,7 +744,7 @@ export function Sidebar(props: Props) {
           {t("sidebar.pinned")}
         </div>
         <div className="space-y-0.5">
-          {pinnedSessions.map((s) => cardRow(s))}
+          {pinnedSessions.flatMap((s) => withSideTasks(s, (x, child) => cardRow(x, { child })))}
         </div>
       </div>
     ) : null;
@@ -891,7 +917,8 @@ export function Sidebar(props: Props) {
         (s) =>
           !s.archived &&
           !s.session_id.startsWith("__") &&
-          s.team?.role !== "worker",
+          s.team?.role !== "worker" &&
+          !isSideChild(s),
       )
       .map((s) => s.agent),
   );
@@ -985,7 +1012,7 @@ export function Sidebar(props: Props) {
                         // pl-[19px] aligns each session's name under the folder NAME (folder icon
                         // 15 + gap 6 + row px 6 − session px 8 = 19), per Rohit's clean-column ask.
                         <div className="space-y-0.5 pl-[19px]">
-                          {shown.map((s) => sessionRow(s, { showTime: true }))}
+                          {shown.flatMap((s) => withSideTasks(s, (x, child) => sessionRow(x, { showTime: true, child })))}
                           {!showAll && list.length > peek && (
                             <button
                               className="px-2 py-1 text-meta text-faint hover:text-muted"
@@ -1016,7 +1043,7 @@ export function Sidebar(props: Props) {
                 {(personaShowAll.has(browseKey)
                   ? mine.filter(matches)
                   : mine.filter(matches).slice(0, peek)
-                ).map((s) => sessionRow(s))}
+                ).flatMap((s) => withSideTasks(s, (x, child) => sessionRow(x, { child })))}
                 {!personaShowAll.has(browseKey) && mine.filter(matches).length > peek && (
                   <button
                     className="px-2 py-1 text-meta text-faint hover:text-muted"
@@ -1215,7 +1242,7 @@ export function Sidebar(props: Props) {
                                 : k}
                           </span>
                         </div>
-                        <div>{groups.get(k)!.map((s) => cardRow(s))}</div>
+                        <div>{groups.get(k)!.flatMap((s) => withSideTasks(s, (x, child) => cardRow(x, { child })))}</div>
                       </div>
                       );
                     });
@@ -1233,7 +1260,7 @@ export function Sidebar(props: Props) {
                   {(recentExpanded
                     ? recentSessions
                     : recentSessions.slice(0, RECENT_PEEK)
-                  ).map((s) => cardRow(s))}
+                  ).flatMap((s) => withSideTasks(s, (x, child) => cardRow(x, { child })))}
                   {recentSessions.length > RECENT_PEEK && (
                     <button
                       className="w-full text-left px-2 py-1.5 text-meta text-muted hover:text-ink"

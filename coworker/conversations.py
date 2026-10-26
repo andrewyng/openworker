@@ -115,6 +115,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN actor TEXT",
             "ALTER TABLE sessions ADD COLUMN usage TEXT",
             "ALTER TABLE sessions ADD COLUMN spawn TEXT",
+            "ALTER TABLE sessions ADD COLUMN side_task TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -426,6 +427,9 @@ class ConversationStore:
             ),
             usage=_load_grants(row["usage"] if "usage" in row.keys() else None),
             spawn=_load_grants(row["spawn"] if "spawn" in row.keys() else None),
+            side_task=_load_grants(
+                row["side_task"] if "side_task" in row.keys() else None
+            ),
         )
 
     def set_spawn(self, session_id: str, spawn: dict) -> None:
@@ -447,6 +451,17 @@ class ConversationStore:
             self._conn.execute(
                 "UPDATE sessions SET team = ? WHERE session_id = ?",
                 (json.dumps(team or {}), session_id),
+            )
+            self._conn.commit()
+
+    def set_side_task(self, session_id: str, side_task: dict) -> None:
+        """Persist a side task's tie to its parent chat and its status. Same shape as
+        `team`: the per-turn upsert never touches this column, so a child's first saved
+        turn can't detach it from the parent's sidebar entry."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET side_task = ? WHERE session_id = ?",
+                (json.dumps(side_task or {}), session_id),
             )
             self._conn.commit()
 
@@ -509,6 +524,9 @@ class ConversationStore:
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
                 usage=_load_grants(r["usage"] if "usage" in r.keys() else None),
                 spawn=_load_grants(r["spawn"] if "spawn" in r.keys() else None),
+                side_task=_load_grants(
+                    r["side_task"] if "side_task" in r.keys() else None
+                ),
             )
             for r in rows
         ]

@@ -37,6 +37,8 @@ import {
   renameSession,
   runAutomation,
   setSessionFlags,
+  setSideTaskReportStatus,
+  startSideTask,
   setAttendance,
   setUnattended,
   Session,
@@ -69,7 +71,9 @@ import {
 } from "./routes";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
-import { itemsFromMessages } from "./itemsFromMessages";
+import { itemsFromMessages, sideTaskItemFromPayload } from "./itemsFromMessages";
+import type { SideTaskAction, SideTaskItem } from "./components/SideTaskCard";
+import { SideTaskDialog } from "./components/SideTaskDialog";
 import { addTurnUsage, emptyUsage, teamUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
@@ -225,6 +229,8 @@ export function App() {
   const [reviewerPaused, setReviewerPaused] = useState(false);
   // UX-029 send-time folder enforcement: the stashed message while the folder dialog is
   // up. The message goes out the moment the dialog resolves; Escape restores the draft.
+  // "+ ▸ Side task…" form (coworker/sidetasks.py): open while the user writes the brief.
+  const [sideTaskDialog, setSideTaskDialog] = useState(false);
   const [sendGate, setSendGate] = useState<{
     text: string;
     attachments?: Attachment[];
@@ -1100,6 +1106,18 @@ export function App() {
           if (d.model) setModel(d.model);
           setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.model_switched") }]);
           break;
+        case "side_task_started":
+          // The user started a side task from the "+" menu: one quiet line here; the side
+          // chat itself appears under this one in the sidebar.
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.title ? `Side task started: ${d.title}` : "Side task started" }]);
+          refreshSessions();
+          break;
+        case "side_task_report":
+          // A side task finished (coworker/sidetasks.py): its report card, for the user to
+          // decide on. Display-only — nothing entered the model's context, no turn starts.
+          setItems((p) => [...p, sideTaskItemFromPayload(d)]);
+          refreshSessions(); // the side chat's sidebar row flips from running to done
+          break;
         case "memory_saved":
           // §5.1 save notice — inline in the transcript, where the user is already
           // looking and where it keeps until they act (a corner toast disappeared
@@ -1472,6 +1490,28 @@ export function App() {
   };
   const prefillComposer = (text: string, attachments?: Attachment[]) =>
     setComposerPrefill((p) => ({ text, attachments, nonce: (p?.nonce ?? 0) + 1 }));
+  // Side task report cards: the verdict is the user's, never automatic. "Add" puts the
+  // report in the composer as a text attachment — it enters this chat's context only when
+  // sent, with whatever instruction the user types alongside. "Dismiss" folds the card.
+  // "Open" selects the side chat (same coworker and folder as this one).
+  const onSideTask = (item: SideTaskItem, action: SideTaskAction) => {
+    if (action === "open") {
+      void selectSession(item.childSession, workspace || "", agent);
+      return;
+    }
+    const status = action === "add" ? "added" : "dismissed";
+    if (action === "add") {
+      const slug = item.title.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "side-task";
+      const text =
+        `# ${item.title}\n\n${item.summary}` +
+        (item.reportPath ? `\n\nFull report: ${item.reportPath}` : "");
+      prefillComposer("", [{ kind: "text", name: `${slug}.md`, text }]);
+    }
+    setItems((p) =>
+      p.map((it) => (it.kind === "sidetask" && it.id === item.id ? { ...it, status } : it)),
+    );
+    setSideTaskReportStatus(sessionId, item.id, status).catch(() => {});
+  };
   const interrupt = () => sessionRef.current?.interrupt();
   const retry = () => {
     // Optimistic running: turn_start confirms; a rejected retry still ends in turn_done.
@@ -2314,6 +2354,7 @@ export function App() {
                     running={running}
                     onRetry={retry}
                     onOpenConnectors={() => openSettings("connectors")}
+                    onSideTask={onSideTask}
                     onAllowAnyway={allowAnyway}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
@@ -2497,6 +2538,8 @@ export function App() {
               attendance={attendance}
               onAutoAnswerChange={agent !== "chat" ? toggleAutoAnswer : undefined}
               prefill={composerPrefill}
+              // A side chat never starts another side task (no nesting).
+              onStartSideTask={curSession?.side_task?.parent_session ? undefined : () => setSideTaskDialog(true)}
               resetKey={sessionId}
               usage={usage}
               contextWindow={modelContextWindows[model]}
@@ -2654,6 +2697,21 @@ export function App() {
         />
       )}
 
+      {/* "+ ▸ Side task…" (coworker/sidetasks.py): the user's own title and brief start a
+          side chat without the model. The side chat shows under this one in the sidebar. */}
+      {sideTaskDialog && surface === "session" && (
+        <SideTaskDialog
+          onCancel={() => setSideTaskDialog(false)}
+          onSubmit={async (title, brief) => {
+            const res = await startSideTask(sessionId, title, brief);
+            if (res.ok) {
+              setSideTaskDialog(false);
+              refreshSessions();
+            }
+            return res;
+          }}
+        />
+      )}
       {/* UX-029: the send-time folder dialog — the stashed message flies as soon as a
           choice lands; Escape/backdrop restores the draft to the composer. */}
       {sendGate && surface === "session" && (

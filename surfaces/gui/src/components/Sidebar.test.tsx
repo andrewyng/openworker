@@ -211,3 +211,47 @@ describe("New session button", () => {
     expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
   });
 });
+
+// Side tasks (coworker/sidetasks.py): a side chat is never a top-level row — it sits
+// right under the chat that started it, and opens like any other session.
+describe("Sidebar side tasks", () => {
+  it("nests a side chat under its parent and opens it on click", async () => {
+    stubFetch([
+      { match: "/v1/personas", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    const side: SessionInfo = {
+      session_id: "s-side-1", title: "Hoop sensing", workspace: "", agent: "cowork", model: "m", mode: "interactive",
+      updated_at: "2026-06-30", messages: 3, side_task: { parent_session: "s-cowork-1", title: "Hoop sensing", status: "done" },
+    };
+    // Newer than every parent: still never listed on its own.
+    render(<Sidebar {...baseProps} sessions={[side, ...SESSIONS]} />);
+    await waitFor(() => expect(screen.getByText("Hoop sensing")).toBeTruthy());
+    const row = screen.getByText("Hoop sensing").closest(".sidetask-child");
+    expect(row).not.toBeNull();
+    const parentRow = screen.getByText("hi there").closest("[title='hi there']");
+    expect(parentRow?.nextElementSibling).toBe(row);
+    fireEvent.click(screen.getByText("Hoop sensing"));
+    expect(baseProps.onSelectSession).toHaveBeenCalledWith("s-side-1", "", "cowork");
+  });
+
+  it("lists a side chat as an ordinary row when its parent is gone or archived", async () => {
+    stubFetch([
+      { match: "/v1/personas", json: PERSONAS },
+      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
+    ]);
+    const orphan: SessionInfo = {
+      session_id: "s-side-2", title: "Orphaned study", workspace: "", agent: "cowork", model: "m", mode: "interactive",
+      updated_at: "2026-06-30", messages: 3, side_task: { parent_session: "s-deleted", title: "Orphaned study", status: "running" },
+    };
+    const archivedParent: SessionInfo = { ...SESSIONS[1], session_id: "s-archived", title: "old chat", archived: true };
+    const childOfArchived: SessionInfo = {
+      ...orphan, session_id: "s-side-3", title: "Child of archived",
+      side_task: { parent_session: "s-archived", title: "Child of archived", status: "done" },
+    };
+    render(<Sidebar {...baseProps} sessions={[orphan, childOfArchived, archivedParent, ...SESSIONS]} />);
+    await waitFor(() => expect(screen.getByText("Orphaned study")).toBeTruthy());
+    expect(screen.getByText("Orphaned study").closest(".sidetask-child")).toBeNull();
+    expect(screen.getByText("Child of archived").closest(".sidetask-child")).toBeNull();
+  });
+});

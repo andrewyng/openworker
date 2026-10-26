@@ -56,6 +56,11 @@ class SessionRecord:
     # user's standing rules for this session only; `worktree` is removed on archive
     # or delete (the clone stays). {} for every other session.
     spawn: dict[str, Any] = field(default_factory=dict)
+    # Side tasks (coworker/sidetasks.py): {} for every ordinary session. A chat started
+    # by another chat's `start_side_task` carries {parent_session, title, status:
+    # "running"|"done", started_at, report?}. Drives the child's `report_back` tool and
+    # the sidebar's nesting under the parent.
+    side_task: dict[str, Any] = field(default_factory=dict)
 
 
 USAGE_FIELDS = ("input", "output", "cache_read", "cache_write")
