@@ -289,14 +289,27 @@ MATRIX: dict[str, ModelEntry] = {
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
         "Llama 4 Maverick · via Together", _AGENTIC, 1_000_000
     ),
-    "anyrouter:anyrouter/free": ModelEntry("Free (preset) · via AnyRouter"),
-    "anyrouter:anyrouter/agent": ModelEntry("Agent (preset) · via AnyRouter"),
-    "anyrouter:moonshotai/kimi-k3": ModelEntry("Kimi K3 · via AnyRouter"),
-    "anyrouter:google/gemini-3.6-flash": ModelEntry(
-        "Gemini 3.6 Flash · via AnyRouter"
+    # AnyRouter: its own routing presets plus other labs' models under their namespaces.
+    # Ids and windows from anyrouter.dev/api/v1/models (keyless, read 2026-10-25:
+    # `context_length` as below; `capabilities` list function-calling on all three, vision
+    # on auto and Kimi K3 — PDFs unverified over the compat surface). The earlier
+    # anyrouter/agent preset is gone; auto is the general route, free the no-cost pool.
+    "anyrouter:anyrouter/auto": ModelEntry(
+        "Auto (preset) · via AnyRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_048_576,
     ),
-    "anyrouter:google/gemini-3.5-flash-lite": ModelEntry(
-        "Gemini 3.5 Flash Lite · via AnyRouter"
+    "anyrouter:anyrouter/free": ModelEntry(
+        "Free (preset) · via AnyRouter", _AGENTIC, 1_048_576
+    ),
+    "anyrouter:moonshotai/kimi-k3": ModelEntry(
+        "Kimi K3 · via AnyRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_050_000,
     ),
     # fireworks.ai/models/fireworks/glm-5p2 lists "1040k tokens" (read 2026-09-08).
     "fireworks:accounts/fireworks/models/glm-5p2": ModelEntry(

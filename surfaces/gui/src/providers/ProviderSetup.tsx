@@ -66,6 +66,7 @@ export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: s
   huggingface: { url: "https://huggingface.co/settings/tokens", label: "huggingface.co" },
   cohere: { url: "https://dashboard.cohere.com/api-keys", label: "dashboard.cohere.com" },
   siliconflow: { url: "https://cloud.siliconflow.com", label: "cloud.siliconflow.com" },
+  anyrouter: { url: "https://anyrouter.dev/dashboard/keys", label: "anyrouter.dev" },
 };
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };

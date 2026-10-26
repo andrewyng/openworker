@@ -878,7 +878,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "anyrouter",
         "AnyRouter",
         base_url="https://anyrouter.dev/api/v1",
-        recommended_model="anyrouter/agent",
+        recommended_model="anyrouter/auto",
         env_key="ANYROUTER_API_KEY",
     ),
     _compat(
