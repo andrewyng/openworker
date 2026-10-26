@@ -219,6 +219,24 @@ def test_deleting_the_parent_detaches_its_side_chats_and_drops_late_reports(tmp_
     assert mgr.session_store.load("p1") is None
 
 
+def test_side_tasks_interrupted_by_a_restart_report_at_startup(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path, monkeypatch)
+    _parent(mgr, tmp_path)
+    assert mgr._create_side_task_row("p1", "c1", "Cut off")  # the row says running; no turn is in flight
+    done = mgr.session_store.load("c1")
+    done.side_task = {"parent_session": "p1", "title": "Finished earlier", "status": "done"}
+    mgr.session_store.save(done)
+    mgr.session_store.set_side_task("c1", done.side_task)
+    assert mgr._create_side_task_row("p1", "c2", "Cut off")
+
+    mgr._settle_interrupted_side_tasks()  # what start_gateway runs on boot
+    assert mgr.session_store.load("c2").side_task["status"] == "done"
+    assert mgr.session_store.load("c1").side_task["status"] == "done"
+    (card,) = _report_notices(mgr, "p1")
+    assert card["side_task"]["session_id"] == "c2"
+    assert "interrupted by a restart" in card["text"]
+
+
 def test_report_back_refuses_outside_a_side_task(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path, monkeypatch)
     _parent(mgr, tmp_path)

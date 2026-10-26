@@ -5737,6 +5737,7 @@ class SessionManager:
         (else parked). Returns the platforms whose listeners came up."""
         # Team steering/kicks are dispatched from tool threads; they need the app loop.
         self._loop = asyncio.get_running_loop()
+        self._settle_interrupted_side_tasks()
         self.scheduler.start()  # tick scheduler for automations (independent of connectors)
         return await self._build_and_start_gateway()
 
@@ -7673,6 +7674,22 @@ class SessionManager:
             self._pending_side_reports.setdefault(parent, []).append(payload)
             return
         self._deliver_side_task_report(parent, payload)
+
+    def _settle_interrupted_side_tasks(self) -> None:
+        """Side tasks still marked running at startup were cut off by a restart — a turn
+        never survives the process. Report that to their parents, so nobody waits on a
+        card that would never come; the user can open the side chat and tell it to
+        continue."""
+        for child in self.session_store.list():
+            info = child.side_task or {}
+            if not info.get("parent_session") or info.get("status") != "running":
+                continue
+            self._side_task_children.add(child.session_id)
+            self.report_side_task(
+                child.session_id,
+                "The side task was interrupted by a restart before it reported. Open the "
+                "side chat and ask it to continue.",
+            )
 
     def _detach_side_tasks(self, parent_sid: str, record: Optional[SessionRecord]) -> bool:
         """A deleted parent's side chats become ordinary chats (their work and history
