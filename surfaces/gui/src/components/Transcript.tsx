@@ -7,6 +7,7 @@ import { Markdown } from "./Markdown";
 import { TeamUpdateLine, TeamCreatedLine, foldTeamUpdates } from "./TeamUpdateLine";
 import type { MessageSource } from "../api";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
+import { SideTaskCard, type SideTaskAction, type SideTaskItem } from "./SideTaskCard";
 import { Icon } from "./Icon";
 
 // Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
@@ -468,6 +469,8 @@ interface Props {
   onRetry?: () => void;
   // mcp_error notices: "Open Connectors" jumps to the Connectors page (Integrations surface).
   onOpenConnectors?: () => void;
+  // Side task report cards: the user's verdict (add to chat / dismiss) or open the side chat.
+  onSideTask?: (item: SideTaskItem, action: SideTaskAction) => void;
   // MEMORY-SPEC §5.1: undo a just-announced write. `previous` (set when the write was
   // an edit) is the text to restore; without it the memory is deleted.
   onUndoMemory?: (id: number, previous?: string) => void;
@@ -532,7 +535,7 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onSideTask, onUndoMemory, onAllowAnyway }: Props) {
   const { t } = useTranslation();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -663,6 +666,8 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
                 </div>
               </div>
             );
+          case "sidetask":
+            return <SideTaskCard key={bi} item={item} onAction={onSideTask} />;
           case "notice":
             if (item.server && item.detail)
               return (

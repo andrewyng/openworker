@@ -86,6 +86,15 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           ...(meta?.grant ? { approvalGrant: meta.grant } : {}),
         });
       }
+    } else if (m.role === "notice" && m.kind === "side_task_report") {
+      // A side task's report card (coworker/sidetasks.py) — display-only, like every notice.
+      items.push(sideTaskItemFromPayload({ ...(m.side_task || {}), ts: m.ts }));
+    } else if (m.role === "notice" && m.kind === "side_task_report_status") {
+      // The user's verdict on a card. The log is append-only, so it follows the card as
+      // its own marker: fold it into the card, render nothing.
+      const st = m.side_task || {};
+      const card = items.find((it) => it.kind === "sidetask" && it.id === String(st.id || ""));
+      if (card && card.kind === "sidetask") card.status = sideTaskStatus(st.status);
     } else if (m.role === "notice") {
       // Persisted markers (engine `_append_notice`): error/interrupted/model-switch survive
       // reload exactly like the live view rendered them. An error notice is retriable —
@@ -131,6 +140,26 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
     // system messages are omitted; tool-result messages are folded into the tool row above
   }
   return items;
+}
+
+function sideTaskStatus(value: unknown): "new" | "added" | "dismissed" {
+  return value === "added" || value === "dismissed" ? value : "new";
+}
+
+/** The side-task card from the server's payload — the persisted notice's `side_task`
+ * sidecar on replay, the `side_task_report` event's data live. */
+export function sideTaskItemFromPayload(d: Record<string, any>): Extract<Item, { kind: "sidetask" }> {
+  const summary = String(d.summary || "");
+  return {
+    kind: "sidetask",
+    id: String(d.id || ""),
+    title: String(d.title || "Side task"),
+    summary,
+    ...(d.report_path ? { reportPath: String(d.report_path) } : {}),
+    childSession: String(d.session_id || ""),
+    status: sideTaskStatus(d.status),
+    ...(typeof d.ts === "number" ? { ts: d.ts } : {}),
+  };
 }
 
 function mcpNoticeItem(m: ConversationMessage): Item {

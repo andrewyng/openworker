@@ -488,6 +488,30 @@ body {
 .notice-block .notice-title { font-weight: 600; color: var(--ink); }
 .notice-block p { margin: 0; }
 
+/* Side task report card (coworker/sidetasks.py): a quiet line that expands to the summary
+   and the user's three choices. Same bones as the mode banner — a notice, not a message. */
+.sidetask-card {
+  margin: 12px 0; border: 1px solid var(--line); border-radius: 9px; background: var(--paper);
+  font-size: var(--fs-ui); color: var(--ink); line-height: 1.5;
+}
+.sidetask-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 13px;
+  text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+}
+.sidetask-label { color: var(--muted); white-space: nowrap; }
+.sidetask-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidetask-verdict { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.sidetask-chev { color: var(--muted); }
+.sidetask-verdict + .sidetask-chev { margin-left: 0; }
+.sidetask-head > .sidetask-chev:last-child:not(.sidetask-verdict + .sidetask-chev) { margin-left: auto; }
+.sidetask-body { padding: 0 13px 11px; display: flex; flex-direction: column; gap: 8px; }
+.sidetask-path { color: var(--muted); }
+.sidetask-path code { font-size: 0.92em; }
+.sidetask-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.sidetask-note { color: var(--muted); font-size: var(--fs-meta, 0.92em); }
+/* A side chat's sidebar row sits under the chat that started it. */
+.sidetask-child::before { content: "↳"; color: var(--faint); flex-shrink: 0; }
+
 /* approval */
 .approval {
   border: 1px solid var(--line-strong); background: var(--panel); border-radius: 14px;

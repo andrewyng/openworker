@@ -161,3 +161,55 @@ describe("itemsFromMessages mcp failure", () => {
     });
   });
 });
+
+// Side task report cards (coworker/sidetasks.py): the persisted notice replays as a card,
+// and the user's verdict — appended later, because the log is append-only — folds into it.
+describe("itemsFromMessages side task cards", () => {
+  const card = {
+    role: "notice",
+    kind: "side_task_report",
+    text: "Three methods: break-beam, net-motion, vision.",
+    ts: 1719700000,
+    side_task: {
+      id: "r1",
+      session_id: "c1",
+      title: "Hoop sensing",
+      summary: "Three methods: break-beam, net-motion, vision.",
+      report_path: "side-tasks/hoops.md",
+      status: "new",
+    },
+  };
+
+  it("replays the report notice as a sidetask card", () => {
+    const items = itemsFromMessages([{ role: "user", content: "draft the scope" }, card] as any);
+    expect(items[1]).toEqual({
+      kind: "sidetask",
+      id: "r1",
+      title: "Hoop sensing",
+      summary: "Three methods: break-beam, net-motion, vision.",
+      reportPath: "side-tasks/hoops.md",
+      childSession: "c1",
+      status: "new",
+      ts: 1719700000,
+    });
+  });
+
+  it("folds a later verdict marker into its card and renders nothing for the marker", () => {
+    const items = itemsFromMessages([
+      card,
+      { role: "assistant", content: "Meanwhile, the scope draft." },
+      { role: "notice", kind: "side_task_report_status", side_task: { id: "r1", status: "added" } },
+    ] as any);
+    expect(items.map((i) => i.kind)).toEqual(["sidetask", "assistant"]);
+    expect(items[0]).toMatchObject({ kind: "sidetask", id: "r1", status: "added" });
+  });
+
+  it("ignores a marker for a card it has not seen and unknown statuses", () => {
+    const items = itemsFromMessages([
+      { role: "notice", kind: "side_task_report_status", side_task: { id: "nope", status: "added" } },
+      { ...card, side_task: { ...card.side_task, status: "archived" } },
+    ] as any);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "sidetask", status: "new" });
+  });
+});

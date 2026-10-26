@@ -2608,6 +2608,16 @@
       "no_cloud_api": "未配置云端 API"
     }
   },
+  "sidetask": {
+    "report_arrived": "旁路任务报告",
+    "full_report": "完整报告：",
+    "add_to_chat": "加入对话",
+    "dismiss": "忽略",
+    "open_chat": "打开旁路对话",
+    "added": "已加入对话",
+    "dismissed": "已忽略",
+    "note": "只有你能看到这张卡片。报告只有在你加入并发送后才会进入这个对话。"
+  },
   "teamview": {
     "pending_requests_one": "1 个请求需要你的回答",
     "pending_requests_other": "{{count}} 个请求需要你的回答",

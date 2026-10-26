@@ -385,6 +385,24 @@ export async function renameSession(sessionId: string, title: string): Promise<{
   return res.json();
 }
 
+/** The user's verdict on a side task's report card (coworker/sidetasks.py): "added" once it
+ * went into the composer, "dismissed" when closed. Persisted so the card keeps its state. */
+export async function setSideTaskReportStatus(
+  sessionId: string,
+  id: string,
+  status: "new" | "added" | "dismissed",
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/side-task-report`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    },
+  );
+  return res.json();
+}
+
 export async function setSessionFlags(
   sessionId: string,
   flags: { pinned?: boolean; archived?: boolean },
