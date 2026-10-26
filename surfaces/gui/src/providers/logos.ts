@@ -103,7 +103,6 @@ export const PROVIDER_ORDER = [
   "vertex",
   "openrouter",
   "openrouter-account",
-  "requesty",
   "fireworks",
   "together",
   "zai",
@@ -121,11 +120,12 @@ export const PROVIDER_ORDER = [
   "novita",
   "groq",
   "upstage",
-  // No vendored marks yet for these four: the gallery shows the neutral monogram.
+  // No vendored marks yet for these five: the gallery shows the neutral monogram.
   "cerebras",
   "huggingface",
   "cohere",
   "siliconflow",
+  "requesty",
 ];
 
 export function providerRank(name: string): number {

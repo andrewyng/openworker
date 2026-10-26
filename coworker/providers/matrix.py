@@ -396,7 +396,8 @@ MATRIX: dict[str, ModelEntry] = {
         "Nemotron 3.5 Lightning · via NVIDIA", _AGENTIC, 1_000_000
     ),
     # Requesty slugs are `<vendor>/<model>` (router.requesty.ai/v1/models, read
-    # 2026-09-28: both report a 1,000,000 context_window and tool calling).
+    # 2026-09-28, re-read 2026-10-25: both report a 1,000,000 context_window and
+    # tool calling; Sonnet 5 declares vision).
     "requesty:zai/glm-5.2": ModelEntry(
         "GLM-5.2 · via Requesty", _AGENTIC, 1_000_000
     ),
