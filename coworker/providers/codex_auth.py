@@ -57,11 +57,18 @@ ORIGINATOR = "openworker"
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 PROFILE = "provider:openai-codex"
 FLOW_TIMEOUT_SECONDS = 300
+# The catalog schema OpenWorker understands. The Codex backend uses this value to
+# exclude models that require a newer wire contract; update it only after checking
+# the public `codex-protocol` ModelInfo schema for that release. Unknown response
+# fields are deliberately ignored by `discover_models` below.
+CODEX_CATALOG_CLIENT_VERSION = "0.162.1"
+CATALOG_DEFAULT_TTL_SECONDS = 300
+CATALOG_MIN_TTL_SECONDS = 60
+CATALOG_MAX_TTL_SECONDS = 3600
+CATALOG_MAX_BYTES = 1024 * 1024
 # Refresh this close to the JWT `exp` instead of sending an about-to-die bearer.
 REFRESH_MARGIN_SECONDS = 300
 _ACCOUNT_CLAIM = "https://api.openai.com/auth"
-# Smallest curated model — the verify probe should cost as close to nothing as possible.
-_VERIFY_MODEL = "gpt-5.1-codex-mini"
 
 SIGNED_OUT_ERROR = (
     "Not signed in to ChatGPT — connect your account in Settings ▸ Models to use "
@@ -309,6 +316,136 @@ class CodexTokenStore:
         )
 
 
+# -- live model catalog -------------------------------------------------------------
+
+
+def _catalog_ttl(cache_control: str) -> int:
+    """A bounded max-age from the account-scoped catalog response."""
+    for part in (cache_control or "").split(","):
+        key, sep, value = part.strip().partition("=")
+        if sep and key.lower() == "max-age":
+            try:
+                seconds = int(value.strip().strip('"'))
+            except ValueError:
+                break
+            return max(CATALOG_MIN_TTL_SECONDS, min(seconds, CATALOG_MAX_TTL_SECONDS))
+    return CATALOG_DEFAULT_TTL_SECONDS
+
+
+def _parse_catalog(body: Any) -> list[dict[str, Any]]:
+    """Reduce Codex ModelInfo rows to safe metadata used by OpenWorker's UI.
+
+    The remote catalog is account-scoped and untrusted. Only picker-visible rows
+    with unique, non-empty slugs survive; no instructions or opaque backend data
+    are persisted. Priority order is the backend's recommended picker order.
+    """
+    raw_models = body.get("models") if isinstance(body, dict) else None
+    if not isinstance(raw_models, list):
+        raise CodexAuthError("ChatGPT returned an invalid model catalog.")
+    parsed: list[tuple[int, int, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(raw_models):
+        if not isinstance(raw, dict) or raw.get("visibility") != "list":
+            continue
+        slug = raw.get("slug")
+        if not isinstance(slug, str) or not (slug := slug.strip()) or slug in seen:
+            continue
+        seen.add(slug)
+        display = raw.get("display_name")
+        display = display.strip() if isinstance(display, str) and display.strip() else slug
+        priority = raw.get("priority")
+        priority = priority if isinstance(priority, int) and not isinstance(priority, bool) else 0
+        context = raw.get("context_window") or raw.get("max_context_window")
+        if not isinstance(context, int) or isinstance(context, bool) or context <= 0:
+            context = None
+        levels: list[str] = []
+        for level in raw.get("supported_reasoning_levels") or []:
+            effort = level.get("effort") if isinstance(level, dict) else level
+            if isinstance(effort, str) and effort and effort not in levels:
+                levels.append(effort)
+        default_effort = raw.get("default_reasoning_level")
+        row: dict[str, Any] = {
+            "slug": slug,
+            "display_name": display,
+            "priority": priority,
+        }
+        if context is not None:
+            row["context_window"] = context
+        if levels:
+            row["reasoning_levels"] = levels
+        if isinstance(default_effort, str) and default_effort in levels:
+            row["default_reasoning_level"] = default_effort
+        modalities = [
+            value
+            for value in (raw.get("input_modalities") or [])
+            if isinstance(value, str) and value in ("text", "image")
+        ]
+        if modalities:
+            row["input_modalities"] = list(dict.fromkeys(modalities))
+        parsed.append((priority, index, row))
+    parsed.sort(key=lambda item: (item[0], item[1]))
+    return [row for _, _, row in parsed]
+
+
+def discover_models(secrets: Any, timeout: float = 5.0) -> dict[str, Any]:
+    """Fetch the models this signed-in ChatGPT account can use.
+
+    Returns a small, persistence-safe catalog plus its account-scoped expiry.
+    A bearer rejected mid-request gets the same single refresh retry as inference.
+    """
+    import httpx
+
+    store = CodexTokenStore(secrets)
+
+    def request(force_refresh: bool = False) -> Any:
+        token, account = store.refresh() if force_refresh else store.access_token()
+        return httpx.get(
+            CODEX_BASE_URL + "/models",
+            params={"client_version": CODEX_CATALOG_CLIENT_VERSION},
+            headers={
+                "Authorization": f"Bearer {token}",
+                **backend_headers(account, str(uuid.uuid4())),
+            },
+            timeout=timeout,
+        )
+
+    try:
+        response = request()
+        if response.status_code == 401:
+            response = request(force_refresh=True)
+    except CodexSignInRequired:
+        raise
+    except Exception as exc:
+        raise CodexAuthError(
+            f"Couldn't refresh ChatGPT models ({exc.__class__.__name__})."
+        ) from exc
+    if response.status_code in (401, 403):
+        raise CodexSignInRequired(EXPIRED_ERROR)
+    if response.status_code >= 300:
+        raise CodexAuthError(
+            f"ChatGPT model discovery returned HTTP {response.status_code}."
+        )
+    content = getattr(response, "content", b"")
+    if isinstance(content, bytes) and len(content) > CATALOG_MAX_BYTES:
+        raise CodexAuthError("ChatGPT returned an unexpectedly large model catalog.")
+    try:
+        models = _parse_catalog(response.json())
+    except CodexAuthError:
+        raise
+    except Exception as exc:
+        raise CodexAuthError("ChatGPT returned an invalid model catalog.") from exc
+    if not models:
+        raise CodexAuthError("ChatGPT returned no models available to this account.")
+    fetched_at = int(time.time())
+    ttl = _catalog_ttl(response.headers.get("cache-control", ""))
+    return {
+        "models": models,
+        "fetched_at": fetched_at,
+        "expires_at": fetched_at + ttl,
+        "client_version": CODEX_CATALOG_CLIENT_VERSION,
+    }
+
+
 # -- interactive sign-in flow -------------------------------------------------------
 
 # The last authorize URL, surfaced over REST so the GUI can offer "reopen sign-in
@@ -467,6 +604,10 @@ def verify(secrets: Any, timeout: float = 10.0) -> dict[str, Any]:
     if not store.signed_in():
         return {"ok": False, "error": SIGNED_OUT_ERROR, "state": "signed_out"}
     try:
+        # Never probe a hard-coded model: retired ids made a healthy subscription look
+        # broken. Discovery is account-scoped and supplies a currently selectable id.
+        catalog = discover_models(secrets, timeout=min(timeout, 5.0))
+        verify_model = catalog["models"][0]["slug"]
         token, account = store.access_token()
     except CodexSignInRequired as exc:
         return {"ok": False, "error": str(exc), "state": "signed_out"}
@@ -480,7 +621,7 @@ def verify(secrets: Any, timeout: float = 10.0) -> dict[str, Any]:
                 **backend_headers(account, str(uuid.uuid4())),
             },
             json={
-                "model": _VERIFY_MODEL,
+                "model": verify_model,
                 "input": "Reply with OK.",
                 "store": False,
                 "stream": True,

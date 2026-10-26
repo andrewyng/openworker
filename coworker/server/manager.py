@@ -406,6 +406,13 @@ class SessionManager:
         # the providers list + status route so the GUI can show "authorizing…".
         self._codex_authorizing = False
         self._codex_error: Optional[str] = None
+        # The account-scoped Codex model catalog is persisted beside its OAuth profile,
+        # but refreshed off-thread so opening Settings/the composer never waits on the
+        # network. This lock prevents the two surfaces from starting duplicate refreshes.
+        self._codex_catalog_refreshing = False
+        self._codex_catalog_refresh_lock = threading.Lock()
+        self._codex_catalog_fetch_lock = threading.Lock()
+        self._codex_catalog_retry_at = 0.0
         # http servers whose anonymous connect came back 401/403 — the failure is
         # "needs sign-in", so the GUI offers the OAuth switch instead of a raw error.
         self._mcp_auth_hints: set[str] = set()
@@ -4284,12 +4291,17 @@ class SessionManager:
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
-        Ollama → live `/api/tags` (best-effort); everyone else → the curated matrix,
-        topped up with the compat-vendor extras the matrix doesn't vouch for."""
+        Ollama/local servers and ChatGPT → live discovery (best-effort); everyone else
+        → the curated matrix, topped up with compat-vendor extras it doesn't vouch for."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
         if name in ("llamacpp", "vllm", "lmstudio"):
             return [m.split(":", 1)[-1] for m in self._local_server_models(name)]
+        if name == "openai-codex":
+            self._maybe_refresh_codex_catalog()
+            live = [row["slug"] for row in self._codex_catalog_models()]
+            if live:
+                return live
         from ..providers.matrix import models_for_provider
 
         return list(
@@ -4297,6 +4309,114 @@ class SessionManager:
                 [*models_for_provider(name), *self.COMPAT_MODELS.get(name, [])]
             )
         )
+
+    def _codex_catalog(self) -> dict[str, Any]:
+        profile = self.secrets.get("provider:openai-codex") or {}
+        catalog = profile.get("model_catalog")
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+            return {}
+        return catalog
+
+    def _codex_catalog_models(self) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self._codex_catalog().get("models") or []
+            if isinstance(row, dict) and isinstance(row.get("slug"), str) and row["slug"]
+        ]
+
+    def _codex_catalog_fresh(self) -> bool:
+        expires_at = self._codex_catalog().get("expires_at")
+        return isinstance(expires_at, (int, float)) and expires_at > time.time()
+
+    def _maybe_refresh_codex_catalog(self) -> None:
+        """Start one best-effort refresh when signed in and the live catalog is stale."""
+        profile = self.secrets.get("provider:openai-codex") or {}
+        if (
+            not profile.get("tokens")
+            or self._codex_catalog_fresh()
+            or time.time() < self._codex_catalog_retry_at
+        ):
+            return
+        with self._codex_catalog_refresh_lock:
+            if self._codex_catalog_refreshing:
+                return
+            self._codex_catalog_refreshing = True
+
+        def run() -> None:
+            try:
+                self.refresh_codex_catalog()
+            finally:
+                with self._codex_catalog_refresh_lock:
+                    self._codex_catalog_refreshing = False
+
+        threading.Thread(target=run, name="codex-model-catalog", daemon=True).start()
+
+    def refresh_codex_catalog(self, force: bool = False) -> bool:
+        """Refresh and persist the signed-in account's picker-visible Codex models.
+
+        The last successful catalog remains the offline fallback. Only newly discovered
+        slugs are auto-added, so removing a live model from the picker remains sticky.
+        """
+        with self._codex_catalog_fetch_lock:
+            return self._refresh_codex_catalog_locked(force)
+
+    def _refresh_codex_catalog_locked(self, force: bool) -> bool:
+        from ..providers import codex_auth
+        from ..providers.matrix import MATRIX
+
+        before = self.secrets.get("provider:openai-codex") or {}
+        if not before.get("tokens") or (not force and self._codex_catalog_fresh()):
+            return False
+        account = before.get("account_id") or before.get("account_email")
+        try:
+            catalog = codex_auth.discover_models(self.secrets)
+        except Exception as exc:
+            self._codex_catalog_retry_at = time.time() + 60
+            logger.info("codex model catalog refresh failed: %s", exc)
+            return False
+
+        # Sign-out or an account switch may have happened while the request was in flight.
+        current = self.secrets.get("provider:openai-codex") or {}
+        current_account = current.get("account_id") or current.get("account_email")
+        if not current.get("tokens") or current_account != account:
+            return False
+        old_rows = ((current.get("model_catalog") or {}).get("models") or [])
+        old_slugs = {
+            row.get("slug") for row in old_rows if isinstance(row, dict) and row.get("slug")
+        }
+        current["model_catalog"] = catalog
+        self.secrets.put("provider:openai-codex", current)
+        self._codex_catalog_retry_at = 0.0
+
+        models = self._prefs.get("models")
+        models = list(models) if isinstance(models, list) else []
+        hidden = set(self._prefs.get("hidden_models") or [])
+        changed = False
+        for row in catalog["models"]:
+            slug = row["slug"]
+            if slug in old_slugs:
+                continue
+            full = f"openai-codex:{slug}"
+            if full not in MATRIX and full not in models and full not in hidden:
+                models.append(full)
+                changed = True
+        if changed:
+            self._prefs["models"] = models
+            self._save_prefs()
+        return True
+
+    def _codex_catalog_labels(self) -> dict[str, str]:
+        return {
+            f"openai-codex:{row['slug']}": f"{row.get('display_name') or row['slug']} · ChatGPT plan"
+            for row in self._codex_catalog_models()
+        }
+
+    def _codex_catalog_context_windows(self) -> dict[str, int]:
+        return {
+            f"openai-codex:{row['slug']}": row["context_window"]
+            for row in self._codex_catalog_models()
+            if isinstance(row.get("context_window"), int)
+        }
 
     def set_provider(
         self, name: str, fields: Optional[dict[str, Any]]
@@ -4417,9 +4537,14 @@ class SessionManager:
         finally:
             self._codex_authorizing = False
         self._refresh_provider("openai-codex")
+        # Pull the account's authoritative catalog immediately after sign-in. Discovery
+        # is best-effort: a transient failure keeps the curated offline fallback.
+        await asyncio.to_thread(self.refresh_codex_catalog, True)
+        live = self._codex_catalog_models()
+        recommended = live[0]["slug"] if live else "gpt-5.6-sol"
         # Same convenience as set_provider: surface the recommended model right away,
         # and win the default when the current default's provider isn't usable.
-        added = "openai-codex:gpt-5.6-sol"
+        added = f"openai-codex:{recommended}"
         self.add_model(added)
         if not self._provider_configured(self._model_provider(self.model)):
             self.set_default_model(added)
@@ -4814,15 +4939,17 @@ class SessionManager:
         return {"ok": True, **self.get_settings()}
 
     def remove_model(self, model: str) -> dict[str, Any]:
-        """Remove a model id from the picker. Custom ids are dropped; matrix models are
-        hidden by id (the matrix is derived, not stored, so a bare drop would resurrect
-        them on the next read)."""
+        """Remove a model id from the picker. Custom ids are dropped; derived models are
+        hidden by id so the matrix or a later live-catalog refresh cannot resurrect them."""
         from ..providers.matrix import MATRIX
 
         models = self._prefs.get("models")
         models = models if isinstance(models, list) else []
         self._prefs["models"] = [m for m in models if m != model]
-        if model in MATRIX:
+        discovered_codex = model.startswith("openai-codex:") and any(
+            model == f"openai-codex:{row['slug']}" for row in self._codex_catalog_models()
+        )
+        if model in MATRIX or discovered_codex:
             hidden = self._prefs.get("hidden_models") or []
             if model not in hidden:
                 self._prefs["hidden_models"] = [*hidden, model]
@@ -4855,12 +4982,29 @@ class SessionManager:
 
         env_key = bool(os.environ.get("OPENAI_API_KEY"))
         stored = bool((self.secrets.get("provider:openai") or {}).get("api_key"))
+        self._maybe_refresh_codex_catalog()
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
-        selectable = [m for m in self._curated_models() if self.model_selectable(m)]
+        from ..providers.matrix import MATRIX, model_context_windows, model_labels
+
+        curated = self._curated_models()
+        live_codex = {row["slug"] for row in self._codex_catalog_models()}
+        if live_codex:
+            # Once the account has supplied an authoritative catalog, stale bundled
+            # subscription rows no longer belong in the picker. Custom/manual ids remain.
+            curated = [
+                m
+                for m in curated
+                if not (
+                    m.startswith("openai-codex:")
+                    and m in MATRIX
+                    and m.split(":", 1)[1] not in live_codex
+                )
+            ]
+        selectable = [m for m in curated if self.model_selectable(m)]
         # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
         if self._ollama_alive():
             selectable = list(dict.fromkeys([*selectable, *self._ollama_models()]))
@@ -4869,8 +5013,6 @@ class SessionManager:
                 selectable = list(dict.fromkeys([*selectable, *self._local_server_models(local)]))
         if self.model not in selectable:
             selectable.insert(0, self.model)
-        from ..providers.matrix import model_context_windows, model_labels
-
         return {
             "provider": "openai",
             "model": self.model,
@@ -4881,10 +5023,13 @@ class SessionManager:
             "org_policy": self.org_policy_status(),
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
-            "model_labels": model_labels(),
+            "model_labels": {**model_labels(), **self._codex_catalog_labels()},
             # {full id → context window in tokens}, verified matrix entries only —
             # drives the composer's context-fill meter (absent id → meter hides).
-            "model_context_windows": model_context_windows(),
+            "model_context_windows": {
+                **model_context_windows(),
+                **self._codex_catalog_context_windows(),
+            },
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
             # model's provider is configured (any provider, not just OpenAI), or for an
@@ -6505,6 +6650,31 @@ class SessionManager:
             return model_controls.NONE.as_dict()
         provider = self._model_provider(model)
         bare = model.split(":", 1)[1] if (provider != "openai" or model.startswith("openai:")) else model
+        if provider == "openai-codex":
+            live = next(
+                (row for row in self._codex_catalog_models() if row["slug"] == bare),
+                None,
+            )
+            if live:
+                supported = ("low", "medium", "high", "xhigh", "max")
+                levels = [
+                    level
+                    for level in live.get("reasoning_levels") or []
+                    if level in supported
+                ]
+                if levels:
+                    saved = _model_config.get(model).get("reasoning_effort")
+                    default = saved if saved in levels else live.get("default_reasoning_level")
+                    if default not in levels:
+                        default = levels[0]
+                    return {
+                        "thinking": {"support": "not_supported"},
+                        "reasoning": {
+                            "support": "supported",
+                            "levels": levels,
+                            "default": default,
+                        },
+                    }
         d = get_descriptor(provider)
         local = d is not None and d.kind == "local"
         server_thinking = None

@@ -475,6 +475,104 @@ def test_matrix_curates_subscription_models():
     assert caps.tools and caps.vision and caps.streaming
 
 
+# -- live model catalog --------------------------------------------------------------
+
+
+def _catalog_response(models, *, status=200, cache_control="max-age=120"):
+    body = {"models": models}
+    return SimpleNamespace(
+        status_code=status,
+        headers={"cache-control": cache_control},
+        content=json.dumps(body).encode(),
+        json=lambda: body,
+    )
+
+
+def test_discover_models_uses_account_catalog_and_filters_picker_rows(tmp_path, monkeypatch):
+    secrets = SecretStore(tmp_path / "s.json")
+    _seed(secrets)
+    seen = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers, timeout=timeout)
+        return _catalog_response(
+            [
+                {
+                    "slug": "gpt-6-luna",
+                    "display_name": "GPT-6 Luna",
+                    "visibility": "list",
+                    "priority": 20,
+                    "max_context_window": 500_000,
+                    "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+                    "default_reasoning_level": "high",
+                    "input_modalities": ["text", "image"],
+                },
+                {
+                    "slug": "internal-only",
+                    "display_name": "Internal",
+                    "visibility": "hide",
+                    "priority": 0,
+                },
+                {
+                    "slug": "gpt-6.1-sol",
+                    "display_name": "GPT-6.1 Sol",
+                    "visibility": "list",
+                    "priority": 10,
+                    "context_window": 900_000,
+                },
+                {  # duplicate slugs never create duplicate picker rows
+                    "slug": "gpt-6.1-sol",
+                    "display_name": "duplicate",
+                    "visibility": "list",
+                    "priority": 1,
+                },
+            ]
+        )
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    catalog = codex_auth.discover_models(secrets)
+    assert seen["url"] == CODEX_BASE_URL + "/models"
+    assert seen["params"] == {"client_version": codex_auth.CODEX_CATALOG_CLIENT_VERSION}
+    assert seen["headers"]["chatgpt-account-id"] == "acct_1"
+    assert seen["headers"]["originator"] == "openworker"
+    assert [row["slug"] for row in catalog["models"]] == ["gpt-6.1-sol", "gpt-6-luna"]
+    assert catalog["models"][1]["context_window"] == 500_000
+    assert catalog["models"][1]["reasoning_levels"] == ["low", "high"]
+    assert catalog["expires_at"] - catalog["fetched_at"] == 120
+
+
+def test_discover_models_refreshes_once_after_401(tmp_path, monkeypatch):
+    secrets = SecretStore(tmp_path / "s.json")
+    _seed(secrets)
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(headers["Authorization"])
+        if len(calls) == 1:
+            return _catalog_response([], status=401)
+        return _catalog_response(
+            [{"slug": "gpt-6-luna", "visibility": "list", "priority": 1}]
+        )
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    monkeypatch.setattr(CodexTokenStore, "refresh", lambda self: ("fresh-token", "acct_1"))
+    catalog = codex_auth.discover_models(secrets)
+    assert len(calls) == 2
+    assert calls[0].startswith("Bearer ")
+    assert calls[1] == "Bearer fresh-token"
+    assert catalog["models"][0]["slug"] == "gpt-6-luna"
+
+
+def test_discover_models_rejects_malformed_catalog(tmp_path, monkeypatch):
+    secrets = SecretStore(tmp_path / "s.json")
+    _seed(secrets)
+    response = _catalog_response([])
+    response.json = lambda: {"unexpected": []}
+    monkeypatch.setattr("httpx.get", lambda *args, **kwargs: response)
+    with pytest.raises(CodexAuthError, match="invalid model catalog"):
+        codex_auth.discover_models(secrets)
+
+
 # -- verify probe --------------------------------------------------------------------
 
 
@@ -482,6 +580,13 @@ def _verify_with_backend(tmp_path, monkeypatch, status: int):
     secrets = SecretStore(tmp_path / "s.json")
     _seed(secrets)
     probes: dict = {}
+
+    monkeypatch.setattr(
+        "httpx.get",
+        lambda *args, **kwargs: _catalog_response(
+            [{"slug": "gpt-current", "visibility": "list", "priority": 1}]
+        ),
+    )
 
     def fake_post(url, headers=None, json=None, timeout=None):
         probes.update(url=url, headers=headers, body=json)
@@ -502,6 +607,7 @@ def test_verify_ok_probes_backend(tmp_path, monkeypatch):
     assert probes["url"] == CODEX_BASE_URL + "/responses"
     assert probes["headers"]["Authorization"].startswith("Bearer ")
     assert probes["headers"]["chatgpt-account-id"] == "acct_1"
+    assert probes["body"]["model"] == "gpt-current"
     assert probes["body"]["store"] is False and probes["body"]["stream"] is True
 
 
@@ -530,12 +636,64 @@ def test_providers_list_shows_oauth_state(tmp_path):
 
     manager.secrets.put(
         "provider:openai-codex",
-        {"tokens": {"access_token": "a", "refresh_token": "r"}, "account_email": "u@x.com"},
+        {
+            "tokens": {"access_token": "a", "refresh_token": "r"},
+            "account_email": "u@x.com",
+            "model_catalog": {
+                "models": [{"slug": "gpt-live", "display_name": "GPT Live", "priority": 1}],
+                "expires_at": time.time() + 300,
+            },
+        },
     )
     row = {p["name"]: p for p in client.get("/v1/providers").json()}["openai-codex"]
     assert row["signed_in"] is True and row["configured"] is True
     assert row["account"] == "u@x.com"
     assert "tokens" not in row.get("values", {})  # secrets never leave the store
+
+
+def test_manager_merges_live_catalog_into_picker_metadata(tmp_path, monkeypatch):
+    manager, _ = _rest(tmp_path)
+    _seed(manager.secrets)
+    catalog = {
+        "models": [
+            {
+                "slug": "gpt-6.1-sol",
+                "display_name": "GPT-6.1 Sol",
+                "priority": 1,
+                "context_window": 900_000,
+                "reasoning_levels": ["low", "medium", "high", "ultra"],
+                "default_reasoning_level": "medium",
+            },
+            {"slug": "gpt-6-luna", "display_name": "GPT-6 Luna", "priority": 2},
+        ],
+        "fetched_at": int(time.time()),
+        "expires_at": int(time.time()) + 300,
+        "client_version": codex_auth.CODEX_CATALOG_CLIENT_VERSION,
+    }
+    monkeypatch.setattr(codex_auth, "discover_models", lambda secrets: catalog)
+
+    assert manager.refresh_codex_catalog(force=True) is True
+    providers = {row["name"]: row for row in manager.get_providers()}
+    assert providers["openai-codex"]["suggested_models"] == ["gpt-6.1-sol", "gpt-6-luna"]
+    settings = manager.get_settings()
+    assert "openai-codex:gpt-6.1-sol" in settings["models"]
+    assert "openai-codex:gpt-5.2-codex" not in settings["models"]
+    assert settings["model_labels"]["openai-codex:gpt-6.1-sol"] == (
+        "GPT-6.1 Sol · ChatGPT plan"
+    )
+    assert settings["model_context_windows"]["openai-codex:gpt-6.1-sol"] == 900_000
+    controls = manager.model_controls("openai-codex:gpt-6.1-sol")
+    assert controls["reasoning"] == {
+        "support": "supported",
+        "levels": ["low", "medium", "high"],
+        "default": "medium",
+    }
+
+    # A user's removal remains sticky when the same catalog refreshes again.
+    manager.remove_model("openai-codex:gpt-6-luna")
+    assert "openai-codex:gpt-6-luna" in manager._prefs["hidden_models"]
+    assert manager.refresh_codex_catalog(force=True) is True
+    assert "openai-codex:gpt-6-luna" not in manager.get_settings()["models"]
 
 
 def test_signin_route_starts_background_flow(tmp_path, monkeypatch):
@@ -597,11 +755,23 @@ async def test_manager_signin_stores_and_promotes_model(tmp_path, monkeypatch):
         return {"ok": True, "account": "user@example.com"}
 
     monkeypatch.setattr(codex_auth, "sign_in", fake_sign_in)
+    monkeypatch.setattr(
+        codex_auth,
+        "discover_models",
+        lambda secrets: {
+            "models": [
+                {"slug": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol", "priority": 1}
+            ],
+            "fetched_at": int(time.time()),
+            "expires_at": int(time.time()) + 300,
+            "client_version": codex_auth.CODEX_CATALOG_CLIENT_VERSION,
+        },
+    )
     result = await manager.codex_signin()
     assert result["ok"] is True
     assert manager._codex_authorizing is False
     settings = manager.get_settings()
-    assert "openai-codex:gpt-5.6-sol" in settings["models"]
+    assert "openai-codex:gpt-6.1-sol" in settings["models"]
 
 
 async def test_manager_signin_failure_lands_in_status(tmp_path, monkeypatch):
