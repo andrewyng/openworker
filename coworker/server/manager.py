@@ -2315,6 +2315,7 @@ class SessionManager:
         conn = self.mcp._conns.get(name)
         if conn is not None:
             conn.shutdown.set()
+        self.mcp.forget(name)
         self._mcp_errors.pop(name, None)
         removed = mcp_oauth.sign_out(name, self.secrets)
         return {"ok": True, "had_tokens": removed}
@@ -2347,6 +2348,7 @@ class SessionManager:
                     self._loop.call_soon_threadsafe(conn.shutdown.set)
                 else:
                     conn.shutdown.set()
+            self.mcp.forget(name)
             from ..mcp import oauth as mcp_oauth
 
             mcp_oauth.sign_out(name, self.secrets)
@@ -2534,6 +2536,7 @@ class SessionManager:
         conn = self.mcp._conns.get(name)
         if conn is not None:
             conn.shutdown.set()
+        self.mcp.forget(name)
         return disconnect_connector(self.secrets, name)
 
     def update_connector_tools(
