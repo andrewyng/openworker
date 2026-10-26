@@ -2616,7 +2616,18 @@
     "open_chat": "打开旁路对话",
     "added": "已加入对话",
     "dismissed": "已忽略",
-    "note": "只有你能看到这张卡片。报告只有在你加入并发送后才会进入这个对话。"
+    "note": "只有你能看到这张卡片。报告只有在你加入并发送后才会进入这个对话。",
+    "menu": "旁路任务…",
+    "dialog_title": "开始一个旁路任务",
+    "dialog_sub": "一个使用相同协作者、文件夹和模型的独立对话会在后台完成这项工作。它的报告会以卡片形式回到这里；在你加入对话之前只有你能看到。",
+    "dialog_name": "名称",
+    "dialog_name_placeholder": "Raspberry Pi 4 设计研究",
+    "dialog_brief": "简报",
+    "dialog_brief_placeholder": "旁路对话需要的全部信息，不多不少：问题、它必须了解的背景，以及要交付什么。",
+    "dialog_cancel": "取消",
+    "dialog_start": "开始",
+    "dialog_starting": "正在开始…",
+    "dialog_error": "无法开始旁路任务。"
   },
   "teamview": {
     "pending_requests_one": "1 个请求需要你的回答",

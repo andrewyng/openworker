@@ -147,6 +147,52 @@ def test_start_side_task_validates_and_caps(tmp_path, monkeypatch):
     assert mgr._spawning_side_tasks == {}
 
 
+def test_direct_start_from_the_composer_validates_like_the_tool(tmp_path, monkeypatch):
+    """"+ ▸ Side task…": the user's own title and brief go through the same checks as the
+    model's tool call, over the REST endpoint."""
+    from fastapi.testclient import TestClient
+    from coworker.server import create_app
+
+    mgr = _mgr(tmp_path, monkeypatch)
+    _parent(mgr, tmp_path)
+    client = TestClient(create_app(mgr))
+    url = "/v1/sessions/p1/side-tasks"
+    assert "needs a title" in client.post(url, json={"title": " ", "brief": "b"}).json()["error"]
+    assert "needs a brief" in client.post(url, json={"title": "Pi 4 study"}).json()["error"]
+    # Without the server loop nothing spawns, and the parent gets no started line.
+    res = client.post(url, json={"title": "Pi 4 study", "brief": "How would the design change?"}).json()
+    assert res["ok"] is False and "running server" in res["error"]
+    assert all(m.get("kind") != "side_task_started" for m in mgr.get_engine("p1").messages)
+
+
+def test_direct_start_leaves_a_started_line_on_an_idle_parent(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path, monkeypatch)
+    _parent(mgr, tmp_path)
+    # Stand in for the running server: the spawn is scheduled, not awaited here.
+    scheduled: list = []
+    monkeypatch.setattr(mgr, "_spawn_side_task", lambda *a: scheduled.append(a) or _noop())
+    monkeypatch.setattr("asyncio.run_coroutine_threadsafe", lambda coro, loop: coro.close())
+    mgr._loop = object()
+
+    res = mgr.start_side_task_direct("p1", " Pi 4 study ", " How would the design change? ")
+    assert res["ok"] and res["title"] == "Pi 4 study"
+    assert scheduled and scheduled[0][0] == "p1" and scheduled[0][2:] == ("Pi 4 study", "How would the design change?")
+    (line,) = [m for m in mgr.get_engine("p1").messages if m.get("kind") == "side_task_started"]
+    assert line["text"] == "Side task started: Pi 4 study"
+    assert line["side_task"] == {"id": res["side_task_id"], "title": "Pi 4 study"}
+    # Display-only, like every notice.
+    assert all(m.get("role") != "notice" for m in mgr.get_engine("p1")._outbound_messages())
+
+    # Mid-turn, the parent gets no line (a card never lands inside a reply).
+    mgr.mark_running("p1")
+    assert mgr.start_side_task_direct("p1", "Second", "brief")["ok"]
+    assert len([m for m in mgr.get_engine("p1").messages if m.get("kind") == "side_task_started"]) == 1
+
+
+async def _noop():
+    return True
+
+
 def test_report_back_refuses_outside_a_side_task(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path, monkeypatch)
     _parent(mgr, tmp_path)

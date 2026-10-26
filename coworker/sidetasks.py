@@ -24,6 +24,9 @@ SIDE_TASK_REPORT_KIND = "side_task_report"
 # The user's verdict on a card (added / dismissed / new). The transcript log is
 # append-only, so a verdict is its own marker notice; the GUI folds it into the card.
 SIDE_TASK_STATUS_KIND = "side_task_report_status"
+# A quiet line in the parent when the USER started a side task from the composer's
+# "+" menu (the model-started path leaves its tool call in the transcript instead).
+SIDE_TASK_STARTED_KIND = "side_task_started"
 # A report is a summary, not the write-up: the full report belongs in a file.
 MAX_SUMMARY_CHARS = 4000
 # Running side tasks per chat. A chat that fans out further is a team job.
@@ -55,13 +58,16 @@ def start_side_task_tool(start: Callable[[str, str], dict[str, Any]]) -> Any:
     """The parent's tool. `start(title, brief)` is the manager's spawn entry point."""
 
     def start_side_task(title: str, brief: str) -> dict:
-        """Hand a self-contained job — research, a comparison, a draft — to a separate chat
-        that runs in the background on the same coworker, folder and model, so this
-        chat's context stays clear for the main work. `title` names the new chat in a few
-        words. `brief` is everything the side chat needs and nothing more: the question,
-        the context it must know, and what to deliver. Returns at once; carry on with your
-        own work. The report arrives as a card for the user, who decides whether it comes
-        into this chat — never wait for it."""
+        """Hand a self-contained job — a study, research, a comparison, a draft — to a
+        separate chat that runs in the background on the same coworker, folder and model,
+        so this chat's context stays clear for the main work. Use it whenever the user
+        asks for something "in a separate chat", "as a side task", "in the background",
+        "without cluttering this chat", or "in a new chat and report back": do NOT do that
+        work here. `title` names the new chat in a few words. `brief` is everything the
+        side chat needs and nothing more: the question, the context it must know (the
+        project, constraints, decisions so far), and what to deliver. Returns at once;
+        carry on with your own work. The report arrives as a card for the user, who
+        decides whether it comes into this chat — never wait for it."""
         return start(str(title or "").strip(), str(brief or "").strip())
 
     return ai.tool(

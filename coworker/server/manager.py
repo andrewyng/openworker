@@ -40,6 +40,7 @@ from ..sidetasks import (
     MAX_SUMMARY_CHARS,
     SIDE_TASK_REPORT_KIND,
     SIDE_TASK_STARTED_HINT,
+    SIDE_TASK_STARTED_KIND,
     SIDE_TASK_STATUS_KIND,
     report_back_tool,
     side_task_opening,
@@ -7569,6 +7570,34 @@ class SessionManager:
         except Exception:
             logger.exception("side task %s opening turn failed", child)
         return True
+
+    def start_side_task_direct(
+        self, parent_sid: str, title: str, brief: str
+    ) -> dict[str, Any]:
+        """The composer's "+ ▸ Side task…": the user starts one without the model (a
+        model may read "in a separate chat" as a figure of speech and do the work here).
+        Same checks and spawn as the tool. An idle parent gets a quiet started line; a
+        parent mid-turn gets none — the side chat shows in the sidebar either way."""
+        title = (title or "").strip()
+        brief = (brief or "").strip()
+        res = self.start_side_task(parent_sid, title, brief)
+        if not res.get("ok"):
+            return res
+        engine = self._engines.get(parent_sid)
+        payload = {"id": res["side_task_id"], "title": title}
+        if engine is not None and parent_sid not in self._running_sessions:
+            engine._append_notice(
+                SIDE_TASK_STARTED_KIND, f"Side task started: {title}", side_task=payload
+            )
+            self.save(parent_sid, engine, touch=False)
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self.broadcast_session(
+                        parent_sid, {"type": "side_task_started", "data": payload}
+                    ),
+                    self._loop,
+                )
+        return {"ok": True, "side_task_id": res["side_task_id"], "title": title}
 
     def report_side_task(
         self, child: str, summary: str, report_path: str = ""

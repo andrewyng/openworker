@@ -25,6 +25,7 @@ export type EventType =
   | "mode_notice"
   | "memory_saved"
   | "side_task_report"
+  | "side_task_started"
   | "compacting"
   | "compacted"
   | "continuation"

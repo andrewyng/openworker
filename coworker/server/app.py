@@ -826,6 +826,14 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         return manager.rename_session(session_id, str(body.get("title", "")))
 
+    @app.post("/v1/sessions/{session_id}/side-tasks")
+    def session_start_side_task(session_id: str, body: dict) -> dict[str, Any]:
+        """The composer's "+ ▸ Side task…": start one from the user's own title and brief."""
+        body = body or {}
+        return manager.start_side_task_direct(
+            session_id, str(body.get("title", "")), str(body.get("brief", ""))
+        )
+
     @app.post("/v1/sessions/{session_id}/side-task-report")
     def session_side_task_report(session_id: str, body: dict) -> dict[str, Any]:
         """The user's verdict on a side task's report card: added, dismissed, or new."""

@@ -89,6 +89,9 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
     } else if (m.role === "notice" && m.kind === "side_task_report") {
       // A side task's report card (coworker/sidetasks.py) — display-only, like every notice.
       items.push(sideTaskItemFromPayload({ ...(m.side_task || {}), ts: m.ts }));
+    } else if (m.role === "notice" && m.kind === "side_task_started") {
+      // The user started a side task from the "+" menu: one quiet line.
+      items.push({ kind: "notice", tone: "info", text: m.text || "Side task started" });
     } else if (m.role === "notice" && m.kind === "side_task_report_status") {
       // The user's verdict on a card. The log is append-only, so it follows the card as
       // its own marker: fold it into the card, render nothing.

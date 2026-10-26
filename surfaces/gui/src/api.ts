@@ -385,6 +385,24 @@ export async function renameSession(sessionId: string, title: string): Promise<{
   return res.json();
 }
 
+/** "+ ▸ Side task…" (coworker/sidetasks.py): start a side task from the user's own title and
+ * brief, without the model. The side chat runs on this session's coworker, folder and model. */
+export async function startSideTask(
+  sessionId: string,
+  title: string,
+  brief: string,
+): Promise<{ ok: boolean; side_task_id?: string; error?: string }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/side-tasks`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, brief }),
+    },
+  );
+  return res.json();
+}
+
 /** The user's verdict on a side task's report card (coworker/sidetasks.py): "added" once it
  * went into the composer, "dismissed" when closed. Persisted so the card keeps its state. */
 export async function setSideTaskReportStatus(
