@@ -196,6 +196,7 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
+    "minimax:MiniMax-M3": ModelEntry("MiniMax M3 · MiniMax"),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba", _AGENTIC, 256_000),
     # Qwen3.8 Max: multimodal (text/image/video/document) per Alibaba's model card, unlike
     # the text-only Qwen3 Max above — needs its own entry so the qwen prefix heuristic in
