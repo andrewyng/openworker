@@ -23,7 +23,7 @@ import threading
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 
 @dataclass
@@ -218,22 +218,31 @@ def subscription_tools(
     *,
     default_platform: str = "slack",
     routing_targets: Optional[list[str]] = None,
+    register: Optional[Callable[[str, str], dict]] = None,
+    release: Optional[Callable[[str, str], None]] = None,
 ) -> list:
     """The channel-subscription tools for a messaging persona's session: subscribe / unsubscribe /
     list / catch up. The agent obtains a channel by asking the user (ask_user) or from a channel
-    message it's reacting to."""
+    message it's reacting to. `register(session_id, addr)` / `release(session_id, addr)` are the
+    manager's cloud hooks (spec §3.3): the same one-responder rule and the same "held by" answer
+    the app's UI gets — an agent never silently splits a channel with another session."""
 
     def subscribe_channel(channel: str) -> dict:
         """Subscribe THIS session to a messaging channel so you receive its messages (a steer while
         you work, or a fresh turn when idle). Ask the user which channel (ask_user) if you don't
         already have one. `channel` may be a Slack `#channel` mention, a `platform:chat_id` address,
-        or a channel id."""
+        or a channel id. If another session already answers that channel you get `held_by` back —
+        tell the user; only they can move it (in the app)."""
         addr = resolve_channel(channel, default_platform=default_platform)
         if not addr or ":" not in addr:
             return {
                 "ok": False,
                 "error": f"could not resolve a channel from {channel!r}",
             }
+        if register is not None:
+            verdict = register(session_id, addr)
+            if not verdict.get("ok"):
+                return {"ok": False, "channel": addr, **verdict}
         store.subscribe(session_id, addr)
         warn = None
         if routing_targets and addr in routing_targets:
@@ -248,6 +257,8 @@ def subscription_tools(
         """Stop THIS session from listening to a channel."""
         addr = resolve_channel(channel, default_platform=default_platform)
         removed = store.unsubscribe(session_id, addr)
+        if removed and release is not None:
+            release(session_id, addr)
         return {"ok": True, "unsubscribed": addr, "was_subscribed": removed}
 
     def list_subscriptions() -> dict:

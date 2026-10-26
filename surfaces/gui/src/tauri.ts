@@ -16,6 +16,15 @@ export const platformOS = (): string => {
   return /mac/i.test(navigator.userAgent) ? "macos" : /win/i.test(navigator.userAgent) ? "windows" : "linux";
 };
 
+// macOS major version (26 for Tahoe), injected by the shell; 0 when unknown (browser dev).
+// macOS 26 places the traffic lights itself, higher than the position the shell asks for,
+// so the top strip lays out differently there (styles.css, `.macos-26`).
+export const macosMajor = (): number => {
+  const injected = (globalThis as any).__OCW_OS_VERSION__;
+  const major = typeof injected === "string" ? parseInt(injected.split(".")[0], 10) : NaN;
+  return Number.isFinite(major) ? major : 0;
+};
+
 export type DictationStatus = {
   recording: boolean;
   model_installed: boolean;
@@ -125,9 +134,8 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
  * Windows hands off to the installer). */
 export const installUpdate = () => invokeStrict<void>("install_update");
 
-/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
- * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op
- * (the desktop webview has no opener plugin wired yet). */
+/** Open a URL in the user's browser: the Tauri opener plugin in the desktop app (wired in
+ * src-tauri, `opener:default`), `window.open` in a browser. */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {

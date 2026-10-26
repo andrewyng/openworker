@@ -84,3 +84,86 @@ def test_unrelated_errors_pass_through_raw():
         friendly_model_error("gpt-5.6-sol", RuntimeError("connection reset by peer"))
         is None
     )
+
+
+def test_os_permission_error_is_not_a_model_access_error():
+    """An unreadable FILE is not a billing problem.
+
+    Every OS PermissionError stringifies as "[Errno 13] Permission denied: <path>". The
+    marker list used to contain "permission denied" with a space, so any such error was
+    reported as "your account doesn't have access to <model>", sending debugging after a
+    provider outage that never happened. Unrecognized errors must return None so the
+    caller surfaces the raw message.
+    """
+    exc = PermissionError(13, "Permission denied", "/src/.coworker/skills")
+    assert friendly_model_error("openrouter:moonshotai/kimi-k3", exc) is None
+
+    # The genuine provider marker (Anthropic's underscored error type) still translates.
+    real = RuntimeError("Error code: 403 - {'type': 'permission_error', 'message': '...'}")
+    msg = friendly_model_error("anthropic:claude-fable-5", real)
+    assert msg and "doesn't have access to anthropic:claude-fable-5" in msg
+
+# -- friendly authentication errors ------------------------------------------------------
+def test_qwen_auth_error_mentions_endpoint_mismatch():
+    # DashScope's 401 InvalidApiKey — the exact shape the OpenAI SDK surfaces when a
+    # China-portal key hits the international endpoint (or vice versa).
+    exc = RuntimeError(
+        "Error code: 401 - {'code': 'InvalidApiKey', 'message': 'Invalid API-key "
+        "provided.'}"
+    )
+    msg = friendly_model_error("qwen:qwen3-max", exc)
+    assert msg is not None
+    assert "qwen3-max" in msg
+    assert "dashscope.aliyuncs.com" in msg
+    assert "dashscope-intl.aliyuncs.com" in msg
+    assert "endpoint" in msg.lower()
+
+
+def test_qwen_auth_error_works_with_bare_model_name():
+    # A bare "qwen3-max" (no provider prefix) should still be recognized as Qwen.
+    exc = RuntimeError(
+        "Error code: 401 - {'code': 'InvalidApiKey', 'message': 'Invalid API-key "
+        "provided.'}"
+    )
+    msg = friendly_model_error("qwen3-max", exc)
+    assert msg is not None
+    assert "qwen3-max" in msg
+
+
+def test_generic_auth_error_for_non_qwen_provider():
+    # DeepSeek uses "invalid_api_key" — should get the generic key-check message,
+    # not the Qwen-specific endpoint guidance.
+    exc = RuntimeError(
+        "Error code: 401 - {'error': {'code': 'invalid_api_key', 'message': "
+        "'Incorrect API key provided.'}}"
+    )
+    msg = friendly_model_error("deepseek:deepseek-v4-pro", exc)
+    assert msg is not None
+    assert "deepseek-v4-pro" in msg
+    assert "Settings" in msg
+    # Must NOT mention DashScope endpoints for a non-Qwen provider
+    assert "dashscope" not in msg.lower()
+
+
+def test_permission_error_is_not_treated_as_auth_failure():
+    # A 403 permission_error is about model access, not key validity — it must be
+    # caught by _NO_ACCESS, not by the auth-failure path.
+    exc = RuntimeError(
+        "Error code: 403 - {'error': {'type': 'permission_error', 'message': "
+        "'You do not have access to this model.'}}"
+    )
+    msg = friendly_model_error("qwen:qwen3-max", exc)
+    assert msg is not None
+    assert "doesn't have access" in msg
+    assert "endpoint" not in msg.lower()
+
+
+def test_unrelated_401_passes_through_raw():
+    # A 401 that doesn't carry an invalid-key marker should NOT be dressed up.
+    assert (
+        friendly_model_error(
+            "qwen:qwen3-max",
+            RuntimeError("Error code: 401 - token expired, refresh required"),
+        )
+        is None
+    )

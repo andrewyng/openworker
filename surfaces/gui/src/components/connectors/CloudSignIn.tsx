@@ -8,7 +8,17 @@ import { announceCloudChanged, cloudLogin, waitForCloudSignIn } from "../../api"
 // even poll-less hosts (the Sources rail's inline pane) re-render signed in —
 // relying on "some other section's 5s poll" left the rail stuck on the prompt
 // (FB-013).
-export function CloudSignInInline({ blurb }: { blurb?: string }) {
+export function CloudSignInInline({
+  blurb,
+  onSignedIn,
+}: {
+  blurb?: string;
+  // Fires once the poll confirms sign-in landed, after announceCloudChanged() —
+  // lets a caller (e.g. a one-click connect that just discovered its session had
+  // expired) resume the flow it was in instead of leaving the user to notice the
+  // button reappeared and click it again (issue #658).
+  onSignedIn?: () => void;
+}) {
   const { t } = useTranslation();
   const [waiting, setWaiting] = useState(false);
   const cancelRef = useRef<(() => void) | null>(null);
@@ -16,7 +26,7 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
   return (
     <div className="space-y-1.5">
       <button
-        className="w-full px-3 py-2 rounded-lg border border-accent text-accent text-[13px] font-medium hover:bg-accentSoft/40"
+        className="w-full px-3 py-2 rounded-lg border border-accent text-accent text-ui font-medium hover:bg-accentSoft/40"
         data-testid="inline-cloud-sign-in"
         onClick={async () => {
           setWaiting(true);
@@ -24,14 +34,17 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
           cancelRef.current?.();
           cancelRef.current = waitForCloudSignIn((s) => {
             setWaiting(false);
-            if (s?.signed_in) announceCloudChanged();
+            if (s?.signed_in) {
+              announceCloudChanged();
+              onSignedIn?.();
+            }
           });
         }}
       >
         {waiting ? t("cloud.check_browser") : t("cloud.sign_in")}
       </button>
-      <div className="text-[12px] text-faint">
-        {blurb || "Sign-in unlocks one-click connects — or switch to Manual, which works without it."}
+      <div className="text-meta text-faint">
+        {blurb || t("misc.cloud_signin.blurb")}
       </div>
     </div>
   );
@@ -44,7 +57,7 @@ export function CloudStatusPending() {
   const { t } = useTranslation();
   return (
     <div
-      className="text-[12px] text-faint py-2 text-center"
+      className="text-meta text-faint py-2 text-center"
       data-testid="cloud-status-pending"
     >
       {t("cloud.checking")}

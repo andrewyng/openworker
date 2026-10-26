@@ -13,7 +13,7 @@ import pytest
 
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
-from coworker.tools.search import _py_grep, search_tools
+from coworker.tools.search import _parse_rg, _py_grep, search_tools
 from coworker.web.fetch import _html_to_text, make_web_fetch_tool
 
 
@@ -39,6 +39,37 @@ def test_grep_finds_matches_and_respects_glob(tmp_path):
     assert all(m["file"].endswith(".py") for m in only_py["matches"])
     assert not any("node_modules" in m["file"] for m in only_py["matches"])
     assert only_py["matches"][0]["line"] == 1
+
+
+def test_parse_rg_handles_windows_drive_letter_paths():
+    # `rg --null` emits `<path>\0<line>:<text>`. A Windows absolute path leads with a
+    # drive-letter colon (C:\...); the old `split(":", 2)` mis-parsed it as file="C",
+    # line=0, text="12:...". Regression for issue #17 — asserts hold on every platform.
+    from pathlib import Path
+
+    stdout = "C:\\ws\\a.py\x0012:def hello():\n"
+    out = _parse_rg(stdout, Path("C:\\ws"), 100)
+    assert out["count"] == 1
+    m = out["matches"][0]
+    assert m["line"] == 12
+    assert m["text"] == "def hello():"
+    # the whole path survives (not truncated to the drive letter "C"); .endswith
+    # stays platform-independent — on Linux _rel can't relativize a `C:\` path, so it
+    # returns the raw string, which still ends with the filename.
+    assert m["file"].endswith("a.py")
+
+
+def test_grep_works_when_workspace_sits_under_an_ignored_dir_name(tmp_path):
+    # Regression for #576: ripgrep matches --glob patterns against paths
+    # relative to the *current working directory*, not the search root, so a
+    # workspace living under e.g. .../node_modules/ws excluded itself entirely.
+    ws = tmp_path / "node_modules" / "ws"
+    ws.mkdir(parents=True)
+    (ws / "a.py").write_text("hello under ignored parent\n", encoding="utf-8")
+    grep = search_tools(str(ws))[0]
+    out = grep(pattern="hello")
+    assert out["count"] == 1
+    assert out["matches"][0]["file"] == "a.py"
 
 
 def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, monkeypatch):

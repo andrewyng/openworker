@@ -8,10 +8,36 @@ end-to-end with no network, tokens, or the Slack app console. See
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 
 from coworker.testing.fake_slack import FakeSlack
+
+
+def assert_user_only(path: Path) -> None:
+    """Assert `path` is readable by the current user alone, per the platform's own model.
+
+    POSIX says this with mode bits. Windows has no such bits: `os.stat` derives `st_mode`
+    from the read-only attribute only, so every writable file reports 0o666 and a
+    `st_mode & 0o777 == 0o600` check can never pass there, not even for a file that
+    `secrets._restrict_to_user` has correctly locked down with `icacls`. Assert the ACL
+    instead, mirroring how the protection is applied in the first place.
+    """
+    if sys.platform == "win32":
+        acl = subprocess.run(
+            ["icacls", str(path)], capture_output=True, text=True
+        ).stdout
+        # `/inheritance:r` strips inherited ACEs; their absence is what proves the file
+        # was restricted rather than left to inherit SYSTEM/Administrators from its parent.
+        assert "(I)" not in acl, f"{path} still carries inherited ACEs:\n{acl}"
+        for principal in ("NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"):
+            assert principal not in acl, f"{path} grants {principal}:\n{acl}"
+    else:
+        assert (path.stat().st_mode & 0o777) == 0o600
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +53,17 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("COWORKER_API_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_docker_host_network_probe(monkeypatch):
+    """OpenShell's preflight asks, on a Mac, whether Docker Desktop's host networking is on,
+    by starting a container. No unit test may do that; the check has its own tests."""
+    from coworker.sandbox import setup_cmd
+    from coworker.sandbox.providers import openshell
+
+    monkeypatch.setattr(openshell, "host_network_problem", lambda: None)
+    monkeypatch.setattr(setup_cmd, "_host_network_ok_at", 0.0)
+
+
 @pytest_asyncio.fixture
 async def fake_slack(monkeypatch):
     """A running FakeSlack control object; `SLACK_API_URL` is set to it for the test's duration."""
@@ -37,3 +74,14 @@ async def fake_slack(monkeypatch):
         yield fake
     finally:
         await fake.stop()
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_ollama_facts():
+    """Model facts are cached per Ollama server for a minute (providers/ollama_facts.py);
+    a test must never see another test's fake server."""
+    from coworker.providers import ollama_facts
+
+    ollama_facts.forget_all()
+    yield
+    ollama_facts.forget_all()

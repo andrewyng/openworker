@@ -113,6 +113,20 @@ class SecretStoreTokenStorage(TokenStorage):
             return None
 
     async def set_client_info(self, info: OAuthClientInformationFull) -> None:
+        # A DCR that issues a client_secret has registered a CONFIDENTIAL client, even when
+        # it ignored the `token_endpoint_auth_method: "none"` we asked for and left the field
+        # out of its response (Supabase's hosted MCP: 201 + client_secret, method absent).
+        # The SDK reads the method off the client info and, for "none"/absent, sends no
+        # secret at all (client.auth.oauth2 `prepare_token_auth`), so every exchange 422s
+        # "Required parameter: client_secret" and one-click Connect can never finish.
+        # Record the method the issued secret implies; a method the server names still wins.
+        #
+        # Correct the object itself, not just the copy we store: the SDK assigns this very
+        # instance to `context.client_info` immediately before this call and re-reads the
+        # method from there at token-exchange time. Normalizing only the stored copy would
+        # leave the connect that just registered still sending no secret.
+        if info.client_secret and not info.token_endpoint_auth_method:
+            info.token_endpoint_auth_method = "client_secret_post"
         self._merge({"client_info": info.model_dump(mode="json", exclude_none=True)})
 
 
@@ -327,7 +341,9 @@ def build_auth(
             "redirect_uris": [redirect_base() + CALLBACK_PATH],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
-            # Public client: DCR issues no secret a native app could keep anyway.
+            # Ask for a public client: a native app has no secret it could keep. A server
+            # that registers a confidential client regardless (and returns a secret) is
+            # handled in set_client_info above.
             "token_endpoint_auth_method": "none",
         }
     )

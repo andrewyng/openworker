@@ -29,14 +29,23 @@ function clock(ts: string): string {
     : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-export function TeamChatView({ teamId, onClose }: { teamId: string; onClose: () => void }) {
+export function TeamChatView({
+  teamId,
+  sessionId,
+  onClose,
+}: {
+  teamId: string;
+  // The lead session the team belongs to — routes the calls to its machine (spec §6).
+  sessionId?: string;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
   const [chat, setChat] = useState<TeamChat | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement | null>(null);
 
-  const load = () => getTeamChat(teamId).then(setChat).catch(() => {});
+  const load = () => getTeamChat(teamId, sessionId).then(setChat).catch(() => {});
   useEffect(() => {
     load();
     const t = setInterval(load, 3000);
@@ -58,7 +67,7 @@ export function TeamChatView({ teamId, onClose }: { teamId: string; onClose: () 
     if (!text || busy) return;
     setBusy(true);
     try {
-      await postTeamChat(teamId, text);
+      await postTeamChat(teamId, text, sessionId);
       setDraft("");
       await load();
     } finally {

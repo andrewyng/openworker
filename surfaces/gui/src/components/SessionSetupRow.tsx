@@ -1,10 +1,17 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getRecentWorkspaces, openWorkspace, type Persona, type RecentWorkspace } from "../api";
+import {
+  getRecentWorkspaces,
+  openWorkspace,
+  type Machine,
+  type Persona,
+  type RecentWorkspace,
+} from "../api";
 import { chooseFolder } from "../tauri";
 import { fullPersonaName } from "../personaScope";
 import { baseName } from "../paths";
 import { Icon } from "./Icon";
+import { MachineFolderDialog } from "./MachineFolderDialog";
 
 // UX-029: the session-setup row — per-SESSION choices (coworker + folder) in their own
 // quiet chip row above the composer, a different species from the per-MESSAGE controls
@@ -19,6 +26,14 @@ interface Props {
   showFolder: boolean;
   // The user's explicit folder pick for this draft, if any (never a temporary dir's path).
   folderName: string | null;
+  // Remote homes (UX-045 frame B): the runs-on chip. Renders only when ≥1 machine
+  // is enrolled — with zero machines none of this exists visually.
+  machines?: Machine[];
+  machine?: string | null;
+  // Cloud mode: there is no local home — "This Mac" isn't a choice, and a
+  // machine is required (the chip label prompts until one is picked).
+  cloud?: boolean;
+  onPickMachine?: (id: string | null) => void;
   onPickCoworker: (id: string) => void;
   onPickFolder: (path: string, branch?: string | null) => void;
   onManage: () => void;
@@ -27,16 +42,43 @@ interface Props {
   onImport: () => void;
 }
 
+// Picker order (UX ruling 2026-09-29): the general coworkers first, with no label; then
+// Engineering and Security, each under a hairline and a small label; any other group after,
+// by name. A group is left out when it has nothing to show.
+const PICKER_GROUP_ORDER = ["engineering", "security"];
+
+export function personaGroups(personas: Persona[]): { group: string; items: Persona[] }[] {
+  const by = new Map<string, Persona[]>();
+  for (const p of personas) {
+    const g = p.group && p.group !== "general" ? p.group : "";
+    by.set(g, [...(by.get(g) || []), p]);
+  }
+  const rest = [...by.keys()].filter((g) => g && !PICKER_GROUP_ORDER.includes(g)).sort();
+  return ["", ...PICKER_GROUP_ORDER, ...rest]
+    .filter((g) => (by.get(g) || []).length > 0)
+    .map((g) => ({ group: g, items: by.get(g) || [] }));
+}
+
 export function SessionSetupRow(props: Props) {
   const { t } = useTranslation();
-  const [openMenu, setOpenMenu] = useState<"coworker" | "folder" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"coworker" | "folder" | "machine" | null>(null);
+  // On a machine, the Mac's file picker cannot see the folders: a dialog takes a typed path.
+  const [machineDialog, setMachineDialog] = useState(false);
   const [recents, setRecents] = useState<RecentWorkspace[] | null>(null);
   const [error, setError] = useState("");
   const personas = (props.personas || []).filter((p) => p.enabled);
   const current = personas.find((p) => p.id === props.agent);
+  const machines = props.machines || [];
+  const currentMachine = machines.find((m) => m.id === props.machine) || null;
 
-  const toggle = (menu: "coworker" | "folder") => {
+  const toggle = (menu: "coworker" | "folder" | "machine") => {
     setError("");
+    if (menu === "folder" && currentMachine) {
+      // The folder lives on the machine: no menu, the path dialog.
+      setOpenMenu(null);
+      setMachineDialog(true);
+      return;
+    }
     if (menu === "folder" && openMenu !== "folder") {
       getRecentWorkspaces().then(setRecents).catch(() => setRecents([]));
     }
@@ -59,11 +101,22 @@ export function SessionSetupRow(props: Props) {
   };
 
   const chip =
-    "relative inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-muted hover:text-ink hover:bg-paper cursor-pointer select-none whitespace-nowrap";
+    "relative inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-ui text-muted hover:text-ink hover:bg-paper cursor-pointer select-none whitespace-nowrap";
 
   return (
     <div className="max-w-3xl mx-auto mb-1.5 px-1 flex items-center gap-1.5" data-testid="setup-row">
       {openMenu && <div className="fixed inset-0 z-20" onClick={() => setOpenMenu(null)} />}
+      {machineDialog && currentMachine && (
+        <MachineFolderDialog
+          coworkerName={fullPersonaName(current?.name, props.agent)}
+          machine={currentMachine}
+          onPick={(path, branch) => {
+            setMachineDialog(false);
+            props.onPickFolder(path, branch);
+          }}
+          onCancel={() => setMachineDialog(false)}
+        />
+      )}
 
       {/* Coworker chip — name only, no icon (owner call). */}
       <div className="relative">
@@ -73,29 +126,40 @@ export function SessionSetupRow(props: Props) {
         </button>
         {openMenu === "coworker" && (
           <div className="setup-menu absolute bottom-full mb-1.5 left-0 z-30 w-[320px] bg-panel border border-line rounded-xl2 shadow-xl p-1">
-            {personas.map((p) => (
-              <button
-                key={p.id}
-                className={
-                  "w-full text-left px-2.5 py-2 rounded-lg hover:bg-paper " +
-                  (p.id === props.agent ? "bg-accentSoft/50" : "")
-                }
-                onClick={() => {
-                  setOpenMenu(null);
-                  props.onPickCoworker(p.id);
-                }}
-              >
-                <span className="block text-[13px] font-medium text-ink">
-                  {fullPersonaName(p.name, p.id)}
-                </span>
-                {p.tagline && (
-                  <span className="block text-[12px] text-muted truncate">{p.tagline}</span>
+            {personaGroups(personas).map(({ group, items }) => (
+              <div key={group || "general"} data-testid={group ? `coworker-group-${group}` : undefined}>
+                {group && (
+                  <div className="border-t border-line mt-1 pt-1">
+                    <div className="px-2.5 pt-1.5 pb-0.5 text-meta text-faint">
+                      {t(`setup.group_${group}`, { defaultValue: group })}
+                    </div>
+                  </div>
                 )}
-              </button>
+                {items.map((p) => (
+                  <button
+                    key={p.id}
+                    className={
+                      "w-full text-left px-2.5 py-2 rounded-lg hover:bg-paper " +
+                      (p.id === props.agent ? "bg-accentSoft/50" : "")
+                    }
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onPickCoworker(p.id);
+                    }}
+                  >
+                    <span className="block text-ui font-medium text-ink">
+                      {fullPersonaName(p.name, p.id)}
+                    </span>
+                    {p.tagline && (
+                      <span className="block text-meta text-muted truncate">{p.tagline}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
             <div className="border-t border-line mt-1 pt-1">
               <button
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-[12px] text-accent"
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-meta text-accent"
                 data-testid="import-coworker"
                 onClick={() => {
                   setOpenMenu(null);
@@ -105,7 +169,7 @@ export function SessionSetupRow(props: Props) {
                 {t("setup.import_coworker")}
               </button>
               <button
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-[12px] text-accent"
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-meta text-accent"
                 onClick={() => {
                   setOpenMenu(null);
                   props.onManage();
@@ -142,20 +206,81 @@ export function SessionSetupRow(props: Props) {
                   >
                     <Icon name="folder" size={13} className="mt-0.5 shrink-0 text-muted" />
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-medium text-ink truncate">{baseName(w.path)}</span>
-                      <span className="block text-[12px] text-faint truncate">{w.path}</span>
+                      <span className="block text-ui font-medium text-ink truncate">{baseName(w.path)}</span>
+                      <span className="block text-meta text-faint truncate">{w.path}</span>
                     </span>
                   </button>
                 ))}
               <div className={(recents || []).some((w) => w.exists) ? "border-t border-line mt-1 pt-1" : ""}>
                 <button
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-[12px] text-accent"
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-paper text-meta text-accent"
                   onClick={() => void browse()}
                 >
                   {props.folderName ? t("setup.choose_another_folder") : t("setup.choose_a_folder")}
                 </button>
               </div>
-              {error && <div className="px-2.5 py-1 text-[12px] text-warnInk">{error}</div>}
+              {error && <div className="px-2.5 py-1 text-meta text-warnInk">{error}</div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Runs-on chip (UX-045 frame B) — only when ≥1 machine is enrolled. Fixed at
+          creation: the row leaves after the first message, taking the choice with it. */}
+      {machines.length > 0 && props.onPickMachine && (
+        <div className="relative">
+          <button className={chip} data-testid="runson-chip" onClick={() => toggle("machine")}>
+            <span aria-hidden>⌂</span>
+            <span className="max-w-[160px] truncate">
+              {currentMachine ? currentMachine.name : props.cloud ? t("onmachine.setup.choose_machine") : t("onmachine.this_mac")}
+            </span>
+            <Icon name="chevronDown" size={12} className="text-faint" />
+          </button>
+          {openMenu === "machine" && (
+            <div className="setup-menu absolute bottom-full mb-1.5 left-0 z-30 w-[240px] bg-panel border border-line rounded-xl2 shadow-xl p-1">
+              {!props.cloud && (
+                <button
+                  className={
+                    "w-full text-left px-2.5 py-2 rounded-lg hover:bg-paper " +
+                    (!props.machine ? "bg-accentSoft/50" : "")
+                  }
+                  onClick={() => {
+                    setOpenMenu(null);
+                    props.onPickMachine!(null);
+                  }}
+                >
+                  <span className="block text-ui font-medium text-ink">{t("onmachine.this_mac")}</span>
+                </button>
+              )}
+              {machines.map((m, i) => (
+                // Union view: cloud rows sit under a quiet divider — same
+                // choice, different registry (they wear the origin, that's all).
+                <div key={m.id}>
+                  {m.origin === "cloud" && machines[i - 1]?.origin !== "cloud" && (
+                    <div className="px-2.5 pt-2 pb-1 text-[10.5px] text-faint font-medium">
+                      {t("onmachine.openworker_cloud")}
+                    </div>
+                  )}
+                  <button
+                    className={
+                      "w-full text-left px-2.5 py-2 rounded-lg " +
+                      (m.connected ? "hover:bg-paper " : "opacity-45 cursor-not-allowed ") +
+                      (m.id === props.machine ? "bg-accentSoft/50" : "")
+                    }
+                    disabled={!m.connected}
+                    title={m.connected ? undefined : t("onmachine.offline")}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onPickMachine!(m.id);
+                    }}
+                  >
+                    <span className="block text-ui font-medium text-ink">⌂ {m.name}</span>
+                    {!m.connected && (
+                      <span className="block text-meta text-faint">{t("onmachine.offline")}</span>
+                    )}
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </div>

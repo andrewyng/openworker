@@ -236,6 +236,28 @@ def test_begin_managed_connect_requires_sign_in(secrets, config):
     out = cloud.begin_managed_connect(secrets, config, "gmail")
     assert not out["ok"]
     assert "not signed in" in out["error"]
+    assert out["signed_in"] is False
+
+
+def test_begin_managed_connect_reports_signed_out_on_expired_unrefreshable_session(
+    secrets, config
+):
+    """GitHub issue #658 ("Add to Slack" dead-ends on "not signed in"): the GUI
+    polls /v1/cloud/status every 5s and only checks `access_token` presence
+    (cloud.status), so a stored-but-expired session with no refresh_token still
+    reads signed_in=True there — the button stays live. begin_managed_connect is
+    the flow's actual authority: it calls fresh_access_token, which returns None
+    for exactly this profile, so this is where the rejection has to happen and
+    where the GUI's recovery-into-sign-in depends on `signed_in: False` being set
+    (not just `ok: False`, whose text a UI shouldn't have to pattern-match)."""
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert cloud.status(secrets)["signed_in"] is True  # the stale, misleading read
+
+    out = cloud.begin_managed_connect(secrets, config, "slack")
+    assert out == {"ok": False, "error": "not signed in", "signed_in": False}
 
 
 def test_managed_profile_is_field_compatible_with_manual(secrets):
@@ -443,6 +465,44 @@ def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch
     }
 
 
+def test_gallery_install_event_sends_nothing_when_opted_out(secrets, config, monkeypatch):
+    """The install event must respect the telemetry toggle — it fired regardless of it
+    before #398, so a user who turned telemetry off was still POSTed to on install."""
+    _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, False)
+
+    def boom(*a, **k):
+        raise AssertionError("opted-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_sends_nothing_signed_out(secrets, config, monkeypatch):
+    _signed_in_marker = secrets.get(cloud.CLOUD_AUTH_PROFILE)
+    assert _signed_in_marker is None  # start signed out
+
+    def boom(*a, **k):
+        raise AssertionError("signed-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_posts_when_enabled(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent["body"] = kwargs["json"]
+        return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    cloud.gallery_install_event(secrets, config, "sales")
+    assert sent["url"] == "https://cloud.test/v1/personas/gallery/sales/install-events"
+
+
 # --- gallery solo page ------------------------------------------------------
 
 
@@ -480,7 +540,9 @@ You are the Sales Coworker."""
     assert out["card"]["pitch_markdown"] == "**pitch**"
     caps = out["capabilities"]
     assert caps["tools"] == ["files", "search", "todo"]
-    assert caps["messaging"] is True
+    # `messaging: true` decides nothing (spec §11): the legacy `connectors: true` grants
+    # the recommended connectors (hubspot), none of which is a chat platform.
+    assert caps["messaging"] is False and caps["connectors"] == ["hubspot"]
     assert out["recommends"] == [
         {"kind": "connector", "ref": "hubspot", "reason": "read deals", "tier": "core"}
     ]
@@ -496,3 +558,80 @@ def test_gallery_detail_rejects_malformed_manifest(secrets, config, monkeypatch)
     out = cloud.gallery_detail(secrets, config, "bad")
     assert not out["ok"]
     assert "validation" in out["error"]
+
+
+# --- delegated (machine-held) renewal — machines spec §Remote OAuth ------------
+
+
+def test_refresh_managed_token_delegated_fallback(secrets, config, monkeypatch):
+    """No cloud session (a box): a delegated managed profile renews by
+    possession on the delegated route — no Authorization header, opaque
+    user_id in the body. The renewed tokens land back in the profile."""
+    secrets.put(
+        "notion:default",
+        {
+            "managed": True,
+            "provider": "notion",
+            "refresh_token": "1//MOVED",
+            "connection_id": "conn_abc",
+            "broker_user_id": "u_opaque",
+        },
+    )
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers or {}
+        seen["json"] = json
+        return FakeResponse(200, {"access_token": "at.NEW", "expires_in": 3600})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    profile = cloud.refresh_managed_token(secrets, config, "notion")
+    assert profile is not None and profile["access_token"] == "at.NEW"
+    assert seen["url"].endswith("/v1/oauth/notion/refresh-delegated")
+    assert "Authorization" not in seen["headers"]
+    assert seen["json"]["user_id"] == "u_opaque"
+    assert seen["json"]["connection_id"] == "conn_abc"
+
+
+def test_refresh_managed_token_undelegated_box_gives_up(secrets, config, monkeypatch):
+    """No session AND no delegation ids: nothing to present — return None
+    rather than hammering the broker."""
+    secrets.put(
+        "notion:default",
+        {"managed": True, "provider": "notion", "refresh_token": "1//X"},
+    )
+    monkeypatch.setattr(
+        cloud.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call"))
+    )
+    assert cloud.refresh_managed_token(secrets, config, "notion") is None
+
+
+def test_delegate_connection_returns_opaque_user_id(secrets, config, monkeypatch):
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "sess", "expires": 9999999999},
+    )
+    seen = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["json"] = json
+        seen["headers"] = headers or {}
+        return FakeResponse(
+            200, {"ok": True, "user_id": "u_opaque", "machine_credential": "mc_x"}
+        )
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    # Plain delegation: no seal key sent, credential passed through if minted.
+    out = cloud.delegate_connection(secrets, config, "conn_abc")
+    assert out == {"user_id": "u_opaque", "machine_credential": "mc_x"}
+    assert seen["url"].endswith("/v1/connections/conn_abc/delegate")
+    assert seen["headers"]["Authorization"] == "Bearer sess"
+    assert seen["json"] is None  # no body without a seal key
+    # With the machine's seal key: it rides the body (the broker mints there).
+    cloud.delegate_connection(secrets, config, "conn_abc", seal_pubkey="PUBKEY")
+    assert seen["json"] == {"seal_pubkey": "PUBKEY"}
+    # Hosted machine: its id rides along so the broker can wake a sandbox.
+    cloud.delegate_connection(secrets, config, "conn_abc", seal_pubkey="PUBKEY", machine_id="m1")
+    assert seen["json"] == {"seal_pubkey": "PUBKEY", "machine_id": "m1"}

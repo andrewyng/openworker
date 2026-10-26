@@ -33,14 +33,16 @@ test("top-left cluster renders only while the sidebar is collapsed", async ({ pa
   await expect(page.getByTestId("topbar-cluster")).toHaveCount(0);
 });
 
-test("facts subtitle: absent on a fresh session, coworker + model after the first turn, inert", async ({
+test("session facts: none on a fresh session, coworker + model in the title tooltip after the first turn", async ({
   page,
 }) => {
   await page.goto("/");
 
-  // Fresh-ish (boot-resumed, no rendered history): no subtitle, no old About-persona button —
+  // Fresh-ish (boot-resumed, no rendered history): no facts line (UX-048: the header is the
+  // title alone; facts ride its tooltip once there is history), no old About-persona button —
   // and the model is a live PICKER in the composer (fresh sessions choose; nothing is locked yet).
   await expect(page.getByTestId("session-subtitle")).toHaveCount(0);
+  await expect(page.getByTestId("session-title")).not.toHaveAttribute("title", /·/);
   await expect(page.getByRole("button", { name: "About this persona" })).toHaveCount(0);
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
 
@@ -51,12 +53,13 @@ test("facts subtitle: absent on a fresh session, coworker + model after the firs
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/Echo: hello/)).toBeVisible();
 
-  // Coworker + model (UX-029 restored the coworker name — the picker shipped), and the
-  // subtitle is a plain fact line, not a button to the persona page.
-  const sub = page.getByTestId("session-subtitle");
-  await expect(sub).toHaveText("Coworker · Claude Opus 4.8");
+  // Coworker + model in the tooltip (UX-029 restored the coworker name — the picker shipped);
+  // the title is a plain fact, not a button to the persona page.
+  const ttl = page.getByTestId("session-title");
+  await expect(ttl).toHaveAttribute("title", /Coworker · Claude Opus 4.8/);
+  await expect(page.getByTestId("session-subtitle")).toHaveCount(0);
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
-  await sub.click();
+  await ttl.click();
   await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
 });
 

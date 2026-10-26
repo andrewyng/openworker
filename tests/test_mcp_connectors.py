@@ -21,6 +21,14 @@ from coworker.mcp.config import put_global_server, read_global
 from coworker.secrets import SecretStore
 from coworker.server.manager import SessionManager
 
+# ExceptionGroup is a builtin on Python 3.11+; on 3.10 it lives in the exceptiongroup
+# backport, which pytest already depends on. Keep test code aligned with
+# requires-python = ">=3.10".
+try:
+    from builtins import ExceptionGroup
+except ImportError:
+    from exceptiongroup import ExceptionGroup
+
 
 def _state(tmp_path, monkeypatch):
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))

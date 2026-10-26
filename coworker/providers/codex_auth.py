@@ -27,6 +27,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import secrets as pysecrets
 import time
 import uuid
@@ -42,6 +43,13 @@ TOKEN_URL = AUTH_ISSUER + "/oauth/token"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CALLBACK_PORT = 1455
 CALLBACK_PATH = "/auth/callback"
+# Where the callback server listens. Loopback is right for a desktop install — the
+# browser completing the flow is on the same machine. It is wrong for a server one:
+# a container publishes a port to its external interface, and a listener bound to
+# the container's own loopback never sees that traffic, so the redirect lands on a
+# closed port and the sign-in can never finish. Overridable for exactly that case;
+# the redirect below is unaffected, since it describes where the BROWSER goes.
+CALLBACK_HOST_ENV = "COWORKER_OAUTH_CALLBACK_HOST"
 # Registered redirect for CLIENT_ID, verbatim — host and port are not ours to choose.
 REDIRECT_URI = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
 SCOPE = "openid profile email offline_access"
@@ -65,6 +73,15 @@ PLAN_LIMIT_ERROR = (
     "5 hours) is used up. Wait for it to reset, upgrade the plan, or switch to an "
     "API-key provider."
 )
+def callback_host() -> str:
+    """Bind address for the loopback callback server (see CALLBACK_HOST_ENV).
+
+    Read per flow, not at import, so a deployment can set it without re-importing —
+    and so tests can exercise both without module surgery.
+    """
+    return os.environ.get(CALLBACK_HOST_ENV) or "127.0.0.1"
+
+
 PORT_BUSY_ERROR = (
     f"Port {CALLBACK_PORT} is already in use — the OpenAI Codex CLI is the usual "
     "holder. Quit it and start the sign-in again."
@@ -244,7 +261,24 @@ class CodexTokenStore:
     def refresh(self) -> tuple[str, str]:
         """refresh_token grant → fresh (access token, account id). A rejected refresh
         token blanks the profile — the provider reads as cleanly signed out."""
-        refresh = (self._data().get("tokens") or {}).get("refresh_token") or ""
+        seen = (self._data().get("tokens") or {}).get("access_token") or ""
+        exclusive = getattr(self._secrets, "exclusive", None)
+        if exclusive is None:  # a store without the lock (tests' stand-ins)
+            return self._refresh_locked(seen)
+        # One renewal at a time, across processes: the app and each `openworker run`
+        # share this store, and a second renewal with the refresh token the first one
+        # replaced would sign the user out.
+        with exclusive():
+            return self._refresh_locked(seen)
+
+    def _refresh_locked(self, seen: str) -> tuple[str, str]:
+        data = self._data()
+        tokens = data.get("tokens") or {}
+        access = tokens.get("access_token") or ""
+        exp = _jwt_claims(access).get("exp")
+        if access and access != seen and isinstance(exp, (int, float)) and exp - time.time() >= REFRESH_MARGIN_SECONDS:
+            return access, data.get("account_id") or ""  # another process just renewed it
+        refresh = tokens.get("refresh_token") or ""
         if not refresh:
             self.clear()
             raise CodexSignInRequired(EXPIRED_ERROR)
@@ -361,7 +395,7 @@ async def _start_callback_server(
                 pass
 
     try:
-        server = await asyncio.start_server(handle, "127.0.0.1", CALLBACK_PORT)
+        server = await asyncio.start_server(handle, callback_host(), CALLBACK_PORT)
     except OSError as exc:
         raise CodexAuthError(PORT_BUSY_ERROR) from exc
     return server, future

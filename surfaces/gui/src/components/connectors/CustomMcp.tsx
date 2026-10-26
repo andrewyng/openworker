@@ -85,7 +85,7 @@ export function mcpStatusLine(s: McpServer): string {
   // Live servers show it too — the visible receipt that clicking Test did
   // something (it re-round-trips the connection and refreshes the tool count).
   if (s.last_test_at) {
-    const rel = relTime(s.last_test_at);
+    const rel = relTime(s.last_test_at, t);
     if (rel) bits.push(t("mcp.tested_rel", { rel }));
   }
   return bits.join(" · ");
@@ -156,11 +156,11 @@ export function CustomMcpGroup({
           >
             <McpGlyph />
             <span className="min-w-0 flex-1">
-              <span className="font-medium text-[13px]">{s.name}</span>
-              <span className="block text-[12px] text-muted truncate">{mcpStatusLine(s)}</span>
+              <span className="font-medium text-ui">{s.name}</span>
+              <span className="block text-meta text-muted truncate">{mcpStatusLine(s)}</span>
             </span>
             {mcpChip(s)}
-            <span className="text-faint text-[14px] shrink-0">›</span>
+            <span className="text-faint text-body shrink-0">›</span>
           </button>
         ))}
       </div>
@@ -199,8 +199,8 @@ export function McpPresetRows({
         <div key={p.name} className={ROW} data-testid={`mcp-preset-${p.name}`}>
           <McpGlyph />
           <span className="min-w-0 flex-1">
-            <span className="font-medium text-[13px]">{p.label}</span>
-            <span className="block text-[12px] text-muted truncate">{t(p.blurb)}</span>
+            <span className="font-medium text-ui">{p.label}</span>
+            <span className="block text-meta text-muted truncate">{t(p.blurb)}</span>
           </span>
           <span
             className={PILL_QUIET + " cursor-pointer"}
@@ -231,7 +231,7 @@ const EXAMPLE = `{
 }`;
 
 const INPUT =
-  "w-full text-[13px] px-3 py-2 rounded-lg border border-line bg-paper text-ink outline-none focus:border-accent";
+  "w-full text-ui px-3 py-2 rounded-lg border border-line bg-paper text-ink outline-none focus:border-accent";
 
 // A friendly default server name from its URL: walk the hostname's labels left to
 // right, skip the generic ones (mcp/api/data/www…), take the first distinctive label
@@ -324,7 +324,7 @@ export function AddMcpModal({
   };
 
   const tabBtn = (active: boolean) =>
-    "text-[12px] px-2.5 py-1 rounded-md border shrink-0 " +
+    "text-meta px-2.5 py-1 rounded-md border shrink-0 " +
     (active ? "border-accent text-accent font-medium" : "border-line text-muted hover:text-ink");
 
   return (
@@ -332,8 +332,8 @@ export function AddMcpModal({
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="absolute left-1/2 top-24 -translate-x-1/2 w-[540px] max-w-[92vw] rounded-xl2 border border-line bg-panel shadow-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="text-[14px] font-semibold">{t("mcp.add_title")}</div>
-          <button className="text-faint hover:text-ink text-[16px] leading-none" onClick={onClose}>
+          <div className="text-body font-semibold">{t("mcp.add_title")}</div>
+          <button className="text-faint hover:text-ink text-body leading-none" onClick={onClose}>
             ×
           </button>
         </div>
@@ -347,7 +347,7 @@ export function AddMcpModal({
         </div>
         {tab === "url" ? (
           <>
-            <div className="text-[13px] text-muted">{t("mcp.add_url_blurb")}</div>
+            <div className="text-ui text-muted">{t("mcp.add_url_blurb")}</div>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -366,19 +366,19 @@ export function AddMcpModal({
               }}
               placeholder="https://mcp.example.com/mcp"
               spellCheck={false}
-              className={INPUT + " font-mono text-[12px]"}
+              className={INPUT + " font-mono text-meta"}
               data-testid="mcp-add-url"
             />
           </>
         ) : (
           <>
-            <div className="text-[13px] text-muted">{t("mcp.add_json_blurb")}</div>
+            <div className="text-ui text-muted">{t("mcp.add_json_blurb")}</div>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               spellCheck={false}
               rows={9}
-              className="w-full font-mono text-[12px] px-3 py-2.5 rounded-lg border border-line bg-paper text-ink outline-none focus:border-accent resize-y"
+              className="w-full font-mono text-meta px-3 py-2.5 rounded-lg border border-line bg-paper text-ink outline-none focus:border-accent resize-y"
             />
           </>
         )}
@@ -386,11 +386,11 @@ export function AddMcpModal({
           <button className={PILL_ACCENT} onClick={tab === "url" ? saveUrl : saveJson}>
             {tab === "url" ? t("mcp.add_and_test") : t("manage.add_btn")}
           </button>
-          <button className="text-[13px] text-muted hover:text-ink" onClick={onClose}>
+          <button className="text-ui text-muted hover:text-ink" onClick={onClose}>
             {t("manage.cancel")}
           </button>
         </div>
-        {error && <div className="text-[13px] text-danger">{error}</div>}
+        {error && <div className="text-ui text-danger">{error}</div>}
       </div>
     </div>
   );
@@ -533,9 +533,9 @@ export function McpToolReview({
           <span className="text-warnInk shrink-0">
             <Icon name="warning" size={15} />
           </span>
-          <span className="min-w-0 flex-1 text-[13px]">
+          <span className="min-w-0 flex-1 text-ui">
             <span className="font-medium block">{t("mcp.legacy_warn_title")}</span>
-            <span className="block text-[12px] text-muted">{t("mcp.legacy_warn_body")}</span>
+            <span className="block text-meta text-muted">{t("mcp.legacy_warn_body")}</span>
           </span>
           <span
             className={PILL_ACCENT + " cursor-pointer shrink-0" + (converting ? " opacity-50" : "")}
@@ -589,13 +589,13 @@ export function McpToolReview({
         );
 
         const errLine = err && (
-          <div className="px-4 py-2.5 text-[13px] text-danger">{err}</div>
+          <div className="px-4 py-2.5 text-ui text-danger">{err}</div>
         );
 
         const list = offered && checked && (
           <div className="py-1 max-h-[320px] overflow-y-auto hairline-scroll">
             {offered.length === 0 && (
-              <div className="text-[12px] text-faint px-4 py-1">{t("manage.mcp_no_tools")}</div>
+              <div className="text-meta text-faint px-4 py-1">{t("manage.mcp_no_tools")}</div>
             )}
             {offered.map((tool) => {
               // "new" = the SERVER's menu grew: a name neither list has ever seen.
@@ -617,7 +617,7 @@ export function McpToolReview({
                   badge={
                     isNew ? (
                       <span
-                        className="ml-1.5 text-[11px] px-1.5 rounded-full bg-warnSoft text-warnInk"
+                        className="ml-1.5 text-label px-1.5 rounded-full bg-warnSoft text-warnInk"
                         data-testid={`mcp-tool-new-${tool.name}`}
                       >
                         {t("mcp.tools_new_badge")}
@@ -626,7 +626,7 @@ export function McpToolReview({
                   }
                   description={
                     tool.description ? (
-                      <span className="block text-[12px] text-muted truncate" title={tool.description}>
+                      <span className="block text-meta text-muted truncate" title={tool.description}>
                         “{tool.description}”
                       </span>
                     ) : undefined
@@ -657,7 +657,7 @@ export function McpToolReview({
                           {t("mcp.trust_marker")}
                         </span>
                         <button
-                          className="text-[11px] underline text-muted hover:text-danger"
+                          className="text-label underline text-muted hover:text-danger"
                           data-testid={`mcp-tool-revoke-${tool.name}`}
                           onClick={async (e) => {
                             e.preventDefault();
@@ -680,10 +680,10 @@ export function McpToolReview({
           return (
             <details>
               <summary className={ROW + " cursor-pointer hover:bg-paper/60 list-none [&::-webkit-details-marker]:hidden"}>
-                <span className="text-[13px] text-muted w-24 shrink-0">
+                <span className="text-ui text-muted w-24 shrink-0">
                   {t("connector.tools_label")}
                 </span>
-                <span className="min-w-0 flex-1 text-[13px] text-muted">
+                <span className="min-w-0 flex-1 text-ui text-muted">
                   {t("tools.enabled_count", { checked: checked!.size, total: offered!.length })}
                   {/* Granted authority stays advertised even while collapsed. */}
                   {trustCount > 0 && <> · {t("mcp.trust_count", { count: trustCount })}</>}
@@ -699,7 +699,7 @@ export function McpToolReview({
         return (
           <>
             <div className={ROW}>
-              <span className="text-[13px] flex-1">
+              <span className="text-ui flex-1">
                 {t("available.tools")}
                 {offered && checked && (
                   <ToolsCountLine
@@ -716,7 +716,7 @@ export function McpToolReview({
               </span>
               {offered === null && (
                 <button
-                  className="text-[13px] text-muted hover:text-ink"
+                  className="text-ui text-muted hover:text-ink"
                   onClick={load}
                   disabled={busy}
                   data-testid={`mcp-tools-load-${server.name}`}
@@ -801,15 +801,15 @@ export function McpServerDetail({
       <div className="flex items-center gap-3">
         <McpGlyph />
         <div className="flex-1 min-w-0">
-          <div className="text-[16px] font-semibold">{server.name}</div>
-          <div className="text-[12px] text-muted">{mcpStatusLine(server)}</div>
+          <div className="text-body font-semibold">{server.name}</div>
+          <div className="text-meta text-muted">{mcpStatusLine(server)}</div>
         </div>
         {mcpChip(server)}
       </div>
 
       <div className={GRP}>
         <div className={ROW}>
-          <span className="text-[13px] flex-1">{t("persona.enabled")}</span>
+          <span className="text-ui flex-1">{t("persona.enabled")}</span>
           <Toggle
             checked={server.enabled}
             onChange={async () => {
@@ -820,9 +820,9 @@ export function McpServerDetail({
           />
         </div>
         <div className={ROW}>
-          <span className="text-[13px] flex-1">
+          <span className="text-ui flex-1">
             {t("mcp.test_connection")}
-            <span className="block text-[12px] text-faint">{t("mcp.test_desc")}</span>
+            <span className="block text-meta text-faint">{t("mcp.test_desc")}</span>
           </span>
           {server.auth_hint && !isOauth ? (
             <span
@@ -861,14 +861,14 @@ export function McpServerDetail({
             durable receipt stays in the header. Failures stay persistent in red. */}
         {freshResult && server.status === "connected" && server.last_test_at ? (
           <div
-            className="px-4 py-2 text-[12px] text-ok"
+            className="px-4 py-2 text-meta text-ok"
             data-testid={`mcp-test-ok-${server.name}`}
           >
-            ✓ {t("mcp.test_ok", { count: server.tool_count ?? 0, rel: relTime(server.last_test_at) })}
+            ✓ {t("mcp.test_ok", { count: server.tool_count ?? 0, rel: relTime(server.last_test_at, t) })}
           </div>
         ) : null}
         {server.last_error && server.status !== "connected" && (
-          <div className="px-4 py-2.5 text-[13px] text-danger break-words">
+          <div className="px-4 py-2.5 text-ui text-danger break-words">
             {server.last_error}
           </div>
         )}
@@ -886,7 +886,7 @@ export function McpServerDetail({
       <div className="flex items-center gap-4">
         {isOauth && server.status === "connected" && (
           <button
-            className="text-[13px] text-muted hover:text-ink"
+            className="text-ui text-muted hover:text-ink"
             onClick={async () => {
               await signoutMcp(server.name);
               onChanged();
@@ -898,7 +898,7 @@ export function McpServerDetail({
           </button>
         )}
         <button
-          className="text-[13px] text-danger/80 hover:text-danger"
+          className="text-ui text-danger/80 hover:text-danger"
           onClick={async () => {
             await deleteMcpServer(server.name);
             onChanged();

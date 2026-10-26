@@ -27,7 +27,7 @@ def client(tmp_path, monkeypatch):
 
 def _install_form(team_id: str) -> dict:
     state = f"slack-{team_id}"
-    cloud._pending_managed_states[state] = cloud._now()
+    cloud._pending_managed_states[state] = {"created": cloud._now(), "machine_id": "", "machine_name": ""}
     return {
         "connector": "slack",
         "team_id": team_id,

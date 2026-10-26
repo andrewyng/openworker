@@ -219,6 +219,7 @@ def test_converse_stream_accumulates_text_and_tool():
 
 
 def test_no_credentials_error_becomes_friendly():
+    pytest.importorskip("botocore")
     from botocore.exceptions import NoCredentialsError
 
     class _Raises:
@@ -341,7 +342,7 @@ def test_auth_method_narrows_out_other_methods_fields(monkeypatch):
 def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
     import os
 
-    import boto3
+    boto3 = pytest.importorskip("boto3")
 
     from coworker.providers.bedrock_provider import _BedrockConverseClient
 
@@ -373,6 +374,23 @@ def test_bedrock_capabilities_from_matrix_and_fallback():
     assert custom_claude.vision and custom_claude.parallel_tool_calls
     custom_other = capabilities_for("bedrock:other/cohere.command-b-v1:0")
     assert custom_other.tools and not custom_other.parallel_tool_calls
+
+
+def test_bedrock_claude_5_family_in_matrix():
+    """Claude 5 generation models (Fable, Opus, Sonnet) are curated with 1M context."""
+    from coworker.providers.matrix import MATRIX
+
+    for mid, label, ctx in [
+        ("bedrock:claude/anthropic.claude-fable-5", "Claude Fable 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/anthropic.claude-opus-5", "Claude Opus 5 · AWS Bedrock", 1_000_000),
+        ("bedrock:claude/anthropic.claude-sonnet-5", "Claude Sonnet 5 · AWS Bedrock", 1_000_000),
+    ]:
+        assert mid in MATRIX, f"{mid} missing from matrix"
+        entry = MATRIX[mid]
+        assert entry.label == label
+        assert entry.context_window == ctx
+        caps = capabilities_for(mid)
+        assert caps.tools and caps.vision and caps.parallel_tool_calls
 
 
 def test_router_prefix_survives_bedrock_version_colons():
@@ -461,7 +479,7 @@ class _FakeBedrockControl:
 
 
 def _patch_session(monkeypatch, control: Any, captured: dict):
-    import boto3
+    boto3 = pytest.importorskip("boto3")
 
     class _FakeSession:
         def __init__(self, **kwargs):
@@ -503,7 +521,12 @@ def test_verify_bedrock_per_method_required_fields(monkeypatch):
         fields={"region": "us-east-1", "auth_method": "iam", "aws_access_key_id": "AKIA"},
     )
     assert not out["ok"] and "secret access key" in out["error"]
-    # Blank profile is fine — it means the default credential chain.
+
+
+def test_verify_bedrock_blank_profile_uses_default_chain(monkeypatch):
+    """A blank profile is fine — it means the default credential chain."""
+    from coworker.providers.registry import verify_provider_key
+
     captured: dict = {}
     _patch_session(monkeypatch, _FakeBedrockControl(), captured)
     out = verify_provider_key(
@@ -553,6 +576,7 @@ def test_verify_bedrock_api_key_rides_the_bearer_env(monkeypatch):
 
 
 def test_verify_bedrock_maps_client_errors(monkeypatch):
+    pytest.importorskip("botocore")
     from botocore.exceptions import ClientError
 
     from coworker.providers.registry import verify_provider_key
@@ -582,6 +606,7 @@ def test_verify_bedrock_maps_modeled_client_error_subclasses(monkeypatch):
     # Live boto3 raises MODELED subclasses (class name "AccessDeniedException", not
     # "ClientError"). The old name-based check sent these to the generic "Couldn't reach"
     # fallback and hid the specific guidance (owner report 2026-08-17, real Bedrock key).
+    pytest.importorskip("botocore")
     from botocore.exceptions import ClientError
 
     from coworker.providers.registry import verify_provider_key

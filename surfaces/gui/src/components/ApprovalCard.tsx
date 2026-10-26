@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { ApprovalEscalation } from "./ApprovalEscalation";
 import { getI18n, useTranslation } from "react-i18next";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
+import { leadDecisionFromArgs, WorkerDecisionCard } from "./WorkerDecisionCard";
 
 export function shortArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
@@ -121,6 +123,8 @@ export function scopeNote(
   // save_skill's corner answers WHERE (SKILLS-SPEC §5.2): the exact place to find, edit,
   // or turn off the skill afterwards.
   if (name === "save_skill") return { text: tt("approval.scope.save_skill"), external: false };
+  // OPE-219: the ask is to let commands OUT, so the corner says what it changes.
+  if (name === "request_network_access") return { text: tt("approval.scope.network_access"), external: true };
   if (category === "connector") return { text: tt("approval.scope.connector"), external: true };
   // MCP tools (OPE-136 finding 4): the one family the old fallthrough mislabeled
   // "stays on this computer". The destination comes from the server DEF — the user's
@@ -309,6 +313,29 @@ function Buttons({
   // run context (§25: the task-persistent grant is that flow's one grant) and in
   // Auto-approve (§1.5: in-flow grants don't skip the judge).
   const externalFamily = isMcp || connector || EXTERNAL.has(item.name);
+  // OPE-219: a site for commands is never "once". This session, always, or no. "Always"
+  // writes the machine's list, so it is offered in Auto-approve too.
+  if (item.networkRequest) {
+    const hosts = item.networkRequest.hosts.map((h) => h.host.replace(/:443$/, ""));
+    return (
+      <div className="approval-btns">
+        <button className="btn approval-primary" onClick={() => onApprove("always_domain")} data-testid="approval-network-session">
+          {t("approval.btn.network_session")}
+        </button>
+        <button
+          className="btn"
+          title={t("approval.btn.network_always_title")}
+          onClick={() => onApprove("always_site")}
+          data-testid="approval-network-always"
+        >
+          {hosts.length === 1 ? t("approval.btn.always_site", { host: hosts[0] }) : t("approval.btn.network_always_many")}
+        </button>
+        <button className="btn quiet-deny" onClick={() => onApprove("deny")}>
+          {t("approval.btn.deny")}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="approval-btns">
       <button className="btn approval-primary" onClick={() => onApprove("once")}>
@@ -387,6 +414,19 @@ function Buttons({
           {t("approval.btn.always_search")}
         </button>
       )}
+      {/* OPE-219: the one durable choice on the allowed-sites card. It writes the site into
+          the machine's sandbox list, so it is offered in Auto-approve too: standing policy
+          the user sets, not an in-flow session grant. */}
+      {!offerStanding && item.siteWall && (
+        <button
+          className="btn"
+          title={t("approval.btn.always_site_title", { host: item.siteWall })}
+          onClick={() => onApprove("always_site")}
+          data-testid="approval-always-site"
+        >
+          {t("approval.btn.always_site", { host: item.siteWall })}
+        </button>
+      )}
       {!autoApprove && item.name === "run_shell" && (
         <button className="btn" onClick={() => onApprove("always_command")}>
           {t("approval.btn.always_command")}
@@ -420,9 +460,13 @@ export function ApprovalCard({
   runTask,
   compact = false,
   autoApprove = false,
+  onAnswerWorkerCall,
 }: {
   item: ApprovalItem;
   onApprove: (decision: ApprovalDecision) => void;
+  // decide_worker_call only: answer the WORKER'S waiting call directly (the human
+  // overriding the lead). Without it the override only declines the lead's decision.
+  onAnswerWorkerCall?: (callId: string, resolution: "allow" | "deny") => void;
   // Present when this approval was raised inside an automation run — unlocks the
   // task-persistent "Allow every time" (in-app only, §25).
   runTask?: { id: string; title: string } | null;
@@ -433,11 +477,30 @@ export function ApprovalCard({
 }) {
   const { t } = useTranslation();
   const [peek, setPeek] = useState(false);
+  // A lead's decision on a worker's call has its own card: the generic one asked the
+  // human to "Allow" a denial of a command it never showed.
+  if (item.name === "decide_worker_call" && !item.resolved) {
+    const decision = leadDecisionFromArgs(item.args);
+    return (
+      <WorkerDecisionCard
+        decision={decision}
+        workerCall={item.workerCall}
+        escalation={item.escalation}
+        reviewerUnsure={item.reviewerUnsure}
+        compact={compact}
+        onFollow={() => onApprove("once")}
+        onOverride={() => {
+          onAnswerWorkerCall?.(decision.callId, decision.decision === "deny" ? "allow" : "deny");
+          onApprove("deny");
+        }}
+      />
+    );
+  }
   const title = humanizeApprovalTitle(item.name, item.args);
   const scope = scopeNote(item.name, item.args, item.category, item.mcpDestination);
   const grants = item.name === "create_scheduled_task" ? permissionLines(item.args) : [];
   // "requires approval" is the engine's default boilerplate — only surface a real reason.
-  const reason = item.reason && item.reason !== "requires approval" ? item.reason : "";
+  const reason = item.reason && item.reason !== "requires approval" && item.reason !== item.escalation?.reason ? item.reason : "";
   const offerStanding = !!(runTask && item.standingTarget);
   const dock = compact ? " approval-dock" : "";
   // OPE-114 §1: the command text cannot tell you the agent wrote this file a moment ago.
@@ -448,11 +511,35 @@ export function ApprovalCard({
     </div>
   ) : null;
   // Quiet, not a warning: the reviewer hesitating is context, not danger.
-  const reviewerUnsure = item.reviewerUnsure ? (
-    <div className="text-[12px] text-muted mt-1" data-testid="approval-reviewer-unsure">
-      {t("approval.reviewer_unsure", { note: item.reviewerUnsure })}
+  // OPE-219: a site the sandbox's allowed sites do not include. Its own plain line, in
+  // place of the generic "requires a human decision" banner the engine also sends.
+  const reviewerUnsure = item.networkRequest ? (
+    // The agent's reason, then what the sandbox itself saw for each site: the person's
+    // check on the request.
+    <div className="mt-1" data-testid="approval-network-request">
+      {item.networkRequest.reason && <div className="text-ui text-ink">{item.networkRequest.reason}</div>}
+      <div className="mt-1.5 flex flex-col gap-0.5">
+        {item.networkRequest.hosts.map((h) => (
+          <div key={h.host} className="text-meta text-muted" data-testid="approval-network-host">
+            <code className="approval-tool">{h.host.replace(/:443$/, "")}</code>{" "}
+            {!item.networkRequest!.evidence
+              ? ""
+              : h.blockedSecondsAgo === null
+              ? t("approval.network.not_seen")
+              : h.blockedSecondsAgo < 60
+                ? t("approval.network.blocked_now")
+                : t("approval.network.blocked_minutes", { count: Math.round(h.blockedSecondsAgo / 60) })}
+          </div>
+        ))}
+      </div>
     </div>
-  ) : null;
+  ) : item.siteWall ? (
+    <div className="text-meta text-muted mt-1" data-testid="approval-site-wall">
+      {t("approval.site_wall_note", { host: item.siteWall })}
+    </div>
+  ) : (
+    <ApprovalEscalation escalation={item.escalation} reviewerUnsure={item.reviewerUnsure} />
+  );
 
   // §35 compact row: routine workspace writes — one line, preview expands inline from the
   // tool args. Standing/grant flows keep the full card (they carry §25 consent weight).
@@ -479,7 +566,7 @@ export function ApprovalCard({
         {peek && content && <PreviewBlock text={content} />}
         {provenance}
         {reviewerUnsure}
-        {reason && <div className="approval-reason">{reason}</div>}
+        {reason && !item.networkRequest && <div className="approval-reason">{reason}</div>}
       </div>
     );
   }
@@ -539,6 +626,13 @@ export function ApprovalCard({
             : t("approval.search_note")}
         </div>
       )}
+      {/* web_fetch through the search service (Settings ▸ Customization): the card names
+          the service that reads the page, since it sees the address. */}
+      {item.name === "web_fetch" && item.fetchProvider && (
+        <div className="approval-with" data-testid="approval-fetch-provider">
+          {t("approval.fetch_note_current", { provider: item.fetchProvider })}
+        </div>
+      )}
       {/* MCP arguments (OPE-136 finding 5): everything the call carries, expandable —
           for a stranger's tool the arguments are the only evidence there is. */}
       {item.name.startsWith("mcp__") && item.args && Object.keys(item.args).length > 0 && (
@@ -570,7 +664,7 @@ export function ApprovalCard({
           (finding 7: no silent truncation, on any tool, ever). MCP and egress tools
           are excluded: they render full evidence above. */}
       {!FILE_WRITES.has(item.name) &&
-        !["run_shell", "send_message", "send_file", "save_skill", "web_fetch", "web_search"].includes(item.name) &&
+        !["run_shell", "send_message", "send_file", "save_skill", "web_fetch", "web_search", "request_network_access"].includes(item.name) &&
         !item.name.startsWith("mcp__") &&
         !grants.length &&
         (() => {
@@ -584,7 +678,7 @@ export function ApprovalCard({
         })()}
       {provenance}
       {reviewerUnsure}
-      {reason && <div className="approval-reason">{reason}</div>}
+      {reason && !item.networkRequest && <div className="approval-reason">{reason}</div>}
 
       {item.resolved ? (
         <div className="resolved">{t("approval.resolved_prefix", { state: item.resolved.replace(/_/g, " ") })}</div>

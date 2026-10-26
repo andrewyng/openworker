@@ -6,6 +6,7 @@ that file, and how long ago.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,31 @@ def test_shell_fetchers_record_their_output_path(command, expected):
     )
 
 
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("curl --output=tool.sh https://x.io/a", ["tool.sh"]),
+        ("curl --output=/tmp/payload.sh https://x.io/a", ["/tmp/payload.sh"]),
+        ("wget --output-document=tool.sh https://x.io/a", ["tool.sh"]),
+    ],
+)
+def test_attached_output_values_record_the_download(command, expected):
+    # `--output=FILE` is the same flag as `--output FILE`; token comparison alone missed
+    # the attached spelling, so the fetch-then-execute floor stayed down afterwards.
+    assert prov.created_paths("run_shell", {"command": command}, None) == (
+        expected,
+        DOWNLOADED,
+    )
+
+
+def test_attached_output_value_feeds_the_downloaded_match(files):
+    files.record(
+        "run_shell", {"command": "curl https://x/p --output=/tmp/ws/p.sh"}, None, step=1
+    )
+    match = files.match("run_shell", {"command": "sh /tmp/ws/p.sh"}, step=2)
+    assert match is not None and match.downloaded
+
+
 def test_curl_capital_o_does_not_swallow_the_url():
     # `-o FILE` and `-O` are different curl flags; folding their case would record the URL
     # itself as the downloaded file.
@@ -163,6 +189,28 @@ def test_download_over_a_written_path_becomes_a_download(files):
     _wrote(files, "tool.sh", 2)
     files.record("run_shell", {"command": "curl -o tool.sh https://x.io/a"}, None, step=6)
     assert files.match("run_shell", {"command": "bash tool.sh"}, step=7).downloaded
+
+
+def test_device_download_sink_does_not_taint_later_health_checks(files):
+    files.record("run_shell", {"command": f"curl -o {os.devnull} https://example.test"}, None, step=1)
+    assert files.match("run_shell", {"command": f"curl -o {os.devnull} http://127.0.0.1:8000"}, step=2) is None
+
+
+def test_device_symlink_is_ignored_but_regular_null_named_script_is_not(files, tmp_path):
+    alias = tmp_path / "sink.sh"
+    alias.symlink_to(os.devnull)
+    files.record("run_shell", {"command": "curl -o sink.sh https://example.test"}, None, step=1)
+    assert files.match("run_shell", {"command": "bash sink.sh"}, step=2) is None
+    (tmp_path / "null.sh").write_text("echo test")
+    files.record("run_shell", {"command": "curl -o null.sh https://example.test"}, None, step=3)
+    assert files.match("run_shell", {"command": "bash null.sh"}, step=4).downloaded
+
+
+def test_device_does_not_hide_a_real_download_or_keep_legacy_taint(files):
+    files._files[prov.resolve(os.devnull, files.root)] = prov.Origin(step=9, kind=DOWNLOADED)
+    files.record("run_shell", {"command": "curl -o tool.sh https://example.test"}, None, step=1)
+    found = files.match("run_shell", {"command": f"bash tool.sh > {os.devnull}"}, step=10)
+    assert found.path == "tool.sh" and found.downloaded
 
 
 # -- the documented blind spot -------------------------------------------------

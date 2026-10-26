@@ -25,7 +25,7 @@ def capabilities_for(model: str) -> ModelCapabilities:
     # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
     # tools work (we only point at tool-capable models) but stay conservative otherwise.
     # Vision is detected from common model naming conventions (-vl, vision, llava, etc.).
-    if provider == "ollama":
+    if provider in ("ollama", "llamacpp", "vllm", "lmstudio"):
         _vision_patterns = ("-vl", "vision", "llava", "bakllava", "cogvlm", "minicpm-v")
         has_vision = any(p in name for p in _vision_patterns)
         return ModelCapabilities(
@@ -65,11 +65,22 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=False, parallel_tool_calls=False, streaming=True
         )
 
-    # OpenAI-compatible vendors (DeepSeek, Z AI/GLM, Kimi, MiniMax, Qwen, xAI/Grok, Mistral):
-    # tool calling + streaming across their current lineups; vision left off until probed
-    # per-model (several have vision variants, but the text flagships are what we suggest).
+    # OpenAI-compatible vendors (DeepSeek, Z AI/GLM, Kimi, MiniMax, Qwen, xAI/Grok, Mistral,
+    # Upstage/Solar): tool calling + streaming across their current lineups; vision left off
+    # until probed per-model (several have vision variants, but the text flagships are what
+    # we suggest).
     if name.startswith(
-        ("deepseek", "glm", "kimi", "minimax", "qwen", "grok", "mistral", "magistral")
+        (
+            "deepseek",
+            "glm",
+            "kimi",
+            "minimax",
+            "qwen",
+            "grok",
+            "mistral",
+            "magistral",
+            "solar",
+        )
     ):
         return ModelCapabilities(
             tools=True, vision=False, parallel_tool_calls=True, streaming=True

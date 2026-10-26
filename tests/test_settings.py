@@ -172,5 +172,119 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
     assert "ollama:llama3.3" not in manager.get_settings()["models"]
 
+    monkeypatch.setattr(SessionManager, "_ollama_models", lambda self: [])
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
     assert "ollama:llama3.3" in manager.get_settings()["models"]
+
+
+def _ollama_manager(tmp_path, monkeypatch, pulled=("qwen2.5:7b-instruct",)):
+    """A fresh manager (no keys, no saved Ollama profile) whose local Ollama answers
+    `/api/tags` with `pulled` — none of them the recommended model."""
+    import httpx
+
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+
+    from coworker.providers import ollama_facts
+
+    class _Tags:
+        status_code = 200
+
+        def json(self):
+            return {"models": [{"name": n} for n in pulled]}
+
+    class _Show:
+        status_code = 200
+
+        def json(self):
+            return {"capabilities": ["completion", "tools"]}
+
+    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _Tags())
+    monkeypatch.setattr(httpx, "post", lambda url, json=None, timeout=None: _Show())
+    ollama_facts.forget_all()  # answers are cached per server; never across tests
+    return SessionManager(data_dir=tmp_path / "data")
+
+
+def test_ollama_models_without_saved_profile(tmp_path, monkeypatch):
+    """Keyless Ollama needs no saved form: pulled models list from the localhost default."""
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert manager.secrets.get("provider:ollama") is None
+    assert manager._ollama_models() == ["ollama:qwen2.5:7b-instruct"]
+
+
+def test_pulled_ollama_models_reach_the_picker(tmp_path, monkeypatch):
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert "ollama:qwen2.5:7b-instruct" in manager.get_settings()["models"]
+
+
+def test_ollama_default_ready_tracks_liveness(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    manager.set_default_model("ollama:qwen2.5:7b-instruct")
+    assert manager.get_settings()["model_ready"] is True
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
+    assert manager.get_settings()["model_ready"] is False
+
+
+def test_ollama_adopts_first_pulled_model(tmp_path, monkeypatch):
+    """Saving Ollama with only a non-recommended model pulled still yields a runnable default."""
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    assert manager.get_settings()["model_ready"] is False
+    assert manager.adopt_provider_default("ollama") == "ollama:qwen2.5:7b-instruct"
+    settings = manager.get_settings()
+    assert settings["model"] == "ollama:qwen2.5:7b-instruct"
+    assert settings["model_ready"] is True
+
+
+def test_ollama_adoption_never_steals_a_working_default(tmp_path, monkeypatch):
+    manager = _ollama_manager(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-123")
+    before = manager.get_settings()["model"]
+    assert manager.adopt_provider_default("ollama") is None
+    assert manager.get_settings()["model"] == before
+
+
+def test_env_key_provider_reports_its_source_and_refuses_removal(tmp_path, monkeypatch):
+    """#742: a key that comes from the provider's environment variable is not ours to
+    remove. The provider row says where the key comes from, and remove_provider answers
+    truthfully instead of reporting a removal that changes nothing."""
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+    mgr = SessionManager(data_dir=tmp_path)
+
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["configured"] is True
+    assert row["key_source"] == "env" and row["env_key"] == "ANTHROPIC_API_KEY"
+
+    res = mgr.remove_provider("anthropic")
+    assert res["ok"] is False and res["env_key"] == "ANTHROPIC_API_KEY"
+    assert "ANTHROPIC_API_KEY" in res["error"]
+    assert {p["name"]: p for p in mgr.get_providers()}["anthropic"]["configured"] is True
+
+    # A key saved in Settings wins over the variable and can be removed; the provider
+    # then stays configured by the variable, and the answer says so.
+    mgr.set_provider("anthropic", {"api_key": "sk-ant-stored"})
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "store" and row["env_key"] == "ANTHROPIC_API_KEY"
+    res = mgr.remove_provider("anthropic")
+    assert res == {"ok": True, "provider": "anthropic", "env_key": "ANTHROPIC_API_KEY", "configured": True}
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "env" and row["configured"] is True
+
+
+def test_stored_key_provider_removes_cleanly(tmp_path, monkeypatch):
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mgr = SessionManager(data_dir=tmp_path)
+    assert {p["name"]: p for p in mgr.get_providers()}["anthropic"]["key_source"] is None
+    mgr.set_provider("anthropic", {"api_key": "sk-ant-stored"})
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["key_source"] == "store" and row["env_key"] is None
+    assert mgr.remove_provider("anthropic") == {"ok": True, "provider": "anthropic"}
+    row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
+    assert row["configured"] is False and row["key_source"] is None

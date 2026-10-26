@@ -51,12 +51,13 @@ test("gated coworker: send with no folder asks where to work; temp folder sends 
   await expect(page.locator(".main-scroll").getByText("fix the tests", { exact: true })).toHaveCount(1);
   await expect(page.getByText("Temporary folder created · git initialized")).toBeVisible();
 
-  // The raw temp path never shows: header says "Temporary folder" + Save as project….
-  const sub = page.getByTestId("session-subtitle");
-  await expect(sub).toContainText("Security Coworker");
-  await expect(sub).toContainText("Temporary folder");
-  await expect(sub).not.toContainText("ow-temp");
-  await expect(page.getByTestId("save-as-project")).toBeVisible();
+  // The raw temp path never shows: the title tooltip says "Temporary folder" (UX-048 moved the
+  // facts there; "Save as project…" was dropped 2026-09-03).
+  const ttl = page.getByTestId("session-title");
+  await expect(ttl).toHaveAttribute("title", /Security Coworker/);
+  await expect(ttl).toHaveAttribute("title", /Temporary folder/);
+  await expect(ttl).not.toHaveAttribute("title", /ow-temp/);
+  await expect(page.getByTestId("save-as-project")).toHaveCount(0);
 
   // One-time pick: the setup row left with the first message.
   await expect(page.getByTestId("setup-row")).toHaveCount(0);
@@ -76,8 +77,7 @@ test("gated coworker: Choose a folder… binds the picked project and sends", as
   // Native pick is mocked server-side → /tmp/picked-folder.
   await page.getByTestId("send-folder-dialog").getByRole("button", { name: "Choose a folder…" }).click();
   await expect(page.getByText(/Echo: hello repo/)).toBeVisible();
-  await expect(page.getByTestId("session-subtitle")).toContainText("picked-folder");
-  await expect(page.getByTestId("save-as-project")).toHaveCount(0);
+  await expect(page.getByTestId("session-title")).toHaveAttribute("title", /picked-folder/);
 });
 
 test("escape restores the draft instead of losing it", async ({ page }) => {

@@ -70,6 +70,19 @@ describe("itemsFromMessages notices", () => {
 });
 
 describe("itemsFromMessages model switch", () => {
+  it("replays the persisted truncated marker as a retriable warning (OPE-171)", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "go", ts: 1752969700 },
+      { role: "assistant", content: "", finish_reason: "length", replay: "stub", ts: 1752969710 },
+      { role: "notice", kind: "truncated", text: "cut off 3 times", continuations: 2, ts: 1752969720 },
+    ] as any);
+    const notice = items[items.length - 1] as any;
+    expect(notice.kind).toBe("notice");
+    expect(notice.tone).toBe("warn");
+    expect(notice.text).toBe("cut off 3 times");
+    expect(notice.retriable).toBe(true);
+  });
+
   it("replays the persisted model_switch marker as an info notice", () => {
     const items = itemsFromMessages([
       { role: "user", content: "hi" },

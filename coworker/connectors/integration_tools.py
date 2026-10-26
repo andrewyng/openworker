@@ -14,7 +14,7 @@ import re
 from email.message import EmailMessage
 from html.parser import HTMLParser
 from typing import Any, Callable, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import aisuite as ai
 
@@ -134,6 +134,51 @@ _GEN_ACCOUNT_PROP = {
     "type": "string",
     "description": "Which connected account to use (default account when empty)",
 }
+
+_OUTLOOK_SEARCH_MAX_RESULTS = 100
+_OUTLOOK_SEARCH_MAX_PAGES = 100
+_OUTLOOK_MESSAGE_SUMMARY_FIELDS = (
+    "id",
+    "subject",
+    "from",
+    "sender",
+    "receivedDateTime",
+    "sentDateTime",
+    "isRead",
+    "hasAttachments",
+    "importance",
+    "conversationId",
+    "webLink",
+)
+_OUTLOOK_MESSAGE_DETAIL_FIELDS = (
+    *_OUTLOOK_MESSAGE_SUMMARY_FIELDS,
+    "toRecipients",
+    "ccRecipients",
+    "replyTo",
+    "body",
+    "bodyPreview",
+)
+
+
+def _outlook_message_summary(message: Any) -> dict[str, Any]:
+    """Keep mailbox listings compact; full content belongs to get-message."""
+    if not isinstance(message, dict):
+        return {}
+    return {
+        key: message[key]
+        for key in _OUTLOOK_MESSAGE_SUMMARY_FIELDS
+        if key in message
+    }
+
+
+def _is_outlook_graph_url(url: str) -> bool:
+    """Only forward mailbox credentials to the Graph origin we started on."""
+    parsed = urlsplit(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "graph.microsoft.com"
+        and parsed.path.startswith("/v1.0/")
+    )
 
 
 def _gmail_profile(
@@ -556,6 +601,11 @@ def make_integration_tools(
     # Email needs the session roots: attachment downloads land in the primary scratch
     # and outgoing attachments must resolve inside a granted directory.
     tools.extend(make_email_tools(secrets, roots=roots))
+    # Chat connectors (spec §11): posting is a catalog tool, filtered below by the
+    # session's enabled connectors like everything else here.
+    from .chat_tools import make_chat_tools
+
+    tools.extend(make_chat_tools(secrets, roots=roots))
 
     def github_search(
         query: str, search_type: str = "issues", max_results: int = 10
@@ -789,18 +839,30 @@ def make_integration_tools(
         writable = [r.path for r in (roots or []) if r.writable]
         if not writable:
             return None, {"error": "no writable session directory to clone into"}
-        path = (
-            _Path(str(raw)).expanduser().resolve()
-            if raw
-            else (writable[0] / default_name).resolve()
-        )
+        listed = ", ".join(str(r) for r in writable)
+        if raw:
+            given = _Path(str(raw)).expanduser()
+            # Strict (owner ruling 2026-09-06): a relative name is never guessed
+            # against the process cwd or a root — the agent resends the absolute
+            # path github_clone handed back. The error names the roots so the
+            # retry is a one-turn fix, not a dead end.
+            if not given.is_absolute():
+                return None, {
+                    "error": f"directory must be an absolute path inside a "
+                    f"writable session directory ({listed}); got {raw!r}"
+                }
+            path = given.resolve()
+        else:
+            path = (writable[0] / default_name).resolve()
         if not any(path.is_relative_to(root) for root in writable):
             return None, {
-                "error": f"{path} is outside the session's writable directories"
+                "error": f"{path} is outside the session's writable directories ({listed})"
             }
         return path, None
 
-    def github_clone(owner: str, repo: str, directory: str = "") -> dict[str, Any]:
+    def github_clone(owner: str, repo: str, directory: str = "", ref: str = "") -> dict[str, Any]:
+        if ref and (ref.startswith("-") or any(c.isspace() for c in ref) or ":" in ref):
+            return {"error": "ref must be a single branch, tag, commit SHA, or refs/pull/N/head"}
         target, err = _writable_target(directory, default_name=repo)
         if err:
             return err
@@ -822,7 +884,18 @@ def make_integration_tools(
 
             shutil.rmtree(target)
             return {"error": "clone aborted: credentials would have persisted"}
-        head, _ = _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+        if ref:
+            _out, git_err = _run_git(
+                [*_github_git_auth_args(secrets, owner), "fetch", "origin", ref], cwd=target
+            )
+            if git_err:
+                return {"error": f"clone exists at {target}, but ref fetch failed: {git_err}", "path": str(target)}
+            _out, git_err = _run_git(["checkout", "--detach", "FETCH_HEAD"], cwd=target)
+            if git_err:
+                return {"error": f"clone exists at {target}, but checkout failed: {git_err}", "path": str(target)}
+        head, git_err = _run_git(["rev-parse", "HEAD"], cwd=target)
+        if git_err:
+            return {"error": f"clone has no readable HEAD: {git_err}", "path": str(target)}
         return {"ok": True, "path": str(target), "head": head}
 
     github_clone.__name__ = "github_clone"
@@ -837,9 +910,13 @@ def make_integration_tools(
                 {
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
+                    "ref": {
+                        "type": "string",
+                        "description": "Optional branch, tag, commit SHA or refs/pull/N/head. Fetches and checks out that revision detached; omitted uses the default branch. Returns full HEAD SHA.",
+                    },
                     "directory": {
                         "type": "string",
-                        "description": "target path inside a granted folder (default: <primary>/<repo>)",
+                        "description": "absolute target path inside a granted folder (default: <primary>/<repo>)",
                     },
                 },
                 ["owner", "repo"],
@@ -882,11 +959,135 @@ def make_integration_tools(
                 "github_pull",
                 "Fast-forward an existing clone in a session folder to the latest "
                 "upstream commits. Requires user approval.",
-                {"directory": {"type": "string"}},
+                {"directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"}},
                 ["directory"],
             ),
             approval=True,
             caps=["github", "read"],
+        )
+    )
+
+    def _repo_of(target) -> tuple[str, str, dict[str, Any] | None]:
+        """(owner, repo) from the clone's origin remote, or an error dict."""
+        remote, git_err = _run_git(["remote", "get-url", "origin"], cwd=target)
+        if git_err:
+            return "", "", {"error": f"no origin remote: {git_err}"}
+        m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$", remote)
+        if not m:
+            return "", "", {"error": f"could not parse origin remote: {remote}"}
+        return m.group(1), m.group(2), None
+
+    def github_push(directory: str, branch: str = "") -> dict[str, Any]:
+        """The runtime pushes — the agent never handles a credential (machines
+        spec: tools are the boundary the sandbox will later harden). Same
+        per-invocation header auth as clone/pull: process-only, never at rest."""
+        target, err = _writable_target(directory)
+        if err:
+            return err
+        if not (target / ".git").exists():
+            return {"error": f"{target} is not a git repository"}
+        owner, _repo, rerr = _repo_of(target)
+        if rerr:
+            return rerr
+        if not branch:
+            branch, git_err = _run_git(
+                ["rev-parse", "--abbrev-ref", "HEAD"], cwd=target
+            )
+            if git_err or branch == "HEAD":
+                return {"error": "could not determine the current branch — pass `branch`"}
+        _out, git_err = _run_git(
+            [
+                *_github_git_auth_args(secrets, owner),
+                "-C",
+                str(target),
+                "push",
+                "--set-upstream",
+                "origin",
+                branch,
+            ]
+        )
+        if git_err:
+            return {"error": f"push failed: {git_err}"}
+        head, _ = _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+        return {"ok": True, "branch": branch, "head": head}
+
+    github_push.__name__ = "github_push"
+    tools.append(
+        _attach(
+            github_push,
+            _schema(
+                "github_push",
+                "Push the clone's current (or named) branch to GitHub — first "
+                "publish and every follow-up push to an open PR's branch alike. "
+                "The runtime authenticates with a short-lived token that is "
+                "never written to disk. Requires user approval.",
+                {
+                    "directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"},
+                    "branch": {
+                        "type": "string",
+                        "description": "branch to push (default: the current branch)",
+                    },
+                },
+                ["directory"],
+            ),
+            approval=True,
+            caps=["github", "write"],
+        )
+    )
+
+    def github_open_pr(
+        directory: str, title: str, body: str = "", base: str = "main", head: str = ""
+    ) -> dict[str, Any]:
+        target, err = _writable_target(directory)
+        if err:
+            return err
+        owner, repo, rerr = _repo_of(target)
+        if rerr:
+            return rerr
+        if not head:
+            head, git_err = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=target)
+            if git_err or head == "HEAD":
+                return {"error": "could not determine the current branch — pass `head`"}
+        out = _github_call(
+            secrets,
+            "POST",
+            f"/repos/{owner}/{repo}/pulls",
+            install=owner,
+            json={"title": title, "body": body, "base": base, "head": head},
+        )
+        if out.get("error"):
+            return out
+        created = out.get("data") if isinstance(out.get("data"), dict) else {}
+        return {
+            "ok": True,
+            "number": created.get("number"),
+            "url": created.get("html_url"),
+            "head": head,
+            "base": base,
+        }
+
+    github_open_pr.__name__ = "github_open_pr"
+    tools.append(
+        _attach(
+            github_open_pr,
+            _schema(
+                "github_open_pr",
+                "Open a pull request for a pushed branch (push first with "
+                "github_push). Requires user approval.",
+                {
+                    "directory": {"type": "string", "description": "absolute path of the clone, as returned by github_clone"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "base": {"type": "string", "description": "target branch (default main)"},
+                    "head": {
+                        "type": "string",
+                        "description": "source branch (default: the clone's current branch)",
+                    },
+                },
+                ["directory", "title"],
+            ),
+            approval=True,
+            caps=["github", "write"],
         )
     )
 
@@ -1316,17 +1517,92 @@ def make_integration_tools(
         )
         if err:
             return err
-        params = {"$top": max(1, min(int(max_results or 10), 20))}
+        limit = _clamp(
+            max_results, default=10, ceiling=_OUTLOOK_SEARCH_MAX_RESULTS
+        )
+        params = {
+            "$top": limit,
+            "$select": ",".join(_OUTLOOK_MESSAGE_SUMMARY_FIELDS),
+        }
         if query:
             params["$search"] = f'"{query}"'
+
+        headers = _graph_headers(profile["access_token"])
+        next_url = "https://graph.microsoft.com/v1.0/me/messages"
+        next_params: Optional[dict[str, Any]] = params
+        seen_page_urls: set[str] = set()
+        seen_message_ids: set[str] = set()
+        messages: list[dict[str, Any]] = []
+        pagination_warning = ""
+        pages_fetched = 0
+        page_truncated = False
+
+        while next_url and len(messages) < limit:
+            if next_url in seen_page_urls:
+                pagination_warning = "Microsoft Graph repeated a pagination URL"
+                break
+            if not _is_outlook_graph_url(next_url):
+                pagination_warning = "Microsoft Graph returned an unsafe pagination URL"
+                break
+            if pages_fetched >= _OUTLOOK_SEARCH_MAX_PAGES:
+                pagination_warning = "Microsoft Graph pagination exceeded the page limit"
+                break
+            seen_page_urls.add(next_url)
+            pages_fetched += 1
+            page = _request(
+                "GET",
+                next_url,
+                headers=headers,
+                params=next_params,
+            )
+            if not page.get("ok"):
+                if not messages:
+                    return _acct_result(aid, page)
+                pagination_warning = str(
+                    page.get("error") or "Microsoft Graph pagination failed"
+                )
+                break
+
+            data = page.get("data")
+            if not isinstance(data, dict):
+                pagination_warning = "Microsoft Graph returned an invalid message page"
+                break
+
+            raw_messages = data.get("value")
+            if not isinstance(raw_messages, list):
+                pagination_warning = "Microsoft Graph returned an invalid message list"
+                break
+
+            for index, raw_message in enumerate(raw_messages):
+                summary = _outlook_message_summary(raw_message)
+                message_id = str(summary.get("id") or "")
+                if message_id and message_id in seen_message_ids:
+                    continue
+                if message_id:
+                    seen_message_ids.add(message_id)
+                if summary:
+                    messages.append(summary)
+                if len(messages) >= limit:
+                    page_truncated = index < len(raw_messages) - 1
+                    break
+
+            raw_next = data.get("@odata.nextLink")
+            next_url = raw_next if isinstance(raw_next, str) else ""
+            # Graph's nextLink is opaque and already contains the original query.
+            next_params = None
+
+        has_more = bool(next_url) or page_truncated
+        result_data: dict[str, Any] = {
+            "value": messages,
+            "returned_count": len(messages),
+            "has_more": has_more,
+            "query_complete": not has_more,
+        }
+        if pagination_warning:
+            result_data["pagination_warning"] = pagination_warning
         return _acct_result(
             aid,
-            _request(
-                "GET",
-                "https://graph.microsoft.com/v1.0/me/messages",
-                headers=_graph_headers(profile["access_token"]),
-                params=params,
-            ),
+            {"ok": True, "data": result_data},
         )
 
     outlook_search_messages.__name__ = "outlook_search_messages"
@@ -1335,13 +1611,59 @@ def make_integration_tools(
             outlook_search_messages,
             _schema(
                 "outlook_search_messages",
-                "Search or list Outlook messages through Microsoft Graph.",
+                "Search Outlook and return up to 100 compact message summaries. "
+                "This tool follows Microsoft Graph pagination and deduplicates results. "
+                "When query_complete is false, report that the limit was reached and "
+                "ask the user to narrow the query; do not repeat or broaden the same "
+                "query to paginate. Use outlook_get_message to read a full body.",
                 {
-                    "query": {"type": "string"},
-                    "max_results": {"type": "integer"},
+                    "query": {
+                        "type": "string",
+                        "description": "Microsoft Outlook search expression; keep the user's requested scope unchanged.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": _OUTLOOK_SEARCH_MAX_RESULTS,
+                    },
                     "account": _GEN_ACCOUNT_PROP,
                 },
                 [],
+            ),
+            caps=["outlook", "read"],
+        )
+    )
+
+    def outlook_get_message(message_id: str, account: str = "") -> dict[str, Any]:
+        aid, profile, err = _account_profile(
+            secrets, "outlook", account, "access_token"
+        )
+        if err:
+            return err
+        return _acct_result(
+            aid,
+            _request(
+                "GET",
+                "https://graph.microsoft.com/v1.0/me/messages/"
+                f"{quote(message_id, safe='')}",
+                headers=_graph_headers(profile["access_token"]),
+                params={"$select": ",".join(_OUTLOOK_MESSAGE_DETAIL_FIELDS)},
+            ),
+        )
+
+    outlook_get_message.__name__ = "outlook_get_message"
+    tools.append(
+        _attach(
+            outlook_get_message,
+            _schema(
+                "outlook_get_message",
+                "Read one Outlook message, including its body, by the ID returned "
+                "from outlook_search_messages.",
+                {
+                    "message_id": {"type": "string"},
+                    "account": _GEN_ACCOUNT_PROP,
+                },
+                ["message_id"],
             ),
             caps=["outlook", "read"],
         )

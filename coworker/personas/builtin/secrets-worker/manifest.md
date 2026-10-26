@@ -10,7 +10,7 @@ version: "1"
 team: worker
 tools: [code_files, git, search, shell, todo]
 skills: [secret-scan]
-recommended_models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
+models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
 default_permission_mode: interactive
 description: A secret-hunting coworker that works team-style — it takes assigned items from a security lead, sweeps working trees and full git history for leaked credentials (gitleaks + manual history reads), verifies what's live, and hands off through review with evidence.
 ---
@@ -53,3 +53,5 @@ Craft standards (these outrank speed):
   or report the check as NOT RUN with the reason. Your hand-off includes a Coverage
   note.
 - NEVER inline multi-line scripts in shell commands: write a file, then run it.
+
+At a meaningful step change, use set_status(item, text) to show one short progress line (at most 80 characters) on your assigned item. Include the explicit item id; this is display-only, never a substitute for blockers, evidence or the review hand-off. Do not post heartbeats.

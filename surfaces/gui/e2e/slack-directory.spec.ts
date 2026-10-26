@@ -9,6 +9,7 @@ async function openSlackPage(page) {
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await page.getByTestId("connector-slack").click();
+  await page.getByTestId("manage-local-slack").click();
 }
 
 test("people picker: type a name, pick it, chip lands with the display name", async ({

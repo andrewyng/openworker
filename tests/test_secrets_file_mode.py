@@ -63,8 +63,10 @@ def test_temp_file_is_never_group_or_world_readable_mid_write(tmp_path, monkeypa
 def test_no_temp_file_is_left_behind(tmp_path):
     store = SecretStore(tmp_path / "secrets.json")
     store.put("openai", {"api_key": "sk-live"})
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "secrets.json"]
+    # The lock file beside it is permanent and empty; it is not a temporary file.
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name not in ("secrets.json", "secrets.json.lock")]
     assert leftovers == []
+    assert (tmp_path / "secrets.json.lock").read_bytes() == b""
 
 
 def test_content_round_trips(tmp_path):
@@ -90,7 +92,7 @@ def test_a_failed_write_leaves_the_previous_file_intact(tmp_path, monkeypatch):
         store.put("openai", {"api_key": "sk-replacement"})
 
     assert json.loads(path.read_text())["openai"]["api_key"] == "sk-original"
-    assert [p.name for p in tmp_path.iterdir()] == ["secrets.json"], "temp must be cleaned up"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["secrets.json", "secrets.json.lock"], "temp must be cleaned up"
 
 
 def test_a_hostile_preexisting_temp_name_cannot_redirect_the_write(tmp_path):

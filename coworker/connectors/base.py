@@ -95,6 +95,20 @@ class MessageEvent:
     # The bot itself was @-mentioned (UX-DECISIONS §31 mention router). Computed from the RAW
     # platform text at mapping time — mention tokens are rewritten for display afterwards.
     mentions_me: bool = False
+    # The broker's one-responder routing (connectors-across-machines spec §3): when a
+    # session subscribed to this source at the cloud, the relay envelope names it and the
+    # box delivers straight there — no fan-out, no per-mention spawn.
+    target_session_id: Optional[str] = None
+    # The coworker the cloud's routing line names for a per-mention session in this
+    # workspace / installation (UX-049). A hint: used when that coworker exists here.
+    mention_persona: Optional[str] = None
+    # The configuration this event fired under (connectors spec §10): {config_id,
+    # event, name, spawn?}. With `spawn` the box starts a fresh session from the
+    # spec; without it the envelope also names `target_session_id`.
+    configuration: Optional[dict] = None
+    # A reply-only frame ("unknown_name"): post one line on the thread, start nothing.
+    reply_only: Optional[str] = None
+    known_names: list = field(default_factory=list)
 
     def tagged_text(self) -> str:
         """How the message enters the super-agent thread: source + reply handle + text.
@@ -143,6 +157,10 @@ class BasePlatformAdapter(ABC):
     `handle_message` for inbound events."""
 
     platform: str = "base"
+    # Whether this platform renders choice buttons. False here is the honest
+    # default: `send_interactive` below falls back to plain text, and a caller
+    # that assumes buttons would leave the reader with no way to answer.
+    supports_interactive: bool = False
 
     def __init__(self) -> None:
         self._handler: Optional[MessageHandler] = None

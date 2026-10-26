@@ -12,7 +12,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // Full-page: left sub-nav + the General section (no modal backdrop).
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
-  for (const label of ["General", "Models", "Voice input"]) {
+  for (const label of ["General", "Models & Keys", "Voice input"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   // Folded tabs: Files is a General card now; Coworkers ships as its own tab (UX-029).
@@ -22,8 +22,34 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // The Files card lives inside General.
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
 
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
+});
+
+// #43: when /v1/settings fails (server down, or hung past the 10 s timeout) Models says so
+// and offers Retry instead of "Loading…" forever; Retry reloads once the server answers.
+test("Models explains when the server cannot be reached, and Retry recovers", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+  // Later routes win over the fixture's catch-all: fail GET /v1/settings until "the server
+  // comes back"; every other call keeps its fixture answer.
+  let serverDown = true;
+  await page.route("**/v1/settings", async (route) => {
+    if (route.request().method() === "GET" && serverDown) return route.abort("connectionrefused");
+    await route.fallback();
+  });
+  await page.getByRole("button", { name: "Models & Keys", exact: true }).click();
+
+  await expect(page.getByTestId("settings-error")).toContainText("Couldn't reach the server to load settings");
+  await expect(page.getByText("Loading…", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("set-provider-openai")).toHaveCount(0);
+
+  serverDown = false;
+  await page.getByTestId("settings-retry").click();
+  await expect(page.getByTestId("set-provider-openai")).toBeVisible();
+  await expect(page.getByTestId("settings-error")).toHaveCount(0);
 });
 
 // The flag's "0" escape hatch hides the tab again (the default is on — UX-029).
@@ -51,17 +77,25 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
-  // Card states from the fixtures: openai configured+used, anthropic configured, zai not.
-  await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected · used 2h ago");
+  // Card states from the fixtures: openai configured with models in the picker, anthropic
+  // configured, zai not. UX-055: a connected card counts its picker models; connected
+  // cards come first in their group, the rest sit quieter behind them; local servers group apart.
+  await expect(page.getByTestId("set-provider-openai")).toContainText("✓ Connected · 4 models");
   await expect(page.getByTestId("set-provider-anthropic")).toContainText("✓ Connected");
   await expect(page.getByTestId("set-provider-zai")).toContainText("Not set up");
   await expect(page.getByTestId("set-provider-ollama")).toContainText("No key needed");
+  await expect(page.getByTestId("provider-group-local")).toContainText("Ollama");
+  await expect(page.getByTestId("set-provider-zai")).not.toHaveClass(/bg-panel/);
+  // Five API-key providers fit under the fold; the "Show N more" line only appears past six.
+  await expect(page.getByTestId("provider-more-api_key")).toHaveCount(0);
+  await expect(page.getByTestId("pick-model-btn")).toBeVisible();
+  await expect(page.getByTestId("provider-search")).toBeVisible();
 
   // The composer-picker card lists the curated models with provider tags.
   const picker = page.getByTestId("composer-picker");
-  await expect(picker).toContainText("In the composer's picker");
+  await expect(picker).toContainText("Select what shows up for sessions");
 
   // Vendor form: blurb renders; the prefilled endpoint hides behind the disclosure.
   await page.getByTestId("set-provider-zai").click();
@@ -83,7 +117,7 @@ test("Models: BytePlus and Volcengine Ark stay visually and operationally separa
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
   const byteplusCard = page.getByTestId("set-provider-ark");
   const volcengineCard = page.getByTestId("set-provider-ark-agent-plan-cn");
@@ -124,7 +158,7 @@ test("Models: Remove key reverts a configured provider", async ({ page }) => {
   page.on("dialog", (d) => d.accept());
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByRole("button", { name: "Models & Keys" }).click();
 
   await page.getByTestId("set-provider-anthropic").click();
   await expect(page.getByTestId("set-saved-pill")).toContainText("Tested & saved");

@@ -7,3 +7,7 @@ dist/
 /test-results/
 /playwright-report/
 /e2e/_dbg.png
+
+# Scenarios exported from real runs (scripts/export-scenario.py) stay on this machine:
+# scrubbed, but still someone's real session. Hand-written scenarios are committed.
+src/gallery/scenarios/real-*.json

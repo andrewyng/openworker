@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
   createSkill,
@@ -9,9 +8,12 @@ import {
   stageSkillUpload,
   confirmSkillUpload,
   updateSkill,
+  type Machine,
   type SkillRow,
   type SkillUploadPreview,
 } from "../api";
+import { useMachineData } from "../useMachineData";
+import { CachedNote, LoadingRow, UnreachableRow } from "./ScopedStatus";
 import { Icon } from "./Icon";
 
 // Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
@@ -23,15 +25,15 @@ import { Icon } from "./Icon";
 // Persona-bundled skills arrive with personas (§10), managed on the persona page, not here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
-const FIELD_LABEL = "text-[13px] font-medium text-ink";
+const FIELD_LABEL = "text-ui font-medium text-ink";
 const INPUT =
-  "w-full min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
+  "w-full min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent";
 const BTN_ACCENT =
-  "text-[13px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+  "text-ui px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
-  "text-[13px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
+  "text-ui px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 const BADGE =
-  "text-[11px] px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
+  "text-label px-2 py-0.5 rounded-full border border-line bg-paper text-muted shrink-0";
 
 type Editor = {
   mode: "new" | "edit";
@@ -69,13 +71,17 @@ async function fileToB64(file: File): Promise<string> {
 
 export function SkillsTab({
   onCreateSkill,
+  machine,
 }: {
   // The doorway (SKILLS-SPEC §5.2): starts a new conversation with the description
   // prefilled in the composer — the worker builds the skill and proposes it via save_skill.
+  // With a machine scope, that conversation runs ON the machine.
   onCreateSkill?: (description: string) => void;
+  // UX-046 machine scope: manage THIS machine's skills through the proxy.
+  machine?: Machine | null;
 }) {
   const { t } = useTranslation();
-  const [rows, setRows] = useState<SkillRow[]>([]);
+  const mid = machine?.id ?? null;
   const [editor, setEditor] = useState<Editor | null>(null);
   const [upload, setUpload] = useState<SkillUploadPreview | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -97,10 +103,11 @@ export function SkillsTab({
   const OFF_NOTE = t("skills.off_note");
   const DELETE_NOTE = t("skills.delete_note");
 
-  const refresh = () => listSkills().then(setRows);
-  useEffect(() => {
-    refresh();
-  }, []);
+  const skills = useMachineData<SkillRow[]>(`skills:${mid ?? "local"}`, () =>
+    listSkills(undefined, mid),
+  );
+  const rows = skills.data ?? [];
+  const refresh = skills.refresh;
 
   const fail = (res: { ok?: boolean; error?: string }) => {
     setNotice(null);
@@ -116,15 +123,22 @@ export function SkillsTab({
     if (!editor) return;
     const res =
       editor.mode === "new"
-        ? await createSkill({
-            name: editor.name.trim(),
-            description: editor.description.trim(),
-            instructions: editor.instructions,
-          })
-        : await updateSkill(editor.name, {
-            description: editor.description.trim(),
-            instructions: editor.instructions,
-          });
+        ? await createSkill(
+            {
+              name: editor.name.trim(),
+              description: editor.description.trim(),
+              instructions: editor.instructions,
+            },
+            mid,
+          )
+        : await updateSkill(
+            editor.name,
+            {
+              description: editor.description.trim(),
+              instructions: editor.instructions,
+            },
+            mid,
+          );
     if (fail(res)) return;
     setEditor(null);
     if (editor.mode === "new")
@@ -134,14 +148,14 @@ export function SkillsTab({
 
   const onPickFile = async (file: File | undefined) => {
     if (!file) return;
-    const res = await stageSkillUpload(await fileToB64(file), file.name);
+    const res = await stageSkillUpload(await fileToB64(file), file.name, mid);
     if (fail(res)) return;
     setUpload(res);
   };
 
   const confirmUpload = async () => {
     if (!upload?.token) return;
-    const res = await confirmSkillUpload(upload.token);
+    const res = await confirmSkillUpload(upload.token, "global", undefined, mid);
     if (fail(res)) return;
     setUpload(null);
     setNotice({ name: upload.name || t("skills.fallback_name"), text: CONFIRMATION, tone: "ok" });
@@ -154,7 +168,7 @@ export function SkillsTab({
       return;
     }
     setArmedDelete(null);
-    const res = await deleteSkill(row.name);
+    const res = await deleteSkill(row.name, undefined, mid);
     if (fail(res)) return;
     setNotice({ name: row.name, text: DELETE_NOTE, tone: "warn" });
     refresh();
@@ -164,8 +178,12 @@ export function SkillsTab({
     <section>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-[16px] font-semibold">{t("settings.tab.skills")}</h2>
-          <p className="text-[13px] text-muted mt-1 leading-relaxed">{t("skills.subtitle")}</p>
+          <h2 className="text-body font-semibold">{t("settings.tab.skills")}</h2>
+          <p className="text-ui text-muted mt-1 leading-relaxed">
+            {machine
+              ? t("settingsx.skills.machine_subtitle", { name: machine.name })
+              : t("skills.subtitle")}
+          </p>
         </div>
         {/* One add-action, three doors behind it (SKILLS-SPEC §5): the list is the page. */}
         <div className="relative shrink-0">
@@ -195,8 +213,8 @@ export function SkillsTab({
                     setEditor(emptyEditor());
                   }}
                 >
-                  <div className="text-[13px] font-medium">{t("skills.door_write")}</div>
-                  <div className="text-[12px] text-muted">{t("skills.door_write_sub")}</div>
+                  <div className="text-ui font-medium">{t("skills.door_write")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_write_sub")}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -206,8 +224,8 @@ export function SkillsTab({
                     fileInput.current?.click();
                   }}
                 >
-                  <div className="text-[13px] font-medium">{t("skills.door_import")}</div>
-                  <div className="text-[12px] text-muted">{t("skills.door_import_sub")}</div>
+                  <div className="text-ui font-medium">{t("skills.door_import")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_import_sub")}</div>
                 </button>
                 <button
                   role="menuitem"
@@ -218,8 +236,8 @@ export function SkillsTab({
                     onCreateSkill?.("");
                   }}
                 >
-                  <div className="text-[13px] font-medium">{t("skills.door_ai")}</div>
-                  <div className="text-[12px] text-muted">{t("skills.door_ai_sub")}</div>
+                  <div className="text-ui font-medium">{t("skills.door_ai")}</div>
+                  <div className="text-meta text-muted">{t("skills.door_ai_sub")}</div>
                 </button>
               </div>
             </>
@@ -239,7 +257,7 @@ export function SkillsTab({
       />
 
       {error ? (
-        <div className="text-[13px] text-red-500 mb-3" role="alert">
+        <div className="text-ui text-red-500 mb-3" role="alert">
           {error}
         </div>
       ) : null}
@@ -247,7 +265,7 @@ export function SkillsTab({
         <div
           role="status"
           className={
-            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px] " +
+            "mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-ui " +
             (notice.tone === "ok"
               ? "bg-tealSoft/70 text-tealInk border-tealInk/20"
               : "bg-warnSoft/70 text-warnInk border-warnInk/20")
@@ -268,17 +286,17 @@ export function SkillsTab({
 
       {upload ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-1">{t("skills.review_title")}</div>
-          <p className="text-[13px] text-muted mb-3">{t("skills.review_sub")}</p>
-          <div className="text-[13px] mb-1">
+          <div className="text-ui font-medium mb-1">{t("skills.review_title")}</div>
+          <p className="text-ui text-muted mb-3">{t("skills.review_sub")}</p>
+          <div className="text-ui mb-1">
             <span className="font-medium">{upload.name}</span>
             <span className="text-muted"> — {upload.description || t("skills.no_description")}</span>
           </div>
-          <pre className="text-[12px] bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
+          <pre className="text-meta bg-paper border border-line rounded-lg p-3 whitespace-pre-wrap max-h-64 overflow-y-auto mb-2">
             {upload.instructions}
           </pre>
           {upload.files?.length ? (
-            <div className="text-[12px] text-muted mb-2">
+            <div className="text-meta text-muted mb-2">
               {t("skills.bundled_files", { files: upload.files.join(", ") })}
             </div>
           ) : null}
@@ -295,7 +313,7 @@ export function SkillsTab({
 
       {editor ? (
         <div className={`${CARD} p-4 mb-4`}>
-          <div className="text-[13px] font-medium mb-3">
+          <div className="text-ui font-medium mb-3">
             {editor.mode === "new"
               ? t("skills.editor_new")
               : t("skills.editor_edit", { name: editor.name })}
@@ -346,9 +364,20 @@ export function SkillsTab({
         </div>
       ) : null}
 
+      {skills.cachedAt ? <CachedNote at={skills.cachedAt} /> : null}
       <div className={`${CARD} divide-y divide-line`}>
-        {rows.length === 0 && !editor ? (
-          <div className="p-5 text-[13px] text-muted">
+        {skills.loading && !skills.data ? (
+          <LoadingRow
+            what={
+              machine
+                ? t("settingsx.skills.loading_what_on", { name: machine.name })
+                : t("settingsx.skills.loading_what")
+            }
+          />
+        ) : skills.error && !skills.data && machine ? (
+          <UnreachableRow machineName={machine.name} />
+        ) : rows.length === 0 && !editor ? (
+          <div className="p-5 text-ui text-muted">
             <Trans i18nKey="skills.empty" components={{ b: <b /> }} />
           </div>
         ) : null}
@@ -356,7 +385,7 @@ export function SkillsTab({
           <div key={row.name} className="flex items-center gap-3 px-4 py-3">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`text-[13px] font-medium ${row.enabled ? "" : "text-muted"}`}>
+                <span className={`text-ui font-medium ${row.enabled ? "" : "text-muted"}`}>
                   {row.name}
                 </span>
                 {row.source !== "local" ? <span className={BADGE}>{row.source}</span> : null}
@@ -364,18 +393,27 @@ export function SkillsTab({
                     chip with a folder icon so it READS as clickable (live drive: plain
                     text hid the affordance). */}
                 {row.files ? (
-                  <button
-                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
-                    title={t("skills.show_folder")}
-                    onClick={() => revealSkill(row.name)}
-                  >
-                    <Icon name="folder" size={11} /> {t("skills.file_count", { count: row.files })}
-                  </button>
+                  machine ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-label px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted shrink-0"
+                      title={t("settingsx.skills.files_live_on", { name: machine.name })}
+                    >
+                      <Icon name="folder" size={11} /> {t("skills.file_count", { count: row.files })}
+                    </span>
+                  ) : (
+                    <button
+                      className="inline-flex items-center gap-1 text-label px-1.5 py-0.5 rounded-md border border-line bg-paper text-muted hover:text-ink hover:border-lineStrong shrink-0"
+                      title={t("skills.show_folder")}
+                      onClick={() => revealSkill(row.name)}
+                    >
+                      <Icon name="folder" size={11} /> {t("skills.file_count", { count: row.files })}
+                    </button>
+                  )
                 ) : null}
               </div>
               {/* Full description, wrapping — a skill's one-liner is its menu entry; cutting
                   it mid-word hid what the skill does (live drive). */}
-              <div className="text-[12px] text-muted leading-relaxed">{row.description}</div>
+              <div className="text-meta text-muted leading-relaxed">{row.description}</div>
             </div>
             <button
               className={BTN_BORDERED}
@@ -403,7 +441,7 @@ export function SkillsTab({
                 <Icon name="trash" size={13} />
               )}
             </button>
-            <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+            <label className="inline-flex items-center gap-1.5 text-meta text-muted">
               <input
                 type="checkbox"
                 role="switch"
@@ -411,7 +449,7 @@ export function SkillsTab({
                 checked={row.enabled}
                 onChange={(e) => {
                   const on = e.target.checked;
-                  updateSkill(row.name, { enabled: on }).then((res) => {
+                  updateSkill(row.name, { enabled: on }, mid).then((res) => {
                     if (!fail(res))
                       setNotice({
                         name: row.name,

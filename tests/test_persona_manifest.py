@@ -29,7 +29,8 @@ def test_parse_valid():
     assert m.tools == ["files", "search", "shell", "todo"]
     assert m.requires_folder is False and m.scheduling is True
     assert m.messaging is True and m.connectors == ("github",)
-    assert m.recommended_models == ["anthropic:claude-opus-4-8"]
+    assert m.models == ["anthropic:claude-opus-4-8"]
+    assert m.recommended_models == m.models  # alias name, one release
     assert m.system_prompt.startswith("You are a demo coworker")
 
 
@@ -81,7 +82,9 @@ def test_to_agent_carries_traits_and_tools(tmp_path):
 
     agent = parse_manifest(VALID).to_agent()
     assert agent.name == "demo" and agent.requires_folder is False
-    assert agent.messaging and agent.connectors
+    # `messaging:` is parsed but decides nothing (spec §11): chat tools follow
+    # `connectors:`, and a GitHub-only coworker has no chat platform to post to.
+    assert agent.messaging is False and agent.connectors == ("github",)
     ctx = AgentContext(workspace=tmp_path, executor=object(), todo=TodoList())
     names = {getattr(t, "__name__", "") for t in agent.build_tools(ctx)}
     assert {"read_file", "grep", "run_shell", "todo_write"} <= names

@@ -131,8 +131,33 @@ def test_mention_spawns_visible_session_with_thread_grant(tmp_path, monkeypatch)
     # The opening turn carries the reply contract and went to the new session.
     got_sid, opening, source = captured[-1]
     assert got_sid == sid
-    assert target in opening and "pre-approved" in opening
+    # The origin block (spec §11.3): ids the model copies into the reply call, no handle.
+    assert "From Slack · workspace default · #general (C1) · thread 1700000010.000100" in opening
+    assert 'slack_post_message(workspace="default", channel="C1", thread_ts="1700000010.000100", text=…) — pre-approved' in opening
+    assert target not in opening
+    assert "mentioned on Slack in #general" in opening and "Slack-appropriate" in opening
+    # The grant covers the platform's own reply tool as well (spec §11.4).
+    assert target in mgr._engines[sid].permissions.task_rules["slack_post_message"]
     assert source["connector"] == "slack" and source["kind"] == "channel"
+
+
+def test_mention_opening_is_framed_for_the_platform():
+    """GitHub mentions must not be told they own a Slack thread (2026-09-01 drill)."""
+    from coworker.server.manager import mention_opening
+
+    gh_src = SessionSource(platform="github", chat_id="acme/api#12", user_id="rohit", user_name="rohit", chat_name="acme/api#12", chat_type="channel")
+    gh = mention_opening(gh_src, "@bot fix this")
+    assert gh.startswith("🔔 You were mentioned on GitHub in acme/api#12 by rohit")
+    assert "You own this GitHub issue/PR thread" in gh
+    assert 'github_reply(owner="acme", repo="api", number=12, body=…) — pre-approved' in gh and "GitHub-appropriate" in gh
+    assert "Slack" not in gh
+    sl_src = SessionSource(platform="slack", chat_id="C1", user_id="U1", user_name="U1", chat_name="general", chat_type="channel")
+    sl = mention_opening(sl_src, "hi", "1.2", "- U2: earlier")
+    assert "You own this Slack thread" in sl and sl.endswith("Recent channel context:\n- U2: earlier")
+    assert 'slack_post_message(workspace="default", channel="C1", thread_ts="1.2", text=…)' in sl
+    # Unknown platform degrades to a capitalised name, never a crash.
+    mx = mention_opening(SessionSource(platform="matrix", chat_id="!r", user_id="u", user_name="u", chat_name="!r"), "t")
+    assert "mentioned on Matrix in" in mx and 'send_message(target="matrix:!r", text=…)' in mx
 
 
 def test_followup_tag_steers_same_session(tmp_path, monkeypatch):
@@ -177,19 +202,28 @@ def test_distinct_thread_spawns_distinct_session(tmp_path, monkeypatch):
 def test_subscribed_coworker_overrides_router(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     captured = _capture_deliveries(mgr, monkeypatch)
+    mgr.save("sA", mgr.get_engine("sA"))  # the connected coworker exists
     mgr.subscriptions.subscribe("sA", "slack:C1")
 
     asyncio.run(mgr._dispatch_inbound(_mention_event()))
 
-    # Delivered to the connected coworker with must-respond framing + the thread target…
+    # Delivered to the connected coworker with must-respond framing + the reply call…
     assert len(captured) == 1
     sid, message, _ = captured[0]
     assert sid == "sA"
     assert "must" in message and "respond" in message
-    assert "slack:C1:1700000010.000100" in message
+    assert 'slack_post_message(workspace="default", channel="C1", thread_ts="1700000010.000100", text=…) — pre-approved' in message
     # …and the router spawned nothing.
     assert mgr.mention_sessions.all() == []
-    assert mgr.list_sessions() == []
+    assert [s["session_id"] for s in mgr.list_sessions()] == ["sA"]
+    # The tag granted the thread to the subscribed session (spec §11.4 — drill 5
+    # finding: a subscribed session that got tagged had to ask to reply), and the
+    # grant survives a rebuild because it is persisted with the session's grants.
+    target = "slack:C1:1700000010.000100"
+    assert target in mgr._engines["sA"].permissions.task_rules["slack_post_message"]
+    assert target in mgr._engines["sA"].permissions.task_rules["send_message"]
+    mgr._engines.pop("sA")
+    assert target in mgr.get_engine("sA").permissions.task_rules["slack_post_message"]
 
 
 def test_grant_reseeds_on_engine_rebuild(tmp_path, monkeypatch):
@@ -202,6 +236,8 @@ def test_grant_reseeds_on_engine_rebuild(tmp_path, monkeypatch):
     mgr._engines.pop(sid)  # simulate restart/rebuild
     engine = mgr.get_engine(sid)
     assert target in engine.permissions.task_rules["send_message"]
+    # A Slack thread grants the reply only — the GitHub tools stay out of it.
+    assert "github_reply" not in engine.permissions.task_rules
 
 
 def test_deleted_session_releases_thread_and_respawns(tmp_path, monkeypatch):

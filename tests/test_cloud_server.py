@@ -9,10 +9,14 @@ from fastapi.testclient import TestClient
 from coworker.server import SessionManager, create_app
 
 
-def _allow_managed_state(state: str = "s") -> None:
+def _allow_managed_state(state: str = "s", machine_id: str = "", machine_name: str = "") -> None:
     from coworker import cloud
 
-    cloud._pending_managed_states[state] = cloud._now()
+    cloud._pending_managed_states[state] = {
+        "created": cloud._now(),
+        "machine_id": machine_id,
+        "machine_name": machine_name,
+    }
 
 
 @pytest.fixture
@@ -41,6 +45,27 @@ def test_connect_managed_requires_sign_in(client):
     body = client.post("/v1/connectors/notion/connect-managed").json()
     assert not body["ok"]
     assert "not signed in" in body["error"]
+
+
+def test_connect_managed_reports_signed_in_false_on_expired_session(client, monkeypatch):
+    """GitHub issue #658: /v1/cloud/status can still say signed_in=True from a
+    stale-but-present access_token (cloud.status only checks presence, not
+    freshness) while the actual connect attempt — which needs a token it can use
+    right now — correctly fails. The GUI (AddConnectionModal's SlackOneClick)
+    relies on this route's `signed_in: False` to recover into a sign-in prompt
+    instead of dead-ending on the bare error text."""
+    import time
+
+    from coworker import cloud
+
+    client.manager.secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert client.get("/v1/cloud/status").json()["signed_in"] is True
+
+    body = client.post("/v1/connectors/slack/connect-managed").json()
+    assert body == {"ok": False, "error": "not signed in", "signed_in": False}
 
 
 def test_oauth_callback_writes_profile_and_returns_page(client):
@@ -174,6 +199,36 @@ def test_gallery_install_runs_consent_flow(client, monkeypatch):
     assert events == ["sales"]  # install event fired
 
 
+NON_ASCII_MANIFEST = """---
+id: sales
+name: Sales Coworker — 销售
+icon: chart
+tagline: It’s a “quality” pitch — 你好
+family: knowledge
+workspace: deliverable
+tools: [files, search, todo]
+description: d
+---
+You are the Sales Coworker. \U0001f680"""
+
+
+def test_gallery_install_handles_non_ascii_manifest(client, monkeypatch):
+    """Gallery copy carries em-dashes, curly quotes, CJK and emoji.
+
+    The install path hashes the markdown as UTF-8 and `personas/manifest.py` reads it
+    back as UTF-8, so the temp file in between must be written as UTF-8 too. Writing it
+    with the locale encoding works on Linux/macOS but not on Windows, where the default
+    is cp1252: CJK and emoji fail to encode outright, while an em-dash silently writes
+    as a single cp1252 byte that the UTF-8 read then rejects.
+    """
+    _stub_gallery(monkeypatch, markdown=NON_ASCII_MANIFEST)
+    body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()
+    assert body["ok"], body
+    installed = {p["id"]: p for p in body["personas"]}
+    assert installed["sales"]["name"] == "Sales Coworker — 销售"
+    assert installed["sales"]["tagline"] == "It’s a “quality” pitch — 你好"
+
+
 def test_gallery_install_rejects_hash_mismatch(client, monkeypatch):
     _stub_gallery(monkeypatch, hash_ok=False)
     body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()
@@ -218,3 +273,77 @@ def test_delete_persona_refuses_builtin_and_unknown(client):
     assert not body["ok"] and "built-in" in body["error"]
     body = client.delete("/v1/personas/ghost").json()
     assert not body["ok"] and "unknown" in body["error"]
+
+
+# -- machine-targeted connect (machines spec §Remote OAuth) -------------------
+
+
+def test_connect_managed_machine_target_open_to_all_managed(client):
+    """Connect-direct covers every managed connector now — GitHub and Slack
+    included (increment 2) — so a machine-targeted start proceeds straight
+    to the ordinary sign-in requirement."""
+    for name in ("github", "slack", "notion"):
+        body = client.post(
+            f"/v1/connectors/{name}/connect-managed",
+            json={"machine_id": "m1", "machine_name": "box"},
+        ).json()
+        assert not body["ok"]
+        assert "not signed in" in body["error"]
+
+
+def test_store_managed_grant_stages_into_ephemeral_store():
+    """The staging store produces exactly the keys a fresh connect writes —
+    account profile + default pointer for gmail, a bare default for notion —
+    and never touches disk."""
+    from coworker.connectors.setup import store_managed_grant
+    from coworker.secrets import EphemeralSecretStore
+
+    staging = EphemeralSecretStore()
+    out = store_managed_grant(
+        staging,
+        "gmail",
+        {},
+        {"type": "oauth", "managed": True, "access_token": "t", "account": "a@b.c"},
+    )
+    assert out["ok"]
+    assert set(staging.profiles()) == {"gmail:account:a@b.c", "gmail:default"}
+    assert staging.profiles()["gmail:default"]["default_account"] == "a@b.c"
+
+    # Notion rides the generic accounts layer (the live drill's
+    # notion:account:<id> finding): account profile + default pointer.
+    staging = EphemeralSecretStore()
+    out = store_managed_grant(
+        staging,
+        "notion",
+        {},
+        {"type": "oauth", "managed": True, "access_token": "t", "account": "W"},
+    )
+    assert out["ok"]
+    assert set(staging.profiles()) == {"notion:account:w", "notion:default"}
+    assert staging.profiles()["notion:default"]["default_account"] == "w"
+
+
+def test_machine_targeted_callback_stores_nothing_on_delegation_failure(
+    client, monkeypatch
+):
+    """One grant, one holder: if the delegation step fails the grant is stored
+    NOWHERE — not locally as a fallback — and the page says so."""
+    from coworker import cloud
+
+    monkeypatch.setattr(cloud, "delegate_connection", lambda *a, **k: None)
+    _allow_managed_state("t", machine_id="m1", machine_name="my-vm")
+    resp = client.post(
+        "/oauth/callback",
+        data={
+            "provider": "notion",
+            "connector": "notion",
+            "connection_id": "conn_1",
+            "access_token": "secret-token",
+            "refresh_token": "secret-refresh",
+            "account": "W",
+            "app_state": "t",
+        },
+    )
+    assert resp.status_code == 400
+    assert "nothing was stored" in resp.text.lower()
+    assert client.manager.secrets.get("notion:default") is None

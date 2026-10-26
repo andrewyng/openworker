@@ -1,0 +1,8 @@
+# The only image built from this repository is packaging/openshell/Dockerfile, and it
+# needs the CLI's source and nothing else.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!coworker
+**/__pycache__

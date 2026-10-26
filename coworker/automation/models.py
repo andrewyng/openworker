@@ -43,7 +43,7 @@ def grant_entries(permissions: Any) -> list[str]:
     tools by construction) and the target must be non-empty. Reads are disclosure-only —
     rendered on the consent card, never stored. Anything else is dropped, fail-closed.
     """
-    from ..connectors.tool_defs import target_arg_for
+    from ..connectors.tool_defs import rule_eligible
 
     entries: list[str] = []
     for item in permissions or []:
@@ -53,7 +53,7 @@ def grant_entries(permissions: Any) -> list[str]:
             continue
         tool = str(item.get("tool", "")).strip()
         target = str(item.get("target", "")).strip()
-        if not tool or not target or target_arg_for(tool) is None:
+        if not tool or not target or not rule_eligible(tool):
             continue
         entry = rule_entry(tool, target)
         if entry not in entries:
@@ -179,6 +179,22 @@ class ScheduledTask:
     def add_rule(self, tool: str, target: str) -> bool:
         entry = rule_entry(tool, target)
         if not tool or not target or entry in self.always_allowed_tools:
+            return False
+        self.always_allowed_tools.append(entry)
+        return True
+
+    def add_tool_rule(self, tool: str) -> bool:
+        """Grant a tool for this task with no target binding — "this routine may search
+        the web", as opposed to "…may message this one chat".
+
+        Needed because a target binding is not always available to bind. A tool that
+        takes no target argument can never earn a standing rule through add_rule, so a
+        routine using one asks again on every single run: the session-scoped "always"
+        dies with the run, and a scheduled task is a fresh session each time. Callers
+        gate which tools may take this path (see standing_tool_candidate).
+        """
+        entry = rule_entry(tool)
+        if not tool or entry in self.always_allowed_tools:
             return False
         self.always_allowed_tools.append(entry)
         return True

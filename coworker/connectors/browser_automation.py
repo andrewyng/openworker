@@ -56,6 +56,39 @@ def _resolve_in_roots(
     return resolved, None
 
 
+def _guard_route(route: Any) -> None:
+    """Playwright route handler: vet every NAVIGATION at request time against the same
+    address guard web_fetch uses, and abort the ones it refuses.
+
+    ``check_url`` in ``browser_open_url`` only sees the model-supplied URL. The browser then
+    follows redirects and runs page JavaScript, and a later navigation (a 30x hop, a
+    meta-refresh, ``location = …``) to ``127.0.0.1`` / ``169.254.169.254`` is never re-vetted
+    before ``browser_read_page`` / ``browser_screenshot`` lift its content into the agent —
+    the gap ``redirect_refusal`` (OPE-124) can only patch after the fact for the single
+    ``goto``. Gating navigation requests here closes it at the source and narrows the
+    DNS-rebinding window (the handler sees the concrete request that is about to go out).
+
+    Subresource fetches (images, scripts, XHR) are not gated: they can't pull internal
+    content back into the agent's context, and resolving DNS for every one would be dozens of
+    lookups per page. A resolver-pinning proxy is the larger design that would also cover
+    those; this closes the read-back path.
+    """
+    request = route.request
+    try:
+        is_navigation = request.is_navigation_request()
+    except Exception:
+        is_navigation = True  # unknown shape → treat as a navigation and fail closed
+    if is_navigation:
+        try:
+            blocked = check_url(request.url)
+        except Exception:
+            blocked = "address guard error"  # a guard failure must fail closed
+        if blocked:
+            route.abort("blockedbyclient")
+            return
+    route.continue_()
+
+
 def _meta(
     name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
 ):
@@ -104,6 +137,7 @@ class _BrowserController:
         self._browser = None
         self._context = None
         self._page = None
+        self._tracked_page_ids: set[int] = set()
         self._error: Optional[str] = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="coworker-browser"
@@ -120,6 +154,30 @@ class _BrowserController:
             "updated_at": None,
             "controls": [],
         }
+
+    def _open_pages(self) -> list[Any]:
+        if self._context is None:
+            return []
+        return [page for page in self._context.pages if not page.is_closed()]
+
+    def _activate_page(self, page: Any) -> None:
+        """Make a newly opened tab the target for subsequent browser tools."""
+        with self._lock:
+            if page.is_closed():
+                return
+            self._page = page
+            page_id = id(page)
+            if page_id not in self._tracked_page_ids:
+                self._tracked_page_ids.add(page_id)
+                page.on("close", lambda _closed_page: self._page_closed(page))
+
+    def _page_closed(self, page: Any) -> None:
+        with self._lock:
+            self._tracked_page_ids.discard(id(page))
+            if self._page is not page:
+                return
+            pages = self._open_pages()
+            self._page = pages[-1] if pages else None
 
     def _touch(self, **changes: Any) -> None:
         self._state.update(changes)
@@ -164,7 +222,14 @@ class _BrowserController:
                 self._context = self._browser.new_context(
                     viewport={"width": 1280, "height": 900}
                 )
-                self._page = self._context.new_page()
+                # Vet every navigation (redirect / JS / meta-refresh), not just the URL the
+                # model passed to browser_open_url, before its request goes out.
+                self._context.route("**/*", _guard_route)
+                # Playwright keeps every tab in one BrowserContext. A page opened by
+                # window.open() is the user's new working surface, so make it the active
+                # target for screenshot/snapshot/click and the other browser tools.
+                self._context.on("page", self._activate_page)
+                self._activate_page(self._context.new_page())
                 self._touch(
                     open=True, status="open", last_action="open browser", last_error=""
                 )
@@ -195,6 +260,7 @@ class _BrowserController:
                 self._browser = None
                 self._context = None
                 self._page = None
+                self._tracked_page_ids.clear()
                 self._touch(open=False, status="closed", url="", title="", controls=[])
             return {"ok": True}
 
@@ -205,6 +271,56 @@ class _BrowserController:
         with self._lock:
             self._refresh_page_state()
             return dict(self._state)
+
+    def tabs(self) -> dict[str, Any]:
+        return self._submit(self._tabs_locked)
+
+    def _tabs_locked(self) -> dict[str, Any]:
+        with self._lock:
+            tabs = []
+            for index, page in enumerate(self._open_pages()):
+                try:
+                    title = page.title()
+                except Exception:
+                    title = ""
+                tabs.append(
+                    {
+                        "index": index,
+                        "active": page is self._page,
+                        "url": page.url,
+                        "title": title,
+                    }
+                )
+            return {"tabs": tabs}
+
+    def switch_tab(self, index: int) -> dict[str, Any]:
+        return self._submit(lambda: self._switch_tab_locked(index))
+
+    def _switch_tab_locked(self, index: int) -> dict[str, Any]:
+        with self._lock:
+            pages = self._open_pages()
+            if not pages:
+                return {"error": "no browser tabs are open"}
+            if isinstance(index, bool) or not isinstance(index, int):
+                return {"error": "tab index must be an integer"}
+            if index < 0 or index >= len(pages):
+                return {
+                    "error": f"tab index {index} is out of range",
+                    "tab_count": len(pages),
+                }
+            page = pages[index]
+            try:
+                page.bring_to_front()
+                self._page = page
+                self._refresh_page_state()
+            except Exception as exc:
+                return {"error": str(exc)}
+            return {
+                "ok": True,
+                "index": index,
+                "url": page.url,
+                "title": self._state.get("title", ""),
+            }
 
     def screenshot(self) -> dict[str, Any]:
         return self._submit(self._screenshot_locked)
@@ -461,7 +577,7 @@ def make_browser_automation_tools(
             browser_read_page,
             _schema(
                 "browser_read_page",
-                "Read the current page: its text plus visible controls and selector "
+                "Read the active browser tab: its text plus visible controls and selector "
                 "hints (for browser_click/browser_type). Not an image — use "
                 "browser_screenshot for pixels.",
                 {"max_chars": {"type": "integer"}},
@@ -602,6 +718,40 @@ def make_browser_automation_tools(
         )
     )
 
+    def browser_list_tabs() -> dict[str, Any]:
+        return _BROWSER.tabs()
+
+    browser_list_tabs.__name__ = "browser_list_tabs"
+    tools.append(
+        _attach(
+            browser_list_tabs,
+            _schema(
+                "browser_list_tabs",
+                "List open browser tabs, including index, title, URL, and which tab is active.",
+                {},
+                [],
+            ),
+            approval=True,
+        )
+    )
+
+    def browser_switch_tab(index: int) -> dict[str, Any]:
+        return _BROWSER.switch_tab(index)
+
+    browser_switch_tab.__name__ = "browser_switch_tab"
+    tools.append(
+        _attach(
+            browser_switch_tab,
+            _schema(
+                "browser_switch_tab",
+                "Switch subsequent browser actions to the tab at an index returned by browser_list_tabs. Requires approval.",
+                {"index": {"type": "integer"}},
+                ["index"],
+            ),
+            approval=True,
+        )
+    )
+
     def browser_screenshot(path: str = "") -> dict[str, Any]:
         if path:
             out, err = _resolve_in_roots(path, roots, need_write=True)
@@ -633,7 +783,7 @@ def make_browser_automation_tools(
             browser_screenshot,
             _schema(
                 "browser_screenshot",
-                "Save a full-page screenshot of the current browser page and return the local path.",
+                "Save a full-page screenshot of the active browser tab and return the local path.",
                 {"path": {"type": "string"}},
                 [],
             ),

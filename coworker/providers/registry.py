@@ -12,7 +12,8 @@ Chat Completions path), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `novita` (OpenAI-compatible Novita Cloud), and `ollama` (local,
+OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -90,6 +91,9 @@ class ProviderDescriptor:
     # (tokens in its `provider:<name>` profile) and the GUI renders connect/sign-out
     # instead of fields. None → the usual key/field form.
     auth: Optional[str] = None
+    # How the GUI groups it: "local" (a server on the user's own hardware), "subscription"
+    # (a plan signed into), or "api_key" (everything else).
+    kind: str = "api_key"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +104,7 @@ class ProviderDescriptor:
             "recommended_model": self.recommended_model,
             "blurb": self.blurb,
             "auth": self.auth,
+            "kind": self.kind,
         }
 
 
@@ -197,16 +202,56 @@ def _build_vertex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
+    # Chat calls are rewritten onto the native API so we can set num_ctx — the /v1 handler
+    # cannot, and its 4,096-token default drops the Cowork prompt (see ollama_context.py).
+    from .ollama_context import ollama_http_client
+
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    return OpenAIProvider(api_key="ollama", base_url=base_url, http_client=ollama_http_client())
+
+
+def _local_server(name: str):
+    """Builder for llama.cpp, vLLM and LM Studio (providers/local_server.py): the user's own server,
+    reached through its `/v1`, with an optional key. Without a key the server takes any
+    value, so a placeholder goes out."""
+    from .local_server import PLACEHOLDER_KEY, remember_server, thinking_as_template_kwargs, v1_base
+
+    class _LocalServerProvider(OpenAIProvider):
+        # The thinking switch, in the form these servers read.
+        def complete(self, **kwargs: Any):
+            return super().complete(**thinking_as_template_kwargs(kwargs))
+
+        def stream(self, **kwargs: Any):
+            return super().stream(**thinking_as_template_kwargs(kwargs))
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        key = ((profile or {}).get("api_key") or "").strip() or PLACEHOLDER_KEY
+        remember_server(name, (profile or {}).get("base_url"), key if key != PLACEHOLDER_KEY else None)
+        return _LocalServerProvider(api_key=key, base_url=v1_base(name, (profile or {}).get("base_url")))
+
+    return build
+
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    """The `openrouter-account` provider: the key OpenRouter issued at sign-in
+    (providers/openrouter_auth.py), always against OpenRouter's own endpoint — a
+    browser credential is never sent to a custom gateway."""
+    api_key = ((profile or {}).get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("OpenRouter account not signed in — sign in under Models & Keys.")
+    return OpenAIProvider(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
-    env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
-    key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
-    vendor-named error (these are only built on demand, when one of their models is selected).
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage). The key is resolved from the vendor's OWN
+    profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
+    configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
+    fail fast with a vendor-named error (these are only built on demand, when one of their models
+    is selected).
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -362,6 +407,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
     ),
     ProviderDescriptor(
         name="openai-codex",
+        kind="subscription",
         title="ChatGPT subscription",
         needs_key=False,
         fields=[],
@@ -619,7 +665,12 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         recommended_model="qwen3-max",
         env_key="DASHSCOPE_API_KEY",
-        endpoint_help="Prefilled with Alibaba Model Studio's international endpoint. China (Beijing): https://dashscope.aliyuncs.com/compatible-mode/v1",
+        endpoint_help=(
+            "Prefilled with the international endpoint. If your key was issued on the "
+            "China mainland portal (qwencloud.com), switch to "
+            "https://dashscope.aliyuncs.com/compatible-mode/v1 — keys only work against "
+            "the endpoint in the region where they were created."
+        ),
     ),
     _compat(
         "xai",
@@ -643,10 +694,39 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
+    _compat(
+        "sambanova",
+        "SambaNova",
+        base_url="https://api.sambanova.ai/v1",
+        recommended_model="Meta-Llama-3.3-70B-Instruct",
+        env_key="SAMBANOVA_API_KEY",
+        endpoint_help="Prefilled with SambaNova's official OpenAI-compatible endpoint.",
+    ),
+    _compat(
+        "atlascloud",
+        "Atlas Cloud",
+        base_url="https://api.atlascloud.ai/v1",
+        recommended_model="zai-org/glm-5.2",
+        env_key="ATLASCLOUD_API_KEY",
+    ),
+    _compat(
+        "novita",
+        "Novita AI",
+        base_url="https://api.novita.ai/openai/v1",
+        recommended_model="zai-org/glm-5.2",
+        env_key="NOVITA_API_KEY",
+        endpoint_help="Prefilled with Novita's OpenAI-compatible endpoint; keep it unless you use a regional or proxy variant.",
+    ),
+    _compat(
+        "upstage",
+        "Upstage (Solar)",
+        base_url="https://api.upstage.ai/v1",
+        recommended_model="solar-pro4",
+        env_key="UPSTAGE_API_KEY",
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
-    # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
-    # rows) once the current provider surface is tested — deliberately deferred to bound
-    # how much needs verifying at once (owner call, 2026-07-04).
+    # ids + display labels live in providers/matrix.py). Groq was deferred on 2026-07-04 to
+    # bound how much needed verifying at once; it landed 2026-10-25 with verified rows.
     _compat(
         "together",
         "Together AI",
@@ -669,8 +749,53 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="OPENROUTER_API_KEY",
     ),
     ProviderDescriptor(
+        name="openrouter-account",
+        kind="subscription",
+        title="OpenRouter account",
+        needs_key=False,
+        fields=[],
+        build=_build_openrouter_account,
+        recommended_model="z-ai/glm-5.2",
+        blurb="Sign in with your OpenRouter account and use its credits — nothing to "
+        "paste. The key OpenRouter issues stays on this machine.",
+        auth="oauth",
+    ),
+    _compat(
+        "nebius",
+        "Nebius Token Factory",
+        base_url="https://api.tokenfactory.nebius.com/v1",
+        recommended_model="zai-org/GLM-5.2",
+        env_key="NEBIUS_API_KEY",
+    ),
+    _compat(
+        "orcarouter",
+        "OrcaRouter",
+        base_url="https://api.orcarouter.ai/v1",
+        recommended_model="anthropic/claude-sonnet-5",
+        env_key="ORCAROUTER_API_KEY",
+    ),
+    # NVIDIA NIM: NVIDIA's own Nemotron line plus other labs' models, all under NVIDIA's
+    # `vendor/model` namespace (hence a routed id like `nvidia:nvidia/nemotron-…`). Same
+    # reseller shape as Together/Fireworks; the endpoint also fronts self-hosted NIM
+    # containers, which is why the base_url help calls that out.
+    _compat(
+        "nvidia",
+        "NVIDIA NIM",
+        base_url="https://integrate.api.nvidia.com/v1",
+        recommended_model="nvidia/nemotron-3-super-120b-a12b",
+        env_key="NVIDIA_API_KEY",
+        endpoint_help="Prefilled with NVIDIA's hosted NIM endpoint. Point it at a self-hosted NIM container (e.g. http://localhost:8000/v1) to use your own deployment.",
+    ),
+    _compat(
+        "groq",
+        "Groq",
+        base_url="https://api.groq.com/openai/v1",
+        recommended_model="llama-3.3-70b-versatile",
+        env_key="GROQ_API_KEY",
+    ),
+    ProviderDescriptor(
         name="ollama",
-        title="Ollama (local models)",
+        title="Ollama",
         needs_key=False,
         fields=[
             ProviderField(
@@ -686,6 +811,83 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         # Reliable native tool-calling + strong coding quality (verified). Pull with
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="llamacpp",
+        title="llama.cpp",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:8080",
+                help="Where `llama-server` is listening. The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("llamacpp"),
+        blurb="A llama-server you started yourself, on this computer or another one.",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="vllm",
+        title="vLLM",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:8000",
+                help="Where `vllm serve` is listening. The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("vllm"),
+        blurb="A vLLM server, usually on a Linux machine with an NVIDIA GPU.",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="lmstudio",
+        title="LM Studio",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:1234",
+                help="Where LM Studio's local server is listening (the Developer tab, or "
+                "`lms server start`). The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("lmstudio"),
+        # The same verified tool-calling pick as Ollama's, under LM Studio's catalog id
+        # (lmstudio.ai/models/qwen/qwen3-coder-30b, read 2026-10-25) — download it in-app.
+        recommended_model="qwen/qwen3-coder-30b",
+        blurb="The LM Studio app's local server, with whatever models you downloaded there.",
+        kind="local",
     ),
 ]
 
@@ -718,8 +920,9 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     every required field present — their actual credentials may be ambient (~/.aws, ADC).
     """
     if d.auth == "oauth":
-        # A stored token set = signed in (the tokens live in the same profile).
-        return bool((profile or {}).get("tokens"))
+        # Signed in = a stored token set, or the key a sign-in issued (OpenRouter).
+        profile = profile or {}
+        return bool(profile.get("tokens") or profile.get("api_key"))
     if not d.needs_key:
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
@@ -739,10 +942,14 @@ def detect_provider(api_key: str) -> Optional[str]:
         return None
     if key.startswith("sk-ant-"):
         return "anthropic"
+    if key.startswith("sk-orca-"):
+        return "orcarouter"
     if key.startswith("sk-or-"):
         return "openrouter"
     if key.startswith("AIza"):
         return "gemini"
+    if key.startswith("nvapi-"):
+        return "nvidia"
     if key.startswith(("sk-", "sk_")):
         return "openai"
     return None
@@ -756,16 +963,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     def get(key: str) -> Optional[str]:
         return (fields.get(key) or "").strip() or None
 
-    try:
-        import boto3
-        from botocore.config import Config
-    except ImportError:
-        return {
-            "ok": False,
-            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
-        }
     # Exactly one auth method is exercised — the one the form has selected. Per-method
-    # required fields are checked here so the Test button says what's missing.
+    # required fields are checked here so the Test button says what's missing. Do this
+    # before importing boto3 so the test suite (and users) get a helpful missing-field
+    # message even when the optional `bedrock` extra is not installed.
     method = get("auth_method") or "api_key"
     if method == "api_key" and not (
         get("bedrock_api_key") or os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
@@ -775,6 +976,14 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         get("aws_access_key_id") and get("aws_secret_access_key")
     ):
         return {"ok": False, "error": "Enter an access key ID and secret access key."}
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "boto3 is not installed — `pip install 'openworker[bedrock]'`.",
+        }
     try:
         if method == "api_key":
             # The key rides the env var (boto3's only bearer channel); bearer then wins
@@ -830,7 +1039,10 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             if code == "ExpiredTokenException":
                 return {"ok": False, "error": "The credentials have expired — generate a new key."}
             return {"ok": False, "error": f"AWS Bedrock returned {code}."}
-        return {"ok": False, "error": f"Couldn't reach AWS Bedrock ({kind})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach AWS Bedrock ({_describe_transport_error(exc)})."
+        }
     return {"ok": True}
 
 
@@ -869,7 +1081,7 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
         except Exception as exc:
             return {
                 "ok": False,
-                "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__}).",
+                "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
             }
         if resp.status_code < 300:
             return {"ok": True}
@@ -914,7 +1126,10 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
             timeout=timeout,
         )
     except Exception as exc:
-        return {"ok": False, "error": f"Couldn't reach Vertex AI ({exc.__class__.__name__})."}
+        return {
+            "ok": False,
+            "error": f"Couldn't reach Vertex AI ({_describe_transport_error(exc)}).",
+        }
     if resp.status_code < 300:
         return {"ok": True}
     if resp.status_code in (401, 403):
@@ -925,6 +1140,37 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     if resp.status_code == 404:
         return {"ok": False, "error": "Project or location not found on Vertex AI."}
     return {"ok": False, "error": f"Vertex AI returned HTTP {resp.status_code}."}
+
+
+def _describe_transport_error(exc: Exception) -> str:
+    """Turn a verify probe's transport failure into one actionable line.
+
+    The bare class name ("ConnectError") cost a real user round-trips of
+    diagnosis while the exception carried the answer all along — TLS
+    verification, DNS, refusal and timeout each read differently (#505).
+    """
+    msg = " ".join(str(exc).split()).rstrip(".")[:200]
+    lowered = msg.lower()
+    for signature, hint in (
+        (
+            "certificate_verify_failed",
+            "TLS certificate verification failed; the app's CA bundle may be missing or stale",
+        ),
+        ("ssl:", "TLS handshake failed"),
+        ("gaierror", "DNS could not resolve the endpoint"),
+        ("nodename", "DNS could not resolve the endpoint"),
+        ("name or service", "DNS could not resolve the endpoint"),
+        ("getaddrinfo", "DNS could not resolve the endpoint"),
+        ("refused", "the endpoint refused the connection"),
+        ("timed out", "the connection timed out"),
+    ):
+        if signature in lowered:
+            if not msg:
+                return f"{exc.__class__.__name__} — {hint}"
+            return f"{exc.__class__.__name__}: {msg} — looks like {hint}"
+    if not msg:
+        return exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {msg}"
 
 
 def verify_provider_key(
@@ -970,6 +1216,40 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif name in ("llamacpp", "vllm", "lmstudio"):
+            from .local_server import v1_base
+
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            resp = httpx.get(v1_base(name, base_url) + "/models", headers=headers, timeout=timeout)
+        elif name == "nvidia":
+            # NIM's /v1/models is PUBLIC: it answers 200 for any key, including an empty
+            # one, so the usual list-models probe can't tell a good key from a typo. Auth
+            # is enforced only on inference — and only once the model id routes (a bad
+            # model 404s before the key is looked at) — so we spend a single token on the
+            # recommended model instead. A self-hosted NIM (any other endpoint) serves one
+            # model of its own choosing, so the recommended id would 404 there; its
+            # /v1/models is behind the key, so the plain listing is the right probe.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            if base != default_base.rstrip("/"):
+                resp = httpx.get(
+                    base + "/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+            else:
+                resp = httpx.post(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={
+                        "model": d.recommended_model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=timeout,
+                )
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
@@ -1000,10 +1280,28 @@ def verify_provider_key(
                 headers={"Authorization": f"Bearer {key}"},
                 timeout=timeout,
             )
+            # Reachability of /models isn't enough: a base URL that omits the /v1 path
+            # segment (e.g. LM Studio served at http://127.0.0.1:1234) can still answer
+            # /models while every completion 404s — the session then hangs silently on
+            # an endpoint that "tested" fine. Probe the real completions route too and
+            # fail fast with a path-specific message instead (issue #431).
+            if resp.status_code < 300:
+                route = httpx.get(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+                if route.status_code == 404:
+                    return {
+                        "ok": False,
+                        "error": "Server reachable, but the completions route 404s — the "
+                        "endpoint is usually missing a /v1 path segment (e.g. "
+                        "http://127.0.0.1:1234/v1).",
+                    }
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
         return {
             "ok": False,
-            "error": f"Couldn't reach {d.title} ({exc.__class__.__name__}).",
+            "error": f"Couldn't reach {d.title} ({_describe_transport_error(exc)}).",
         }
 
     if resp.status_code < 300:

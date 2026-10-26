@@ -62,6 +62,10 @@ ITEM_TRANSITIONED = "item_transitioned"
 ITEM_COMMENTED = "item_commented"
 ITEM_ASSIGNED = "item_assigned"
 ITEM_LINKED = "item_linked"
+ITEM_STATUS = "item_status"
+# §11.6: a manual-mode worker parked on a tool approval — the lead cannot approve it
+# (it holds nothing the human did not grant) but should wait knowingly or reassign.
+WORKER_WAITING = "worker_waiting"
 
 _HASHED_FIELDS = (
     "ts",
@@ -163,6 +167,11 @@ class TeamStore:
                 name TEXT PRIMARY KEY
             );
             """)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(team_items)")}
+        for column in ("status", "status_ts", "proposal"):
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE team_items ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        self._conn.commit()
         migrated = self._conn.execute(
             "SELECT 1 FROM team_migrations WHERE name = ?",
             (ATTACHMENT_REFS_MIGRATION,),
@@ -223,6 +232,7 @@ class TeamStore:
         recipient: Optional[str],
         payload: dict[str, Any],
         taint: bool,
+        commit: bool = True,
     ) -> dict[str, Any]:
         prev = self._head_hash(space)
         record = {
@@ -273,7 +283,8 @@ class TeamStore:
             """,
             (space, record["hash"], seq, record["hash"], seq),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
         return {**record, "seq": seq, "payload": payload}
 
     def events(
@@ -285,9 +296,13 @@ class TeamStore:
         case_id: Optional[str] = None,
         since_seq: int = 0,
         limit: int = 500,
+        exclude_kinds: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         where = ["space = ?", "seq > ?"]
         params: list[Any] = [space, since_seq]
+        if exclude_kinds:
+            where.append(f"kind NOT IN ({','.join('?' * len(exclude_kinds))})")
+            params.extend(exclude_kinds)
         if kinds:
             where.append(f"kind IN ({','.join('?' * len(kinds))})")
             params.extend(kinds)
@@ -337,7 +352,7 @@ class TeamStore:
         assigned to it) or END it (just reassigned away — it hears that, then
         goes quiet). Its own events never appear."""
         key = f"feed:{actor_id}:{space}"
-        events = self.events(space, since_seq=self._cursor(key), limit=limit)
+        events = self.events(space, since_seq=self._cursor(key), limit=limit, exclude_kinds=[ITEM_STATUS])
         with self._lock:
             slice_ids = self._worker_slice(space, actor_id)
         out = []
@@ -358,6 +373,41 @@ class TeamStore:
     def consume_feed(self, space: str, actor_id: str, upto_seq: int) -> None:
         self._set_cursor(f"feed:{actor_id}:{space}", int(upto_seq))
 
+    @staticmethod
+    def _subscription_event(event: dict, subscriber: str) -> bool:
+        if event["actor"] == subscriber:
+            return False
+        kind, payload = event["kind"], event["payload"]
+        if kind == ITEM_COMMENTED:
+            return bool(payload.get("needs_attention")) or event.get("actor_role") == "user"
+        if kind == ITEM_TRANSITIONED:
+            return payload.get("to") in ("review", "blocked")
+        if kind == ITEM_ASSIGNED:
+            return bool(payload.get("claimed"))
+        return kind in (ITEM_CREATED, WORKER_WAITING)
+
+    def delivery_page(self, space: str, actor: str, *, is_lead: bool,
+                      feed_after: int = 0, subscription_after: int = 0, limit: int = 200) -> dict:
+        """Read both delivery projections from ONE scanned log range.
+
+        Even quiet/self/status events advance the scan. Never let a subscription
+        cursor leap over an unscanned direct user instruction on a busy board.
+        The caller acknowledges through_seq only after deciding it is quiet or
+        durably accepting the actionable input.
+        """
+        with self._lock:
+            feed = max(feed_after, self._cursor(f"feed:{actor}:{space}"))
+            sub = max(subscription_after, self._cursor(f"sub:{actor}:{space}")) if is_lead else feed
+            events = self.events(space, since_seq=min(feed, sub), limit=limit + 1)
+            page = events[:limit]
+            visible = self._worker_slice(space, actor)
+            directs = [e for e in page if e["seq"] > feed and e["actor"] != actor and (
+                e.get("item_id") in visible or
+                (e["kind"] == ITEM_ASSIGNED and actor in (e["payload"].get("assignee"), e["payload"].get("previous"))))]
+            subs = [e for e in page if e["seq"] > sub and self._subscription_event(e, actor)] if is_lead else []
+            return {"directs": directs, "subs": subs, "through_seq": page[-1]["seq"] if page else 0,
+                    "has_more": len(events) > limit}
+
     # Lead subscriptions: an ALLOWLIST of decision-demanding event classes — a
     # worker moving its item to review/blocked, or filing a new item. Journal
     # appends and routine comments never wake anyone.
@@ -370,12 +420,14 @@ class TeamStore:
         key = f"sub:{subscriber}:{space}"
         events = self.events(
             space,
-            kinds=[ITEM_TRANSITIONED, ITEM_CREATED, ITEM_ASSIGNED],
+            kinds=[ITEM_TRANSITIONED, ITEM_CREATED, ITEM_ASSIGNED, ITEM_COMMENTED, WORKER_WAITING],
             since_seq=self._cursor(key),
             limit=limit,
         )
         out = []
         for event in events:
+            if event["kind"] == ITEM_COMMENTED and not self._subscription_event(event, subscriber):
+                continue
             if event["actor"] == subscriber:
                 continue  # your own verbs never wake you
             if (
@@ -472,6 +524,45 @@ class TeamStore:
             self._conn.commit()
 
     # ------------------------------------------------------------------ board verbs
+
+    def create_proposal(self, space: str, actor: Actor, proposal: dict) -> dict:
+        """Atomically materialize an accepted plan, its intent and dependency links."""
+        from .proposals import validate_work_proposal
+        proposal = validate_work_proposal(proposal)
+        self._require(actor, {Role.USER, Role.LEAD}, "create_proposal")
+        # Journal failures must not leave committed board items followed by an error
+        # that encourages the lead to retry the whole proposal.
+        if self.journal is not None:
+            for case in {i.get("case") for i in proposal["items"]} - {None, ""}:
+                self.journal.ensure_case(case, actor.id)
+        common = {k: v for k, v in proposal.items() if k != "items"}
+        with self._lock:
+            first = self._next_item_id(space)
+            ids = {item["key"]: first + i for i, item in enumerate(proposal["items"])}
+            def append(kind, item_id, payload, case=None):
+                return self._append_locked(space, kind, actor, item_id=item_id,
+                    case_id=case, recipient=None, payload=payload, taint=False, commit=False)
+            try:
+                for item in proposal["items"]:
+                    metadata = {**common, "key": item["key"], "activity": item["activity"],
+                        "workstream": item["workstream"], "item_ids": ids,
+                        "verifies": [ids[k] for k in item["verifies"]]}
+                    append(ITEM_CREATED, ids[item["key"]], {**item, "proposal": metadata}, item.get("case"))
+                for item in proposal["items"]:
+                    for prerequisite in item["depends_on"]:
+                        append(ITEM_LINKED, ids[prerequisite], {"src": ids[prerequisite],
+                            "kind": "blocks", "dst": ids[item["key"]]})
+                # Reserving the explicit lead-owned acceptance item does not execute it.
+                final = proposal["final_acceptance"]
+                if final["owner"] == "lead":
+                    append(ITEM_ASSIGNED, ids[final["item_key"]], {"assignee": actor.id, "previous": ""})
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return {"approved": True, "items": [{"id": ids[i["key"]], "key": i["key"],
+            "title": i["title"]} for i in proposal["items"]],
+            "note": "Items and dependency links created. Staff and assign to start work; declared external actions are not permission grants."}
 
     def create_item(
         self,
@@ -588,12 +679,15 @@ class TeamStore:
         *,
         actor: Actor,
         seq: Optional[int] = None,
+        include_comments: bool = True,
     ) -> dict[str, Any]:
         """Return one actor-visible item.
 
         The actor is required because detail reads enforce the same worker scope as
         list reads. Missing and hidden items deliberately share one error contract.
         """
+        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id < 1:
+            raise BoardError("item must be a positive integer")
         with self._lock:
             try:
                 item = self._item(space, item_id)
@@ -606,10 +700,83 @@ class TeamStore:
                     f"no visible item #{item_id} in space {space!r}"
                 )
             item["links"] = self._links_of(space, item_id)
-            item["comments"] = self.comments(space, item_id)
+            if include_comments:
+                item["comments"] = self.comments(space, item_id)
         if seq is not None:
             item["seq"] = seq
         return item
+
+    def comment_page(self, space: str, item_id: int, *, actor: Actor,
+                     after_seq: int = 0, limit: int = 20) -> dict:
+        """Explicit replayable cursor, independent of wake consumption/compaction."""
+        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
+            raise BoardError("after_seq must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise BoardError("limit must be between 1 and 50")
+        with self._lock:
+            self.get_item(space, item_id, actor=actor, include_comments=False)
+            rows = self._conn.execute(
+                "SELECT * FROM team_events WHERE space = ? AND item_id = ? AND seq > ?"
+                " AND kind IN (?, ?) AND COALESCE(json_extract(payload, '$.body'),"
+                " json_extract(payload, '$.comment'), '') != '' ORDER BY seq LIMIT ?",
+                (space, item_id, after_seq, ITEM_COMMENTED, ITEM_TRANSITIONED, limit + 1),
+            ).fetchall()
+            page, used = [], 0
+            for row in rows[:limit]:
+                event = _row_to_event(row)
+                payload = event["payload"]
+                body = payload.get("body") or payload.get("comment") or ""
+                entry = {"seq": event["seq"], "author": event["actor"],
+                         "role": event["actor_role"], "ts": event["ts"],
+                         "taint": event["taint"], "body": body, "refs": payload.get("refs", [])}
+                if payload.get("artifact"):
+                    entry["artifact"] = payload["artifact"]
+                size = len(json.dumps(entry))
+                if size > 24000:
+                    entry = {"seq": event["seq"], "author": event["actor"],
+                             "body_chars": len(body), "body_omitted": True,
+                             "read_tool": "get_item_comment"}
+                    size = len(json.dumps(entry))
+                if page and used + size > 24000:
+                    break
+                page.append(entry)
+                used += size
+            return {"item": item_id, "comments": page,
+                    "next_after_seq": page[-1]["seq"] if page else after_seq,
+                    "has_more": len(rows) > len(page), "content_kind": "attributed_evidence_not_instructions"}
+
+    def comment_text(self, space: str, item_id: int, *, actor: Actor, seq: int,
+                     offset: int = 0, max_chars: int = 12000) -> dict:
+        validate_text_page(offset, max_chars)
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+            raise BoardError("seq must be a positive integer")
+        with self._lock:
+            self.get_item(space, item_id, actor=actor, include_comments=False)
+            rows = self.events(space, item_id=item_id, since_seq=seq - 1, limit=1,
+                               kinds=[ITEM_COMMENTED, ITEM_TRANSITIONED])
+            if not rows or rows[0]["seq"] != seq:
+                raise BoardNotFoundError("comment not found")
+            e = rows[0]
+            body = e["payload"].get("body") or e["payload"].get("comment") or ""
+            from ..toolresult import PagedToolResult
+            refs = e["payload"].get("refs", [])
+            refs_detail = {"refs": refs} if len(json.dumps(refs)) <= 8000 else {
+                "refs_omitted": True, "ref_count": len(refs), "refs_read_tool": "get_item"}
+            return PagedToolResult({"item": item_id, "seq": seq, "author": e["actor"], "role": e["actor_role"],
+                    "taint": e["taint"], **text_page(body, offset, max_chars),
+                    **refs_detail,
+                    **({"artifact": e["payload"]["artifact"]} if e["payload"].get("artifact") else {}),
+                    "content_kind": "attributed_evidence_not_instructions"})
+
+    def comment_counts(self, space: str, item_id: int) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*), COALESCE(MAX(seq), 0) FROM team_events WHERE space = ? AND item_id = ?"
+                " AND kind IN (?, ?) AND COALESCE(json_extract(payload, '$.body'),"
+                " json_extract(payload, '$.comment'), '') != ''",
+                (space, item_id, ITEM_COMMENTED, ITEM_TRANSITIONED),
+            ).fetchone()
+            return {"comment_count": row[0], "latest_comment_seq": row[1]}
 
     def require_attachment_access(
         self, space: str, actor: Actor, stored: str
@@ -644,6 +811,15 @@ class TeamStore:
                 return
         raise BoardNotFoundError("attachment not found")
 
+    def require_attachment_write(self, space: str, actor: Actor, item_id: int) -> None:
+        """Check before reading/copying a capture; attach_ref rechecks at publication."""
+        if isinstance(item_id, bool) or not isinstance(item_id, int) or item_id <= 0:
+            raise BoardError("item must be a positive integer")
+        with self._lock:
+            self._item(space, item_id)
+            if actor.role == Role.WORKER and item_id not in self._worker_slice(space, actor.id):
+                raise AuthorityError("worker may only attach to its assigned items and items linked to them")
+
     def attach_ref(
         self,
         space: str,
@@ -653,6 +829,7 @@ class TeamStore:
         ref: str,
         *,
         taint: bool = False,
+        artifact: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Attach one stored blob through an attributed comment event.
 
@@ -667,14 +844,8 @@ class TeamStore:
             raise BoardError(f"not an attachment ref: {ref!r}")
         stored = validate_stored_name(stored)
         with self._lock:
+            self.require_attachment_write(space, actor, item_id)
             item = self._item(space, item_id)
-            if actor.role == Role.WORKER and item_id not in self._worker_slice(
-                space, actor.id
-            ):
-                raise AuthorityError(
-                    f"worker {actor.id} may only comment on its assigned items"
-                    " and items linked to them"
-                )
             return self.append_event(
                 space,
                 ITEM_COMMENTED,
@@ -685,6 +856,7 @@ class TeamStore:
                     "body": body,
                     "refs": [ref],
                     "attachments": [stored],
+                    **({"artifact": artifact} if artifact else {}),
                 },
                 taint=taint,
             )
@@ -738,9 +910,12 @@ class TeamStore:
         *,
         refs: Optional[list[str]] = None,
         taint: bool = False,
+        needs_attention: bool = False,
     ) -> dict[str, Any]:
         if not (body or "").strip():
             raise BoardError("comment body is required")
+        if not isinstance(needs_attention, bool):
+            raise BoardError("needs_attention must be a boolean")
         with self._lock:
             item = self._item(space, item_id)
             if actor.role == Role.WORKER and item_id not in self._worker_slice(
@@ -756,9 +931,28 @@ class TeamStore:
                 actor,
                 item_id=item_id,
                 case_id=item["case_id"] or None,
-                payload={"body": body, "refs": list(refs or [])},
+                payload={"body": body, "refs": list(refs or []),
+                         **({"needs_attention": True} if needs_attention else {})},
                 taint=taint,
             )
+
+    def set_status(self, space: str, actor: Actor, item_id: int, text: str) -> dict[str, Any]:
+        """Display-only progress. Never an assignment, transition or wake signal."""
+        self._require(actor, {Role.WORKER}, "set_status")
+        if not isinstance(item_id, int) or isinstance(item_id, bool) or item_id < 1:
+            raise BoardError("item must be an explicit positive integer")
+        if not isinstance(text, str) or len(text) > 80 or len(text.splitlines()) > 1 or "\n" in text or "\r" in text:
+            raise BoardError("status must be one line of at most 80 characters")
+        with self._lock:
+            item = self.get_item(space, item_id, actor=actor)
+            if item["assignee"] != actor.id:
+                raise AuthorityError("set_status requires an item currently assigned to you")
+            if item["state"] in ("done", "canceled"):
+                raise BoardError("cannot update status on a finished item")
+            if item["status"] == text.strip():
+                return item
+            self.append_event(space, ITEM_STATUS, actor, item_id=item_id, payload={"text": text.strip()})
+            return self.get_item(space, item_id, actor=actor)
 
     def assign(
         self, space: str, actor: Actor, item_id: int, assignee: str
@@ -945,6 +1139,9 @@ class TeamStore:
                     seq,
                 ),
             )
+            if payload.get("proposal"):
+                self._conn.execute("UPDATE team_items SET proposal = ? WHERE space = ? AND id = ?",
+                    (_canonical(payload["proposal"]), space, item_id))
             if payload.get("parent") is not None:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO team_links (space, src, kind, dst)"
@@ -953,7 +1150,7 @@ class TeamStore:
                 )
         elif kind == ITEM_TRANSITIONED:
             self._conn.execute(
-                "UPDATE team_items SET state = ?, updated_seq = ?"
+                "UPDATE team_items SET state = ?, updated_seq = ?, status = '', status_ts = ''"
                 " WHERE space = ? AND id = ?",
                 (payload.get("to"), seq, space, item_id),
             )
@@ -965,9 +1162,14 @@ class TeamStore:
             )
         elif kind == ITEM_ASSIGNED:
             self._conn.execute(
-                "UPDATE team_items SET assignee = ?, updated_seq = ?"
+                "UPDATE team_items SET assignee = ?, updated_seq = ?, status = '', status_ts = ''"
                 " WHERE space = ? AND id = ?",
                 (payload.get("assignee") or "", seq, space, item_id),
+            )
+        elif kind == ITEM_STATUS:
+            self._conn.execute(
+                "UPDATE team_items SET status = ?, status_ts = ? WHERE space = ? AND id = ?",
+                (payload.get("text") or "", ts, space, item_id),
             )
         elif kind == ITEM_LINKED:
             self._conn.execute(
@@ -1217,8 +1419,9 @@ class TeamStore:
                 # Cursor keys embed the space as a suffix ("feed:<actor>:<space>",
                 # "sub:<sub>:<space>") — rewrite the suffix, keep consumed positions.
                 cur_rows = self._conn.execute(
-                    "SELECT cursor_key FROM team_cursors WHERE cursor_key LIKE ?",
-                    ("%:" + old,),
+                    "SELECT cursor_key FROM team_cursors"
+                    " WHERE cursor_key LIKE ? ESCAPE '\\'",
+                    ("%" + _like_escape(":" + old),),
                 ).fetchall()
                 for crow in cur_rows:
                     new_key = crow["cursor_key"][: -len(old)] + new
@@ -1263,6 +1466,15 @@ class TeamStore:
             )
 
 
+def _like_escape(text: str) -> str:
+    """Quote LIKE metacharacters so a literal string matches only itself. Space
+    keys are filesystem paths, where `_` (LIKE's single-character wildcard) is
+    ordinary — left raw it also matches a neighbouring space's rows."""
+    for char in ("\\", "%", "_"):
+        text = text.replace(char, "\\" + char)
+    return text
+
+
 def _canonical(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -1274,6 +1486,7 @@ def _hash(record: dict[str, Any], *, fields: tuple[str, ...] = _HASHED_FIELDS) -
 
 def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
+    item["proposal"] = json.loads(item.get("proposal") or "null")
     try:
         item["refs"] = json.loads(item.get("refs") or "[]")
     except json.JSONDecodeError:
@@ -1288,3 +1501,16 @@ def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
     except json.JSONDecodeError:
         event["payload"] = {}
     return event
+
+
+def validate_text_page(offset: int, max_chars: int) -> None:
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise BoardError("offset must be a non-negative integer")
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 1 <= max_chars <= 16000:
+        raise BoardError("max_chars must be between 1 and 16000")
+
+
+def text_page(text: str, offset: int, max_chars: int) -> dict:
+    end = min(len(text), offset + max_chars)
+    return {"text": text[offset:end], "offset": offset, "next_offset": end,
+            "total_chars": len(text), "has_more": end < len(text)}

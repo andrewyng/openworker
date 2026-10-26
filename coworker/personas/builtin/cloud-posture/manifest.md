@@ -10,7 +10,7 @@ version: "1"
 tools: [code_files, git, search, shell, todo]
 connectors: [github]
 skills: [iac-scan, aws-posture]
-recommended_models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
+models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
 default_permission_mode: interactive
 description: An infrastructure-security reviewer for teams without a cloud security team. Scans Terraform and cloud configuration with open-source tools (trivy, checkov), reads your live cloud posture strictly read-only, and fixes what matters in the IaC — never by clicking around a console.
 recommends:

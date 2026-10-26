@@ -278,7 +278,8 @@ def test_stream_accumulates_tool_calls():
     )
 
 
-# -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral) ------
+# -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral,
+# NVIDIA NIM) ------------------------------------------------------------------------------
 
 COMPAT_VENDORS = {
     "zai": "https://api.z.ai/api/paas/v4",
@@ -288,6 +289,9 @@ COMPAT_VENDORS = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+    "atlascloud": "https://api.atlascloud.ai/v1",
+    "upstage": "https://api.upstage.ai/v1",
 }
 
 
@@ -467,6 +471,9 @@ def test_compat_models_route_and_get_tool_capabilities():
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
+        "orcarouter:anthropic/claude-sonnet-5",
+        "atlascloud:zai-org/glm-5.2",
+        "upstage:solar-pro4",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
@@ -498,9 +505,40 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "nebius:zai-org/GLM-5.2",
+        "orcarouter:anthropic/claude-sonnet-5",
+        # NIM ids are `vendor/model`, so NVIDIA's own models repeat the word in the
+        # routed id. Deliberate: the `z-ai/` and `deepseek-ai/` rows in matrix.py don't.
+        "nvidia:nvidia/nemotron-3-super-120b-a12b",
+        "groq:llama-3.3-70b-versatile",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
+
+
+def test_openrouter_vision_matches_declared_input_modalities():
+    """Vision must track what OpenRouter declares per model, or the engine swaps in its
+    non-vision placeholder and the image never reaches a model that can read it."""
+    for mid in (
+        "openrouter:moonshotai/kimi-k2.6",
+        "openrouter:meta-llama/llama-4-maverick",
+    ):
+        caps = capabilities_for(mid)
+        assert caps.vision and not caps.pdf, mid
+    for mid in ("openrouter:z-ai/glm-5.2", "openrouter:deepseek/deepseek-v4-pro"):
+        assert not capabilities_for(mid).vision, mid
+
+
+def test_qwen38_max_is_curated_vision_true():
+    """Qwen3.8 Max is multimodal, unlike the text-only Qwen3 Max — it needs its own
+    matrix entry so the blanket qwen-prefix heuristic (vision=False) doesn't strip
+    images client-side (issue: images silently replaced with a placeholder). The bare
+    Qwen3 Max entry is untouched by the fix."""
+    assert capabilities_for("qwen:qwen3.8-max").vision is True
+    assert capabilities_for("qwen:qwen3-max").vision is False
+    # the heuristic alone (no provider prefix) still can't tell the two apart — the
+    # matrix entry, not the heuristic, is what fixes this.
+    assert capabilities_for("qwen3.8-max").vision is False
 
 
 def test_matrix_labels_and_custom_model_fallback():
@@ -512,12 +550,34 @@ def test_matrix_labels_and_custom_model_fallback():
     # Deliberately small: agent-capable current models only (owner call, 2026-07-04).
     # 60→65 (2026-08-24): the stealth ox-alpha preview slug tipped it; reclaim slack by
     # pruning retired entries before raising this again.
-    assert len(MATRIX) < 65
+    # 65→70 (2026-09-16): three Claude 4.5/4.6 rows added for comparability with
+    # published evaluations of those models. The
+    # pruning owed above is NOT done here — deciding which entries are retired is an owner
+    # call, and dropping a row silently downgrades that model to the conservative fallback
+    # capabilities. Prune before raising this a third time.
+    # 70→75 (2026-10-01, OPE-215): three OpenRouter rows (Nemotron 3 Ultra, Nemotron 3.5
+    # Lightning, GLM 5.3). The pruning owed above is still not done; it remains the owner's
+    # call and should come before this is raised again.
+    # 75→100 (2026-10-25, owner call): thirteen provider cards from the PR backlog land
+    # next, each with one to three rows; the prune of retired rows follows them as its own
+    # change, against a verified list of what each vendor still serves.
+    # The `openrouter-account:` rows are aliases of the `openrouter:` rows (one source), so
+    # they are excluded from the count rather than counted against it.
+    assert len([m for m in MATRIX if not m.startswith("openrouter-account:")]) < 100
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
     caps = capabilities_for("together:some-org/Brand-New-Model")
     assert caps.tools and not caps.parallel_tool_calls
+
+
+def test_groq_gpt_oss_rows_do_not_claim_parallel_tool_calls():
+    """console.groq.com/docs/tool-use (2026-10-25): GPT-OSS on Groq takes tools but not
+    parallel tool use; Llama 3.3 70B does both."""
+    assert capabilities_for("groq:llama-3.3-70b-versatile").parallel_tool_calls
+    for mid in ("groq:openai/gpt-oss-120b", "groq:openai/gpt-oss-20b"):
+        caps = capabilities_for(mid)
+        assert caps.tools and not caps.parallel_tool_calls
 
 
 def test_reseller_descriptors_and_matrix_stay_in_lockstep():
@@ -526,7 +586,10 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in (
+        "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
+        "novita", "groq",
+    ):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)

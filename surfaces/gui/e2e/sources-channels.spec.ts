@@ -98,3 +98,26 @@ test("channel add: link URLs resolve, bare #names are rejected with a hint", asy
   await expect(page.getByText("slack:C0123ABC")).toBeVisible();
   await expect(page.getByText(/Subscribed channels · 1/)).toBeVisible();
 });
+
+// One session across all of the user's machines answers a source (connectors-across-machines
+// spec §3): a held channel names the holder and offers the move; nothing is stored until then.
+test("channel add: a held channel names its holder and moves on request", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  await page.getByTestId("access-toggle").click();
+  await page.getByRole("button", { name: /Channels · 0/ }).click();
+
+  const input = page.getByPlaceholder("slack:C0123 or channel link");
+  await input.fill("slack:CHELD");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const held = page.getByTestId("channel-held");
+  await expect(held).toContainText("Release watcher");
+  await expect(held).toContainText("another machine");
+  await expect(page.getByTestId("channel-add-error")).toHaveCount(0);
+  await expect(page.getByText(/Subscribed channels · 1/)).toHaveCount(0);
+
+  await page.getByTestId("channel-move").click();
+  await expect(page.getByTestId("channel-held")).toHaveCount(0);
+  await expect(page.getByText("slack:CHELD", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Subscribed channels · 1/)).toBeVisible();
+});

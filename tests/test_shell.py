@@ -24,6 +24,7 @@ ECHO_ENV = "echo $env:GREETING" if _WIN else "echo $GREETING"
 EXIT_OK = "cmd /c exit 0" if _WIN else "true"
 EXIT_FAIL = "cmd /c exit 1" if _WIN else "false"
 SLEEP_5 = "Start-Sleep -Seconds 5" if _WIN else "sleep 5"
+PWD = "(Get-Location).Path" if _WIN else "pwd"  # PowerShell's `pwd` is a table that cuts long paths
 PRINT_1000 = (
     'foreach ($i in 1..1000) { "line$i" }'
     if _WIN
@@ -31,17 +32,52 @@ PRINT_1000 = (
 )
 
 
-@pytest.fixture
-def executor(tmp_path):
-    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
-    yield ex
-    ex.close()
+# Every behaviour below is checked twice: on the in-process executor (direct mode) and on
+# the same contract served by a tool runner in another process (the sandbox path, over a
+# Unix socket or a Windows named pipe). The two must not drift apart.
+_EXECUTORS = ["direct", "runner"]
+if sys.platform == "darwin":
+    _EXECUTORS.append("seatbelt")  # the same runner, inside the macOS sandbox
+
+
+@pytest.fixture(params=_EXECUTORS)
+def executor(request, tmp_path):
+    if request.param == "direct":
+        ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+        yield ex
+        ex.close()
+        return
+    from coworker.sandbox.providers.runner_local import RunnerLocalProvider
+    from coworker.sandbox.workspace import RunnerWorkspace
+
+    if request.param == "seatbelt":
+        from coworker.sandbox.providers import seatbelt
+
+        try:
+            seatbelt.preflight()
+        except seatbelt.SeatbeltUnavailable as exc:
+            pytest.skip(str(exc))
+        provider = seatbelt.SeatbeltProvider(
+            roots=[{"path": str(tmp_path), "writable": True}], cwd=tmp_path, runner_path=_runner_zipapp(tmp_path), network=False
+        )
+    else:
+        provider = RunnerLocalProvider(cwd=tmp_path, runner_path=_runner_zipapp(tmp_path))
+    ws = RunnerWorkspace(provider, cwd=tmp_path)
+    ws.executor.default_timeout = 10
+    yield ws.executor
+    ws.close()
+
+
+def _runner_zipapp(tmp_path):
+    from coworker.sandbox.bundle import build_runner_zipapp
+
+    return build_runner_zipapp(tmp_path.parent / "runner-dist")
 
 
 def test_cwd_persists_across_calls(executor, tmp_path):
     (tmp_path / "sub").mkdir()
     executor.run("cd sub")
-    result = executor.run("pwd")
+    result = executor.run(PWD)
     assert result["exit_code"] == 0
     assert "sub" in result["output"]
     assert executor.cwd.endswith("sub")

@@ -120,3 +120,19 @@ describe("Ark provider presentation", () => {
     );
   });
 });
+
+describe("Atlas Cloud provider presentation", () => {
+  it("links to the Atlas Cloud API key page", () => {
+    expect(KEY_HELP.atlascloud).toEqual({
+      url: "https://www.atlascloud.ai/console/api-keys",
+      label: "atlascloud.ai",
+    });
+  });
+
+  it("wears the bundled Atlas Cloud mark", () => {
+    const { container } = render(
+      <ProviderMark name="atlascloud" title="Atlas Cloud" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});
