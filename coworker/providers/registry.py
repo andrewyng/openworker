@@ -136,7 +136,17 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # URL pasted here keeps working for users who set it up before that card existed.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
     if base_url:
-        return OpenAIProvider(secrets=secrets, base_url=base_url)
+        from .local_server import thinking_as_template_kwargs
+
+        class _CustomEndpointProvider(OpenAIProvider):
+            # Compatible servers read the thinking switch from the chat template.
+            def complete(self, **kwargs: Any):
+                return super().complete(**thinking_as_template_kwargs(kwargs))
+
+            def stream(self, **kwargs: Any):
+                return super().stream(**thinking_as_template_kwargs(kwargs))
+
+        return _CustomEndpointProvider(secrets=secrets, base_url=base_url)
     return OpenAIResponsesProvider(secrets=secrets)
 
 
