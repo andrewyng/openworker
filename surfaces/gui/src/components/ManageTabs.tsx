@@ -6,6 +6,8 @@ import {
   connectConnector,
   connectManaged,
   connectMcpBacked,
+  createCustomProvider,
+  getLocalModels,
   disallowUser,
   getSettings,
   getSubscriptions,
@@ -24,6 +26,7 @@ import {
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
 import { Icon } from "./Icon";
 import { ModelChecklist } from "./ModelChecklist";
+import { LlamaCppPage } from "./models/LlamaCppSetup";
 import { LocalModelsTable, YourSystem } from "./models/LocalModels";
 import { PickModelDialog } from "./models/PickModelDialog";
 import { ProviderGroups } from "./models/ProviderGroups";
@@ -47,6 +50,7 @@ const relTime = (epoch?: number | null): string | null => {
 // when Settings/Activity became full-page surfaces): ModelsTab → Settings ▸ Models; ConnectorsTab →
 // Integrations ▸ Connectors (the MCP tab retired into the Connectors page, UX-034).
 const SEC_H = "text-label text-faint font-medium";
+const CARD = "rounded-xl2 border border-line bg-panel";
 const BTN_BORDERED =
   "text-ui px-3 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0 disabled:opacity-50";
@@ -78,10 +82,11 @@ export function ProviderKeyFooter({
       className="text-ui text-danger/80 hover:text-danger hover:underline underline-offset-2"
       data-testid="set-remove-key"
       onClick={() => {
-        if (window.confirm(t("manage.remove_key_confirm", { title: info?.title || "" }))) onRemove();
+        const key = info?.is_custom ? "manage.remove_provider_confirm" : "manage.remove_key_confirm";
+        if (window.confirm(t(key, { title: info?.title || "" }))) onRemove();
       }}
     >
-      {t("manage.remove_key")}
+      {t(info?.is_custom ? "manage.remove_provider" : "manage.remove_key")}
     </button>
   );
 }
@@ -97,6 +102,13 @@ export function ModelsTab() {
   // The Pick a model dialog (UX-055): "" closed, "+" picking, else the model to configure.
   const [dialog, setDialog] = useState<string>("");
   const [settingsError, setSettingsError] = useState(false);
+  const [addingCustom, setAddingCustom] = useState(false);
+  const [openCustom, setOpenCustom] = useState<string | null>(null);
+  // A custom provider's "Fetch from server": the ids its GET /models listed (offered as
+  // suggestions in the checklist) and the one-line outcome.
+  const [fetched, setFetched] = useState<string[]>([]);
+  const [fetching, setFetching] = useState(false);
+  const [fetchNote, setFetchNote] = useState<string | null>(null);
   const refreshSettings = () => {
     setSettingsError(false);
     getSettings()
@@ -117,6 +129,33 @@ export function ModelsTab() {
       }
     } catch { /* private window */ }
   }, []);
+
+  useEffect(() => {
+    if (openCustom && ps.providers.some((p) => p.name === openCustom)) {
+      setOpenCustom(null);
+      ps.openProvider(openCustom);
+    }
+  }, [openCustom, ps.providers]);
+
+  useEffect(() => {
+    setFetched([]);
+    setFetchNote(null);
+  }, [ps.sel]);
+
+  const fetchModels = async () => {
+    if (!ps.sel) return;
+    setFetching(true);
+    setFetchNote(null);
+    try {
+      const res = await getLocalModels(ps.sel);
+      const ids = res.models.map((m) => m.name);
+      setFetched(ids);
+      setFetchNote(res.error || (ids.length ? t("manage.custom_fetched_count", { count: ids.length }) : t("manage.custom_fetched_none")));
+    } catch {
+      setFetchNote(t("manage.local_models_failed"));
+    }
+    setFetching(false);
+  };
 
   // #43: a failed or hung settings fetch says so and offers Retry (same shape as the
   // local-models status line below) instead of sitting on "Loading…" forever.
@@ -152,20 +191,53 @@ export function ModelsTab() {
   if (ps.sel === null) {
     return (
       <div>
-        <ProviderGroups ps={ps} tp="set" models={settings.models} />
+        {addingCustom ? (
+          <CustomProviderForm
+            onCancel={() => setAddingCustom(false)}
+            onCreated={async (name) => {
+              setAddingCustom(false);
+              setOpenCustom(name);
+              await ps.refreshProviders();
+              refreshSettings();
+            }}
+          />
+        ) : (
+          <ProviderGroups ps={ps} tp="set" models={settings.models} onAddCustom={() => setAddingCustom(true)} />
+        )}
         <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} onPick={() => setDialog("+")} onConfigure={(m) => setDialog(m)} />
         {dialogEl}
       </div>
     );
   }
 
+  const removeKeyFooter = <ProviderKeyFooter info={info} credentialed={ps.credentialed} onRemove={ps.removeKey} />;
+  const localTables = (key = "", withTable = true) => (
+    <>
+      <YourSystem />
+      {withTable && <LocalModelsTable
+        key={key}
+        provider={ps.sel!}
+        curated={settings.models}
+        defaultModel={settings.model}
+        onChanged={refreshSettings}
+        onConfigure={(m) => setDialog(m)}
+      />}
+      {dialogEl}
+    </>
+  );
+
+  if (ps.sel === "llamacpp" && info?.setup_here) {
+    // UX-057: OpenWorker sets llama.cpp up and runs it on this Mac.
+    return (
+      <div>
+        <LlamaCppPage ps={ps} tp="set" footer={removeKeyFooter} onChanged={refreshSettings} after={localTables} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <ProviderForm
-        ps={ps}
-        tp="set"
-        footer={<ProviderKeyFooter info={info} credentialed={ps.credentialed} onRemove={ps.removeKey} />}
-      />
+      <ProviderForm ps={ps} tp="set" footer={removeKeyFooter} />
 
       {info?.env_key && (
         <p className="text-meta text-muted mt-3 leading-relaxed" data-testid="set-env-key-note">
@@ -180,27 +252,31 @@ export function ModelsTab() {
 
       {info?.kind === "local" ? (
         // A local provider: the machine, then what the server holds (UX-055).
-        <>
-          <YourSystem />
-          <LocalModelsTable
-            provider={ps.sel}
-            curated={settings.models}
-            defaultModel={settings.model}
-            onChanged={refreshSettings}
-            onConfigure={(m) => setDialog(m)}
-          />
-          {dialogEl}
-        </>
+        localTables()
       ) : info?.configured ? (
         <div className="mt-6">
           <div className={SEC_H + " mb-1.5"}>{t("manage.models")}</div>
           <p className="text-meta text-muted mb-2.5 leading-relaxed">
-            {t("manage.models_help")}
+            {t(info?.is_custom ? "manage.custom_models_help" : "manage.models_help")}
           </p>
+          {ps.sel === "azure" && (
+            // No catalogue on Azure: the id to add is the deployment's name.
+            <p className="text-meta text-muted mb-2.5 leading-relaxed" data-testid="set-azure-deployment-note">
+              {t("manage.azure_deployment_help")}
+            </p>
+          )}
+          {info?.is_custom && (
+            <div className="flex items-center gap-3 mb-2.5" data-testid="custom-fetch-row">
+              <button className={BTN_BORDERED} data-testid="custom-fetch-models" disabled={fetching} onClick={() => void fetchModels()}>
+                {fetching ? t("manage.custom_fetching") : t("manage.custom_fetch_models")}
+              </button>
+              {fetchNote && <span className="text-meta text-muted" data-testid="custom-fetch-note">{fetchNote}</span>}
+            </div>
+          )}
           <ModelChecklist
             provider={ps.sel}
             knownProviders={knownNames}
-            suggested={info?.suggested_models || []}
+            suggested={[...(info?.suggested_models || []), ...fetched].filter((m, i, a) => a.indexOf(m) === i)}
             curated={settings.models}
             defaultModel={settings.model}
             labels={settings.model_labels}
@@ -233,6 +309,125 @@ export function ModelsTab() {
           </div>
         )
       )}
+    </div>
+  );
+}
+
+/** A route prefix from a display name: lowercase, dashes between words, starting with a
+ * letter, at most 32 characters — the slug the backend accepts for `<prefix>:<model-id>`. */
+export function routePrefixFor(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^[^a-z]+/, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+}
+
+/** The form behind the "Add an OpenAI-compatible provider" box: a name of the user's
+ * choosing (the new card's title), the route prefix derived from it (editable until the
+ * first save), the endpoint and the key. Saving creates the card and opens it, where the
+ * model ids are typed or fetched from the server. */
+function CustomProviderForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (name: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [title, setTitle] = useState("");
+  const [name, setName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const input = "w-full px-3 py-2 rounded-lg border border-line bg-panel text-ui outline-none focus:border-accent";
+  const label = "block text-meta text-muted mt-3 mb-1";
+  const prefix = name || routePrefixFor(title);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    const result: { ok: boolean; error?: string; provider?: string } = await createCustomProvider(
+      prefix,
+      title,
+      { base_url: baseUrl, api_key: apiKey },
+    ).catch(() => ({ ok: false, error: t("provider.err_unreachable") }));
+    setSaving(false);
+    if (!result.ok || !result.provider) {
+      setError(result.error || t("manage.custom_add_failed"));
+      return;
+    }
+    await onCreated(result.provider);
+  };
+
+  return (
+    <div className={CARD + " p-4 max-w-xl mb-6"} data-testid="set-custom-provider-form">
+      <div className="text-body font-semibold">{t("manage.custom_add_title")}</div>
+      <p className="text-meta text-muted mt-1 leading-relaxed">{t("manage.custom_add_desc")}</p>
+      <label className={label} htmlFor="custom-provider-title">{t("manage.custom_name_label")}</label>
+      <input
+        id="custom-provider-title"
+        className={input}
+        value={title}
+        placeholder={t("manage.custom_name_placeholder")}
+        data-testid="custom-provider-title"
+        onChange={(e) => {
+          setTitle(e.target.value);
+          if (!nameTouched) setName(routePrefixFor(e.target.value));
+        }}
+      />
+      <label className={label} htmlFor="custom-provider-route">{t("manage.custom_route_label")}</label>
+      <input
+        id="custom-provider-route"
+        className={input + " font-mono"}
+        value={prefix}
+        spellCheck={false}
+        autoCapitalize="none"
+        data-testid="custom-provider-route"
+        onChange={(e) => {
+          setNameTouched(true);
+          setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""));
+        }}
+      />
+      <p className="text-meta text-faint mt-1">{t("manage.custom_route_hint", { prefix: prefix || "acme" })}</p>
+      <label className={label} htmlFor="custom-provider-endpoint">{t("manage.custom_endpoint_label")}</label>
+      <input
+        id="custom-provider-endpoint"
+        className={input}
+        value={baseUrl}
+        placeholder="https://…/v1"
+        spellCheck={false}
+        autoCapitalize="none"
+        data-testid="custom-provider-endpoint"
+        onChange={(e) => setBaseUrl(e.target.value)}
+      />
+      <p className="text-meta text-faint mt-1">{t("manage.custom_endpoint_help")}</p>
+      <label className={label} htmlFor="custom-provider-key">{t("manage.custom_key_label")}</label>
+      <input
+        id="custom-provider-key"
+        className={input}
+        type="password"
+        value={apiKey}
+        autoComplete="off"
+        data-testid="custom-provider-key"
+        onChange={(e) => setApiKey(e.target.value)}
+      />
+      <div className="mt-3 min-h-[19px] text-ui">{error && <span className="text-warnInk" data-testid="custom-provider-error">{error}</span>}</div>
+      <div className="flex gap-2 mt-1">
+        <button
+          className={BTN_ACCENT}
+          disabled={saving || !title.trim() || !prefix || !baseUrl.trim() || !apiKey.trim()}
+          data-testid="custom-provider-add"
+          onClick={() => void save()}
+        >
+          {saving ? t("manage.custom_adding") : t("manage.custom_add_btn")}
+        </button>
+        <button className={BTN_BORDERED} onClick={onCancel} data-testid="custom-provider-cancel">{t("manage.custom_cancel")}</button>
+      </div>
     </div>
   );
 }

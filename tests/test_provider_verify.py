@@ -1,5 +1,5 @@
-"""Tests for provider key detection + the live (read-only) Test/verify path. SDK-free: the
-single httpx.get is monkeypatched so no network is touched."""
+"""Tests for provider key detection + the live Test/verify path. SDK-free: httpx.get — and
+httpx.post, which only NVIDIA NIM needs — are monkeypatched so no network is touched."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ from coworker.providers import detect_provider, verify_provider_key
     "key,expected",
     [
         ("sk-ant-api03-abc", "anthropic"),
+        ("sk-orca-v1-abc", "orcarouter"),
         ("sk-or-v1-abc", "openrouter"),
         ("AIzaSyAbc123", "gemini"),
+        ("nvapi-abc123", "nvidia"),
         ("sk-proj-abc", "openai"),
         ("sk_live_abc", "openai"),
         ("", None),
@@ -99,6 +101,23 @@ def test_verify_openai_completions_route_404_is_clear(monkeypatch):
     assert "v1" in res["error"]
 
 
+def test_verify_orcarouter_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("orcarouter", api_key="sk-orca-x") == {"ok": True}
+    # OpenAI-compatible branch: prefilled vendor endpoint, bearer key
+    assert cap["url"] == "https://api.orcarouter.ai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-orca-x"
+
+
+def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("novita", api_key="sk-nov") == {"ok": True}
+    assert cap["url"] == "https://api.novita.ai/openai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-nov"
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {
@@ -131,6 +150,44 @@ def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
     assert "headers" not in cap  # keyless
 
 
+# -- NVIDIA NIM: the one provider a list-models probe can't verify ---------------
+def _patch_post_refusing_get(monkeypatch, status=200, capture=None):
+    _patch_post(monkeypatch, status=status, capture=capture)
+
+    def refuse_get(*_a, **_kw):  # see the docstring below
+        raise AssertionError("NVIDIA verify must not GET /models — it is unauthenticated")
+
+    monkeypatch.setattr("httpx.get", refuse_get)
+
+
+def test_verify_nvidia_posts_a_one_token_completion(monkeypatch):
+    """NIM's /v1/models is PUBLIC — 200 for any key, including an empty one — so a
+    list-models probe would greenlight a typo. Auth is only enforced on inference, hence
+    the POST. The GET stub above fails the test if this ever regresses to the generic
+    branch."""
+    from coworker.providers.registry import get_descriptor
+
+    cap: dict = {}
+    _patch_post_refusing_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("nvidia", api_key="nvapi-x") == {"ok": True}
+    assert cap["url"] == "https://integrate.api.nvidia.com/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer nvapi-x"
+    # Asserted against the descriptor, not a literal: NIM model ids rotate, and the point
+    # is that verify names the *recommended* model — a bad id 404s before auth is checked.
+    assert cap["json"]["model"] == get_descriptor("nvidia").recommended_model
+    assert cap["json"]["max_tokens"] == 1
+
+
+def test_verify_nvidia_bad_key_is_invalid(monkeypatch):
+    """NIM answers 403 on a bad key (401 with no header at all); both must read as a key
+    problem, not as an unreachable server."""
+    _patch_post_refusing_get(monkeypatch, status=403)
+    assert verify_provider_key("nvidia", api_key="nvapi-bad") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
 @pytest.mark.parametrize(
     "name,base_url,model",
     [
@@ -151,7 +208,7 @@ def test_verify_ark_uses_non_persisted_responses_probe(
 ):
     """Reverse-verified probe: the captured fixture must be non-empty and provider-specific."""
     cap: dict = {}
-    _patch_post(monkeypatch, status=200, capture=cap)
+    _patch_post_refusing_get(monkeypatch, status=200, capture=cap)
 
     assert verify_provider_key(name, api_key="ark-key") == {"ok": True}
     assert cap["url"] == base_url + "/responses"
@@ -166,7 +223,7 @@ def test_verify_ark_uses_non_persisted_responses_probe(
 
 def test_verify_ark_profile_endpoint_override(monkeypatch):
     cap: dict = {}
-    _patch_post(monkeypatch, status=200, capture=cap)
+    _patch_post_refusing_get(monkeypatch, status=200, capture=cap)
 
     verify_provider_key(
         "ark",
@@ -175,6 +232,32 @@ def test_verify_ark_profile_endpoint_override(monkeypatch):
     )
 
     assert cap["url"] == "https://gateway.example/ark/v3/responses"
+
+
+def test_verify_nvidia_self_hosted_lists_models(monkeypatch):
+    """The descriptor's help text promises a self-hosted NIM container works. Such a
+    container serves one model of its own, so the hosted probe's recommended id would
+    404 there; with any endpoint other than the default, Test lists models instead
+    (behind the key on a self-hosted NIM) and never POSTs a completion."""
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    def refuse_post(*_a, **_kw):
+        raise AssertionError("a self-hosted NIM is probed with GET /models, not a completion")
+
+    monkeypatch.setattr("httpx.post", refuse_post)
+    assert verify_provider_key(
+        "nvidia", api_key="nvapi-x", base_url="http://localhost:8000/v1/"
+    ) == {"ok": True}
+    assert cap["url"] == "http://localhost:8000/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer nvapi-x"
+
+
+def test_verify_nvidia_self_hosted_rejected_key_is_invalid(monkeypatch):
+    _patch_get(monkeypatch, status=401)
+    assert verify_provider_key(
+        "nvidia", api_key="nvapi-bad", base_url="http://nim.internal:8000/v1"
+    ) == {"ok": False, "error": "Invalid API key."}
 
 
 def test_verify_network_error_is_clean(monkeypatch):
@@ -240,3 +323,46 @@ def test_verify_silent_exception_falls_back_to_class_name_only(monkeypatch):
 
     _patch_get(monkeypatch, raise_exc=Weird())
     assert verify_provider_key("openai", api_key="sk-x") == {"ok": False, "error": "Couldn't reach OpenAI (Weird)."}
+
+
+# -- verify_provider_key: Azure OpenAI probes the user's resource, never api.openai.com ----
+def test_verify_azure_lists_models_at_the_resource_v1_api(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key(
+        "azure", api_key="az-key", fields={"endpoint": "https://contoso.openai.azure.com"}
+    ) == {"ok": True}
+    assert cap["url"] == "https://contoso.openai.azure.com/openai/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer az-key"
+    # One probe: /openai/v1 is always normalised in, so no completions-route check follows.
+    assert [c["url"] for c in cap["calls"]] == ["https://contoso.openai.azure.com/openai/v1/models"]
+    assert not any("api.openai.com" in c["url"] for c in cap["calls"])
+
+
+def test_verify_azure_accepts_an_endpoint_already_on_v1(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    verify_provider_key(
+        "azure", api_key="az-key", fields={"endpoint": "https://contoso.openai.azure.com/openai/v1/"}
+    )
+    assert cap["url"] == "https://contoso.openai.azure.com/openai/v1/models"
+
+
+def test_verify_azure_without_an_endpoint_asks_for_one_without_a_request(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    res = verify_provider_key("azure", api_key="az-key", fields={})
+    assert res["ok"] is False and "endpoint" in res["error"].lower()
+    assert "calls" not in cap
+
+
+def test_verify_azure_bad_key_and_wrong_host_read_differently(monkeypatch):
+    _patch_get(monkeypatch, status=401)
+    assert verify_provider_key(
+        "azure", api_key="az-bad", fields={"endpoint": "https://contoso.openai.azure.com"}
+    ) == {"ok": False, "error": "Invalid API key."}
+    _patch_get(monkeypatch, status=404)
+    res = verify_provider_key(
+        "azure", api_key="az-key", fields={"endpoint": "https://example.com"}
+    )
+    assert res["ok"] is False and "no Azure OpenAI v1 API" in res["error"]

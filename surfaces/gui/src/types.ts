@@ -178,6 +178,10 @@ export type Item =
       // web_search only (§1.9): the LIVE configured provider name, resolved server-side
       // when the card was raised — the grant description names the actual destination.
       searchProvider?: string;
+      // web_fetch only: the search service the page is read through, when Settings ▸
+      // Customization sends fetches through it (it sees the page address). Absent = this
+      // machine fetches the page.
+      fetchProvider?: string;
       // OPE-219: the host the sandbox's allowed-sites wall stopped. The card says so and
       // offers "Always allow <host>", which adds it to Settings ▸ Sandbox ▸ allowed sites.
       siteWall?: string;

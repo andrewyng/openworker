@@ -7,12 +7,14 @@ a `ProviderClient`. The `ProviderRouter` selects a descriptor by the `provider:`
 model string and builds (and caches) its client from the matching SecretStore profile.
 
 Today: `openai` (the default — native models via the Responses API; an optional custom
-endpoint covering Azure OpenAI's `/openai/v1` and any OpenAI-compliant gateway keeps the
-Chat Completions path), `anthropic` (native Messages API via
+endpoint for vLLM and any OpenAI-compliant gateway keeps the Chat Completions path),
+`azure` (the user's own Azure OpenAI / Foundry resource through its `/openai/v1` API,
+key-authenticated; model ids are deployment names), `anthropic` (native Messages API via
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
+MaaS endpoint), `novita` (OpenAI-compatible Novita Cloud), and `ollama` (local,
+OpenAI-compatible `/v1`).
 """
 
 from __future__ import annotations
@@ -25,11 +27,15 @@ from .anthropic_provider import AnthropicProvider
 from .base import ProviderClient
 from .bedrock_provider import BedrockProvider
 from .gemini_provider import GeminiProvider
+from .local_server import LOCAL_SERVERS
 from .openai_provider import OpenAIProvider
 from .openai_responses import OpenAIResponsesProvider
 from .vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# The index deliberately lives in the SecretStore too: it names profiles which contain
+# credentials, and keeping the two together makes a future secure-store backend a drop-in.
+CUSTOM_PROVIDERS_PROFILE = "providers:custom"
 
 
 @dataclass(frozen=True)
@@ -124,13 +130,68 @@ def _normalize_ollama_url(url: Optional[str]) -> str:
 def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Key resolution stays in resolve_api_key (explicit → env → SecretStore), so we just
     # hand over the SecretStore. Stock OpenAI (no custom endpoint) speaks the Responses
-    # API — the only wire with reasoning + tools on GPT-5.6+. A custom endpoint (Azure
-    # OpenAI /openai/v1, vLLM, any OpenAI-compliant gateway) keeps Chat Completions,
-    # which is what compat servers implement.
+    # API — the only wire with reasoning + tools on GPT-5.6+. A custom endpoint (vLLM,
+    # any OpenAI-compliant gateway) keeps Chat Completions, which is what compat servers
+    # implement. Azure OpenAI has its own card below (`azure`); an Azure `/openai/v1`
+    # URL pasted here keeps working for users who set it up before that card existed.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
     if base_url:
         return OpenAIProvider(secrets=secrets, base_url=base_url)
     return OpenAIResponsesProvider(secrets=secrets)
+
+
+AZURE_OPENAI_ENV_KEY = "AZURE_OPENAI_API_KEY"
+_AZURE_V1_SUFFIX = "/openai/v1"
+
+
+def normalize_azure_endpoint(endpoint: Optional[str]) -> str:
+    """The `/openai/v1` base URL for an Azure OpenAI or Foundry resource, from whatever the
+    user pasted: the bare resource endpoint (`https://<resource>.openai.azure.com`, also
+    `…services.ai.azure.com` and sovereign-cloud hosts), one already ending in `/openai`
+    or `/openai/v1`, or a full request URL copied from the portal (its path and
+    `?api-version=` query are dropped — the v1 API takes neither). Empty in ⇒ empty out.
+
+    Base URL per learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle
+    (read 2026-10-26): append `/openai/v1` to the resource endpoint; no api-version.
+    """
+    raw = (endpoint or "").strip().split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "https://" + raw
+    lowered = raw.lower()
+    if lowered.endswith(_AZURE_V1_SUFFIX):
+        return raw
+    if lowered.endswith("/openai"):
+        return raw + "/v1"
+    # A deployments URL (`…/openai/deployments/<name>/chat/completions`) or any other
+    # path under /openai: keep the origin and the /openai segment, drop the rest.
+    marker = lowered.find("/openai/")
+    if marker != -1:
+        return raw[:marker] + _AZURE_V1_SUFFIX
+    return raw + _AZURE_V1_SUFFIX
+
+
+def _build_azure(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    """Azure OpenAI through the v1 API: the stock OpenAI SDK pointed at
+    `<endpoint>/openai/v1`. The key comes from THIS provider's profile or
+    AZURE_OPENAI_API_KEY only — never the OpenAI key or SecretStore fallback, so a
+    configured OpenAI key is never sent to an Azure host (same guard as the compat
+    vendors). Chat Completions, as the OpenAI custom-endpoint path always used for Azure."""
+    p = profile or {}
+    base_url = normalize_azure_endpoint(p.get("endpoint"))
+    if not base_url:
+        raise RuntimeError(
+            "No Azure OpenAI endpoint configured — add it in Settings ▸ Models."
+        )
+    api_key = (p.get("api_key") or "").strip() or os.environ.get(
+        AZURE_OPENAI_ENV_KEY, ""
+    ).strip()
+    if not api_key:
+        raise RuntimeError(
+            "No Azure OpenAI API key configured — add it in Settings ▸ Models."
+        )
+    return OpenAIProvider(api_key=api_key, base_url=base_url)
 
 
 def _build_codex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -210,7 +271,8 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 
 
 def _local_server(name: str):
-    """Builder for llama.cpp and vLLM (providers/local_server.py): the user's own server,
+    """Builder for the OpenAI-compatible local servers (providers/local_server.py: llama.cpp,
+    vLLM, LM Studio, Jan, Docker Model Runner, mlx-lm): the user's own server,
     reached through its `/v1`, with an optional key. Without a key the server takes any
     value, so a placeholder goes out."""
     from .local_server import PLACEHOLDER_KEY, remember_server, thinking_as_template_kwargs, v1_base
@@ -246,10 +308,11 @@ def _build_openrouter_account(profile: dict[str, Any], secrets: Any) -> Provider
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
-    Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
-    env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
-    key is never silently sent to a different vendor's endpoint. Missing key ⇒ fail fast with a
-    vendor-named error (these are only built on demand, when one of their models is selected).
+    Kimi, MiniMax, Qwen, xAI, Mistral, Novita, Upstage). The key is resolved from the vendor's OWN
+    profile (or its env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a
+    configured OpenAI key is never silently sent to a different vendor's endpoint. Missing key ⇒
+    fail fast with a vendor-named error (these are only built on demand, when one of their models
+    is selected).
     """
 
     def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -378,6 +441,50 @@ def _responses_compat(
     )
 
 
+def _custom_provider_descriptor(name: str, title: str) -> ProviderDescriptor:
+    """Descriptor synthesized for a user-defined OpenAI-compatible endpoint.
+
+    Unlike the built-ins there is no catalog or capability claim here. The endpoint and
+    bearer key are required; model ids are supplied separately by the user.
+    """
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[
+            ProviderField("api_key", f"{title} API key", secret=True),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                required=True,
+                placeholder="https://…/v1",
+                help="An HTTPS OpenAI-compatible API base URL ending in /v1. HTTP is allowed only for local gateways.",
+            ),
+        ],
+        build=_openai_compat(title, ""),
+        blurb="Uses the standard OpenAI Chat Completions API. Add model IDs manually below.",
+    )
+
+
+def _disabled_custom_provider_descriptor(name: str, title: str) -> ProviderDescriptor:
+    """Keep a removed route recognizable so old sessions fail closed, never reroute."""
+
+    def build(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+        raise RuntimeError(
+            f"{title} was removed from Settings ▸ Models. Configure that provider again "
+            "before continuing this session."
+        )
+
+    return ProviderDescriptor(
+        name=name,
+        title=title,
+        needs_key=True,
+        fields=[],
+        build=build,
+        blurb="Removed custom provider.",
+    )
+
+
 DESCRIPTORS: list[ProviderDescriptor] = [
     ProviderDescriptor(
         name="openai",
@@ -395,14 +502,46 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 "Custom endpoint (optional)",
                 secret=False,
                 required=False,
-                placeholder="https://…/openai/v1",
-                help="For Azure OpenAI, vLLM, or any OpenAI-compliant server. Leave blank for api.openai.com.",
+                placeholder="https://…/v1",
+                help="For vLLM or any OpenAI-compliant server. Leave blank for api.openai.com. "
+                "Azure OpenAI has its own card.",
             ),
         ],
         build=_build_openai,
         recommended_model="gpt-5.6-sol",
         env_key="OPENAI_API_KEY",
     ),
+    # Azure OpenAI as its own card (issue #457): before it, Azure meant pasting an
+    # `/openai/v1` URL into the OpenAI card's custom endpoint, with the OpenAI key field
+    # standing in for the Azure key. Entra ID sign-in is a second auth mode to follow (#507).
+    ProviderDescriptor(
+        name="azure",
+        title="Azure OpenAI",
+        needs_key=True,
+        fields=[
+            ProviderField(
+                "endpoint",
+                "Endpoint",
+                secret=False,
+                placeholder="https://<resource>.openai.azure.com",
+                help="Your resource's endpoint, from Keys and Endpoint in the Azure portal "
+                "or the Foundry portal. /openai/v1 is added automatically; Foundry "
+                "(…services.ai.azure.com) and sovereign-cloud hosts work too.",
+            ),
+            ProviderField(
+                "api_key",
+                "Azure OpenAI API key",
+                secret=True,
+            ),
+        ],
+        build=_build_azure,
+        # No catalogue: on Azure the model id is the user's own deployment name.
+        recommended_model=None,
+        env_key=AZURE_OPENAI_ENV_KEY,
+        blurb="Your own Azure OpenAI or Foundry resource, through its v1 API — model ids "
+        "are your deployment names.",
+    ),
+
     ProviderDescriptor(
         name="openai-codex",
         kind="subscription",
@@ -692,10 +831,39 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="META_API_KEY",
         endpoint_help="Prefilled with the Meta Model API endpoint (public preview, US-only as of 2026-07).",
     ),
+    _compat(
+        "sambanova",
+        "SambaNova",
+        base_url="https://api.sambanova.ai/v1",
+        recommended_model="Meta-Llama-3.3-70B-Instruct",
+        env_key="SAMBANOVA_API_KEY",
+        endpoint_help="Prefilled with SambaNova's official OpenAI-compatible endpoint.",
+    ),
+    _compat(
+        "atlascloud",
+        "Atlas Cloud",
+        base_url="https://api.atlascloud.ai/v1",
+        recommended_model="zai-org/glm-5.2",
+        env_key="ATLASCLOUD_API_KEY",
+    ),
+    _compat(
+        "novita",
+        "Novita AI",
+        base_url="https://api.novita.ai/openai/v1",
+        recommended_model="zai-org/glm-5.2",
+        env_key="NOVITA_API_KEY",
+        endpoint_help="Prefilled with Novita's OpenAI-compatible endpoint; keep it unless you use a regional or proxy variant.",
+    ),
+    _compat(
+        "upstage",
+        "Upstage (Solar)",
+        base_url="https://api.upstage.ai/v1",
+        recommended_model="solar-pro4",
+        env_key="UPSTAGE_API_KEY",
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
-    # ids + display labels live in providers/matrix.py). TODO: add Groq here (+ its matrix
-    # rows) once the current provider surface is tested — deliberately deferred to bound
-    # how much needs verifying at once (owner call, 2026-07-04).
+    # ids + display labels live in providers/matrix.py). Groq was deferred on 2026-07-04 to
+    # bound how much needed verifying at once; it landed 2026-10-25 with verified rows.
     _compat(
         "together",
         "Together AI",
@@ -736,6 +904,74 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         blurb="Sign in with your OpenRouter account and use its credits — nothing to "
         "paste. The key OpenRouter issues stays on this machine.",
         auth="oauth",
+    ),
+    _compat(
+        "nebius",
+        "Nebius Token Factory",
+        base_url="https://api.tokenfactory.nebius.com/v1",
+        recommended_model="zai-org/GLM-5.2",
+        env_key="NEBIUS_API_KEY",
+    ),
+    _compat(
+        "orcarouter",
+        "OrcaRouter",
+        base_url="https://api.orcarouter.ai/v1",
+        recommended_model="anthropic/claude-sonnet-5",
+        env_key="ORCAROUTER_API_KEY",
+    ),
+    # NVIDIA NIM: NVIDIA's own Nemotron line plus other labs' models, all under NVIDIA's
+    # `vendor/model` namespace (hence a routed id like `nvidia:nvidia/nemotron-…`). Same
+    # reseller shape as Together/Fireworks; the endpoint also fronts self-hosted NIM
+    # containers, which is why the base_url help calls that out.
+    _compat(
+        "nvidia",
+        "NVIDIA NIM",
+        base_url="https://integrate.api.nvidia.com/v1",
+        recommended_model="nvidia/nemotron-3-super-120b-a12b",
+        env_key="NVIDIA_API_KEY",
+        endpoint_help="Prefilled with NVIDIA's hosted NIM endpoint. Point it at a self-hosted NIM container (e.g. http://localhost:8000/v1) to use your own deployment.",
+    ),
+    _compat(
+        "groq",
+        "Groq",
+        base_url="https://api.groq.com/openai/v1",
+        recommended_model="llama-3.3-70b-versatile",
+        env_key="GROQ_API_KEY",
+    ),
+    # Four more OpenAI-compatible vendors (2026-10-26); endpoints, key pages and the
+    # recommended ids read from each vendor's docs that day (sources in matrix.py).
+    _compat(
+        "cerebras",
+        "Cerebras",
+        base_url="https://api.cerebras.ai/v1",
+        recommended_model="gpt-oss-120b",
+        env_key="CEREBRAS_API_KEY",
+    ),
+    # Hugging Face routes each repo id to one of its partner providers; model ids are
+    # the Hub repo ids, optionally with a `:provider` suffix to pin one.
+    _compat(
+        "huggingface",
+        "Hugging Face (Inference Providers)",
+        base_url="https://router.huggingface.co/v1",
+        recommended_model="zai-org/GLM-5.2",
+        env_key="HF_TOKEN",
+        endpoint_help="Prefilled with the Inference Providers router. Model ids are Hugging Face repo ids, e.g. zai-org/GLM-5.2.",
+    ),
+    _compat(
+        "cohere",
+        "Cohere",
+        base_url="https://api.cohere.ai/compatibility/v1",
+        recommended_model="command-a-plus-05-2026",
+        env_key="COHERE_API_KEY",
+        endpoint_help="Prefilled with Cohere's Compatibility API, which speaks the OpenAI chat format.",
+    ),
+    _compat(
+        "siliconflow",
+        "SiliconFlow",
+        base_url="https://api.siliconflow.com/v1",
+        recommended_model="zai-org/GLM-5.2",
+        env_key="SILICONFLOW_API_KEY",
+        endpoint_help="Prefilled with SiliconFlow's international endpoint. China mainland: https://api.siliconflow.cn/v1 (keys from cloud.siliconflow.cn).",
     ),
     ProviderDescriptor(
         name="ollama",
@@ -805,28 +1041,193 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         blurb="A vLLM server, usually on a Linux machine with an NVIDIA GPU.",
         kind="local",
     ),
+    ProviderDescriptor(
+        name="lmstudio",
+        title="LM Studio",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:1234",
+                help="Where LM Studio's local server is listening (the Developer tab, or "
+                "`lms server start`). The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("lmstudio"),
+        # The same verified tool-calling pick as Ollama's, under LM Studio's catalog id
+        # (lmstudio.ai/models/qwen/qwen3-coder-30b, read 2026-10-25) — download it in-app.
+        recommended_model="qwen/qwen3-coder-30b",
+        blurb="The LM Studio app's local server, with whatever models you downloaded there.",
+        kind="local",
+    ),
+    # Three more OpenAI-compatible local servers (2026-10-26). Defaults read from each
+    # tool's own docs: docs.jan.ai/desktop/api-server (127.0.0.1:1337, /v1 prefix),
+    # docs.docker.com/ai/model-runner/api-reference (localhost:12434/engines/v1),
+    # mlx-lm's server.py (127.0.0.1:8080). No recommended model: each serves whatever the
+    # user loaded, and the picker lists that.
+    ProviderDescriptor(
+        name="jan",
+        title="Jan",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://127.0.0.1:1337",
+                help="Where Jan's local API server is listening (Settings ▸ Local API Server ▸ "
+                "Start Server). The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if you set one in Jan's server settings)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("jan"),
+        blurb="The Jan app's local API server, with the models you downloaded there.",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="docker",
+        title="Docker Model Runner",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://localhost:12434/engines",
+                help="Docker Model Runner's TCP address (enable it in Docker Desktop ▸ Settings ▸ "
+                "AI, or `docker desktop enable model-runner --tcp 12434`). The /engines/v1 path "
+                "is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the runner was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("docker"),
+        blurb="Models pulled with `docker model pull`, served by Docker Desktop.",
+        kind="local",
+    ),
+    ProviderDescriptor(
+        name="mlx",
+        title="mlx-lm",
+        needs_key=False,
+        fields=[
+            ProviderField(
+                "base_url",
+                "Server address",
+                secret=False,
+                required=False,
+                placeholder="http://127.0.0.1:8080",
+                help="Where `mlx_lm.server` is listening. It defaults to port 8080, the same as "
+                "llama.cpp — if you run both, start one on another port "
+                "(`mlx_lm.server --port 8081`). The /v1 path is added automatically.",
+            ),
+            ProviderField(
+                "api_key",
+                "API key (only if the server was started with one)",
+                secret=True,
+                required=False,
+            ),
+        ],
+        build=_local_server("mlx"),
+        blurb="An mlx-lm server on Apple silicon (`pip install mlx-lm`, then `mlx_lm.server --model <repo>`).",
+        kind="local",
+    ),
 ]
 
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
 
 
-def provider_descriptors() -> list[ProviderDescriptor]:
-    return list(DESCRIPTORS)
+def _custom_provider_titles(secrets: Any = None) -> dict[str, str]:
+    """Return the validated custom-provider index without exposing credentials."""
+    if secrets is None:
+        return {}
+    raw = secrets.get(CUSTOM_PROVIDERS_PROFILE) or {}
+    providers = raw.get("providers") if isinstance(raw, dict) else None
+    if not isinstance(providers, dict):
+        return {}
+    return {
+        name: title
+        for name, title in providers.items()
+        if isinstance(name, str)
+        and isinstance(title, str)
+        and name not in _BY_NAME
+        and title.strip()
+    }
 
 
-def provider_names() -> list[str]:
-    return [d.name for d in DESCRIPTORS]
+def _removed_custom_provider_titles(secrets: Any = None) -> dict[str, str]:
+    """Routes kept as tombstones after deletion to protect existing sessions."""
+    if secrets is None:
+        return {}
+    raw = secrets.get(CUSTOM_PROVIDERS_PROFILE) or {}
+    removed = raw.get("removed") if isinstance(raw, dict) else None
+    if not isinstance(removed, dict):
+        return {}
+    return {
+        name: title
+        for name, title in removed.items()
+        if isinstance(name, str)
+        and isinstance(title, str)
+        and name not in _BY_NAME
+        and title.strip()
+    }
 
 
-def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
-    return _BY_NAME.get(name)
+def is_custom_provider(name: str, secrets: Any = None) -> bool:
+    return name in _custom_provider_titles(secrets)
+
+
+def is_removed_custom_provider(name: str, secrets: Any = None) -> bool:
+    return name in _removed_custom_provider_titles(secrets)
+
+
+def provider_descriptors(secrets: Any = None) -> list[ProviderDescriptor]:
+    custom = [
+        _custom_provider_descriptor(name, title)
+        for name, title in _custom_provider_titles(secrets).items()
+    ]
+    return [*DESCRIPTORS, *custom]
+
+
+def provider_names(secrets: Any = None) -> list[str]:
+    return [d.name for d in provider_descriptors(secrets)]
+
+
+def get_descriptor(name: str, secrets: Any = None) -> Optional[ProviderDescriptor]:
+    builtin = _BY_NAME.get(name)
+    if builtin is not None:
+        return builtin
+    title = _custom_provider_titles(secrets).get(name)
+    if title:
+        return _custom_provider_descriptor(name, title)
+    title = _removed_custom_provider_titles(secrets).get(name)
+    return _disabled_custom_provider_descriptor(name, title) if title else None
 
 
 def build_provider_client(
     name: str, profile: dict[str, Any], secrets: Any
 ) -> ProviderClient:
     """Build a `ProviderClient` for `name` from its stored profile. Unknown → OpenAI default."""
-    descriptor = _BY_NAME.get(name) or _BY_NAME["openai"]
+    descriptor = get_descriptor(name, secrets) or _BY_NAME["openai"]
     return descriptor.build(profile or {}, secrets)
 
 
@@ -843,8 +1244,13 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
         return True  # keyless (Ollama) — usable out of the box
     profile = profile or {}
     if any(f.key == "api_key" for f in d.fields):
-        return bool(profile.get("api_key")) or bool(
+        has_key = bool(profile.get("api_key")) or bool(
             d.env_key and os.environ.get(d.env_key)
+        )
+        # A key alone is not enough where the card also requires a non-secret field
+        # (Azure's endpoint): an env key with nowhere to send it is not configured.
+        return has_key and all(
+            profile.get(f.key) for f in d.fields if f.required and not f.secret
         )
     return all(profile.get(f.key) for f in d.fields if f.required)
 
@@ -858,10 +1264,14 @@ def detect_provider(api_key: str) -> Optional[str]:
         return None
     if key.startswith("sk-ant-"):
         return "anthropic"
+    if key.startswith("sk-orca-"):
+        return "orcarouter"
     if key.startswith("sk-or-"):
         return "openrouter"
     if key.startswith("AIza"):
         return "gemini"
+    if key.startswith("nvapi-"):
+        return "nvidia"
     if key.startswith(("sk-", "sk_")):
         return "openai"
     return None
@@ -1092,6 +1502,7 @@ def verify_provider_key(
     base_url: Optional[str] = None,
     fields: Optional[dict[str, Any]] = None,
     timeout: float = 10.0,
+    descriptor: Optional[ProviderDescriptor] = None,
 ) -> dict[str, Any]:
     """Validate a provider's credentials with one cheap call — usually list models.
 
@@ -1102,7 +1513,7 @@ def verify_provider_key(
     """
     import httpx
 
-    d = _BY_NAME.get(name) or _BY_NAME["openai"]
+    d = descriptor or _BY_NAME.get(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
     if d.auth == "oauth":
         # OAuth providers verify from their stored tokens (needs the SecretStore),
@@ -1125,14 +1536,64 @@ def verify_provider_key(
                 params={"key": key},
                 timeout=timeout,
             )
+        elif name == "azure":
+            # The Azure v1 API's own model list, at the user's resource — never
+            # api.openai.com. The key rides as a bearer token, exactly as the OpenAI SDK
+            # sends it at run time (the v1 spec takes the key in `authorization` as
+            # well as `api-key`), so a passing Test proves the path the sessions use.
+            endpoint = normalize_azure_endpoint(
+                (fields or {}).get("endpoint") or base_url
+            )
+            if not endpoint:
+                return {"ok": False, "error": "Enter the Azure OpenAI endpoint to test."}
+            resp = httpx.get(
+                endpoint + "/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=timeout,
+            )
+            if resp.status_code == 404:
+                return {
+                    "ok": False,
+                    "error": "Reached the host, but no Azure OpenAI v1 API at this "
+                    "endpoint — check the resource endpoint.",
+                }
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
-        elif name in ("llamacpp", "vllm"):
+        elif name in LOCAL_SERVERS:
             from .local_server import v1_base
 
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             resp = httpx.get(v1_base(name, base_url) + "/models", headers=headers, timeout=timeout)
+        elif name == "nvidia":
+            # NIM's /v1/models is PUBLIC: it answers 200 for any key, including an empty
+            # one, so the usual list-models probe can't tell a good key from a typo. Auth
+            # is enforced only on inference — and only once the model id routes (a bad
+            # model 404s before the key is looked at) — so we spend a single token on the
+            # recommended model instead. A self-hosted NIM (any other endpoint) serves one
+            # model of its own choosing, so the recommended id would 404 there; its
+            # /v1/models is behind the key, so the plain listing is the right probe.
+            default_base = next(
+                (f.default for f in d.fields if f.key == "base_url" and f.default), ""
+            )
+            base = (base_url or "").strip().rstrip("/") or default_base.rstrip("/")
+            if base != default_base.rstrip("/"):
+                resp = httpx.get(
+                    base + "/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=timeout,
+                )
+            else:
+                resp = httpx.post(
+                    base + "/chat/completions",
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={
+                        "model": d.recommended_model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=timeout,
+                )
         elif name in ("ark", "ark-agent-plan-cn"):
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
@@ -1189,6 +1650,14 @@ def verify_provider_key(
 
     if resp.status_code < 300:
         return {"ok": True}
+    if resp.status_code in (404, 405) and d.name not in _BY_NAME:
+        # Chat Completions compatibility does not require the optional model-list
+        # endpoint. The gateway was reached, so do not call a usable custom route
+        # invalid merely because it cannot provide a catalog.
+        return {
+            "ok": True,
+            "warning": "Endpoint reached, but it does not expose /models. Add a model ID and try a chat to finish checking it.",
+        }
     if resp.status_code in (401, 403):
         if name == "ollama":
             return {"ok": False, "error": "Server rejected the request."}

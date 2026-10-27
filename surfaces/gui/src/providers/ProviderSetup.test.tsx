@@ -39,13 +39,35 @@ const BEDROCK: ProviderInfo = {
   ],
 };
 
-function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
+// Azure OpenAI: a REQUIRED non-secret endpoint ahead of the key — a plain field row, since it
+// is keyed `endpoint`, not `base_url` (which the form folds behind the custom-endpoint link).
+const AZURE: ProviderInfo = {
+  name: "azure",
+  title: "Azure OpenAI",
+  needs_key: true,
+  configured: false,
+  values: {},
+  suggested_models: [],
+  recommended_model: null,
+  blurb: "Your own Azure OpenAI or Foundry resource, through its v1 API — model ids are your deployment names.",
+  fields: [
+    { key: "endpoint", label: "Endpoint", secret: false, required: true, help: "/openai/v1 is added automatically.", placeholder: "https://<resource>.openai.azure.com" },
+    { key: "api_key", label: "Azure OpenAI API key", secret: true, required: true, help: "", placeholder: "" },
+  ],
+};
+
+function makePs(
+  fields: Record<string, string>,
+  setFieldValue = vi.fn(),
+  info: ProviderInfo = BEDROCK,
+): ProviderSetupState {
   return {
-    providers: [BEDROCK],
-    ordered: [BEDROCK],
+    providers: [info],
+    ordered: [info],
     refreshProviders: async () => {},
-    sel: "bedrock",
-    info: BEDROCK,
+    sel: info.name,
+    info,
+
     fields,
     setFieldValue,
     dirty: false,
@@ -118,5 +140,42 @@ describe("Ark provider presentation", () => {
     expect(KEY_HELP["ark-agent-plan-cn"].url).toContain(
       "advancedActiveKey=agentPlan",
     );
+  });
+});
+
+describe("Atlas Cloud provider presentation", () => {
+  it("links to the Atlas Cloud API key page", () => {
+    expect(KEY_HELP.atlascloud).toEqual({
+      url: "https://www.atlascloud.ai/console/api-keys",
+      label: "atlascloud.ai",
+    });
+  });
+
+  it("wears the bundled Atlas Cloud mark", () => {
+    const { container } = render(
+      <ProviderMark name="atlascloud" title="Atlas Cloud" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});
+
+describe("Azure OpenAI provider presentation", () => {
+  it("renders the endpoint as a plain required row, not the custom-endpoint disclosure", () => {
+    render(<ProviderForm ps={makePs({}, vi.fn(), AZURE)} tp="t" />);
+    const endpoint = screen.getByTestId("t-field-endpoint") as HTMLInputElement;
+    expect(endpoint.type).toBe("text");
+    expect(endpoint.placeholder).toBe("https://<resource>.openai.azure.com");
+    expect(screen.queryByTestId("t-endpoint-link")).toBeNull();
+    // Test sits beside the key (the required secret), as on every keyed card.
+    expect(screen.getByTestId("t-field-api_key")).toBeTruthy();
+    expect(screen.getByTestId("t-test")).toBeTruthy();
+    expect(screen.getByText(/deployment names/)).toBeTruthy();
+  });
+
+  it("links to the Azure portal for a key and wears the bundled mark", () => {
+    expect(KEY_HELP.azure.label).toBe("portal.azure.com");
+    expect(KEY_HELP.azure.url).toMatch(/^https:\/\/portal\.azure\.com\//);
+    const { container } = render(<ProviderMark name="azure" title="Azure OpenAI" />);
+    expect(container.querySelector("img")).not.toBeNull();
   });
 });

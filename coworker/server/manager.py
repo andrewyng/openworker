@@ -8,6 +8,7 @@ sessions span folders.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import threading
 import json
 import logging
@@ -21,6 +22,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from .. import model_config as _model_config
 from ..agent import build_engine
@@ -84,9 +86,13 @@ from ..providers import (
     ProviderRouter,
     descriptor_configured,
     get_descriptor,
+    is_custom_provider,
+    is_removed_custom_provider,
     provider_descriptors,
     verify_provider_key,
 )
+from ..providers.local_server import LOCAL_SERVERS
+from ..providers.registry import CUSTOM_PROVIDERS_PROFILE
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
 from ..teams import Actor as TeamActor
@@ -113,6 +119,28 @@ from ..skills import (
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
+
+
+def _custom_endpoint_error(url: str) -> Optional[str]:
+    """Allow HTTPS everywhere; plaintext HTTP only for an explicitly local gateway."""
+    try:
+        parsed = urlsplit((url or "").strip())
+    except ValueError:
+        return "Enter a valid HTTPS endpoint."
+    if parsed.scheme == "https" and parsed.hostname:
+        return None
+    if parsed.scheme != "http" or not parsed.hostname:
+        return "Endpoint must be an HTTPS URL (for example, https://gateway.example/v1)."
+    host = parsed.hostname.lower()
+    if host == "localhost":
+        return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "HTTP endpoints are allowed only for localhost or a private IP address."
+    if address.is_loopback or address.is_private:
+        return None
+    return "HTTP endpoints are allowed only for localhost or a private IP address."
 
 
 def _grants_of(engine) -> dict[str, Any]:
@@ -4014,40 +4042,147 @@ class SessionManager:
         return {"ok": True}
 
     # -- web search -------------------------------------------------------------
-    def get_web_search(self) -> dict[str, Any]:
+    # Settings ▸ Customization ▸ Web search. The profile `web_search:default` holds the
+    # active provider, one key per provider (`keys`) and the fetch-through-provider switch;
+    # `coworker.web.tool.load_profile` reads the pre-Customization `{provider, api_key}`
+    # shape too, and the first write here lands the new one.
+    def _web_profile(self) -> dict[str, Any]:
+        from ..web.tool import PROFILE, load_profile
+
+        raw = self.secrets.get(PROFILE) or {}
+        profile = load_profile(self.secrets)
+        if raw and ("api_key" in raw or "keys" not in raw):
+            self.secrets.put(PROFILE, profile)  # one-time migration of the legacy shape
+        return profile
+
+    def _save_web_profile(self, profile: dict[str, Any]) -> None:
+        from ..web.tool import PROFILE
+
+        self.secrets.put(PROFILE, profile)
+
+    def _active_web_provider(self, profile: dict[str, Any]) -> str:
         from ..config import load_config
-        from ..web import provider_names
 
-        profile = self.secrets.get("web_search:default") or {}
-        provider = (
-            profile.get("provider") or load_config().web_search_provider or "duckduckgo"
-        )
-        return {
-            "provider": provider,
-            "has_key": bool(profile.get("api_key")),
-            "providers": provider_names(),
-        }
+        return profile.get("provider") or load_config().web_search_provider or "duckduckgo"
 
-    def set_web_search(
-        self, provider: str, api_key: Optional[str] = None
-    ) -> dict[str, Any]:
-        from ..web import provider_names
-
-        if provider not in provider_names():
-            return {"ok": False, "error": f"unknown provider: {provider}"}
-        before = self.get_web_search()["provider"]
-        profile: dict[str, Any] = {"provider": provider}
-        if api_key:
-            profile["api_key"] = api_key
-        self.secrets.put("web_search:default", profile)
+    def _forget_search_grants(self) -> None:
         # §1.9: "Always allow searches this session" is consent to a NAMED destination —
         # the card says which provider the queries go to. A new provider is a new
         # destination, so every live session's grant dies with the old one. (Scheduled
         # tasks that name-allow web_search are unaffected: their approver re-allows.)
+        for engine in self._engines.values():
+            engine.permissions.session_allow_tools.discard("web_search")
+
+    def get_web_search(self) -> dict[str, Any]:
+        """The Web search section: the active provider, the fetch switch, and every provider
+        with its key state. Never the keys themselves."""
+        from ..web import provider_names
+        from ..web.providers import provider_class
+        from ..web.tool import env_key_var, stored_key
+
+        profile = self._web_profile()
+        rows: list[dict[str, Any]] = []
+        for name in provider_names():  # registry order; duckduckgo first
+            cls = provider_class(name)
+            assert cls is not None
+            stored = bool(stored_key(profile, name))
+            var = None if stored else env_key_var(name)
+            rows.append(
+                {
+                    "name": name,
+                    "display_name": cls.display_name,
+                    "key_mode": cls.key_mode,
+                    "key_url": cls.key_url,
+                    "has_key": stored or bool(var),
+                    "key_source": "store" if stored else ("env" if var else None),
+                    "key_env": var or "",
+                    "supports_fetch": cls.supports_fetch,
+                }
+            )
+        return {
+            "provider": self._active_web_provider(profile),
+            "fetch_via_provider": bool(profile.get("fetch_via_provider")),
+            "providers": rows,
+        }
+
+    def _web_key_at_hand(self, profile: dict[str, Any], name: str) -> bool:
+        from ..web.tool import env_key_var, stored_key
+
+        return bool(stored_key(profile, name) or env_key_var(name))
+
+    def set_web_search(self, provider: str) -> dict[str, Any]:
+        """Make `provider` the active search service. A service that needs a key cannot be
+        chosen until one is stored or in the environment."""
+        from ..web import provider_names
+        from ..web.providers import provider_class
+
+        cls = provider_class(provider)
+        if provider not in provider_names() or cls is None:
+            return {"ok": False, "error": f"unknown provider: {provider}"}
+        profile = self._web_profile()
+        if cls.key_mode == "required" and not self._web_key_at_hand(profile, provider):
+            return {
+                "ok": False,
+                "error": f"{cls.display_name} needs an API key before it can be chosen. Add one first.",
+            }
+        before = self._active_web_provider(profile)
+        profile["provider"] = provider
+        self._save_web_profile(profile)
         if provider != before:
-            for engine in self._engines.values():
-                engine.permissions.session_allow_tools.discard("web_search")
-        return {"ok": True, "provider": provider}
+            self._forget_search_grants()
+        return {"ok": True, **self.get_web_search()}
+
+    def set_web_search_key(self, name: str, api_key: str) -> dict[str, Any]:
+        """"Test and save": one search with the key, then store it under that provider.
+        Other providers' keys are untouched."""
+        from ..web.providers import provider_class, verify_key
+
+        cls = provider_class(name)
+        if cls is None:
+            return {"ok": False, "error": f"unknown provider: {name}"}
+        if cls.key_mode == "none":
+            return {"ok": False, "error": f"{cls.display_name} does not take a key."}
+        api_key = (api_key or "").strip()
+        if not api_key:
+            return {"ok": False, "error": "api_key required"}
+        error = verify_key(name, api_key)
+        if error:
+            return {"ok": False, "error": error}
+        profile = self._web_profile()
+        profile.setdefault("keys", {})[name] = api_key
+        self._save_web_profile(profile)
+        return {"ok": True, **self.get_web_search()}
+
+    def clear_web_search_key(self, name: str) -> dict[str, Any]:
+        """Forget a stored key. If that leaves the active provider with no key at all, the
+        keyless default takes over rather than every search failing."""
+        from ..web.providers import provider_class
+
+        cls = provider_class(name)
+        if cls is None:
+            return {"ok": False, "error": f"unknown provider: {name}"}
+        profile = self._web_profile()
+        profile.get("keys", {}).pop(name, None)
+        active = self._active_web_provider(profile)
+        if (
+            active == name
+            and cls.key_mode == "required"
+            and not self._web_key_at_hand(profile, name)
+        ):
+            profile["provider"] = "duckduckgo"
+            self._save_web_profile(profile)
+            self._forget_search_grants()
+        else:
+            self._save_web_profile(profile)
+        return {"ok": True, **self.get_web_search()}
+
+    def set_fetch_via_provider(self, enabled: bool) -> dict[str, Any]:
+        """"Fetch pages through the search service" — honoured only while the active
+        provider offers it (`coworker.web.tool.fetch_provider`)."""
+        profile = self._web_profile()
+        profile["fetch_via_provider"] = bool(enabled)
+        self._save_web_profile(profile)
+        return {"ok": True, **self.get_web_search()}
 
     # -- model providers (OpenAI, Ollama, …) ------------------------------------
     def get_providers(self) -> list[dict[str, Any]]:
@@ -4055,7 +4190,7 @@ class SessionManager:
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors():
+        for d in provider_descriptors(self.secrets):
             profile = self.secrets.get(f"provider:{d.name}") or {}
             configured = descriptor_configured(d, profile)
             values = {
@@ -4082,11 +4217,20 @@ class SessionManager:
                 "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
                     d.name
                 ),
+                "is_custom": is_custom_provider(d.name, self.secrets),
             }
             if d.kind == "local":
                 # A keyless server is "connected" when it answers (cached probes), not
                 # when a form was saved; the page groups connected providers first.
                 row["alive"] = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)
+            if d.name == "llamacpp":
+                # UX-057: OpenWorker can set it up and run it here (Mac for now).
+                from ..providers import llamacpp_setup
+
+                if llamacpp_setup.supported():
+                    st = self.llamacpp_runner().state()
+                    row["setup_here"] = True
+                    row["managed"] = {"phase": st["phase"], "model": (st["model"] or {}).get("name")}
             if d.auth == "oauth":
                 # Sign-in state instead of key state; the token values themselves
                 # never leave the SecretStore.
@@ -4099,6 +4243,51 @@ class SessionManager:
                     row["last_error"] = self._codex_error
             out.append(row)
         return out
+
+    def create_custom_provider(
+        self, name: str, title: str, fields: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Create a named OpenAI-compatible provider, then save its first credentials.
+
+        The short slug is the stable model-route prefix (``slug:model-id``), so it is
+        deliberately immutable and restricted to a transport-safe subset.
+        """
+        name = (name or "").strip().lower()
+        title = (title or "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name):
+            return {
+                "ok": False,
+                "error": "Route prefix must start with a letter and use only lowercase letters, numbers, - or _.",
+            }
+        if not title or len(title) > 80:
+            return {"ok": False, "error": "Enter a provider name (up to 80 characters)."}
+        if get_descriptor(name) is not None or is_custom_provider(name, self.secrets):
+            return {"ok": False, "error": "That route prefix is already in use."}
+        fields = fields or {}
+        base_url = str(fields.get("base_url") or "").strip()
+        endpoint_error = _custom_endpoint_error(base_url)
+        if endpoint_error:
+            return {"ok": False, "error": endpoint_error}
+        if not str(fields.get("api_key") or "").strip():
+            return {"ok": False, "error": "Enter an API key."}
+
+        index = dict(self.secrets.get(CUSTOM_PROVIDERS_PROFILE) or {})
+        providers = dict(index.get("providers") or {})
+        removed = dict(index.get("removed") or {})
+        previous_removed = dict(removed)
+        providers[name] = title
+        removed.pop(name, None)  # re-creating a route clears its fail-closed tombstone
+        self.secrets.put(
+            CUSTOM_PROVIDERS_PROFILE, {"providers": providers, "removed": removed}
+        )
+        saved = self.set_provider(name, fields)
+        if not saved.get("ok"):
+            providers.pop(name, None)
+            self.secrets.put(
+                CUSTOM_PROVIDERS_PROFILE,
+                {"providers": providers, "removed": previous_removed},
+            )
+        return saved
 
     def pick_native_folder(self) -> dict[str, Any]:
         """Open the OS folder picker FROM THE SIDECAR — the browser GUI can't obtain absolute
@@ -4165,6 +4354,19 @@ class SessionManager:
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
         "xai": ["grok-4.3", "grok-4"],
         "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        # NIM ids carry their own `vendor/model` namespace (integrate.api.nvidia.com/v1/models,
+        # read 2026-10-25).
+        "nvidia": [
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+        ],
+        "atlascloud": ["zai-org/glm-5.2"],
+        "upstage": ["solar-pro4", "solar-mini4"],
+        # Verified 2026-10-26 (sources in providers/matrix.py).
+        "cerebras": ["gpt-oss-120b"],
+        "huggingface": ["zai-org/GLM-5.2"],
+        "cohere": ["command-a-plus-05-2026"],
+        "siliconflow": ["zai-org/GLM-5.2"],
     }
 
     def _suggested_models(self, name: str) -> list[str]:
@@ -4173,7 +4375,7 @@ class SessionManager:
         topped up with the compat-vendor extras the matrix doesn't vouch for."""
         if name == "ollama":
             return [m.split(":", 1)[-1] for m in self._ollama_models()]
-        if name in ("llamacpp", "vllm"):
+        if name in LOCAL_SERVERS:
             return [m.split(":", 1)[-1] for m in self._local_server_models(name)]
         from ..providers.matrix import models_for_provider
 
@@ -4188,9 +4390,11 @@ class SessionManager:
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
         its cached client. Merges provided fields into any existing profile."""
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
+        if is_removed_custom_provider(name, self.secrets):
+            return {"ok": False, "error": "provider was removed; create it again first"}
         fields = fields or {}
         profile = dict(self.secrets.get(f"provider:{name}") or {})
         for f in d.fields:
@@ -4206,6 +4410,10 @@ class SessionManager:
         missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
         if missing:
             return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        if is_custom_provider(name, self.secrets):
+            endpoint_error = _custom_endpoint_error(str(profile.get("base_url") or ""))
+            if endpoint_error:
+                return {"ok": False, "error": endpoint_error}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
         # keys are visible. Endpoint-only saves keep the original stamp.
         if isinstance(fields.get("api_key"), str) and fields["api_key"].strip():
@@ -4224,7 +4432,7 @@ class SessionManager:
         fresh-sandbox gpt-5.6-sol case; owner-hit on a sandbox 2026-09-02).
         A default that already works is never stolen. Returns the model
         adopted, if any."""
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return None
         self._refresh_provider(name)
@@ -4236,7 +4444,7 @@ class SessionManager:
         if rec and rec in suggested:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
-        elif name in ("ollama", "llamacpp", "vllm") and suggested:
+        elif (name == "ollama" or name in LOCAL_SERVERS) and suggested:
             # A local server offers whatever the user loaded — the recommended model may
             # not be one.
             added = f"{name}:{suggested[0]}"
@@ -4251,7 +4459,7 @@ class SessionManager:
         """Forget a provider's stored config (Settings ▸ Models "Remove key"). The whole
         `provider:<name>` profile goes — key, endpoint, key_set_at — so the provider reads
         as never configured. Curated models stay; they just gray out until a new key."""
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
@@ -4270,6 +4478,31 @@ class SessionManager:
                 ),
             }
         self.secrets.delete(f"provider:{name}")
+        if is_custom_provider(name, self.secrets):
+            index = dict(self.secrets.get(CUSTOM_PROVIDERS_PROFILE) or {})
+            providers = dict(index.get("providers") or {})
+            removed = dict(index.get("removed") or {})
+            title = providers.pop(name, d.title)
+            removed[name] = title
+            self.secrets.put(
+                CUSTOM_PROVIDERS_PROFILE,
+                {"providers": providers, "removed": removed},
+            )
+            # A deleted custom route must not remain selectable and accidentally fall
+            # through to the default OpenAI provider as an unknown ``prefix:model``.
+            prefix = name + ":"
+            self._prefs["models"] = [
+                m for m in self._prefs.get("models", []) if not str(m).startswith(prefix)
+            ]
+            self._prefs["hidden_models"] = [
+                m
+                for m in self._prefs.get("hidden_models", [])
+                if not str(m).startswith(prefix)
+            ]
+            if str(self.model).startswith(prefix):
+                self.model = "gpt-5.6-sol"
+                self._prefs["default_model"] = self.model
+            self._save_prefs()
         self._refresh_provider(name)
         out: dict[str, Any] = {"ok": True, "provider": name}
         if env_var:
@@ -4338,7 +4571,7 @@ class SessionManager:
         a field blank (e.g. testing an already-configured provider)."""
         import os
 
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         if d.auth == "oauth":
@@ -4367,20 +4600,27 @@ class SessionManager:
             missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]
             if missing:
                 return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        # A verification call sends the key to the supplied endpoint too. Apply the
+        # same transport policy as Save so an unsaved edit cannot accidentally
+        # send a credential over plaintext to a remote host.
+        if is_custom_provider(name, self.secrets):
+            endpoint_error = _custom_endpoint_error(merged.get("base_url", ""))
+            if endpoint_error:
+                return {"ok": False, "error": endpoint_error}
         return verify_provider_key(
-            name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged
+            name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged, descriptor=d
         )
 
     def _model_provider(self, model: str) -> str:
         """The provider a model string routes to (known `prefix:` or the OpenAI default)."""
         if ":" in (model or ""):
             prefix = model.split(":", 1)[0]
-            if get_descriptor(prefix) is not None:
+            if get_descriptor(prefix, self.secrets) is not None:
                 return prefix
         return "openai"
 
     def _provider_configured(self, name: str) -> bool:
-        d = get_descriptor(name)
+        d = get_descriptor(name, self.secrets)
         if d is None:
             return False
         return descriptor_configured(d, self.secrets.get(f"provider:{name}") or {})
@@ -4506,10 +4746,63 @@ class SessionManager:
             profile = self.secrets.get(f"provider:{name}") or {}
             rows = local_server.model_facts(name, profile.get("base_url"), profile.get("api_key"), fresh=True)
             return {"provider": name, "models": rows, "alive": self._local_server_alive(name)}
+        if is_custom_provider(name, self.secrets):
+            return self._custom_provider_models(name)
         return {"provider": name, "models": [], "error": "no local model list for this provider"}
 
+    def _custom_provider_models(self, name: str) -> dict[str, Any]:
+        """The ids a user-added OpenAI-compatible provider lists at GET /models, as rows the
+        settings page can tick ("Fetch from server"). A server without /models is not a
+        broken provider — Chat Completions does not require the listing — so that case
+        comes back as a note, and the user types the ids instead."""
+        import httpx
+
+        profile = self.secrets.get(f"provider:{name}") or {}
+        base = str(profile.get("base_url") or "").strip().rstrip("/")
+        key = str(profile.get("api_key") or "").strip()
+        if not base:
+            return {"provider": name, "models": [], "error": "No endpoint saved for this provider."}
+        try:
+            resp = httpx.get(
+                base + "/models",
+                headers={"Authorization": f"Bearer {key}"} if key else {},
+                timeout=8.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - a listing never raises into the route
+            return {
+                "provider": name,
+                "models": [],
+                "alive": False,
+                "error": f"Could not reach {base}: {exc.__class__.__name__}.",
+            }
+        if resp.status_code in (404, 405):
+            return {
+                "provider": name,
+                "models": [],
+                "alive": True,
+                "error": "This server does not list its models (no /models). Type the model ids by hand.",
+            }
+        if resp.status_code >= 300:
+            return {"provider": name, "models": [], "alive": True, "error": f"HTTP {resp.status_code} from {base}/models."}
+        try:
+            data = resp.json()
+        except ValueError:
+            return {"provider": name, "models": [], "alive": True, "error": f"{base}/models did not answer with JSON."}
+        items = data.get("data") if isinstance(data, dict) else data
+        ids = [str(it["id"]) for it in items if isinstance(it, dict) and it.get("id")] if isinstance(items, list) else []
+        rows = [
+            {
+                "model": f"{name}:{mid}", "name": mid, "size_bytes": None, "tools": None,
+                "thinking": None, "vision": None, "remote": True, "parameter_size": None,
+                "quantization": None, "context_max": None, "context": None,
+                "context_from": "server", "fit": "cloud", "recommendation": None,
+            }
+            for mid in ids
+        ]
+        return {"provider": name, "models": rows, "alive": True}
+
     def _local_server_alive(self, name: str) -> bool:
-        """Best-effort liveness of a llama.cpp or vLLM server, cached 30 s like Ollama's."""
+        """Best-effort liveness of an OpenAI-compatible local server (local_server.LOCAL_SERVERS), cached 30 s like Ollama's."""
         import time
 
         from ..providers import local_server
@@ -4526,7 +4819,7 @@ class SessionManager:
         return alive
 
     def _local_server_models(self, name: str) -> list[str]:
-        """The model ids a llama.cpp or vLLM server serves, as `<name>:<id>`; empty when
+        """The model ids a local server (local_server.LOCAL_SERVERS) serves, as `<name>:<id>`; empty when
         it does not answer or was started without tool calling."""
         from ..providers import local_server
 
@@ -4544,13 +4837,46 @@ class SessionManager:
 
         return local_machine.system_facts()
 
+    def llamacpp_runner(self):
+        """The llama-server OpenWorker runs (UX-057), wired to point the `llamacpp`
+        provider at it and tick its model once it answers."""
+        from ..providers import llamacpp_setup
+
+        runner = llamacpp_setup.runner()
+        if runner.on_running is None:
+            runner.on_running = self._llamacpp_running
+        return runner
+
+    def llamacpp_stop(self) -> dict[str, Any]:
+        from ..providers import local_server
+
+        result = self.llamacpp_runner().stop()
+        # The cached probe would say "running" for up to 30 s after the server is gone.
+        local_server.forget_all()
+        self._local_alive_cache = {}
+        return result
+
+    def _llamacpp_running(self, base_url: str, alias: str) -> None:
+        from ..providers import local_server
+
+        local_server.forget_all()
+        self._local_alive_cache = {}
+        model = f"llamacpp:{alias}"
+        # Switching models: the one it served before is gone, so it leaves the picker.
+        previous = self._prefs.get("llamacpp_managed_model")
+        if previous and previous != model:
+            self.remove_model(previous)
+        self._prefs["llamacpp_managed_model"] = model
+        self.set_provider("llamacpp", {"base_url": base_url})
+        self.add_model(model)
+
     def model_selectable(self, model: str) -> bool:
         """Can this machine run `model` right now? Its provider has a key — or, for the
         keyless Ollama, a local Ollama answers (cached liveness probe)."""
         provider = self._model_provider(model)
         if provider == "ollama":
             return self._ollama_alive()
-        if provider in ("llamacpp", "vllm"):
+        if provider in LOCAL_SERVERS:
             return self._local_server_alive(provider)
         return self._provider_configured(provider)
 
@@ -4783,7 +5109,7 @@ class SessionManager:
         # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
         if self._ollama_alive():
             selectable = list(dict.fromkeys([*selectable, *self._ollama_models()]))
-        for local in ("llamacpp", "vllm"):
+        for local in LOCAL_SERVERS:
             if self.secrets.get(f"provider:{local}") and self._local_server_alive(local):
                 selectable = list(dict.fromkeys([*selectable, *self._local_server_models(local)]))
         if self.model not in selectable:
@@ -6004,6 +6330,9 @@ class SessionManager:
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
+        from ..providers import llamacpp_setup
+
+        llamacpp_setup.runner().shutdown()
 
     # -- automation (scheduled tasks) -------------------------------------------
     def worker_call_for(self, arguments: dict[str, Any], *, lead_session: str | None = None) -> dict[str, Any] | None:

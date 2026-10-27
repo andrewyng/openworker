@@ -72,6 +72,7 @@ import { MachinesSection } from "./MachinesSection";
 import { RemoteConnectorsPanel } from "./RemoteConnectorsPanel";
 import { MemorySection } from "./MemorySection";
 import { SandboxSection } from "./SandboxSection";
+import { CustomizationTab } from "./CustomizationTab";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
@@ -94,6 +95,8 @@ export type SetTab =
   | "sandbox"
   | "machines"
   | "connectors"
+  // UX-058: the services behind the tools (web search provider + keys, fetch switch).
+  | "customization"
   | "personas"
   // UX-049: per-connector glance pages (App group), shown once connected somewhere.
   | "slack"
@@ -147,6 +150,7 @@ const SET_GROUPS: { name: string; nameKey?: string; scope: "app" | "machine" | "
     tabs: [
       { key: "models", label: "Models & Keys", labelKey: "settings.tab.models", icon: "code" },
       { key: "connectors", label: "Connectors", labelKey: "nav.connectors", icon: "plug" },
+      { key: "customization", label: "Customization", labelKey: "settings.tab.customization", icon: "sliders" },
       { key: "context", label: "Context optimization", labelKey: "settings.tab.context", icon: "refresh" },
       { key: "skills", label: "Skills", labelKey: "settings.tab.skills", icon: "book" },
       { key: "memory", label: "Memory", labelKey: "settings.tab.memory", icon: "archive" },
@@ -397,6 +401,8 @@ export function SettingsView({
             />
           ) : tab === "sandbox" ? (
             <SandboxSection key={scopeId || "local"} machine={scoped} onProviderChanged={onSandboxProviderChanged} />
+          ) : tab === "customization" ? (
+            <CustomizationTab key={scopeId || "local"} machine={scoped} />
           ) : tab === "machines" ? (
             <MachinesSection />
           ) : tab === "slack" || tab === "github" ? (
