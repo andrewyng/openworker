@@ -43,6 +43,13 @@ class WorkspaceTrustStore:
     def list(self) -> list[str]:
         return sorted(self._load())
 
+    def revoke_trust(self, workspace: str | Path) -> bool:
+        """Remove a trusted root using the same private writer as trust grants."""
+        if not self.is_trusted(workspace):
+            return False
+        self.set_trusted(workspace, False)
+        return True
+
     def set_trusted(self, workspace: str | Path, trusted: bool) -> str:
         canonical = self.canonical(workspace)
         values = self._load()
