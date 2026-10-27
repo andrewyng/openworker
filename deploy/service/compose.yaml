@@ -1,0 +1,121 @@
+# Only TLS ingress is published, on host loopback. No Docker socket mounts.
+services:
+  install:
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    user: "0:0"
+    entrypoint: [/bin/sh, /install.sh]
+    volumes:
+      - ${STATE_DIR}/input:/input:ro
+      - ./install.sh:/install.sh:ro
+      - service-config:/service
+      - gateway-tls:/gateway
+      - ingress-tls:/ingress
+      - postgres-tls:/postgres
+      - runner:/runner
+      - bootstrap-token:/bootstrap
+      - model-keys:/models
+    network_mode: none
+    restart: "no"
+  postgres:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_USER: openworker
+      POSTGRES_DB: openworker
+      POSTGRES_PASSWORD_FILE: /tls/password
+    command:
+      [
+        postgres,
+        -c,
+        ssl=on,
+        -c,
+        ssl_cert_file=/tls/tls.crt,
+        -c,
+        ssl_key_file=/tls/tls.key,
+      ]
+    volumes: [postgres:/var/lib/postgresql/data, postgres-tls:/tls:ro]
+    networks: [database]
+    depends_on: { install: { condition: service_completed_successfully } }
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U openworker -d openworker]
+      interval: 2s
+      timeout: 2s
+      retries: 40
+    mem_limit: 512m
+  bootstrap:
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    command: [bootstrap]
+    volumes: [service-config:/run/service:ro, bootstrap-token:/bootstrap:ro]
+    networks: [database]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+  ingress:
+    image: nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+    user: "101:101"
+    entrypoint: [nginx, -c, /tls/nginx.conf, -g, "daemon off;"]
+    ports: ["127.0.0.1:${API_PORT}:8443"]
+    volumes: [ingress-tls:/tls:ro]
+    tmpfs: [/tmp]
+    read_only: true
+    networks: [database, ingress]
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    mem_limit: 64m
+  api:
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    command: [api, --node, api-container, --listen, "127.0.0.1:8080"]
+    # Ingress owns the network namespace, so restarting API preserves TLS ingress.
+    network_mode: service:ingress
+    volumes: [service-config:/run/service:ro, runner:/runner:ro, state:/state]
+    depends_on: { ingress: { condition: service_started } }
+    stop_grace_period: 45s
+    mem_limit: 768m
+  controller:
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    command: [service-controller]
+    volumes:
+      [
+        service-config:/run/service:ro,
+        gateway-tls:/openshell:ro,
+        runner:/runner:ro,
+        state:/state,
+      ]
+    networks: [database, execution]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    stop_grace_period: 180s
+    mem_limit: 768m
+  worker:
+    image: ${SERVICE_IMAGE}
+    pull_policy: never
+    command: [service-worker, --slots, "2"]
+    volumes:
+      [
+        service-config:/run/service:ro,
+        gateway-tls:/openshell:ro,
+        runner:/runner:ro,
+        state:/state,
+        model-keys:/models:ro,
+      ]
+    networks: [database, execution]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    stop_grace_period: 60s
+    mem_limit: 1536m
+volumes:
+  postgres:
+  postgres-tls:
+  service-config:
+  gateway-tls:
+  ingress-tls:
+  bootstrap-token:
+  model-keys:
+  runner:
+  state:
+networks:
+  database:
+    internal: true
+  execution:
+  ingress:

@@ -244,3 +244,120 @@ fn profile_quota_and_alias_updates_do_not_change_existing_admissions() {
     pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
         .unwrap();
 }
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
+    let (c, store, a, u) = setup();
+    let (r, p) = catalog(&a);
+    let mut input = admission();
+    input.initial_message = Some("first task".into());
+    let o = u
+        .service_admit("combined", input.clone(), r.clone(), p.clone(), spec())
+        .unwrap();
+    assert!(o.run_id.is_some() && o.submission_id.is_some());
+    assert!(u.read_snapshot(&o.session_id).is_err());
+    let env = store.clone().environment(&o.environment_id).unwrap();
+    let binding = Binding {
+        environment_id: env.id.clone(),
+        spec: env.spec.clone(),
+        remote_id: "uid".into(),
+        remote_name: "name".into(),
+        workspace_scope: "default".into(),
+        policy_hash: "policy".into(),
+        policy_version: 1,
+    };
+    store
+        .complete_environment(&env.id, env.revision, Some(binding.clone()))
+        .unwrap();
+    store
+        .service_update_operation(&o.id, "ready", None)
+        .unwrap();
+    let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
+    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
+        .unwrap();
+    pg.batch_execute("CREATE FUNCTION fail_initial_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fault'; END $$; CREATE TRIGGER fail_initial_task BEFORE INSERT ON submissions FOR EACH ROW EXECUTE FUNCTION fail_initial_task()").unwrap();
+    assert!(store
+        .service_finish(&o.id, session("prepared", binding.clone()), "svc", "test")
+        .is_err());
+    for table in ["sessions", "submissions", "creations"] {
+        assert_eq!(
+            pg.query_one(&format!("SELECT count(*) FROM {table}"), &[])
+                .unwrap()
+                .get::<_, i64>(0),
+            0
+        );
+    }
+    pg.batch_execute("DROP TRIGGER fail_initial_task ON submissions")
+        .unwrap();
+    let store = PostgresStore::open(c.clone()).unwrap();
+    store
+        .service_finish(&o.id, session("prepared", binding.clone()), "svc", "test")
+        .unwrap();
+    store
+        .service_finish(&o.id, session("prepared", binding), "svc", "test")
+        .unwrap();
+    let user = store.authorized(&"user-test-key-".repeat(5)).unwrap();
+    assert_eq!(
+        user.service_run_id(&o.session_id, o.run_id.as_deref().unwrap())
+            .unwrap()["status"],
+        "running"
+    );
+    assert!(user.service_close(&o.session_id).is_err());
+    assert_eq!(
+        pg.query_one("SELECT count(*) FROM submissions", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    let mut owner = PostgresStore::open(c.clone()).unwrap();
+    owner.claim(&o.session_id).unwrap();
+    let next = owner.next_turn(&o.session_id).unwrap().unwrap();
+    let (mut state, _, _) = owner
+        .accept(&o.session_id, &next.submission_id, &next.text)
+        .unwrap();
+    assert_eq!(state.turn.as_ref().unwrap().id, o.run_id.clone().unwrap());
+    state.turn.as_mut().unwrap().status = "completed".into();
+    owner
+        .save(&state, "turn_completed", json!({"status":"completed"}))
+        .unwrap();
+    assert!(user.service_close(&o.session_id).is_err());
+    owner.release(&o.session_id).unwrap();
+    assert_eq!(user.service_close(&o.session_id).unwrap()["closed"], true);
+    assert_eq!(user.service_close(&o.session_id).unwrap()["closed"], true);
+    let replay = user.service_admit("combined", input, r, p, spec()).unwrap();
+    assert_eq!(replay.run_id, o.run_id);
+    assert_eq!(replay.receipt.unwrap()["runId"], o.run_id.unwrap());
+    let a = store.authorized(&"admin-test-key-".repeat(5)).unwrap();
+    let delete_key = "11111111111111111111111111111111";
+    let (deleting, fresh) = a
+        .begin_environment_delete(&o.environment_id, delete_key, "admin")
+        .unwrap();
+    assert!(fresh);
+    assert!(user
+        .service_queue_delete(&o.environment_id, delete_key)
+        .is_err());
+    a.service_queue_delete(&o.environment_id, delete_key)
+        .unwrap();
+    a.service_queue_delete(&o.environment_id, delete_key)
+        .unwrap();
+    assert!(a.service_claim_delete("install").is_err());
+    assert!(store
+        .service_claim_delete("other-installation")
+        .unwrap()
+        .is_none());
+    let (_, k, _, dispatch) = store.service_claim_delete("install").unwrap().unwrap();
+    assert!(dispatch);
+    assert_eq!(k, delete_key);
+    assert!(store.service_claim_delete("install").unwrap().is_none());
+    pg.batch_execute("UPDATE service_deletions SET next_check=clock_timestamp()")
+        .unwrap();
+    let (_, _, _, dispatch) = store.service_claim_delete("install").unwrap().unwrap();
+    assert!(!dispatch, "lost delete must never dispatch twice");
+    store
+        .complete_environment_delete(&o.environment_id, delete_key, deleting.revision)
+        .unwrap();
+    assert!(store.service_claim_delete("install").unwrap().is_none());
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+}

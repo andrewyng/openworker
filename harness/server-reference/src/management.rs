@@ -238,6 +238,14 @@ pub(crate) async fn admit(
     headers: HeaderMap,
     input: Admission,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    admit_kind(app, headers, input, "session").await
+}
+pub(crate) async fn admit_kind(
+    app: App,
+    headers: HeaderMap,
+    input: Admission,
+    kind: &str,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let release = app.store.catalog_get("release", &input.agent)?;
     let r: Release =
         serde_json::from_value(release.definition.clone()).map_err(anyhow::Error::from)?;
@@ -276,7 +284,7 @@ pub(crate) async fn admit(
         serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
     let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
     let op = app.store.service_admit(
-        &crate::service::key(&app, &headers, "session")?,
+        &crate::service::key(&app, &headers, kind)?,
         input,
         release,
         profile,
@@ -349,6 +357,7 @@ pub async fn controller(
     store.bind_service(&service.id, &service.namespace)?;
     let installed = installation(&config)?;
     while !stop.is_cancelled() {
+        delete_once(&config, &store, &installed).await?;
         if !control_matching(&config, &store, &installed).await? {
             tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
         }
@@ -473,4 +482,42 @@ pub async fn worker(
     tokio::pin!(work);
     tokio::pin!(monitor);
     tokio::select! {result=&mut work=>{stop.cancel();result},result=&mut monitor=>{stop.cancel();let joined=work.await;result.and(joined)}}
+}
+
+/// The API records intent only; gateway credentials stay on private controllers.
+pub(crate) async fn delete_environment(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    app.store.service_environment(&id)?;
+    let key = crate::service::key(&app, &headers, &format!("delete-environment:{id}"))?;
+    let operation = &key[..32];
+    let (record, _) = app
+        .store
+        .begin_environment_delete(&id, operation, &app.actor)?;
+    if record.phase != openworker_runtime::environment::Phase::Deleted {
+        app.store.service_queue_delete(&id, operation)?;
+    }
+    Ok(Json(json!({"id":id,"phase":record.phase})))
+}
+async fn delete_once(config: &Config, store: &PostgresStore, installed: &str) -> Result<()> {
+    let Some((record, key, profile, fresh)) = store.service_claim_delete(installed)? else {
+        return Ok(());
+    };
+    let provider = provider(config, &store.catalog_get("profile", &profile)?)?;
+    let binding = record.binding.context("Environment binding missing")?;
+    // A lost connection is not retry permission. Only the first claim can delete;
+    // after that, read the original object's state and never delete a replacement.
+    let deleted = if fresh {
+        provider.delete(binding, key.clone()).await.is_ok()
+    } else {
+        provider.confirm_deleted(binding).await.unwrap_or(false)
+    };
+    if deleted {
+        store.complete_environment_delete(&record.id, &key, record.revision)?;
+    } else {
+        store.service_recheck_delete(&record.id)?;
+    }
+    Ok(())
 }

@@ -170,3 +170,60 @@ test("provisioning wait transport errors retain operation identity and admission
       e.idempotencyKey === "create-original",
   );
 });
+
+test("combined submit preserves alias and idempotency key without two-step creation", async (t) => {
+  let posts = 0;
+  const url = await server(t, (q, r) => {
+    headers(r);
+    if (q.url === "/v1/capabilities") {
+      r.end(
+        JSON.stringify({
+          apiVersion: "1",
+          namespace: "test",
+          serviceId: "service-one",
+          features: { combinedSubmission: true },
+        }),
+      );
+      return;
+    }
+    if (handshake(q, r)) return;
+    assert.equal(q.url, "/v1/submissions");
+    assert.equal(q.method, "POST");
+    assert.equal(q.headers["idempotency-key"], "original");
+    posts++;
+    let body = "";
+    q.on("data", (b) => (body += b));
+    q.on("end", () => {
+      assert.deepEqual(JSON.parse(body), {
+        agent: "builder",
+        text: "Build it",
+        project: "game",
+      });
+      r.end(
+        JSON.stringify({
+          operation: {
+            id: "op-one",
+            sessionId: "session-one",
+            runId: "run-one",
+            submissionId: "op-one",
+          },
+        }),
+      );
+    });
+  });
+  const service = await Harness.connect(options(url));
+  const operation = await service.submit("builder", "Build it", {
+    project: "game",
+    idempotencyKey: "original",
+  });
+  assert.equal(operation.runId, "run-one");
+  assert.equal(posts, 1);
+  await assert.rejects(
+    service.submit("builder", "Build it", {
+      environmentId: "env",
+      runtimeProfile: "p",
+    }),
+    /conflicting_environment_options/,
+  );
+  assert.equal(posts, 1);
+});

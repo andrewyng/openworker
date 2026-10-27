@@ -1919,6 +1919,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "openworker-service-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures-util",
+ "openworker-sdk",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "openworker-store-postgres"
 version = "0.1.0"
 dependencies = [

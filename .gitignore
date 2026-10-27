@@ -19,3 +19,7 @@ dist/
 /.ow-stack/
 /.ow-helm/
 /.ow-recovery/
+
+# Local OpenWorker Service packaging and qualification
+/.ow-service/
+/.ow-service-build/

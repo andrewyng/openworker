@@ -71,12 +71,16 @@ Reuse, rather than replace:
   [AWS qualification](../../deploy/aws/README.md), and the existing read-only console.
 - Runtime/tool policy, plan/team/session state, compaction and telemetry contracts.
 
-Gaps: a remote transport for the friendly SDK; deployed-agent registry and release
-admission; namespace-aware management permissions; expiring credentials/human
-login; declarative management operations/controllers; a packaged Docker-only
-service profile; and a writable management UI. The current local reference uses
-host processes plus backing-service containers and a separate Kubernetes/OpenShell
-gateway. Do not describe it as the Docker-only product specified here.
+M1–M3 now provide the remote SDK transport, deployed releases, RuntimeProfiles,
+OpenShell provisioning, combined task admission and `ows`. The
+[local service package](../../deploy/service/README.md) runs the API, controller,
+worker and PostgreSQL in Compose, connecting to an explicitly provisioned
+Kubernetes/OpenShell gateway. It is not an all-in-one Docker-only execution
+provider. See the [progress ledger](SERVICE-PROGRESS.md) for qualification evidence.
+
+Remaining gaps include broader namespace management, expiring credentials/human
+login, managed configuration/scaling, Kubernetes control-plane packaging, a
+Docker-only execution provider and a writable management UI.
 
 Existing versioned worker pools remain the server upgrade model. The local SDK
 currently pins the runner binary per session; changing it requires a new session.

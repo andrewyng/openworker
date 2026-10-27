@@ -157,3 +157,95 @@ the pre-existing suspended sandbox remains in the gateway namespace. Disposable
 PostgreSQL, port forwarding and temporary client certificates were removed.
 Final real M2 qualification took 35.66 seconds. All final checks passed.
 M2 is committed locally on `feat/openworker-service-m1`; no remote push/PR yet.
+
+## 2026-10-27 — M3 started
+
+User authorized `ows` and local container packaging with end-to-end testing.
+Continue on `feat/openworker-service-m1` from `273694e8`.
+Disk baseline: 216 GiB free. Reuse cached PostgreSQL/nginx/Rust images and existing
+OpenShell 0.1.3 gateway; do not alter the default kubecontext or other workloads.
+
+Implementation order: atomic session + initial task admission; thin Rust CLI using
+service SDK; containerized service roles with private PostgreSQL/TLS ingress;
+CLI-driven local qualification, restart/reconnect and explicit cleanup.
+OpenShell remains a separately configured provider; the package will not claim to
+install a second gateway or a new Kubernetes cluster as a hidden side effect.
+
+### M3 implementation and qualification
+
+Implemented combined admission (`POST /v1/submissions`), reserving operation,
+session, environment and initial run IDs before provisioning. Session creation,
+first queued task and completion receipt commit atomically. Added `Service.submit`
+in both SDKs and the thin Rust `ows` CLI for catalog, task and control operations.
+
+Local Compose package now runs PostgreSQL/TLS, a private bootstrap job, API,
+controller, worker and loopback TLS ingress. It pins the service image identity,
+separates bootstrap/model/gateway secrets by role and retains state across down/up.
+OpenShell is an explicit prerequisite; this package does not install a hidden
+cluster or alter existing kubecontexts.
+
+Qualification found and fixed two packaging/architecture problems:
+- Docker Desktop did not publish ingress from an internal-only network; ingress
+  now has a separate network while PostgreSQL remains private.
+- Initial deletion attempted gateway I/O on API nodes, which have no gateway
+  credentials. Deletion now queues on the API and dispatches from the private
+  controller, once only. Subsequent claims reconcile the original object.
+The failed first fixture was explicitly removed through Kubernetes; the corrected
+implementation is being tested with a fresh environment, without manual cleanup.
+
+Passing regressions so far: 4 PostgreSQL catalog tests (including atomic rollback,
+close fencing and one delete-dispatch authorization), 8 submission tests, 16 Rust
+SDK unit tests, 2 CLI configuration tests and 8 TypeScript service tests. Linux
+ARM64 release binaries built with pinned Rust 1.96.1 container; native macOS CLI
+built with the workspace toolchain. No model credentials or paid model calls used.
+
+### M3 qualification complete
+
+The final CLI-driven run passed against the Compose service and local Kubernetes
+OpenShell gateway. It created a fresh environment and completed all cleanup through
+the corrected service API/controller; no manual deletion was needed for that run.
+
+Verified:
+- Native `ows` context add/login/use and persisted service identity; packaged Linux
+  CLI also authenticated successfully. Wrong CA and wrong bearer token rejected.
+- Immutable release/profile publish + activation, combined submission replay with
+  the same run/session/environment IDs, changed-body conflict.
+- Real sandboxed write/read with output bytes verified in replayed SSE events.
+- Pending approval survived API + worker restart and executed only after approval.
+- Durable question/answer, cancellation of a pending write, and full Compose
+  down/up retaining the original session and turn.
+- Safe close, asynchronous controller deletion, confirmed remote absence, and
+  refusal to destroy a deployment under the wrong identity.
+- PostgreSQL fault test proves session/task/receipt rollback together; deletion
+  claim tests prove installation matching and no second dispatch after a lost claim.
+
+Final test counts: 4 PostgreSQL catalog + 8 submission tests, 16 Rust SDK unit
+checks, 2 CLI configuration tests, 8 TypeScript service tests, plus the real
+container qualification and Linux CLI smoke check. The server reference's existing
+unit suite was rerun as a final regression check. Models were scripted; all noted
+OpenShell, storage, TLS and tool effects were real. No live-model quality claim.
+
+Local qualification deployment: `ows-5ffe2199f562`.
+Final session: `s_30705acd25884df5be55dfe9879be743`.
+Final run: `t_ea43c8d896bb4888b63024d815f6d8ef`.
+
+Docs: [CLI quickstart](SERVICE-M3-QUICKSTART.md),
+[local package](../../deploy/service/README.md).
+
+Boundaries: one local namespace; static bootstrap credential; ARM64 container and
+macOS-host CLI qualification. OpenShell/Kubernetes are separately provisioned.
+Multi-architecture publication, hosted identity/expiring tokens, managed service
+configuration/scaling, Kubernetes management packaging and cloud qualification are
+not included. The source-build Docker target is provided; qualification used the
+same pinned builder command with a persistent cache, then the prebuilt image target.
+
+M3 cleanup complete: Compose containers/networks/volumes removed through the guarded
+installer, disposable unit-test PostgreSQL stopped, gateway port-forward stopped,
+and generated/copied test credentials removed. Only the pre-existing suspended
+OpenShell sandbox remains. Build cache and local images retained for subsequent
+work (Linux cache/output ~840 MiB); final disk free ~213 GiB. No cloud resources or
+unrelated workloads changed. All 4 server-reference unit tests passed as well.
+
+M3 is complete locally on `feat/openworker-service-m1`; no remote push or PR.
+Next is M4: expiring credentials/bootstrap administration, managed configuration
+and scaling/draining, then Kubernetes control-plane packaging and qualification.

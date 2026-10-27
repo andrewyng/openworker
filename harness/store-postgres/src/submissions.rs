@@ -120,12 +120,21 @@ pub(crate) fn insert(
     status: &str,
     epoch: Option<i64>,
 ) -> Result<SubmissionReceipt> {
+    insert_reserved(tx, request, status, epoch, &openworker_runtime::id("t"))
+}
+pub(crate) fn insert_reserved(
+    tx: &mut Transaction<'_>,
+    request: &TurnSubmission,
+    status: &str,
+    epoch: Option<i64>,
+    turn_id: &str,
+) -> Result<SubmissionReceipt> {
     request.validate()?;
+    validate_id(turn_id, 80)?;
     let sequence: i64 = tx.query_one(
         "UPDATE sessions SET command_sequence=command_sequence+1 WHERE id=$1 RETURNING command_sequence",
         &[&request.session_id],
     )?.get(0);
-    let turn_id = openworker_runtime::id("t");
     let row = tx.query_one(
         "INSERT INTO submissions(session_id,id,text,turn_id,sequence,status,owner_epoch) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
         &[&request.session_id, &request.submission_id, &request.text, &turn_id, &sequence, &status, &epoch],
@@ -231,22 +240,7 @@ impl Database {
             return Err(SubmissionError::QueueFull.into());
         }
         let result = insert(&mut tx, &request, "queued", None)?;
-        // Shared row lock serializes ALL cursor allocation. Ingress does not
-        // mutate canonical state, so it must not invalidate a worker's snapshot.
-        let row = tx.query_one(
-            "UPDATE sessions SET cursor=cursor+1 WHERE id=$1 RETURNING cursor,epoch",
-            &[&request.session_id],
-        )?;
-        let cursor: i64 = row.get(0);
-        let observed_epoch: i64 = row.get(1);
-        let data = json!({"submission_id":result.submission_id,"turn_id":result.turn_id,"sequence":result.sequence,"status":"queued"});
-        tx.execute(
-            "INSERT INTO events VALUES($1,$2,$3,'command_accepted',$4)",
-            &[&request.session_id, &cursor, &result.turn_id, &data],
-        )?;
-        // Epoch is an observation for correlation, not an API execution grant.
-        tx.execute("INSERT INTO audit(session_id,cursor,turn_id,kind,owner_epoch,actor) VALUES($1,$2,$3,'command_accepted',$4,$5)",
-            &[&request.session_id, &cursor, &result.turn_id, &observed_epoch,&p.as_ref().map(|p|p.principal.as_str())])?;
+        journal_acceptance(&mut tx, &result, p.as_ref().map(|p| p.principal.as_str()))?;
         tx.commit()?;
         Ok(result)
     }
@@ -296,4 +290,28 @@ impl Database {
         tx.commit()?;
         Ok(result)
     }
+}
+
+pub(crate) fn journal_acceptance(
+    tx: &mut Transaction<'_>,
+    result: &SubmissionReceipt,
+    principal: Option<&str>,
+) -> Result<()> {
+    // Shared row lock serializes ALL cursor allocation. Ingress does not
+    // mutate canonical state, so it must not invalidate a worker's snapshot.
+    let row = tx.query_one(
+        "UPDATE sessions SET cursor=cursor+1 WHERE id=$1 RETURNING cursor,epoch",
+        &[&result.session_id],
+    )?;
+    let cursor: i64 = row.get(0);
+    let observed_epoch: i64 = row.get(1);
+    let data = json!({"submission_id":result.submission_id,"turn_id":result.turn_id,"sequence":result.sequence,"status":"queued"});
+    tx.execute(
+        "INSERT INTO events VALUES($1,$2,$3,'command_accepted',$4)",
+        &[&result.session_id, &cursor, &result.turn_id, &data],
+    )?;
+    // Epoch is an observation for correlation, not an API execution grant.
+    tx.execute("INSERT INTO audit(session_id,cursor,turn_id,kind,owner_epoch,actor) VALUES($1,$2,$3,'command_accepted',$4,$5)",
+            &[&result.session_id, &cursor, &result.turn_id, &observed_epoch,&principal])?;
+    Ok(())
 }

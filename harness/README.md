@@ -49,10 +49,11 @@ boundaries separate; use SDK/protocol APIs instead of reading runtime tables.
 
 ## Pick an integration
 
-For the proposed remote SDK, authenticated service control plane and `ows` CLI,
-see [OpenWorker Service design](../docs/harness/OPENWORKER-SERVICE.md) and the
-[visual architecture review](../docs/harness/SERVICE-ARCHITECTURE.html). This is a
-design specification; use the current integration paths below until implemented.
+For authenticated remote SDK access, release/RuntimeProfile deployment and the
+`ows` CLI, see the [service CLI quickstart](../docs/harness/SERVICE-M3-QUICKSTART.md)
+and [local Docker deployment](../deploy/service/README.md). The
+[service specification](../docs/harness/OPENWORKER-SERVICE.md) also describes later
+management and cloud milestones; see the ledger for qualified scope.
 
 | Application | Interface |
 |---|---|

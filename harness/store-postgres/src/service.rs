@@ -63,6 +63,45 @@ impl PostgresStore {
             Ok(())
         })
     }
+    pub fn service_close(&self, sid: &str) -> Result<Value> {
+        let sid = sid.to_owned();
+        self.call(move|db|{
+        let mut tx=db.client.transaction()?;let p=auth::guard(&mut tx,db.auth.as_ref(),auth::Action::Control,Some(&sid),None)?;
+        let mut s=locked(&mut tx,&sid,None)?;if s.closed{return Ok(json!({"sessionId":sid,"closed":true}))}
+        ensure!(s.turn.as_ref().is_none_or(|t|openworker_runtime::store::terminal(&t.status)),SubmissionError::Busy);
+        ensure!(!crate::controls::pending(&mut tx,&sid)?,SubmissionError::Busy);
+        let active:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued') OR EXISTS(SELECT 1 FROM attachments WHERE session_id=$1 AND state<>'released')",&[&sid])?.get(0);ensure!(!active,SubmissionError::Busy);
+        let epoch:i64=tx.query_opt("UPDATE sessions SET owner=$2,epoch=epoch+1,expires=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND expires<=clock_timestamp() RETURNING epoch",&[&sid,&db.owner])?.ok_or(SubmissionError::Busy)?.get(0);
+        s.closed=true;crate::db::write_metadata(&mut tx,&s)?;
+        crate::db::event(&mut tx,&s,&db.owner,epoch,"session_closed",json!({"actor":p.as_ref().map(|p|&p.principal)}))?;
+        tx.execute("UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",&[&sid])?;tx.commit()?;Ok(json!({"sessionId":sid,"closed":true}))
+    })
+    }
+    pub fn service_environment_list(&self) -> Result<Value> {
+        self.call(move|db|{let mut tx=db.client.transaction()?;auth::guard(&mut tx,db.auth.as_ref(),auth::Action::Admin,None,None)?;let rows=tx.query("SELECT o.environment_id,o.project,o.principal,e.data->>'phase' FROM service_environment_owners o JOIN environments e ON e.id=o.environment_id ORDER BY o.environment_id LIMIT 1000",&[])?;let values:Vec<Value>=rows.into_iter().map(|r|json!({"id":r.get::<_,String>(0),"project":r.get::<_,String>(1),"principal":r.get::<_,String>(2),"phase":r.get::<_,String>(3)})).collect();tx.commit()?;Ok(json!({"environments":values}))})
+    }
+    pub fn service_run_id(&self, sid: &str, tid: &str) -> Result<Value> {
+        let (sid, tid) = (sid.to_owned(), tid.to_owned());
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            auth::guard(
+                &mut tx,
+                db.auth.as_ref(),
+                auth::Action::Read,
+                Some(&sid),
+                None,
+            )?;
+            let id: String = tx
+                .query_opt(
+                    "SELECT id FROM submissions WHERE session_id=$1 AND turn_id=$2",
+                    &[&sid, &tid],
+                )?
+                .ok_or(SubmissionError::NotFound)?
+                .get(0);
+            tx.commit()?;
+            db.service_run(&sid, &id)
+        })
+    }
     pub fn service_run(&self, sid: &str, submission: &str) -> Result<Value> {
         let (sid, submission) = (sid.to_owned(), submission.to_owned());
         self.call(move |db| db.service_run(&sid, &submission))

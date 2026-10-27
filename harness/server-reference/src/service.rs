@@ -40,15 +40,20 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("GET", ["", "v1", "capabilities"])
         | ("GET", ["", "v1", "auth", "me"])
         | ("GET", ["", "v1", "agents", _]) => Some(Action::Read),
-        ("POST", ["", "v1", "sessions"]) => Some(Action::Submit),
+        ("POST", ["", "v1", "sessions" | "submissions"]) => Some(Action::Submit),
         ("GET", ["", "v1", "sessions", _])
         | ("GET", ["", "v1", "sessions", _, "events"])
-        | ("GET", ["", "v1", "sessions", _, "turns" | "controls", _]) => Some(Action::Read),
+        | ("GET", ["", "v1", "sessions", _, "turns" | "runs" | "controls", _]) => {
+            Some(Action::Read)
+        }
         ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
-        ("POST", ["", "v1", "sessions", _, "controls"]) => Some(Action::Control),
+        ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
         ("POST", ["", "v1", "profiles" | "releases"])
         | ("POST", ["", "v1", "profiles" | "releases", _, "activate"]) => Some(Action::Admin),
         ("GET", ["", "v1", "profiles" | "environments" | "operations", _]) => Some(Action::Read),
+        ("GET", ["", "v1", "environments"]) | ("POST", ["", "v1", "environments", _, "delete"]) => {
+            Some(Action::Admin)
+        }
         _ => None,
     }
 }
@@ -81,6 +86,14 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/auth/me", get(crate::authorization::me))
         .route("/v1/agents/:id", get(agent))
         .route("/v1/sessions", post(create))
+        .route("/v1/submissions", post(submit))
+        .route("/v1/sessions/:sid/close", post(close))
+        .route("/v1/environments", get(environment_list))
+        .route(
+            "/v1/environments/:id/delete",
+            post(crate::management::delete_environment),
+        )
+        .route("/v1/sessions/:sid/runs/:id", get(run_result))
         .route("/v1/sessions/:sid", get(snapshot))
         .route("/v1/sessions/:sid/events", get(crate::http::events))
         .route("/v1/sessions/:sid/turns", post(send))
@@ -93,7 +106,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"runtimeProfiles":true,"agentDeployment":true,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -127,6 +140,10 @@ async fn create(
     headers: HeaderMap,
     Json(body): Json<openworker_store_postgres::service_catalog::Admission>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    check(
+        body.initial_message.is_none(),
+        SubmissionError::InvalidRequest,
+    )?;
     if body.agent != cfg(&app).agent {
         return crate::management::admit(app, headers, body).await;
     }
@@ -228,4 +245,45 @@ async fn control_receipt(
     Path((sid, id)): Path<(String, String)>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!(app.store.control_receipt(&sid, &id)?)))
+}
+
+async fn submit(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(mut body): Json<Value>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let object = body
+        .as_object_mut()
+        .ok_or_else(|| ApiError(SubmissionError::InvalidRequest.into()))?;
+    check(
+        !object.contains_key("initialMessage"),
+        SubmissionError::InvalidRequest,
+    )?;
+    let text = object
+        .remove("text")
+        .and_then(|v| v.as_str().map(String::from))
+        .ok_or_else(|| ApiError(SubmissionError::InvalidRequest.into()))?;
+    let mut input: openworker_store_postgres::service_catalog::Admission =
+        serde_json::from_value(body)
+            .map_err(|_| ApiError(SubmissionError::InvalidRequest.into()))?;
+    input.initial_message = Some(text);
+    crate::management::admit_kind(app, headers, input, "submission").await
+}
+async fn run_result(
+    Extension(app): Extension<App>,
+    Path((sid, id)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.service_run_id(&sid, &id)?))
+}
+
+async fn close(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    key(&app, &headers, &format!("close:{sid}"))?;
+    Ok(Json(app.store.service_close(&sid)?))
+}
+async fn environment_list(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.service_environment_list()?))
 }

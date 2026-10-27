@@ -13,6 +13,9 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+pub fn new_idempotency_key() -> String {
+    openworker_runtime::id("idem")
+}
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub struct Error {
@@ -472,6 +475,30 @@ impl Agent {
     }
 }
 impl Service {
+    pub async fn submit(
+        &self,
+        agent: &str,
+        options: SessionOptions,
+        text: &str,
+        key: &str,
+    ) -> Result<ServiceOperation> {
+        if self.capabilities()["features"]["combinedSubmission"] != true {
+            return Err(error("unsupported_combined_submission"));
+        }
+        if options.environment_id.is_some() && options.runtime_profile.is_some() {
+            return Err(error("conflicting_environment_options"));
+        }
+        let mut body =
+            serde_json::to_value(options).map_err(|_| error("invalid_session_options"))?;
+        body["agent"] = json!(agent);
+        body["text"] = json!(text);
+        serde_json::from_value(
+            self.json("POST", "/v1/submissions", Some(body), Some(key))
+                .await?["operation"]
+                .clone(),
+        )
+        .map_err(|_| error("invalid_operation"))
+    }
     pub async fn register_runtime_profile(
         &self,
         profile: &RuntimeProfile,

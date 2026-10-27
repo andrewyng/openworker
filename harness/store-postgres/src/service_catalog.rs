@@ -136,6 +136,8 @@ pub struct Entry {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Admission {
     pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_message: Option<String>,
     #[serde(default)]
     pub model: Option<openworker_runtime::connections::Choice>,
     #[serde(default)]
@@ -154,6 +156,10 @@ fn default_project() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     pub id: String,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub submission_id: Option<String>,
     pub session_id: String,
     pub environment_id: String,
     pub release_id: String,
@@ -165,8 +171,12 @@ pub struct Operation {
     pub error: Option<String>,
 }
 fn op(row: &postgres::Row) -> Operation {
+    let id: String = row.get("id");
+    let task = row.get::<_, Value>("input")["initialMessage"].is_string();
     Operation {
-        id: row.get("id"),
+        run_id: task.then(|| format!("t_{}", id.trim_start_matches("op_"))),
+        submission_id: task.then(|| id.clone()),
+        id,
         session_id: row.get("session_id"),
         environment_id: row.get("environment_id"),
         release_id: row.get("release_id"),
@@ -210,6 +220,7 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
     CREATE TABLE IF NOT EXISTS service_aliases(kind TEXT NOT NULL,alias TEXT NOT NULL,target TEXT NOT NULL,PRIMARY KEY(kind,alias));
     CREATE TABLE IF NOT EXISTS service_management_receipts(id TEXT PRIMARY KEY,payload JSONB NOT NULL,result JSONB NOT NULL);
     CREATE TABLE IF NOT EXISTS service_environment_owners(environment_id TEXT PRIMARY KEY REFERENCES environments(id),profile_id TEXT NOT NULL,principal TEXT NOT NULL,project TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS service_deletions(environment_id TEXT PRIMARY KEY REFERENCES environments(id),request_key TEXT NOT NULL,dispatched BOOLEAN NOT NULL DEFAULT FALSE,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE TABLE IF NOT EXISTS service_operations(id TEXT PRIMARY KEY,request_key TEXT NOT NULL UNIQUE,input JSONB NOT NULL,principal TEXT NOT NULL,credential_id TEXT NOT NULL,release_id TEXT NOT NULL,profile_id TEXT NOT NULL,environment_id TEXT NOT NULL REFERENCES environments(id),session_id TEXT NOT NULL UNIQUE,project TEXT NOT NULL,status TEXT NOT NULL,receipt JSONB,error TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
     Ok(())
 }
@@ -305,6 +316,9 @@ impl PostgresStore {
             SubmissionError::InvalidRequest
         );
         spec.validate()?;
+        if let Some(text) = &input.initial_message {
+            crate::submissions::validate_id(text, 32000)?;
+        }
         let key = key.to_owned();
         self.call(move |db| db.service_admit(key, input, release, profile, spec))
     }
@@ -335,9 +349,42 @@ impl PostgresStore {
         let id = id.to_owned();
         self.call(move |db| db.service_environment(id))
     }
-    /// Controller-only dispatch claim. A reclaimed dispatch is READ-ONLY
-    /// reconciliation, never another create;
-    /// timeout cannot prove non-execution.
+    /// Resume-safe enqueue: begin_environment_delete already fenced attachments.
+    pub fn service_queue_delete(&self, id: &str, key: &str) -> Result<()> {
+        let (id, key) = (id.to_owned(), key.to_owned());
+        self.call(move|db| {let mut tx=db.client.transaction()?;
+            auth::guard(&mut tx,db.auth.as_ref(),auth::Action::Admin,None,None)?;
+            let recorded:Option<String>=tx.query_one("SELECT delete_request_id FROM environments WHERE id=$1",&[&id])?.get(0);
+            ensure!(recorded.as_deref()==Some(&key),"Deletion identity mismatch");
+            tx.execute("INSERT INTO service_deletions(environment_id,request_key) VALUES($1,$2) ON CONFLICT DO NOTHING",&[&id,&key])?;tx.commit()?;Ok(())})
+    }
+    /// One dispatch authorization. Later claims only inspect the original remote object.
+    pub fn service_claim_delete(
+        &self,
+        installed: &str,
+    ) -> Result<
+        Option<(
+            openworker_runtime::environment::Record,
+            String,
+            String,
+            bool,
+        )>,
+    > {
+        ensure!(self.auth.is_none(), "Controller requires private store");
+        let installed = installed.to_owned();
+        self.call(move|db|{let mut tx=db.client.transaction()?;
+            let row=tx.query_opt("SELECT d.environment_id,d.request_key,d.dispatched,o.profile_id,e.data FROM service_deletions d JOIN environments e ON e.id=d.environment_id JOIN service_environment_owners o ON o.environment_id=d.environment_id WHERE e.data->>'phase'='deleting' AND d.next_check<=clock_timestamp() AND EXISTS(SELECT 1 FROM service_operations a JOIN service_catalog c ON c.kind='release' AND c.id=a.release_id WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1) ORDER BY d.next_check,d.environment_id LIMIT 1 FOR UPDATE OF d SKIP LOCKED",&[&installed])?;
+            let Some(row)=row else {return Ok(None)};
+            let id:String=row.get(0);let key:String=row.get(1);let dispatched:bool=row.get(2);let profile:String=row.get(3);let record=serde_json::from_value(row.get(4))?;
+            tx.execute("UPDATE service_deletions SET dispatched=TRUE,next_check=clock_timestamp()+interval '180 seconds' WHERE environment_id=$1",&[&id])?;
+            tx.commit()?;Ok(Some((record,key,profile,!dispatched)))})
+    }
+    pub fn service_recheck_delete(&self, id: &str) -> Result<()> {
+        ensure!(self.auth.is_none(), "Controller requires private store");
+        let id = id.to_owned();
+        self.call(move|db|{db.client.execute("UPDATE service_deletions SET next_check=clock_timestamp()+interval '2 seconds' WHERE environment_id=$1",&[&id])?;Ok(())})
+    }
+    /// Controller-only claim: a reclaimed dispatch only reconciles, never creates again.
     pub fn service_claim(&self) -> Result<Option<(Operation, bool)>> {
         ensure!(self.auth.is_none(), auth::Error::Forbidden);
         self.service_claim_for(None)
@@ -728,9 +775,33 @@ impl crate::db::Database {
                 "serviceOperation":o.id,"environment_id":o.environment_id,"input":input}
             ),
         };
-        crate::ingress::create_in_tx(&mut tx, &self.owner, req, session, Some(p))?;
+        crate::ingress::create_in_tx(&mut tx, &self.owner, req, session, Some(p.clone()))?;
+        // The session, first task and completed operation receipt commit together.
+        // No worker can observe an idle half-submission or execute a second copy.
+        if let Some(text) = input.initial_message {
+            let request = crate::TurnSubmission {
+                session_id: o.session_id.clone(),
+                submission_id: o.submission_id.clone().expect("initial task identity"),
+                text,
+            };
+            let receipt = crate::submissions::insert_reserved(
+                &mut tx,
+                &request,
+                "queued",
+                None,
+                o.run_id.as_deref().expect("initial run identity"),
+            )?;
+            crate::submissions::journal_acceptance(&mut tx, &receipt, Some(&p.principal))?;
+            auth::audit(
+                &mut tx,
+                Some(&p),
+                Action::Submit,
+                Some(&o.session_id),
+                Some(&request.submission_id),
+            )?;
+        }
         let receipt = json!({
-            "serviceId":service_id,"namespace":namespace,"sessionId":o.session_id,"agent":o.release_id,"releaseId":o.release_id,"runtimeProfile":o.profile_id,"environmentId":o.environment_id,"operationId":o.id}
+            "serviceId":service_id,"namespace":namespace,"sessionId":o.session_id,"agent":o.release_id,"releaseId":o.release_id,"runtimeProfile":o.profile_id,"environmentId":o.environment_id,"operationId":o.id,"runId":o.run_id,"submissionId":o.submission_id}
         );
         tx.execute(
             "UPDATE service_operations SET status='complete',receipt=$2,error=NULL WHERE id=$1",

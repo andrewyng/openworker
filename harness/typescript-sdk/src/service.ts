@@ -46,6 +46,8 @@ export interface ServiceCatalogEntry {
 }
 export interface ServiceOperation {
   id: string;
+  runId?: string | null;
+  submissionId?: string | null;
   sessionId: string;
   environmentId: string;
   releaseId: string;
@@ -463,6 +465,25 @@ export class Service {
         setTimeout(r, Math.min(100 * 2 ** failures, 2000)),
       );
     }
+  }
+  async submit(
+    agent: string,
+    text: string,
+    options: Omit<ServiceSessionOptions, "signal" | "waitTimeoutMs"> = {},
+  ): Promise<ServiceOperation> {
+    if (this.capabilities.features?.combinedSubmission !== true)
+      throw new ServiceError("unsupported_combined_submission", 0);
+    if (options.environmentId && options.runtimeProfile)
+      throw new ServiceError("conflicting_environment_options", 0);
+    const { idempotencyKey = randomUUID(), ...session } = options;
+    return (
+      await this.json(
+        "POST",
+        "/v1/submissions",
+        { agent, text, ...session },
+        idempotencyKey,
+      )
+    ).operation;
   }
   registerRuntimeProfile(
     profile: RuntimeProfile,
