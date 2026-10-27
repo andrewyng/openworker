@@ -1981,11 +1981,11 @@ impl Runtime {
                     // check status/read before write and propose a fresh action
                     // through normal policy checks. Do not invent success/failure
                     // or resume work that the user cancelled.
-                    // TODO: recovery already records this result, but this live
-                    // error path still ends the turn. Normalize typed delivery
-                    // uncertainty here before enabling same-turn reconciliation;
-                    // do not turn every validation/configuration error into an
-                    // uncertain outcome or replay the original call.
+                    // RemoteClient already returns a structured unknown result
+                    // after possible delivery, recording attachment uncertainty
+                    // before the model can continue. Errors that still reach
+                    // here (including failed persistence) stop the turn; never
+                    // relabel every configuration/storage failure or replay it.
                     result?
                 };
                 self.update(sid,"tool_finished",json!({"name":alias,"call_id":call["call_id"],"result":output,"interaction_id":interaction.id}),|s|{if alias=="load_skill"&&output.get("skill_digest").is_some(){s.loaded_skills.insert(args["name"].as_str().context("Missing skill name")?.into());}s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));let t=s.turn.as_mut().unwrap();t.queue.remove(0);t.status="running".into();Ok(())})?;

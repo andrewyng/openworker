@@ -15,12 +15,66 @@ export interface ServiceOptions {
       };
   requestTimeoutMs?: number;
 }
+export interface RuntimeProfile {
+  id: string;
+  provider: "openshell";
+  cpu: number;
+  memoryMB: number;
+  sharing: "exclusive" | "shared";
+  allowedPrincipals?: string[];
+  approvalMode?: "ask" | "auto-approve" | "bypass";
+  autoSkipQuestions?: boolean;
+}
+export interface AgentRelease {
+  id: string;
+  instructions: string;
+  tools: string[];
+  runtimeProfiles: string[];
+  defaultRuntimeProfile?: string;
+  allowedPrincipals?: string[];
+  defaultModel?: { connection: string; model: string };
+  reviewerModel?: { connection: string; model: string };
+  modelOverrides?: { connection: string; model: string }[];
+}
+export interface ServiceCatalogEntry {
+  id: string;
+  kind: string;
+  digest: string;
+  definition: RuntimeProfile | AgentRelease;
+  installation: string;
+  activated: boolean;
+}
+export interface ServiceOperation {
+  id: string;
+  sessionId: string;
+  environmentId: string;
+  releaseId: string;
+  profileId: string;
+  principal: string;
+  project: string;
+  status: string;
+  receipt: ServiceSessionRef | null;
+  error: string | null;
+}
+export interface ServiceSessionOptions {
+  environmentId?: string;
+  runtimeProfile?: string;
+  project?: string;
+  model?: { connection: string; model: string };
+  name?: string;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  waitTimeoutMs?: number;
+}
 export interface ServiceSessionRef {
   serviceId: string;
   namespace: string;
   sessionId: string;
   agent: string;
   environmentId: string;
+  releaseId?: string;
+  runtimeProfile?: string;
+  operationId?: string;
 }
 /** Durable interaction identity and policy pins supplied by the service. */
 export interface ServiceInteraction {
@@ -49,6 +103,7 @@ export class ServiceError extends Error {
     public code: string,
     public status: number,
     public idempotencyKey?: string,
+    public operationId?: string,
   ) {
     super(`OpenWorker service: ${code}`);
   }
@@ -337,18 +392,27 @@ export class Service {
   }
   async agent(id: string): Promise<ServiceAgent> {
     const a = await this.json("GET", `/v1/agents/${segment(id)}`);
-    if (a.id !== id) throw new ServiceError("invalid_agent", 0);
-    return new ServiceAgent(this, id);
+    if (typeof a.id !== "string" || !a.id)
+      throw new ServiceError("invalid_agent", 0);
+    return new ServiceAgent(this, a.id);
   }
   async resume(ref: ServiceSessionRef): Promise<ServiceSession> {
     if (
       ref.serviceId !== this.capabilities.serviceId ||
-      ref.namespace !== this.options.namespace ||
-      ref.agent !== this.capabilities.agent
+      ref.namespace !== this.options.namespace
     )
+      throw new ServiceError("reference_identity_mismatch", 0);
+    if ((await this.agent(ref.agent)).id !== ref.agent)
       throw new ServiceError("reference_identity_mismatch", 0);
     const session = new ServiceSession(this, structuredClone(ref));
     const snapshot = await session.snapshot();
+    if ((snapshot.service?.releaseId ?? this.capabilities.agent) !== ref.agent)
+      throw new ServiceError("release_identity_mismatch", 0);
+    if (
+      ref.runtimeProfile &&
+      snapshot.service?.runtimeProfile !== ref.runtimeProfile
+    )
+      throw new ServiceError("profile_identity_mismatch", 0);
     if (snapshot.session?.environment?.environment_id !== ref.environmentId)
       throw new ServiceError("environment_identity_mismatch", 0);
     return session;
@@ -400,6 +464,97 @@ export class Service {
       );
     }
   }
+  registerRuntimeProfile(
+    profile: RuntimeProfile,
+    options: { idempotencyKey?: string } = {},
+  ): Promise<ServiceCatalogEntry> {
+    return this.json(
+      "POST",
+      "/v1/profiles",
+      profile,
+      options.idempotencyKey ?? randomUUID(),
+    );
+  }
+  activateRuntimeProfile(
+    id: string,
+    options: { alias?: string; idempotencyKey?: string } = {},
+  ): Promise<ServiceCatalogEntry> {
+    return this.json(
+      "POST",
+      `/v1/profiles/${segment(id)}/activate`,
+      { alias: options.alias ?? null },
+      options.idempotencyKey ?? randomUUID(),
+    );
+  }
+  deployAgent(
+    release: AgentRelease,
+    options: { idempotencyKey?: string } = {},
+  ): Promise<ServiceCatalogEntry> {
+    return this.json(
+      "POST",
+      "/v1/releases",
+      release,
+      options.idempotencyKey ?? randomUUID(),
+    );
+  }
+  activateAgent(
+    id: string,
+    options: { alias?: string; idempotencyKey?: string } = {},
+  ): Promise<ServiceCatalogEntry> {
+    return this.json(
+      "POST",
+      `/v1/releases/${segment(id)}/activate`,
+      { alias: options.alias ?? null },
+      options.idempotencyKey ?? randomUUID(),
+    );
+  }
+  environment(id: string): Promise<any> {
+    return this.json("GET", `/v1/environments/${segment(id)}`);
+  }
+  operation(id: string): Promise<ServiceOperation> {
+    return this.json("GET", `/v1/operations/${segment(id)}`);
+  }
+  async waitOperation(
+    id: string,
+    options: {
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      idempotencyKey?: string;
+    } = {},
+  ): Promise<ServiceOperation> {
+    const until = Date.now() + (options.timeoutMs ?? 300000);
+    while (true) {
+      if (options.signal?.aborted || this.closed)
+        throw new ServiceError("wait_cancelled", 0, options.idempotencyKey, id);
+      if (Date.now() >= until)
+        throw new ServiceError(
+          "provisioning_pending",
+          0,
+          options.idempotencyKey,
+          id,
+        );
+      let op: ServiceOperation;
+      try {
+        op = await this.operation(id);
+      } catch (error) {
+        if (error instanceof ServiceError) {
+          error.operationId = id;
+          error.idempotencyKey ??= options.idempotencyKey;
+        }
+        throw error;
+      }
+      if (op.status === "complete") return op;
+      if (op.status === "failed")
+        throw new ServiceError(
+          "provisioning_failed",
+          0,
+          options.idempotencyKey,
+          id,
+        );
+      // Management readiness only; tool output still uses cursor-based SSE.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
   disconnect(): void {
     this.closed = true;
     for (const c of this.requests) c.abort();
@@ -411,37 +566,58 @@ export class ServiceAgent {
     private service: Service,
     public readonly id: string,
   ) {}
-  async newSession(options: {
-    environmentId: string;
-    name?: string;
-    idempotencyKey?: string;
-  }): Promise<ServiceSession> {
+  async newSession(
+    options: ServiceSessionOptions = {},
+  ): Promise<ServiceSession> {
     if (
       Object.keys(options).some(
-        (k) => !["environmentId", "name", "idempotencyKey"].includes(k),
+        (k) =>
+          ![
+            "environmentId",
+            "runtimeProfile",
+            "name",
+            "project",
+            "model",
+            "idempotencyKey",
+            "signal",
+            "waitTimeoutMs",
+          ].includes(k),
       )
     )
       throw new ServiceError("unsupported_session_option", 0);
-    const key = options.idempotencyKey ?? randomUUID();
-    const r = await this.service.json(
+    if (options.environmentId && options.runtimeProfile)
+      throw new ServiceError("conflicting_environment_options", 0);
+    const {
+      idempotencyKey = randomUUID(),
+      signal,
+      waitTimeoutMs,
+      ...parameters
+    } = options;
+    let r = await this.service.json(
       "POST",
       "/v1/sessions",
-      {
-        agent: this.id,
-        environmentId: options.environmentId,
-        ...(options.name ? { name: options.name } : {}),
-      },
-      key,
+      { agent: this.id, ...parameters },
+      idempotencyKey,
     );
+    if (r.operation) {
+      r = (
+        await this.service.waitOperation(r.operation.id, {
+          signal,
+          timeoutMs: waitTimeoutMs,
+          idempotencyKey,
+        })
+      ).receipt;
+    }
     if (
-      r.serviceId !== this.service.capabilities.serviceId ||
-      r.namespace !== this.service.capabilities.namespace ||
-      r.agent !== this.id ||
-      r.environmentId !== options.environmentId ||
-      typeof r.sessionId !== "string"
+      r?.serviceId !== this.service.capabilities.serviceId ||
+      r?.namespace !== this.service.capabilities.namespace ||
+      r?.agent !== this.id ||
+      typeof r?.environmentId !== "string" ||
+      (options.environmentId && r.environmentId !== options.environmentId) ||
+      typeof r?.sessionId !== "string"
     )
-      throw new ServiceError("invalid_reference", 0, key);
-    return new ServiceSession(this.service, r as ServiceSessionRef);
+      throw new ServiceError("invalid_reference", 0, idempotencyKey);
+    return new ServiceSession(this.service, r);
   }
 }
 export class ServiceSession {

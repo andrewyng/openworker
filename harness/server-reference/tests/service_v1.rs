@@ -124,7 +124,7 @@ async fn qualification() {
     let (mut b, url_b) = api(&path, "service-b").await;
     let service = Harness::connect(options(&url_a, &token)).await.unwrap();
     let other = Harness::connect(options(&url_b, &token)).await.unwrap();
-    assert_eq!(service.capabilities()["features"]["runtimeProfiles"], false);
+    assert_eq!(service.capabilities()["features"]["runtimeProfiles"], true);
     assert!(Harness::connect(options(&url_a, &"wrong".repeat(12)))
         .await
         .is_err());

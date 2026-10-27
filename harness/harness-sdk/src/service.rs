@@ -19,6 +19,7 @@ pub struct Error {
     pub code: &'static str,
     pub status: u16,
     pub idempotency_key: Option<String>,
+    pub operation_id: Option<String>,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -31,6 +32,7 @@ fn error(code: &'static str) -> Error {
         code,
         status: 0,
         idempotency_key: None,
+        operation_id: None,
     }
 }
 pub type TokenFuture = Pin<Box<dyn std::future::Future<Output = Result<Zeroizing<String>>> + Send>>;
@@ -123,6 +125,24 @@ pub struct RunResult {
     pub final_output: Option<String>,
     pub failure: Option<String>,
     pub interruptions: Vec<Value>,
+}
+pub use openworker_store_postgres::service_catalog::{
+    Entry as CatalogEntry, Operation as ServiceOperation, Profile as RuntimeProfile,
+    Release as AgentRelease,
+};
+#[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<openworker_runtime::connections::Choice>,
 }
 pub type Events = Pin<Box<dyn Stream<Item = Result<openworker_runtime::store::Event>> + Send>>;
 fn id(value: &str) -> Result<&str> {
@@ -250,7 +270,7 @@ impl Service {
             } else {
                 r = r.timeout(Duration::from_secs(30));
             }
-            let response = tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),r=r.send()=>r.map_err(|_|Error{code:if method=="GET"{"unavailable"}else{"outcome_unknown"},status:0,idempotency_key:key.map(String::from)})?};
+            let response = tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),r=r.send()=>r.map_err(|_|Error{code:if method=="GET"{"unavailable"}else{"outcome_unknown"},status:0,idempotency_key:key.map(String::from),operation_id:None})?};
             if response.status().as_u16() == 401
                 && attempt == 0
                 && matches!(self.0.options.credentials, Credential::Callback(_))
@@ -267,6 +287,7 @@ impl Service {
                     },
                     status: response.status().as_u16(),
                     idempotency_key: key.map(String::from),
+                    operation_id: None,
                 });
             }
             if response
@@ -314,6 +335,7 @@ impl Service {
                 },
                 status: 0,
                 idempotency_key: key.map(String::from),
+                operation_id: None,
             })?;
             if bytes.len() + chunk.len() > 1048576 {
                 return Err(error("response_too_large"));
@@ -328,18 +350,19 @@ impl Service {
             },
             status: 0,
             idempotency_key: key.map(String::from),
+            operation_id: None,
         })
     }
     pub async fn agent(&self, name: &str) -> Result<Agent> {
         let a = self
             .json("GET", &format!("/v1/agents/{}", id(name)?), None, None)
             .await?;
-        if a["id"] != name {
+        if a["id"].as_str().is_none_or(str::is_empty) {
             return Err(error("invalid_agent"));
         }
         Ok(Agent {
             service: self.clone(),
-            id: name.into(),
+            id: a["id"].as_str().unwrap().into(),
         })
     }
     pub async fn resume(&self, reference: SessionRef) -> Result<Session> {
@@ -348,11 +371,20 @@ impl Service {
         {
             return Err(error("reference_identity_mismatch"));
         }
+        if self.agent(&reference.agent).await?.id != reference.agent {
+            return Err(error("reference_identity_mismatch"));
+        }
         let s = Session {
             service: self.clone(),
             reference,
         };
         let snap = s.snapshot().await?;
+        let actual = snap["service"]["releaseId"]
+            .as_str()
+            .or_else(|| self.capabilities()["agent"].as_str());
+        if actual != Some(s.reference.agent.as_str()) {
+            return Err(error("release_identity_mismatch"));
+        }
         if snap["session"]["environment"]["environment_id"] != s.reference.environment_id {
             return Err(error("environment_identity_mismatch"));
         }
@@ -386,23 +418,166 @@ impl Service {
 }
 impl Agent {
     pub async fn new_session(&self, environment_id: &str, key: Option<&str>) -> Result<Session> {
+        self.new_session_with(
+            SessionOptions {
+                environment_id: Some(environment_id.into()),
+                ..Default::default()
+            },
+            key,
+        )
+        .await
+    }
+    pub async fn admit_session(&self, options: SessionOptions, key: &str) -> Result<Value> {
+        if options.environment_id.is_some() && options.runtime_profile.is_some() {
+            return Err(error("conflicting_environment_options"));
+        }
+        let mut input =
+            serde_json::to_value(options).map_err(|_| error("invalid_session_options"))?;
+        input["agent"] = json!(self.id);
+        self.service
+            .json("POST", "/v1/sessions", Some(input), Some(key))
+            .await
+    }
+    pub async fn new_session_with(
+        &self,
+        options: SessionOptions,
+        key: Option<&str>,
+    ) -> Result<Session> {
         let generated = openworker_runtime::id("idem");
-        let value = self
-            .service
-            .json(
-                "POST",
-                "/v1/sessions",
-                Some(json!({"agent":self.id,"environmentId":environment_id})),
-                Some(key.unwrap_or(&generated)),
-            )
-            .await?;
-        let reference = serde_json::from_value(value).map_err(|_| error("invalid_reference"))?;
+        let key = key.unwrap_or(&generated);
+        let mut value = self.admit_session(options, key).await?;
+        if let Some(operation) = value["operation"]["id"].as_str() {
+            let op = self
+                .service
+                .wait_operation(operation, Duration::from_secs(300))
+                .await
+                .map_err(|mut e| {
+                    e.idempotency_key = Some(key.into());
+                    e
+                })?;
+            value = op.receipt.ok_or_else(|| error("invalid_reference"))?;
+        }
+        let reference: SessionRef =
+            serde_json::from_value(value).map_err(|_| error("invalid_reference"))?;
+        if reference.service_id != self.service.capabilities()["serviceId"]
+            || reference.namespace != self.service.capabilities()["namespace"]
+            || reference.agent != self.id
+        {
+            return Err(error("invalid_reference"));
+        }
         Ok(Session {
             service: self.service.clone(),
             reference,
         })
     }
 }
+impl Service {
+    pub async fn register_runtime_profile(
+        &self,
+        profile: &RuntimeProfile,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json("POST", "/v1/profiles", Some(json!(profile)), Some(key))
+                .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn deploy_agent(&self, release: &AgentRelease, key: &str) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json("POST", "/v1/releases", Some(json!(release)), Some(key))
+                .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn activate_runtime_profile(
+        &self,
+        profile: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        self.activate("profiles", profile, alias, key).await
+    }
+    pub async fn activate_agent(
+        &self,
+        release: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        self.activate("releases", release, alias, key).await
+    }
+    async fn activate(
+        &self,
+        kind: &str,
+        target: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json(
+                "POST",
+                &format!("/v1/{kind}/{}/activate", id(target)?),
+                Some(json!({"alias":alias})),
+                Some(key),
+            )
+            .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn environment(&self, environment: &str) -> Result<Value> {
+        self.json(
+            "GET",
+            &format!("/v1/environments/{}", id(environment)?),
+            None,
+            None,
+        )
+        .await
+    }
+    pub async fn operation(&self, operation: &str) -> Result<ServiceOperation> {
+        serde_json::from_value(
+            self.json(
+                "GET",
+                &format!("/v1/operations/{}", id(operation)?),
+                None,
+                None,
+            )
+            .await?,
+        )
+        .map_err(|_| error("invalid_operation"))
+    }
+    /// Dropping this future cancels only the wait. Retain the admission receipt
+    /// (or its idempotency key) to inspect the original provisioning operation.
+    pub async fn wait_operation(
+        &self,
+        operation: &str,
+        timeout: Duration,
+    ) -> Result<ServiceOperation> {
+        self.wait_operation_inner(operation, timeout)
+            .await
+            .map_err(|mut error| {
+                error.operation_id = Some(operation.into());
+                error
+            })
+    }
+    async fn wait_operation_inner(
+        &self,
+        operation: &str,
+        timeout: Duration,
+    ) -> Result<ServiceOperation> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let op = self.operation(operation).await?;
+            if op.status == "complete" {
+                return Ok(op);
+            }
+            if op.status == "failed" {
+                return Err(error("provisioning_failed"));
+            }
+            tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),_=tokio::time::sleep_until(deadline)=>return Err(error("provisioning_pending")),_=tokio::time::sleep(Duration::from_millis(250))=>{}}
+        }
+    }
+}
+
 impl Session {
     pub fn id(&self) -> &str {
         &self.reference.session_id
@@ -573,6 +748,7 @@ impl Sse {
                             code: "stream_reconcile",
                             status: 503,
                             idempotency_key: None,
+                            operation_id: None,
                         });
                     }
                     if self.event != "progress" {

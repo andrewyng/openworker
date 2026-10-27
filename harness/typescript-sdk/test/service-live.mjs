@@ -48,7 +48,7 @@ try {
   await assert.rejects(
     agent.newSession({
       environmentId: process.env.OW_SERVICE_ENV,
-      runtimeProfile: "unsupported",
+      workingDirectory: "unsupported",
     }),
     /unsupported_session_option/,
   );

@@ -1,5 +1,8 @@
 # Connect to OpenWorker Service — first milestone
 
+This documents the M1 interface. Release/profile management and automatic
+provisioning are now covered by the [M2 quickstart](SERVICE-M2-QUICKSTART.md).
+
 The service runs the agent loop on workers and stores sessions, events and controls
 in PostgreSQL. Your application connects over authenticated REST and SSE. Closing
 an SDK connection does not cancel agent work.

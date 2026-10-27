@@ -28,6 +28,7 @@ pub struct App {
     pub(crate) actor: String,
     streams: Arc<Semaphore>,
     pub(crate) service: Option<crate::service::ServiceConfig>,
+    pub(crate) config: Arc<Config>,
     pub(crate) stop: CancellationToken,
     pub(crate) artifacts: Option<openworker_artifacts::Store>,
     pub(crate) transfers: Arc<Semaphore>,
@@ -51,6 +52,7 @@ impl App {
             }
         }
         Ok(Self {
+            config: Arc::new(config.clone()),
             service: config.service.clone(),
             recovery_read_only: config.recovery_read_only,
             artifacts: config.artifacts.as_ref().map(|a| a.build()).transpose()?,

@@ -11,6 +11,7 @@ pub mod pools;
 pub use operations::OperationalSnapshot;
 mod sdk_host;
 mod service;
+pub mod service_catalog;
 mod submissions;
 mod team_execution;
 pub mod teams;

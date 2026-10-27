@@ -13,6 +13,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Reconcile durable release/profile provisioning operations. No public port.
+    ServiceController,
+    /// Schedule all admitted release/profile cohorts within one slot budget.
+    ServiceWorker {
+        #[arg(long, default_value_t = 4)]
+        slots: usize,
+    },
     Migrate,
     /// Trusted-host operational catalog, not a session-authorized API.
     WorkerPools {
@@ -85,7 +92,7 @@ async fn main() -> Result<()> {
     )?)?;
     let role = match &args.command {
         Command::Api { .. } => "api",
-        Command::Worker { .. } => "worker",
+        Command::Worker { .. } | Command::ServiceWorker { .. } => "worker",
         _ => "admin",
     };
     let telemetry_config = config.telemetry.clone();
@@ -191,6 +198,14 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                 _ => unreachable!(),
             };
             println!("{}", serde_json::to_string(&result)?);
+        }
+        Command::ServiceController => {
+            config.require_execution()?;
+            openworker_server_reference::management::controller(config, store, stop).await?;
+        }
+        Command::ServiceWorker { slots } => {
+            config.require_execution()?;
+            openworker_server_reference::management::worker(config, store, slots, stop).await?;
         }
         Command::Api { node, listen } => {
             if let Some(options) = &config.operational_metrics {

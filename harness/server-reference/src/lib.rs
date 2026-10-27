@@ -8,6 +8,7 @@ use std::{path::PathBuf, sync::Arc};
 mod artifacts;
 mod authorization;
 pub mod http;
+pub mod management;
 pub mod operations;
 pub mod readiness;
 pub mod service;
@@ -102,6 +103,8 @@ impl ArtifactConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenShellConfig {
+    pub cpu: Option<u16>,
+    pub memory_mb: Option<u32>,
     pub identity: String,
     pub endpoint: String,
     pub certificates: PathBuf,
@@ -140,7 +143,8 @@ impl Config {
                     workspace: c.workspace.clone(),
                 },
                 c.image.clone(),
-            )?,
+            )?
+            .with_resources(c.cpu.unwrap_or(1), c.memory_mb.unwrap_or(512))?,
         ))
     }
     #[cfg(not(windows))]

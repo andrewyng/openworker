@@ -78,3 +78,82 @@ Final disk measurement: 68 GiB available. No cloud spending or new container ima
 
 M1 complete. Changes are local on `feat/openworker-service-m1`; no public branch
 push or pull request is part of this milestone.
+
+## 2026-10-27 — M2 started
+
+User authorized M2 and optionally M3, with local tests and ledger updates.
+Working on `feat/openworker-service-m1` after `c231d102`; initial disk free 68 GiB.
+No LLM key needed for deterministic execution/recovery qualification.
+Architecture: extend the existing PG store, controller/provider and worker loop;
+no second agent loop and no remote code execution on API nodes.
+
+### M2 implemented; qualification in progress
+
+- Added immutable, revisioned release/profile catalog, explicit activation aliases,
+  principal allowlists and management idempotency receipts.
+- Session admission atomically reserves operation/environment/session identities.
+  A separate controller provisions and verifies OpenShell, then atomically creates
+  the owned session and completes its receipt. Lost dispatches reconcile only.
+- Dynamic cohorts reuse the existing Worker loop under one total slot limit;
+  adding releases does not multiply configured worker concurrency.
+- Profiles configure verified CPU/RAM, sharing, approval mode and question skipping.
+  Releases select installed tools, model defaults/allowed overrides, and a separate
+  reviewer model. Shared attachments require matching owner/project/profile.
+- Rust and TypeScript SDK helpers support release/profile management, automatic
+  provisioning waits, explicit operation lookup and same-environment attachment.
+- Initial real local qualification passed: Docker PostgreSQL, two APIs, two
+  controllers, shared coder/verifier sandbox, both SDKs and independent histories.
+- Fault-injected lost provisioning acknowledgement also passed: the controller
+  binds the original remote UID; SDK wait timeout resumes the same receipt.
+- Storage regression suites passed (18 tests across environment/admission/submission
+  suites), plus three OpenShell policy/resource identity tests. Additional quota,
+  default resolution and live tool-uncertainty checks are being finalized.
+
+M2 intentionally uses the qualified fixed OpenShell filesystem/network profile.
+Advanced external-sandbox import, directory overrides, alternate providers and team
+release packaging are not advertised as available. See SERVICE-M2-QUICKSTART.md.
+Disk availability is now >200 GiB; this work did not require extra image downloads.
+
+
+### M2 qualification complete
+
+Final exercised behavior:
+
+- Immutable revisions, explicit activation and alias changes that preserve existing
+  admissions; default profile resolution; model override allowlists.
+- Profile/environment ownership and project checks, environment quota enforcement,
+  and replay of an admitted request even when the quota is full.
+- Atomic admission rollback, one create authorization, and installation-compatible
+  controller claims. Workers retain bounded slots across dynamic cohorts and skip
+  releases from incompatible installed worker/runner cohorts.
+- Real OpenShell creation with custom RAM limit, sharing between coder/verifier,
+  private session histories, and a separately provisioned environment for another
+  project. Original remote UID retained after lost provisioning acknowledgement.
+- Rust and TypeScript SDKs recover timed-out waits using the same operation/key;
+  resumed references reject an incorrect agent release. Wait transport errors
+  retain operation identity rather than losing the accepted admission.
+- Fault-injected live tool test: one effect, lost response, durable unknown result,
+  subsequent model-directed read, and no replay of the original write. This reuses
+  the existing RemoteClient normalization; unrelated storage/configuration errors
+  continue to stop execution.
+
+Tests passed: 3 new catalog tests; 5 environment, 3 ingress and 8 submission
+regressions; 3 OpenShell identity/resource-policy tests; 16 Rust SDK unit tests;
+7 desktop SDK tests including PostgreSQL embedded/managed variants; 4 server and
+5 store unit tests; 17 existing TypeScript tests plus 7 remote-service tests.
+The real M1 API/control regression, real M2 provisioning/sharing qualification,
+and live uncertainty fault test also passed. Models were scripted; tools and
+OpenShell provisioning were real except the explicitly fault-injected provider.
+No paid model calls or LLM key were needed.
+
+Developer instructions: [M2 quickstart](SERVICE-M2-QUICKSTART.md).
+M3 CLI/container packaging is the next milestone; it is not included in this work.
+Advanced sandbox import, provider-specific disk recovery, directory overrides,
+extra network/credential policy, team-release deployment and expanded auth remain
+explicit limits, not claimed completed features.
+
+M2 cleanup complete: successful fixtures deleted their sandboxes and schemas; only
+the pre-existing suspended sandbox remains in the gateway namespace. Disposable
+PostgreSQL, port forwarding and temporary client certificates were removed.
+Final real M2 qualification took 35.66 seconds. All final checks passed.
+M2 is committed locally on `feat/openworker-service-m1`; no remote push/PR yet.

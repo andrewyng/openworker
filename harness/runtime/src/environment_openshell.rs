@@ -16,6 +16,8 @@ pub struct OpenShell {
     identity: String,
     config: ExecConnectionConfig,
     image: String,
+    cpu: u16,
+    memory_mb: u32,
 }
 impl OpenShell {
     pub fn new(
@@ -29,6 +31,8 @@ impl OpenShell {
             identity,
             config,
             image,
+            cpu: 1,
+            memory_mb: 512,
         };
         this.spec(Sharing::Exclusive, Management::Harness)
             .validate()?;
@@ -37,6 +41,20 @@ impl OpenShell {
         }
         Ok(this)
     }
+    pub fn with_resources(mut self, cpu: u16, memory_mb: u32) -> Result<Self> {
+        anyhow::ensure!(
+            (1..=16).contains(&cpu) && (256..=65536).contains(&memory_mb),
+            "Unsupported OpenShell resource limits"
+        );
+        self.cpu = cpu;
+        self.memory_mb = memory_mb;
+        Ok(self)
+    }
+    fn configured_template(&self) -> SandboxSpec {
+        let mut spec = Self::template(&self.image);
+        spec.template.as_mut().unwrap().resources = Some(resource_limits(self.cpu, self.memory_mb));
+        spec
+    }
     pub fn spec(&self, sharing: Sharing, management: Management) -> Spec {
         Spec {
             provider: self.key.clone(),
@@ -44,7 +62,7 @@ impl OpenShell {
             profile_digest: crate::bundle::digest(
                 &serde_json::to_vec(&(
                     self.config.workspace.as_str(),
-                    Self::template(&self.image).encode_to_vec(),
+                    self.configured_template().encode_to_vec(),
                 ))
                 .expect("profile serialization"),
             ),
@@ -186,7 +204,7 @@ impl OpenShell {
         let meta = object.metadata.context("Remote object metadata missing")?;
         let desired = object.spec.context("Remote spec missing")?;
         let status = object.status.context("Remote status missing")?;
-        let expected = Self::template(&self.image);
+        let expected = self.configured_template();
         let template = desired.template.context("Remote image missing")?;
         let expected_template = expected.template.unwrap();
         // Reject extra authority instead of ignoring fields in a partial wire model.
@@ -279,7 +297,7 @@ impl Provider for OpenShell {
                 .rpc(
                     "/openshell.v1.OpenShell/CreateSandbox",
                     Create {
-                        spec: Some(Self::template(&self.image)),
+                        spec: Some(self.configured_template()),
                         name: name.clone(),
                         labels: BTreeMap::from([(
                             "openworker-environment".into(),
@@ -617,19 +635,22 @@ mod struct_value {
     }
 }
 fn resources() -> Struct {
+    resource_limits(1, 512)
+}
+fn resource_limits(cpu: u16, memory_mb: u32) -> Struct {
     use struct_value::Kind::{Object, Text};
     let limits = Struct {
         fields: BTreeMap::from([
             (
                 "cpu".into(),
                 StructValue {
-                    kind: Some(Text("1".into())),
+                    kind: Some(Text(cpu.to_string())),
                 },
             ),
             (
                 "memory".into(),
                 StructValue {
-                    kind: Some(Text("512Mi".into())),
+                    kind: Some(Text(format!("{memory_mb}Mi"))),
                 },
             ),
         ]),
@@ -669,7 +690,7 @@ mod tests {
                 workspace: "default".into(),
                 ..Default::default()
             }),
-            spec: Some(OpenShell::template(&p.image)),
+            spec: Some(p.configured_template()),
             status: Some(Status {
                 phase: 2,
                 admission: Some(Admission {
@@ -763,5 +784,33 @@ mod tests {
         let mut changed = p;
         changed.config.workspace = "different-workspace".into();
         assert!(changed.validate_spec(&saved).is_err());
+    }
+    #[test]
+    fn resource_limits_are_in_profile_identity_and_verified_on_attach() {
+        let old = provider();
+        let spec = old.spec(Sharing::Shared, Management::Harness);
+        let bigger = provider().with_resources(2, 768).unwrap();
+        assert_ne!(
+            spec.profile_digest,
+            bigger
+                .spec(Sharing::Shared, Management::Harness)
+                .profile_digest
+        );
+        assert!(bigger.validate_spec(&spec).is_err());
+        assert!(bigger
+            .observed(
+                ready(&old),
+                bigger.spec(Sharing::Shared, Management::Harness),
+                "env-test".into()
+            )
+            .is_err());
+        assert!(bigger
+            .observed(
+                ready(&bigger),
+                bigger.spec(Sharing::Shared, Management::Harness),
+                "env-test".into()
+            )
+            .is_ok());
+        assert!(provider().with_resources(0, 512).is_err());
     }
 }

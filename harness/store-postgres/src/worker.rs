@@ -134,7 +134,9 @@ impl Default for Options {
 /// before returning. Use a session-private local controller directory, not the
 /// remote workspace. The supplied store already owns exactly this session.
 pub type Factory = Arc<dyn Fn(&str, PostgresStore) -> Result<Arc<Runtime>> + Send + Sync>;
+pub type Catalog = Arc<dyn Fn() -> Result<Vec<(Selector, Factory)>> + Send + Sync>;
 pub struct Worker {
+    catalog: Option<Catalog>,
     config: Config,
     selector: Selector,
     options: Options,
@@ -168,7 +170,12 @@ impl Worker {
             selector,
             options,
             factory,
+            catalog: None,
         })
+    }
+    pub fn with_catalog(mut self, catalog: Catalog) -> Self {
+        self.catalog = Some(catalog);
+        self
     }
     /// Stops on the first database/lease/runtime failure. A poisoned connection
     /// is never silently reopened to replay work. Deployment supervision may
@@ -216,8 +223,12 @@ impl Worker {
                 occupied.clone(),
                 drain.clone(),
             );
+            let catalog = self.catalog.clone();
             slots.spawn(async move {
-                slot(config, selector, options, factory, stop, occupied, drain).await
+                slot(
+                    config, selector, options, factory, stop, occupied, drain, catalog,
+                )
+                .await
             });
         }
         let mut error = None;
@@ -317,7 +328,9 @@ async fn slot(
     stop: CancellationToken,
     occupied: Arc<AtomicU64>,
     drain: Drain,
+    catalog: Option<Catalog>,
 ) -> Result<()> {
+    let mut turn = 0usize;
     let mut spare = Some(PostgresStore::open(config.clone())?);
     let mut tick = interval(options.poll_interval);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -328,9 +341,24 @@ async fn slot(
             return Ok(());
         }
         let store = spare.take().context("Worker slot missing store")?;
-        let claim = store.claim_next(selector.clone())?;
+        let mut selected = None;
+        let candidates = match &catalog {
+            Some(get) => get()?,
+            None => vec![(selector.clone(), factory.clone())],
+        };
+        for offset in 0..candidates.len() {
+            let index = (turn + offset) % candidates.len();
+            let (selector, factory) = &candidates[index];
+            selector.validate()?;
+            if let Some(lease) = store.claim_next(selector.clone())? {
+                selected = Some((lease, selector.clone(), factory.clone()));
+                turn = index + 1;
+                break;
+            }
+        }
+        let claim = selected;
         drop(permit);
-        let Some(lease) = claim else {
+        let Some((lease, selector, factory)) = claim else {
             spare = Some(store);
             continue;
         };

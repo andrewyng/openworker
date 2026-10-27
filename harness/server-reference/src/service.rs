@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    pub default_runtime_profile: Option<String>,
     pub id: String,
     pub namespace: String,
     pub agent: String,
@@ -45,6 +46,9 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         | ("GET", ["", "v1", "sessions", _, "turns" | "controls", _]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
         ("POST", ["", "v1", "sessions", _, "controls"]) => Some(Action::Control),
+        ("POST", ["", "v1", "profiles" | "releases"])
+        | ("POST", ["", "v1", "profiles" | "releases", _, "activate"]) => Some(Action::Admin),
+        ("GET", ["", "v1", "profiles" | "environments" | "operations", _]) => Some(Action::Read),
         _ => None,
     }
 }
@@ -57,6 +61,22 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route("/v1/profiles", post(crate::management::put_profile))
+        .route("/v1/profiles/:id", get(crate::management::get_profile))
+        .route(
+            "/v1/profiles/:id/activate",
+            post(crate::management::activate_profile),
+        )
+        .route("/v1/releases", post(crate::management::put_release))
+        .route(
+            "/v1/releases/:id/activate",
+            post(crate::management::activate_release),
+        )
+        .route(
+            "/v1/environments/:id",
+            get(crate::management::get_environment),
+        )
+        .route("/v1/operations/:id", get(crate::management::get_operation))
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/auth/me", get(crate::authorization::me))
         .route("/v1/agents/:id", get(agent))
@@ -73,19 +93,23 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"runtimeProfiles":false,"agentDeployment":false,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"runtimeProfiles":true,"agentDeployment":true,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
     Extension(app): Extension<App>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    check(id == cfg(&app).agent, SubmissionError::NotFound)?;
+    if id != cfg(&app).agent {
+        let release = app.store.catalog_get("release", &id)?;
+        check(release.activated, SubmissionError::NotFound)?;
+        return Ok(Json(json!({"id":release.id,"environmentRequired":false})));
+    }
     Ok(Json(
         json!({"id":id,"executionDigest":app.runtime.execution_digest(),"environmentRequired":true}),
     ))
 }
-fn key(app: &App, headers: &HeaderMap, kind: &str) -> Result<String> {
+pub(crate) fn key(app: &App, headers: &HeaderMap, kind: &str) -> Result<String> {
     let raw = headers
         .get("idempotency-key")
         .and_then(|s| s.to_str().ok())
@@ -98,19 +122,18 @@ fn key(app: &App, headers: &HeaderMap, kind: &str) -> Result<String> {
         &json!([cfg(app).namespace, app.actor, kind, raw]),
     )?))
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Create {
-    agent: String,
-    environment_id: String,
-    name: Option<String>,
-}
 async fn create(
     Extension(app): Extension<App>,
     headers: HeaderMap,
-    Json(body): Json<Create>,
+    Json(body): Json<openworker_store_postgres::service_catalog::Admission>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    check(body.agent == cfg(&app).agent, SubmissionError::NotFound)?;
+    if body.agent != cfg(&app).agent {
+        return crate::management::admit(app, headers, body).await;
+    }
+    check(
+        body.runtime_profile.is_none() && body.environment_id.is_some(),
+        SubmissionError::InvalidRequest,
+    )?;
     let request = SessionCreation {
         request_id: key(&app, &headers, "session")?,
         actor: app.actor.clone(),
@@ -140,7 +163,12 @@ async fn snapshot(
     Extension(app): Extension<App>,
     Path(sid): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(app.store.read_snapshot(&sid)?))
+    let mut snapshot = app.store.read_snapshot(&sid)?;
+    snapshot["service"] = app
+        .store
+        .service_session_identity(&sid)?
+        .unwrap_or(Value::Null);
+    Ok(Json(snapshot))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

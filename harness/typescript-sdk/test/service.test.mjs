@@ -154,3 +154,19 @@ test("reconnect replays cursor through other API, suppresses duplicates, disconn
   assert.equal(mutations, 0);
   await assert.rejects(s.agent("builder"), /disconnected/);
 });
+
+test("provisioning wait transport errors retain operation identity and admission key", async (t) => {
+  const url = await server(t, (q, r) => {
+    if (handshake(q, r)) return;
+    q.socket.destroy();
+  });
+  const s = await Harness.connect(options(url));
+  t.after(() => s.disconnect());
+  await assert.rejects(
+    s.waitOperation("op_original", { idempotencyKey: "create-original" }),
+    (e) =>
+      e.code === "unavailable" &&
+      e.operationId === "op_original" &&
+      e.idempotencyKey === "create-original",
+  );
+});

@@ -115,65 +115,9 @@ impl Database {
             request.parameters["environment_id"].as_str(),
         )?;
         auth::actor(p.as_ref(), &request.actor)?;
-        tx.query_one(
-            "SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext($1))",
-            &[&format!("session-create:{}", request.request_id)],
-        )?;
-        if let Some(receipt) = lookup(&mut tx, &request)? {
-            if let Some(p) = &p {
-                anyhow::ensure!(
-                    auth::session_allowed(&mut tx, p, &receipt.session_id)?,
-                    auth::Error::Forbidden
-                );
-            }
-            tx.commit()?;
-            return Ok(receipt);
-        }
-        // API-created sessions are immediately claimable; creating a session
-        // does not start a worker, model request or sandbox operation.
-        tx.execute("INSERT INTO sessions(id,data,owner,epoch,expires,creation_request_id) VALUES($1,'{}',$2,0,clock_timestamp()+interval '5 minutes',$3)",&[&s.id,&self.owner,&request.request_id])?;
-        append_history(&mut tx, &s)?;
-        write_metadata(&mut tx, &s)?;
-        if let Some(p) = &p {
-            tx.execute(
-                "INSERT INTO api_session_owners VALUES($1,$2)",
-                &[&s.id, &p.principal],
-            )?;
-        }
-        auth::audit(
-            &mut tx,
-            p.as_ref(),
-            Action::Create,
-            Some(&s.id),
-            Some(&request.request_id),
-        )?;
-        event(
-            &mut tx,
-            &s,
-            &self.owner,
-            0,
-            "session_created",
-            json!({"request_id":request.request_id,"actor":request.actor,"coworker":s.coworker,"environment":s.environment,"permissions":s.permissions,"resource_policy":s.resource_policy}),
-        )?;
-        tx.execute(
-            "INSERT INTO creations(request_id,actor,parameters,session_id) VALUES($1,$2,$3,$4)",
-            &[
-                &request.request_id,
-                &request.actor,
-                &request.parameters,
-                &s.id,
-            ],
-        )?;
-        tx.execute(
-            "UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",
-            &[&s.id],
-        )?;
+        let result = create_in_tx(&mut tx, &self.owner, request, s, p)?;
         tx.commit()?;
-        Ok(CreationReceipt {
-            request_id: request.request_id,
-            session_id: s.id,
-            duplicate: false,
-        })
+        Ok(result)
     }
     pub(crate) fn read_snapshot(&mut self, sid: &str) -> Result<Value> {
         let mut tx = self.client.transaction()?;
@@ -279,4 +223,71 @@ impl Database {
         tx.commit()?;
         Ok(result)
     }
+}
+
+/// Shared atomic session insertion used by service-controller admission too.
+pub(crate) fn create_in_tx(
+    tx: &mut Transaction<'_>,
+    owner: &str,
+    request: SessionCreation,
+    s: Session,
+    p: Option<auth::Identity>,
+) -> Result<CreationReceipt> {
+    tx.query_one(
+        "SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext($1))",
+        &[&format!("session-create:{}", request.request_id)],
+    )?;
+    if let Some(receipt) = lookup(tx, &request)? {
+        if let Some(p) = &p {
+            anyhow::ensure!(
+                auth::session_allowed(tx, p, &receipt.session_id)?,
+                auth::Error::Forbidden
+            );
+        }
+        return Ok(receipt);
+    }
+    // API-created sessions are immediately claimable; creating a session
+    // does not start a worker, model request or sandbox operation.
+    tx.execute("INSERT INTO sessions(id,data,owner,epoch,expires,creation_request_id) VALUES($1,'{}',$2,0,clock_timestamp()+interval '5 minutes',$3)",&[&s.id,&owner,&request.request_id])?;
+    append_history(tx, &s)?;
+    write_metadata(tx, &s)?;
+    if let Some(p) = &p {
+        tx.execute(
+            "INSERT INTO api_session_owners VALUES($1,$2)",
+            &[&s.id, &p.principal],
+        )?;
+    }
+    auth::audit(
+        tx,
+        p.as_ref(),
+        Action::Create,
+        Some(&s.id),
+        Some(&request.request_id),
+    )?;
+    event(
+        tx,
+        &s,
+        owner,
+        0,
+        "session_created",
+        json!({"request_id":request.request_id,"actor":request.actor,"coworker":s.coworker,"environment":s.environment,"permissions":s.permissions,"resource_policy":s.resource_policy}),
+    )?;
+    tx.execute(
+        "INSERT INTO creations(request_id,actor,parameters,session_id) VALUES($1,$2,$3,$4)",
+        &[
+            &request.request_id,
+            &request.actor,
+            &request.parameters,
+            &s.id,
+        ],
+    )?;
+    tx.execute(
+        "UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",
+        &[&s.id],
+    )?;
+    Ok(CreationReceipt {
+        request_id: request.request_id,
+        session_id: s.id,
+        duplicate: false,
+    })
 }
