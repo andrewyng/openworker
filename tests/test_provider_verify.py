@@ -274,6 +274,15 @@ def test_verify_unexpected_status(monkeypatch):
     assert "500" in res["error"]
 
 
+def test_verify_deepinfra_default_endpoint(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("deepinfra", api_key="di-key") == {"ok": True}
+    assert cap["url"] == "https://api.deepinfra.com/v1/openai/models"
+    assert cap["headers"]["Authorization"] == "Bearer di-key"
+
+
 # -- verify_provider_key: transport failures carry their cause (#505) ------------
 def test_verify_transport_failure_includes_cause_and_hint(monkeypatch):
     import httpx

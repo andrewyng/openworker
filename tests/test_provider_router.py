@@ -131,6 +131,12 @@ def test_router_routes_and_strips_prefix(monkeypatch):
         "llama3.3"
     ]  # prefix stripped before delegating
 
+    turn = router.complete(
+        model="deepinfra:deepseek-ai/DeepSeek-V4-Flash", messages=[]
+    )
+    assert turn.text == "deepinfra"
+    assert state["latest"]["deepinfra"].models == ["deepseek-ai/DeepSeek-V4-Flash"]
+
     router.complete(model="gpt-5.5", messages=[])  # bare → default openai
     assert state["latest"]["openai"].models == ["gpt-5.5"]
 
@@ -861,3 +867,19 @@ def test_manager_azure_card_saves_endpoint_and_key_and_verifies_at_the_resource(
     added = mgr.add_model("azure:gpt-5-prod")
     assert added["ok"] and "azure:gpt-5-prod" in added["models"]
     assert mgr._model_provider("azure:gpt-5-prod") == "azure"
+
+
+def test_build_deepinfra_client_uses_default_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client(
+        "deepinfra", {"api_key": "di-test"}, secrets=None
+    )
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://api.deepinfra.com/v1/openai"
+    assert captured["api_key"] == "di-test"
