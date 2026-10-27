@@ -6,6 +6,9 @@ This specifies the next service interface. New SDK methods, CLI commands and
 `/v1` routes below are proposed, not a claim that the current server reference
 implements them. Existing local SDK/stdio APIs remain supported.
 
+For a visual review of the deployment shapes and minimal SDK examples, open
+[the architecture companion](SERVICE-ARCHITECTURE.html).
+
 ## 1. Decisions and boundaries
 
 Use **OpenWorker Service** as the product name and **`ows`** as the service CLI.
@@ -385,6 +388,27 @@ its permitted tools/resources. External providers may use authenticated outbound
 connections or a verified private gateway; no generic inbound public ToolRunner
 port is required. Provider-specific connectivity and identity must be qualified.
 
+### Co-located versus separate execution placement
+
+RuntimeProfiles name an approved placement policy as well as a provider. The
+architecture examples use `openshell-colocated` and `openshell-remote` as example
+profile names, not built-in reserved names or already implemented capabilities.
+Co-located means a harness worker and its sandbox occupy the same Kubernetes
+node while remaining separate processes/pods and trust boundaries. It does not
+put the agent loop inside the tool sandbox.
+
+Strict co-location requires scheduler/provider support: choose a compatible node,
+provision/inspect the sandbox there, then admit the worker attachment with verified
+node affinity. If unsupported or unschedulable, return an explicit pending/error
+state. Do not claim strict co-location merely because both run in one cluster.
+A profile can instead declare a preference with an explicit allowed fallback.
+
+Separate execution keeps the worker in the service cluster and places the sandbox
+on another node/cluster/provider. The provider's authenticated gateway/channel
+carries tool requests/results; REST/SSE remains the application-facing interface.
+OpenShell is the first provider to qualify for both policies. The current adapter
+and chart provide substantial groundwork but not a portable placement guarantee.
+
 ## 5. Submitting work to a running cluster
 
 Like submitting work to an existing compute cluster, callers choose an admitted
@@ -465,6 +489,69 @@ Authentication is mandatory, including local service testing. Bootstrap the
 first administrator using a local install/job command and private credential
 output, not an unauthenticated HTTP registration endpoint. Existing authorization
 checks and audit transactions must remain effective during migration to `/v1`.
+
+### First-administrator bootstrap: cloud and local
+
+Cloud identity is optional. The root of trust is the operator who can install
+and administer the infrastructure. Normal client authentication begins only after
+the installer has created the first service administrator through a private,
+privileged bootstrap path. There is no public “first caller becomes admin” route.
+
+| Deployment | Installer authority | Initial credential delivery |
+|---|---|---|
+| Cloud Kubernetes | Existing cloud and Kubernetes permissions | Restricted cloud secret manager or Kubernetes Secret |
+| Local/on-prem Kubernetes | Existing Kubernetes administrator credentials | Restricted Kubernetes Secret retrieved through the authorized Kubernetes connection |
+| Docker / bare metal | Host administrator access | Owner-only local file, outside shared tool workspaces |
+
+Sequence:
+
+1. Install PostgreSQL/auth schema, endpoint trust and the service components.
+   Terraform may provision infrastructure and secret-store locations; it is not
+   required for an existing/local cluster.
+2. Run a private bootstrap job/installer command with narrow access to the auth
+   registry and designated credential destination. Generate a cryptographically
+   random, expiring bootstrap token and establish `bootstrap-admin` as a service
+   administrator. Persist only its token hash, principal, permissions and expiry
+   in the authentication registry; deliver the token to the protected destination.
+3. The operator retrieves it using installer authority (cloud secret-store access,
+   Kubernetes RBAC, or local file ownership), not an unauthenticated service API.
+   `ows login --url SERVICE_URL --token-file /private/bootstrap-token` presents
+   that credential over the authenticated TLS connection.
+4. The service validates it against the pre-existing administrator record. The
+   administrator establishes normal human/service identities, tests another
+   administrative login, then revokes the bootstrap credential.
+
+Bootstrap uses a durable initialization marker and atomic uniqueness checks,
+including concurrent job attempts. “No currently valid admin token” is not the
+same as “never initialized”: token expiry/revocation never reopens bootstrap.
+On retry, reconcile the original private bootstrap operation and credential
+reference; do not generate/activate replacement admins opportunistically. Handle
+secret-store and database partial failure explicitly: retain a retrievable
+protected credential before exposing its administrator record, and never leave
+a committed admin that the installer cannot retrieve. If ownership or receipt
+state is uncertain, require private operator recovery rather than overwriting it.
+Lost/expired first credentials require an audited infrastructure-admin recovery
+procedure; there is no HTTP reset shortcut. Remove bootstrap-only permissions and
+jobs after successful setup.
+
+TLS server identity, API caller identity, and internal worker/OpenShell identity
+are separate. Terraform/Helm configures endpoint certificates and their rotation;
+internal mTLS credentials are not distributed as user login tokens. A local
+cluster can use an operator CA trusted explicitly by CLI/SDK, or a managed public
+certificate. Plain HTTP is limited to explicitly configured loopback development;
+never disable TLS verification to support local boxes.
+
+Do not generate/export the administrator bearer through Terraform state or its
+outputs. Marking an output sensitive does not remove it from state. Terraform
+provisions the destination and access policy; bootstrap writes the token directly.
+Do not read its value back through a Terraform data source. Kubernetes Secrets
+require restricted RBAC and appropriate encryption-at-rest; encoding alone is
+not encryption. Local token files require owner-only access. Tokens never appear
+in command arguments, browser storage, URLs, source control or installer logs.
+CLI contexts store endpoint/namespace and a secure credential reference.
+
+After bootstrap, the API's authentication/authorization behavior is identical
+on cloud, local Kubernetes and Docker/bare metal.
 
 ### Caller identity versus agent permission
 

@@ -50,7 +50,8 @@ boundaries separate; use SDK/protocol APIs instead of reading runtime tables.
 ## Pick an integration
 
 For the proposed remote SDK, authenticated service control plane and `ows` CLI,
-see [OpenWorker Service design](../docs/harness/OPENWORKER-SERVICE.md). This is a
+see [OpenWorker Service design](../docs/harness/OPENWORKER-SERVICE.md) and the
+[visual architecture review](../docs/harness/SERVICE-ARCHITECTURE.html). This is a
 design specification; use the current integration paths below until implemented.
 
 | Application | Interface |
