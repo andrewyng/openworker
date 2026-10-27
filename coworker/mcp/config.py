@@ -109,6 +109,26 @@ def load_mcp_servers(
     return [_parse(name, raw, secrets) for name, raw in merged.items()]
 
 
+def load_mcp_file(
+    path: str | Path, *, secrets: Optional[SecretStore] = None
+) -> list[MCPServerDef]:
+    """Parse the `mcpServers` map from ONE explicit JSON file — no global/workspace merge.
+
+    For a caller that points at a specific config rather than this computer's layered one
+    (the headless runner's ``--mcp-config``, e.g. a benchmark's own mcp.json). ``${VAR}``
+    refs resolve the same way as in ``load_mcp_servers``; a missing or malformed file
+    yields no servers. The file is the sole source, so the workspace-trust gate does not
+    apply — the caller chose this path explicitly.
+    """
+    secrets = secrets or SecretStore()
+    raw = _read(Path(path).expanduser())
+    return [
+        _parse(name, cfg, secrets)
+        for name, cfg in (raw.get("mcpServers") or {}).items()
+        if isinstance(cfg, dict)
+    ]
+
+
 # -- raw global-file mutation (REST) -------------------------------------------
 def read_global() -> dict[str, dict[str, Any]]:
     """Raw `mcpServers` map from the global file (no `${VAR}` resolution)."""

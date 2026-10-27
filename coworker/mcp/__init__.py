@@ -9,6 +9,7 @@ from .client import MCPManager
 from .config import (
     MCPServerDef,
     delete_global_server,
+    load_mcp_file,
     load_mcp_servers,
     patch_global_server,
     put_global_server,
@@ -20,6 +21,7 @@ __all__ = [
     "MCPManager",
     "MCPServerDef",
     "load_mcp_servers",
+    "load_mcp_file",
     "read_global",
     "put_global_server",
     "patch_global_server",
