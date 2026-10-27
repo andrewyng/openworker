@@ -51,7 +51,7 @@ class ProviderRouter(ProviderClient):
         """
         if ":" in model:
             prefix = model.split(":", 1)[0]
-            if get_descriptor(prefix) is not None:
+            if get_descriptor(prefix, getattr(self, "_secrets", None)) is not None:
                 return prefix
         return self._default
 
@@ -68,14 +68,14 @@ class ProviderRouter(ProviderClient):
             return client
 
     @staticmethod
-    def _bare(model: str) -> str:
+    def _bare(model: str, secrets: Any = None) -> str:
         """Strip a KNOWN provider prefix; the underlying SDK wants the bare model name. A model
         whose first segment isn't a provider (e.g. `qwen2.5-coder:32b` — a version tag, not a
         prefix) is returned unchanged, so the colon isn't mistaken for a provider separator.
         """
         if ":" in model:
             prefix, rest = model.split(":", 1)
-            if get_descriptor(prefix) is not None:
+            if get_descriptor(prefix, secrets) is not None:
                 return rest
         return model
 
@@ -98,7 +98,7 @@ class ProviderRouter(ProviderClient):
     ):
         self._note_use(model)
         return self._client_for(model).complete(
-            model=self._bare(model), messages=messages, tools=tools, **settings
+            model=self._bare(model, self._secrets), messages=messages, tools=tools, **settings
         )
 
     def stream(
@@ -111,7 +111,7 @@ class ProviderRouter(ProviderClient):
     ):
         self._note_use(model)
         return self._client_for(model).stream(
-            model=self._bare(model), messages=messages, tools=tools, **settings
+            model=self._bare(model, self._secrets), messages=messages, tools=tools, **settings
         )
 
     def capabilities(self, model: str):

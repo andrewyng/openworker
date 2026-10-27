@@ -442,7 +442,7 @@ def build_engine(
     # unless the caller withheld them (`openworker run --no-web-tools`).
     if web_tools:
         registry.register(make_web_search_tool(secrets))
-        registry.register(make_web_fetch_tool())
+        registry.register(make_web_fetch_tool(secrets))
     # ask_user: the universal human-in-the-loop Q&A primitive (every agent; engine-intercepted).
     if question_asker is not None:
         registry.register(ask_user_tool())
@@ -815,6 +815,13 @@ def build_engine(
             from .web import provider_name
 
             return {"search_provider": provider_name(secrets)}
+        if tool_name == "web_fetch":
+            # Same rule for web_fetch: when the page goes through the search service
+            # (Settings ▸ Customization), the card names it.
+            from .web import fetch_provider_name
+
+            via = fetch_provider_name(secrets)
+            return {"fetch_provider": via} if via else {}
         return {}
 
     engine.approval_extras = _approval_extras

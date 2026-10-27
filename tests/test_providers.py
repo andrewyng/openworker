@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -278,7 +281,8 @@ def test_stream_accumulates_tool_calls():
     )
 
 
-# -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral) ------
+# -- OpenAI-compatible vendor providers (Z AI, DeepSeek, Kimi, MiniMax, Qwen, xAI, Mistral,
+# NVIDIA NIM) ------------------------------------------------------------------------------
 
 COMPAT_VENDORS = {
     "zai": "https://api.z.ai/api/paas/v4",
@@ -288,6 +292,13 @@ COMPAT_VENDORS = {
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+    "atlascloud": "https://api.atlascloud.ai/v1",
+    "upstage": "https://api.upstage.ai/v1",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "huggingface": "https://router.huggingface.co/v1",
+    "cohere": "https://api.cohere.ai/compatibility/v1",
+    "siliconflow": "https://api.siliconflow.com/v1",
 }
 
 
@@ -467,6 +478,13 @@ def test_compat_models_route_and_get_tool_capabilities():
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
+        "orcarouter:anthropic/claude-sonnet-5",
+        "atlascloud:zai-org/glm-5.2",
+        "upstage:solar-pro4",
+        "cerebras:gpt-oss-120b",
+        "huggingface:zai-org/GLM-5.2",
+        "cohere:command-a-plus-05-2026",
+        "siliconflow:zai-org/GLM-5.2",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
@@ -498,6 +516,12 @@ def test_matrix_answers_capabilities_for_reseller_ids():
         "fireworks:accounts/fireworks/models/kimi-k2p6",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
+        "nebius:zai-org/GLM-5.2",
+        "orcarouter:anthropic/claude-sonnet-5",
+        # NIM ids are `vendor/model`, so NVIDIA's own models repeat the word in the
+        # routed id. Deliberate: the `z-ai/` and `deepseek-ai/` rows in matrix.py don't.
+        "nvidia:nvidia/nemotron-3-super-120b-a12b",
+        "groq:llama-3.3-70b-versatile",
     ):
         caps = capabilities_for(mid)
         assert caps.tools and caps.parallel_tool_calls and caps.streaming
@@ -545,14 +569,26 @@ def test_matrix_labels_and_custom_model_fallback():
     # 70→75 (2026-10-01, OPE-215): three OpenRouter rows (Nemotron 3 Ultra, Nemotron 3.5
     # Lightning, GLM 5.3). The pruning owed above is still not done; it remains the owner's
     # call and should come before this is raised again.
+    # 75→100 (2026-10-25, owner call): thirteen provider cards from the PR backlog land
+    # next, each with one to three rows; the prune of retired rows follows them as its own
+    # change, against a verified list of what each vendor still serves.
     # The `openrouter-account:` rows are aliases of the `openrouter:` rows (one source), so
     # they are excluded from the count rather than counted against it.
-    assert len([m for m in MATRIX if not m.startswith("openrouter-account:")]) < 75
+    assert len([m for m in MATRIX if not m.startswith("openrouter-account:")]) < 100
     assert all(e.caps.tools for e in MATRIX.values())
     # A custom (unlisted) reseller model falls back to the conservative default — usable,
     # but at the user's own risk (no parallel tool calls assumed).
     caps = capabilities_for("together:some-org/Brand-New-Model")
     assert caps.tools and not caps.parallel_tool_calls
+
+
+def test_groq_gpt_oss_rows_do_not_claim_parallel_tool_calls():
+    """console.groq.com/docs/tool-use (2026-10-25): GPT-OSS on Groq takes tools but not
+    parallel tool use; Llama 3.3 70B does both."""
+    assert capabilities_for("groq:llama-3.3-70b-versatile").parallel_tool_calls
+    for mid in ("groq:openai/gpt-oss-120b", "groq:openai/gpt-oss-20b"):
+        caps = capabilities_for(mid)
+        assert caps.tools and not caps.parallel_tool_calls
 
 
 def test_reseller_descriptors_and_matrix_stay_in_lockstep():
@@ -561,7 +597,10 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.matrix import models_for_provider
     from coworker.providers.registry import get_descriptor
 
-    for name in ("together", "fireworks", "openrouter"):
+    for name in (
+        "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
+        "novita", "groq",
+    ):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
         curated = models_for_provider(name)
@@ -652,3 +691,132 @@ def test_over_limit_max_tokens_is_dropped_and_retried():
     calls = client.chat.completions.calls
     assert turn.text == "ok" and len(calls) == 2
     assert "max_tokens" not in calls[1]
+
+
+# -- Azure OpenAI (its own card, issue #457) ---------------------------------------------
+# Verified against learn.microsoft.com/azure/ai-foundry/openai/api-version-lifecycle
+# (read 2026-10-26): base URL = resource endpoint + `/openai/v1`, no api-version, the stock
+# OpenAI client with an API key; the model id is the deployment name.
+
+
+def test_azure_descriptor_shape():
+    from coworker.providers.registry import get_descriptor
+
+    d = get_descriptor("azure")
+    assert d is not None and d.needs_key and d.kind == "api_key"
+    assert d.title == "Azure OpenAI"
+    assert [f.key for f in d.fields] == ["endpoint", "api_key"]
+    endpoint, key = d.fields
+    # The endpoint is a REQUIRED plain field — keyed `endpoint`, not `base_url`, so the GUI
+    # renders it as an ordinary row instead of folding it behind the custom-endpoint link.
+    assert endpoint.required and not endpoint.secret
+    assert key.required and key.secret
+    assert d.env_key == "AZURE_OPENAI_API_KEY"
+    assert d.recommended_model is None  # no catalogue: ids are deployment names
+    assert "deployment" in d.blurb
+
+
+@pytest.mark.parametrize(
+    "pasted,expected",
+    [
+        ("https://contoso.openai.azure.com", "https://contoso.openai.azure.com/openai/v1"),
+        ("https://contoso.openai.azure.com/", "https://contoso.openai.azure.com/openai/v1"),
+        ("  https://contoso.openai.azure.com/openai/v1/ ", "https://contoso.openai.azure.com/openai/v1"),
+        ("https://contoso.openai.azure.com/openai", "https://contoso.openai.azure.com/openai/v1"),
+        # Foundry and sovereign-cloud hosts are not second-guessed — any https host goes.
+        ("https://contoso.services.ai.azure.com", "https://contoso.services.ai.azure.com/openai/v1"),
+        ("https://contoso.openai.azure.us/", "https://contoso.openai.azure.us/openai/v1"),
+        ("contoso.openai.azure.com", "https://contoso.openai.azure.com/openai/v1"),
+        # A request URL copied from the portal: path and api-version query dropped.
+        (
+            "https://contoso.openai.azure.com/openai/deployments/gpt-5/chat/completions?api-version=2024-10-21",
+            "https://contoso.openai.azure.com/openai/v1",
+        ),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_azure_endpoint_normalisation(pasted, expected):
+    from coworker.providers.registry import normalize_azure_endpoint
+
+    assert normalize_azure_endpoint(pasted) == expected
+
+
+def test_azure_builder_targets_the_v1_api_with_the_profile_key():
+    from coworker.providers.openai_provider import OpenAIProvider
+    from coworker.providers.registry import build_provider_client
+
+    p = build_provider_client(
+        "azure", {"endpoint": "https://contoso.openai.azure.com", "api_key": "az-key"}, None
+    )
+    assert isinstance(p, OpenAIProvider)  # Chat Completions, as the custom-endpoint path did
+    assert p._base_url == "https://contoso.openai.azure.com/openai/v1"
+    assert p._api_key == "az-key"
+
+
+def test_azure_builder_env_key_fallback(monkeypatch):
+    from coworker.providers.registry import build_provider_client
+
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "az-env")
+    p = build_provider_client("azure", {"endpoint": "https://contoso.openai.azure.com/openai/v1"}, None)
+    assert p._api_key == "az-env"
+
+
+def test_azure_builder_never_leaks_the_openai_key(monkeypatch):
+    """Same guard as the compat vendors: an OpenAI key (env or SecretStore) is never sent
+    to an Azure host — a missing Azure key fails fast, naming Azure."""
+    from coworker.providers.registry import build_provider_client
+
+    class Store:
+        def get(self, name):
+            return {"api_key": "sk-openai-stored"} if name == "provider:openai" else None
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="Azure OpenAI API key"):
+        build_provider_client("azure", {"endpoint": "https://contoso.openai.azure.com"}, Store())
+
+
+def test_azure_builder_requires_an_endpoint(monkeypatch):
+    from coworker.providers.registry import build_provider_client
+
+    with pytest.raises(RuntimeError, match="endpoint"):
+        build_provider_client("azure", {"api_key": "az-key"}, None)
+
+
+def test_azure_configured_needs_endpoint_and_key(monkeypatch):
+    """An env key alone is not a working setup — there is nowhere to send it."""
+    from coworker.providers.registry import descriptor_configured, get_descriptor
+
+    d = get_descriptor("azure")
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    assert not descriptor_configured(d, {})
+    assert not descriptor_configured(d, {"api_key": "k"})
+    assert not descriptor_configured(d, {"endpoint": "https://c.openai.azure.com"})
+    assert descriptor_configured(d, {"endpoint": "https://c.openai.azure.com", "api_key": "k"})
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "env")
+    assert not descriptor_configured(d, {})
+    assert descriptor_configured(d, {"endpoint": "https://c.openai.azure.com"})
+
+
+def test_azure_models_route_by_prefix_and_default_to_agentic_capabilities():
+    from coworker.providers.capabilities import capabilities_for
+    from coworker.providers.router import ProviderRouter
+
+    router = ProviderRouter(secrets=None)
+    assert router._provider_name("azure:my-gpt-deployment") == "azure"
+    assert ProviderRouter._bare("azure:my-gpt-deployment") == "my-gpt-deployment"
+    # An arbitrary deployment name: tools + parallel calls, no vision claimed.
+    caps = capabilities_for("azure:my-gpt-deployment")
+    assert caps.tools and caps.parallel_tool_calls and caps.streaming and not caps.vision
+    # A deployment named after the model keeps the model's own profile.
+    assert capabilities_for("azure:gpt-5.5").vision
+    assert not capabilities_for("azure:o4-mini").parallel_tool_calls
+
+
+def test_openai_custom_endpoint_help_points_azure_users_at_the_card():
+    from coworker.providers.registry import get_descriptor
+
+    base = next(f for f in get_descriptor("openai").fields if f.key == "base_url")
+    assert "Azure OpenAI has its own card" in base.help
+    assert not base.required  # the old Azure-URL-in-OpenAI setup keeps working

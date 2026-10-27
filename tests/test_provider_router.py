@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from coworker.providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -72,6 +74,20 @@ def test_build_ollama_client_uses_base_url(monkeypatch):
     client._ensure_client()  # type: ignore[attr-defined]
     assert captured["base_url"] == "http://box:11434/v1"
     assert captured["api_key"] == "ollama"  # placeholder, Ollama ignores it
+
+
+def test_build_novita_client_uses_base_url(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    client = build_provider_client("novita", {"api_key": "sk-nov"}, secrets=None)
+    client._ensure_client()  # type: ignore[attr-defined]
+    assert captured["base_url"] == "https://api.novita.ai/openai/v1"
+    assert captured["api_key"] == "sk-nov"
 
 
 # -- router routing -------------------------------------------------------------
@@ -377,6 +393,166 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     assert mgr.set_provider("nope", {})["ok"] is False  # unknown provider rejected
 
 
+def test_custom_openai_compatible_provider_routes_and_persists(tmp_path, monkeypatch):
+    """A custom route owns its key/endpoint and strips only its own prefix. The slug
+    must not be a built-in provider's name (openrouter is one now), so a neutral one."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    created = mgr.create_custom_provider(
+        "acme",
+        "Acme Gateway",
+        {"api_key": "acme-test", "base_url": "https://llm.acme.example/v1"},
+    )
+    assert created["ok"] is True and created["provider"] == "acme"
+
+    providers = {p["name"]: p for p in mgr.get_providers()}
+    assert providers["acme"]["is_custom"] is True
+    assert providers["acme"]["values"] == {
+        "base_url": "https://llm.acme.example/v1"
+    }
+    assert "acme-test" not in str(providers)
+
+    router = mgr.provider
+    assert router._provider_name("acme:anthropic/claude-example") == "acme"
+    assert (
+        router._bare("acme:anthropic/claude-example", mgr.secrets)
+        == "anthropic/claude-example"
+    )
+    client = router._client_for("acme:anthropic/claude-example")
+    assert client._api_key == "acme-test" and client._base_url == "https://llm.acme.example/v1"
+
+    mgr.add_model("acme:anthropic/claude-example")
+    assert "acme:anthropic/claude-example" in mgr.get_settings()["models"]
+    assert mgr.remove_provider("acme")["ok"] is True
+    assert "acme" not in {p["name"] for p in mgr.get_providers()}
+    assert "acme:anthropic/claude-example" not in mgr.get_settings()["models"]
+    # Existing sessions retain the full routed model id. After removal that must
+    # fail locally, never fall through to whichever provider is now the default.
+    assert router._provider_name("acme:anthropic/claude-example") == "acme"
+    with pytest.raises(RuntimeError, match="was removed"):
+        router.complete(model="acme:anthropic/claude-example", messages=[])
+
+    # Re-creating the same route intentionally clears its tombstone.
+    assert mgr.create_custom_provider(
+        "acme",
+        "Acme Gateway",
+        {"api_key": "acme-recreated", "base_url": "https://llm.acme.example/v1"},
+    )["ok"]
+    assert router._client_for("acme:anthropic/claude-example")._api_key == "acme-recreated"
+
+
+def test_custom_provider_requires_safe_route_and_complete_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert not mgr.create_custom_provider("Bad Name", "Gateway", {})["ok"]
+    assert not mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "x", "base_url": "gateway.example/v1"}
+    )["ok"]
+    assert not mgr.create_custom_provider(
+        "remote-http", "Remote HTTP", {"api_key": "x", "base_url": "http://example.com/v1"}
+    )["ok"]
+    assert mgr.create_custom_provider(
+        "local-http", "Local HTTP", {"api_key": "x", "base_url": "http://127.0.0.1:8000/v1"}
+    )["ok"]
+
+
+def test_custom_provider_slug_cannot_shadow_a_built_in(tmp_path, monkeypatch):
+    """A custom route prefix is the model id's namespace; a built-in's name is taken."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.create_custom_provider(
+        "groq", "My Groq", {"api_key": "x", "base_url": "https://api.groq.com/openai/v1"}
+    )
+    assert res["ok"] is False and "already in use" in res["error"]
+    assert all(not p.get("is_custom") for p in mgr.get_providers() if p["name"] == "groq")
+
+
+def test_custom_provider_key_change_reaches_the_router(tmp_path, monkeypatch):
+    """Re-saving a custom provider's key rebuilds its client (the adopt step used to look
+    the descriptor up without the store and skip the refresh for custom routes)."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "acme", "Acme Gateway", {"api_key": "acme-1", "base_url": "https://llm.acme.example/v1"}
+    )["ok"]
+    assert mgr.provider._client_for("acme:some-model")._api_key == "acme-1"
+    assert mgr.set_provider("acme", {"api_key": "acme-2"})["ok"]
+    assert mgr.provider._client_for("acme:some-model")._api_key == "acme-2"
+
+
+def test_custom_provider_lists_models_from_its_server(tmp_path, monkeypatch):
+    """"Fetch from server" reads GET /models with the saved key; a server without the
+    listing comes back as a note, not a failure."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "acme", "Acme Gateway", {"api_key": "acme-test", "base_url": "https://llm.acme.example/v1"}
+    )["ok"]
+    seen = {}
+
+    def fake_get(url, headers=None, timeout=None):
+        seen.update(url=url, headers=headers or {})
+        return SimpleNamespace(status_code=200, json=lambda: {"data": [{"id": "acme-large"}, {"id": "acme-small"}]})
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    got = mgr.local_model_facts("acme")
+    assert [r["model"] for r in got["models"]] == ["acme:acme-large", "acme:acme-small"]
+    assert got["models"][0]["name"] == "acme-large" and "error" not in got
+    assert seen["url"] == "https://llm.acme.example/v1/models"
+    assert seen["headers"]["Authorization"] == "Bearer acme-test"
+
+    monkeypatch.setattr("httpx.get", lambda *a, **k: SimpleNamespace(status_code=404, json=lambda: {}))
+    got = mgr.local_model_facts("acme")
+    assert got["models"] == [] and "/models" in got["error"]
+
+
+def test_custom_provider_verify_allows_missing_models_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "test", "base_url": "https://gateway.example/v1"}
+    )["ok"]
+
+    monkeypatch.setattr(
+        "httpx.get", lambda *args, **kwargs: SimpleNamespace(status_code=404)
+    )
+    checked = mgr.verify_provider("gateway", {})
+    assert checked["ok"] is True and "does not expose /models" in checked["warning"]
+
+
+def test_custom_provider_verify_applies_endpoint_transport_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.create_custom_provider(
+        "gateway", "Gateway", {"api_key": "test", "base_url": "https://gateway.example/v1"}
+    )["ok"]
+
+    # Verify accepts unsaved form fields, so it must independently reject an
+    # unsafe replacement URL before it makes any request with the key.
+    monkeypatch.setattr(
+        "httpx.get", lambda *args, **kwargs: pytest.fail("unsafe endpoint was requested")
+    )
+    checked = mgr.verify_provider(
+        "gateway", {"base_url": "http://example.com/v1", "api_key": "test"}
+    )
+    assert checked["ok"] is False
+    assert "localhost or a private IP" in checked["error"]
+
+
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.
@@ -639,3 +815,49 @@ def test_manager_key_hygiene_stamps(tmp_path, monkeypatch):
     mgr2 = SessionManager(data_dir=tmp_path)
     provs2 = {p["name"]: p for p in mgr2.get_providers()}
     assert provs2["deepseek"]["last_used_at"] == first
+
+
+def test_manager_azure_card_saves_endpoint_and_key_and_verifies_at_the_resource(
+    tmp_path, monkeypatch
+):
+    """Settings ▸ Models for Azure OpenAI: both fields are required to save; the stored
+    endpoint comes back for prefilling, the key never does; Test probes the resource with
+    the merged (stored + typed) fields; nothing is auto-added to the picker (no catalogue)."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.set_provider("azure", {"api_key": "az-key"})
+    assert res["ok"] is False and "Endpoint" in res["error"]
+    res = mgr.set_provider(
+        "azure", {"endpoint": "https://contoso.openai.azure.com", "api_key": "az-key"}
+    )
+    assert res["ok"] and res["recommended_model"] is None
+
+    row = next(p for p in mgr.get_providers() if p["name"] == "azure")
+    assert row["configured"] is True
+    assert row["values"] == {"endpoint": "https://contoso.openai.azure.com"}
+    assert row["suggested_models"] == []
+    assert "api_key" not in row["values"]
+    assert not any(m.startswith("azure:") for m in mgr.get_settings()["models"])
+
+    # Test with the stored credentials: the probe goes to the resource's v1 model list.
+    seen: dict = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    assert mgr.verify_provider("azure", {}) == {"ok": True}
+    assert seen["url"] == "https://contoso.openai.azure.com/openai/v1/models"
+    assert seen["headers"]["Authorization"] == "Bearer az-key"
+
+    # A deployment the user adds routes to the azure provider.
+    added = mgr.add_model("azure:gpt-5-prod")
+    assert added["ok"] and "azure:gpt-5-prod" in added["models"]
+    assert mgr._model_provider("azure:gpt-5-prod") == "azure"

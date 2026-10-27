@@ -29,6 +29,7 @@ export function approvalItemFromPayload(d: any): ApprovalItem {
     category: d.category,
     standingTarget: d.standing_target || undefined,
     searchProvider: d.search_provider || undefined,
+    fetchProvider: d.fetch_provider || undefined,
     siteWall: d.site_wall || undefined,
     networkRequest: d.network_request
       ? {

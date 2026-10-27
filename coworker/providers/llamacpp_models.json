@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "about": "Models the llama.cpp setup suggests (UX-057). Read by coworker/providers/llamacpp_setup.py. Each names a Hugging Face repo and the GGUF files OpenWorker downloads into llama.cpp's own cache; `draft` is a second file for speculative decoding (`spec_type`). `size` is the bytes of all files, for the fit advice; a model too large for the machine is not offered. `ollama` is the same model's name in Ollama, for the download command shown next to it. `license` and `license_url` are shown before Download, read from the model card on Hugging Face (`license_source` says where; checked 2026-10-26). Edit in git; give a source.",
+  "models": [
+    {
+      "id": "nemotron-3.5-lightning",
+      "name": "Nemotron 3.5 Lightning",
+      "vendor": "NVIDIA",
+      "quant": "Q8 + MTP",
+      "repo": "ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+      "file": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+      "draft": "mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q8_0.gguf",
+      "spec_type": "draft-mtp",
+      "size": 35761208832,
+      "context_max": 1048576,
+      "features": ["thinking", "tools"],
+      "license": "OpenMDW-1.1",
+      "license_url": "https://openmdw.ai/license/1-1/",
+      "license_source": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 (model card: license: other, license_name: openmdw-1.1; the GGUF repo only says other)",
+      "source": "https://huggingface.co/ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF"
+    },
+    {
+      "id": "qwen3-coder-30b",
+      "name": "Qwen3 Coder 30B",
+      "vendor": "Alibaba",
+      "quant": "Q4",
+      "repo": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "file": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+      "size": 18556689568,
+      "context_max": 262144,
+      "features": ["tools"],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct/blob/main/LICENSE",
+      "license_source": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF (model card: license: apache-2.0, license_link as above)",
+      "ollama": "qwen3-coder:30b",
+      "source": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "gpt-oss 20B",
+      "vendor": "OpenAI",
+      "quant": "MXFP4",
+      "repo": "ggml-org/gpt-oss-20b-GGUF",
+      "file": "gpt-oss-20b-MXFP4.gguf",
+      "size": 12109566624,
+      "context_max": 131072,
+      "features": ["reasoning", "tools"],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/openai/gpt-oss-20b/blob/main/LICENSE",
+      "license_source": "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF (model card: license: apache-2.0)",
+      "ollama": "gpt-oss:20b",
+      "source": "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF"
+    }
+  ]
+}

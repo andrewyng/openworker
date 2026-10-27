@@ -8935,6 +8935,15 @@
           "reason": "Check the invoice object's PDF field",
           "category": "network"
         },
+        "web-fetch-via-provider": {
+          "name": "web_fetch",
+          "arguments": {
+            "url": "https://docs.stripe.com/api/invoices/object"
+          },
+          "reason": "Check the invoice object's PDF field",
+          "category": "network",
+          "fetch_provider": "exa"
+        },
         "site-off-the-allowed-sites": {
           "name": "web_fetch",
           "arguments": {
@@ -9236,6 +9245,30 @@
           }
         },
         "web-fetch": {
+          "id": "gallery-item",
+          "session_id": "gallery-session",
+          "kind": "approval",
+          "title": "Run `web_fetch`?",
+          "body": "Check the invoice object's PDF field",
+          "state": "pending",
+          "resolution": null,
+          "inbox": "default",
+          "created_at": "2026-09-17T09:30:00Z",
+          "resolved_at": null,
+          "visibility": "inbox",
+          "session_title": "Mention #3 · Invoice PDF download",
+          "session_agent": "swe-lead",
+          "session_exists": true,
+          "data": {
+            "tool": "web_fetch",
+            "arguments": {
+              "url": "https://docs.stripe.com/api/invoices/object"
+            },
+            "escalation": null,
+            "provenance": ""
+          }
+        },
+        "web-fetch-via-provider": {
           "id": "gallery-item",
           "session_id": "gallery-session",
           "kind": "approval",

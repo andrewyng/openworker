@@ -88,7 +88,8 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
   await expect(page.getByTestId("set-provider-ollama")).toContainText("No key needed");
   await expect(page.getByTestId("provider-group-local")).toContainText("Ollama");
   await expect(page.getByTestId("set-provider-zai")).not.toHaveClass(/bg-panel/);
-  // Five API-key providers fit under the fold; the "Show N more" line only appears past six.
+  // Six API-key providers fit under the fold; the "Show N more" line only appears past six.
+
   await expect(page.getByTestId("provider-more-api_key")).toHaveCount(0);
   await expect(page.getByTestId("pick-model-btn")).toBeVisible();
   await expect(page.getByTestId("provider-search")).toBeVisible();

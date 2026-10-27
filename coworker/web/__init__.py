@@ -5,14 +5,25 @@ from __future__ import annotations
 from .providers import (
     BraveProvider,
     DuckDuckGoProvider,
+    ExaProvider,
+    FirecrawlProvider,
     SearchResult,
+    SerperProvider,
     TavilyProvider,
     WebSearchProvider,
+    YouProvider,
     build_provider,
     provider_names,
 )
 from .fetch import make_web_fetch_tool
-from .tool import make_web_search_tool, provider_host, provider_name, resolve_provider
+from .tool import (
+    fetch_provider,
+    fetch_provider_name,
+    make_web_search_tool,
+    provider_host,
+    provider_name,
+    resolve_provider,
+)
 
 __all__ = [
     "SearchResult",
@@ -20,6 +31,10 @@ __all__ = [
     "DuckDuckGoProvider",
     "TavilyProvider",
     "BraveProvider",
+    "SerperProvider",
+    "ExaProvider",
+    "FirecrawlProvider",
+    "YouProvider",
     "build_provider",
     "provider_names",
     "make_web_search_tool",
@@ -27,4 +42,6 @@ __all__ = [
     "provider_name",
     "provider_host",
     "resolve_provider",
+    "fetch_provider",
+    "fetch_provider_name",
 ]
