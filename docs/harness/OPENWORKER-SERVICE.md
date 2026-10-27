@@ -216,8 +216,8 @@ moves a running workspace/process between providers.
 ### Reusing an execution environment across agents
 
 Return a service-generated **`environmentId`** with each session creation receipt,
-and expose it as `session.environmentId`. The ID maps to an immutable provider
-binding in the service. It is sufficient to request another attachment without
+and expose it as `session.environmentId`. The ID maps to a versioned provider binding in the service; each admitted
+binding revision pins verified execution and storage identities. It is sufficient to request another attachment without
 requiring the caller to know pod names, remote sandbox IDs or gateway credentials.
 Authorization and readiness checks still apply.
 
@@ -254,6 +254,40 @@ file-write coordination: use the existing hashes/edit conflict checks, task
 coordination, or separate working directories. Concurrent servers can conflict on
 ports within one environment. Untrusted tenants must not share an environment.
 
+### Shared-workspace use cases
+
+Primary use cases are a coding agent and verifier in one Agent Team, or several
+agents belonging to one user/project working in separate directories or Git
+worktrees on the same execution machine. The verifier may inspect the coder's
+output in place or a named revision/check-out. The application/team coordinates
+when an artifact is ready for verification; sharing alone does not make concurrent
+file reads a coherent snapshot.
+
+Proposed session option `workingDirectory` is a workspace-relative directory:
+
+```typescript
+const coding = await coder.newSession({
+  runtimeProfile: 'team-workspace',
+  workingDirectory: 'worktrees/coder',
+});
+const verification = await verifier.newSession({
+  environmentId: coding.environmentId,
+  workingDirectory: 'worktrees/verifier',
+});
+```
+
+The directory must exist before use (or be created through a separately authorized
+workspace setup operation). Validate traversal, symlinks and allowed mount roots.
+Do not silently create Git branches/worktrees as a side effect of attachment.
+A working directory is a default execution location, not a security boundary;
+the profile and actual sandbox enforcement define accessible files. Worktrees
+share repository metadata and may require Git coordination. A verifier's narrower
+tool permissions remain separate from the shared machine's OS authority.
+All sessions consume the same environment's aggregate CPU/RAM capacity; track
+attachment limits and resource pressure. Worktree separation does not separate
+network ports. Tests must cover two agents attaching/detaching independently,
+conflicting writes/ports, and verifier reads of a selected committed revision.
+
 Default profiles are exclusive. A shared profile explicitly allows multiple
 concurrent attachments; switching an existing exclusive environment to shared is
 not an implicit side effect of starting another agent. Closing/cancelling one
@@ -268,6 +302,63 @@ A reusable stored reference includes service identity, namespace and environment
 ID so it cannot accidentally attach to an unrelated service. Deleted, incompatible
 or unknown environments return explicit errors, never a fresh workspace under the
 same ID. Reusing an environment does not waive session/runner upgrade restrictions.
+
+### Provider-specific execution and storage identities
+
+Expose the stable OpenWorker `environmentId` to applications. Do not expose a
+provider's sandbox ID as though it were a universal environment identifier.
+An environment can comprise several provider resources with different lifetimes.
+Store their verified identities together in a provider-owned binding payload.
+Illustrative logical schema, not literal Kubernetes/Modal API fields:
+
+```json
+{
+  "environmentId": "env_project_42",
+  "bindingRevision": 1,
+  "provider": "openshell-local",
+  "runtimeProfileRevision": "team-workspace@1",
+  "execution": {"providerResourceId": "sandbox-or-pod-id", "generation": "generation-1"},
+  "storage": [
+    {"role": "workspace", "providerResourceId": "workspace-or-volume-id",
+     "mountPath": "/sandbox", "persistence": "retained", "management": "service"}
+  ]
+}
+```
+
+The provider adapter validates this schema/version and supplies the exact identity
+fields needed by its backend; keep opaque provider details out of generic client
+logic. No credentials are embedded in the binding. Each resource records ownership
+and lifecycle independently (service-managed versus application-managed).
+
+- **OpenShell first:** retain the gateway sandbox identity, its verified persistent
+  workspace scope, accepted policy and image identity. Obtain storage identity
+  through the supported gateway/provider contract. Do not invent an OpenShell
+  volume ID or bypass the gateway by inspecting arbitrary Kubernetes objects.
+- **Native Kubernetes adapter, later:** record cluster/namespace identity and pod
+  UID, plus persistent claim UID and appropriate backing-volume identity. Names
+  alone are insufficient because a deleted name can be reused. Record mount/access
+  mode, storage class and retention policy as needed to verify safe reattachment.
+- **A provider such as Modal, later:** if compute and persistent storage are
+  separate resources, retain both the sandbox reference and every attached volume
+  reference, mount point and ownership. Qualify its actual mount, consistency and
+  lifecycle semantics before claiming compatibility; do not assume volume sharing
+  or data flush behavior from an ID alone.
+
+Compute loss and workspace loss are different states. Stopping or replacing a
+sandbox must not silently delete its retained workspace. Conversely, a running
+sandbox with a missing/replaced volume is not the original environment. Reject
+reattachment on identity mismatch; never substitute an empty disk under the same
+environment ID. Process handles do not survive compute replacement.
+
+Recreating compute while retaining the environment ID requires an explicit,
+idempotent recovery operation: verify retained storage, compatible image/profile
+and permissions, fence/reconcile the old execution instance, then atomically admit
+a new binding revision and attachment generation. Stale workers cannot act against
+the new generation. Providers that cannot prove these conditions report recovery
+unsupported or unknown. This is not automatic live migration and does not waive
+existing session/runner compatibility requirements. Workspace deletion requires
+its own authorization/retention decision; external volumes are never deleted
+merely because the service released its attachment.
 
 ### Provisioning, registration and attachment mechanics
 
@@ -374,6 +465,41 @@ Authentication is mandatory, including local service testing. Bootstrap the
 first administrator using a local install/job command and private credential
 output, not an unauthenticated HTTP registration endpoint. Existing authorization
 checks and audit transactions must remain effective during migration to `/v1`.
+
+### Caller identity versus agent permission
+
+`Harness.start()` operates inside a trusted application/process boundary. It does
+not require a service login, although its tools still follow runtime policy.
+`Harness.connect()` crosses a service boundary and always authenticates the
+application, user or service account making the request. An LLM is not an
+independent login identity and does not choose or receive the caller's token.
+
+Example: the product backend authenticates as `learning-app`. Its grant permits
+running `coder@v1` and `verifier@v1` in project P using `team-workspace`, plus
+attachment to project P's environments. That grant does not permit publishing a
+new agent, changing RuntimeProfiles, viewing project Q, or using an arbitrary
+provider. Human CLI/UI users authenticate as themselves with their own grants.
+
+For each session/run admission check, in one authorized transaction where feasible:
+
+1. The caller credential is valid and not expired/revoked.
+2. The caller can execute this deployed, active agent release in this namespace/project.
+3. The requested RuntimeProfile/model/provider use is allowed by caller and release policy.
+4. Existing-environment ownership, attachment grants, sharing and compatibility match.
+5. Quotas/capacity admission and the idempotency receipt permit the request.
+
+Record the actor, release, effective grants and resolved binding. The worker may
+execute only admitted work using its private worker identity; the runner receives
+scoped execution credentials, not the user's service-admin or model-provider key.
+Team-created child agents inherit only explicitly delegated, bounded authority
+and approved releases, never wider permissions than the parent admission allows.
+
+A backend acting for users must use service-verified delegation or scoped
+principals/project grants. A caller-supplied `userId` is not authentication and
+must not authorize access to another user's environment. Reads, SSE, reconnects,
+approvals and cancellation enforce their own scopes; possession of a session or
+environment ID grants nothing by itself. As already specified, revocation blocks
+new admissions but does not pretend to undo an action already admitted.
 
 Proposed namespace-scoped permission bundles (enforced as explicit permissions,
 not hard-coded UI-only roles):
