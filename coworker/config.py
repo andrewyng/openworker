@@ -90,7 +90,8 @@ class Config:
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
-    # | "tavily" | "brave" | "serper" | "exa" | "firecrawl" (the keyed ones need a key).
+    # | "tavily" | "brave" | "serper" | "serply" | "exa" | "firecrawl" (the keyed ones need
+    # a key).
     # Settings ▸ Customization writes the choice (and the keys) to the secret store's
     # `web_search:default` profile, which wins over this value.
     web_search_provider: str = "duckduckgo"
