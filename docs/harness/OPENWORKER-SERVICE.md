@@ -96,13 +96,13 @@ const service = await Harness.connect({
 
 const coder = await service.agent('coder@v1');
 const session = await coder.newSession({
-  requestId: 'workspace-42-session',
-  environment: { id: 'env_workspace_42' },
+  idempotencyKey: 'workspace-42-session',
+  runtimeProfile: 'standard', // Optional: otherwise use the authorized default.
   // Optional; must be allowed by the deployed agent and provider grants.
   model: { provider: 'primary', name: modelId },
 });
 const run = await session.send('Implement the requested feature.', {
-  submissionId: 'feature-456',
+  idempotencyKey: 'feature-456',
 });
 for await (const event of run.events()) render(event);
 const result = await run.result();
@@ -135,7 +135,7 @@ an unreviewed definition to a production cluster. In service mode:
   deploy`; a release administrator activates it. A development policy may grant
   both capabilities to the same principal.
 - Definitions describe instructions, tools, skills, model defaults, compaction
-  defaults and permitted environment profiles. Teams use the same release model.
+  defaults and permitted RuntimeProfiles. Teams use the same release model.
 - Tools must be registered in compatible trusted worker/runner images or explicit
   MCP integrations. A JavaScript function in the caller cannot be shipped as JSON
   and executed remotely. Remote sessions reject local application callbacks.
@@ -151,69 +151,194 @@ A connected client's `disconnect()` only closes client resources. It never stops
 service workers or cancels runs. Local process shutdown retains its existing
 meaning. API capability flags describe genuine backend differences.
 
-## 4. Execution-environment selection
+## 4. RuntimeProfiles and reusable execution environments
 
-`newSession()` accepts exactly one of:
+A **RuntimeProfile** is the application-facing choice of where and under what
+constraints an agent executes. An execution environment is the actual sandbox
+allocated internally from that profile. Ordinary applications need not provision
+an environment separately before starting a session.
 
-```typescript
-environment: { id: 'env_existing' }                 // attach an admitted environment
-environment: { profile: 'isolated-linux-small' }    // provision from an approved profile
+Infrastructure hosting and execution placement are independent. For example,
+OpenWorker Service can run on EKS with an OpenShell gateway in that cluster,
+while another registered provider supplies remote execution. Start with OpenShell;
+other provider adapters require separate implementation and qualification.
+
+Administrators register provider instances (gateway/API identity plus secret
+references) and immutable RuntimeProfile revisions. Example proposed configuration:
+
+```yaml
+defaultRuntimeProfile: standard
+runtimeProfiles:
+  standard:
+    provider: openshell-local
+    image: registry.example/runner@sha256:<approved-digest>
+    cpu: 2
+    memoryMB: 4096
+    permissions: { filesystem: workspace-only, network: approved-destinations }
+    sharing: exclusive
+    persistence: project
+  team-workspace:
+    provider: openshell-local
+    image: registry.example/runner@sha256:<approved-digest>
+    cpu: 4
+    memoryMB: 8192
+    permissions: { filesystem: workspace-only, network: approved-destinations }
+    sharing: shared
+    persistence: project
 ```
 
-If omitted, use the deployed agent's authorized default profile. If no default
-exists, return a validation error. Never silently use the API/worker filesystem.
-The server resolves namespace ownership, caller grants, agent compatibility,
-image/runner identity, sharing mode, resource/network policy and capacity.
+The permissions values illustrate policy references, not a replacement for the
+existing resource-policy schema. Profiles also define bounded lifetime, tool
+credential references and allowed resource overrides. `memoryMB` means execution
+RAM; conversational memory/compaction is configured separately. Agents must have
+permission to use a profile; possessing its name does not grant access.
 
-An environment profile is an immutable operator-managed configuration: provider,
-image digest, workspace persistence, CPU/memory limits, network/filesystem grants,
-credential references, lifetime and exclusive/shared attachment policy. Caller
-resource overrides are bounded by that profile. An environment ID is not a
-credential and does not itself authorize access.
+An agent release can select a default `runtimeProfile`. Session creation can
+specify an authorized override. Resolve in this order: explicit session choice,
+agent default, namespace default, service default. Pin the resolved immutable
+profile revision and provider binding in the session/environment record. If no
+valid default exists, return a configuration error, not worker-local execution.
 
-Environment creation has a durable operation ID and idempotency key. A session
-request can return `202 provisioning` with its session/operation IDs; the SDK
-waits for readiness unless cancelled by the caller. Cancelling the wait does not
-cancel provisioning. An unknown provisioning result is reconciled with the
-original remote identity; it is never replaced by a second environment.
+```typescript
+const coder = await service.agent('coder@v1');
+const session = await coder.newSession(); // Uses the resolved RuntimeProfile.
 
-Default: one exclusive workspace per session or explicitly authorized project.
-Shared environments require explicit grants and share filesystem/network
-permissions; they are unsuitable for mutually untrusted learners. Closing a
-session releases its attachment. Environment deletion and workspace deletion are
-separate explicit operations, never consequences of a client disconnect.
+const alternate = await coder.newSession({ runtimeProfile: 'burst' });
+// A separately configured/authorized remote profile; no automatic migration.
+```
+
+Multiple profiles may select different providers. Bursting initially means placing
+new environments on an explicitly chosen profile. Automatic placement is a later
+administrator-defined routing policy with cost/capacity constraints, permitted
+providers and no silent weakening of security. Neither selection nor scale-up
+moves a running workspace/process between providers.
+
+### Reusing an execution environment across agents
+
+Return a service-generated **`environmentId`** with each session creation receipt,
+and expose it as `session.environmentId`. The ID maps to an immutable provider
+binding in the service. It is sufficient to request another attachment without
+requiring the caller to know pod names, remote sandbox IDs or gateway credentials.
+Authorization and readiness checks still apply.
+
+```typescript
+const coder = await service.agent('coder@v1');
+const reviewer = await service.agent('reviewer@v1');
+
+const codingSession = await coder.newSession({
+  runtimeProfile: 'team-workspace',
+  idempotencyKey: 'project-42-coder',
+});
+await app.projects.saveEnvironment('project-42', codingSession.environmentId);
+
+const reviewSession = await reviewer.newSession({
+  environmentId: codingSession.environmentId,
+  idempotencyKey: 'project-42-reviewer',
+});
+```
+
+`environmentId` and `runtimeProfile` are mutually exclusive session inputs.
+Attaching uses the environment's existing profile; it cannot change its provider,
+permissions, image or memory allocation. Both agents must be compatible with
+that profile and worker/runner cohort. The service checks namespace/project
+ownership, caller grants and sharing policy. Same-user ownership permits a useful
+default scope but is not a bypass for cross-project or cross-namespace access.
+An environment ID is a lookup key, never an access token.
+
+Two attached sessions have independent conversations, plans, approvals and private
+session memory. They share workspace files and the environment's filesystem/network
+authority. Runner attachments and process handles remain session-scoped unless an
+explicit shared-process API is introduced. Do not assume an agent can control
+another session's process by reusing its handle. Shared filesystem access is not
+file-write coordination: use the existing hashes/edit conflict checks, task
+coordination, or separate working directories. Concurrent servers can conflict on
+ports within one environment. Untrusted tenants must not share an environment.
+
+Default profiles are exclusive. A shared profile explicitly allows multiple
+concurrent attachments; switching an existing exclusive environment to shared is
+not an implicit side effect of starting another agent. Closing/cancelling one
+session releases only its attachment and owned processes, not other sessions'
+attachments or the shared environment. Last-attachment release follows a declared
+retention policy; data deletion remains a separate authorized operation.
+
+Expose authorized environment metadata through `service.environments.get(id)`:
+provider name, resolved RuntimeProfile revision, lifecycle state, ownership,
+sharing mode and active attachments. Provider credentials are never returned.
+A reusable stored reference includes service identity, namespace and environment
+ID so it cannot accidentally attach to an unrelated service. Deleted, incompatible
+or unknown environments return explicit errors, never a fresh workspace under the
+same ID. Reusing an environment does not waive session/runner upgrade restrictions.
+
+### Provisioning, registration and attachment mechanics
+
+Profile-based session creation durably allocates session/environment IDs and a
+provisioning operation before contacting the provider. It can return `202` with
+those IDs; the SDK waits for readiness before returning a usable session. The
+receipt remains inspectable if that wait is cancelled or the connection is lost.
+Cancelling a wait does not delete the environment or cancel provisioning. Repeating
+the same idempotency key retrieves the original operation.
+
+Workers attach only after the environment is ready and its image, workspace,
+policy and ownership have been verified. Provider create/attach operations use
+stable internal operation IDs. An unknown result is reconciled against the
+original remote identity; it is never replaced with another environment.
+
+Advanced callers may explicitly create an environment from a RuntimeProfile or
+register an existing application-owned sandbox through management APIs. Registration
+inspects and verifies the remote object against an approved profile before issuing
+an environment ID. The service does not own deletion of application-managed
+objects. Neither registration nor an arbitrary remote ID proves authorization.
 
 LLM credentials stay on workers. ToolRunner receives only credentials scoped to
 its permitted tools/resources. External providers may use authenticated outbound
 connections or a verified private gateway; no generic inbound public ToolRunner
 port is required. Provider-specific connectivity and identity must be qualified.
-Modal/Fly.io integration is an adapter milestone, not assumed support.
 
 ## 5. Submitting work to a running cluster
 
 Like submitting work to an existing compute cluster, callers choose an admitted
-agent release and an environment/profile, then receive durable IDs:
+agent release and a RuntimeProfile or existing environment, then receive durable IDs:
 
 ```sh
 ows context add dev --url http://127.0.0.1:8080 --namespace demo
 ows context use dev
 ows login --context dev --token-file /private/service-token
-ows agent deploy --file coder.yaml --request-id deploy-coder-v1
-ows agent activate coder@v1 --request-id activate-coder-v1
-ows submit --agent coder@v1 --environment env_workspace_42 \
-  --message 'Implement the requested feature.' --request-id feature-456
+ows agent deploy --file coder.yaml --idempotency-key deploy-coder-v1
+ows agent activate coder@v1 --idempotency-key activate-coder-v1
+ows submit --agent coder@v1 --runtime-profile standard \
+  --message 'Implement the requested feature.' --idempotency-key feature-456
 ows watch --session SESSION_ID --run RUN_ID
-ows send --session SESSION_ID --message 'Also add tests.' --request-id followup-001
-ows cancel --session SESSION_ID --run RUN_ID --request-id cancel-001
+ows send --session SESSION_ID --message 'Also add tests.' --idempotency-key followup-001
+ows cancel --session SESSION_ID --run RUN_ID --idempotency-key cancel-001
 ```
 
 `submit` atomically admits a new session and its initial run (or one durable
 submission resource owning both), then returns IDs and `queued`/`provisioning`.
 A worker starts only after the authorized environment is ready. It is not a
-promise of immediate execution. Request ID plus principal/namespace and payload
-hash uniquely identifies admission. Exact repeats return the original receipt;
-a changed payload under the same ID is a conflict. Cross-namespace reuse does
-not expose receipts. SDK-generated IDs are stable across transport retries.
+promise of immediate execution. The service generates unique session, run,
+environment and operation IDs; these resource IDs are not caller tracing IDs.
+
+The optional SDK `idempotencyKey` / CLI `--idempotency-key` maps to the REST
+`Idempotency-Key` header. The SDK/CLI generates a key before the first mutation
+when omitted and retains it across retries. Raw REST clients supply a key for
+mutations; reject missing keys rather than silently invent deduplication behavior
+that clients cannot recover. Callers supply a stable application key when they
+need deduplication across application restarts. SDK-generated keys are returned
+in admission handles/errors so an uncertain request can be inspected.
+
+Principal + namespace + operation kind + idempotency key identifies admission;
+the canonical payload hash detects conflicts. Same key and payload returns the
+original receipt; a changed payload is `409`. Cross-namespace reuse cannot expose
+receipts. Internal submission IDs remain stable and map to the same resource;
+existing reference `request_id`/`submission_id` fields are translated internally,
+not renamed silently on the old protocol. Preserve deduplication receipts for
+the resource lifetime; advertise retention, and reject known expired keys rather
+than treating them as permission to repeat an external action.
+
+`requestId` / `X-Request-ID` is solely for tracing an individual HTTP attempt.
+The service supplies a correlation ID in each response. It may differ between
+retries and never controls deduplication. Audit records correlate request IDs,
+resource IDs and the admission identity without storing credentials.
 
 `send` submits another run on an existing session. V1 allows one active run per
 session: conflicting work returns `409 session_busy`, not an invisible queue.
@@ -258,7 +383,7 @@ not hard-coded UI-only roles):
 | Viewer | Read authorized agents, sessions, events and operations. |
 | Runner | Create sessions/runs and send permitted controls in granted environments. |
 | Publisher | Upload/validate agent versions; cannot activate them by default. |
-| Release administrator | Activate/retire agent versions and manage permitted profiles/provider configuration. |
+| Release administrator | Activate/retire agent versions and manage permitted RuntimeProfiles/provider configuration. |
 | Service administrator | Manage credentials, quotas, worker-pool capacity and service configuration. |
 
 Tool approvals are separate permissions, not implied by publisher/service-admin
@@ -270,7 +395,7 @@ isolation; execution isolation remains separately enforced.
 Deployments transition through `uploaded → validated → approved → active`, with
 failure/rejection/retirement states. Validation checks bundle schema, tool and
 provider bindings, image provenance policy, compatible worker cohorts and allowed
-environment profiles. Activation is separately audited and can require a distinct
+RuntimeProfiles. Activation is separately audited and can require a distinct
 approver. No agent-created text can grant deployment permission. A new release
 never mutates existing sessions. Emergency disablement and cancellation are
 explicit operations with documented effects on pending/active work.
@@ -296,18 +421,19 @@ OpenAPI description and SSE event schemas, including limits and structured error
 | `/capabilities`, `/auth/me` | Version/features/limits and caller grants. |
 | `/agents`, `/agents/{id}/versions` | List, upload declarative versions, validate and inspect. |
 | `/agents/{id}/versions/{version}/activate` | Separate authorized activation command. |
-| `/environments`, `/environment-profiles` | Provision/attach metadata, inspect, release/delete and reconcile. |
+| `/execution-providers` | Register/validate execution backends and their credential references. |
+| `/environments`, `/runtime-profiles` | Provision/attach metadata, inspect, release/delete and reconcile. |
 | `/submissions` | Atomic new-session + initial-run admission and receipt lookup. |
 | `/sessions`, `/sessions/{id}/turns` | Session creation/read and additional run admission. |
 | `/sessions/{id}/controls`, `/sessions/{id}/events` | Priority controls, receipts and cursor-based SSE. |
-| `/providers`, `/providers/{id}/credentials` | Validated provider revisions, write-only secret updates, health checks. |
+| `/model-providers`, `/model-providers/{id}/credentials` | Validated provider revisions, write-only secret updates, health checks. |
 | `/policies`, `/worker-pools`, `/configuration` | Validated revisions, desired capacity and operational limits. |
 | `/operations/{id}` | Durable `accepted/applying/applied/failed/unknown` status and reconciliation. |
 | `/credentials`, `/audit` | Issue/revoke service identities and read authorized audit. |
 
-Reads are scoped before pagination. Writes use request IDs and payload conflict
-checks. Configuration edits also require an expected revision/ETag to reject lost
-updates. Responses separate admission, desired state and observed/applied state.
+Reads are scoped before pagination. Writes use idempotency keys and payload
+conflict checks; request IDs are separate per-attempt tracing metadata.
+Configuration edits also require an expected revision/ETag to reject lost updates. Responses separate admission, desired state and observed/applied state.
 Long operations return `202` plus an operation ID; never report success merely
 because a Kubernetes/provider request was submitted. Deletes respect active
 references and retention policy. Errors include a safe code, request ID and retry
@@ -335,9 +461,23 @@ Changes apply to new sessions unless an explicit, audited active-session update
 is supported at a safe boundary. Credential rotation is intentionally different.
 Reviewer model/provider settings remain distinct from the working agent's model.
 
-### Scaling
+### Scaling and infrastructure ownership
 
-`ows pool scale coder --replicas 4 --request-id scale-001` writes desired state;
+Terraform (or another IaC tool) provisions the cloud account resources: VPC/subnets,
+cluster, node-pool instance types and min/max capacity, IAM, database and storage.
+Helm installs the service, UI and worker pools on that infrastructure. Node/pod
+autoscalers then adjust within operator-approved bounds; Terraform should not
+continually force a live replica count owned by an autoscaler.
+
+The service API/`ows`/UI controls logical worker capacity, worker slots, admission
+quotas and execution RuntimeProfiles within those bounds. It does not create cloud
+nodes or expand the operator's spending ceiling through ordinary agent requests.
+If Kubernetes lacks capacity, report pending/blocked scheduling; node autoscaling
+may satisfy it within its configured limits. Expanding those limits or adding a
+new cloud/provider remains an infrastructure/operator change. External execution
+provider capacity and costs are separately bounded by its registered profiles.
+
+`ows pool scale coder --replicas 4 --idempotency-key scale-001` writes desired state;
 the platform controller reconciles it and reports observed capacity/readiness.
 Also expose drain, pause admissions, namespace quotas, worker slots and maximum
 queued work. Scaling workers does not scale execution-provider sandboxes or
@@ -388,10 +528,10 @@ single-host development is not HA. Persist database and workspace data separatel
 ```sh
 ows dev up --directory .ows-dev                 # explicit local development stack
 ows login --context local --token-file .ows-dev/admin-token
-ows agent deploy --file examples/coder.yaml --request-id local-coder-v1
-ows agent activate coder@v1 --request-id local-activate-v1
-ows submit --agent coder@v1 --environment-profile local-dev \
-  --message 'Build a quiz app' --request-id local-quiz-001
+ows agent deploy --file examples/coder.yaml --idempotency-key local-coder-v1
+ows agent activate coder@v1 --idempotency-key local-activate-v1
+ows submit --agent coder@v1 --runtime-profile local-dev \
+  --message 'Build a quiz app' --idempotency-key local-quiz-001
 ows dev down                                  # preserves volumes by default
 ```
 
@@ -437,6 +577,8 @@ are explicit versioned jobs run by an installer identity. Never use a publicly
 reachable first-admin bootstrap route. Secrets are referenced from trusted stores.
 UI deployment is optional; CLI/API users have identical capabilities.
 
+Terraform is the recommended infrastructure reference, not a runtime dependency:
+customers may bring an existing cluster provisioned by any supported process.
 Separate future infrastructure modules can provision EKS/AKS, VPC/subnets, database,
 identity, storage, certificates and the chart. They must present an account/region,
 resource plan, estimated cost controls and cleanup ownership before applying.
@@ -453,10 +595,12 @@ scripts are qualification tools, not an unrestricted customer provisioner.
    lost acknowledgments, duplicate admission, reconnect to another API, controls
    and read-only disconnect. Local SDK remains compatible.
 2. **Agent releases and environment bindings.** Implement deploy/validate/activate,
-   grants, immutable release resolution, environment profiles and asynchronous
+   grants, immutable release resolution, RuntimeProfiles and asynchronous
    provisioning receipts. Verify an undeployed/unapproved agent cannot run, tool
    exposure cannot exceed deployed grants, and uncertain create/attach cannot
-   duplicate environments. Normalize live unknown tool outcomes and test model
+   duplicate environments. Verify returned environment IDs attach a second
+   authorized agent, keep private conversation/memory separate, reject unauthorized
+   or exclusive attachments, and preserve the other session when one detaches. Normalize live unknown tool outcomes and test model
    read-before-retry with no automatic replay and no continuation after cancellation.
 3. **`ows` plus Docker reference.** Context/login/agent/submit/send/watch/cancel,
    operation inspection and idempotent dev lifecycle. Qualify clean Docker setup,
