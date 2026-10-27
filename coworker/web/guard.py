@@ -110,6 +110,11 @@ def _vet(url: str) -> tuple[Optional[str], Optional[str]]:
             return f"refusing to fetch {host} ({ip}): {reason}", None
         if pin is None:
             pin = raw
+    if pin is None:
+        # Empty or garbage answers (a resolver that returns no usable record at all).
+        # Falling through would allow the fetch and leave the client to resolve the
+        # name itself — unvetted and unpinned, the one path around this guard.
+        return f"could not resolve {host}: no usable address", None
     return None, pin
 
 
