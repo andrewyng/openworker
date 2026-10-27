@@ -678,6 +678,15 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// Use native page zoom, not CSS scaling: the viewport must reflow with the UI.
+#[tauri::command]
+fn set_ui_zoom(window: tauri::WebviewWindow, factor: f64) -> Result<(), String> {
+    if !factor.is_finite() || !(0.5..=2.0).contains(&factor) {
+        return Err("UI zoom must be between 0.5 and 2.0".into());
+    }
+    window.set_zoom(factor).map_err(|error| error.to_string())
+}
+
 // --- Auto-update (tauri-plugin-updater) -------------------------------------------
 // The GUI drives updates through these commands (same invoke bridge as everything
 // else — no global plugin JS): check, background pre-download, install. Update
@@ -805,6 +814,7 @@ pub fn run() {
             None,
         ))
         .invoke_handler(tauri::generate_handler![
+            set_ui_zoom,
             pick_folder,
             get_autostart,
             set_autostart,

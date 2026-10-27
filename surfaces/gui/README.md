@@ -44,6 +44,15 @@ npm install        # first time
 npm run tauri dev  # builds the shell, launches the window, starts the server
 ```
 
+## Desktop UI zoom
+
+Use **Cmd + =** (or **Cmd + +**) to zoom in, **Cmd + -** to zoom out,
+and **Cmd + 0** to reset to 100%. On Windows/Linux, use **Ctrl** instead of Cmd.
+Zoom changes in 10-percentage-point steps from 50% to 200% and is remembered on
+this device across restarts. It scales the whole interface, independently of the
+Text size setting, and also works while typing in the composer. The browser
+build keeps the browser's own zoom shortcuts and preferences.
+
 ## Tests
 
 ```bash
