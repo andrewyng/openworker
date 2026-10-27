@@ -208,6 +208,11 @@ pub struct Harness {
 }
 
 impl Harness {
+    pub async fn connect<T: crate::service::ConnectTarget>(
+        target: T,
+    ) -> std::result::Result<T::Connected, T::Error> {
+        target.connect().await
+    }
     /// Register an agent after startup. Exact repeats are safe; changes need a new ID.
     pub async fn create_agent(&self, definition: Agent) -> Result<AgentHandle> {
         if self.client.info()["capabilities"]["dynamic_agents"] != true {
@@ -244,7 +249,7 @@ impl Harness {
     }
     /// Wrap any connected client whose host supports agent runs, e.g. one
     /// built from a hand-written `HostConfig` with `agents`.
-    pub async fn connect(client: HarnessClient) -> Result<Self> {
+    pub(crate) async fn connect_client(client: HarnessClient) -> Result<Self> {
         if client.info()["capabilities"]["agent_runs"] != true {
             return Err(Error::Setup("Host does not support agent runs".into()));
         }

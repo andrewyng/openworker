@@ -27,7 +27,8 @@
     "test:dynamic-agents": "npm run build && node --test --test-concurrency=1 test/dynamic-agents.test.mjs",
     "test:openrouter-streaming": "npm run build && node --test test/openrouter-streaming.test.mjs",
     "test:provider-auth": "npm run build && node --test test/provider-auth.test.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "test:service": "npm run build && node --test test/service.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

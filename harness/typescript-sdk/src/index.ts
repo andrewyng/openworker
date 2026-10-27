@@ -1,3 +1,5 @@
+import { Service, type ServiceOptions } from "./service.js";
+export * from "./service.js";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { Transport } from "./transport.js";
@@ -90,6 +92,7 @@ function interruptionOf(value: unknown): Interruption {
 
 /** Node.js host owner. Agent logic, storage and permission enforcement remain in Rust. */
 export class Harness {
+  static connect(options: ServiceOptions): Promise<Service> { return Service.connect(options); }
   private readonly callbackOwner = randomUUID();
   private readonly callbacks = new Map<string, ApplicationTool>();
   private readonly callbackRuns = new Map<string, AbortController>();

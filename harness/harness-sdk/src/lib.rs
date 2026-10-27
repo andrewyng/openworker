@@ -494,3 +494,6 @@ impl HarnessClient {
         }
     }
 }
+
+/// Authenticated REST/SSE service transport; independent of managed child lifecycle.
+pub mod service;

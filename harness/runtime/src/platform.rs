@@ -97,6 +97,37 @@ pub fn validate_path(path: &Path) -> Result<()> {
     let _ = path;
     Ok(())
 }
+/// OpenShell executes its pinned runner inside Linux, even when the controller
+/// is a Mac. Unsandboxed runners execute on the host and retain host validation.
+pub fn runner_executable(bytes: &[u8], backend: crate::execution::Backend) -> Result<()> {
+    match backend {
+        crate::execution::Backend::Openshell => {
+            if !bytes.starts_with(b"\x7fELF") {
+                bail!("OpenShell runner must be a Linux ELF executable");
+            }
+            Ok(())
+        }
+        crate::execution::Backend::Off => executable(bytes),
+    }
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    #[test]
+    fn runner_validation_uses_execution_location() {
+        use crate::execution::Backend;
+        assert!(runner_executable(b"\x7fELF", Backend::Openshell).is_ok());
+        assert!(runner_executable(b"#!/bin/sh", Backend::Openshell).is_err());
+        assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Openshell).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(runner_executable(b"\x7fELF", Backend::Off).is_err());
+            assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Off).is_ok());
+        }
+    }
+}
+
 pub fn executable(bytes: &[u8]) -> Result<()> {
     #[cfg(windows)]
     {

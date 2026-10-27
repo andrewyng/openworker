@@ -10,9 +10,12 @@ mod authorization;
 pub mod http;
 pub mod operations;
 pub mod readiness;
+pub mod service;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub service: Option<service::ServiceConfig>,
     /// Restore inspection only: no HTTP mutations, workers or provider access.
     #[serde(default)]
     pub recovery_read_only: bool,

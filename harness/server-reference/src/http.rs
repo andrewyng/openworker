@@ -27,6 +27,7 @@ pub struct App {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) actor: String,
     streams: Arc<Semaphore>,
+    pub(crate) service: Option<crate::service::ServiceConfig>,
     pub(crate) stop: CancellationToken,
     pub(crate) artifacts: Option<openworker_artifacts::Store>,
     pub(crate) transfers: Arc<Semaphore>,
@@ -41,7 +42,16 @@ impl App {
         if config.actor.trim().is_empty() || config.actor.len() > 128 {
             anyhow::bail!("Invalid reference principal");
         }
+        if let Some(service) = &config.service {
+            service.validate()?;
+            if config.recovery_read_only {
+                store.verify_service(&service.id, &service.namespace)?;
+            } else {
+                store.bind_service(&service.id, &service.namespace)?;
+            }
+        }
         Ok(Self {
+            service: config.service.clone(),
             recovery_read_only: config.recovery_read_only,
             artifacts: config.artifacts.as_ref().map(|a| a.build()).transpose()?,
             transfers: Arc::new(Semaphore::new(4)),
@@ -54,6 +64,7 @@ impl App {
     }
     pub fn router(self) -> Router {
         Router::new()
+            .merge(crate::service::router())
             .route(
                 "/healthz",
                 get(|| async { Json(json!({"status":"up","reference":true})) }),
@@ -111,8 +122,30 @@ async fn authenticate(State(app): State<App>, request: Request, next: Next) -> R
         .runtime
         .telemetry
         .span(openworker_telemetry::Operation::Api, None, None);
-    let result =
+    let service = request
+        .uri()
+        .path()
+        .starts_with("/v1/")
+        .then(|| app.service.clone())
+        .flatten();
+    let mut result =
         openworker_telemetry::scope(span.context(), authenticate_inner(app, request, next)).await;
+    // Include identity and a fresh trace ID on errors too. This ID is never an
+    // admission/deduplication key and is not supplied by an untrusted caller.
+    if let Some(config) = service {
+        result.headers_mut().insert(
+            "x-openworker-service-id",
+            config.id.parse().expect("validated"),
+        );
+        result.headers_mut().insert(
+            "x-openworker-namespace",
+            config.namespace.parse().expect("validated"),
+        );
+        result.headers_mut().insert(
+            "x-request-id",
+            openworker_runtime::id("req").parse().unwrap(),
+        );
+    }
     span.finish(if result.status().is_success() {
         openworker_telemetry::Outcome::Ok
     } else {
@@ -161,6 +194,27 @@ async fn authenticate_inner(mut app: App, mut request: Request, next: Next) -> R
             Json(json!({"error":"shutting_down"})),
         )
             .into_response();
+    }
+    let service_request = request.uri().path().starts_with("/v1/");
+    if service_request {
+        let Some(service) = &app.service else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        if request
+            .headers()
+            .get("x-openworker-service-id")
+            .is_some_and(|v| v.to_str().ok() != Some(service.id.as_str()))
+        {
+            return ApiError(AuthError::Forbidden.into()).into_response();
+        }
+        if request
+            .headers()
+            .get("x-openworker-namespace")
+            .and_then(|h| h.to_str().ok())
+            != Some(service.namespace.as_str())
+        {
+            return ApiError(AuthError::Forbidden.into()).into_response();
+        }
     }
     let Some(action) = crate::authorization::route(request.method().as_str(), request.uri().path())
     else {
@@ -234,6 +288,7 @@ impl IntoResponse for ApiError {
             Some(SubmissionError::NotFound) => (StatusCode::NOT_FOUND, "not_found"),
             Some(SubmissionError::Conflict) => (StatusCode::CONFLICT, "idempotency_conflict"),
             Some(SubmissionError::QueueFull) => (StatusCode::TOO_MANY_REQUESTS, "queue_full"),
+            Some(SubmissionError::Busy) => (StatusCode::CONFLICT, "session_busy"),
             Some(SubmissionError::Closed) => (StatusCode::CONFLICT, "session_closed"),
             Some(SubmissionError::ControlConflict) => {
                 (StatusCode::CONFLICT, "control_target_conflict")
@@ -362,7 +417,7 @@ async fn control_receipt(
     Ok(Json(app.store.control_receipt(&sid, &id)?).into_response())
 }
 #[derive(Default, Deserialize)]
-struct Cursor {
+pub(crate) struct Cursor {
     after: Option<i64>,
 }
 async fn team_create(
@@ -432,7 +487,7 @@ async fn team_events(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
         .into_response())
 }
-async fn events(
+pub(crate) async fn events(
     Extension(app): Extension<App>,
     Path(sid): Path<String>,
     Query(query): Query<Cursor>,

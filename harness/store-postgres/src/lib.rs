@@ -10,6 +10,7 @@ mod operations;
 pub mod pools;
 pub use operations::OperationalSnapshot;
 mod sdk_host;
+mod service;
 mod submissions;
 mod team_execution;
 pub mod teams;

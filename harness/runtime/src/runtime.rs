@@ -65,6 +65,9 @@ enum CompactResult {
 }
 impl Runtime {
     /// Used by a trusted scheduler to select compatible sessions before claim.
+    pub fn coworker(&self) -> &str {
+        &self.bundle.id
+    }
     pub fn execution_digest(&self) -> &str {
         &self.execution_digest
     }
@@ -234,7 +237,7 @@ impl Runtime {
             .canonicalize()
             .context("Native runner executable unavailable")?;
         let head = std::fs::read(&runner)?;
-        crate::platform::executable(&head)?;
+        crate::platform::runner_executable(&head, backend)?;
         let runner_digest = digest(&head);
         let mut execution_identity = format!(
             "{}:{runner_digest}:{}:{}",

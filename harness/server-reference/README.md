@@ -1,5 +1,8 @@
 # Two API / two worker reference
 
+For the opt-in versioned service API and Rust/TypeScript `Harness.connect()`, see
+[Service M1 quickstart](../../docs/harness/SERVICE-M1-QUICKSTART.md).
+
 A deliberately small native Rust server adapter and Node client, using the same
 runtime as Desktop/stdio/SDK. No second agent loop and no Python dependency.
 This demonstrates the production boundary, not a complete multi-tenant product.

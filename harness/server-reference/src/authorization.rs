@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 /// Deny unmatched/new routes until their required authority is explicit.
 /// Resource scope is rechecked with decoded IDs inside store transactions.
 pub(crate) fn route(method: &str, path: &str) -> Option<Action> {
+    if path.starts_with("/v1/") {
+        return crate::service::authority(method, path);
+    }
     let p: Vec<_> = path.split('/').collect();
     match (method, p.as_slice()) {
         ("GET", ["", "healthz" | "readyz" | "sessions"]) | ("GET", ["", "auth", "me"]) => {

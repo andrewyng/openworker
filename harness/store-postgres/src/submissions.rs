@@ -57,6 +57,7 @@ pub enum SubmissionError {
     NotFound,
     Conflict,
     QueueFull,
+    Busy,
     Closed,
     ProviderBlocked,
     OutOfOrder,
@@ -71,6 +72,7 @@ impl SubmissionError {
             Self::NotFound => "not_found",
             Self::Conflict => "idempotency_conflict",
             Self::QueueFull => "queue_full",
+            Self::Busy => "session_busy",
             Self::Closed => "session_closed",
             Self::ProviderBlocked => "provider_blocked",
             Self::OutOfOrder => "submission_out_of_order",
@@ -172,6 +174,13 @@ pub(crate) fn finish(tx: &mut Transaction<'_>, session: &Session) -> Result<()> 
 }
 impl Database {
     pub(crate) fn submit_turn(&mut self, request: TurnSubmission) -> Result<SubmissionReceipt> {
+        self.submit_turn_with_mode(request, false)
+    }
+    pub(crate) fn submit_turn_with_mode(
+        &mut self,
+        request: TurnSubmission,
+        single: bool,
+    ) -> Result<SubmissionReceipt> {
         request.validate()?;
         let mut tx = self.client.transaction()?;
         let p = crate::auth::guard(
@@ -215,6 +224,9 @@ impl Database {
                 &[&request.session_id],
             )?
             .get(0);
+        if single && (count > 0 || session.turn.as_ref().is_some_and(|t| !terminal(&t.status))) {
+            return Err(SubmissionError::Busy.into());
+        }
         if count >= i64::from(self.max_queued_turns) {
             return Err(SubmissionError::QueueFull.into());
         }

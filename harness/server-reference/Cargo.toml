@@ -28,6 +28,7 @@ tokio = { version = "1", features = ["full"] }
 zeroize = "1"
 
 [dev-dependencies]
+openworker-sdk = { path = "../harness-sdk" }
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 reqwest = { version = "0.12", default-features = false, features = ["json","stream","rustls-tls"] }
 futures-util = "0.3"
