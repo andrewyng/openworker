@@ -2868,6 +2868,8 @@
     "auto_compact": "Auto-compact",
     "machine_setting": "Machine setting",
     "compact_note": "Summarises at {{pct}}% of the context unless changed here.",
+    "compact_cap": "Compact by",
+    "compact_cap_note": "The machine setting is {{cap}} tokens. Whichever limit comes first applies.",
     "make_default": "Make this the default for new sessions",
     "reset": "Reset",
     "cancel": "Cancel",

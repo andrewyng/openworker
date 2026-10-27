@@ -64,7 +64,8 @@ def test_saved_settings_are_checked_merged_and_kept(tmp_path):
     assert (tmp_path / "state" / "model_config.json").is_file()
     assert model_config.get("ollama:qwen3-coder:30b") == {"thinking": False, "temperature": 0.2}
     for bad in ({"context_size": 0}, {"context_size": "big"}, {"temperature": 3}, {"top_p": 0},
-                {"compaction_threshold_pct": 0.99}, {"thinking": "yes"}, {"nope": 1}):
+                {"compaction_threshold_pct": 0.99}, {"compaction_cap_tokens": 5_000},
+                {"compaction_cap_tokens": 3_000_000}, {"thinking": "yes"}, {"nope": 1}):
         _, error = model_config.set("m", bad)
         assert error, bad
     model_config.remove("ollama:qwen3-coder:30b")
@@ -143,6 +144,20 @@ def test_compaction_uses_the_saved_threshold_and_window():
     model_config.set("acme:unlisted-model", {"context_size": 100_000, "compaction_threshold_pct": 0.6})
     cfg = TurnEngine._compaction_config(engine)
     assert cfg["context_window"] == 100_000 and cfg["threshold_pct"] == 0.6
+
+
+def test_a_saved_cap_raises_compaction_for_that_model_only():
+    machine = {"threshold_pct": 0.6, "cap_tokens": 78_643}
+    fable = SimpleNamespace(model="anthropic:claude-fable-5-1", compaction_settings=lambda: dict(machine), _warned_context_fallback=False)
+    other = SimpleNamespace(model="anthropic:claude-opus-5", compaction_settings=lambda: dict(machine), _warned_context_fallback=False)
+    model_config.set("anthropic:claude-fable-5-1", {"compaction_cap_tokens": 1_000_000})
+    cfg = TurnEngine._compaction_config(fable)
+    assert cfg["cap_tokens"] == 1_000_000 and cfg["context_window"] == 1_000_000
+    assert TurnEngine._compaction_config(other)["cap_tokens"] == 78_643
+    assert model_config.effective("anthropic:claude-fable-5-1")["compaction_cap_tokens"] == {"value": 1_000_000, "from": "user"}
+    # A cap given on the command line for one run (headless --compaction-cap-tokens) still wins.
+    fable.compaction_settings = lambda: {**machine, "cap_tokens": 20_000, "cap_pinned": True}
+    assert TurnEngine._compaction_config(fable)["cap_tokens"] == 20_000
 
 
 # -- the server's view ----------------------------------------------------------------------
