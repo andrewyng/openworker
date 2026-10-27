@@ -9,6 +9,8 @@ scripts, test suites, npm lifecycle hooks.
 
 import os
 
+import pytest
+
 from coworker.sandbox.runner.executor import LocalExecutor as RunnerLocalExecutor
 from coworker.tools.shell import LocalExecutor, _shell_base_env
 
@@ -17,9 +19,10 @@ def _stdout(result) -> str:
     return str(result.get("output") or result.get("stdout") or "")
 
 
-def test_sidecar_token_is_not_in_the_shell_environment(monkeypatch, tmp_path):
+@pytest.mark.parametrize("allowed_env", [[], ["COWORKER_API_TOKEN"]])
+def test_sidecar_token_is_not_in_the_shell_environment(monkeypatch, tmp_path, allowed_env):
     monkeypatch.setenv("COWORKER_API_TOKEN", "SIDECAR-SECRET")
-    ex = LocalExecutor(cwd=str(tmp_path))
+    ex = LocalExecutor(cwd=str(tmp_path), allowed_env=allowed_env)
     try:
         out = _stdout(ex.run('echo "[$COWORKER_API_TOKEN]"', timeout=20))
     finally:
@@ -40,16 +43,16 @@ def test_env_listing_does_not_reveal_the_token(monkeypatch, tmp_path):
     assert "COWORKER_API_TOKEN" not in out
 
 
-def test_the_users_own_keys_are_still_available(monkeypatch, tmp_path):
-    """Scoped deliberately: the user's provider keys stay, so builds and CLIs keep working.
-    Only OpenWorker's own credential is withheld."""
+@pytest.mark.parametrize("allowed_env, expected", [([], "[]"), (["OPENAI_API_KEY"], "[sk-user-key]")])
+def test_provider_keys_require_explicit_allowlisting(monkeypatch, tmp_path, allowed_env, expected):
+    """Provider credentials are available only when the user opts in."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-user-key")
-    ex = LocalExecutor(cwd=str(tmp_path))
+    ex = LocalExecutor(cwd=str(tmp_path), allowed_env=allowed_env)
     try:
         out = _stdout(ex.run('echo "[$OPENAI_API_KEY]"', timeout=20))
     finally:
         ex.close()
-    assert "sk-user-key" in out
+    assert expected in out
 
 
 def test_base_env_drops_only_the_sidecar_vars(monkeypatch):

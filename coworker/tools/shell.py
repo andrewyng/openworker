@@ -55,6 +55,8 @@ class LocalExecutor(_StdlibLocalExecutor):
         from .. import toolchain
 
         extra = [*kwargs.pop("extra_path_dirs", ()), str(toolchain.bin_dir())]
+        if kwargs.get("allowed_env") is None:
+            kwargs["allowed_env"] = []
         super().__init__(
             cwd=cwd, base_env=_shell_base_env(), extra_path_dirs=extra, **kwargs
         )
