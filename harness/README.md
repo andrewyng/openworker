@@ -49,6 +49,10 @@ boundaries separate; use SDK/protocol APIs instead of reading runtime tables.
 
 ## Pick an integration
 
+For the proposed remote SDK, authenticated service control plane and `ows` CLI,
+see [OpenWorker Service design](../docs/harness/OPENWORKER-SERVICE.md). This is a
+design specification; use the current integration paths below until implemented.
+
 | Application | Interface |
 |---|---|
 | Rust desktop app | Embed `openworker-sdk` in your Tokio process, or use its managed child |

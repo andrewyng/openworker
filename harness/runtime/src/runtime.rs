@@ -1972,6 +1972,17 @@ impl Runtime {
                         Ok(_) => Outcome::Ok,
                         Err(_) => Outcome::Unknown,
                     });
+                    // Uncertain-outcome contract: never retry a dispatched tool
+                    // merely because its response was lost. Persist a structured
+                    // tool_outcome_unknown for that call; the model can then
+                    // check status/read before write and propose a fresh action
+                    // through normal policy checks. Do not invent success/failure
+                    // or resume work that the user cancelled.
+                    // TODO: recovery already records this result, but this live
+                    // error path still ends the turn. Normalize typed delivery
+                    // uncertainty here before enabling same-turn reconciliation;
+                    // do not turn every validation/configuration error into an
+                    // uncertain outcome or replay the original call.
                     result?
                 };
                 self.update(sid,"tool_finished",json!({"name":alias,"call_id":call["call_id"],"result":output,"interaction_id":interaction.id}),|s|{if alias=="load_skill"&&output.get("skill_digest").is_some(){s.loaded_skills.insert(args["name"].as_str().context("Missing skill name")?.into());}s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));let t=s.turn.as_mut().unwrap();t.queue.remove(0);t.status="running".into();Ok(())})?;

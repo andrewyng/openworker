@@ -21,6 +21,12 @@ pub struct Capabilities {
 }
 
 /// A connection owns one tool process/channel, never the entire environment.
+/// Uncertain-outcome rule: after dispatch, connection loss is not proof that an
+/// action failed or stopped. Never transparently replay it. The harness must
+/// persist a tool_outcome_unknown response for the original call so the model
+/// can inspect status/read back state before deciding whether to issue another
+/// action. This response is not retry authorization: any new call still passes
+/// normal policy/approval checks. Cancellation must not restart the agent loop.
 pub trait Connection: Send {
     fn request<'a>(&'a mut self, method: &'a str, params: Value) -> ProviderFuture<'a, Value>;
     fn close(self: Box<Self>) -> ProviderFuture<'static, CloseOutcome>;
