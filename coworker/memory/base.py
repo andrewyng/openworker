@@ -48,6 +48,11 @@ class MemoryStore(ABC):
     def get(self, item_id: int) -> Optional[MemoryItem]: ...
 
     @abstractmethod
+    def get_visible(
+        self, item_id: int, *, workspace: Optional[str]
+    ) -> Optional[MemoryItem]: ...
+
+    @abstractmethod
     def list(
         self,
         *,
@@ -62,7 +67,20 @@ class MemoryStore(ABC):
     ) -> Optional[MemoryItem]: ...
 
     @abstractmethod
+    def update_visible(
+        self,
+        item_id: int,
+        content: str,
+        *,
+        workspace: Optional[str],
+        summary: Optional[str] = None,
+    ) -> Optional[MemoryItem]: ...
+
+    @abstractmethod
     def delete(self, item_id: int) -> bool: ...
+
+    @abstractmethod
+    def delete_visible(self, item_id: int, *, workspace: Optional[str]) -> bool: ...
 
     @abstractmethod
     def delete_all(self, *, scope: Optional[Scope] = None) -> int: ...
