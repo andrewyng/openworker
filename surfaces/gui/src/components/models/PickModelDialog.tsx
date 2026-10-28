@@ -134,6 +134,17 @@ export function PickModelDialog({
   const contextMax = row?.context_max || rec?.context_max || null;
   const machineContext = row?.context_from === "machine" ? row.context : null;
   const thinkingAvailable = row?.thinking || rec?.thinking.available || false;
+  // Where compaction starts for this model, as engine._compaction_config works it out:
+  // the smaller of the Auto-compact share of its window and the Compact-by cap.
+  const contextWindow =
+    (model && settings.model_context_windows?.[model]) || (isLocal ? draft.context_size || machineContext || row?.context : null) || null;
+  const machineCap = settings.compaction_cap_tokens || 250_000;
+  const compactAt = contextWindow
+    ? Math.min(
+        Math.floor((draft.compaction_threshold_pct ?? settings.compaction_threshold_pct ?? 0.8) * contextWindow),
+        draft.compaction_cap_tokens ?? machineCap,
+      )
+    : null;
 
   const save = async () => {
     if (!model) return;
@@ -366,7 +377,9 @@ export function PickModelDialog({
                       t("pick.compact_note", { pct: Math.round((settings.compaction_threshold_pct || 0.8) * 100) }))}
                     {setting("compact-cap", t("pick.compact_cap"),
                       select("compact-cap", draft.compaction_cap_tokens == null ? "" : String(draft.compaction_cap_tokens), [{ v: "", label: t("pick.machine_setting") }, ...COMPACT_CAP_STEPS.map((c) => ({ v: String(c), label: `${fmtContext(c)} ${t("pick.tokens")}` }))], (v) => setDraft((d) => ({ ...d, compaction_cap_tokens: v ? Number(v) : null }))),
-                      t("pick.compact_cap_note", { cap: (settings.compaction_cap_tokens || 250_000).toLocaleString() }))}
+                      compactAt
+                        ? t("pick.compact_cap_note_at", { at: compactAt.toLocaleString(), cap: machineCap.toLocaleString() })
+                        : t("pick.compact_cap_note", { cap: machineCap.toLocaleString() }))}
                     <label className="flex items-center gap-2 text-ui mt-2.5">
                       <input type="checkbox" checked={!!draft.default} disabled={settings.model === model} onChange={(e) => setDraft((d) => ({ ...d, default: e.target.checked }))} data-testid="pick-default" />
                       {t("pick.make_default")}
