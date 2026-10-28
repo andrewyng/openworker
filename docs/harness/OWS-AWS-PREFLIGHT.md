@@ -137,7 +137,7 @@ an operator who can rewrite local files. It must not be used as a way to bypass
 fresh scope/authentication checks in a future executor.
 
 Still required: independent guard behavior/health qualification, durable apply and
-cleanup reconciliation, runtime image digests, private Kubernetes connectivity,
+cleanup reconciliation, runtime image digests, connectivity to the cluster management API (private access),
 image upload/secret handoff, OpenShell strict network enforcement and service/UI
 installation qualification. Live provisioning remains disabled on all providers.
 

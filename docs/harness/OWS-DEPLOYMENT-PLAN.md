@@ -151,7 +151,7 @@ Guide: [AWS infrastructure export](OWS-AWS-INFRASTRUCTURE-EXPORT.md).
 
 Next is D3 read-only preflight: identity, service-linked roles, version/image support,
 quota, prices and guard artifact digest. D4 still owns guard packaging/behavior and
-cloud lifecycle reconciliation. D5 still owns private Kubernetes connectivity,
+cloud lifecycle reconciliation. D5 still owns connectivity to the cluster management API (private access),
 image upload, exact secret handoff and OpenShell/service Helm qualification. Live
 apply remains disabled. The example versions/artifact identifiers are test fixtures,
 not a supported-version catalog or an uploaded/qualified guard. A generated template
@@ -209,6 +209,6 @@ Guide: [AWS preflight](OWS-AWS-PREFLIGHT.md). Formatting and diff checks pass.
 
 Next: D4 guard packaging/behavior and durable apply/status/destroy reconciliation,
 starting with local/fake-provider failure tests. No AWS provisioning is authorized.
-D5 still owns image/secret/Helm wiring and private Kubernetes qualification. A valid
+D5 still owns image/secret/Helm wiring and qualification of the cluster management API (private access). A valid
 policy document is not proof of effective IAM permissions or creation/rollback
 qualification, and a verified guard hash is not proof of safe cleanup behavior.

@@ -227,3 +227,10 @@ errors are not logged. The full contract and limitations are in the
 [preflight guide](OWS-AWS-PREFLIGHT.md). `checksPassed` is observational evidence;
 `applyReady` remains false. It is not a reservation, signature, billing cap or proof
 of effective provisioning/cleanup permissions.
+
+## Terminology
+
+Use **cluster management API (private access)** for the Kubernetes control-plane
+endpoint that installers use to manage the cluster. “Private access” describes its
+network reachability. It is separate from the OpenWorker Service API used by customer
+applications. The installer needs an approved network path to this endpoint.

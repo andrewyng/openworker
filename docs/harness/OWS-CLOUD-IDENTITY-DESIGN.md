@@ -191,7 +191,7 @@ Name/label conventions alone cannot enforce project-wide create permissions; whe
 IAM cannot isolate creation by deployment, a dedicated project or customer-managed
 network scope is required and must be stated in the review.
 
-Private control-plane access needs an explicit operator/installer network path.
+The cluster management API (private access) needs an explicit operator/installer network path.
 Do not make the API public to work around connectivity. The expiry guard needs an
 independent identity and lifecycle from the GKE cluster being destroyed. Terraform
 state remains until teardown is verified; a failed operation is reconciled using

@@ -59,10 +59,10 @@ a fake AWS executable.
 
 ## Network and data choices
 
-Two fixed `t4g.large` nodes run in private subnets. EKS's public endpoint is disabled.
+Two fixed `t4g.large` nodes run in private subnets. The cluster management API has private access; its public endpoint is disabled.
 A single NAT gateway in the first zone provides outbound access. This costs money
 and is a single point of failure; it is an experiment topology, not HA production.
-The customer needs a private network path to the Kubernetes API. No VPN, public
+The installer needs a network path to the cluster management API (private access). No VPN, public
 application ingress or silent API exposure is added to solve that connectivity.
 
 PostgreSQL is private, encrypted and configured to require TLS. Its password is

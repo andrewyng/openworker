@@ -477,7 +477,7 @@ pub(super) async fn run(options: &Options) -> Result<()> {
             .filter(|c| c.required)
             .all(|c| c.status == "passed");
     let report = json!({"schemaVersion":1,"deploymentId":p.deployment_id,"bundleDigest":m.bundle_digest,"target":p.target,"observedAtUnix":at,"validUntilUnix":p.expires_at_unix.min(at+900),"checksPassed":complete,"applyReady":false,"mode":"read_only","awsCliInvocations":aws.calls,"checks":results,
-        "remainingGates":["preflight observations are not reservations or a hard spending cap","IAM validation is not proof of effective provisioning permissions","qualify guard package behavior and independent cleanup","pin runtime images and verify private Kubernetes connectivity","implement durable lifecycle and platform installation","live provisioning remains disabled"],"identityMismatchStoppedFurtherCalls":!identity_ok});
+        "remainingGates":["preflight observations are not reservations or a hard spending cap","IAM validation is not proof of effective provisioning permissions","qualify guard package behavior and independent cleanup","pin runtime images and verify connectivity to the cluster management API (private access)","implement durable lifecycle and platform installation","live provisioning remains disabled"],"identityMismatchStoppedFurtherCalls":!identity_ok});
     write_report(&options.out, &report)?;
     crate::output(report)?;
     ensure!(
