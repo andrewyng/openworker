@@ -23,8 +23,8 @@ ows deploy validate --plan ./my-service-plan
 ows deploy status --plan ./my-service-plan
 ```
 
-Output: `deployment-plan.json`, `REVIEW.md`, `permissions-request.json`, and
-`manifest.json`. The output directory must not already exist. On POSIX systems it
+Output: `deployment-plan.json`, `REVIEW.md`, `permissions-request.json`,
+`resource-graph.json`, and `manifest.json`. The output directory must not already exist. On POSIX systems it
 is created with mode 0700 and files with 0600. Plans contain no secret values.
 Windows ACL behavior is not qualified by this milestone.
 
@@ -34,10 +34,29 @@ hash. Inspect/status do not report live cloud resources. Validate checks local
 integrity/semantics/expiry only; `applyReady` remains false. Unknown cost estimates
 stay null, and a budget is not represented as a hard spending cap.
 
-**Apply, destroy, GCP and Azure execution are not implemented yet and fail without
-calling cloud tools.** Permission requirements are not grantable IAM policies.
-Runnable bootstrap scripts will follow the actual provider permission/template
-implementation; this milestone intentionally emits none.
+**Apply/destroy on all clouds remain disabled.** GCP and Azure now support offline
+planning with provider-specific target fields:
+
+```sh
+ows deploy gcp plan --project my-ows-project --location us-central1 \
+  --name my-service --budget 100 --out ./gcp-plan
+ows deploy azure plan \
+  --tenant 11111111-2222-4333-8444-555555555555 \
+  --subscription 66666666-7777-4888-8999-aaaaaaaaaaaa \
+  --location westus2 --name my-service --budget 100 --out ./azure-plan
+```
+
+AWS plans optionally accept paired `--operator-arn` and `--execution-role-arn` to
+export two IAM role policies, an identity-only CloudFormation template, a review,
+and `bootstrap.sh`. This path requires an existing customer-reviewed CloudFormation
+execution role. It is not the complete infrastructure installer. The script is
+customer-run explicitly with `--apply-identities`; `ows` never executes it. It has
+only been tested against a fake AWS CLI, not live IAM. Ordinary plans emit no script.
+GCP/Azure bootstrap generation is still design-only.
+
+See [cloud identities and bootstrap](../../docs/harness/OWS-CLOUD-IDENTITY-DESIGN.md)
+for commands, exact scope, prerequisites, cloud-specific implementation order, and
+remaining execution-policy work.
 
 [Specification](../../docs/harness/OWS-DEPLOYMENT-SPEC.md) ·
 [Implementation plan and ledger](../../docs/harness/OWS-DEPLOYMENT-PLAN.md)

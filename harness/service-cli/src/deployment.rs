@@ -1,5 +1,7 @@
 //! Offline deployment planning. Deliberately no cloud SDK, process execution,
 //! ambient credentials, or service-client authentication in this module.
+#[path = "deployment_bootstrap.rs"]
+mod bootstrap;
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -19,15 +21,13 @@ pub enum Command {
         #[command(subcommand)]
         command: AwsCommand,
     },
-    /// Reserved provider boundary; not implemented yet.
     Gcp {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        arguments: Vec<String>,
+        #[command(subcommand)]
+        command: GcpCommand,
     },
-    /// Reserved provider boundary; not implemented yet.
     Azure {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        arguments: Vec<String>,
+        #[command(subcommand)]
+        command: AzureCommand,
     },
     /// Read a verified local bundle. Does not query cloud state.
     Inspect {
@@ -69,6 +69,45 @@ pub struct AwsPlan {
     account: String,
     #[arg(long)]
     region: String,
+    /// Export identity bootstrap for this explicit same-account IAM principal.
+    #[arg(long, requires = "execution_role_arn")]
+    operator_arn: Option<String>,
+    /// Existing, customer-reviewed CloudFormation execution role (not created here).
+    #[arg(long, requires = "operator_arn")]
+    execution_role_arn: Option<String>,
+    #[command(flatten)]
+    common: PlanOptions,
+}
+#[derive(Subcommand)]
+pub enum GcpCommand {
+    Plan(GcpPlan),
+}
+#[derive(Subcommand)]
+pub enum AzureCommand {
+    Plan(AzurePlan),
+}
+#[derive(Args)]
+pub struct GcpPlan {
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    location: String,
+    #[command(flatten)]
+    common: PlanOptions,
+}
+#[derive(Args)]
+pub struct AzurePlan {
+    #[arg(long)]
+    tenant: String,
+    #[arg(long)]
+    subscription: String,
+    #[arg(long)]
+    location: String,
+    #[command(flatten)]
+    common: PlanOptions,
+}
+#[derive(Args)]
+struct PlanOptions {
     #[arg(long)]
     name: String,
     #[arg(long, default_value_t = 100)]
@@ -123,6 +162,8 @@ struct Plan {
     expires_at_unix: u64,
     budget: Budget,
     topology: Topology,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bootstrap: Option<bootstrap::AwsIdentity>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -162,7 +203,10 @@ fn region_ok(s: &str) -> bool {
 }
 impl Plan {
     fn validate(&self) -> Result<()> {
-        ensure!(self.schema_version == 1, "Unsupported plan schema");
+        ensure!(
+            [1, 2].contains(&self.schema_version),
+            "Unsupported plan schema"
+        );
         ensure!(
             name_ok(&self.name),
             "Name must be 3–30 lowercase letters/digits/hyphens, starting with a letter"
@@ -186,7 +230,52 @@ impl Plan {
                 );
                 ensure!(region_ok(region),"Unsupported AWS region syntax/partition; availability requires online preflight");
             }
-            _ => bail!("Provider adapter is not implemented; no changes made"),
+            Target::Gcp { project, location } => {
+                ensure!(self.schema_version == 2, "GCP requires schema 2");
+                ensure!(
+                    (6..=30).contains(&project.len()) && name_ok(project),
+                    "Invalid GCP project ID"
+                );
+                let parts: Vec<_> = location.split('-').collect();
+                ensure!(
+                    parts.len() == 2
+                        && (2..=20).contains(&parts[0].len())
+                        && parts[0].bytes().all(|b| b.is_ascii_lowercase())
+                        && (2..=20).contains(&parts[1].len())
+                        && parts[1]
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                        && parts[1].as_bytes().last().unwrap().is_ascii_digit(),
+                    "Use a GCP region, not a zone; availability requires preflight"
+                );
+            }
+            Target::Azure {
+                tenant,
+                subscription,
+                location,
+            } => {
+                ensure!(self.schema_version == 2, "Azure requires schema 2");
+                for id in [tenant, subscription] {
+                    ensure!(
+                        uuid::Uuid::parse_str(id)
+                            .map(|u| u.hyphenated().to_string() == *id && !u.is_nil())
+                            .unwrap_or(false),
+                        "Azure tenant/subscription must be lowercase nonzero hyphenated UUIDs"
+                    );
+                }
+                ensure!(
+                    (3..=30).contains(&location.len())
+                        && location
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                        && location.as_bytes()[0].is_ascii_lowercase(),
+                    "Invalid Azure location; availability requires preflight"
+                );
+            }
+        }
+        if let Some(identity) = &self.bootstrap {
+            ensure!(self.schema_version == 2, "Bootstrap requires schema 2");
+            identity.validate(self)?;
         }
         ensure!(
             self.created_at_unix > 0
@@ -206,7 +295,12 @@ impl Plan {
                     cluster_mode: "new".into(),
                     node_count: 2,
                     max_worker_replicas: 2,
-                    architecture: "arm64".into(),
+                    architecture: if matches!(self.target, Target::Aws { .. }) {
+                        "arm64"
+                    } else {
+                        "amd64"
+                    }
+                    .into(),
                     access: "private".into(),
                     node_autoscaling: false
                 },
@@ -244,10 +338,24 @@ impl Planner for AwsPlanner {
     }
 }
 fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
-    match &plan.target {
-        Target::Aws { .. } => AwsPlanner.render(plan),
-        _ => bail!("Provider adapter is not implemented"),
+    let mut files = match &plan.target {
+        Target::Aws { .. } => AwsPlanner.render(plan)?,
+        _ => other_cloud_artifacts(plan)?,
+    };
+    if plan.schema_version == 2 {
+        files.insert(
+            "resource-graph.json".into(),
+            json_bytes(&resource_graph(plan))?,
+        );
     }
+    if plan.bootstrap.is_some() {
+        files.extend(bootstrap::render(plan)?);
+        let review = files.get_mut("REVIEW.md").unwrap();
+        *review = String::from_utf8(review.clone())?.replace(
+            "No bootstrap.sh is emitted until its permissions and operations are implemented.",
+            "Identity-only bootstrap artifacts are included. Read BOOTSTRAP.md before use. The existing execution role and complete infrastructure deployment are NOT generated or qualified here.").into_bytes();
+    }
+    Ok(files)
 }
 fn write_bundle(root: &Path, p: &Plan) -> Result<Manifest> {
     let files = artifacts(p)?;
@@ -303,10 +411,6 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
         meta.is_dir() && !meta.file_type().is_symlink(),
         "Plan root must be a directory, not a link"
     );
-    let entries = fs::read_dir(root)?
-        .take(5)
-        .collect::<std::io::Result<Vec<_>>>()?;
-    ensure!(entries.len() == 4, "Unexpected or missing plan artifacts");
     let m: Manifest = serde_json::from_slice(&read_file(root, "manifest.json")?)
         .context("Invalid plan manifest")?;
     ensure!(m.schema_version == 1, "Unsupported manifest schema");
@@ -318,6 +422,13 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
         "Deployment identity mismatch"
     );
     let expected = artifacts(&p)?;
+    let entries = fs::read_dir(root)?
+        .take(expected.len() + 2)
+        .collect::<std::io::Result<Vec<_>>>()?;
+    ensure!(
+        entries.len() == expected.len() + 1,
+        "Unexpected or missing plan artifacts"
+    );
     let hashes: BTreeMap<_, _> = expected.iter().map(|(n, b)| (n.clone(), hash(b))).collect();
     ensure!(
         hashes == m.artifacts && hash(&serde_json::to_vec(&hashes)?) == m.bundle_digest,
@@ -332,44 +443,49 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
     Ok((p, m))
 }
 fn result(p: &Plan, m: &Manifest) -> Value {
-    json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix})
+    json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix,
+        "identityBootstrap": if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
         Command::Aws {
             command: AwsCommand::Plan(a),
-        } => {
-            ensure!((1..=72).contains(&a.ttl_hours), "TTL must be 1–72 hours");
-            let created = now()?;
-            let p = Plan {
-                schema_version: 1,
-                deployment_id: format!("ows-{}", uuid::Uuid::new_v4().simple()),
-                name: a.name.clone(),
-                target: Target::Aws {
-                    account: a.account.clone(),
-                    region: a.region.clone(),
-                },
-                created_at_unix: created,
-                expires_at_unix: created
-                    .checked_add(u64::from(a.ttl_hours) * 3600)
-                    .context("Expiry overflow")?,
-                budget: Budget {
-                    authorized_usd: a.budget,
-                    hard_cap: false,
-                    estimate: None,
-                },
-                topology: Topology {
-                    cluster_mode: "new".into(),
-                    node_count: 2,
-                    max_worker_replicas: 2,
-                    architecture: "arm64".into(),
-                    access: "private".into(),
-                    node_autoscaling: false,
-                },
-            };
-            let manifest = write_bundle(&a.out, &p)?;
-            crate::output(result(&p, &manifest))
-        }
+        } => create(
+            &a.common,
+            Target::Aws {
+                account: a.account.clone(),
+                region: a.region.clone(),
+            },
+            match (&a.operator_arn, &a.execution_role_arn) {
+                (Some(operator), Some(execution)) => Some(bootstrap::AwsIdentity {
+                    operator_arn: operator.clone(),
+                    execution_role_arn: execution.clone(),
+                }),
+                (None, None) => None,
+                _ => bail!("Both operator and execution role are required"),
+            },
+        ),
+        Command::Gcp {
+            command: GcpCommand::Plan(a),
+        } => create(
+            &a.common,
+            Target::Gcp {
+                project: a.project.clone(),
+                location: a.location.clone(),
+            },
+            None,
+        ),
+        Command::Azure {
+            command: AzureCommand::Plan(a),
+        } => create(
+            &a.common,
+            Target::Azure {
+                tenant: a.tenant.clone(),
+                subscription: a.subscription.clone(),
+                location: a.location.clone(),
+            },
+            None,
+        ),
         Command::Inspect { plan } | Command::Status { plan } => {
             let (p, m) = inspect(plan)?;
             crate::output(result(&p, &m))
@@ -391,7 +507,11 @@ pub fn run(command: &Command) -> Result<()> {
                 *accept_plan == m.bundle_digest,
                 "Accepted digest does not match reviewed plan"
             );
-            ensure!(now()? < p.expires_at_unix, "Plan expired");
+            let n = now()?;
+            ensure!(
+                p.created_at_unix <= n && n < p.expires_at_unix,
+                "Plan expired or future-dated"
+            );
             bail!("Cloud apply is not implemented/qualified in this milestone; no cloud calls or changes made")
         }
         Command::Destroy {
@@ -405,10 +525,105 @@ pub fn run(command: &Command) -> Result<()> {
             );
             bail!("Cloud destroy is not implemented/qualified in this milestone; no cloud calls or changes made")
         }
-        Command::Gcp { .. } | Command::Azure { .. } => {
-            bail!("Provider adapter is not implemented; no cloud calls or changes made")
-        }
     }
+}
+
+fn create(
+    a: &PlanOptions,
+    target: Target,
+    bootstrap: Option<bootstrap::AwsIdentity>,
+) -> Result<()> {
+    ensure!((1..=72).contains(&a.ttl_hours), "TTL must be 1–72 hours");
+    let created = now()?;
+    let architecture = if matches!(target, Target::Aws { .. }) {
+        "arm64"
+    } else {
+        "amd64"
+    };
+    let p = Plan {
+        schema_version: 2,
+        deployment_id: format!("ows-{}", uuid::Uuid::new_v4().simple()),
+        name: a.name.clone(),
+        target,
+        bootstrap,
+        created_at_unix: created,
+        expires_at_unix: created
+            .checked_add(u64::from(a.ttl_hours) * 3600)
+            .context("Expiry overflow")?,
+        budget: Budget {
+            authorized_usd: a.budget,
+            hard_cap: false,
+            estimate: None,
+        },
+        topology: Topology {
+            cluster_mode: "new".into(),
+            node_count: 2,
+            max_worker_replicas: 2,
+            architecture: architecture.into(),
+            access: "private".into(),
+            node_autoscaling: false,
+        },
+    };
+    let m = write_bundle(&a.out, &p)?;
+    crate::output(result(&p, &m))
+}
+
+/// Logical resource/authority boundaries. Not a resolved infrastructure template.
+fn resource_graph(p: &Plan) -> Value {
+    let (cluster, database, registry, artifacts, identity, engine) = match p.target {
+        Target::Aws { .. } => (
+            "EKS",
+            "RDS PostgreSQL",
+            "ECR",
+            "S3",
+            "EKS Pod Identity",
+            "CloudFormation",
+        ),
+        Target::Gcp { .. } => (
+            "GKE Standard",
+            "Cloud SQL PostgreSQL",
+            "Artifact Registry",
+            "Cloud Storage",
+            "Workload Identity Federation for GKE",
+            "Infrastructure Manager / Terraform",
+        ),
+        Target::Azure { .. } => (
+            "AKS",
+            "Azure Database for PostgreSQL Flexible Server",
+            "ACR",
+            "Blob Storage",
+            "Microsoft Entra Workload ID",
+            "Bicep / ARM",
+        ),
+    };
+    json!({"schemaVersion":1,"resolved":false,"deploymentId":p.deployment_id,"engine":engine,
+        "nodes":[
+            {"id":"bootstrap","authority":"customer administrator","dependsOn":[]},
+            {"id":"expiry-guard","authority":"dedicated cleanup identity","dependsOn":["bootstrap"]},
+            {"id":"network","authority":"infrastructure executor","dependsOn":["expiry-guard"]},
+            {"id":"cluster","type":cluster,"authority":"infrastructure executor","dependsOn":["network"]},
+            {"id":"database","type":database,"authority":"infrastructure executor","dependsOn":["network"]},
+            {"id":"registry","type":registry,"authority":"infrastructure executor","dependsOn":["expiry-guard"]},
+            {"id":"artifacts","type":artifacts,"authority":"infrastructure executor","dependsOn":["expiry-guard"]},
+            {"id":"workload-identity","type":identity,"authority":"customer bootstrap + exact workload binding","dependsOn":["cluster","artifacts"]},
+            {"id":"openshell","type":"Helm platform installation","authority":"scoped platform installer","dependsOn":["cluster","registry"]},
+            {"id":"service","type":"Helm service/UI installation","authority":"namespace installer","dependsOn":["openshell","database","workload-identity"]}
+        ],"unresolved":["cloud IAM and RBAC qualification","network connectivity to private APIs","image digests and supported versions","quotas and verified cost","independent expiry guard","storage and credential references"]})
+}
+fn other_cloud_artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
+    p.validate()?;
+    let (provider, scope, engine, setup, workload) = match &p.target {
+        Target::Gcp {project, location} => ("GCP", format!("project {project}; region {location}"), "Infrastructure Manager / Terraform", "Impersonated setup service account; separate Terraform executor service account", "Workload Identity Federation for GKE; bucket-scoped artifact principal"),
+        Target::Azure {tenant, subscription, location} => ("Azure", format!("tenant {tenant}; subscription {subscription}; location {location}"), "Bicep / ARM", "Federated deployment principal scoped to a dedicated resource group", "AKS OIDC federation to a dedicated managed identity; container-scoped Blob data access"),
+        _ => bail!("Expected GCP or Azure"),
+    };
+    let review = format!("# {} deployment review\n\nDeployment: `{}`\n{provider}: {scope}\nResource prefix: `{}`\n\nInfrastructure: {engine}. Two proposed AMD64 nodes; at most two worker replicas.\nPrivate service access; no node autoscaler. PostgreSQL, artifact storage and OpenShell.\n\nBudget authorization: ${} USD. No verified estimate; not a spending cap.\nCreated: {}. Expires: {} (Unix seconds).\n\nSetup: {setup}.\nWorkloads: {workload}.\n\nThis is an offline plan, not a runnable installer. No cloud calls or resource changes.\nThe resource graph and permissions request describe intent, not grantable policy.\nBootstrap and deployment executors for this provider are not implemented.\nResolve resource scopes, IAM, images, versions, quotas, cost and expiry guard before apply.\nThe bundle digest detects changes; it is not a signature.\n",p.name,p.deployment_id,p.prefix(),p.budget.authorized_usd,p.created_at_unix,p.expires_at_unix);
+    let permissions = json!({"schemaVersion":1,"format":"ows.permission-requirements.v1","deploymentId":p.deployment_id,"target":p.target,"resourcePrefix":p.prefix(),"setup":{"identity":setup,"policyReady":false},"workload":{"identity":workload,"policyReady":false,"sharedWithAgents":false},"constraints":["no project-wide Owner/Editor or subscription-wide Owner grants","no static service-account keys or client secrets","workload identity separate from installer authority","private cluster access requires an explicit operator network path"],"requiresCloudValidation":true});
+    Ok(BTreeMap::from([
+        ("deployment-plan.json".into(), json_bytes(p)?),
+        ("REVIEW.md".into(), review.into_bytes()),
+        ("permissions-request.json".into(), json_bytes(&permissions)?),
+    ]))
 }
 
 #[cfg(test)]
@@ -430,6 +645,7 @@ mod tests {
                 hard_cap: false,
                 estimate: None,
             },
+            bootstrap: None,
             topology: Topology {
                 cluster_mode: "new".into(),
                 node_count: 2,

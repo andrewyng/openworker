@@ -2,7 +2,9 @@
 
 Status: design and incremental implementation. No cloud provisioning is authorized
 for this work. The first deliverable is the offline planning/validation contract;
-cloud executors and runnable bootstrap artifacts follow as separate milestones.
+cloud executors follow as separate milestones. AWS identity-only bootstrap export
+and offline GCP/Azure plans are now implemented; see the
+[cloud identity design](OWS-CLOUD-IDENTITY-DESIGN.md) for scope and prerequisites.
 
 ## Product flow
 
@@ -19,8 +21,8 @@ ows deploy aws plan --account 123456789012 --region us-west-2 \
 ows deploy inspect --plan ./my-service-plan
 ows deploy validate --plan ./my-service-plan
 
-# Following milestones, not executable in the initial planner:
-bash ./my-service-plan/bootstrap.sh
+# AWS plans can optionally export identity-only bootstrap (see linked design).
+# Complete service provisioning remains a later milestone:
 ows deploy apply --plan ./my-service-plan --accept-plan PLAN_DIGEST
 ows deploy status --plan ./my-service-plan
 ows deploy destroy --plan ./my-service-plan --deployment-id EXACT_ID
@@ -31,7 +33,9 @@ credentials, invokes cloud CLIs, creates change sets, creates IAM identities or
 claims pricing/quotas were checked. Future online `preflight` is explicitly read-only
 and separate. `apply` is the only ordinary command that creates service resources;
 bootstrap grants authority separately. `destroy` is an explicit bounded mutation.
-All cloud mutations remain disabled until their adapter is implemented and qualified.
+All `ows` cloud mutations remain disabled until their adapter is qualified.
+The optional exported AWS script is a separate, explicit customer-run IAM bootstrap;
+its generation is offline and does not authorize running it.
 
 ## Common interface, cloud-specific implementation
 
@@ -170,3 +174,17 @@ Then simulate cloud responses for mutation loss, retries/reconciliation, wrong
 accounts, mismatched resource ownership, partial installs and cleanup failures.
 Only a separately authorized cloud run can qualify real IAM behavior, prices,
 quotas, cluster provisioning, guard execution and actual billing bounds.
+
+## Schema 2 and current provider plans
+
+New plans use schema 2 and include an unresolved `resource-graph.json`. Schema 1
+AWS bundles remain inspectable with their original artifact set and digest.
+GCP plans take `--project` and regional `--location`; Azure takes `--tenant`,
+`--subscription` and `--location`. Each uses the common name/budget/TTL/output options.
+Provider scope validation is syntactic; it does not assert cloud availability.
+
+AWS may receive paired `--operator-arn` and `--execution-role-arn` options to export
+identity-only bootstrap. The execution role is customer-provided, not auto-generated
+or policy-audited. These extra artifacts are integrity-checked along with the plan.
+No identity artifacts are emitted for GCP/Azure yet. Their identity/resource designs
+and remaining qualification gates are in [cloud identities](OWS-CLOUD-IDENTITY-DESIGN.md).
