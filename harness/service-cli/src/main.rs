@@ -1,4 +1,5 @@
 //! Thin service client: no agent loop, provider credentials or local tool runner.
+mod deployment;
 mod settings;
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
@@ -32,6 +33,11 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Plan and inspect cloud deployments independently of service authentication.
+    Deploy {
+        #[command(subcommand)]
+        command: deployment::Command,
+    },
     Context {
         #[command(subcommand)]
         command: ContextCommand,
@@ -360,6 +366,9 @@ async fn main() {
     }
 }
 async fn run(args: Args) -> Result<()> {
+    if let Command::Deploy { command } = &args.command {
+        return deployment::run(command);
+    }
     let mut settings = settings::Settings::load(args.config.as_ref())?;
     if let Command::Context { command } = &args.command {
         return match command {
@@ -640,7 +649,7 @@ async fn run(args: Args) -> Result<()> {
                 .control_receipt(&receipt)
                 .await?,
         )?,
-        Command::Context { .. } | Command::Login => unreachable!(),
+        Command::Context { .. } | Command::Login | Command::Deploy { .. } => unreachable!(),
     }
     service.disconnect();
     Ok(())
