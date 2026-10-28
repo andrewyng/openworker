@@ -91,6 +91,9 @@ Model access is yours: pick a provider, paste your key, switch anytime. Supporte
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 
+For hosted generative-media workloads, [MuAPI](https://muapi.ai) provides an OpenAI-compatible API for image, video, audio, and 3D generation.
+
+
 Azure OpenAI uses your own resource: paste its endpoint and key (or set `AZURE_OPENAI_API_KEY`), then add your deployment names as models — on Azure the model id is the deployment name.
 
 Another OpenAI-compatible server — a gateway, a proxy, a vendor not listed? In **Settings ▸ Models & Keys**, the **Add an OpenAI-compatible provider** box at the end of the API-keys group takes a name, its endpoint and key; it becomes its own card, and its models are selected as `<prefix>:<model-id>` (the prefix is derived from the name). Type the model ids, or fetch them from the server when it lists them.
