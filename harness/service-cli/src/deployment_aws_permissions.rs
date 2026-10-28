@@ -433,6 +433,22 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
     let log = format!("arn:aws:logs:{region}:{account}:log-group:/aws/lambda/{prefix}-cleanup");
     let guard_permissions = vec![
         statement(
+            "GuardControlTable",
+            &[
+                "dynamodb:CreateTable",
+                "dynamodb:DescribeTable",
+                "dynamodb:DeleteTable",
+                "dynamodb:UpdateTable",
+                "dynamodb:TagResource",
+                "dynamodb:UntagResource",
+                "dynamodb:ListTagsOfResource",
+            ],
+            vec![format!(
+                "arn:aws:dynamodb:{region}:{account}:table/{prefix}-control"
+            )],
+            None,
+        ),
+        statement(
             "GuardFunction",
             &[
                 "lambda:CreateFunction",
@@ -507,6 +523,16 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
         ),
     ];
     let cleanup = policy(json!([
+        statement(
+            "GuardControlRecord",
+            &["dynamodb:GetItem", "dynamodb:PutItem"],
+            vec![format!(
+                "arn:aws:dynamodb:{region}:{account}:table/{prefix}-control"
+            )],
+            Some(
+                json!({"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":[p.deployment_id]},"Null":{"dynamodb:LeadingKeys":"false"}})
+            )
+        ),
         statement(
             "ObserveOwnedInfraStack",
             &[
@@ -612,7 +638,8 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
                 | "AWS::S3::Bucket"
                 | "AWS::S3::BucketPolicy"
                 | "AWS::ECR::Repository" => vec!["Data"],
-                "AWS::Lambda::Function"
+                "AWS::DynamoDB::Table"
+                | "AWS::Lambda::Function"
                 | "AWS::Lambda::Permission"
                 | "AWS::Events::Rule"
                 | "AWS::Logs::LogGroup" => vec!["Guard"],

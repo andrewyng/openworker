@@ -212,3 +212,51 @@ starting with local/fake-provider failure tests. No AWS provisioning is authoriz
 D5 still owns image/secret/Helm wiring and qualification of the cluster management API (private access). A valid
 policy document is not proof of effective IAM permissions or creation/rollback
 qualification, and a verified guard hash is not proof of safe cleanup behavior.
+
+### Local installer and guard behavior qualified — 28 October 2026
+
+Completed the local D4/D5 subset authorized for this task. Added native `ows deploy
+local plan/apply/status/destroy` and offline `ows deploy guard package`. Local apply
+supports an installer-owned pinned OpenShell release or a read-only existing-gateway
+dependency. Cluster/namespace UIDs, reviewed input hashes, intent-before-effect
+journaling, OS locks, original Helm receipts and explicit no-effect recovery protect
+resumption. Unknown mutation outcomes are not blindly replayed. Safe fixture teardown
+refuses active work, freezes API intake, removes Helm releases before namespaces, and
+uses namespace UID preconditions. Existing gateways are never upgraded or removed.
+
+The independent expiry guard now has a deterministic ZIP packager and injected
+provider tests. Its own scoped DynamoDB CAS record stores the original infra stack
+ARN, stable delete token and volume deletion intents across invocations. Fixed expiry,
+ownership, complete bounded inventories, foreign/versioned buckets, partial cleanup,
+replacement stacks and unknown outcomes are checked before proceeding. The guard
+does not remove itself or its bootstrap. Health is read-only; pre-expiry binding of
+stack identity is permitted, destructive cleanup is not.
+
+32 Rust CLI tests and nine guard tests pass. Independently verified deterministic
+ZIP/CRC/source/hash; all three current CloudFormation templates pass cfn-lint 1.58.0
+with only intentional W3010 waived. Exact table/key IAM scope and dependency edges
+are regression-covered. Prior development schema-3 bundles must be regenerated and
+reviewed for the new guard table/policies; schema-1/2 identity-only shapes remain stable.
+
+Real kind qualification passed for both gateway modes, including authenticated worker
+readiness, scoped publication/activation, service submission, OpenShell sandbox file
+write and shell read, installer process restart without revision changes, teardown
+refusal during active work, session close and explicit environment deletion. A real
+Calico probe passed ingress/egress deny then restored allow. Test namespaces, PVCs
+and owned gateway cluster RBAC are removed. The baseline gateway revision/receipt,
+all baseline namespace UIDs and three suspended sandbox UIDs are unchanged.
+
+Reused cached Linux ARM64 images and the existing kind cluster; about 202 GiB free.
+The model was deterministic; tools and execution environment were real. The native
+CLI requires Helm/kubectl, with no new Rust dependency or Python/Node runtime. Node/
+Python are development fixture/test helpers only.
+
+Details: [local plan and progress](OWS-LOCAL-INSTALLATION-PLAN.md),
+[guide](OWS-LOCAL-INSTALLATION.md), [sanitized evidence](evidence/local-installer-20261028.json).
+
+Remaining before an AWS experiment: cloud apply/status/destroy reconciliation and
+interruption tests; cloud platform installation for CRD/controller/CNI/storage;
+private cluster management API connectivity; image/guard upload and exact secret
+handoff; real Lambda/runtime/IAM/cleanup qualification and fresh preflight. Local
+success does not complete those cloud milestones. No AWS resources or identities
+were created/changed/uploaded in this task. Live cloud apply/destroy stay disabled.

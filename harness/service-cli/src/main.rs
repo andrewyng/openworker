@@ -33,7 +33,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Plan and inspect cloud deployments independently of service authentication.
+    /// Plan/inspect cloud deployments and manage local installations without service authentication.
     Deploy {
         #[command(subcommand)]
         command: deployment::Command,

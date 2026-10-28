@@ -422,6 +422,13 @@ fn guard_template(p: &Plan, i: &Inputs) -> Value {
     let (account, region) = scope(p);
     let mut r = BTreeMap::from([
         (
+            "Control".into(),
+            resource(
+                "AWS::DynamoDB::Table",
+                json!({"TableName":format!("{prefix}-control"),"BillingMode":"PAY_PER_REQUEST","AttributeDefinitions":[{"AttributeName":"deploymentId","AttributeType":"S"}],"KeySchema":[{"AttributeName":"deploymentId","KeyType":"HASH"}],"Tags":tags(p)}),
+            ),
+        ),
+        (
             "Logs".into(),
             resource(
                 "AWS::Logs::LogGroup",
@@ -451,7 +458,7 @@ fn guard_template(p: &Plan, i: &Inputs) -> Value {
             ),
         ),
     ]);
-    r.get_mut("Cleanup").unwrap()["DependsOn"] = json!(["Logs"]);
+    r.get_mut("Cleanup").unwrap()["DependsOn"] = json!(["Logs", "Control"]);
     template(
         "OpenWorker independent expiry guard; artifact and cleanup behavior require qualification",
         r,
@@ -534,7 +541,7 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         json_bytes(&policies.review)?,
     );
     files.insert("infrastructure-inputs.json".into(), json_bytes(i)?);
-    files.insert("guard-contract.json".into(),json_bytes(&json!({"schemaVersion":1,"qualified":false,"code":i.guard_code,"requiredBeforeInfrastructure":["verify versioned S3 object SHA-256","verify Lambda account/region/deployment identity","invoke read-only health probe","prove rejection of foreign stack, bucket and volume ownership","prove expiry cleanup and lost-response reconciliation"],"requiredBehavior":["no effects before fixed expiry","resolve exact infra stack ARN and verify deployment tag before deletion","never update or delete the bootstrap stack or guard stack","delete only deployment-prefix objects and tagged available volumes","refuse foreign objects/versioned bucket and fail closed on ambiguous ownership","use exact execution role and stable deletion request identity","report incomplete teardown; retain guard until independently verified"]}))?);
+    files.insert("guard-contract.json".into(),json_bytes(&json!({"schemaVersion":1,"qualified":false,"code":i.guard_code,"requiredBeforeInfrastructure":["verify versioned S3 object SHA-256","verify Lambda account/region/deployment identity","invoke read-only health probe","prove rejection of foreign stack, bucket and volume ownership","prove expiry cleanup and lost-response reconciliation"],"requiredBehavior":["no destructive effects before fixed expiry","resolve exact infra stack ARN and verify deployment tag before deletion","never update or delete the bootstrap stack or guard stack","delete only deployment-prefix objects and tagged available volumes","refuse foreign objects/versioned bucket and fail closed on ambiguous ownership","use exact execution role and stable deletion request identity","report incomplete teardown; retain guard until independently verified"]}))?);
     let review = review(p, i, &policies.execution);
     files.insert("BOOTSTRAP.md".into(), review.clone().into_bytes());
     files.insert("REVIEW.md".into(), review.into_bytes());

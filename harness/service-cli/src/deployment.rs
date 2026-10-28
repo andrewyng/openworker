@@ -1,9 +1,13 @@
-//! Offline deployment planning and explicit, read-only AWS preflight dispatch.
+//! Offline planning/packaging, local kind installation and read-only AWS preflight.
 //! Offline commands do not invoke cloud tools or load service authentication.
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
+#[path = "deployment_guard.rs"]
+mod guard;
 #[path = "deployment_infrastructure.rs"]
 mod infrastructure;
+#[path = "deployment_local.rs"]
+mod local;
 #[path = "deployment_preflight.rs"]
 mod preflight;
 use anyhow::{bail, ensure, Context, Result};
@@ -21,6 +25,15 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum Command {
+    Guard {
+        #[command(subcommand)]
+        command: guard::Command,
+    },
+    /// Local kind installation/qualification; no cloud provisioning.
+    Local {
+        #[command(subcommand)]
+        command: local::Command,
+    },
     Aws {
         #[command(subcommand)]
         command: AwsCommand,
@@ -475,6 +488,9 @@ fn result(p: &Plan, m: &Manifest) -> Value {
         "identityBootstrap": if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
+    if let Command::Local { command } = command {
+        return local::run(command).await;
+    }
     if let Command::Aws {
         command: AwsCommand::Preflight(options),
     } = command
@@ -485,6 +501,8 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Guard { command } => guard::run(command),
+        Command::Local { .. } => bail!("Local installer requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Preflight(_),
         } => bail!("Preflight requires asynchronous dispatch"),

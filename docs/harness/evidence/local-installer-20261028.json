@@ -1,0 +1,102 @@
+{
+  "qualifiedAt": "2026-10-28T17:33:34.067Z",
+  "passed": true,
+  "platform": "Linux ARM64 on local kind/Docker",
+  "kubernetes": "v1.36.4",
+  "openshellVersion": "0.1.3",
+  "openshellChartArchiveSha256": "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33",
+  "tests": {
+    "rustCli": 32,
+    "guard": 9,
+    "cloudFormationTemplatesLinted": 3,
+    "zipCrcSourceIdentityAndRepeatBuildVerified": true
+  },
+  "installations": [
+    {
+      "passed": true,
+      "serviceId": "ows-f6b9e5bcbe26",
+      "deploymentId": "ows-local-745d943e10b84a2ba375dfaa5cd6f394",
+      "mode": "install",
+      "namespace": "ow-service-m4-ownf6b9e5bc",
+      "gatewayNamespace": "ow-local-shell-f6b9e5bc",
+      "sessionId": "s_2f89a6d0aa7c4f25b74811fc33c05739",
+      "environmentId": "env_0616764afb8b47e79ab43930e29ea807",
+      "checks": [
+        "gateway authenticated by ready worker",
+        "publish/activate profile and agent using scoped credentials",
+        "service submission and real OpenShell file write/shell read",
+        "installer restart reconciles original release revisions",
+        "teardown refuses active work",
+        "session close and explicit sandbox deletion"
+      ],
+      "cloudCalls": false,
+      "model": "scripted"
+    },
+    {
+      "passed": true,
+      "serviceId": "ows-b6ec7a88638f",
+      "deploymentId": "ows-local-a60937eb66334f568ad89387cad7e83c",
+      "mode": "existing",
+      "namespace": "ow-service-m4-reuseb6ec7a88",
+      "gatewayNamespace": "ow-helm-shell",
+      "sessionId": "s_e911c9175f434bfa92d3b7f0ee79ef9d",
+      "environmentId": "env_fbc2445bc3cf4bf8bf02629db4c0a5ac",
+      "checks": [
+        "gateway authenticated by ready worker",
+        "publish/activate profile and agent using scoped credentials",
+        "service submission and real OpenShell file write/shell read",
+        "installer restart reconciles original release revisions",
+        "teardown refuses active work",
+        "session close and explicit sandbox deletion"
+      ],
+      "cloudCalls": false,
+      "model": "scripted"
+    }
+  ],
+  "network": {
+    "passed": true,
+    "checks": [
+      "explicit baseline allow",
+      "egress deny",
+      "egress allow",
+      "ingress deny",
+      "ingress allow"
+    ],
+    "namespace": "ow-service-m4-reuseb6ec7a88",
+    "cloudCalls": false
+  },
+  "cleanup": {
+    "ownedServiceNamespacesRemoved": true,
+    "ownedGatewayNamespaceAndClusterRbacRemoved": true,
+    "testPVCsRemoved": true,
+    "existingGatewayReceiptAndRevisionUnchanged": true,
+    "baselineNamespaceUidsUnchanged": true,
+    "baselineSandboxUidsUnchanged": true,
+    "baselineSuspendedSandboxesRemaining": 3
+  },
+  "guardPackage": {
+    "archiveSha256": "f3adf51e0bea8279c36788b5740964788d9c1e1fa4d16ef9c306f2b5038b216a",
+    "entrypoint": "index.handler",
+    "guardControlVersion": 1,
+    "requiresLiveRuntimeQualification": true,
+    "runtime": "nodejs22.x",
+    "runtimeProvidedDependencies": [
+      "@aws-sdk/client-cloudformation",
+      "@aws-sdk/client-s3",
+      "@aws-sdk/client-ec2",
+      "@aws-sdk/client-dynamodb"
+    ],
+    "schemaVersion": 1,
+    "sourceSha256": "abaeac734788348ce3b5f2d9de9faec429fac4cb348ceedc75bd9e8d368c0743",
+    "uploaded": false
+  },
+  "limits": [
+    "No AWS/GCP/Azure provisioning, identity changes or artifact uploads",
+    "No live LLM call; deterministic model with real sandbox tool effects",
+    "Cloud Lambda runtime/SDK, IAM, expiry and EBS cleanup need live qualification",
+    "Existing Agent Sandbox controller, Calico and storage were reused, not bootstrapped",
+    "CNI enforcement probe is separate from the OpenShell sandbox tool round trip",
+    "No new management UI qualification in this task; prior UI evidence remains separate",
+    "Cloud lifecycle reconciliation and private management API connectivity remain unimplemented"
+  ]
+}

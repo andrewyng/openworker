@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { init, run } from "./stack.mjs";
+import { localValues } from "./local-values.mjs";
 const [action, root, configFile] = process.argv.slice(2);
 if (!action || !root)
   throw Error(
@@ -78,7 +79,7 @@ if (action === "init") {
     );
   if (m.destroying && action !== "destroy")
     throw Error("Destruction in progress; resume destroy with the same ID");
-  if (action === "install") {
+  if (action === "install" || action === "fixtures") {
     const names = JSON.parse(
       await kube(m, ["get", "namespaces", "-o", "json"]),
     ).items;
@@ -236,46 +237,35 @@ if (action === "init") {
     const config = JSON.parse(
       await readFile(join(input, "config.json"), "utf8"),
     );
-    config.runner = "/opt/openworker/openworker";
-    config.openshell.image = m.runnerImage;
-    const values = {
-      image: m.imageRef,
-      config,
-      worker: {
-        ownership: "manual",
-        maxReplicas: 4,
-        slots: 2,
-        drainSeconds: 30,
-      },
-      terminationGracePeriodSeconds: 90,
-    };
+    const values = localValues(config, m);
     await writeFile(
       join(state, "values.json"),
       JSON.stringify(values, null, 2),
       { mode: 0o600 },
     );
-    await run(
-      m.helm,
-      [
-        "upgrade",
-        "--install",
-        m.release,
-        resolve("deploy/service/chart"),
-        "--kubeconfig",
-        m.kubeconfig,
-        "--kube-context",
-        m.context,
-        "--namespace",
-        m.namespace,
-        "-f",
-        join(state, "values.json"),
-        "--wait",
-        "--wait-for-jobs",
-        "--timeout",
-        "180s",
-      ],
-      { inherit: true },
-    );
+    if (action === "install")
+      await run(
+        m.helm,
+        [
+          "upgrade",
+          "--install",
+          m.release,
+          resolve("deploy/service/chart"),
+          "--kubeconfig",
+          m.kubeconfig,
+          "--kube-context",
+          m.context,
+          "--namespace",
+          m.namespace,
+          "-f",
+          join(state, "values.json"),
+          "--wait",
+          "--wait-for-jobs",
+          "--timeout",
+          "180s",
+        ],
+        { inherit: true },
+      );
     console.log(
       JSON.stringify({
         namespace: m.namespace,

@@ -56,6 +56,8 @@ credentials, configuration and Kubernetes capacity, see the
 [service administration guide](../docs/harness/SERVICE-M4-QUICKSTART.md). The
 [service specification](../docs/harness/OPENWORKER-SERVICE.md) also describes later
 management and cloud milestones; see the ledger for qualified scope.
+The [local Kubernetes installation guide](../docs/harness/OWS-LOCAL-INSTALLATION.md)
+covers pinned OpenShell installation, existing-gateway reuse and installer recovery.
 
 | Application | Interface |
 |---|---|

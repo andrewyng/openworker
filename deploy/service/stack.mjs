@@ -107,64 +107,11 @@ async function certificate(input, name, cn, san) {
   ]);
   for (const f of [ca + ".key", cert + ".key"]) await chmod(f, 0o600);
 }
-export async function init(root, connectionFile, image, port = 58443) {
-  root = resolve(root);
-  if (/[\r\n$]/.test(root))
-    throw Error("State path cannot contain newlines or dollar signs");
-  if (!Number.isInteger(port) || port < 1024 || port > 65535)
-    throw Error("Invalid local port");
-  const c = JSON.parse(await readFile(resolve(connectionFile), "utf8"));
+export function serviceConfig(c, id) {
   const gateway = new URL(c.openshell.endpoint);
-  if (
-    gateway.protocol !== "https:" ||
-    gateway.username ||
-    gateway.password ||
-    gateway.search ||
-    gateway.hash
-  )
-    throw Error("OpenShell requires a verified HTTPS endpoint");
-  if (!c.openshell.image.includes("@sha256:"))
-    throw Error("Runner image must be pinned by digest");
-  const imageId = (
-    await run("docker", ["image", "inspect", image, "--format", "{{.Id}}"])
-  ).trim();
-  const id = "ows-" + randomUUID().replaceAll("-", "").slice(0, 12);
-  await mkdir(root, { mode: 0o700 });
-  await mkdir(join(root, "input"), { mode: 0o700 });
-  const input = join(root, "input");
-  await mkdir(join(input, "openshell"), { mode: 0o700 });
-  for (const name of ["ca.crt", "tls.crt", "tls.key"]) {
-    await copyFile(
-      join(resolve(c.openshell.certificates), name),
-      join(input, "openshell", name),
-    );
-    await chmod(join(input, "openshell", name), 0o600);
-  }
-  await copyFile(resolve(c.runner), join(input, "runner"));
-  await chmod(join(input, "runner"), 0o500);
-  const password = randomBytes(32).toString("hex"),
-    admin = randomBytes(32).toString("hex");
-  await privateWrite(join(input, "pg-password"), password);
-  await privateWrite(join(input, "admin-token"), admin);
-  await certificate(input, "pg", "postgres", "DNS:postgres");
-  await certificate(input, "api", "localhost", "DNS:localhost,IP:127.0.0.1");
-  await privateWrite(
-    join(input, "database-url"),
-    `postgresql://openworker:${password}@postgres:5432/openworker`,
-  );
   const scripted = c.scripted === true;
-  if (!scripted && (!c.model || !c.modelKeyFile))
-    throw Error(
-      "Live setup requires explicit model and modelKeyFile; use scripted:true for qualification",
-    );
   const provider = c.modelProvider ?? "openai";
-  if (!["openai", "anthropic"].includes(provider))
-    throw Error("Unsupported local model provider");
-  if (!scripted) {
-    await copyFile(resolve(c.modelKeyFile), join(input, `model-${provider}`));
-    await chmod(join(input, `model-${provider}`), 0o600);
-  }
-  const config = {
+  return {
     service: {
       id,
       namespace: "local",
@@ -203,6 +150,68 @@ export async function init(root, connectionFile, image, port = 58443) {
       image: c.openshell.image,
     },
   };
+}
+export async function init(root, connectionFile, image, port = 58443) {
+  root = resolve(root);
+  if (/[\r\n$]/.test(root))
+    throw Error("State path cannot contain newlines or dollar signs");
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    throw Error("Invalid local port");
+  const c = JSON.parse(await readFile(resolve(connectionFile), "utf8"));
+  const gateway = new URL(c.openshell.endpoint);
+  if (
+    gateway.protocol !== "https:" ||
+    gateway.username ||
+    gateway.password ||
+    gateway.search ||
+    gateway.hash
+  )
+    throw Error("OpenShell requires a verified HTTPS endpoint");
+  if (!c.openshell.image.includes("@sha256:"))
+    throw Error("Runner image must be pinned by digest");
+  const imageId = (
+    await run("docker", ["image", "inspect", image, "--format", "{{.Id}}"])
+  ).trim();
+  const id =
+    c.serviceId ?? "ows-" + randomUUID().replaceAll("-", "").slice(0, 12);
+  if (!/^ows-[a-z0-9]{12}$/.test(id))
+    throw Error("Invalid explicit local service identity");
+  await mkdir(root, { mode: 0o700 });
+  await mkdir(join(root, "input"), { mode: 0o700 });
+  const input = join(root, "input");
+  await mkdir(join(input, "openshell"), { mode: 0o700 });
+  for (const name of ["ca.crt", "tls.crt", "tls.key"]) {
+    await copyFile(
+      join(resolve(c.openshell.certificates), name),
+      join(input, "openshell", name),
+    );
+    await chmod(join(input, "openshell", name), 0o600);
+  }
+  await copyFile(resolve(c.runner), join(input, "runner"));
+  await chmod(join(input, "runner"), 0o500);
+  const password = randomBytes(32).toString("hex"),
+    admin = randomBytes(32).toString("hex");
+  await privateWrite(join(input, "pg-password"), password);
+  await privateWrite(join(input, "admin-token"), admin);
+  await certificate(input, "pg", "postgres", "DNS:postgres");
+  await certificate(input, "api", "localhost", "DNS:localhost,IP:127.0.0.1");
+  await privateWrite(
+    join(input, "database-url"),
+    `postgresql://openworker:${password}@postgres:5432/openworker`,
+  );
+  const scripted = c.scripted === true;
+  if (!scripted && (!c.model || !c.modelKeyFile))
+    throw Error(
+      "Live setup requires explicit model and modelKeyFile; use scripted:true for qualification",
+    );
+  const provider = c.modelProvider ?? "openai";
+  if (!["openai", "anthropic"].includes(provider))
+    throw Error("Unsupported local model provider");
+  if (!scripted) {
+    await copyFile(resolve(c.modelKeyFile), join(input, `model-${provider}`));
+    await chmod(join(input, `model-${provider}`), 0o600);
+  }
+  const config = serviceConfig(c, id);
   await privateWrite(
     join(input, "config.json"),
     JSON.stringify(config, null, 2),

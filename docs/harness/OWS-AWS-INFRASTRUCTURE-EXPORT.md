@@ -44,7 +44,7 @@ and schema-2 bundles retain their original contents/digests and remain inspectab
 |---|---|
 | `bootstrap.cfn.json` | Setup, artifact, CloudFormation executor, cluster, node, EBS CSI and cleanup roles; five execution managed policies |
 | `infrastructure.cfn.json` | Dedicated VPC/routing/NAT, private EKS/node group, pinned add-ons, private PostgreSQL and named secret, S3 and three ECR repositories |
-| `guard.cfn.json` | Independent Lambda, log group, schedule and invocation permission; uses the supplied immutable code artifact |
+| `guard.cfn.json` | Independent Lambda, DynamoDB operation journal, log group, schedule and invocation permission; uses the supplied immutable code artifact |
 | `execution-policy-*.json` | Network creation, network management, EKS, data and guard permissions |
 | `setup-policy.json`, `workload-policy.json`, `cleanup-policy.json` | Separate operator, artifact and cleanup grants |
 | `permission-review.json` | Coverage of every infrastructure/guard resource, broad-grant explanations and remaining qualification checks |
@@ -128,11 +128,18 @@ in the plan is not proof that the object exists or implements safe cleanup. Befo
 billable infrastructure can be launched, the executor must verify its bytes, install
 it, and prove the behaviors in `guard-contract.json`:
 
-- No action before the fixed expiry; verify deployment/account/region identity.
+- No destructive action before the fixed expiry; verify deployment/account/region identity.
 - Resolve the exact infra stack ARN and check ownership before deletion.
 - Delete only the deployment's artifact prefix and owned available volumes; refuse
   foreign objects, versioned buckets or ambiguous ownership.
 - Preserve operation identity across lost responses and report incomplete cleanup.
+
+The guard package and simulated failure behavior are now tested locally; see
+[local qualification](OWS-LOCAL-INSTALLATION.md). Its independent DynamoDB table
+preserves stack/volume deletion intents; the cleanup role can read/write only the
+deployment's key. Local tests do not qualify the actual Lambda runtime/SDK, IAM,
+CloudFormation rollback or EBS cleanup. Keep cloud apply disabled until those pass.
+Regenerate/review earlier development schema-3 bundles for the new table/policies.
 - Keep guard/bootstrap resources until teardown is independently verified.
 
 The schedule disables event-delivery retries; that does not remove the need for

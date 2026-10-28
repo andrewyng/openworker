@@ -5,6 +5,10 @@ through HTTPS and submits agents to an existing NVIDIA OpenShell gateway.
 This reference is for local integration testing. It does not install Kubernetes
 or OpenShell, and it is not a production HA deployment.
 
+For the native `ows deploy local` Kubernetes installer, including pinned OpenShell
+installation or reuse of an existing gateway, see the
+[local installation guide](../../docs/harness/OWS-LOCAL-INSTALLATION.md).
+
 ```text
 ows / application SDK
         │ HTTPS + bearer token; REST requests and SSE events

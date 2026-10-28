@@ -225,6 +225,33 @@ fn complete_templates_are_private_bounded_and_have_valid_dependency_graphs() {
             .is_none(),
         "Guard must survive target VPC/cluster loss"
     );
+    assert_eq!(
+        guard["Resources"]["Control"]["Type"],
+        "AWS::DynamoDB::Table"
+    );
+    assert_eq!(
+        guard["Resources"]["Control"]["Properties"]["KeySchema"],
+        json!([{"AttributeName":"deploymentId","KeyType":"HASH"}])
+    );
+    assert!(guard["Resources"]["Cleanup"]["DependsOn"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("Control")));
+    let cleanup = read(&out, "cleanup-policy.json");
+    let record = cleanup["Statement"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["Sid"] == "GuardControlRecord")
+        .unwrap();
+    assert_eq!(
+        record["Action"],
+        json!(["dynamodb:GetItem", "dynamodb:PutItem"])
+    );
+    assert_eq!(
+        record["Condition"]["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"],
+        json!([meta["deploymentId"]])
+    );
     assert_eq!(read(&out, "guard-contract.json")["qualified"], false);
     let coverage = read(&out, "permission-review.json");
     assert_eq!(
