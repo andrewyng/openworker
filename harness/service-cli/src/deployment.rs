@@ -2,6 +2,8 @@
 //! ambient credentials, or service-client authentication in this module.
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
+#[path = "deployment_infrastructure.rs"]
+mod infrastructure;
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -70,11 +72,14 @@ pub struct AwsPlan {
     #[arg(long)]
     region: String,
     /// Export identity bootstrap for this explicit same-account IAM principal.
-    #[arg(long, requires = "execution_role_arn")]
+    #[arg(long)]
     operator_arn: Option<String>,
     /// Existing, customer-reviewed CloudFormation execution role (not created here).
     #[arg(long, requires = "operator_arn")]
     execution_role_arn: Option<String>,
+    /// Export the AWS infrastructure and generated execution roles from explicit pinned inputs.
+    #[arg(long, requires = "operator_arn", conflicts_with = "execution_role_arn")]
+    infrastructure_config: Option<PathBuf>,
     #[command(flatten)]
     common: PlanOptions,
 }
@@ -164,6 +169,8 @@ struct Plan {
     topology: Topology,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bootstrap: Option<bootstrap::AwsIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    infrastructure: Option<infrastructure::Inputs>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -204,7 +211,7 @@ fn region_ok(s: &str) -> bool {
 impl Plan {
     fn validate(&self) -> Result<()> {
         ensure!(
-            [1, 2].contains(&self.schema_version),
+            [1, 2, 3].contains(&self.schema_version),
             "Unsupported plan schema"
         );
         ensure!(
@@ -274,8 +281,23 @@ impl Plan {
             }
         }
         if let Some(identity) = &self.bootstrap {
-            ensure!(self.schema_version == 2, "Bootstrap requires schema 2");
+            ensure!(
+                self.schema_version >= 2,
+                "Bootstrap requires schema 2 or later"
+            );
             identity.validate(self)?;
+        }
+        if let Some(inputs) = &self.infrastructure {
+            ensure!(
+                self.schema_version == 3 && self.bootstrap.is_some(),
+                "Infrastructure requires schema 3 and bootstrap identity"
+            );
+            inputs.validate(self)?;
+        } else {
+            ensure!(
+                self.schema_version != 3,
+                "Schema 3 requires infrastructure inputs"
+            );
         }
         ensure!(
             self.created_at_unix > 0
@@ -342,13 +364,15 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         Target::Aws { .. } => AwsPlanner.render(plan)?,
         _ => other_cloud_artifacts(plan)?,
     };
-    if plan.schema_version == 2 {
+    if plan.schema_version >= 2 {
         files.insert(
             "resource-graph.json".into(),
             json_bytes(&resource_graph(plan))?,
         );
     }
-    if plan.bootstrap.is_some() {
+    if plan.infrastructure.is_some() {
+        files.extend(infrastructure::render(plan)?);
+    } else if plan.bootstrap.is_some() {
         files.extend(bootstrap::render(plan)?);
         let review = files.get_mut("REVIEW.md").unwrap();
         *review = String::from_utf8(review.clone())?.replace(
@@ -444,7 +468,7 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
 }
 fn result(p: &Plan, m: &Manifest) -> Value {
     json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix,
-        "identityBootstrap": if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
+        "identityBootstrap": if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
@@ -457,13 +481,36 @@ pub fn run(command: &Command) -> Result<()> {
                 region: a.region.clone(),
             },
             match (&a.operator_arn, &a.execution_role_arn) {
+                (Some(operator), None) if a.infrastructure_config.is_some() => {
+                    Some(bootstrap::AwsIdentity {
+                        operator_arn: operator.clone(),
+                        execution_role_arn: String::new(),
+                    })
+                }
                 (Some(operator), Some(execution)) => Some(bootstrap::AwsIdentity {
                     operator_arn: operator.clone(),
                     execution_role_arn: execution.clone(),
                 }),
                 (None, None) => None,
-                _ => bail!("Both operator and execution role are required"),
+                _ => bail!(
+                    "Operator requires either an existing execution role or infrastructure config"
+                ),
             },
+            a.infrastructure_config
+                .as_ref()
+                .map(|path| {
+                    let parent = path
+                        .parent()
+                        .filter(|x| !x.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                    let file = path
+                        .file_name()
+                        .and_then(|x| x.to_str())
+                        .context("Invalid infrastructure config filename")?;
+                    serde_json::from_slice(&read_file(parent, file)?)
+                        .context("Invalid infrastructure config")
+                })
+                .transpose()?,
         ),
         Command::Gcp {
             command: GcpCommand::Plan(a),
@@ -473,6 +520,7 @@ pub fn run(command: &Command) -> Result<()> {
                 project: a.project.clone(),
                 location: a.location.clone(),
             },
+            None,
             None,
         ),
         Command::Azure {
@@ -484,6 +532,7 @@ pub fn run(command: &Command) -> Result<()> {
                 subscription: a.subscription.clone(),
                 location: a.location.clone(),
             },
+            None,
             None,
         ),
         Command::Inspect { plan } | Command::Status { plan } => {
@@ -532,6 +581,7 @@ fn create(
     a: &PlanOptions,
     target: Target,
     bootstrap: Option<bootstrap::AwsIdentity>,
+    infrastructure: Option<infrastructure::Inputs>,
 ) -> Result<()> {
     ensure!((1..=72).contains(&a.ttl_hours), "TTL must be 1–72 hours");
     let created = now()?;
@@ -540,12 +590,13 @@ fn create(
     } else {
         "amd64"
     };
-    let p = Plan {
-        schema_version: 2,
+    let mut p = Plan {
+        schema_version: if infrastructure.is_some() { 3 } else { 2 },
         deployment_id: format!("ows-{}", uuid::Uuid::new_v4().simple()),
         name: a.name.clone(),
         target,
         bootstrap,
+        infrastructure,
         created_at_unix: created,
         expires_at_unix: created
             .checked_add(u64::from(a.ttl_hours) * 3600)
@@ -564,6 +615,16 @@ fn create(
             node_autoscaling: false,
         },
     };
+    if p.infrastructure.is_some() {
+        let Target::Aws { account, .. } = &p.target else {
+            bail!("Infrastructure export requires AWS");
+        };
+        let arn = format!("arn:aws:iam::{account}:role/{}-executor", p.prefix());
+        p.bootstrap
+            .as_mut()
+            .context("Infrastructure requires operator")?
+            .execution_role_arn = arn;
+    }
     let m = write_bundle(&a.out, &p)?;
     crate::output(result(&p, &m))
 }
@@ -646,6 +707,7 @@ mod tests {
                 estimate: None,
             },
             bootstrap: None,
+            infrastructure: None,
             topology: Topology {
                 cluster_mode: "new".into(),
                 node_count: 2,

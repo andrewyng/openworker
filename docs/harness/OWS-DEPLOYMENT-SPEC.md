@@ -188,3 +188,20 @@ identity-only bootstrap. The execution role is customer-provided, not auto-gener
 or policy-audited. These extra artifacts are integrity-checked along with the plan.
 No identity artifacts are emitted for GCP/Azure yet. Their identity/resource designs
 and remaining qualification gates are in [cloud identities](OWS-CLOUD-IDENTITY-DESIGN.md).
+
+## Schema 3: generated AWS infrastructure and identities
+
+`ows deploy aws plan --operator-arn ARN --infrastructure-config FILE ...` now exports
+bootstrap, infrastructure and guard templates plus resource-mapped execution policies.
+It generates the CloudFormation execution role instead of requiring an imported one;
+`--execution-role-arn` therefore conflicts with this option. The explicit input
+pins zones, private network range, Kubernetes/node/add-on/PostgreSQL versions and a
+versioned guard artifact. It requires an acknowledgement of experiment data deletion.
+
+The output is still offline: no cloud identity, availability, quota, price or guard
+behavior is verified. Runtime images, private connectivity, image uploading, secret
+handoff and Helm platform/service installation are later phases. See the
+[infrastructure export guide](OWS-AWS-INFRASTRUCTURE-EXPORT.md) for exact files and
+permission boundaries. Schema 1/2 rendering remains unchanged. Live apply/destroy
+remain disabled; a generated guard template does not constitute an installed or
+qualified expiry guard.

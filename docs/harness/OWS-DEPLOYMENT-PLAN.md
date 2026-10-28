@@ -106,3 +106,53 @@ Manual offline smoke: generated AWS (10 artifacts), GCP (5) and Azure (5) sample
 under ignored `.ow-service-deploy-d2-wbxy9jqe/`; inspected, validated and read local
 status for each. Every result has `applyReady: false`. The original D1 sample remains
 inspectable with its unchanged bundle digest. Formatting and diff checks pass.
+
+### D2b complete as an offline export — 28 October 2026
+
+Added `--infrastructure-config` with a strict, versioned input schema and explicit
+experiment-data-deletion acknowledgement. With an operator ARN, this generates the
+execution role rather than importing one. Existing identity-only exports and schema
+1/2 bundles retain their original artifact contents/digests.
+
+Generated 21-artifact review bundle:
+- Bootstrap template: seven roles and five scoped execution managed policies.
+- Infrastructure template: 36 resources covering a dedicated VPC, single NAT, private
+  worker subnets, private EKS endpoint, pinned node/add-on versions, private TLS RDS,
+  generated named DB secret, artifact S3 bucket and three ECR repositories.
+- Independent guard template: four resources referencing an immutable S3 code version.
+- Per-domain execution policies, workload/setup/cleanup policies, resource permission
+  coverage, wildcard explanations, guard qualification contract and pinned inputs.
+
+The infrastructure executor has no IAM identity/policy mutation permissions.
+Bootstrap owns platform roles; PassRole is restricted to exact roles/services.
+Cleanup can delete the owned infra stack and scoped artifacts/volumes, not provision
+resources or alter bootstrap/guard identities. EC2 creation and subsequent mutation
+use request/ownership tags. Tag deletion requires a nonempty key list excluding the
+ownership tag. EKS CreateCluster's required Resource * is explicitly documented;
+IAM does not enforce the experiment's cost or node-count ceiling.
+
+Validation completed:
+- 19 Rust CLI tests pass (7 unit, 7 deployment, 5 infrastructure tests).
+- New tests cover dependency/reference graphs, private endpoints/subnets, explicit
+  destructive retention, exact identity references, policy sizes and authority
+  boundaries, missing/unpinned/unsafe inputs, every artifact's integrity, no cloud
+  invocations, and generated-role bootstrap using a fake AWS executable only.
+- `cfn-lint 1.58.0` passes all three templates for us-west-2. Only W3010 is waived:
+  availability zones are deliberately pinned per target account/region. The linter
+  caught an invalid S3 permission action during development; it was removed.
+- Manual plan/inspect/validate/status smoke succeeded; applyReady remains false.
+  Historical D1 and D2a bundle digests remain unchanged on inspection.
+- Formatting and diff checks pass. No runtime dependency was added. cfn-lint was
+  downloaded to a /tmp tool cache; no AWS credentials/API/provisioning were used.
+
+Final local review bundle:
+`.ow-service-deploy-d2b-verified-8lh3e0ko/plan/` (ignored, synthetic target/fixtures).
+Guide: [AWS infrastructure export](OWS-AWS-INFRASTRUCTURE-EXPORT.md).
+
+Next is D3 read-only preflight: identity, service-linked roles, version/image support,
+quota, prices and guard artifact digest. D4 still owns guard packaging/behavior and
+cloud lifecycle reconciliation. D5 still owns private Kubernetes connectivity,
+image upload, exact secret handoff and OpenShell/service Helm qualification. Live
+apply remains disabled. The example versions/artifact identifiers are test fixtures,
+not a supported-version catalog or an uploaded/qualified guard. A generated template
+is not an installed guard, a cloud IAM qualification, or a hard $100 spending cap.

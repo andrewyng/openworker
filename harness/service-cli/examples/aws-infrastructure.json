@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "availabilityZones": ["us-west-2a", "us-west-2b"],
+  "vpcCidr": "10.94.0.0/16",
+  "kubernetesVersion": "1.36",
+  "nodeReleaseVersion": "1.36.4-20261007",
+  "postgresVersion": "16.13",
+  "addons": {
+    "vpcCni": "v1.21.1-eksbuild.1",
+    "kubeProxy": "v1.36.4-eksbuild.1",
+    "coreDns": "v1.13.1-eksbuild.1",
+    "podIdentity": "v1.3.8-eksbuild.1",
+    "ebsCsi": "v1.48.0-eksbuild.1"
+  },
+  "guardCode": {
+    "bucket": "example-ows-qualified-artifacts",
+    "key": "guard/cleanup.zip",
+    "versionId": "EXAMPLE-not-an-uploaded-object",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "acknowledgeExperimentDataDeletion": true
+}

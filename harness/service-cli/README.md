@@ -46,11 +46,18 @@ ows deploy azure plan \
   --location westus2 --name my-service --budget 100 --out ./azure-plan
 ```
 
-AWS plans optionally accept paired `--operator-arn` and `--execution-role-arn` to
-export two IAM role policies, an identity-only CloudFormation template, a review,
-and `bootstrap.sh`. This path requires an existing customer-reviewed CloudFormation
-execution role. It is not the complete infrastructure installer. The script is
-customer-run explicitly with `--apply-identities`; `ows` never executes it. It has
+AWS plans have two export options:
+
+- `--operator-arn` plus `--infrastructure-config`: generate infrastructure templates,
+  the execution role and scoped execution policies. See the
+  [infrastructure export guide](../../docs/harness/OWS-AWS-INFRASTRUCTURE-EXPORT.md).
+- Paired `--operator-arn` and `--execution-role-arn`: retain an existing executor and
+  export identities only.
+
+The imported-role option exports two IAM role policies, an identity-only
+CloudFormation template, a review, and `bootstrap.sh`. This path requires an existing customer-reviewed CloudFormation
+execution role. It is not the complete infrastructure installer. Both modes produce
+a script that is customer-run explicitly with `--apply-identities`; `ows` never executes it. It has
 only been tested against a fake AWS CLI, not live IAM. Ordinary plans emit no script.
 GCP/Azure bootstrap generation is still design-only.
 

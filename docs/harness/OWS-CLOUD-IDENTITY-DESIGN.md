@@ -11,8 +11,8 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Capability | AWS | GCP | Azure |
 |---|---|---|---|
 | Offline typed plan, resource graph, inspect/validate/status | Implemented | Implemented | Implemented |
-| Generated setup/workload identity policies and bootstrap | Identity-only export with existing execution role | Design below | Design below |
-| Automatically generated infrastructure execution permissions | Not yet | Not yet | Not yet |
+| Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Design below | Design below |
+| Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
 | Live preflight, provisioning and cleanup | Disabled | Disabled | Disabled |
 
 Nothing in this milestone has been run against a cloud account. Generated AWS
@@ -44,7 +44,14 @@ customer must already have permission to create those identities and assign thos
 specific grants. No static AWS keys, GCP service-account keys or Azure client secrets
 are generated. Customer CI may run the same reviewed artifacts.
 
-## AWS: implemented identity-only export
+## AWS: generated infrastructure and identity-only exports
+
+The [infrastructure export](OWS-AWS-INFRASTRUCTURE-EXPORT.md) now generates the
+CloudFormation executor and platform identities along with private EKS, RDS, network,
+S3/ECR and guard templates. It takes `--infrastructure-config` plus `--operator-arn`.
+Cloud provisioning and guard qualification remain disabled/pending. The rest of this
+section describes the retained **imported execution-role, identity-only** path.
+
 
 ```sh
 ows deploy aws plan --account 123456789012 --region us-west-2 \
@@ -117,10 +124,11 @@ and [session tag attributes](https://docs.aws.amazon.com/eks/latest/userguide/po
 The wildcard suffixes cover stack-generated IDs and objects inside the deployment
 prefix. No generated allow statement uses a bare `*` resource or wildcard action.
 
-### Remaining AWS execution-policy work
+### AWS execution-policy review and qualification
 
-The complete auto-generated path must derive each grant from the resolved template,
-not guess broad permissions from a list of cloud services:
+The auto-generated path now maps template resources to explicit permission domains.
+The following boundaries still require cloud preflight/simulation and live qualification;
+local generation does not prove every resource-handler permission is sufficient:
 
 | Resource/phase | Required authority and review boundary |
 |---|---|
@@ -239,10 +247,10 @@ an explicit cleanup decision.
 
 ## Next implementation order
 
-1. Complete AWS resolved infrastructure templates and auto-generated execution
-   permissions, including explicit storage/network/guard inputs.
-2. Read-only preflight and mocked reconciliation/executor tests; retain disabled
-   live apply until separately authorized.
+1. Read-only preflight for the generated AWS templates, including IAM prerequisites,
+   identity, versions, quotas, prices and versioned guard artifact verification.
+2. Mocked lifecycle/reconciliation tests and guard packaging/qualification; retain
+   disabled live apply until separately authorized.
 3. Wire the current OpenShell/service/UI Helm installation and cloud workload identity.
 4. Qualify AWS with the experiment budget, then implement GCP and Azure bootstrap /
    template executors against the same lifecycle contract and their own IAM tests.

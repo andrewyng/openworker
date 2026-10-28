@@ -43,6 +43,18 @@ impl AwsIdentity {
             self.operator_arn != self.execution_role_arn,
             "Operator and CloudFormation executor must be separate identities"
         );
+        if p.infrastructure.is_some() {
+            ensure!(
+                self.execution_role_arn
+                    == format!("arn:aws:iam::{account}:role/{}-executor", p.prefix()),
+                "Generated execution role mismatch"
+            );
+            ensure!(
+                !self.operator_arn.contains(&p.prefix()),
+                "Operator cannot be a generated role"
+            );
+            return Ok(());
+        }
         for role in [&self.operator_arn, &self.execution_role_arn] {
             ensure!(
                 !role.contains(&format!("role/{}-", p.prefix())),
