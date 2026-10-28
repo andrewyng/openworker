@@ -931,6 +931,8 @@ def _run(args: argparse.Namespace) -> int:
         _base_cfg = engine._compaction_config()
         _forced = {
             "cap_tokens": int(args.compaction_cap_tokens or _base_cfg["cap_tokens"]),
+            # A saved per-model cap must not override the flag (model_config.py).
+            "cap_pinned": bool(args.compaction_cap_tokens),
             "threshold_pct": float(_base_cfg["threshold_pct"]),
             "context_window": _base_cfg.get("context_window"),
             "summary_max_tokens": int(

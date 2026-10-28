@@ -882,11 +882,16 @@ class TurnEngine:
 
         cfg = dict(self.compaction_settings() or {}) if self.compaction_settings else {}
         # The user's per-model settings (model_config.py): a saved window stands in for
-        # a model the matrix does not list; a saved threshold overrides the machine's.
+        # a model the matrix does not list; a saved threshold or cap overrides the
+        # machine's.
         saved_window = model_config.context_size_for(self.model)
         saved_pct = model_config.compaction_threshold_for(self.model)
         if saved_pct:
             cfg["threshold_pct"] = saved_pct
+        saved_cap = model_config.compaction_cap_for(self.model)
+        if saved_cap and not cfg.get("cap_pinned"):
+            # `cap_pinned`: the cap came from this run's command line, which wins.
+            cfg["cap_tokens"] = saved_cap
         if not cfg.get("context_window"):
             from .providers.matrix import model_context_windows
 
