@@ -666,3 +666,33 @@ def test_audit_call_id_is_overridable_by_a_call_site(tmp_path):
         call_id="other_id",
     )
     assert seen[1]["call_id"] == "other_id"
+def test_outbound_messages_does_not_send_orphan_tool_after_compaction(tmp_path):
+    """Compaction + notice-strip must not feed the provider a leading role=tool (#655)."""
+    from coworker.compaction import CompactionState
+
+    engine, _ = _engine(tmp_path, [_text_turn("unused")])
+    call = {
+        "id": "call_orphan",
+        "type": "function",
+        "function": {"name": "run_shell", "arguments": "{}"},
+    }
+    engine.messages = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": "", "tool_calls": [call]},
+        {"role": "user", "content": "interleave"},
+        {"role": "tool", "tool_call_id": "call_orphan", "content": "ok"},
+        {"role": "notice", "kind": "compacted", "text": "compacted"},
+        {"role": "user", "content": "continue"},
+    ]
+    # Boundary on the tool row: parent assistant is in the compacted span, and a
+    # notice sits between the orphan and the next user turn.
+    engine.compaction_state = CompactionState(
+        boundary_index=3, summary_text="earlier work", working_state=""
+    )
+    out = engine._outbound_messages()
+    assert all(m.get("role") != "notice" for m in out)
+    assert engine.messages[3]["role"] == "tool"  # canonical history is untouched
+    for i, msg in enumerate(out):
+        if msg.get("role") == "tool":
+            assert i > 0 and out[i - 1].get("tool_calls")
+    assert not out or out[0].get("role") != "tool"
