@@ -7007,6 +7007,10 @@ class SessionManager:
         agent (it called sleep_for / sleep_until / wake_on / wake_on_event and ended its turn) is re-invoked on
         its own session with a wake message so it continues where it left off. Returns the count.
         """
+        try:
+            await asyncio.to_thread(self.sync_background_wakes)
+        except Exception:
+            logger.exception("background task check failed")
         resumed = 0
         for wake in self.wakes.due():
             self.reconcile_activity_receipts(wake.session_id)
@@ -7016,6 +7020,9 @@ class SessionManager:
                 continue
             if wake.kind == "timer" and wake.session_id in self.wakes.stopped_sessions:
                 self.wakes.cancel_sleep(wake.session_id, "the user stopped the session")
+                continue
+            if wake.kind == "completion" and wake.session_id in self.wakes.stopped_sessions:
+                self.wakes.retire_job(wake.session_id, wake.job_id, reason="the user stopped the session")
                 continue
             self._team_inflight.add(wake.session_id)
             async def deliver(wake=wake):
@@ -7029,6 +7036,58 @@ class SessionManager:
             asyncio.create_task(deliver())
             resumed += 1
         return resumed
+
+    def sync_background_wakes(self) -> None:
+        """Tie background shell tasks to completion wakes (called each scheduler tick).
+
+        A turn that ends while a `run_shell(run_in_background=true)` task still runs gets a
+        completion wake for it, so the agent is resumed when the task exits instead of
+        waiting for the user to ask. A user message cancels a `sleep_for` check-in, so a
+        timer alone can leave the session with nothing to wake it. When a waited-on task
+        exits, its wake becomes due — unless the agent already saw the exit itself.
+        Only sessions with the self-wake tools take part.
+        """
+        for session_id, engine in list(self._engines.items()):
+            executor = getattr(engine, "executor", None)
+            registry = getattr(engine, "registry", None)
+            if executor is None or registry is None or "wake_on" not in registry.names():
+                continue
+            waiting = {w.job_id for w in self.wakes.pending(session_id) if w.kind == "completion"}
+            if session_id in self.wakes.stopped_sessions:
+                for job_id in waiting:
+                    self.wakes.retire_job(session_id, job_id, reason="the user stopped the session")
+                continue
+            idle = not self.is_running(session_id)
+            if not waiting and not idle:
+                continue
+            try:
+                tasks = {t.get("task_id"): t for t in executor.background_tasks()}
+            except Exception:
+                logger.exception("could not list background tasks for %s", session_id)
+                continue
+            for job_id in waiting:
+                found = tasks.get(job_id)
+                if found is not None and (found.get("status") == "running" or not found.get("output_drained", True)):
+                    continue
+                if found is not None and found.get("seen"):
+                    self.wakes.retire_job(session_id, job_id)
+                else:
+                    # Exited unseen, or gone (the sandbox restarted): either way, tell it.
+                    self.wakes.complete_job(job_id, session_id=session_id)
+            if idle:
+                for job_id, found in tasks.items():
+                    if not job_id or job_id in waiting or found.get("seen"):
+                        continue
+                    running = found.get("status") == "running" or not found.get("output_drained", True)
+                    # A task can finish between turn end and the first scheduler tick.
+                    # Watch that unseen exit too, but never re-deliver a finished watch.
+                    exited = (not running and found.get("status") == "exited"
+                              and not self.wakes.has_completion(session_id, job_id))
+                    if running or exited:
+                        command = str(found.get("command") or "")
+                        self.wakes.add_completion(session_id, job_id, note=f"background task: {command[:200]}")
+                        if exited:
+                            self.wakes.complete_job(job_id, session_id=session_id)
 
     def mark_running(self, session_id: str) -> None:
         self._running_sessions.add(session_id)
@@ -7104,7 +7163,7 @@ class SessionManager:
         board_delivery = (source or {}).get("connector") == "board"
         if wake is not None and wake not in self.wakes.pending(session_id):
             return False  # user/board activity won the scheduled-task race
-        if board_delivery and session_id in self.wakes.stopped_sessions:
+        if (board_delivery or (wake is not None and wake.kind == "completion")) and session_id in self.wakes.stopped_sessions:
             return False
         if board_delivery and not self._pending_board_context(session_id)[0]:
             # Backstop messages are not feed deliveries.
@@ -7650,8 +7709,8 @@ class SessionManager:
         note = f" (note: {wake.note})" if getattr(wake, "note", "") else ""
         if wake.kind == "completion":
             return (
-                f"Check-in — the job `{wake.job_id}` you were waiting on has completed{note}. "
-                "Continue where you left off."
+                f"Check-in — the background job `{wake.job_id}` has finished{note}. "
+                "Read its output with shell_task_output and continue where you left off."
             )
         if wake.kind == "event":
             return (

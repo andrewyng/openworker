@@ -66,6 +66,11 @@ class Executor(ABC):
     def background_kill(self, task_id: str) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
+    def background_tasks(self) -> list[dict[str, Any]]:
+        """Every background task with its status, without reading its output. `seen` is
+        True once the caller has been shown the exit (an output read after it, or a kill)."""
+        return []
+
     def interrupt(self) -> None:  # pragma: no cover - default no-op
         pass
 
@@ -119,6 +124,7 @@ class _BackgroundTask:
         self._lock = threading.Lock()
         self._lines: list[str] = []
         self._cursor = 0
+        self.exit_seen = False  # the agent has been shown that it ended
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
@@ -127,6 +133,9 @@ class _BackgroundTask:
         for line in self.proc.stdout:
             with self._lock:
                 self._lines.append(line)
+
+    def reader_alive(self) -> bool:
+        return self._reader.is_alive()
 
     def read_new(self) -> str:
         with self._lock:
@@ -175,7 +184,6 @@ class LocalExecutor(Executor):
         self._marker = f"__COWORKER_DONE_{uuid.uuid4().hex}__"
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
-        self._bg_counter = 0
         # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
@@ -353,8 +361,9 @@ class LocalExecutor(Executor):
 
     # -- background tasks ---------------------------------------------------------
     def run_background(self, command: str) -> dict[str, Any]:
-        self._bg_counter += 1
-        task_id = f"bg-{self._bg_counter}"
+        # Completion history survives shell/sandbox recreation. A new task must never
+        # inherit the identity (and already-delivered wake) of an earlier shell's job.
+        task_id = f"bg-{uuid.uuid4().hex}"
         try:
             task = _BackgroundTask(task_id, command, self.cwd, self._env)
         except OSError as exc:
@@ -371,11 +380,16 @@ class LocalExecutor(Executor):
         task = self._bg_tasks.get(task_id)
         if task is None:
             return {"error": f"unknown task: {task_id}"}
+        # Checked before the read: once the process has exited and its output is fully
+        # drained, this read hands the agent everything, so the exit counts as seen.
+        drained = task.proc.poll() is not None and not task.reader_alive()
         output = task.read_new()
         truncated = len(output) > self.max_output_chars
         if truncated:
             output = output[-self.max_output_chars :]
         exit_code = task.proc.poll()
+        if drained:
+            task.exit_seen = True
         return {
             "task_id": task_id,
             "status": "running" if exit_code is None else "exited",
@@ -389,6 +403,7 @@ class LocalExecutor(Executor):
         if task is None:
             return {"error": f"unknown task: {task_id}"}
         task.kill()
+        task.exit_seen = True
         try:
             task.proc.wait(timeout=5)
         except (subprocess.TimeoutExpired, OSError):
@@ -398,6 +413,20 @@ class LocalExecutor(Executor):
             "status": "running" if task.proc.poll() is None else "killed",
             "exit_code": task.proc.poll(),
         }
+
+    def background_tasks(self) -> list[dict[str, Any]]:
+        out = []
+        for task_id, task in list(self._bg_tasks.items()):
+            exit_code = task.proc.poll()
+            out.append({
+                "task_id": task_id,
+                "command": task.command,
+                "status": "running" if exit_code is None else "exited",
+                "exit_code": exit_code,
+                "output_drained": exit_code is not None and not task.reader_alive(),
+                "seen": exit_code is not None and task.exit_seen,
+            })
+        return out
 
     def _trailer(self) -> str:
         """Command appended after each user command. Emits one line `<marker> <exit> <cwd>`
