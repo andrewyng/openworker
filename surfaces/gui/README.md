@@ -44,6 +44,23 @@ npm install        # first time
 npm run tauri dev  # builds the shell, launches the window, starts the server
 ```
 
+## Localization
+
+The GUI uses i18next JSON resources in `src/locales/`, not gettext PO files.
+Settings > General offers English, Simplified Chinese (`zh`, the existing saved
+preference), Traditional Chinese (Taiwan, `zh-TW`), and Follow system.
+System locales with `Hant`, or the TW/HK/MO regions, use the Taiwan translation;
+an explicit `Hans` script uses Simplified Chinese even with a TW region.
+Unsupported languages fall back to English. HK/MO currently share the Taiwan
+translation; this is not a separate Hong Kong or Macau localization.
+
+Use Taiwan terminology in `zh-TW.json`, for example 文件 → 檔案, 文件夹 → 資料夾,
+保存 → 儲存, 默认 → 預設, 设置 → 設定, 服务器 → 伺服器, 密钥 → 金鑰, and
+令牌 → 權杖. Preserve resource keys, interpolation placeholders, commands, URLs,
+and product names. Translate ambiguous terms in context: Undo is 復原, while
+revoking permission is 撤銷. Both Chinese resources omit English-only `_one`
+plural variants. Locale contract tests check completeness and interpolation.
+
 ## Tests
 
 ```bash

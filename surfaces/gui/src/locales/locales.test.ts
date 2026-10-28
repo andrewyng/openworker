@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "./en.json";
 import zh from "./zh.json";
+import zhTW from "./zh-TW.json";
 
 // OPE-136 test plan #23: every UI string must exist in BOTH locales, or the Chinese
 // UI silently falls back to English one key at a time. Flattens both trees and
@@ -27,7 +28,7 @@ function baseKeys(keys: string[]): string[] {
   return [...new Set(keys.map((k) => k.replace(/_(zero|one|two|few|many|other)$/, "")))].sort();
 }
 
-describe("locale completeness", () => {
+describe.each([["zh", zh], ["zh-TW", zhTW]] as const)("locale completeness: %s", (_language, zh) => {
   it("en.json and zh.json declare the same key set", () => {
     const enKeys = baseKeys(flatten(en as Record<string, unknown>));
     const zhKeys = baseKeys(flatten(zh as Record<string, unknown>));

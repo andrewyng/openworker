@@ -916,13 +916,15 @@ function AppearanceSection() {
       <div className={CARD + " p-4 mb-4"}>
         <div className={FIELD_LABEL}>{t("settings.language")}</div>
         <div className="seg mt-2.5" role="radiogroup" aria-label={t("settings.language_aria")}>
-          {(["system", "en", "zh"] as const).map((lng) => (
+          {(["system", "en", "zh", "zh-TW"] as const).map((lng) => (
             <button
               key={lng}
               className={lng === currentLang ? "active" : ""}
               onClick={() => changeLang(lng)}
+              role="radio"
+              aria-checked={lng === currentLang}
             >
-              {lng === "zh" ? t("settings.language_zh") : lng === "en" ? t("settings.language_en") : t("settings.language_system")}
+              {lng === "zh-TW" ? t("settings.language_zh_tw") : lng === "zh" ? t("settings.language_zh") : lng === "en" ? t("settings.language_en") : t("settings.language_system")}
             </button>
           ))}
         </div>
