@@ -115,3 +115,23 @@ reporting, API/controller restart, strict release gating and guarded teardown.
 Model-provider/secret enrollment over REST and live slot changes remain follow-ups;
 those settings are deployment-managed today. M5 starts with the management UI.
 AWS/GCP qualification follows when the user supplies those clusters.
+
+## M5 — live management UI implementation order
+
+- [x] Clickable visual mock reviewed by user.
+- [x] Add bounded session/catalog/event-page reads with existing scoped authorization.
+- [x] Add a separate UI server: per-browser service-token login, HTTP-only expiring
+      sessions, same-origin/CSRF checks, fixed upstream and strict route allowlist.
+- [x] Connect agents, sessions, controls/results/events, RuntimeProfiles, worker
+      pools, configuration and credentials. Preserve revision and idempotency semantics.
+- [x] Replace sample charts with explicitly bounded real-data summaries; reserve
+      export integrations without pretending exporters are configured.
+- [x] Verify access separation, expiry/logout, uncertainty/retry behavior, and real
+      PostgreSQL/API browser flows locally. Package a standalone container and document
+      TLS/proxy deployment. AWS/GCP remain later qualification.
+
+M5 management UI is implemented and qualified locally against real PostgreSQL and
+Rust HTTP, including the packaged Linux UI container. These fixtures verify durable
+admission/control requests, not worker execution. Helm rendering/security boundaries
+are tested; a fresh combined UI + API + worker/OpenShell Kubernetes rollout and
+AWS/GCP qualification remain subsequent qualification, not claimed complete here.

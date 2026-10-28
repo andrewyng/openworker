@@ -110,3 +110,15 @@ The managed chart disables legacy reference API compatibility. All application
 traffic uses `/v1`; a caller cannot sidestep release activation through the older
 configured-agent endpoints. Recovery-only mode blocks both provisioning and
 Kubernetes capacity controllers before they access dependencies.
+
+## Optional management UI
+
+Set `managementUI.enabled`, a digest-pinned UI `image`, HTTPS `publicOrigin` and
+HTTPS API `serviceUrl`. Add `caSecret` containing `ca.crt` when the API uses a private
+CA. The chart creates a separate `<release>-ui` Service/Deployment without database,
+model, gateway or Kubernetes credentials. Supply a TLS ingress that preserves Host
+and Origin and disables stream buffering. The UI runs one replica; rollouts require
+browser sign-in again but do not interrupt harness sessions.
+
+Build/run details and qualification limits are in
+[the management UI guide](../../../harness/service-ui/README.md).

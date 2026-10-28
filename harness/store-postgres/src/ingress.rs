@@ -147,6 +147,11 @@ impl Database {
             .collect();
         let truncated = (messages.len() as i64) < count;
         let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"coworker":s.coworker,"workspace":s.workspace,"environment":s.environment,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"closed":s.closed,"permissions":s.permissions,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"cursor":cursor,"messages":messages,"history_truncated":truncated,"attempts":attempts,"interactions":pending,"mode":if s.scripted{"scripted-test"}else{"live"}});
+        // Control receipts are separate from the agent's current state. Expose their
+        // bounded status so a reconnect does not invite a duplicate human decision.
+        let tid = s.turn.as_ref().map(|t| t.id.as_str()).unwrap_or("");
+        let controls: Vec<Value> = tx.query("SELECT id,target,status,reason FROM controls WHERE session_id=$1 AND turn_id=$2 ORDER BY sequence LIMIT 128", &[&sid, &tid])?.into_iter().map(|r| json!({"id":r.get::<_,String>(0),"target":r.get::<_,String>(1),"status":r.get::<_,String>(2),"reason":r.get::<_,Option<String>>(3)})).collect();
+        snapshot["controls"] = json!(controls);
         if s.package.planning {
             snapshot["plan"] = json!(s.plan);
         }

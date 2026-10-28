@@ -308,6 +308,50 @@ impl PostgresStore {
             Ok(e)
         })
     }
+    /// Bounded public catalog projection. Never expose drafts or principal-restricted
+    /// definitions to callers who could not read the same entry individually.
+    pub fn catalog_visible(&self, kind: &str) -> Result<Vec<Entry>> {
+        ensure!(
+            matches!(kind, "profile" | "release"),
+            SubmissionError::InvalidRequest
+        );
+        let kind = kind.to_owned();
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let p = auth::guard(&mut tx, db.auth.as_ref(), Action::Read, None, None)?;
+            let mut out = vec![];
+            // Catalog insertion already enforces a 64-entry bound per kind.
+            for row in tx.query(
+                "SELECT data,activated FROM service_catalog WHERE kind=$1 ORDER BY id LIMIT 64",
+                &[&kind],
+            )? {
+                let mut e: Entry = serde_json::from_value(row.get(0))?;
+                e.activated = row.get(1);
+                if let Some(p) = &p {
+                    let manages = p.role.permits(Action::Publish)
+                        || p.role.permits(Action::Activate)
+                        || p.role.permits(Action::Configure)
+                        || p.role.permits(Action::Admin);
+                    let principals: Vec<String> =
+                        serde_json::from_value(e.definition["allowedPrincipals"].clone())
+                            .unwrap_or_default();
+                    if !manages && allowed(p, &principals).is_err() {
+                        continue;
+                    }
+                    if !e.activated
+                        && !(p.role.permits(Action::Publish)
+                            || p.role.permits(Action::Activate)
+                            || p.role.permits(Action::Admin))
+                    {
+                        continue;
+                    }
+                }
+                out.push(e);
+            }
+            tx.commit()?;
+            Ok(out)
+        })
+    }
     pub fn catalog_list(&self) -> Result<Vec<Entry>> {
         self.call(move |db| {
             let mut tx = db.client.transaction()?;

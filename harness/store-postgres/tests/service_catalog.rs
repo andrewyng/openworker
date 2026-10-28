@@ -526,3 +526,47 @@ fn credential_expiring_during_provisioning_cannot_commit_a_session() {
     pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
         .unwrap();
 }
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn visible_catalog_matches_individual_read_authority() {
+    let (_c, root, a, alice) = setup();
+    catalog(&a);
+    let mut draft = release();
+    draft["id"] = json!("draft@1");
+    a.catalog_put("draft", "release", draft, "install").unwrap();
+    let mut hidden = release();
+    hidden["id"] = json!("hidden@1");
+    hidden["allowedPrincipals"] = json!(["bob"]);
+    a.catalog_put("hidden", "release", hidden, "install")
+        .unwrap();
+    a.catalog_activate("hidden-active", "release", "hidden@1", None)
+        .unwrap();
+    assert_eq!(
+        alice
+            .catalog_visible("release")
+            .unwrap()
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["coder@1"]
+    );
+    assert_eq!(a.catalog_visible("release").unwrap().len(), 3);
+    let publisher = "publisher-key-".repeat(5);
+    a.auth_issue(
+        "publisher",
+        serde_json::from_value(
+            json!({"principal":"publisher","role":"publisher","scope":{"kind":"all"}}),
+        )
+        .unwrap(),
+        &publisher,
+    )
+    .unwrap();
+    let p = root.authorized(&publisher).unwrap();
+    assert_eq!(p.catalog_visible("release").unwrap().len(), 3);
+    assert!(
+        p.catalog_list().is_err(),
+        "Private worker catalog enumeration remains admin-only"
+    );
+    assert!(alice.catalog_visible("unknown").is_err());
+}

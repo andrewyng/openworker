@@ -353,11 +353,11 @@ async fn snapshot(
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SessionPage {
+pub(crate) struct SessionPage {
     after: Option<String>,
     limit: Option<u16>,
 }
-async fn session_page(
+pub(crate) async fn session_page(
     Extension(app): Extension<App>,
     Query(q): Query<SessionPage>,
 ) -> Result<Json<Value>, ApiError> {

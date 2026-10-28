@@ -2,7 +2,7 @@
 use crate::http::{ApiError, App};
 use anyhow::{ensure, Result};
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Extension, Json, Router,
@@ -48,7 +48,9 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     match (method, p.as_slice()) {
         ("GET", ["", "v1", "capabilities"])
         | ("GET", ["", "v1", "auth", "me"])
-        | ("GET", ["", "v1", "agents", _]) => Some(Action::Read),
+        | ("GET", ["", "v1", "agents", _])
+        | ("GET", ["", "v1", "releases" | "profiles" | "sessions"])
+        | ("GET", ["", "v1", "sessions", _, "events", "page"]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions" | "submissions"]) => Some(Action::Submit),
         ("GET", ["", "v1", "sessions", _])
         | ("GET", ["", "v1", "sessions", _, "events"])
@@ -87,13 +89,19 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
-        .route("/v1/profiles", post(crate::management::put_profile))
+        .route(
+            "/v1/profiles",
+            post(crate::management::put_profile).get(profiles),
+        )
         .route("/v1/profiles/:id", get(crate::management::get_profile))
         .route(
             "/v1/profiles/:id/activate",
             post(crate::management::activate_profile),
         )
-        .route("/v1/releases", post(crate::management::put_release))
+        .route(
+            "/v1/releases",
+            post(crate::management::put_release).get(releases),
+        )
         .route("/v1/releases/:id", get(crate::management::get_release))
         .route(
             "/v1/releases/:id/activate",
@@ -119,7 +127,8 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/worker-pools", get(pools))
         .route("/v1/worker-pools/:id/scale", post(scale_pool))
         .route("/v1/configuration", get(configuration).put(configure))
-        .route("/v1/sessions", post(create))
+        .route("/v1/sessions", post(create).get(crate::http::session_page))
+        .route("/v1/sessions/:sid/events/page", get(event_page))
         .route("/v1/submissions", post(submit))
         .route("/v1/sessions/:sid/close", post(close))
         .route("/v1/environments", get(environment_list))
@@ -399,4 +408,31 @@ mod boundary_tests {
         c.legacy_compatibility = true;
         assert!(c.public_path("/sessions"));
     }
+}
+
+// Lists use the same transactional visibility rules as individual catalog reads.
+async fn profiles(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        json!({"entries":app.store.catalog_visible("profile")?}),
+    ))
+}
+async fn releases(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        json!({"entries":app.store.catalog_visible("release")?}),
+    ))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EventPage {
+    after: Option<i64>,
+}
+async fn event_page(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+    Query(q): Query<EventPage>,
+) -> Result<Json<Value>, ApiError> {
+    let after = q.after.unwrap_or(0);
+    check(after >= 0, SubmissionError::InvalidRequest)?;
+    let events = app.store.read_events(&sid, after)?;
+    Ok(Json(json!({"events":events,"after":after})))
 }

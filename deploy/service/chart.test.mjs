@@ -89,3 +89,34 @@ test("invalid ownership, mutable image and inadequate drain grace fail rendering
     }),
   );
 });
+test("management UI has no execution, database, or cluster authority", async () => {
+  const uiValues = {
+    enabled: true,
+    image: "ui@sha256:" + "b".repeat(64),
+    publicOrigin: "https://manage.example.test",
+    serviceUrl: "https://test-api.default.svc",
+    caSecret: "api-public-ca",
+  };
+  const out = await render({ managementUI: uiValues });
+  const ui = deployment(out, "ui");
+  assert.match(ui, /automountServiceAccountToken: false/);
+  assert.match(ui, /replicas: 1/);
+  assert.match(ui, /type: Recreate/);
+  assert.match(ui, /NODE_EXTRA_CA_CERTS/);
+  assert.match(ui, /readOnlyRootFilesystem: true/);
+  assert.doesNotMatch(
+    ui,
+    /database-url|pg-ca|openshell|model-key|bootstrap|serviceAccountName/,
+  );
+  await assert.rejects(
+    render({ managementUI: { ...uiValues, image: "ui:latest" } }),
+  );
+  await assert.rejects(
+    render({
+      managementUI: { ...uiValues, publicOrigin: "http://manage.example.test" },
+    }),
+  );
+  await assert.rejects(
+    render({ managementUI: { ...uiValues, serviceUrl: "http://test-api" } }),
+  );
+});

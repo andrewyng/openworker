@@ -21,3 +21,11 @@ platformControllerEnabled: true
 resources:
   requests: {cpu: 100m, memory: 128Mi}
   limits: {cpu: "2", memory: 1536Mi}
+# Optional browser boundary; no database, gateway, or Kubernetes credentials.
+managementUI:
+  enabled: false
+  image: ""
+  publicOrigin: ""
+  # Must match the API TLS certificate (may use the cluster Service DNS name).
+  serviceUrl: ""
+  caSecret: "" # optional Secret containing ca.crt

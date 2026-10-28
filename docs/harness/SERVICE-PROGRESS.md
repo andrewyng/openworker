@@ -368,3 +368,82 @@ API writers must be quiesced for the M4 schema/profile transition; mixed-generat
 rollouts are not claimed qualified. Management UI is M5.
 
 M4 is complete locally on `feat/openworker-service-m1`; no remote push or PR.
+
+### M5 — management UI design preview
+
+Created `harness/service-ui/mock/` with a dependency-free loopback preview server.
+User requested a crisp Apple/Notion/Linear-inspired interface and progressive
+disclosure. The mock covers Overview, Agents, Sessions, Activity, Infrastructure,
+and Settings. Session traces expose steps, output, approvals, results, and usage;
+configuration uses drawers and expandable options. Lightweight charts and reserved
+Grafana/Langfuse settings establish the observability surface.
+
+All records/actions are sample browser state. No service calls, infrastructure changes,
+credentials, or telemetry exports are performed. Service-token authentication and
+role-specific live controls are the next integration work, after design review.
+
+Browser interaction checks passed for approval, session filtering/search, draft
+creation, global search, scaling confirmation, and integration drawers. Six routes
+checked at 1105px and 390px without document overflow or JS errors; desktop and mobile
+screenshots reviewed. No Docker/Kubernetes resources or new package installs needed.
+M5 is in progress; the management UI is not yet service-connected.
+
+
+### M5 — live service integration, 27 October 2026
+
+Implemented the separate management UI server and live browser client in
+`harness/service-ui/`. The original sample-data mock remains separate for design
+comparison. Live views never fall back to mock records.
+
+Connected features:
+- Service-token login with bounded, expiring in-memory sessions, HTTP-only same-site
+  cookies, CSRF/Origin/Host checks, fixed service/namespace identity and strict proxy
+  allowlisting. Tokens are neither browser-stored nor logged. Logout/expiry aborts
+  active requests; UI restarts require login without cancelling service work.
+- Authorized paginated session directory, visibility-filtered release/profile lists,
+  bounded event pages and SSE. Added public reads using existing store authorization.
+- Immutable release publication/activation, explicit RuntimeProfiles, task admission
+  with durable operation identity, session messages, approval/question responses and
+  cancellation using exact saved identity/policy bindings.
+- Snapshot control receipts distinguish an accepted decision from worker application.
+  Reloading retains pending decision/cancellation status and does not re-offer it.
+- Desired/observed pool capacity, expected-revision scaling/configuration, service
+  credential issuance/revocation and audit inspection. UI controls reflect role;
+  the service enforces all writes independently.
+- Lightweight charts use only loaded session records, labeled as such. No invented
+  model usage totals. Grafana/Langfuse configuration remains a future integration.
+- Unknown writes are never retried automatically. The UI preserves the same body/key
+  for an explicit retry and warns before leaving an unresolved request. Definitive
+  plain-text API rejections keep their original HTTP status.
+
+Qualification:
+- 3 browser-boundary tests: route/query checks; CSRF/cross-origin, revocation/logout,
+  no mutation replay and plain-text rejection handling; independent browser expiry.
+- Real PostgreSQL/Rust API/browser acceptance passed both with host Node and the
+  read-only Linux UI container. Verified scoped data, SSE, approval and cancellation
+  receipts after reload, deliberate lost-response/retry with identical key+body,
+  role restrictions, scale/config edits, token issue/revoke, queued task submission
+  and operation restoration after reload. Desktop/mobile screenshots reviewed.
+- 8 PostgreSQL catalog/admission/config/pool tests, including new visibility coverage.
+- 8 authorization, 9 control, and 3 ingress regression tests passed.
+- 6 server-library and 5 store-library tests passed.
+- 4 Helm tests passed, including an optional UI pod with no database, execution,
+  gateway or Kubernetes authority and enforced HTTPS/digest inputs.
+- Rust formatting, JavaScript syntax and diff checks passed.
+
+Final local UI image:
+`openworker-service-ui@sha256:a0a188577132e74e1408d50dcac2cc8aaf2cfe70a32a019c73e6d9e805b0db21`.
+This is a local build, not a pushed registry artifact. No LLM key, paid model request,
+cloud resources or Kubernetes namespaces were used for this UI qualification.
+Fixtures exercise real persistence/API/control admission but do not apply a tool or
+provision OpenShell. Existing M4 worker/provider qualification remains separate.
+
+Packaging: pinned Node base, non-root read-only UI image, optional single-replica
+Helm Deployment/Service, private-CA support. UI browser sessions are not shared across
+replicas yet; a UI rollout signs users out. SSO remains deferred. A fresh combined
+UI/service/OpenShell Kubernetes run and AWS/GCP are still follow-up qualification.
+Run/deployment guide: [management UI](../../harness/service-ui/README.md).
+
+Disposable API/UI processes and test UI containers cleaned up automatically; the
+separate PostgreSQL fixture is removed after verification. Source and cached images
+remain for follow-up work. No remote push or PR in this milestone.
