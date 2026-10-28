@@ -48,6 +48,17 @@ ACCEPT = [
     "sed 's/wide/X/' wide.txt",
     "git grep -c needle",
     "git grep --cached needle",
+    # -- hardening keeps the common reads working ----------------------------------
+    "uniq -c data.txt",
+    "uniq --skip-fields=2 data.txt",
+    "uniq -f 1 data.txt",
+    "grep -E '(alpha|beta)' data.txt",          # quoted parens are literal in both shells
+    r"printf '%s\n' hello",                      # a literal backslash-n, not a newline
+    "git remote -v --verbose",
+    "git remote get-url origin",
+    "TZ=UTC date",                                # locale/timezone assigns stay inert
+    "LC_ALL=C sort data.txt",
+    "git log -p",
 ]
 
 REJECT = [
@@ -121,6 +132,33 @@ REJECT = [
     "awk 'BEGIN{\"id\" | getline x}'",
     "awk -f prog.awk data.txt",               # program file can carry system()/pipes
     "awk --file=prog.awk data.txt",
+    "awk 'BEGIN { \"touch /tmp/x\" |& \"cat\" }'",  # gawk two-way coprocess executes
+    "awk 'BEGIN { \"touch /tmp/x\" |& getline v }'",
+    # -- a second command hidden from the tokenizer --------------------------------
+    "echo safe\nrm -rf target",                 # newline: a command separator to the real shell
+    "cat README.md\r\nRemove-Item target",
+    "echo (Remove-Item target)",               # unquoted parens: PowerShell evaluates
+    r"\git status",                              # backslash head: a path PowerShell executes
+    r"l\s -la",
+    # -- env-assignment injection --------------------------------------------------
+    "PATH=/tmp/evil ls",                         # executable-resolution override
+    "LD_PRELOAD=/tmp/payload.so cat README.md",  # code inside any listed binary
+    "RIPGREP_CONFIG_PATH=payload.conf rg TODO .",  # config smuggles --pre past the flag denials
+    "GIT_CONFIG_COUNT=1 git log",               # arbitrary config onto git
+    # -- git helper execution / network ---------------------------------------------
+    "git diff --ext-diff",                       # config can map to a helper program
+    "git log -p --textconv",
+    "git remote -v add name https://example.invalid/repo",  # `-v` hid the write
+    "git remote show origin",                   # queries the remote: network
+    # -- writers/mutators the flag tables missed ------------------------------------
+    "uniq input.txt output.txt",                # the second positional is the outfile
+    "uniq -- input.txt output.txt",
+    "printf -v PATH /tmp/evil",                 # mutates the persistent shell environment
+    "printf -vPATH /tmp/evil",
+    "actionlint -init-config",                  # writes ./.actionlint.yaml
+    "ugrep --filter=payload pattern .",         # pipes files through a shell command
+    "env",                                      # prints every secret in the environment
+    "env | head -5",
 ]
 
 
@@ -152,6 +190,8 @@ def test_engine_grant_gates_on_classifier(tmp_path):
     # The grant never covers writes/network — those keep asking.
     assert eng.evaluate("run_shell", {"command": "rm -rf x"}, Meta()).needs_user
     assert eng.evaluate("run_shell", {"command": "curl https://x"}, Meta()).needs_user
+    # Or an environment dump: the user's provider keys ride the session shell.
+    assert eng.evaluate("run_shell", {"command": "env"}, Meta()).needs_user
 
 
 def test_grant_persists_via_session_grants(tmp_path):
