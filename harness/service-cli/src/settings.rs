@@ -44,7 +44,7 @@ fn private_file(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn token(path: &Path) -> Result<zeroize::Zeroizing<String>> {
+pub(crate) fn token(path: &Path) -> Result<zeroize::Zeroizing<String>> {
     private_file(path)?;
     let b = std::fs::read(path)?;
     ensure!(b.len() <= 4096, "Credential file too large");

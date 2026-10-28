@@ -1,0 +1,41 @@
+{{- if .Values.bootstrapEnabled }}
+apiVersion: batch/v1
+kind: Job
+metadata: {name: {{ .Release.Name }}-bootstrap}
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: bootstrap
+          image: {{ .Values.image | quote }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              export OW_PG_URL="$(cat /run/service/database-url)"
+              i=0
+              until /bin/sh /opt/openworker/entrypoint.sh bootstrap; do
+                i=$((i+1)); [ "$i" -lt 20 ] || exit 1; sleep 2
+              done
+              /opt/openworker/openworker-server-reference --config /run/service/config.json auth-issue --spec /bootstrap/probe.json --token-file /bootstrap/probe --request-id private-readiness-probe
+          securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          volumeMounts:
+            - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
+            - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
+            - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap/admin-token, subPath: admin-token, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap/probe.json, subPath: probe.json, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap/probe, subPath: probe, readOnly: true}
+      volumes:
+        - name: service
+          projected:
+            defaultMode: 0440
+            sources:
+              - configMap: {name: {{ .Release.Name }}-config, items: [{key: config.json, path: config.json}]}
+              - secret: {name: {{ .Values.secrets.database }}, items: [{key: database-url, path: database-url}, {key: pg-ca.crt, path: pg-ca.crt}]}
+        - name: bootstrap
+          secret: {secretName: {{ .Values.secrets.bootstrap }}, defaultMode: 0440}
+{{- end }}

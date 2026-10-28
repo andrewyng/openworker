@@ -15,10 +15,18 @@ struct Args {
 enum Command {
     /// Reconcile durable release/profile provisioning operations. No public port.
     ServiceController,
+    /// Private worker-pool reconciler, separate from OpenShell provisioning.
+    ServicePlatformController,
     /// Schedule all admitted release/profile cohorts within one slot budget.
     ServiceWorker {
         #[arg(long, default_value_t = 4)]
         slots: usize,
+        #[arg(long, default_value = "service-worker")]
+        node: String,
+        #[arg(long)]
+        health_listen: Option<SocketAddr>,
+        #[arg(long,default_value_t=300,value_parser=clap::value_parser!(u64).range(1..=3600))]
+        drain_timeout_seconds: u64,
     },
     Migrate,
     /// Trusted-host operational catalog, not a session-authorized API.
@@ -29,7 +37,10 @@ enum Command {
         limit: u16,
     },
     /// Local first-admin bootstrap. API never reads this file as a master key.
-    AuthBootstrap,
+    AuthBootstrap {
+        #[arg(long,default_value_t=3600,value_parser=clap::value_parser!(u64).range(60..=86400))]
+        ttl_seconds: u64,
+    },
     /// Issue immutable role/scope using current administrator key and private files.
     AuthIssue {
         #[arg(long)]
@@ -38,6 +49,13 @@ enum Command {
         token_file: PathBuf,
         #[arg(long)]
         request_id: String,
+    },
+    /// Private infrastructure-admin recovery; no HTTP equivalent and no bootstrap reset.
+    AuthRecover {
+        #[arg(long)]
+        request_id: String,
+        #[arg(long,default_value_t=3600,value_parser=clap::value_parser!(u64).range(60..=86400))]
+        ttl_seconds: u64,
     },
     AuthList,
     AuthRevoke {
@@ -123,6 +141,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
     if matches!(
         args.command,
         Command::Worker { .. }
+            | Command::ServiceWorker { .. }
+            | Command::ServiceController
+            | Command::ServicePlatformController
             | Command::EnvironmentCreate { .. }
             | Command::EnvironmentReconcile { .. }
     ) {
@@ -160,8 +181,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         }
     });
     match args.command {
-        Command::AuthBootstrap
+        Command::AuthBootstrap { .. }
         | Command::AuthIssue { .. }
+        | Command::AuthRecover { .. }
         | Command::AuthList
         | Command::AuthRevoke { .. } => {
             use openworker_store_postgres::auth::Action;
@@ -170,16 +192,23 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             )?);
             let authorized = store.authorized(token.trim())?;
             let result = match args.command {
-                Command::AuthBootstrap => match authorized.authorize(Action::Admin, None, None) {
-                    Ok(p) => serde_json::to_value(p)?,
-                    Err(_) => {
-                        let r = store.auth_bootstrap(token.trim(), &config.actor)?;
-                        if r["revoked"] == true {
-                            bail!("Bootstrap credential is revoked; use a valid administrator credential");
+                Command::AuthBootstrap { ttl_seconds } => {
+                    match authorized.authorize(Action::Admin, None, None) {
+                        Ok(p) => serde_json::to_value(p)?,
+                        Err(_) => {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)?
+                                .as_secs();
+                            let r = store.auth_bootstrap_expiring(
+                                token.trim(),
+                                &config.actor,
+                                Some((now + ttl_seconds) as i64),
+                            )?;
+                            // Reconciliation never renews or re-enables the original token.
+                            r
                         }
-                        r
                     }
-                },
+                }
                 Command::AuthIssue {
                     spec,
                     token_file,
@@ -193,19 +222,63 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                     )?);
                     authorized.auth_issue(&request_id, spec, key.trim())?
                 }
+                Command::AuthRecover {
+                    request_id,
+                    ttl_seconds,
+                } => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs();
+                    store.auth_recover(
+                        &request_id,
+                        token.trim(),
+                        &config.actor,
+                        (now + ttl_seconds) as i64,
+                    )?
+                }
                 Command::AuthList => authorized.auth_list("")?,
                 Command::AuthRevoke { credential_id } => authorized.auth_revoke(&credential_id)?,
                 _ => unreachable!(),
             };
             println!("{}", serde_json::to_string(&result)?);
         }
+        Command::ServicePlatformController => {
+            let k = config
+                .kubernetes
+                .as_ref()
+                .context("Kubernetes configuration required")?;
+            let svc = config
+                .service
+                .as_ref()
+                .context("Service configuration required")?;
+            store.bind_service(&svc.id, &svc.namespace)?;
+            while !stop.is_cancelled() {
+                openworker_server_reference::kubernetes::reconcile(k, &store, &svc.id).await?;
+                tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(2))=>{}}
+            }
+        }
         Command::ServiceController => {
             config.require_execution()?;
             openworker_server_reference::management::controller(config, store, stop).await?;
         }
-        Command::ServiceWorker { slots } => {
+        Command::ServiceWorker {
+            slots,
+            node,
+            health_listen,
+            drain_timeout_seconds,
+        } => {
             config.require_execution()?;
-            openworker_server_reference::management::worker(config, store, slots, stop).await?;
+            openworker_server_reference::management::worker_with_options(
+                config,
+                store,
+                slots,
+                stop,
+                abort,
+                node,
+                health_listen,
+                drain_timeout_seconds,
+            )
+            .await?;
         }
         Command::Api { node, listen } => {
             if let Some(options) = &config.operational_metrics {
@@ -533,6 +606,14 @@ mod command_tests {
     #[tokio::test]
     async fn recovery_blocks_workers_and_environment_mutations_before_database_access() {
         for command in [
+            Command::ServiceController,
+            Command::ServicePlatformController,
+            Command::ServiceWorker {
+                slots: 1,
+                node: "test".into(),
+                health_listen: None,
+                drain_timeout_seconds: 300,
+            },
             Command::Worker {
                 node: "test".into(),
                 health_listen: None,

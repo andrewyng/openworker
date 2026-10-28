@@ -99,7 +99,7 @@ async fn qualification() {
     )
     .unwrap();
 
-    let value = json!({"service":{"id":"m1-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m1-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    let value = json!({"service":{"legacy_compatibility":true,"id":"m1-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m1-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let cfg: Config = serde_json::from_value(value).unwrap();
     let db = cfg.database().unwrap();

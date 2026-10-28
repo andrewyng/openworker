@@ -91,3 +91,24 @@ pub(crate) async fn audit(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(app.store.auth_audit(q.after.unwrap_or(0))?))
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IssueV1 {
+    spec: Spec,
+    token: String,
+}
+pub(crate) async fn issue_v1(
+    Extension(app): Extension<App>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<IssueV1>,
+) -> Result<Json<Value>, ApiError> {
+    let token = zeroize::Zeroizing::new(body.token);
+    if body.spec.expires_at.is_none() {
+        return Err(ApiError(
+            openworker_store_postgres::auth::Error::Invalid.into(),
+        ));
+    }
+    let key = crate::service::key(&app, &headers, "credential.issue")?;
+    Ok(Json(app.store.auth_issue(&key, body.spec, &token)?))
+}

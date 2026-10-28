@@ -80,7 +80,8 @@ harness/target/release/ows --config .ow-service/cli.json whoami
 ```
 
 Initialization creates a unique deployment/service ID, local CA, short-lived server
-certificates, random PostgreSQL password and admin bootstrap token. The token is
+certificates, random PostgreSQL password and an admin bootstrap token with a
+one-hour default lifetime. The token is
 installed through a private one-time job, never an unauthenticated API call. Keep
 `.ow-service/` private and out of version control. The generated CLI context pins
 the service identity and CA and stores a token-file reference, not the token.
@@ -147,5 +148,7 @@ state directory and credentials remain for deliberate operator disposal. Once
 destruction starts, the deployment identity cannot be restarted against an empty
 database. An interrupted destruction can be resumed with the same exact ID.
 
-Expiring admin credentials, hosted identity login, managed configuration/scaling,
-Kubernetes control-plane packaging and cloud qualification are later milestones.
+Expiring service tokens, revisioned configuration and Kubernetes pool management
+are covered by the [M4 guide](../../docs/harness/SERVICE-M4-QUICKSTART.md).
+Hosted SSO and cloud qualification follow later. Model connections/secrets and
+worker-slot settings currently remain deployment configuration.

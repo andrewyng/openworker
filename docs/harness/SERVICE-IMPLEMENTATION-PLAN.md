@@ -3,8 +3,8 @@
 Started 27 October 2026. Design: [service specification](OPENWORKER-SERVICE.md).
 Branch: `feat/openworker-service-m1`, based on `7f02f274`.
 
-M1, OpenShell-first M2, and M3 CLI/container packaging are complete; see the
-progress ledger for the tested scope and remaining limits.
+M1–M4 are complete for their locally qualified scope; see the progress ledger
+for evidence and remaining limits. SSO is deferred by user decision.
 
 ## Milestones
 
@@ -19,7 +19,7 @@ progress ledger for the tested scope and remaining limits.
    Advanced imports of application-owned sandboxes remain a follow-up.
 3. `ows` CLI and containerized local service/reference lifecycle; OpenShell is
    an explicit prerequisite. A Docker-only execution provider remains separate.
-4. Expiring credentials/human login, managed configuration, worker scaling/draining
+4. Expiring service credentials (SSO deferred by user), managed configuration, worker scaling/draining
    and Kubernetes controller with explicit GitOps/autoscaler ownership.
 5. Management UI and public-cloud/provider qualification.
 
@@ -87,3 +87,31 @@ additional network policies must be explicitly rejected until qualified.
 
 M3 passed local qualification. OpenShell remains an explicit external prerequisite; the
 service roles and PostgreSQL run in Compose. No cloud resources are needed.
+
+## M4 — administration and Kubernetes service control
+
+- [x] Expiring scoped credentials, expiry enforcement during requests/SSE/admission,
+      private expiring bootstrap and safe rotation/revocation. Separate publisher,
+      release-administrator and service-administrator authority from tool controls.
+- [x] Versioned service configuration with expected-revision conflict checks,
+      admission pause/quotas and resolved compaction defaults for new sessions.
+- [x] Worker-pool desired/observed capacity, explicit manual/GitOps/autoscaled
+      ownership, durable reconciliation and graceful service-worker drain.
+- [x] Kubernetes service packaging and narrowly scoped controller; reuse existing
+      OpenShell gateway, PostgreSQL and execution identity boundaries.
+- [x] Local deterministic, database and Kubernetes end-to-end qualification;
+      updated CLI/setup documentation and progress ledger.
+
+User confirmed service tokens now and SSO later.
+AWS and GCP qualification follow when the user supplies clusters. No cloud
+infrastructure is provisioned during M4. OIDC needs an explicitly configured issuer,
+audience and login flow; do not invent an identity provider or advertise token-file
+login as browser SSO. Record any unqualified authentication modes explicitly.
+
+M4 qualification: local kind/OpenShell, real tool effects and scripted models;
+service-token administration, immutable role separation, config revision/pinning,
+manual scale 0/1/2, active-tool drain, Helm replica ownership, stale-controller
+reporting, API/controller restart, strict release gating and guarded teardown.
+Model-provider/secret enrollment over REST and live slot changes remain follow-ups;
+those settings are deployment-managed today. M5 starts with the management UI.
+AWS/GCP qualification follows when the user supplies those clusters.

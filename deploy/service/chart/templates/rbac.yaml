@@ -1,0 +1,27 @@
+{{- if .Values.platformControllerEnabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: {{ .Release.Name }}-platform}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ .Release.Name }}-platform}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Release.Name }}-worker]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [{{ .Release.Name }}-worker]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ .Release.Name }}-platform}
+subjects: [{kind: ServiceAccount, name: {{ .Release.Name }}-platform}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}-platform}
+{{- end }}

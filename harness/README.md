@@ -51,7 +51,9 @@ boundaries separate; use SDK/protocol APIs instead of reading runtime tables.
 
 For authenticated remote SDK access, release/RuntimeProfile deployment and the
 `ows` CLI, see the [service CLI quickstart](../docs/harness/SERVICE-M3-QUICKSTART.md)
-and [local Docker deployment](../deploy/service/README.md). The
+and [local Docker deployment](../deploy/service/README.md). For expiring service
+credentials, configuration and Kubernetes capacity, see the
+[service administration guide](../docs/harness/SERVICE-M4-QUICKSTART.md). The
 [service specification](../docs/harness/OPENWORKER-SERVICE.md) also describes later
 management and cloud milestones; see the ledger for qualified scope.
 

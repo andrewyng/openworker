@@ -19,6 +19,7 @@ Use the existing `openworker-server-reference` binary and configuration, adding:
 
 ```json
 "service": {
+  "legacy_compatibility": true,
   "id": "development-cluster",
   "namespace": "development",
   "agent": "builder"
@@ -187,3 +188,6 @@ cargo test --manifest-path harness/Cargo.toml -p openworker-server-reference \
 The fixture starts two API processes and a worker, creates a dedicated sandbox,
 checks both SDKs, then deletes its sandbox and schema. It uses a deterministic model
 fixture and **real remote file tools**; it is not a live-model quality evaluation.
+
+This M1 configured-agent example explicitly enables compatibility. M4 managed
+service deployments disable legacy routes and require activated releases instead.

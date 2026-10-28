@@ -23,3 +23,5 @@ dist/
 # Local OpenWorker Service packaging and qualification
 /.ow-service/
 /.ow-service-build/
+
+/.ow-service-m4/

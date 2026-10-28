@@ -32,6 +32,9 @@ pub enum Role {
     Observer,
     Operator,
     Administrator,
+    Publisher,
+    ReleaseAdministrator,
+    ServiceAdministrator,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -48,6 +51,8 @@ pub struct Spec {
     pub scope: Scope,
     #[serde(default)]
     pub environments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Identity {
@@ -56,6 +61,8 @@ pub struct Identity {
     pub role: Role,
     pub scope: Scope,
     pub environments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 #[derive(Clone)]
 pub(crate) struct Context {
@@ -69,6 +76,9 @@ pub enum Action {
     Control,
     Artifact,
     Admin,
+    Publish,
+    Activate,
+    Configure,
 }
 impl Action {
     fn name(self) -> &'static str {
@@ -79,6 +89,9 @@ impl Action {
             Self::Control => "control.submit",
             Self::Artifact => "artifact.write",
             Self::Admin => "credential.manage",
+            Self::Publish => "release.publish",
+            Self::Activate => "release.activate",
+            Self::Configure => "service.configure",
         }
     }
 }
@@ -97,9 +110,30 @@ fn token_hash(token: &str) -> Result<String> {
         format!("openworker-api-key-v1:{token}").as_bytes(),
     ))
 }
+impl Role {
+    pub fn permits(self, action: Action) -> bool {
+        match action {
+            Action::Read => true,
+            Action::Create | Action::Submit | Action::Control | Action::Artifact => {
+                matches!(self, Self::Operator | Self::Administrator)
+            }
+            Action::Admin => matches!(self, Self::Administrator | Self::ServiceAdministrator),
+            Action::Publish => matches!(self, Self::Administrator | Self::Publisher),
+            Action::Activate => matches!(self, Self::Administrator | Self::ReleaseAdministrator),
+            Action::Configure => matches!(
+                self,
+                Self::Administrator | Self::ServiceAdministrator | Self::ReleaseAdministrator
+            ),
+        }
+    }
+}
 impl Spec {
     pub fn validate(&self) -> Result<()> {
         id(&self.principal, 64)?;
+        ensure!(
+            self.expires_at.is_none_or(|t| t > 0 && t < 253402300800),
+            Error::Invalid
+        );
         ensure!(self.environments.len() <= 128, Error::Invalid);
         for e in &self.environments {
             id(e, 80)?;
@@ -110,7 +144,13 @@ impl Spec {
                 id(sid, 80)?;
             }
         }
-        if self.role == Role::Administrator {
+        if matches!(
+            self.role,
+            Role::Administrator
+                | Role::Publisher
+                | Role::ReleaseAdministrator
+                | Role::ServiceAdministrator
+        ) {
             ensure!(
                 self.scope == Scope::All && self.environments.is_empty(),
                 Error::Invalid
@@ -174,7 +214,7 @@ fn identity(tx: &mut Transaction<'_>, ctx: &Context) -> Result<Identity> {
     check(tx)?;
     let r = tx
         .query_opt(
-            "SELECT id,spec FROM api_credentials WHERE token_hash=$1 AND NOT revoked FOR SHARE",
+            "SELECT id,spec FROM api_credentials WHERE token_hash=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) FOR SHARE",
             &[&ctx.digest],
         )?
         .ok_or(Error::Unauthorized)?;
@@ -186,6 +226,7 @@ fn identity(tx: &mut Transaction<'_>, ctx: &Context) -> Result<Identity> {
         role: s.role,
         scope: s.scope,
         environments: s.environments,
+        expires_at: s.expires_at,
     })
 }
 pub(crate) fn session_allowed(tx: &mut Transaction<'_>, p: &Identity, sid: &str) -> Result<bool> {
@@ -200,14 +241,7 @@ pub(crate) fn guard(
 ) -> Result<Option<Identity>> {
     let Some(ctx) = ctx else { return Ok(None) };
     let p = identity(tx, ctx)?;
-    ensure!(
-        action == Action::Read || p.role != Role::Observer,
-        Error::Forbidden
-    );
-    ensure!(
-        action != Action::Admin || p.role == Role::Administrator,
-        Error::Forbidden
-    );
+    ensure!(p.role.permits(action), Error::Forbidden);
     if action == Action::Create {
         ensure!(!matches!(p.scope, Scope::Sessions { .. }), Error::Forbidden);
         ensure!(
@@ -238,6 +272,23 @@ pub(crate) fn audit(
         record(tx, Some(p), action.name(), sid, request, "admitted", None)?;
     }
     Ok(())
+}
+pub(crate) fn audit_target(
+    tx: &mut Transaction<'_>,
+    p: Option<&Identity>,
+    action: Action,
+    request: &str,
+    target: &str,
+) -> Result<()> {
+    record(
+        tx,
+        p,
+        action.name(),
+        None,
+        Some(request),
+        "admitted",
+        Some(target),
+    )
 }
 fn record(
     tx: &mut Transaction<'_>,
@@ -284,6 +335,7 @@ impl Database {
                 role: s.role,
                 scope: s.scope,
                 environments: s.environments,
+                expires_at: s.expires_at,
             };
             record(&mut tx, Some(&p), action.name(), None, None, "denied", None)?;
         }
@@ -302,7 +354,12 @@ impl Database {
         tx.commit()?;
         Ok(p)
     }
-    pub(crate) fn auth_bootstrap(&mut self, digest: String, principal: String) -> Result<Value> {
+    pub(crate) fn auth_bootstrap(
+        &mut self,
+        digest: String,
+        principal: String,
+        expires_at: Option<i64>,
+    ) -> Result<Value> {
         ensure!(self.auth.is_none(), Error::Forbidden);
         let mut tx = self.client.transaction()?;
         check(&mut tx)?;
@@ -312,6 +369,7 @@ impl Database {
             role: Role::Administrator,
             scope: Scope::All,
             environments: vec![],
+            expires_at,
         };
         spec.validate()?;
         let data = serde_json::to_value(&spec)?;
@@ -320,7 +378,8 @@ impl Database {
             &[],
         )? {
             ensure!(
-                row.get::<_, String>("token_hash") == digest && row.get::<_, Value>("spec") == data,
+                row.get::<_, String>("token_hash") == digest
+                    && row.get::<_, Value>("spec")["principal"] == spec.principal,
                 Error::Conflict
             );
             let out = public(&row);
@@ -337,6 +396,15 @@ impl Database {
                     == 0,
             Error::Conflict
         );
+        if let Some(expiry) = spec.expires_at {
+            let now: f64 = tx
+                .query_one("SELECT extract(epoch FROM clock_timestamp())::float8", &[])?
+                .get(0);
+            ensure!(
+                expiry as f64 > now && expiry as f64 <= now + 31_536_000.0,
+                Error::Invalid
+            );
+        }
         let id = format!("key_{}", uuid::Uuid::new_v4().simple());
         let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by) VALUES($1,'bootstrap',$2,$3,'local-bootstrap') RETURNING *",&[&id,&digest,&data])?;
         record(
@@ -411,6 +479,15 @@ impl Database {
                 Error::Invalid
             );
         }
+        if let Some(expiry) = spec.expires_at {
+            let now: f64 = tx
+                .query_one("SELECT extract(epoch FROM clock_timestamp())::float8", &[])?
+                .get(0);
+            ensure!(
+                expiry as f64 > now && expiry as f64 <= now + 31_536_000.0,
+                Error::Invalid
+            );
+        }
         let id = format!("key_{}", uuid::Uuid::new_v4().simple());
         let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",&[&id,&request,&digest,&data,&p.principal])?;
         record(
@@ -439,8 +516,11 @@ impl Database {
             )?
             .ok_or(Error::Invalid)?;
         if !row.get::<_, bool>("revoked") {
-            if row.get::<_, Value>("spec")["role"] == "administrator" {
-                ensure!(tx.query_one("SELECT count(*) FROM api_credentials WHERE NOT revoked AND spec->>'role'='administrator'",&[])?.get::<_,i64>(0)>1,Error::Conflict);
+            if matches!(
+                row.get::<_, Value>("spec")["role"].as_str(),
+                Some("administrator" | "service_administrator")
+            ) {
+                ensure!(tx.query_one("SELECT count(*) FROM api_credentials WHERE id<>$1 AND NOT revoked AND spec->>'role' IN ('administrator','service_administrator') AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp()))",&[&id])?.get::<_,i64>(0)>0,Error::Conflict);
             }
             tx.execute(
                 "UPDATE api_credentials SET revoked=TRUE WHERE id=$1",
@@ -519,10 +599,18 @@ impl PostgresStore {
     }
     /// Local operator bootstrap only. Existing/tombstoned credentials never reset.
     pub fn auth_bootstrap(&self, token: &str, principal: &str) -> Result<Value> {
+        self.auth_bootstrap_expiring(token, principal, None)
+    }
+    pub fn auth_bootstrap_expiring(
+        &self,
+        token: &str,
+        principal: &str,
+        expires_at: Option<i64>,
+    ) -> Result<Value> {
         id(principal, 64)?;
         let digest = token_hash(token)?;
         let principal = principal.to_owned();
-        self.call(move |db| db.auth_bootstrap(digest, principal))
+        self.call(move |db| db.auth_bootstrap(digest, principal, expires_at))
     }
     pub fn auth_issue(&self, request: &str, spec: Spec, token: &str) -> Result<Value> {
         id(request, 100)?;
@@ -531,6 +619,40 @@ impl PostgresStore {
         let digest = token_hash(token)?;
         let request = request.to_owned();
         self.call(move |db| db.auth_issue(request, spec, digest))
+    }
+    /// Infrastructure-admin recovery only. Keeps bootstrap tombstone and all audit history.
+    pub fn auth_recover(
+        &self,
+        request: &str,
+        token: &str,
+        principal: &str,
+        expires_at: i64,
+    ) -> Result<Value> {
+        ensure!(self.auth.is_none(), Error::Forbidden);
+        id(request, 80)?;
+        id(principal, 64)?;
+        let digest = token_hash(token)?;
+        let request = format!("recovery:{request}");
+        let spec = Spec {
+            principal: principal.into(),
+            role: Role::ServiceAdministrator,
+            scope: Scope::All,
+            environments: vec![],
+            expires_at: Some(expires_at),
+        };
+        spec.validate()?;
+        self.call(move|db|{let mut tx=db.client.transaction()?;check(&mut tx)?;admin_lock(&mut tx)?;
+            ensure!(tx.query_one("SELECT EXISTS(SELECT 1 FROM api_credentials WHERE request_id='bootstrap')",&[])?.get::<_,bool>(0),Error::Unconfigured);
+            if let Some(row)=tx.query_opt("SELECT * FROM api_credentials WHERE request_id=$1",&[&request])?{
+                ensure!(row.get::<_,String>("token_hash")==digest&&row.get::<_,Value>("spec")["principal"]==spec.principal,Error::Conflict);
+                return Ok(public(&row));
+            }
+            let now:f64=tx.query_one("SELECT extract(epoch FROM clock_timestamp())::float8",&[])?.get(0);
+            ensure!(expires_at as f64>now&&expires_at as f64<=now+86400.0,Error::Invalid);
+            let key=format!("key_{}",uuid::Uuid::new_v4().simple());
+            let row=tx.query_one("INSERT INTO api_credentials(id,request_id,token_hash,spec,created_by) VALUES($1,$2,$3,$4,'infrastructure-recovery') RETURNING *",&[&key,&request,&digest,&json!(spec)])?;
+            record(&mut tx,None,"credential.recovery",None,Some(&request),"created",Some(&key))?;
+            let result=public(&row);tx.commit()?;Ok(result)})
     }
     pub fn auth_revoke(&self, key: &str) -> Result<Value> {
         id(key, 80)?;

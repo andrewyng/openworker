@@ -39,6 +39,22 @@ enum Command {
     /// Validate credentials, then save only their file reference and service identity.
     Login,
     Whoami,
+    Pool {
+        #[command(subcommand)]
+        command: PoolCommand,
+    },
+    Configuration {
+        #[command(subcommand)]
+        command: ConfigurationCommand,
+    },
+    Credentials {
+        #[command(subcommand)]
+        command: CredentialCommand,
+    },
+    Audit {
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+    },
     Capabilities,
     Profile {
         #[command(subcommand)]
@@ -139,6 +155,47 @@ enum Command {
         session: String,
         #[arg(long)]
         receipt: String,
+    },
+}
+#[derive(Subcommand)]
+enum PoolCommand {
+    List,
+    Scale {
+        id: String,
+        #[arg(long)]
+        replicas: i32,
+        #[arg(long)]
+        expected_revision: i64,
+        #[arg(long)]
+        idempotency_key: String,
+    },
+}
+#[derive(Subcommand)]
+enum ConfigurationCommand {
+    Get,
+    Set {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        expected_revision: i64,
+        #[arg(long)]
+        idempotency_key: String,
+    },
+}
+#[derive(Subcommand)]
+enum CredentialCommand {
+    List,
+    /// Generate a private token file before sending; retries reuse the same file and spec.
+    Issue {
+        #[arg(long)]
+        spec: PathBuf,
+        #[arg(long = "out")]
+        output_token_file: PathBuf,
+        #[arg(long)]
+        idempotency_key: String,
+    },
+    Revoke {
+        id: String,
     },
 }
 #[derive(Subcommand)]
@@ -331,6 +388,75 @@ async fn run(args: Args) -> Result<()> {
         Command::Capabilities => output(service.capabilities())?,
         Command::Profile { command } => catalog(&service, "profile", command).await?,
         Command::Agent { command } => catalog(&service, "agent", command).await?,
+        Command::Pool{command}=>match command {
+            PoolCommand::List=>output(service.json("GET","/v1/worker-pools",None,None).await?)?,
+            PoolCommand::Scale{id,replicas,expected_revision,idempotency_key}=>output(service.json("POST",&format!("/v1/worker-pools/{}/scale",component(&id)?),Some(json!({"replicas":replicas,"expectedRevision":expected_revision})),Some(&idempotency_key)).await?)?,
+        },
+        Command::Configuration{command}=>match command {
+            ConfigurationCommand::Get=>output(service.json("GET","/v1/configuration",None,None).await?)?,
+            ConfigurationCommand::Set{file,expected_revision,idempotency_key}=>output(service.json("PUT","/v1/configuration",Some(json!({"expectedRevision":expected_revision,"configuration":document(&file)?})),Some(&idempotency_key)).await?)?,
+        },
+        Command::Credentials { command } => match command {
+            CredentialCommand::List => {
+                output(service.json("GET", "/v1/credentials", None, None).await?)?
+            }
+            CredentialCommand::Revoke { id } => output(
+                service
+                    .json(
+                        "POST",
+                        &format!("/v1/credentials/{}/revoke", component(&id)?),
+                        Some(json!({})),
+                        None,
+                    )
+                    .await?,
+            )?,
+            CredentialCommand::Issue {
+                spec,
+                output_token_file: token_file,
+                idempotency_key,
+            } => {
+                let spec = document(&spec)?;
+                ensure!(
+                    spec["expires_at"].as_i64().is_some(),
+                    "Credential spec requires expires_at (Unix seconds)"
+                );
+                if !token_file.exists() {
+                    use std::io::Write;
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.write(true).create_new(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        opts.mode(0o600);
+                    }
+                    let mut file = opts
+                        .open(&token_file)
+                        .context("Cannot create private token file")?;
+                    let token = zeroize::Zeroizing::new(format!("{}{}", key(&None), key(&None)));
+                    file.write_all(token.as_bytes())?;
+                    file.sync_all()?;
+                }
+                let token = settings::token(&token_file)?;
+                output(
+                    service
+                        .json(
+                            "POST",
+                            "/v1/credentials",
+                            Some(json!({"spec":spec,"token":token.as_str()})),
+                            Some(&idempotency_key),
+                        )
+                        .await?,
+                )?;
+            }
+        },
+        Command::Audit { after } => {
+            ensure!(after >= 0, "Invalid audit cursor");
+            output(
+                service
+                    .json("GET", &format!("/v1/audit?after={after}"), None, None)
+                    .await?,
+            )?;
+        }
         Command::Submit {
             agent,
             runtime_profile,
@@ -563,7 +689,7 @@ async fn catalog(service: &Service, kind: &str, command: CatalogCommand) -> Resu
             let path = if kind == "profile" {
                 "profiles"
             } else {
-                "agents"
+                "releases"
             };
             output(
                 service
@@ -578,4 +704,37 @@ async fn catalog(service: &Service, kind: &str, command: CatalogCommand) -> Resu
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+    #[test]
+    fn credential_output_does_not_override_the_authentication_file() {
+        let args = Args::try_parse_from([
+            "ows",
+            "--token-file",
+            "admin.token",
+            "credentials",
+            "issue",
+            "--spec",
+            "runner.json",
+            "--out",
+            "new.token",
+            "--idempotency-key",
+            "issue-1",
+        ])
+        .unwrap();
+        assert_eq!(args.token_file, Some(PathBuf::from("admin.token")));
+        match args.command {
+            Command::Credentials {
+                command:
+                    CredentialCommand::Issue {
+                        output_token_file: token_file,
+                        ..
+                    },
+            } => assert_eq!(token_file, PathBuf::from("new.token")),
+            _ => panic!("wrong command"),
+        }
+    }
 }

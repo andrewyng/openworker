@@ -1,7 +1,7 @@
 //! Immutable service definitions and durable management intents. Provider I/O is
 //! performed by the controller only after the intent commits.
 use crate::{
-    auth::{self, Action, Identity, Role, Scope},
+    auth::{self, Action, Identity, Scope},
     PostgresStore, SubmissionError,
 };
 use anyhow::{ensure, Result};
@@ -201,7 +201,7 @@ fn entry(tx: &mut Transaction<'_>, kind: &str, id: &str) -> Result<Entry> {
 }
 fn allowed(p: &Identity, list: &[String]) -> Result<()> {
     ensure!(
-        p.role == Role::Administrator || list.contains(&p.principal),
+        p.role.permits(Action::Admin) || list.contains(&p.principal),
         auth::Error::Forbidden
     );
     Ok(())
@@ -216,12 +216,24 @@ fn resolve(tx: &mut Transaction<'_>, kind: &str, id: &str) -> Result<Entry> {
     entry(tx, kind, resolved.as_deref().unwrap_or(id))
 }
 pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
+    crate::service_admin::migrate(tx)?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS service_catalog(kind TEXT NOT NULL,id TEXT NOT NULL,data JSONB NOT NULL,activated BOOLEAN NOT NULL DEFAULT FALSE,PRIMARY KEY(kind,id));
     CREATE TABLE IF NOT EXISTS service_aliases(kind TEXT NOT NULL,alias TEXT NOT NULL,target TEXT NOT NULL,PRIMARY KEY(kind,alias));
     CREATE TABLE IF NOT EXISTS service_management_receipts(id TEXT PRIMARY KEY,payload JSONB NOT NULL,result JSONB NOT NULL);
     CREATE TABLE IF NOT EXISTS service_environment_owners(environment_id TEXT PRIMARY KEY REFERENCES environments(id),profile_id TEXT NOT NULL,principal TEXT NOT NULL,project TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS service_deletions(environment_id TEXT PRIMARY KEY REFERENCES environments(id),request_key TEXT NOT NULL,dispatched BOOLEAN NOT NULL DEFAULT FALSE,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());
     CREATE TABLE IF NOT EXISTS service_operations(id TEXT PRIMARY KEY,request_key TEXT NOT NULL UNIQUE,input JSONB NOT NULL,principal TEXT NOT NULL,credential_id TEXT NOT NULL,release_id TEXT NOT NULL,profile_id TEXT NOT NULL,environment_id TEXT NOT NULL REFERENCES environments(id),session_id TEXT NOT NULL UNIQUE,project TEXT NOT NULL,status TEXT NOT NULL,receipt JSONB,error TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
+    tx.batch_execute(
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS configuration JSONB",
+    )?;
+    tx.execute(
+        "UPDATE service_operations SET configuration=$1 WHERE configuration IS NULL",
+        &[&json!(crate::service_admin::Revision {
+            revision: 1,
+            configuration: Default::default()
+        })],
+    )?;
+    tx.batch_execute("ALTER TABLE service_operations ALTER COLUMN configuration SET NOT NULL")?;
     Ok(())
 }
 impl PostgresStore {
@@ -275,9 +287,20 @@ impl PostgresStore {
                 let principals: Vec<String> =
                     serde_json::from_value(e.definition["allowedPrincipals"].clone())
                         .unwrap_or_default();
-                allowed(&p, &principals)?;
+                // Deployment authority can inspect definitions to validate references;
+                // execution admission still enforces the principal allowlist separately.
+                let manages = p.role.permits(Action::Publish)
+                    || p.role.permits(Action::Activate)
+                    || p.role.permits(Action::Configure)
+                    || p.role.permits(Action::Admin);
+                if !manages {
+                    allowed(&p, &principals)?;
+                }
                 ensure!(
-                    e.activated || p.role == Role::Administrator,
+                    e.activated
+                        || p.role.permits(Action::Publish)
+                        || p.role.permits(Action::Activate)
+                        || p.role.permits(Action::Admin),
                     auth::Error::Forbidden
                 );
             }
@@ -337,7 +360,7 @@ impl PostgresStore {
             let o = op(&r);
             if let Some(p) = p {
                 ensure!(
-                    p.principal == o.principal || p.role == Role::Administrator,
+                    p.principal == o.principal || p.role.permits(Action::Admin),
                     auth::Error::Forbidden
                 );
             }
@@ -449,7 +472,12 @@ impl crate::db::Database {
         installation: String,
     ) -> Result<Entry> {
         let mut tx = self.client.transaction()?;
-        let p = auth::guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?;
+        let action = if kind == "release" {
+            Action::Publish
+        } else {
+            Action::Configure
+        };
+        let p = auth::guard(&mut tx, self.auth.as_ref(), action, None, None)?;
         tx.query_one(
             "SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('service-catalog'))",
             &[],
@@ -495,7 +523,7 @@ impl crate::db::Database {
             "INSERT INTO service_management_receipts VALUES($1,$2,$3)",
             &[&request, &payload, &json!(e)],
         )?;
-        auth::audit(&mut tx, p.as_ref(), Action::Admin, None, Some(&request))?;
+        auth::audit_target(&mut tx, p.as_ref(), action, &request, &e.id)?;
         tx.commit()?;
         Ok(e)
     }
@@ -507,7 +535,12 @@ impl crate::db::Database {
         alias: Option<String>,
     ) -> Result<Entry> {
         let mut tx = self.client.transaction()?;
-        let p = auth::guard(&mut tx, self.auth.as_ref(), Action::Admin, None, None)?;
+        let action = if kind == "release" {
+            Action::Activate
+        } else {
+            Action::Configure
+        };
+        let p = auth::guard(&mut tx, self.auth.as_ref(), action, None, None)?;
         tx.query_one(
             "SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('service-catalog'))",
             &[],
@@ -553,7 +586,7 @@ impl crate::db::Database {
             "INSERT INTO service_management_receipts VALUES($1,$2,$3)",
             &[&request, &payload, &json!(e)],
         )?;
-        auth::audit(&mut tx, p.as_ref(), Action::Admin, None, Some(&request))?;
+        auth::audit_target(&mut tx, p.as_ref(), action, &request, &e.id)?;
         tx.commit()?;
         Ok(e)
     }
@@ -589,6 +622,11 @@ impl crate::db::Database {
             tx.commit()?;
             return Ok(o);
         }
+        let configured = crate::service_admin::current(&mut tx)?;
+        ensure!(
+            !configured.configuration.admissions_paused,
+            SubmissionError::Busy
+        );
         let r = entry(&mut tx, "release", &release.id)?;
         let f = entry(&mut tx, "profile", &profile.id)?;
         ensure!(
@@ -621,18 +659,25 @@ impl crate::db::Database {
                 &[],
             )?
             .get(0);
-        ensure!(pending < 128, SubmissionError::QueueFull);
+        ensure!(
+            pending < configured.configuration.max_pending_operations,
+            SubmissionError::QueueFull
+        );
         if input.environment_id.is_none() {
             let owned:i64=tx.query_one("SELECT count(*) FROM service_environment_owners o JOIN environments e ON e.id=o.environment_id WHERE o.principal=$1 AND e.data->>'phase'<>'deleted'",&[&p.principal])?.get(0);
             let total:i64=tx.query_one("SELECT count(*) FROM service_environment_owners o JOIN environments e ON e.id=o.environment_id WHERE e.data->>'phase'<>'deleted'",&[])?.get(0);
-            ensure!(owned < 16 && total < 64, SubmissionError::QueueFull);
+            ensure!(
+                owned < configured.configuration.max_environments_per_principal
+                    && total < configured.configuration.max_environments,
+                SubmissionError::QueueFull
+            );
         }
         let operation_id = openworker_runtime::id("op");
         let session_id = openworker_runtime::id("s");
         let (environment_id, status) = if let Some(eid) = &input.environment_id {
             let owner=tx.query_opt("SELECT profile_id,principal,project FROM service_environment_owners WHERE environment_id=$1",&[eid])?.ok_or(auth::Error::Forbidden)?;
             ensure!(
-                (p.role == Role::Administrator || owner.get::<_, String>(1) == p.principal)
+                (p.role.permits(Action::Admin) || owner.get::<_, String>(1) == p.principal)
                     && owner.get::<_, String>(2) == input.project
                     && owner.get::<_, String>(0) == prof.id,
                 auth::Error::Forbidden
@@ -676,7 +721,7 @@ impl crate::db::Database {
             )?;
             (record.id, "queued")
         };
-        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status])?;
+        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured)])?;
         auth::audit(&mut tx, Some(&p), Action::Create, None, Some(&key))?;
         let result = op(&row);
         tx.commit()?;
@@ -689,7 +734,7 @@ impl crate::db::Database {
         let owner: String = r.get(1);
         if let Some(p) = p {
             ensure!(
-                p.principal == owner || p.role == Role::Administrator,
+                p.principal == owner || p.role.permits(Action::Admin),
                 auth::Error::Forbidden
             );
         }
@@ -720,7 +765,7 @@ impl crate::db::Database {
     fn service_session_identity(&mut self, sid: String) -> Result<Option<Value>> {
         let mut tx = self.client.transaction()?;
         auth::guard(&mut tx, self.auth.as_ref(), Action::Read, Some(&sid), None)?;
-        let result=tx.query_opt("SELECT release_id,profile_id,project,id FROM service_operations WHERE session_id=$1 AND status='complete'",&[&sid])?.map(|r|json!({"releaseId":r.get::<_,String>(0),"runtimeProfile":r.get::<_,String>(1),"project":r.get::<_,String>(2),"operationId":r.get::<_,String>(3)}));
+        let result=tx.query_opt("SELECT release_id,profile_id,project,id,configuration FROM service_operations WHERE session_id=$1 AND status='complete'",&[&sid])?.map(|r|json!({"releaseId":r.get::<_,String>(0),"runtimeProfile":r.get::<_,String>(1),"project":r.get::<_,String>(2),"operationId":r.get::<_,String>(3),"configuration":r.get::<_,Value>(4)}));
         tx.commit()?;
         Ok(result)
     }
@@ -744,7 +789,7 @@ impl crate::db::Database {
         let credential: String = row.get("credential_id");
         let cred = tx
             .query_opt(
-                "SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked FOR SHARE",
+                "SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) FOR SHARE",
                 &[&credential],
             )?
             .ok_or(auth::Error::Unauthorized)?;
@@ -755,9 +800,10 @@ impl crate::db::Database {
             role: spec.role,
             scope: spec.scope,
             environments: spec.environments,
+            expires_at: spec.expires_at,
         };
         ensure!(
-            p.principal == o.principal && p.role != Role::Observer,
+            p.principal == o.principal && p.role.permits(Action::Submit),
             auth::Error::Forbidden
         );
         let rel: Release =

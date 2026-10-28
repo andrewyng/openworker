@@ -323,6 +323,7 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         let input=store.service_input(&op.id)?;let r:Release=serde_json::from_value(rel.definition.clone())?;let p:Profile=serde_json::from_value(profile.definition.clone())?;
         let mut parameters=json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":env.id,"name":input.name.unwrap_or(op.release_id),"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
         if let Some(model)=input.model{parameters["model"]=json!(model);}if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
+        let configured=store.service_operation_configuration(&op.id)?;parameters["compaction"]=json!(configured.configuration.compaction);
         let session=rt.prepare_session(parameters)?;
         let service=config.service.as_ref().context("Service config required")?;
         let result=store.service_finish(&op.id,session,&service.id,&service.namespace);rt.shutdown().await?;result?;Ok(())
@@ -406,8 +407,64 @@ pub async fn worker(
     slots: usize,
     stop: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
+    worker_with_options(
+        config,
+        store,
+        slots,
+        stop,
+        tokio_util::sync::CancellationToken::new(),
+        "service-worker".into(),
+        None,
+        300,
+    )
+    .await
+}
+pub async fn worker_with_options(
+    config: Config,
+    store: PostgresStore,
+    slots: usize,
+    stop: tokio_util::sync::CancellationToken,
+    abort: tokio_util::sync::CancellationToken,
+    node: String,
+    health_listen: Option<std::net::SocketAddr>,
+    drain_seconds: u64,
+) -> Result<()> {
     use openworker_store_postgres::worker::{Catalog, Factory, Options, Worker};
+    let _abort_guard = abort.clone().drop_guard();
     config.require_execution()?;
+    anyhow::ensure!(
+        health_listen.is_none_or(|a| a.ip().is_loopback()),
+        "Worker health must bind loopback"
+    );
+    anyhow::ensure!(
+        openworker_runtime::bundle::safe_name(&node),
+        "Invalid worker node name"
+    );
+    let provider = config.provider()?;
+    provider.check_gateway().await?;
+    let drain = openworker_store_postgres::worker::Drain::default();
+    let health = crate::readiness::Readiness::new(drain.clone());
+    let health_stop = tokio_util::sync::CancellationToken::new();
+    let _health_guard = health_stop.clone().drop_guard();
+    let health_server = if let Some(address) = health_listen {
+        let listener = tokio::net::TcpListener::bind(address).await?;
+        let router = health.router();
+        let done = health_stop.clone();
+        Some(tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(done.cancelled_owned())
+                .await
+        }))
+    } else {
+        None
+    };
+    let signal_stop = stop.clone();
+    let signal_abort = abort.clone();
+    let signal_drain = drain.clone();
+    let signal = tokio::spawn(async move {
+        tokio::select! {_=signal_stop.cancelled()=>signal_drain.request(),_=signal_abort.cancelled()=>{}}
+    });
+
     let service = config
         .service
         .as_ref()
@@ -434,7 +491,7 @@ pub async fn worker(
     );
     let work = Worker::new(
         db,
-        base_selector,
+        base_selector.clone(),
         Options {
             slots,
             ..Default::default()
@@ -442,10 +499,22 @@ pub async fn worker(
         default_factory,
     )?
     .with_catalog(catalog)
-    .run(stop.clone());
+    .run_with_drain(
+        drain.clone(),
+        abort.clone(),
+        std::time::Duration::from_secs(drain_seconds),
+    );
     let installed = installation(&config)?;
     let monitor = async {
-        while !stop.is_cancelled() {
+        while !abort.is_cancelled() {
+            provider.check_gateway().await?;
+            store.advertise_worker(
+                &node,
+                base_selector.clone(),
+                slots as u16,
+                drain.is_requested(),
+            )?;
+            health.checked();
             let entries = store.catalog_list()?;
             for release in entries
                 .iter()
@@ -475,13 +544,21 @@ pub async fn worker(
                     cache.lock().unwrap().insert(key, (select, factory));
                 }
             }
-            tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}}
+            tokio::select! {_=abort.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}}
         }
         Ok::<_, anyhow::Error>(())
     };
     tokio::pin!(work);
     tokio::pin!(monitor);
-    tokio::select! {result=&mut work=>{stop.cancel();result},result=&mut monitor=>{stop.cancel();let joined=work.await;result.and(joined)}}
+    let result = tokio::select! {result=&mut work=>result,result=&mut monitor=>{health.clear();abort.cancel();let joined=work.await;result.and(joined)}};
+    abort.cancel();
+    signal.abort();
+    health.clear();
+    health_stop.cancel();
+    if let Some(server) = health_server {
+        let _ = server.await;
+    }
+    result
 }
 
 /// The API records intent only; gateway credentials stay on private controllers.
@@ -520,4 +597,11 @@ async fn delete_once(config: &Config, store: &PostgresStore, installed: &str) ->
         store.service_recheck_delete(&record.id)?;
     }
     Ok(())
+}
+
+pub(crate) async fn get_release(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.catalog_get("release", &id)?)))
 }

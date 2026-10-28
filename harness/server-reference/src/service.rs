@@ -14,12 +14,21 @@ use serde_json::{json, Value};
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// Explicit compatibility only; managed service deployments require releases.
+    #[serde(default)]
+    pub legacy_compatibility: bool,
     pub default_runtime_profile: Option<String>,
     pub id: String,
     pub namespace: String,
     pub agent: String,
 }
 impl ServiceConfig {
+    pub fn public_path(&self, path: &str) -> bool {
+        self.legacy_compatibility
+            || path.starts_with("/v1/")
+            || matches!(path, "/healthz" | "/readyz")
+    }
+
     pub fn validate(&self) -> Result<()> {
         for text in [&self.id, &self.namespace, &self.agent] {
             ensure!(
@@ -48,9 +57,21 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         }
         ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
         ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
-        ("POST", ["", "v1", "profiles" | "releases"])
-        | ("POST", ["", "v1", "profiles" | "releases", _, "activate"]) => Some(Action::Admin),
-        ("GET", ["", "v1", "profiles" | "environments" | "operations", _]) => Some(Action::Read),
+        ("GET", ["", "v1", "worker-pools"]) => Some(Action::Read),
+        ("POST", ["", "v1", "worker-pools", _, "scale"]) => Some(Action::Admin),
+        ("GET", ["", "v1", "configuration"]) => Some(Action::Read),
+        ("PUT", ["", "v1", "configuration"]) => Some(Action::Admin),
+        ("POST", ["", "v1", "releases"]) => Some(Action::Publish),
+        ("POST", ["", "v1", "releases", _, "activate"]) => Some(Action::Activate),
+        ("POST", ["", "v1", "profiles"]) | ("POST", ["", "v1", "profiles", _, "activate"]) => {
+            Some(Action::Configure)
+        }
+        ("GET" | "POST", ["", "v1", "credentials"])
+        | ("POST", ["", "v1", "credentials", _, "revoke"])
+        | ("GET", ["", "v1", "audit"]) => Some(Action::Admin),
+        ("GET", ["", "v1", "profiles" | "releases" | "environments" | "operations", _]) => {
+            Some(Action::Read)
+        }
         ("GET", ["", "v1", "environments"]) | ("POST", ["", "v1", "environments", _, "delete"]) => {
             Some(Action::Admin)
         }
@@ -73,6 +94,7 @@ pub(crate) fn router() -> Router<App> {
             post(crate::management::activate_profile),
         )
         .route("/v1/releases", post(crate::management::put_release))
+        .route("/v1/releases/:id", get(crate::management::get_release))
         .route(
             "/v1/releases/:id/activate",
             post(crate::management::activate_release),
@@ -84,7 +106,19 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/operations/:id", get(crate::management::get_operation))
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/auth/me", get(crate::authorization::me))
+        .route(
+            "/v1/credentials",
+            get(crate::authorization::list).post(crate::authorization::issue_v1),
+        )
+        .route(
+            "/v1/credentials/:id/revoke",
+            post(crate::authorization::revoke),
+        )
+        .route("/v1/audit", get(crate::authorization::audit))
         .route("/v1/agents/:id", get(agent))
+        .route("/v1/worker-pools", get(pools))
+        .route("/v1/worker-pools/:id/scale", post(scale_pool))
+        .route("/v1/configuration", get(configuration).put(configure))
         .route("/v1/sessions", post(create))
         .route("/v1/submissions", post(submit))
         .route("/v1/sessions/:sid/close", post(close))
@@ -106,13 +140,16 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
     Extension(app): Extension<App>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    if id == cfg(&app).agent && !cfg(&app).legacy_compatibility {
+        return Err(ApiError(SubmissionError::NotFound.into()));
+    }
     if id != cfg(&app).agent {
         let release = app.store.catalog_get("release", &id)?;
         check(release.activated, SubmissionError::NotFound)?;
@@ -147,6 +184,7 @@ async fn create(
     if body.agent != cfg(&app).agent {
         return crate::management::admit(app, headers, body).await;
     }
+    check(cfg(&app).legacy_compatibility, SubmissionError::NotFound)?;
     check(
         body.runtime_profile.is_none() && body.environment_id.is_some(),
         SubmissionError::InvalidRequest,
@@ -286,4 +324,79 @@ async fn close(
 }
 async fn environment_list(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
     Ok(Json(app.store.service_environment_list()?))
+}
+
+async fn configuration(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.service_configuration()?)))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Configure {
+    expected_revision: i64,
+    configuration: openworker_store_postgres::service_admin::Configuration,
+}
+async fn configure(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(body): Json<Configure>,
+) -> Result<Json<Value>, ApiError> {
+    let key = key(&app, &headers, "configuration")?;
+    Ok(Json(json!(app.store.service_configure(
+        &key,
+        body.expected_revision,
+        body.configuration
+    )?)))
+}
+
+async fn pools(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!({"pools":app.store.service_pools()?})))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Scale {
+    expected_revision: i64,
+    replicas: i32,
+}
+async fn scale_pool(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Scale>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let key = key(&app, &headers, &format!("scale:{id}"))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!(app.store.service_scale_pool(
+            &id,
+            &key,
+            body.expected_revision,
+            body.replicas
+        )?)),
+    ))
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+    #[test]
+    fn compatibility_routes_require_explicit_opt_in() {
+        let mut c: ServiceConfig =
+            serde_json::from_value(json!({"id":"test","namespace":"test","agent":"catalog"}))
+                .unwrap();
+        assert!(!c.legacy_compatibility);
+        for p in [
+            "/credentials",
+            "/sessions",
+            "/teams",
+            "/auth/me",
+            "/v1evil/sessions",
+        ] {
+            assert!(!c.public_path(p));
+        }
+        for p in ["/v1/sessions", "/v1/credentials", "/readyz"] {
+            assert!(c.public_path(p));
+        }
+        c.legacy_compatibility = true;
+        assert!(c.public_path("/sessions"));
+    }
 }

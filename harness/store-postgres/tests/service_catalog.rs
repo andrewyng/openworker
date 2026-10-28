@@ -361,3 +361,168 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
     pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
         .unwrap();
 }
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn configuration_revisions_pause_and_pin_admission_defaults() {
+    use openworker_store_postgres::service_admin::Configuration;
+    let (c, store, a, u) = setup();
+    let (r, p) = catalog(&a);
+    let mut cfg = Configuration::default();
+    cfg.compaction.context_window = 64000;
+    assert!(u.service_configure("denied", 1, cfg.clone()).is_err());
+    assert_eq!(
+        a.service_configure("edit-1", 1, cfg.clone())
+            .unwrap()
+            .revision,
+        2
+    );
+    let op = u
+        .service_admit("first", admission(), r.clone(), p.clone(), spec())
+        .unwrap();
+    assert_eq!(
+        store
+            .service_operation_configuration(&op.id)
+            .unwrap()
+            .configuration
+            .compaction
+            .context_window,
+        64000
+    );
+    cfg.admissions_paused = true;
+    cfg.compaction.context_window = 32000;
+    assert!(a.service_configure("stale", 1, cfg.clone()).is_err());
+    a.service_configure("pause", 2, cfg.clone()).unwrap();
+    assert!(u
+        .service_admit("new", admission(), r.clone(), p.clone(), spec())
+        .is_err());
+    assert_eq!(
+        u.service_admit("first", admission(), r.clone(), p.clone(), spec())
+            .unwrap()
+            .id,
+        op.id
+    );
+    assert_eq!(
+        store
+            .service_operation_configuration(&op.id)
+            .unwrap()
+            .configuration
+            .compaction
+            .context_window,
+        64000
+    );
+    cfg.admissions_paused = false;
+    a.service_configure("resume", 3, cfg.clone()).unwrap();
+    assert_eq!(
+        a.service_configure("resume", 3, cfg.clone())
+            .unwrap()
+            .revision,
+        4
+    );
+    cfg.max_environments = 0;
+    assert!(a.service_configure("invalid", 4, cfg).is_err());
+    let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn pool_ownership_revisions_and_observed_state_do_not_fight_infrastructure() {
+    use openworker_store_postgres::service_pools::{Binding, Ownership};
+    let (c, store, a, u) = setup();
+    let binding = Binding {
+        id: "coder".into(),
+        namespace: "ow-test".into(),
+        deployment: "coder".into(),
+        uid: "original".into(),
+        ownership: Ownership::Manual,
+        max_replicas: 4,
+    };
+    assert!(a.service_bind_pool(binding.clone(), 1).is_err());
+    store.service_bind_pool(binding.clone(), 1).unwrap();
+    assert!(u.service_scale_pool("coder", "denied", 1, 2).is_err());
+    assert!(a.service_scale_pool("coder", "oversized", 1, 5).is_err());
+    let desired = a.service_scale_pool("coder", "scale", 1, 3).unwrap();
+    assert_eq!(desired.revision, 2);
+    assert_eq!(desired.observed["status"], "pending");
+    assert_eq!(
+        store
+            .service_bind_pool(binding.clone(), 1)
+            .unwrap()
+            .desired_replicas,
+        3
+    );
+    assert_eq!(
+        a.service_scale_pool("coder", "scale", 1, 3)
+            .unwrap()
+            .revision,
+        2
+    );
+    assert!(a.service_scale_pool("coder", "conflict", 1, 2).is_err());
+    store
+        .service_observe_pool("coder", 1, json!({"status":"applied"}))
+        .unwrap();
+    assert_eq!(a.service_pools().unwrap()[0].observed["status"], "pending");
+    let mut replacement = binding.clone();
+    replacement.uid = "replacement".into();
+    assert!(store.service_bind_pool(replacement, 1).is_err());
+    store
+        .service_observe_pool("coder", 2, json!({"status":"applied"}))
+        .unwrap();
+    assert_eq!(a.service_pools().unwrap()[0].observed["status"], "applied");
+    let mut stale = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
+    stale.batch_execute(&format!("UPDATE {}.service_pools SET observed=jsonb_set(observed,'{{checkedAt}}','1') WHERE id='coder'",c.schema)).unwrap();
+    assert_eq!(a.service_pools().unwrap()[0].observed["status"], "unknown");
+    for owner in [Ownership::Autoscaled, Ownership::Gitops] {
+        let mut b = binding.clone();
+        b.id = format!("owned-{owner:?}");
+        b.ownership = owner;
+        store.service_bind_pool(b.clone(), 1).unwrap();
+        assert!(a.service_scale_pool(&b.id, "override", 1, 2).is_err());
+    }
+    let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn credential_expiring_during_provisioning_cannot_commit_a_session() {
+    let (c, store, a, u) = setup();
+    let (r, p) = catalog(&a);
+    let o = u
+        .service_admit("expiry-admission", admission(), r, p, spec())
+        .unwrap();
+    let e = store.clone().environment(&o.environment_id).unwrap();
+    let binding = Binding {
+        environment_id: e.id.clone(),
+        spec: e.spec.clone(),
+        remote_id: "original".into(),
+        remote_name: "name".into(),
+        workspace_scope: "default".into(),
+        policy_hash: "policy".into(),
+        policy_version: 1,
+    };
+    store
+        .complete_environment(&e.id, e.revision, Some(binding.clone()))
+        .unwrap();
+    store
+        .service_update_operation(&o.id, "ready", None)
+        .unwrap();
+    let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
+    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
+        .unwrap();
+    pg.batch_execute("UPDATE api_credentials SET spec=jsonb_set(spec,'{expires_at}',to_jsonb(1::bigint)) WHERE spec->>'principal'='alice'").unwrap();
+    assert!(store
+        .service_finish(&o.id, session("prepared", binding), "svc", "test")
+        .is_err());
+    assert_eq!(
+        pg.query_one("SELECT count(*) FROM sessions", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+}

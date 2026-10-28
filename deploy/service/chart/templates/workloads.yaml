@@ -1,0 +1,118 @@
+{{- $roles := list "api" "worker" "controller" -}}
+{{- if .Values.platformControllerEnabled }}{{ $roles = append $roles "platform" }}{{ end -}}
+{{- range $role := $roles }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $role }}
+  labels:
+    openworker.io/service-id: {{ $.Values.config.service.id | quote }}
+    {{- if eq $role "worker" }}
+    openworker.io/pool-id: default
+    {{- end }}
+spec:
+  {{- if ne $role "worker" }}
+  replicas: {{ if eq $role "api" }}{{ $.Values.apiReplicas }}{{ else }}1{{ end }}
+  {{- else if eq $.Values.worker.ownership "gitops" }}
+  replicas: {{ $.Values.worker.replicas }}
+  {{- end }}
+  # Manual/HPA pools omit replicas: Helm upgrades must not reset live capacity.
+  revisionHistoryLimit: 2
+  selector: {matchLabels: {app: {{ $.Release.Name }}-{{ $role }}}}
+  template:
+    metadata:
+      labels:
+        app: {{ $.Release.Name }}-{{ $role }}
+        openworker.io/service-id: {{ $.Values.config.service.id | quote }}
+        {{- if eq $role "worker" }}
+        openworker.io/pool-id: default
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      automountServiceAccountToken: {{ eq $role "platform" }}
+      {{- if eq $role "platform" }}
+      serviceAccountName: {{ $.Release.Name }}-platform
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: harness
+          image: {{ $.Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, /opt/openworker/entrypoint.sh]
+          {{- if eq $role "api" }}
+          args: [api, --node, "$(POD_NAME)", --listen, "127.0.0.1:8080"]
+          readinessProbe:
+            exec: {command: [curl, --silent, --fail, --max-time, "3", --config, /probe/curl.conf, "http://127.0.0.1:8080/readyz"]}
+            timeoutSeconds: 4
+          {{- else if eq $role "worker" }}
+          args: [service-worker, --node, "$(POD_NAME)", --slots, {{ $.Values.worker.slots | quote }}, --health-listen, "127.0.0.1:8081", --drain-timeout-seconds, {{ $.Values.worker.drainSeconds | quote }}]
+          readinessProbe:
+            exec: {command: [curl, --silent, --fail, --max-time, "2", "http://127.0.0.1:8081/readyz"]}
+            timeoutSeconds: 3
+          {{- else if eq $role "controller" }}
+          args: [service-controller]
+          {{- else }}
+          args: [service-platform-controller]
+          {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          resources: {{ $.Values.resources | toYaml | nindent 12 }}
+          volumeMounts:
+            - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
+            - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
+            - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            - {name: state, mountPath: /state}
+            - {name: tmp, mountPath: /tmp}
+            {{- if or (eq $role "worker") (eq $role "controller") }}
+            - {name: gateway, mountPath: /openshell, readOnly: true}
+            {{- end }}
+            {{- if and (eq $role "worker") $.Values.secrets.model }}
+            - {name: model, mountPath: /models, readOnly: true}
+            {{- end }}
+            {{- if eq $role "api" }}
+            - {name: probe, mountPath: /probe, readOnly: true}
+            {{- end }}
+        {{- if eq $role "api" }}
+        - name: tls
+          image: {{ $.Values.proxyImage | quote }}
+          command: [nginx, -c, /config/nginx.conf, -g, "daemon off;"]
+          securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          ports: [{name: https, containerPort: 8443}]
+          resources: {requests: {cpu: 20m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+          volumeMounts:
+            - {name: nginx, mountPath: /config, readOnly: true}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: proxy-tmp, mountPath: /tmp}
+        {{- end }}
+      volumes:
+        - name: service
+          projected:
+            defaultMode: 0440
+            sources:
+              - configMap: {name: {{ $.Release.Name }}-config, items: [{key: config.json, path: config.json}]}
+              - secret: {name: {{ $.Values.secrets.database }}, items: [{key: database-url, path: database-url}, {key: pg-ca.crt, path: pg-ca.crt}]}
+        - {name: state, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        {{- if or (eq $role "worker") (eq $role "controller") }}
+        - name: gateway
+          secret: {secretName: {{ $.Values.secrets.openshell }}, defaultMode: 0440}
+        {{- end }}
+        {{- if and (eq $role "worker") $.Values.secrets.model }}
+        - name: model
+          secret: {secretName: {{ $.Values.secrets.model }}, defaultMode: 0440}
+        {{- end }}
+        {{- if eq $role "api" }}
+        - name: probe
+          secret: {secretName: {{ $.Values.secrets.probe }}, defaultMode: 0440}
+        - name: tls
+          secret: {secretName: {{ $.Values.secrets.apiTLS }}, defaultMode: 0440}
+        - name: nginx
+          configMap: {name: {{ $.Release.Name }}-config}
+        - {name: proxy-tmp, emptyDir: {}}
+        {{- end }}
+{{- end }}

@@ -1,0 +1,36 @@
+{{- with .Values.config.service }}{{- if .legacy_compatibility }}{{ fail "managed service chart requires approved releases; legacy compatibility is not supported" }}{{- end }}{{- end }}
+{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" .Values.image) -}}{{ fail "image must use a digest" }}{{- end -}}
+{{- if not (has .Values.worker.ownership (list "manual" "gitops" "autoscaled")) -}}{{ fail "invalid replica ownership" }}{{- end -}}
+{{- if lt (int .Values.terminationGracePeriodSeconds) (int (add .Values.worker.drainSeconds 60)) -}}{{ fail "termination grace must cover drain + 45s cleanup + 15s margin" }}{{- end -}}
+{{- if not .Values.config.service -}}{{ fail "config.service is required" }}{{- end -}}
+{{- $_ := set .Values.config.service "legacy_compatibility" false -}}
+{{- $platform := dict "endpoint" "https://kubernetes.default.svc" "caFile" "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" "tokenFile" "/var/run/secrets/kubernetes.io/serviceaccount/token" "pools" (list (dict "id" "default" "namespace" .Release.Namespace "deployment" (printf "%s-worker" .Release.Name) "ownership" .Values.worker.ownership "maxReplicas" .Values.worker.maxReplicas)) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: {{ .Release.Name }}-config}
+data:
+  config.json: |
+    {{- mergeOverwrite (deepCopy .Values.config) (dict "kubernetes" $platform) | toPrettyJson | nindent 4 }}
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 256; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/body; proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi; uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi;
+      server {
+        listen 8443 ssl;
+        ssl_certificate /tls/tls.crt; ssl_certificate_key /tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3; client_max_body_size 160k;
+        location / { proxy_pass http://127.0.0.1:8080; proxy_http_version 1.1;
+          proxy_set_header Connection ""; proxy_buffering off; proxy_read_timeout 3600s; }
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ .Release.Name }}-api}
+spec:
+  selector: {app: {{ .Release.Name }}-api}
+  ports: [{name: https, port: 443, targetPort: 8443}]

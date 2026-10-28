@@ -249,3 +249,122 @@ unrelated workloads changed. All 4 server-reference unit tests passed as well.
 M3 is complete locally on `feat/openworker-service-m1`; no remote push or PR.
 Next is M4: expiring credentials/bootstrap administration, managed configuration
 and scaling/draining, then Kubernetes control-plane packaging and qualification.
+
+## 2026-10-27 — M4 started
+
+User authorized the next milestone; AWS and GCP clusters will follow later for
+cloud qualification. Continue from `a657c92f` on `feat/openworker-service-m1`.
+Disk baseline: 213 GiB free. Reuse existing Rust/Linux caches, local Docker/K8s and
+OpenShell. No cloud infrastructure or unrelated deployments will be changed.
+
+Work order: credential expiry/deployment permissions; managed configuration and
+capacity; Kubernetes packaging/controller and graceful drain; local qualification.
+Reuse existing PostgreSQL auth/audit, worker drain and Helm machinery.
+
+### M4 implementation in progress
+
+- Added database-time credential expiry, separate publisher/release/service-admin
+  roles, expiring private bootstrap and audited infrastructure-only recovery.
+  Legacy administrator compatibility remains explicit; new service-admin grants
+  do not grant tool approvals. Public v1 credential issuance requires expiry.
+- Added expected-revision/idempotent service configuration, admission pause and
+  bounded quotas. Compaction defaults are pinned at admission and passed to session
+  creation; existing sessions retain their resolved settings.
+- Added worker-pool desired/observed state with immutable deployment UID binding,
+  replica ceilings and explicit manual/GitOps/HPA ownership. Private Kubernetes
+  reconciler has no public arbitrary Kubernetes proxy/manifest interface.
+- Service workers now use existing graceful-drain semantics and dependency-gated
+  readiness. SIGTERM stops intake; a second signal/deadline interrupts explicitly.
+- Local database checks passed: 8 authorization, 6 catalog/configuration/pool and
+  8 submission regressions. ARM64 service and matching ToolRunner images built;
+  local Kubernetes Helm qualification is next. No paid model calls/cloud changes.
+
+Kubernetes packaging qualification found projected-file compatibility: Kubernetes
+ConfigMaps/Secrets are symlinks, while general runtime config readers intentionally
+reject symlinks. Static configuration/bootstrap inputs now use direct subPath file
+mounts. The platform controller has a separate bounded reader for Kubernetes-owned
+rotating service-account projections. General coworker/tool file checks remain.
+The first install is a failed test fixture; no agent task has run on it yet.
+
+The first CLI-through-HTTP permission test caught an additional boundary mismatch:
+publishers could write definitions in the store but could not inspect a referenced
+RuntimeProfile because its execution allowlist was applied to management reads.
+Deployment roles can now inspect catalog metadata; execution admission still
+requires runner permission and the principal allowlist. Inactive releases also
+have an explicit metadata read route, separate from the active-agent route.
+Credential CLI output now uses a distinct `--out` argument ID; a parser regression
+ensures it cannot replace the caller's `--token-file` authentication input.
+
+User decision during M4: service tokens for now; browser SSO/OIDC will be added
+later. No identity-provider credentials or tenant setup are needed for this milestone.
+
+The live scale-to-zero check exposed Kubernetes' valid `Scale.spec: {}` encoding
+for zero replicas. The controller now reads omission as zero, rejects malformed
+counts and has a regression using the observed Kubernetes response. Capacity
+observations also expire to `unknown` after controller silence rather than showing
+stale `applied` status. Final qualification additionally rotates/revokes bootstrap,
+removes its Secret, and verifies a service administrator cannot cancel agent work.
+
+Final boundary review also closed two service-profile escape paths: recovery-only
+mode now rejects all service worker/controller roles before DB/provider access;
+and legacy reference routes/configured-agent admission require explicit
+`legacy_compatibility: true`. Managed Compose/Helm profiles disable compatibility,
+so callers cannot bypass release activation or v1 credential expiry through older
+endpoints. The M1 configured-agent test/document explicitly opts into compatibility.
+Deployment/configuration/capacity audit records now include their target IDs.
+
+
+### M4 qualification complete
+
+Final package passed the full CLI/HTTPS acceptance suite on local kind Kubernetes
+v1.36.4 with the existing OpenShell 0.1.3 gateway. Actual worker pods and remote
+ToolRunner file/shell actions were exercised; the model was deterministic.
+No LLM key, paid model call, cloud resources or unrelated namespace changes.
+
+Verified end to end:
+- Expiring service credentials, rotation/revocation of the original bootstrap
+  credential, removal of its Secret, and service-admin denial of agent control.
+- Publisher metadata access and publication, separate release activation, and
+  strict refusal of legacy routes/direct configured-agent admission.
+- Expected-revision configuration, admission pause and already-admitted execution;
+  pinned compaction defaults verified both through metadata and stored session data.
+- Submission with zero workers, scale-up execution, real write/read output,
+  and a running shell action completing successfully during scale-down drain.
+- Scale 0/1/2, Helm upgrades preserving manual replicas, stale observations becoming
+  unknown while the controller is stopped, and recovery of the original pool/UID.
+- API rollout/reconnection with durable session identity and results.
+- Targeted publication/activation audit records; explicit session close and
+  controller-driven sandbox deletion.
+- Guarded namespace teardown: wrong identity rejected; API quiesced before the
+  final resource check; dedicated namespace/PVC removed. Original gateway untouched.
+- Packaged Linux CLI authenticated over verified TLS using the existing read-only
+  probe credential. Packaged recovery-only platform controller rejected execution
+  before database/cluster access, with networking disabled for that negative check.
+
+Regression results: 8 PostgreSQL authorization tests, 7 service catalog/config/pool
+checks, 8 submission tests; 6 server-library and 3 server-command tests; 3 CLI tests;
+3 Helm boundary/ownership tests; 7 Rust SDK desktop API tests including both SQLite
+and PostgreSQL in-process/managed modes; and 8 TypeScript service transport tests.
+Formatting, syntax and diff checks passed.
+
+Final service ID: `ows-8fe1342add09`.
+Final session: `s_42c97948ce754a83b27bace8b8bfe00d`.
+Final environment: `env_4cfd7cf0f6834158bbab30942fb3fdc2` (confirmed deleted).
+Qualified image: `docker.io/library/openworker-service@sha256:74299aae3bcfea7dc0151598077cfc83403cb08ef5dfa90cbfbf3aa6df41c224`.
+
+Cleanup complete: test namespace/PVC removed, unit-test PostgreSQL stopped,
+port-forwards closed, generated tokens/copied gateway credentials removed.
+Only the pre-existing suspended OpenShell sandbox remains. Build caches/images are
+retained for follow-up work. Final free disk is approximately 209 GiB.
+
+Docs: [M4 quickstart](SERVICE-M4-QUICKSTART.md),
+[Helm chart](../../deploy/service/chart/README.md).
+
+Limits remain explicit: ARM64 local qualification; one namespace/default pool;
+OpenShell separately provisioned; service-token login only (SSO deferred by user);
+provider connections/model secrets and worker slots configured through deployment;
+no live HPA/cloud-node autoscaler test and no AWS/GCP qualification yet. Older M3
+API writers must be quiesced for the M4 schema/profile transition; mixed-generation
+rollouts are not claimed qualified. Management UI is M5.
+
+M4 is complete locally on `feat/openworker-service-m1`; no remote push or PR.

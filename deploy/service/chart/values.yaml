@@ -1,0 +1,23 @@
+image: ""
+proxyImage: nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+config: {}
+secrets:
+  database: ow-service-database
+  openshell: ow-service-openshell
+  apiTLS: ow-service-tls
+  bootstrap: ow-service-bootstrap
+  probe: ow-service-probe
+  model: ""
+apiReplicas: 1
+worker:
+  replicas: 1
+  ownership: manual
+  maxReplicas: 4
+  slots: 2
+  drainSeconds: 60
+terminationGracePeriodSeconds: 120
+bootstrapEnabled: true
+platformControllerEnabled: true
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "2", memory: 1536Mi}

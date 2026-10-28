@@ -71,16 +71,20 @@ Reuse, rather than replace:
   [AWS qualification](../../deploy/aws/README.md), and the existing read-only console.
 - Runtime/tool policy, plan/team/session state, compaction and telemetry contracts.
 
-M1–M3 now provide the remote SDK transport, deployed releases, RuntimeProfiles,
-OpenShell provisioning, combined task admission and `ows`. The
+M1–M4 now provide the remote SDK transport, deployed releases, RuntimeProfiles,
+OpenShell provisioning, combined task admission, expiring service tokens,
+revisioned settings, Kubernetes pool management and `ows`. The
 [local service package](../../deploy/service/README.md) runs the API, controller,
 worker and PostgreSQL in Compose, connecting to an explicitly provisioned
 Kubernetes/OpenShell gateway. It is not an all-in-one Docker-only execution
 provider. See the [progress ledger](SERVICE-PROGRESS.md) for qualification evidence.
 
-Remaining gaps include broader namespace management, expiring credentials/human
-login, managed configuration/scaling, Kubernetes control-plane packaging, a
-Docker-only execution provider and a writable management UI.
+Remaining gaps include broader namespace management, browser SSO (deferred by the
+user), REST-managed model-provider/secret enrollment, live worker-slot updates, a
+Docker-only execution provider and a writable management UI. M4 settings cover
+admission controls and pinned compaction defaults; model connections/keys and
+worker slots remain installation configuration with controlled rollouts. Cloud
+qualification follows when AWS/GCP clusters are provided.
 
 Existing versioned worker pools remain the server upgrade model. The local SDK
 currently pins the runner binary per session; changing it requires a new session.

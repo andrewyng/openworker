@@ -1,7 +1,7 @@
 //! Durable ingress is independent of execution ownership. The trusted app supplies
 //! authorized session IDs; this module is not a tenant authorization service.
 use crate::db::{locked, Database};
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use openworker_runtime::store::{terminal, Session};
 use postgres::{Row, Transaction};
 use serde::{Deserialize, Serialize};
@@ -239,6 +239,21 @@ impl Database {
         if count >= i64::from(self.max_queued_turns) {
             return Err(SubmissionError::QueueFull.into());
         }
+        let configured = crate::service_admin::current(&mut tx)?;
+        ensure!(
+            !configured.configuration.admissions_paused,
+            SubmissionError::Busy
+        );
+        let waiting: i64 = tx
+            .query_one(
+                "SELECT count(*) FROM submissions WHERE session_id=$1 AND status='queued'",
+                &[&request.session_id],
+            )?
+            .get(0);
+        ensure!(
+            waiting < configured.configuration.max_queued_turns,
+            SubmissionError::QueueFull
+        );
         let result = insert(&mut tx, &request, "queued", None)?;
         journal_acceptance(&mut tx, &result, p.as_ref().map(|p| p.principal.as_str()))?;
         tx.commit()?;

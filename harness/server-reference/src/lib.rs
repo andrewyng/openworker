@@ -8,6 +8,7 @@ use std::{path::PathBuf, sync::Arc};
 mod artifacts;
 mod authorization;
 pub mod http;
+pub mod kubernetes;
 pub mod management;
 pub mod operations;
 pub mod readiness;
@@ -15,6 +16,8 @@ pub mod service;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub kubernetes: Option<kubernetes::Config>,
     #[serde(default)]
     pub service: Option<service::ServiceConfig>,
     /// Restore inspection only: no HTTP mutations, workers or provider access.

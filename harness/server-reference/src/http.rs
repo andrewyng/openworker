@@ -197,6 +197,13 @@ async fn authenticate_inner(mut app: App, mut request: Request, next: Next) -> R
         )
             .into_response();
     }
+    if app
+        .service
+        .as_ref()
+        .is_some_and(|s| !s.public_path(request.uri().path()))
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let service_request = request.uri().path().starts_with("/v1/");
     if service_request {
         let Some(service) = &app.service else {

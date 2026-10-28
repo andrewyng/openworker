@@ -165,7 +165,12 @@ export async function init(root, connectionFile, image, port = 58443) {
     await chmod(join(input, `model-${provider}`), 0o600);
   }
   const config = {
-    service: { id, namespace: "local", agent: "installed-tools" },
+    service: {
+      id,
+      namespace: "local",
+      agent: "installed-tools",
+      legacy_compatibility: false,
+    },
     database_env: "OW_PG_URL",
     schema: "ow_service",
     database_loopback_plaintext: false,

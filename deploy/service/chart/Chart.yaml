@@ -1,0 +1,5 @@
+apiVersion: v2
+name: openworker-service
+version: 0.1.0
+description: OpenWorker Service control plane and workers; external PostgreSQL and NVIDIA OpenShell.
+type: application

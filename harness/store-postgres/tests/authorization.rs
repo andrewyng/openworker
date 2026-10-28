@@ -37,6 +37,7 @@ fn issue(admin: &PostgresStore, key: &str, principal: &str, role: Role, scope: S
         .auth_issue(
             principal,
             Spec {
+                expires_at: None,
                 principal: principal.into(),
                 role,
                 scope,
@@ -91,6 +92,7 @@ fn role_owned_session_environment_and_actor_matrix() {
         observer.auth_issue(
             "escalate",
             Spec {
+                expires_at: None,
                 principal: "evil".into(),
                 role: Role::Administrator,
                 scope: Scope::All,
@@ -179,6 +181,7 @@ fn role_owned_session_environment_and_actor_matrix() {
         .auth_issue(
             "alice-rotated",
             Spec {
+                expires_at: None,
                 principal: "alice".into(),
                 role: Role::Observer,
                 scope: Scope::Owned,
@@ -343,6 +346,7 @@ fn explicit_scopes_revocation_restarts_and_bootstrap_do_not_resurrect_keys() {
             .auth_issue(
                 "observer",
                 Spec {
+                    expires_at: None,
                     principal: "observer".into(),
                     role: Role::Observer,
                     scope: Scope::Sessions {
@@ -476,4 +480,125 @@ fn audit_cursor_cannot_skip_a_delayed_commit() {
     assert_eq!(page["events"].as_array().unwrap().len(), 2);
     assert_eq!(page["events"][0]["action"], "delayed");
     assert_eq!(page["events"][1]["outcome"], "denied");
+}
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn expiry_and_deployment_roles_are_independent_of_tool_control() {
+    let (c, store, admin) = fixture();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let spec = Spec {
+        principal: "publisher".into(),
+        role: Role::Publisher,
+        scope: Scope::All,
+        environments: vec![],
+        expires_at: Some(now + 600),
+    };
+    let issued = admin
+        .auth_issue("publisher-1", spec.clone(), ALICE)
+        .unwrap();
+    let publisher = store.authorized(ALICE).unwrap();
+    assert!(publisher.authorize(Action::Publish, None, None).is_ok());
+    for action in [
+        Action::Activate,
+        Action::Submit,
+        Action::Control,
+        Action::Admin,
+    ] {
+        assert!(publisher.authorize(action, None, None).is_err());
+    }
+    let profile = json!({"id":"dev@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["runner"]});
+    admin
+        .catalog_put("profile", "profile", profile, "install")
+        .unwrap();
+    admin
+        .catalog_activate("profile-active", "profile", "dev@1", None)
+        .unwrap();
+    assert!(publisher.catalog_get("profile", "dev@1").is_ok());
+    let release = json!({"id":"agent@1","instructions":"Test","tools":["read_file"],"runtimeProfiles":["dev@1"],"defaultRuntimeProfile":"dev@1"});
+    publisher
+        .catalog_put("release", "release", release, "install")
+        .unwrap();
+    assert!(publisher
+        .catalog_activate("activate", "release", "agent@1", None)
+        .is_err());
+    let reviewer = Spec {
+        principal: "releaser".into(),
+        role: Role::ReleaseAdministrator,
+        scope: Scope::All,
+        environments: vec![],
+        expires_at: Some(now + 600),
+    };
+    admin.auth_issue("releaser", reviewer, BOB).unwrap();
+    let reviewer = store.authorized(BOB).unwrap();
+    reviewer
+        .catalog_activate("activate", "release", "agent@1", None)
+        .unwrap();
+    let audit = admin.auth_audit(0).unwrap();
+    assert!(audit["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action"] == "release.publish" && e["target"] == "agent@1"));
+    assert!(reviewer.authorize(Action::Control, None, None).is_err());
+    assert!(reviewer.authorize(Action::Admin, None, None).is_err());
+    // Database time is authoritative; an already-open authorized handle must expire too.
+    let mut pg = sql(&c);
+    pg.execute("UPDATE api_credentials SET spec=jsonb_set(spec,'{expires_at}',to_jsonb(1::bigint)) WHERE id=$1",&[&issued["id"].as_str().unwrap()]).unwrap();
+    assert!(matches!(
+        publisher
+            .authorize(Action::Read, None, None)
+            .unwrap_err()
+            .downcast_ref::<Error>(),
+        Some(Error::Unauthorized)
+    ));
+    let mut changed = spec;
+    changed.expires_at = Some(now + 1200);
+    assert!(admin.auth_issue("publisher-1", changed, ALICE).is_err());
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn expired_bootstrap_cannot_reinitialize_or_extend_its_lifetime() {
+    let (c, store, admin) = fixture();
+    let mut pg = sql(&c);
+    pg.batch_execute("UPDATE api_credentials SET spec=jsonb_set(spec,'{expires_at}',to_jsonb(1::bigint)) WHERE request_id='bootstrap'").unwrap();
+    assert!(admin.authorize(Action::Admin, None, None).is_err());
+    assert_eq!(
+        store
+            .auth_bootstrap_expiring(ADMIN, "admin", Some(2_000_000_000))
+            .unwrap()["spec"]["expires_at"],
+        1
+    );
+    assert!(store
+        .auth_bootstrap_expiring(BOB, "admin", Some(2_000_000_000))
+        .is_err());
+    assert!(admin.authorize(Action::Admin, None, None).is_err());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!(admin
+        .auth_recover("denied", BOB, "recovered", now + 600)
+        .is_err());
+    let recovered = store
+        .auth_recover("recover", BOB, "recovered", now + 600)
+        .unwrap();
+    assert_eq!(
+        store
+            .auth_recover("recover", BOB, "recovered", now + 1200)
+            .unwrap(),
+        recovered
+    );
+    let recovered = store.authorized(BOB).unwrap();
+    assert!(recovered.authorize(Action::Admin, None, None).is_ok());
+    assert!(recovered.authorize(Action::Control, None, None).is_err());
+    assert!(admin.authorize(Action::Admin, None, None).is_err());
+    pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
 }
