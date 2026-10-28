@@ -26,6 +26,32 @@ fn setup() -> (Config, PostgresStore, PostgresStore, PostgresStore) {
     let u = store.authorized(&user).unwrap();
     (c, store, a, u)
 }
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn installer_status_is_trusted_only_and_counts_pending_environments() {
+    let (_config, store, admin, user) = setup();
+    assert_eq!(store.service_install_status().unwrap()["openSessions"], 0);
+    assert_eq!(
+        store.service_install_status().unwrap()["liveEnvironments"],
+        0
+    );
+    assert!(admin.service_install_status().is_err());
+    assert!(user.service_install_status().is_err());
+    let (r, p) = catalog(&admin);
+    user.service_admit("installer-count", admission(), r, p, spec())
+        .unwrap();
+    let status = store.service_install_status().unwrap();
+    assert_eq!(status["liveEnvironments"], 1);
+    assert_eq!(status["pendingAdmissions"], 1);
+    assert!(status.as_object().unwrap().keys().all(|k| [
+        "schemaVersion",
+        "openSessions",
+        "liveEnvironments",
+        "pendingAdmissions",
+        "queuedTurns"
+    ]
+    .contains(&k.as_str())));
+}
 fn profile() -> Value {
     json!({"id":"shared@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["alice"]})
 }

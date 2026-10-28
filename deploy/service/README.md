@@ -156,3 +156,9 @@ Expiring service tokens, revisioned configuration and Kubernetes pool management
 are covered by the [M4 guide](../../docs/harness/SERVICE-M4-QUICKSTART.md).
 Hosted SSO and cloud qualification follow later. Model connections/secrets and
 worker-slot settings currently remain deployment configuration.
+
+Cloud installation uses the same native installer through `ows deploy cluster`.
+See the [experimental AWS lifecycle guide](../../docs/harness/OWS-AWS-LIFECYCLE.md)
+for planning, guard checks, image publication, private Secret handoff and recovery.
+It is locally qualified; AWS IAM/network/storage/expiry behavior still needs the
+explicitly authorized live trial.

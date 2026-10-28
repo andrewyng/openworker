@@ -79,7 +79,7 @@ if (action === "init") {
     );
   if (m.destroying && action !== "destroy")
     throw Error("Destruction in progress; resume destroy with the same ID");
-  if (action === "install" || action === "fixtures") {
+  if (["install", "fixtures", "database-fixture"].includes(action)) {
     const names = JSON.parse(
       await kube(m, ["get", "namespaces", "-o", "json"]),
     ).items;
@@ -108,7 +108,7 @@ if (action === "init") {
     const probeSpec = JSON.parse(
       await readFile(join(input, "probe.json"), "utf8"),
     );
-    await apply(m, [
+    const fixtureSecrets = [
       secret(m.namespace, "ow-service-database", {
         "database-url": await read("database-url"),
         "pg-ca.crt": await read("pg-ca.crt"),
@@ -137,7 +137,15 @@ if (action === "init") {
           `header = "Authorization: Bearer ${probe}"\n`,
         ).toString("base64"),
       }),
-    ]);
+    ];
+    await apply(
+      m,
+      action === "database-fixture"
+        ? fixtureSecrets.filter(
+            (s) => s.metadata.name === "ow-service-postgres",
+          )
+        : fixtureSecrets,
+    );
     await apply(m, [
       {
         apiVersion: "v1",

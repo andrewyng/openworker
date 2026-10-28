@@ -1,7 +1,7 @@
 // Native-installer qualification only: no Helm upgrades and no cloud API calls.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, stat } from "node:fs/promises";
 import { resolve, join } from "node:path";
 const [directory, binary] = process.argv.slice(2);
 if (!directory || !binary)
@@ -13,6 +13,13 @@ const m = JSON.parse(await readFile(join(fixture, "kubernetes.json"), "utf8"));
 const plan = JSON.parse(
   await readFile(join(root, "state/local-plan.json"), "utf8"),
 );
+const deploymentScope =
+  plan.config.cloud || plan.config.service.fixtureDatabase === false
+    ? "cluster"
+    : "local";
+const tokenFile = await stat(join(root, "state/bootstrap-token"))
+  .then(() => join(root, "state/bootstrap-token"))
+  .catch(() => join(fixture, "input/admin-token"));
 assert.equal(plan.config.service.namespace, m.namespace);
 assert.equal(m.scripted, true); // Deterministic provider; effects still run in real OpenShell.
 let forward;
@@ -58,7 +65,7 @@ const config = await file("installer-cli.json", {
     local: {
       url: m.url,
       namespace: "local",
-      tokenFile: join(fixture, "input/admin-token"),
+      tokenFile,
       caFile: join(fixture, "input/api-ca.crt"),
       serviceId: m.id,
     },
@@ -240,7 +247,7 @@ try {
   );
   await execute(bin, [
     "deploy",
-    "local",
+    deploymentScope,
     "apply",
     "--state",
     join(root, "state"),
@@ -255,7 +262,7 @@ try {
   try {
     await execute(bin, [
       "deploy",
-      "local",
+      deploymentScope,
       "destroy",
       "--state",
       join(root, "state"),

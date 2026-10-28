@@ -63,6 +63,12 @@ fn zip(name: &[u8], data: &[u8]) -> Vec<u8> {
     u16b(&mut v, 0);
     v
 }
+pub(super) fn archive_sha() -> String {
+    hash(&zip(
+        b"index.js",
+        include_bytes!("../../../deploy/service/guard/index.cjs"),
+    ))
+}
 pub(super) fn run(command: &Command) -> Result<()> {
     let Command::Package { out } = command;
     let source = include_bytes!("../../../deploy/service/guard/index.cjs");

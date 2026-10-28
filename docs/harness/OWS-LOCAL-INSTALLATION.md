@@ -3,7 +3,9 @@
 `ows deploy local` installs the pinned OpenShell gateway and the OpenWorker service
 chart into dedicated namespaces on an existing kind cluster. It can also use an
 existing gateway without taking over its lifecycle. This is the local qualification
-path for the service installer; cloud provisioning remains disabled.
+path for the service installer. The [experimental AWS lifecycle](OWS-AWS-LIFECYCLE.md)
+uses the same installer through `ows deploy cluster`; no cloud provisioning was
+performed for local qualification.
 
 The Rust CLI calls Helm and kubectl directly. It needs no Node or Python runtime.
 The scripts below are development fixtures and acceptance tests, not runtime
@@ -20,8 +22,9 @@ dependencies or a general customer bootstrap installer.
   cluster. The qualified service images are Linux ARM64.
 - Reviewed chart values plus separately staged PostgreSQL, OpenShell client TLS,
   API TLS, bootstrap and readiness Secrets. No credential values belong in a plan.
-- A dedicated fixture PostgreSQL deployment named `postgres`; this initial local
-  teardown implementation is deliberately limited to disposable test databases.
+- The `deploy local` fixture profile uses a dedicated PostgreSQL deployment named
+  `postgres`. For a managed database, use `deploy cluster` with `fixtureDatabase:
+  false`; cleanup reads aggregate service state through the trusted worker binary.
 
 ## Plan the installation
 
@@ -110,7 +113,10 @@ ows deploy local apply --state ./install-state --accept-plan <planDigest> \
 ```
 
 The other permitted reset is `openshell-release`. Completed, pending or failed
-releases cannot be reset this way. Failed Helm installations require inspection;
+releases cannot be reset this way. An original hook-free service release that timed
+out can instead use `--reconcile-ready-release service-release`: verify its original
+UID/revision/request labels, successful bootstrap Job and ready rollouts without
+reinstalling it. OpenShell hook recovery requires operator inspection. Failed Helm installations require inspection;
 the installer does not silently delete and reinstall them. The old operation intent
 is retained in recovery history. Keep input files unchanged; editing chart/values
 requires a newly reviewed plan rather than silently changing an accepted operation.

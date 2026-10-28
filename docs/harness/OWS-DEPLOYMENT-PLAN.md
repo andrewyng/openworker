@@ -260,3 +260,14 @@ private cluster management API connectivity; image/guard upload and exact secret
 handoff; real Lambda/runtime/IAM/cleanup qualification and fresh preflight. Local
 success does not complete those cloud milestones. No AWS resources or identities
 were created/changed/uploaded in this task. Live cloud apply/destroy stay disabled.
+
+### D4/D5 local execution and installation qualification — 28 October 2026
+
+The [cloud lifecycle ledger](OWS-CLOUD-EXECUTION-PLAN.md) records the implemented
+experimental coordinator, ECR publisher, shared Kubernetes platform/service
+installer, private Secret handoff and teardown recovery. [Operator guide](OWS-AWS-LIFECYCLE.md).
+Fake AWS and real kind/OpenShell/PostgreSQL checks pass; ordinary cloud entry points
+remain closed and the lifecycle path requires explicit experimental opt-in.
+No AWS calls, identity changes, image uploads or provisioning occurred in this task.
+D6 remains the separately authorized AWS trial, including actual IAM, network,
+volume, Pod Identity, guard cleanup and billing qualification.

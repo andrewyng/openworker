@@ -34,6 +34,8 @@ spec:
       automountServiceAccountToken: {{ eq $role "platform" }}
       {{- if eq $role "platform" }}
       serviceAccountName: {{ $.Release.Name }}-platform
+      {{- else if and $.Values.config.artifacts (eq $.Values.config.artifacts.kind "s3") (has $role (list "api" "worker")) }}
+      serviceAccountName: {{ $.Release.Name }}-artifacts
       {{- end }}
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       securityContext: {fsGroup: 1000}

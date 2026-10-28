@@ -477,6 +477,27 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     let guard = guard_template(p, i);
     let policies = permissions::generate(p, i, &infra, &guard)?;
     let mut boot: Value = serde_json::from_slice(&files["bootstrap.cfn.json"])?;
+    let (account, region) = scope(p);
+    let mut setup: Value = serde_json::from_slice(&files["setup-policy.json"])?;
+    // Schema-3 lifecycle creates immutable stacks. Do not inherit the legacy
+    // import path's update grant, especially for the independent expiry guard.
+    for statement in setup["Statement"].as_array_mut().unwrap() {
+        if let Some(actions) = statement["Action"].as_array_mut() {
+            actions.retain(|v| v != "cloudformation:UpdateStack");
+        }
+    }
+    setup["Statement"].as_array_mut().unwrap().extend([
+        json!({"Sid":"VerifyOwnGuard","Effect":"Allow","Action":["lambda:GetFunctionConfiguration","lambda:GetFunctionConcurrency","lambda:InvokeFunction"],"Resource":format!("arn:aws:lambda:{region}:{account}:function:{}-cleanup",p.prefix())}),
+        json!({"Sid":"VerifyOwnGuardSchedule","Effect":"Allow","Action":["events:DescribeRule","events:ListTargetsByRule"],"Resource":format!("arn:aws:events:{region}:{account}:rule/{}-cleanup",p.prefix())}),
+        json!({"Sid":"CheckOwnBucketBeforeTeardown","Effect":"Allow","Action":["s3:GetBucketTagging","s3:GetBucketVersioning","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":format!("arn:aws:s3:::{}-{account}",p.prefix())}),
+        json!({"Sid":"ReadOwnDatabaseBootstrap","Effect":"Allow","Action":["secretsmanager:GetSecretValue"],"Resource":format!("arn:aws:secretsmanager:{region}:{account}:secret:{}-database-*",p.prefix())}),
+        json!({"Sid":"ObserveOwnCni","Effect":"Allow","Action":["eks:DescribeAddon"],"Resource":format!("arn:aws:eks:{region}:{account}:addon/{}/vpc-cni/*",p.prefix())}),
+        json!({"Sid":"ConfigureOwnCniBeforeExpiry","Effect":"Allow","Action":["eks:UpdateAddon"],"Resource":format!("arn:aws:eks:{region}:{account}:addon/{}/vpc-cni/*",p.prefix()),"Condition":{"NumericLessThan":{"aws:EpochTime":p.expires_at_unix}}}),
+        json!({"Sid":"RegistryLogin","Effect":"Allow","Action":["ecr:GetAuthorizationToken"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":region},"NumericLessThan":{"aws:EpochTime":p.expires_at_unix}}}),
+        json!({"Sid":"PublishOwnImages","Effect":"Allow","Action":["ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage","ecr:DescribeRepositories","ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload","ecr:PutImage"],"Resource":(["harness","runner","service-ui"].iter().map(|s|format!("arn:aws:ecr:{region}:{account}:repository/{}/{s}",p.prefix())).collect::<Vec<_>>()),"Condition":{"NumericLessThan":{"aws:EpochTime":p.expires_at_unix}}}),
+    ]);
+    boot["Resources"]["SetupRole"]["Properties"]["Policies"][0]["PolicyDocument"] = setup.clone();
+    files.insert("setup-policy.json".into(), json_bytes(&setup)?);
     let resources = boot["Resources"].as_object_mut().unwrap();
     let mut policy_refs = vec![];
     for (domain, doc) in &policies.execution {
@@ -562,7 +583,9 @@ Budget authorization ${}; no verified estimate and no spending cap. Fixed expiry
 
 This bundle contains private EKS/RDS/network/S3/ECR and independent guard templates,
 plus the identities and execution policies they reference. It has only been tested
-locally. `ows deploy apply` remains disabled. No resources have been provisioned.
+locally. Ordinary `ows deploy apply` remains disabled; the explicit experimental
+`ows deploy aws lifecycle` path requires opt-in and fresh preflight. No resources
+have been provisioned to generate this bundle.
 Cloud IAM behavior, supported versions, quotas, prices and guard behavior are NOT
 certified by offline validation. `guard-contract.json` is a mandatory qualification
 gate, not a claim that the supplied code implements that contract.
@@ -612,12 +635,13 @@ After verified guard installation, the infrastructure executor can create the in
 stack. The setup role gets this cluster's platform access entry. Before admitting
 untrusted agent pods, install OpenShell/network policies and qualify strict CNI mode.
 The chart must use the artifact service account only for artifact-using components.
-Image uploader and exact DB secret handoff grants remain separate future installer
-phases. No static cloud keys are installed in pods.
+The setup policy includes exact image repositories and the generated DB bootstrap
+secret; model secret reads are not granted. The experimental lifecycle/shared
+installer verifies that handoff. No static cloud keys are installed in pods.
 
 Guard code is pinned to a versioned S3 object and expected SHA-256. Its packaging,
-health probe and cleanup behavior must be implemented/verified before infrastructure
-apply. The independent cleanup role may delete only the owned infra stack, inspect
+health probe and cleanup behavior have local deterministic tests; actual Lambda
+scheduling, IAM and expiry cleanup still require cloud qualification before release. The independent cleanup role may delete only the owned infra stack, inspect
 ownership, empty its deployment object prefix and remove tagged available volumes.
 It passes the exact executor only to CloudFormation deletion. It cannot edit roles,
 provision new infrastructure or remove its own guard/bootstrap stack. Keep the guard

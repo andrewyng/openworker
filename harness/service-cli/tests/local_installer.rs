@@ -15,6 +15,48 @@ struct Fixture {
     values: PathBuf,
 }
 impl Fixture {
+    fn openshell_only(&self) {
+        parsed(&Self::call(
+            self.dir.path(),
+            &[
+                "deploy",
+                "cluster",
+                "apply",
+                "--state",
+                self.state.to_str().unwrap(),
+                "--accept-plan",
+                &self.digest,
+                "--openshell-only",
+            ],
+            &[],
+        ));
+    }
+    fn replan(&mut self, update: impl FnOnce(&mut Value)) {
+        let path = self.dir.path().join("config.json");
+        let mut c: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        update(&mut c);
+        fs::write(&path, c.to_string()).unwrap();
+        let state = self
+            .dir
+            .path()
+            .join(format!("state-{}", uuid::Uuid::new_v4().simple()));
+        let r = parsed(&Self::call(
+            self.dir.path(),
+            &[
+                "deploy",
+                "cluster",
+                "plan",
+                "--config",
+                path.to_str().unwrap(),
+                "--out",
+                state.to_str().unwrap(),
+            ],
+            &[],
+        ));
+        self.state = state;
+        self.digest = r["planDigest"].as_str().unwrap().into();
+        self.id = r["deploymentId"].as_str().unwrap().into();
+    }
     fn call(home: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let mut c = Command::new(BIN);
         c.args(args).env_clear().env("HOME", home).env("PATH", home);
@@ -109,6 +151,116 @@ impl Fixture {
             })
             .count()
     }
+}
+#[test]
+fn private_secret_handoff_recovers_lost_reply_without_overwrite_or_journal_leak() {
+    let f = Fixture::new();
+    f.openshell_only();
+    let mut remote = f.remote();
+    remote["managedSecrets"] = json!(true);
+    f.set_remote(&remote);
+    let input = f.dir.path().join("private.json");
+    fs::write(&input,json!({"database":{"database-url":"postgresql://fixture:private-password@postgres/db","pg-ca.crt":"fixture-ca"},"apiTLS":{"tls.crt":"fixture","tls.key":"private-api-key"}}).to_string()).unwrap();
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+    let args = [
+        "deploy",
+        "cluster",
+        "secrets",
+        "--state",
+        f.state.to_str().unwrap(),
+        "--accept-plan",
+        &f.digest,
+        "--input",
+        input.to_str().unwrap(),
+    ];
+    let r = Fixture::call(f.dir.path(), &args, &[("FAIL_AFTER_OBJECT", "Secret")]);
+    assert!(!r.status.success());
+    let journal = fs::read_to_string(f.state.join("journal.json")).unwrap();
+    assert!(!journal.contains("private-password") && !journal.contains("private-api-key"));
+    assert_eq!(
+        parsed(&Fixture::call(f.dir.path(), &args, &[]))["secretsReady"],
+        true
+    );
+    let before = f.remote()["objectCreates"].clone();
+    parsed(&Fixture::call(f.dir.path(), &args, &[]));
+    assert_eq!(f.remote()["objectCreates"], before);
+    let mut changed = f.remote();
+    let key = "secret:ow-service-m4-installer:ow-service-tls";
+    changed["objects"][key]["metadata"]["uid"] = json!("replacement");
+    f.set_remote(&changed);
+    assert!(!Fixture::call(f.dir.path(), &args, &[]).status.success());
+    assert_eq!(f.remote()["objects"][key]["metadata"]["uid"], "replacement");
+}
+#[test]
+fn platform_resource_create_reconciles_original_uid_and_rejects_content_drift() {
+    use sha2::{Digest, Sha256};
+    let mut f = Fixture::new();
+    let artifact = f.dir.path().join("platform.json");
+    let bytes=json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"installer-platform","namespace":"agent-sandbox-system"},"data":{"message":"reviewed"}}).to_string();
+    fs::write(&artifact, &bytes).unwrap();
+    let digest = format!("{:x}", Sha256::digest(bytes.as_bytes()));
+    f.replan(|c| c["platform"] = json!({"file":artifact,"sha256":digest}));
+    let args = [
+        "deploy",
+        "cluster",
+        "platform",
+        "--state",
+        f.state.to_str().unwrap(),
+        "--accept-plan",
+        &f.digest,
+    ];
+    assert!(
+        !Fixture::call(f.dir.path(), &args, &[("FAIL_AFTER_OBJECT", "ConfigMap")])
+            .status
+            .success()
+    );
+    assert_eq!(
+        parsed(&Fixture::call(f.dir.path(), &args, &[]))["phase"],
+        "platform_ready"
+    );
+    let key = "configmap:agent-sandbox-system:installer-platform";
+    assert_eq!(f.remote()["objectCreates"][key], 1);
+    let mut remote = f.remote();
+    remote["objects"][key]["data"]["message"] = json!("changed");
+    f.set_remote(&remote);
+    assert!(!Fixture::call(f.dir.path(), &args, &[]).status.success());
+    assert_eq!(f.remote()["objectCreates"][key], 1);
+}
+#[test]
+fn original_hook_free_release_can_be_readiness_reconciled_after_helm_timeout_without_reinstall() {
+    let f = Fixture::new();
+    assert!(!f.apply(&[("FAIL_RELEASE", "yes")], false).status.success());
+    assert!(!f.apply(&[], false).status.success());
+    let a = [
+        "deploy",
+        "cluster",
+        "apply",
+        "--state",
+        f.state.to_str().unwrap(),
+        "--accept-plan",
+        &f.digest,
+        "--reconcile-ready-release",
+        "service-release",
+    ];
+    assert_eq!(
+        parsed(&Fixture::call(f.dir.path(), &a, &[]))["phase"],
+        "installed"
+    );
+    assert_eq!(parsed(&f.apply(&[], false))["phase"], "installed");
+    assert_eq!(f.installs(), 1);
+    let j: Value =
+        serde_json::from_slice(&fs::read(f.state.join("journal.json")).unwrap()).unwrap();
+    assert_eq!(
+        j["operations"]["service-release"]["receipt"]["qualifiedAfterTimeout"],
+        true
+    );
+    let mut remote = f.remote();
+    remote["releases"]["ow-service-m4-installer"]["ows"]["hooks"] =
+        json!([{"name":"external-hook"}]);
+    f.set_remote(&remote);
+    assert!(!Fixture::call(f.dir.path(), &a, &[]).status.success());
+    assert_eq!(f.installs(), 1);
+    parsed(&f.destroy());
 }
 fn parsed(r: &Output) -> Value {
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
@@ -218,4 +370,37 @@ fn oversized_chart_directory_is_rejected_instead_of_silently_truncated() {
     assert!(!f.apply(&[], false).status.success());
     assert_eq!(f.installs(), 0);
     assert!(f.remote()["namespaces"].as_object().unwrap().is_empty());
+}
+
+#[test]
+fn unstarted_plan_can_be_closed_without_creating_namespaces_or_releases() {
+    let f = Fixture::new();
+    let before = f.remote();
+    assert_eq!(parsed(&f.destroy())["phase"], "destroyed");
+    assert_eq!(f.remote(), before);
+}
+
+#[test]
+fn managed_database_is_not_required_to_remove_a_gateway_only_installation() {
+    let mut f = Fixture::new();
+    f.replan(|c| c["service"]["fixtureDatabase"] = json!(false));
+    f.openshell_only();
+    let r = Fixture::call(
+        f.dir.path(),
+        &[
+            "deploy",
+            "cluster",
+            "destroy",
+            "--state",
+            f.state.to_str().unwrap(),
+            "--deployment-id",
+            &f.id,
+        ],
+        &[],
+    );
+    assert_eq!(parsed(&r)["phase"], "destroyed");
+    assert!(f.remote()["namespaces"].as_object().unwrap().is_empty());
+    assert!(!fs::read_to_string(f.dir.path().join("calls"))
+        .unwrap()
+        .contains("service-install-status"));
 }

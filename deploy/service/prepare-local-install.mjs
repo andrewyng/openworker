@@ -4,7 +4,12 @@ import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { serviceConfig, run } from "./stack.mjs";
 import { localValues } from "./local-values.mjs";
-const [action, rootArg, mode = "install"] = process.argv.slice(2),
+const [
+    action,
+    rootArg,
+    mode = "install",
+    sourceConfig = ".ow-service-build/m5-final-install.json",
+  ] = process.argv.slice(2),
   root = resolve(rootArg || "");
 if (!rootArg || !["prepare", "fixtures"].includes(action))
   throw Error(
@@ -17,9 +22,7 @@ if (action === "prepare") {
   const id = randomUUID().replaceAll("-", "").slice(0, 12),
     short = id.slice(0, 8),
     serviceId = "ows-" + id;
-  const base = JSON.parse(
-    await readFile(".ow-service-build/m5-final-install.json", "utf8"),
-  );
+  const base = JSON.parse(await readFile(sourceConfig, "utf8"));
   const namespace =
     "ow-service-m4-" + (mode === "install" ? "own" : "reuse") + short;
   const shellNs =
@@ -178,9 +181,27 @@ if (action === "prepare") {
   ]);
   await run("node", [
     resolve("deploy/service/kubernetes-local.mjs"),
-    "fixtures",
+    mode === "native-secrets" ? "database-fixture" : "fixtures",
     fixture,
   ]);
+  if (mode === "native-secrets") {
+    const text = (name) => readFile(join(fixture, "input", name), "utf8");
+    await writeFile(
+      join(root, "native-secrets.json"),
+      JSON.stringify({
+        database: {
+          "database-url": await text("database-url"),
+          "pg-ca.crt": await text("pg-ca.crt"),
+        },
+        apiTLS: {
+          "tls.crt": await text("api.crt"),
+          "tls.key": await text("api.key"),
+          "ca.crt": await text("api-ca.crt"),
+        },
+      }),
+      { mode: 0o600, flag: "wx" },
+    );
+  }
   const actual = JSON.parse(
       await readFile(join(fixture, "values.json"), "utf8"),
     ),

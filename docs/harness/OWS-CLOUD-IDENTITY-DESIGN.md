@@ -14,7 +14,7 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Design below | Design below |
 | Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
 | Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Not yet | Not yet |
-| Live provisioning and cleanup | Disabled | Disabled | Disabled |
+| Provisioning and cleanup | Experimental opt-in; locally tested recovery, AWS trial pending | Disabled | Disabled |
 
 Nothing in this milestone has been run against a cloud account. Generated AWS
 bootstrap is structurally tested and exercised against a fake AWS executable;
@@ -50,7 +50,8 @@ are generated. Customer CI may run the same reviewed artifacts.
 The [infrastructure export](OWS-AWS-INFRASTRUCTURE-EXPORT.md) now generates the
 CloudFormation executor and platform identities along with private EKS, RDS, network,
 S3/ECR and guard templates. It takes `--infrastructure-config` plus `--operator-arn`.
-Cloud provisioning and guard qualification remain disabled/pending. The rest of this
+The explicit experimental [lifecycle path](OWS-AWS-LIFECYCLE.md) is locally qualified;
+actual cloud provisioning, guard cleanup and IAM qualification remain pending. The rest of this
 section describes the retained **imported execution-role, identity-only** path.
 
 

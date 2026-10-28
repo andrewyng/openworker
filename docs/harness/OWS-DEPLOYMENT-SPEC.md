@@ -234,3 +234,15 @@ Use **cluster management API (private access)** for the Kubernetes control-plane
 endpoint that installers use to manage the cluster. “Private access” describes its
 network reachability. It is separate from the OpenWorker Service API used by customer
 applications. The installer needs an approved network path to this endpoint.
+
+## Implementation update: experimental lifecycle and shared installer
+
+The original ordinary `deploy apply/destroy` remain fail-closed. The explicit
+`deploy aws lifecycle` path now implements locked durable cloud reconciliation,
+opt-in creation/deletion, guard verification, immutable image publication and
+installation handoff. `deploy cluster` shares the native kind installer and adds
+verified EKS identity, pinned platform bootstrap/strict CNI, private Secrets and
+managed-database cleanup. See [the operator workflow](OWS-AWS-LIFECYCLE.md) and
+[qualification ledger](OWS-CLOUD-EXECUTION-PLAN.md) for current boundaries.
+This supersedes earlier milestone descriptions of those paths as unimplemented;
+local qualification does not certify AWS IAM, networking, storage, cleanup or cost.

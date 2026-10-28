@@ -34,7 +34,8 @@ hash. Inspect/status do not report live cloud resources. Validate checks local
 integrity/semantics/expiry only; `applyReady` remains false. Unknown cost estimates
 stay null, and a budget is not represented as a hard spending cap.
 
-**Apply/destroy on all clouds remain disabled.** GCP and Azure now support offline
+Ordinary `deploy apply/destroy` remain closed. The explicit experimental AWS
+lifecycle path below is available for a separately authorized trial. GCP and Azure support offline
 planning with provider-specific target fields:
 
 ```sh
@@ -85,3 +86,18 @@ After identity bootstrap, `--check-setup-role` verifies temporary assumption of 
 exact setup role with identity-only session permissions. Credentials are not saved.
 See the [preflight guide](../../docs/harness/OWS-AWS-PREFLIGHT.md) for timeouts,
 permissions, pricing assumptions and remaining deployment gates.
+
+## Experimental AWS lifecycle and shared Kubernetes installer
+
+`ows deploy aws lifecycle` prepares separate locked state, verifies original stack
+receipts and guard health, reconciles uncertain operations, publishes immutable
+images and emits an identity-bound installation handoff. Cloud mutations require
+`--allow-experimental-cloud`; new creates also need fresh matching preflight.
+`ows deploy cluster` shares the local installer with platform preparation, private
+Secret staging, managed-database checks and teardown receipts. Native CLI runtime
+dependencies are AWS CLI/Helm/kubectl/Docker/tar, not Python or Node.
+
+See the [operator workflow](../../docs/harness/OWS-AWS-LIFECYCLE.md) and
+[progress/evidence](../../docs/harness/OWS-CLOUD-EXECUTION-PLAN.md). Qualification
+uses fake AWS providers and real local kind/OpenShell/PostgreSQL. Actual cloud IAM,
+networking, storage, Pod Identity, guard cleanup and costs remain unqualified.

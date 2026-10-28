@@ -610,3 +610,51 @@ esac
     assert_eq!(calls.matches("cloudformation create-stack").count(), 1);
     assert!(!calls.contains("cloudformation wait"));
 }
+
+#[test]
+fn setup_can_only_publish_owned_images_and_read_the_bound_database_bootstrap_secret() {
+    let home = tempfile::tempdir().unwrap();
+    let (out, meta) = generate(home.path(), "setup-grants", &input());
+    let setup = read(&out, "setup-policy.json");
+    assert!(serde_json::to_vec(&setup).unwrap().len() < 10240);
+    let boot = read(&out, "bootstrap.cfn.json");
+    assert_eq!(
+        boot["Resources"]["SetupRole"]["Properties"]["Policies"][0]["PolicyDocument"],
+        setup
+    );
+    let statements = setup["Statement"].as_array().unwrap();
+    for s in statements {
+        for action in list(&s["Action"]) {
+            if action == "secretsmanager:GetSecretValue" {
+                assert!(list(&s["Resource"])[0].ends_with("-database-*"));
+            }
+            if action == "ecr:PutImage" {
+                let repos = list(&s["Resource"]);
+                assert_eq!(repos.len(), 3);
+                assert!(repos
+                    .iter()
+                    .all(|r| r.contains("repository/ows-offline-infra-") && !r.contains('*')));
+                assert_eq!(
+                    s["Condition"]["NumericLessThan"]["aws:EpochTime"],
+                    read(&out, "deployment-plan.json")["expiresAtUnix"]
+                );
+            }
+            if action == "eks:UpdateAddon" {
+                assert!(list(&s["Resource"])[0].contains("/vpc-cni/"));
+            }
+            assert!(![
+                "iam:CreateRole",
+                "s3:GetObject",
+                "s3:PutObject",
+                "cloudformation:UpdateStack"
+            ]
+            .contains(&action));
+        }
+    }
+    assert!(statements
+        .iter()
+        .any(|s| s["Sid"] == "RegistryLogin" && s["Resource"] == "*"));
+    assert!(read(&out, "workload-policy.json")
+        .to_string()
+        .contains(&format!("{}/", meta["deploymentId"].as_str().unwrap())));
+}

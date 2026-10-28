@@ -1,7 +1,9 @@
 # Review an AWS infrastructure bundle
 
-28 October 2026. This is an **offline export**, not a deployed service. `ows` still
-refuses live apply/destroy. No AWS account was accessed to qualify these templates.
+28 October 2026. Planning is an **offline export**, not a deployed service. The
+experimental [lifecycle and installation path](OWS-AWS-LIFECYCLE.md) is now implemented
+and locally tested; it requires explicit opt-in for provisioning. Ordinary deploy
+apply/destroy remain closed. No AWS provisioning was used to qualify these templates.
 
 The generator now produces its own CloudFormation execution role and the platform
 roles referenced by the infrastructure. The older option to supply an existing
@@ -171,7 +173,8 @@ network/data settings, invalid inputs, artifact tampering, no cloud calls and th
 fake-AWS bootstrap flow. These are not AWS IAM simulation or deployment tests.
 
 Read-only identity/version/quota/price/artifact [preflight](OWS-AWS-PREFLIGHT.md) is
-now implemented. Next: durable lifecycle reconciliation and guard packaging/qualification. Then connect image upload, exact
-secret handoff, artifact service-account wiring and OpenShell/service Helm phases.
-The experiment budget still needs a verified estimate and independent expiry guard;
-no local check converts it into a hard spending cap. Live provisioning remains disabled.
+now implemented. Lifecycle recovery, pinned guard packaging, ECR image publication,
+private Secret handoff, scoped artifact service accounts and shared OpenShell/service
+installation are locally qualified; see [the operator workflow](OWS-AWS-LIFECYCLE.md).
+Actual AWS IAM, EKS networking/storage, RDS, Pod Identity, Lambda cleanup and billing
+still require the authorized cloud trial. The budget is not a hard spending cap.

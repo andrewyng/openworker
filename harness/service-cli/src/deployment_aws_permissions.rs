@@ -655,6 +655,7 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
         "broadGrants":[
             {"statement":"NetworkObservation","reason":"EC2 Describe APIs do not support individual resource scoping; regional metadata only"},
             {"statement":"CreateTaggedPrivateCluster","reason":"EKS CreateCluster requires Resource *; request ownership tag and region/private-endpoint conditions constrain creation but do not cap cost or count"},
+            {"statement":"RegistryLogin (setup)","reason":"ECR GetAuthorizationToken requires Resource *; requested region/expiry constrain login; actual image writes are restricted to three exact repositories"},
             {"statement":"GenerateDatabasePassword","reason":"GetRandomPassword has no resource; returns generated randomness, not existing secret data"},
             {"statement":"ObserveLogGroups","reason":"DescribeLogGroups has no individual-resource authorization; regional metadata"},
             {"statement":"DescribeEncryptionKeys","reason":"Default AWS-managed key IDs resolve online; DescribeKey only within this account/region, no decrypt/grant/write"},

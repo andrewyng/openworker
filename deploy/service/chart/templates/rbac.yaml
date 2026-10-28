@@ -1,3 +1,10 @@
+{{- if and .Values.config.artifacts (eq .Values.config.artifacts.kind "s3") }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: {{ .Release.Name }}-artifacts}
+automountServiceAccountToken: false
+---
+{{- end }}
 {{- if .Values.platformControllerEnabled }}
 apiVersion: v1
 kind: ServiceAccount

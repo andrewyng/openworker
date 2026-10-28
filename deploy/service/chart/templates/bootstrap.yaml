@@ -5,6 +5,8 @@ metadata: {name: {{ .Release.Name }}-bootstrap}
 spec:
   backoffLimit: 2
   template:
+    metadata:
+      labels: {app: {{ .Release.Name }}-bootstrap}
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false

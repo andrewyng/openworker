@@ -59,6 +59,7 @@ test("service roles separate gateway, model, bootstrap and Kubernetes authority"
   assert.match(out, /subPath: config.json/);
   assert.doesNotMatch(out, /mountPath: \/run\/service,/);
   assert.match(out, /subPath: admin-token/);
+  assert.match(out, /labels: \{app: test-bootstrap\}/);
   assert.match(out, /readOnlyRootFilesystem: true/);
 });
 test("Helm does not overwrite manual/HPA capacity; only GitOps owns replicas", async () => {
@@ -71,6 +72,31 @@ test("Helm does not overwrite manual/HPA capacity; only GitOps owns replicas", a
     if (ownership === "gitops") assert.match(beforeTemplate, /replicas: 3/);
     else assert.doesNotMatch(beforeTemplate, /\n  replicas:/);
   }
+});
+test("S3 identity is assigned only to API/worker, with no Kubernetes API role", async () => {
+  const out = await render({
+    config: {
+      ...base.config,
+      artifacts: {
+        kind: "s3",
+        deployment: "ows-test",
+        bucket: "test-bucket",
+        region: "us-west-2",
+      },
+    },
+  });
+  assert.match(out, /kind: ServiceAccount\nmetadata: \{name: test-artifacts\}/);
+  for (const role of ["api", "worker"])
+    assert.match(deployment(out, role), /serviceAccountName: test-artifacts/);
+  for (const role of ["controller", "platform"])
+    assert.doesNotMatch(
+      deployment(out, role),
+      /serviceAccountName: test-artifacts/,
+    );
+  assert.doesNotMatch(
+    out,
+    /subjects:.*test-artifacts|roleRef:.*test-artifacts/,
+  );
 });
 test("invalid ownership, mutable image and inadequate drain grace fail rendering", async () => {
   await assert.rejects(render({ worker: { ownership: "mixed" } }));

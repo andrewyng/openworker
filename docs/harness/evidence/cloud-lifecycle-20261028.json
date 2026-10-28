@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-28",
+  "branch": "feat/openworker-service-m1",
+  "sourceCommitBase": "198523c3",
+  "scope": "local Docker/kind and isolated fake AWS; no live cloud calls",
+  "aws": {
+    "calls": 0,
+    "identityChanges": 0,
+    "resourcesProvisioned": 0,
+    "artifactOrImageUploads": 0,
+    "liveQualified": false
+  },
+  "kind": {
+    "passed": true,
+    "serviceId": "ows-ca898e2f5e8c",
+    "deploymentId": "ows-local-e9b240d93767455b8afdebe55dd4d27c",
+    "mode": "existing",
+    "namespace": "ow-service-m4-reuseca898e2f",
+    "gatewayNamespace": "ow-helm-shell",
+    "sessionId": "s_6c6deeaa75754a52ac0007efcd6b2ed7",
+    "environmentId": "env_f1ef74e84fb84ecb86ba3c87df9e0454",
+    "checks": [
+      "gateway authenticated by ready worker",
+      "publish/activate profile and agent using scoped credentials",
+      "service submission and real OpenShell file write/shell read",
+      "installer restart reconciles original release revisions",
+      "teardown refuses active work",
+      "session close and explicit sandbox deletion"
+    ],
+    "cloudCalls": false,
+    "model": "scripted",
+    "postgresTopology": "Disposable in-cluster PostgreSQL fixture, shared managed-database installer code path (fixtureDatabase=false), not AWS RDS",
+    "serviceImage": "docker.io/library/openworker-service@sha256:e7ef59a37092224282cae53a1e8d9c212f5bd846905a3408cb7ed1745f152cba",
+    "serviceLinuxPlatform": "linux/arm64",
+    "runnerImage": "docker.io/library/openworker-runner@sha256:23c37c11e0e6420a176c86ad5032042263f0e2c576ac0d277fc41c4666980b6b",
+    "teardownPhase": "destroyed"
+  },
+  "baseline": {
+    "namespaces": [
+      {
+        "name": "agent-sandbox-system",
+        "uid": "7afd37cf-861f-407b-9e69-440d81c16ef7"
+      },
+      {
+        "name": "default",
+        "uid": "52ffd694-39d4-4467-9ff5-345c6d19a1d5"
+      },
+      {
+        "name": "kube-node-lease",
+        "uid": "0170dae1-0d5d-4f10-91de-35131e1f39df"
+      },
+      {
+        "name": "kube-public",
+        "uid": "01e776a1-a04a-4516-9c7c-e1e852fdf99f"
+      },
+      {
+        "name": "kube-system",
+        "uid": "40320f1e-ac8e-46a5-8bc0-f0a1cf984815"
+      },
+      {
+        "name": "local-path-storage",
+        "uid": "fbb222dd-2a6d-4f64-b850-76c5522bd3fc"
+      },
+      {
+        "name": "openshell",
+        "uid": "62c5ec78-8491-433f-8bc1-6cca71099b56"
+      },
+      {
+        "name": "ow-helm-eval",
+        "uid": "1df16c3c-d2d2-40ee-b468-92f87643a243"
+      },
+      {
+        "name": "ow-helm-shell",
+        "uid": "0bd6610b-98a8-4a17-9905-10016c7a237f"
+      }
+    ],
+    "sandboxes": [
+      {
+        "namespace": "openshell",
+        "name": "default--owr-ce8c46905b44418",
+        "uid": "940826d3-4038-4a19-b667-5ef612644d4a"
+      },
+      {
+        "namespace": "openshell",
+        "name": "default--owr-shared-proof",
+        "uid": "0b1f6b8c-962f-4fb7-8590-fb63ebcbb8b7"
+      },
+      {
+        "namespace": "ow-helm-shell",
+        "name": "default--owr-4493c98f39e7461",
+        "uid": "e5d557b3-8731-4b39-aa0a-b36fbd261321"
+      }
+    ],
+    "gatewayReceipt": {
+      "uid": "bcd6cfc2-eaa5-49ef-951e-3ff3b98cf15b",
+      "revision": "2"
+    },
+    "baselinePreserved": true,
+    "testNamespaceAbsent": true
+  },
+  "postgres": {
+    "test": "installer_status_is_trusted_only_and_counts_pending_environments",
+    "passed": true,
+    "topology": "disposable local loopback Docker PostgreSQL with tmpfs data",
+    "containerRemoved": true,
+    "checks": [
+      "trusted aggregate inventory",
+      "denial to API admin/session handles",
+      "counts pending environment/admission without exposing identifiers or payloads"
+    ]
+  },
+  "platform": {
+    "version": "Agent Sandbox 1.0.6",
+    "sourceManifestSha256": "b995db5839f2bdca3a24b8bbefdec405df662d6dd223eec8f5dc74098c974231",
+    "controllerImage": "registry.k8s.io/agent-sandbox/agent-sandbox-controller@sha256:14c479c9e89ca87d05dfcf597840473c0196d6e6eec622a7959e72108d75b24e",
+    "freshEksBootstrapQualified": false,
+    "strictEksNetworkQualified": false,
+    "gatewaySelectorLocallyVerified": true
+  },
+  "priorFailedAttempt": {
+    "namespace": "ow-service-m4-reuse2b361ccf",
+    "cause": "Named digest alias missing in kind CRI image cache; image content was already loaded",
+    "serviceOrBootstrapStarted": false,
+    "sessionSchemaPresent": false,
+    "cleanup": "Operator verified exact owned namespace UID/release and no service effects before uninstalling; retained failed journal. Fresh plan used for passing rerun."
+  },
+  "cleanup": {
+    "ownedTestNamespaceAbsent": true,
+    "baselinePreserved": true,
+    "gatewayPreserved": true,
+    "privateFixtureCopiesRemoved": true,
+    "temporaryPostgresContainerRemoved": true,
+    "newClusterCreated": false
+  },
+  "remainingAwsTrial": [
+    "live IAM/CloudFormation handlers and rollback",
+    "private management API connectivity",
+    "actual immutable ECR push and auth cleanup",
+    "EKS strict CNI allow/deny and sandbox bootstrap traffic",
+    "EBS tagging/reclaim and orphan absence",
+    "RDS TLS and managed secret attachment shape",
+    "Pod Identity and deployment-prefix S3 scope",
+    "Lambda schedule/expiry cleanup/lost responses",
+    "final resources and billing; guard/bootstrap removal last"
+  ],
+  "checks": {
+    "rustCli": {
+      "passed": 51,
+      "failed": 0,
+      "suites": {
+        "unit": 8,
+        "cloudLifecycle": 13,
+        "deployment": 7,
+        "infrastructure": 6,
+        "localInstaller": 11,
+        "preflight": 6
+      },
+      "command": "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-service-cli"
+    },
+    "guardNode": {
+      "passed": 9
+    },
+    "chartNode": {
+      "passed": 5
+    },
+    "postgresIntegration": {
+      "passed": 1
+    },
+    "linuxArm64Build": {
+      "passed": true,
+      "offline": true,
+      "toolchain": "1.96.1"
+    },
+    "cloudFormationLint": {
+      "passed": true,
+      "templates": 3,
+      "version": "1.58.0",
+      "suppressed": [
+        "W3010: pinned availability zones"
+      ]
+    },
+    "rustfmt": true,
+    "gitDiffCheck": true,
+    "operatorGuideLinks": true
+  }
+}

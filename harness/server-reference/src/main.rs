@@ -29,6 +29,8 @@ enum Command {
         drain_timeout_seconds: u64,
     },
     Migrate,
+    /// Trusted installer aggregate check; no public/session API equivalent.
+    ServiceInstallStatus,
     /// Trusted-host operational catalog, not a session-authorized API.
     WorkerPools {
         #[arg(long)]
@@ -181,6 +183,12 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         }
     });
     match args.command {
+        Command::ServiceInstallStatus => {
+            println!(
+                "{}",
+                serde_json::to_string(&store.service_install_status()?)?
+            );
+        }
         Command::AuthBootstrap { .. }
         | Command::AuthIssue { .. }
         | Command::AuthRecover { .. }

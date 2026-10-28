@@ -2,6 +2,8 @@
 //! Offline commands do not invoke cloud tools or load service authentication.
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
+#[path = "deployment_cloud.rs"]
+mod cloud;
 #[path = "deployment_guard.rs"]
 mod guard;
 #[path = "deployment_infrastructure.rs"]
@@ -31,6 +33,11 @@ pub enum Command {
     },
     /// Local kind installation/qualification; no cloud provisioning.
     Local {
+        #[command(subcommand)]
+        command: local::Command,
+    },
+    /// Shared Kubernetes installation, including a lifecycle-bound AWS cluster.
+    Cluster {
         #[command(subcommand)]
         command: local::Command,
     },
@@ -79,6 +86,11 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum AwsCommand {
     Plan(AwsPlan),
+    /// Experimental lifecycle; explicit opt-in, role profile and fresh preflight.
+    Lifecycle {
+        #[command(subcommand)]
+        command: cloud::Command,
+    },
     /// Query AWS read-only and write a fresh report. Never provisions resources.
     Preflight(preflight::Options),
 }
@@ -488,6 +500,15 @@ fn result(p: &Plan, m: &Manifest) -> Value {
         "identityBootstrap": if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
+    if let Command::Cluster { command } = command {
+        return local::run_cluster(command).await;
+    }
+    if let Command::Aws {
+        command: AwsCommand::Lifecycle { command },
+    } = command
+    {
+        return cloud::run(command).await;
+    }
     if let Command::Local { command } = command {
         return local::run(command).await;
     }
@@ -501,8 +522,12 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Aws {
+            command: AwsCommand::Lifecycle { .. },
+        } => bail!("Cloud lifecycle requires asynchronous dispatch"),
         Command::Guard { command } => guard::run(command),
         Command::Local { .. } => bail!("Local installer requires asynchronous dispatch"),
+        Command::Cluster { .. } => bail!("Cluster installer requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Preflight(_),
         } => bail!("Preflight requires asynchronous dispatch"),

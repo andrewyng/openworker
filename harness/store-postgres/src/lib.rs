@@ -173,6 +173,19 @@ impl PostgresStore {
             Ok(())
         })
     }
+    /// Trusted installer only. Aggregate read of the dedicated service schema;
+    /// no credentials, session messages or tool payloads are returned.
+    pub fn service_install_status(&self) -> Result<Value> {
+        self.call(|db| {
+            anyhow::ensure!(db.auth.is_none(),crate::auth::Error::Forbidden);
+            let r=db.client.query_one(
+                "SELECT (SELECT count(*) FROM sessions WHERE NOT COALESCE((data->>'closed')::boolean,FALSE)),
+                (SELECT count(*) FROM environments WHERE data->>'phase' IS DISTINCT FROM 'deleted'),
+                (SELECT count(*) FROM service_operations WHERE status NOT IN ('complete','failed')),
+                (SELECT count(*) FROM submissions WHERE status='queued')", &[])?;
+            Ok(serde_json::json!({"schemaVersion":1,"openSessions":r.get::<_,i64>(0),"liveEnvironments":r.get::<_,i64>(1),"pendingAdmissions":r.get::<_,i64>(2),"queuedTurns":r.get::<_,i64>(3)}))
+        })
+    }
     /// Trusted host only, never exposed through session-authorized HTTP handles.
     pub fn operational_snapshot(
         &self,
