@@ -13,6 +13,10 @@ from coworker.web import guard
 from coworker.web.fetch import make_web_fetch_tool
 
 
+# A public address (example.com's former A record) for names the test does not care about.
+PUBLIC_IP = "93.184.216.34"
+
+
 def _resolves_to(monkeypatch, ip: str):
     monkeypatch.setattr(
         guard.socket, "getaddrinfo",
@@ -271,7 +275,8 @@ def test_a_public_link_that_lands_somewhere_internal_is_refused(landed):
     assert _refusal("https://short.link/x", landed)
 
 
-def test_a_redirect_to_another_public_page_is_fine():
+def test_a_redirect_to_another_public_page_is_fine(monkeypatch):
+    _resolves_to(monkeypatch, PUBLIC_IP)  # no real DNS — CI may have no route to the internet
     assert _refusal("https://short.link/x", "https://example.com/article") is None
 
 
@@ -315,6 +320,7 @@ def _open_url_with(monkeypatch, page):
 
 
 def test_open_url_refuses_and_blanks_the_page_after_a_bad_redirect(monkeypatch):
+    _resolves_to(monkeypatch, PUBLIC_IP)  # short.link passes the pre-navigation check offline too
     page = _FakePage({"https://short.link/x": "http://169.254.169.254/latest/meta-data/"})
     result = _open_url_with(monkeypatch, page)("https://short.link/x")
 
@@ -326,6 +332,7 @@ def test_open_url_refuses_and_blanks_the_page_after_a_bad_redirect(monkeypatch):
 
 
 def test_open_url_keeps_a_harmless_redirect(monkeypatch):
+    _resolves_to(monkeypatch, PUBLIC_IP)
     page = _FakePage({"https://short.link/x": "https://example.com/article"})
     result = _open_url_with(monkeypatch, page)("https://short.link/x")
 
