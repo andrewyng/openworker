@@ -367,7 +367,7 @@ async fn main() {
 }
 async fn run(args: Args) -> Result<()> {
     if let Command::Deploy { command } = &args.command {
-        return deployment::run(command);
+        return deployment::dispatch(command).await;
     }
     let mut settings = settings::Settings::load(args.config.as_ref())?;
     if let Command::Context { command } = &args.command {

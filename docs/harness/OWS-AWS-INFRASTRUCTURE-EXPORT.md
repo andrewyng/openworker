@@ -163,8 +163,8 @@ on. Tests also check policy limits/boundaries, template dependency graphs, priva
 network/data settings, invalid inputs, artifact tampering, no cloud calls and the
 fake-AWS bootstrap flow. These are not AWS IAM simulation or deployment tests.
 
-Next: read-only identity/version/quota/price/artifact preflight, durable lifecycle
-reconciliation and guard packaging/qualification. Then connect image upload, exact
+Read-only identity/version/quota/price/artifact [preflight](OWS-AWS-PREFLIGHT.md) is
+now implemented. Next: durable lifecycle reconciliation and guard packaging/qualification. Then connect image upload, exact
 secret handoff, artifact service-account wiring and OpenShell/service Helm phases.
 The experiment budget still needs a verified estimate and independent expiry guard;
 no local check converts it into a hard spending cap. Live provisioning remains disabled.

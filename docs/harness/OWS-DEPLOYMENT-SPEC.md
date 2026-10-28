@@ -205,3 +205,25 @@ handoff and Helm platform/service installation are later phases. See the
 permission boundaries. Schema 1/2 rendering remains unchanged. Live apply/destroy
 remain disabled; a generated guard template does not constitute an installed or
 qualified expiry guard.
+
+## Implemented AWS preflight
+
+`ows deploy aws preflight --plan DIR --profile NAME --out NEW_DIR` is the explicit
+read-only path. Offline commands still invoke no cloud CLI. Preflight verifies
+schema-3 bundle integrity/expiry before observing the pinned AWS target and operator.
+It emits a private, bounded-lifetime report tied to the original bundle digest.
+
+Checks cover service-linked role existence, zones/type offering, current standard-
+support Kubernetes, recommended node release, ARM64 add-on pins, PostgreSQL options,
+conservative quota headroom, seven published fixed-rate components plus a variable
+reserve, exact guard object version/bytes and Access Analyzer policy validation.
+Unknown/denied/partial/ambiguous observations block rather than claim success. Pin
+mismatches include reviewable alternatives without silently changing the plan.
+
+The optional post-bootstrap `--check-setup-role` uses STS with an identity-only session
+policy and verifies the exact assumed target. No credential value is persisted.
+Pagination, process output and operation/global deadlines are bounded; raw provider
+errors are not logged. The full contract and limitations are in the
+[preflight guide](OWS-AWS-PREFLIGHT.md). `checksPassed` is observational evidence;
+`applyReady` remains false. It is not a reservation, signature, billing cap or proof
+of effective provisioning/cleanup permissions.

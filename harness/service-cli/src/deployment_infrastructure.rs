@@ -37,7 +37,7 @@ pub(super) struct GuardCode {
 fn digits(s: &str, min: usize, max: usize) -> bool {
     (min..=max).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
 }
-fn addon_version(s: &str) -> bool {
+pub(super) fn addon_version(s: &str) -> bool {
     let Some((core, build)) = s.strip_prefix('v').and_then(|v| v.split_once("-eksbuild.")) else {
         return false;
     };

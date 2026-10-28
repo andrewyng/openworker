@@ -13,7 +13,8 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Offline typed plan, resource graph, inspect/validate/status | Implemented | Implemented | Implemented |
 | Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Design below | Design below |
 | Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
-| Live preflight, provisioning and cleanup | Disabled | Disabled | Disabled |
+| Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Not yet | Not yet |
+| Live provisioning and cleanup | Disabled | Disabled | Disabled |
 
 Nothing in this milestone has been run against a cloud account. Generated AWS
 bootstrap is structurally tested and exercised against a fake AWS executable;
@@ -247,8 +248,8 @@ an explicit cleanup decision.
 
 ## Next implementation order
 
-1. Read-only preflight for the generated AWS templates, including IAM prerequisites,
-   identity, versions, quotas, prices and versioned guard artifact verification.
+1. AWS read-only preflight is implemented; use it to validate and review deployment
+   inputs before progressing to the lifecycle phase.
 2. Mocked lifecycle/reconciliation tests and guard packaging/qualification; retain
    disabled live apply until separately authorized.
 3. Wire the current OpenShell/service/UI Helm installation and cloud workload identity.

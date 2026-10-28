@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "qualification": "read-only AWS preflight, not a deployment qualification",
+  "date": "2026-10-28",
+  "target": {
+    "provider": "aws",
+    "account": "redacted",
+    "region": "us-west-2"
+  },
+  "credentialScope": "temporary STS session with explicit read-only session policy; credentials not persisted",
+  "resourceMutationsPerformed": false,
+  "applyReady": false,
+  "checksPassed": false,
+  "awsCliInvocations": 45,
+  "passedChecks": [
+    "operator_identity",
+    "service_linked_roles",
+    "availability_zones_and_offering",
+    "eks_standard_support",
+    "recommended_node_release",
+    "addon_vpc-cni",
+    "addon_kube-proxy",
+    "addon_coredns",
+    "addon_eks-pod-identity-agent",
+    "addon_aws-ebs-csi-driver",
+    "postgres_and_orderability",
+    "quota_headroom",
+    "published_cost_estimate",
+    "policy_validation",
+    "observation_freshness"
+  ],
+  "blockedChecks": [
+    {
+      "name": "guard_artifact_bytes",
+      "reason": "request_failed"
+    }
+  ],
+  "expectedBlock": "The example guard code artifact was never published; no upload was authorized or attempted.",
+  "notRequested": [
+    "setup_role_assumption: setup roles have not been created"
+  ],
+  "publishedCostObservation": {
+    "allowanceIsNotAnUpperBound": true,
+    "authorizedBudgetUsd": 100,
+    "components": {
+      "databaseGp3Storage": {
+        "pricingRegion": "us-east-1",
+        "quantity": 20.0,
+        "sku": "W2B5U7TQ8BTUD7C8",
+        "sourceUnit": "GB-Mo",
+        "unit": "GB-Mo",
+        "usd": 0.115
+      },
+      "databaseInstance": {
+        "pricingRegion": "us-east-1",
+        "quantity": 1.0,
+        "sku": "CT79XNCJJGH56FA8",
+        "sourceUnit": "Hrs",
+        "unit": "Hrs",
+        "usd": 0.016
+      },
+      "eksStandardCluster": {
+        "pricingRegion": "us-east-1",
+        "quantity": 1.0,
+        "sku": "DYQZA4NFAQKBU6H4",
+        "sourceUnit": "Hours",
+        "unit": "Hrs",
+        "usd": 0.1
+      },
+      "natGateway": {
+        "pricingRegion": "us-east-1",
+        "quantity": 1.0,
+        "sku": "44T683R45QPT8RYQ",
+        "sourceUnit": "Hrs",
+        "unit": "Hrs",
+        "usd": 0.045
+      },
+      "natPublicIpv4": {
+        "pricingRegion": "us-east-1",
+        "quantity": 1.0,
+        "sku": "NBHXEKTE88TJDDQF",
+        "sourceUnit": "Hrs",
+        "unit": "Hrs",
+        "usd": 0.005
+      },
+      "nodeGp3Storage": {
+        "pricingRegion": "us-east-1",
+        "quantity": 60.0,
+        "sku": "BB8UJWJ4XPFJB95G",
+        "sourceUnit": "GB-Mo",
+        "unit": "GB-Mo",
+        "usd": 0.08
+      },
+      "workerInstances": {
+        "pricingRegion": "us-east-1",
+        "quantity": 2.0,
+        "sku": "WTMXZWHJP89E49UK",
+        "sourceUnit": "Hrs",
+        "unit": "Hrs",
+        "usd": 0.0672
+      }
+    },
+    "excludedVariableCharges": [
+      "NAT processed bytes",
+      "data transfer",
+      "T4g CPU credits",
+      "S3/ECR storage and requests",
+      "guard, logs and control-plane requests",
+      "OpenShell workspace volume usage"
+    ],
+    "fixedCostEstimateUsd": 7.45,
+    "hardCap": false,
+    "monthHoursForProration": 730,
+    "plannedHours": 24.0,
+    "planningEstimateUsd": 32.45,
+    "rateSource": "AWS Price List GetProducts OnDemand USD",
+    "variableAllowanceUsd": 25,
+    "withinAuthorizedBudget": true
+  },
+  "policyValidation": {
+    "effectivePermissionSimulation": false,
+    "findings": [],
+    "policiesValidated": [
+      "setup-policy.json",
+      "workload-policy.json",
+      "cleanup-policy.json",
+      "execution-policy-data.json",
+      "execution-policy-eks.json",
+      "execution-policy-guard.json",
+      "execution-policy-networkcreate.json",
+      "execution-policy-networkmanage.json"
+    ],
+    "validator": "AWS Access Analyzer ValidatePolicy"
+  },
+  "remainingGates": [
+    "preflight observations are not reservations or a hard spending cap",
+    "IAM validation is not proof of effective provisioning permissions",
+    "qualify guard package behavior and independent cleanup",
+    "pin runtime images and verify private Kubernetes connectivity",
+    "implement durable lifecycle and platform installation",
+    "live provisioning remains disabled"
+  ],
+  "localTestResults": {
+    "unit": 7,
+    "existingDeploymentIntegration": 7,
+    "infrastructureIntegration": 5,
+    "preflightIntegration": 6,
+    "allPassed": true
+  }
+}

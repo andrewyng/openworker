@@ -156,3 +156,59 @@ image upload, exact secret handoff and OpenShell/service Helm qualification. Liv
 apply remains disabled. The example versions/artifact identifiers are test fixtures,
 not a supported-version catalog or an uploaded/qualified guard. A generated template
 is not an installed guard, a cloud IAM qualification, or a hard $100 spending cap.
+
+### D3 implemented and read-only AWS qualified — 28 October 2026
+
+Added `ows deploy aws preflight --plan DIR --profile NAME --out NEW_DIR` plus an
+optional post-bootstrap setup-role assumption check. Report integrity binds to the
+reviewed deployment/bundle digest and fixed expiry. Plan/inspect/validate/status
+remain offline. Preflight uses an explicit read-only API allowlist, no shell,
+bounded subprocess output/time/pagination and fixed sanitized errors. Credentials
+and raw provider output are not persisted; optional STS credential buffers are
+cleared. Runtime AWS CLI credentials are handled by the customer's configured login.
+
+Checks cover identity, service-linked roles, zone/type offerings, standard-support
+Kubernetes, current recommended ARM64 AMI/node release, add-on compatibility, RDS
+version/orderability, conservative quota headroom, published fixed rates plus reserve,
+pinned guard artifact bytes and Access Analyzer validation of all eight policy docs.
+Quota usage includes unused active and future capacity reservations. Stale pins
+produce reviewable alternatives, never silent substitutions. Guard bytes use exact
+owner/version/range, size limits and SHA-256; the scratch file is removed. A passing
+report expires within 15 minutes and never enables apply.
+
+25 tests pass: 7 unit + 7 deployment + 5 infrastructure + 6 preflight integration.
+Preflight tests include successful optional temporary-role identity verification,
+wrong identities/denied calls, malformed/oversized output, secret redaction, timeouts,
+RDS/EC2 pagination and repeated-token rejection, quota exhaustion/unused/future
+reservations, unsupported versions/architecture, ambiguous/missing/zero/NaN prices,
+budget overflow retaining the estimate, owner-pinned guard requests and region/size/
+digest errors, policy
+security warnings and immutable bundle/output boundaries. A fake AWS executable
+asserts every requested operation belongs to the read-only contract. No dependency
+or Python runtime was added; Python is used only for the test fake executable.
+
+Also exercised the actual command against ocw-demos with a temporary STS session
+restricted to metadata, policy validation and the fixture artifact. This was an
+explicit read-only qualification: no role/policy/cluster/resource was created or
+modified. The initial run correctly blocked stale fixture pins. The real Price List
+catalog exposed unused-reservation and regional-NAT alternatives plus EKS's `Hours`
+unit label; selectors/unit normalization were corrected and regression-covered.
+
+The final live read-only run used observed compatible pins in a fresh local plan:
+all identity/prerequisite/version/zone/quota/pricing checks passed, and Access Analyzer
+returned zero findings for all eight generated policy documents. 45 AWS CLI
+invocations. Fixed 24-hour estimate $7.45, plus $25 usage reserve = $32.45 against
+$100 authorization, not a hard cap. The only required blocked check was the expected
+unpublished fixture guard package. Setup-role assumption was not requested live
+because no identity bootstrap was authorized/performed; its behavior is tested locally.
+
+Sanitized evidence: [read-only AWS result](evidence/aws-readonly-preflight-20261028.json).
+Full private reports remain under ignored `.ow-service-d3-live-*/`; final report is
+`.ow-service-d3-live-U2ZZZU/report/preflight.json`. No credential values were saved.
+Guide: [AWS preflight](OWS-AWS-PREFLIGHT.md). Formatting and diff checks pass.
+
+Next: D4 guard packaging/behavior and durable apply/status/destroy reconciliation,
+starting with local/fake-provider failure tests. No AWS provisioning is authorized.
+D5 still owns image/secret/Helm wiring and private Kubernetes qualification. A valid
+policy document is not proof of effective IAM permissions or creation/rollback
+qualification, and a verified guard hash is not proof of safe cleanup behavior.

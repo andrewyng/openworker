@@ -1,9 +1,11 @@
-//! Offline deployment planning. Deliberately no cloud SDK, process execution,
-//! ambient credentials, or service-client authentication in this module.
+//! Offline deployment planning and explicit, read-only AWS preflight dispatch.
+//! Offline commands do not invoke cloud tools or load service authentication.
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
 #[path = "deployment_infrastructure.rs"]
 mod infrastructure;
+#[path = "deployment_preflight.rs"]
+mod preflight;
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -64,6 +66,8 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum AwsCommand {
     Plan(AwsPlan),
+    /// Query AWS read-only and write a fresh report. Never provisions resources.
+    Preflight(preflight::Options),
 }
 #[derive(Args)]
 pub struct AwsPlan {
@@ -470,8 +474,20 @@ fn result(p: &Plan, m: &Manifest) -> Value {
     json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix,
         "identityBootstrap": if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
+pub async fn dispatch(command: &Command) -> Result<()> {
+    if let Command::Aws {
+        command: AwsCommand::Preflight(options),
+    } = command
+    {
+        return preflight::run(options).await;
+    }
+    run(command)
+}
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Aws {
+            command: AwsCommand::Preflight(_),
+        } => bail!("Preflight requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Plan(a),
         } => create(

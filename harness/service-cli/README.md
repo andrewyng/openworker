@@ -67,3 +67,21 @@ remaining execution-policy work.
 
 [Specification](../../docs/harness/OWS-DEPLOYMENT-SPEC.md) ·
 [Implementation plan and ledger](../../docs/harness/OWS-DEPLOYMENT-PLAN.md)
+
+## Read-only AWS preflight
+
+```sh
+ows deploy aws preflight --plan ./aws-review --profile customer-login \
+  --out ./aws-preflight
+```
+
+This uses AWS CLI v2 to check identity, prerequisites, supported pins, observed quota
+headroom, published fixed costs, guard artifact bytes and generated IAM policy
+syntax/security findings. Reports go into a new directory outside the immutable
+plan. Required blocked checks return exit 1; the JSON report explains them. A passing
+report still has `applyReady: false`.
+
+After identity bootstrap, `--check-setup-role` verifies temporary assumption of the
+exact setup role with identity-only session permissions. Credentials are not saved.
+See the [preflight guide](../../docs/harness/OWS-AWS-PREFLIGHT.md) for timeouts,
+permissions, pricing assumptions and remaining deployment gates.
