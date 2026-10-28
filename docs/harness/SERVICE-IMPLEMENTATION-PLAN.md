@@ -135,3 +135,7 @@ Rust HTTP, including the packaged Linux UI container. These fixtures verify dura
 admission/control requests, not worker execution. Helm rendering/security boundaries
 are tested; a fresh combined UI + API + worker/OpenShell Kubernetes rollout and
 AWS/GCP qualification remain subsequent qualification, not claimed complete here.
+
+M5 complete-stack local UI + API + worker/OpenShell qualification subsequently
+passed in a fresh kind deployment; see [the report](SERVICE-M5-QUALIFICATION.md).
+AWS/GCP and other platform/model combinations still require their own evidence.

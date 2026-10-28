@@ -447,3 +447,52 @@ Run/deployment guide: [management UI](../../harness/service-ui/README.md).
 Disposable API/UI processes and test UI containers cleaned up automatically; the
 separate PostgreSQL fixture is removed after verification. Source and cached images
 remain for follow-up work. No remote push or PR in this milestone.
+
+### M5 complete-stack qualification — started 27 October 2026
+
+User authorized local Kubernetes qualification of UI + workers + execution. Their
+“OpenShift” wording is interpreted as the existing NVIDIA OpenShell integration;
+no Red Hat OpenShift cluster is installed or claimed tested.
+
+Plan:
+1. Rebuild the Linux service from the management-UI commit using cached/offline
+   dependencies; import service/UI images into the existing local kind cluster.
+2. Install a dedicated namespace with PostgreSQL, API, worker, controllers, UI and
+   local TLS ingress. Browser talks only to UI; UI talks to authenticated service.
+3. Use the browser to publish/activate definitions, submit a task, answer an approval,
+   inspect real tool outputs, and reconnect across API/UI rollouts.
+4. Verify cancellation and desired/observed capacity where relevant; independently
+   verify sandbox effects and durable identities. Do not retry uncertain tool actions.
+5. Close sessions, delete only newly created environments, remove the test namespace
+   and copied credentials, and record results/remaining limits.
+
+Baseline: local kind `ow-server-20261011`, healthy gateway `ow-helm-gateway` in
+`ow-helm-shell`, three existing suspended sandboxes across `openshell` and
+`ow-helm-shell`. Approximately 207 GiB free. No cloud resources or paid LLM calls.
+
+### M5 complete-stack qualification — passed
+
+Fresh run passed through browser HTTPS, UI pod, API, PostgreSQL, worker/controller
+and real NVIDIA OpenShell tools on local kind v1.36.4 / Linux ARM64.
+Verified browser publication/activation, scoped runner submission, environment
+provisioning, per-call approvals, stable approval across API restart, continued work
+across UI restart/re-login, independent read proving one append, in-flight cancellation
+with durable unknown-outcome history and no replay, and UI scale to two ready workers.
+
+Initial qualification required two test corrections: read_file needed its own
+approval, and a cancelled remote call correctly ended interrupted with outcome unknown.
+The existing session was resumed without replaying the write. The final fresh run
+passed uninterrupted in about 51 seconds. Local ingress temporary paths were fixed
+for a read-only root filesystem. No harness runtime correction was necessary.
+
+Final service: `ows-697985da05f9`.
+Session: `s_25b8fa9fec9f42489f15e8b64e3a64ab`.
+Environment: `env_344611edd30545a28a261533c7c69791` (confirmed deleted).
+Both qualification namespaces/PVCs removed after closing/deleting their resources.
+Three baseline suspended sandboxes remain. Generated secrets/copied gateway client
+credentials removed. No paid inference or cloud resources; ~204 GiB disk remains.
+
+[Qualification report](SERVICE-M5-QUALIFICATION.md) and
+[sanitized evidence](evidence/service-ui-kubernetes-20261027.json).
+JavaScript syntax, diff checks and all four Helm boundary tests passed.
+AWS/GCP, live-model traffic, x86-64 and Red Hat OpenShift remain unqualified.

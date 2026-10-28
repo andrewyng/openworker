@@ -1,0 +1,44 @@
+{
+  "started": "2026-10-28T02:27:23.607Z",
+  "finished": "2026-10-28T02:28:14.244Z",
+  "passed": true,
+  "serviceId": "ows-697985da05f9",
+  "namespace": "ow-service-m4-uifinal20261027",
+  "checks": [
+    "Profile/release publication and activation through UI",
+    "Real OpenShell shell/file effects; approval identity survives API rollout; UI restart requires login and preserves execution",
+    "Independent sandbox read confirms one persisted append",
+    "Browser cancellation applied; unknown remote outcome explicitly interrupted, no tool replay",
+    "UI scale request reconciled to two ready Kubernetes workers",
+    "Session close, remote environment deletion, and runner credential revocation"
+  ],
+  "sessionId": "s_25b8fa9fec9f42489f15e8b64e3a64ab",
+  "environmentId": "env_344611edd30545a28a261533c7c69791",
+  "firstRunId": "t_e4e9aa406474484999d39ced93c0a710",
+  "cancelRunId": "t_188922190cd444209d01cedad6af48ab",
+  "cancellationStatus": "interrupted",
+  "unknownOutcomeInModelHistory": true,
+  "harnessRevision": "098d5f4e",
+  "platform": "linux/arm64",
+  "kubernetes": "v1.36.4",
+  "executionProvider": "NVIDIA OpenShell",
+  "model": "deterministic scripted fixture",
+  "freshUninterruptedPass": true,
+  "images": {
+    "service": "docker.io/library/openworker-service@sha256:18206f457e94e9ca96f04bb98e7ff724301e8f3d2303612599857496de7813a9",
+    "ui": "docker.io/library/openworker-service-ui@sha256:a0a188577132e74e1408d50dcac2cc8aaf2cfe70a32a019c73e6d9e805b0db21",
+    "runner": "docker.io/library/openworker-runner@sha256:23c37c11e0e6420a176c86ad5032042263f0e2c576ac0d277fc41c4666980b6b"
+  },
+  "cleanup": {
+    "sessionsClosed": true,
+    "testEnvironmentsDeleted": true,
+    "testNamespacesAndPVCsRemoved": true,
+    "baselineSuspendedSandboxesRemaining": 3
+  },
+  "limits": [
+    "No live LLM call",
+    "No AWS/GCP qualification",
+    "No Red Hat OpenShift qualification",
+    "No x86-64 qualification"
+  ]
+}

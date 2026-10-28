@@ -166,3 +166,50 @@ node harness/service-ui/preview.mjs
 
 It opens on port 58640. The production UI lives in `public/`; the mock lives in
 `mock/`. Sample records and chart values are never used as a live-data fallback.
+
+## Complete-stack local Kubernetes qualification
+
+`deploy/service/qualify-ui-kubernetes.mjs` drives a real browser against a UI pod,
+Rust API, PostgreSQL, service worker and NVIDIA OpenShell sandbox. It uses the
+scripted test model to exercise real tool effects without a model API key.
+
+Use the dedicated kind installer from the M4 guide with a freshly built service
+image containing the UI listing endpoints, the management UI image, and the matching
+runner image imported by digest. Before installing the service, extend its local
+certificate to the API Service DNS name:
+
+```sh
+node deploy/service/kubernetes-local.mjs init .ow-service-ui /private/install.json
+node deploy/service/ui-kubernetes-local.mjs prepare .ow-service-ui
+node deploy/service/kubernetes-local.mjs install .ow-service-ui
+node deploy/service/ui-kubernetes-local.mjs install .ow-service-ui UI_IMAGE_DIGEST
+OW_PLAYWRIGHT_MODULE=/absolute/path/to/playwright-or-playwright-test \
+  node deploy/service/qualify-ui-kubernetes.mjs .ow-service-ui
+```
+
+The helper installs a local TLS ingress and uses loopback port-forwards on 58444
+(API) and 58644 (UI). Node verifies the generated CA; the test browser trusts only
+the generated leaf certificate's SPKI. Production TLS validation is unchanged.
+Namespaces must satisfy the existing dedicated kind installer's naming/ownership
+checks. There is no Red Hat OpenShift installation in this qualification.
+
+The test publishes a profile/release through the UI, submits a task, approves each
+required tool call, restarts the API while approval is parked, restarts the UI during
+execution, and independently reads a persisted file to verify exactly one append.
+It also cancels an active command, scales to two ready workers, closes the session,
+and deletes its remote environment. A remote cancellation can correctly finish as
+`interrupted` with `outcome_unknown`; the test requires an applied cancel receipt,
+no tool replay, and durable unknown-outcome history rather than claiming rollback.
+
+A failed run retains a journal and never starts the original task again automatically.
+Inspect its durable state first. The two explicit resume switches in the script
+only support their recorded, known checkpoints. After successful session/environment
+cleanup, use the existing guarded destroy command with the exact deployment ID:
+
+```sh
+node deploy/service/kubernetes-local.mjs destroy .ow-service-ui EXACT_DEPLOYMENT_ID
+```
+
+Then dispose of copied private input/token files. Keep only the sanitized report and
+screenshots needed for review. This fixture is local ARM64 kind/OpenShell qualification;
+AWS/GCP, x86-64, and Red Hat OpenShift require their own deployment evidence.
