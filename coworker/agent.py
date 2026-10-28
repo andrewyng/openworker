@@ -751,6 +751,10 @@ def build_engine(
     if _compaction_overrides:
         engine.compaction_settings = lambda: dict(_compaction_overrides)
     engine.executor = executor  # type: ignore[attr-defined]
+    # OPE-232: the read-only session grant judges paths from the persistent shell's
+    # current folder, not the workspace folder it may have moved away from.
+    if executor is not None:
+        engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
     # OPE-219: a sandboxed session with "Only the sites you allow" holds its web tools to
     # the same list as its commands. They run in this process, outside the sandbox, so the

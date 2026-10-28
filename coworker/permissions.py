@@ -8,8 +8,11 @@ prefixes) and a session allowlist. The engine only *decides*; the turn engine ro
 
 from __future__ import annotations
 
+import glob as _glob
+import os
 import re
 import shlex
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -402,6 +405,15 @@ class PermissionEngine:
     # Session-wide read-only grant (owner ask 2026-08-11): auto-allow shell commands the
     # conservative classifier (coworker/readonly.py) accepts. User-elected per session.
     session_readonly: bool = False
+    # OPE-232: which shell runs `run_shell` — "bash" (macOS / Linux) or "powershell"
+    # (Windows); None picks by platform. The read-only check reads the command as that
+    # shell would.
+    shell_kind: Optional[str] = None
+    # The persistent shell's current folder, as the engine knows it right now. None (no
+    # callable) means no shell is wired and the workspace folder is used, as before; a
+    # callable that returns None means the folder is unknown for this call (another shell
+    # command was cleared earlier in the same batch and may move it), so the grant asks.
+    shell_cwd: Optional[Callable[[], Optional[str]]] = None
     # Task-scoped standing rules (§25): {tool: {allowed targets}}, seeded from the owning
     # ScheduledTask's target-shaped entries. Kept by reference and re-read every check, so a
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
@@ -431,6 +443,8 @@ class PermissionEngine:
         self.auto_allow_tools = set(self.auto_allow_tools)
         if self.roots is None:
             self.roots = [{"path": self.workspace_root, "writable": True}]
+        if self.shell_kind is None:
+            self.shell_kind = "powershell" if sys.platform == "win32" else "bash"
 
     def _resolved_roots(self) -> list[tuple[Path, bool]]:
         out: list[tuple[Path, bool]] = []
@@ -603,16 +617,12 @@ class PermissionEngine:
             # Also a session grant, so §1.5 applies: in Auto-Approve the reviewer judges
             # these rather than the classifier waving them through.
             if honor_session_grants and self.session_readonly and command:
-                from .readonly import is_readonly_command, read_targets
-
                 # The classifier vets what a command DOES; the roots vet what it READS
                 # (OPE-130). Without the second half, a grant the user reads as "stop
                 # asking about my project files" also covers ~/.aws/credentials, another
                 # repo's history, and OpenWorker's own secrets file — none of which the
                 # self-protection floor catches, since that guards writes, not reads.
-                if is_readonly_command(command) and all(
-                    self._under_root(t) for t in read_targets(command)
-                ):
+                if self._readonly_grant_covers(command):
                     return Decision(True, "read-only command (session grant)")
         if on_site_wall:
             return Decision(True, "site on the allowed sites")
@@ -705,6 +715,46 @@ class PermissionEngine:
     def allow_command_for_session(self, command: str) -> None:
         if command:
             self.session_allow_commands.add(command)
+
+    def _readonly_grant_covers(self, command: str) -> bool:
+        """The read-only session grant's check (OPE-130, OPE-232): the command only reads,
+        as this platform's shell runs it, and every path it reads is inside the folders.
+        Paths are judged from the shell's real current folder when the engine knows it,
+        and wildcards are expanded with every match checked. A git command is covered only
+        when the project's own git settings are inert (coworker/git_settings.py), since
+        git obeys settings stored inside the project. Fails closed."""
+        from .git_settings import project_git_settings_inert
+        from .readonly import git_repo_dirs, is_readonly_command, read_targets
+
+        try:
+            if not is_readonly_command(command, shell=self.shell_kind):
+                return False
+            if self.shell_cwd is None:
+                base = self.workspace_root
+            else:
+                cwd = self.shell_cwd()
+                if not cwd:
+                    return False
+                base = Path(cwd).expanduser().resolve()
+                if not self._under_root(str(base)):
+                    return False
+            for target in read_targets(command, shell=self.shell_kind):
+                path = Path(os.path.expanduser(target))
+                full = path if path.is_absolute() else base / path
+                if any(c in target for c in "*?["):
+                    for match in _glob.glob(str(full)):
+                        if not self._under_root(str(Path(match).resolve())):
+                            return False
+                if not self._under_root(str(full.resolve())):
+                    return False
+            for repo in git_repo_dirs(command, shell=self.shell_kind):
+                path = Path(os.path.expanduser(repo))
+                full = path if path.is_absolute() else base / path
+                if not project_git_settings_inert(full, lambda p: self._under_root(str(p))):
+                    return False
+            return True
+        except Exception:  # noqa: BLE001 - a check that cannot finish never allows
+            return False
 
     def allow_readonly_for_session(self) -> None:
         self.session_readonly = True

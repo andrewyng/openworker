@@ -90,13 +90,13 @@ class ApprovalOutcome(str, Enum):
     SUPERSEDED = "superseded"
 
 
-def _readonly_ok(arguments: dict) -> bool:
+def _readonly_ok(arguments: dict, shell: Optional[str] = "bash") -> bool:
     command = str((arguments or {}).get("command", "") or "")
     if not command:
         return False
     from .readonly import is_readonly_command
 
-    return is_readonly_command(command)
+    return is_readonly_command(command, shell=shell or "bash")
 
 
 @dataclass
@@ -253,6 +253,10 @@ class TurnEngine:
         # into the tool message's `_display` sidecar, so the quiet provenance chips
         # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
         self._approval_origins: dict[str, dict[str, str]] = {}
+        # OPE-232: set once a shell command has been cleared in the batch being authorized.
+        # The batch runs only after every call is cleared, and the shell persists, so a
+        # later command's folder is unknown from then on (see `current_shell_cwd`).
+        self._shell_cleared_in_batch = False
         # Shadow evaluation (spec Part 6 step 3): when True and a reviewer is attached, the
         # reviewer records what it WOULD have decided on each approval card while the human
         # still decides. Fire-and-forget — the card is never delayed, no decision is ever
@@ -1104,6 +1108,7 @@ class TurnEngine:
         # verdict physically cannot land on the wrong action). The loop below stays
         # sequential because approval cards are interactive and must reach the human one
         # at a time, in call order.
+        self._shell_cleared_in_batch = False
         await self._preconsult_reviewer(tool_calls)
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
@@ -1163,6 +1168,8 @@ class TurnEngine:
                     allowed = item
             if allowed:
                 cleared.append(tool_call)
+                if tool_call.name == "run_shell":
+                    self._shell_cleared_in_batch = True
 
         concurrent = (
             [tc for tc in cleared if self._parallel_safe(tc)]
@@ -1352,6 +1359,16 @@ class TurnEngine:
             tool_call.name, tool_call.arguments, step=self._step
         )
         return match.render() if match else ""
+
+    def current_shell_cwd(self) -> Optional[str]:
+        """OPE-232: the persistent shell's current folder, or None when it cannot be known
+        for the call being checked: no shell, or a shell command already cleared in this
+        batch may move it before this one runs."""
+        if self._shell_cleared_in_batch:
+            return None
+        executor = getattr(self, "executor", None)
+        cwd = getattr(executor, "cwd", None) if executor is not None else None
+        return str(cwd) if cwd else None
 
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
         """Fire one reviewer request per call that will escalate, all concurrently, and
@@ -1825,7 +1842,7 @@ class TurnEngine:
                     ),
                     # True when this shell command classifies as read-only — the card
                     # offers "Allow read-only commands for this session" only then.
-                    "readonly_ok": _readonly_ok(tool_call.arguments),
+                    "readonly_ok": _readonly_ok(tool_call.arguments, self.permissions.shell_kind),
                     # OPE-136 finding 4: where an MCP call actually goes, stamped at
                     # registration (mcp/tools.py) from the server def — so the card's
                     # scope chip can say "leaves this computer → host" instead of the
