@@ -601,7 +601,10 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         logo="browser",
         fields=[],
         instructions=[
-            "No setup required. Browser tools are available to Cowork sessions."
+            "Browser tools are available to Cowork sessions.",
+            "On macOS, set them up once by running this in Terminal: "
+            "curl -fsSL https://raw.githubusercontent.com/andrewyng/openworker/"
+            "main/packaging/setup-browser-macos.sh | bash",
         ],
         available=True,
     ),
