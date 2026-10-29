@@ -327,7 +327,10 @@ class Daemon:
             if method == "task.start":
                 return ex.run_background(str(params.get("command") or ""))
             if method == "task.output":
-                return ex.background_output(str(params.get("task_id") or ""))
+                return ex.background_output(
+                    str(params.get("task_id") or ""),
+                    wait_seconds=float(params.get("wait_seconds") or 0),
+                )
             if method == "task.kill":
                 return ex.background_kill(str(params.get("task_id") or ""))
             return {
