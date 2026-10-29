@@ -479,6 +479,11 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
     classify,
     is_consequential,
 )
+from .workspace_safety import inert_write_check
+
+# The reason prefix of an OPE-233 inert-write allow; the engine keys the transcript chip
+# and the audit row on `Decision.tier`, this text is what the record says.
+INERT_WRITE_REASON = "inert, reversible write inside your folders"
 
 
 # The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
@@ -577,6 +582,12 @@ class Decision:
     site: str = ""
     # The "host:port" entries a `request_network_access` call still needs a person for.
     network_hosts: tuple[str, ...] = ()
+    # Set when an Auto-Approve gate tier matched (OPE-233), e.g. "inert_write". With
+    # `allowed` the call runs without the reviewer; with `tier_audit_only` the decision is
+    # unchanged and the engine only records that the tier WOULD have allowed it.
+    tier: str = ""
+    tier_audit_only: bool = False
+    tier_note: str = ""
 
 
 def standing_rule_candidate(
@@ -693,6 +704,12 @@ class PermissionEngine:
     # `workspace_root` is the sole writable root (back-compat). Kept by reference and re-read on
     # every check, so runtime add/remove of folders takes effect without rebuilding the engine.
     roots: Optional[list] = None
+    # OPE-233 gate tier, Auto-Approve only: "off" (default), "audit" (record what it would
+    # have allowed, change nothing) or "on". User-global config, never a workspace's.
+    inert_writes: str = "off"
+    # "Did the agent's own write produce this file this session?" — the engine's
+    # provenance record. A file the agent wrote can be rewritten without losing the user's.
+    agent_wrote: Optional[Callable[[Path], bool]] = None
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
@@ -701,6 +718,8 @@ class PermissionEngine:
             self.roots = [{"path": self.workspace_root, "writable": True}]
         if self.shell_kind is None:
             self.shell_kind = "powershell" if sys.platform == "win32" else "bash"
+        if self.inert_writes not in ("off", "audit", "on"):
+            self.inert_writes = "off"
 
     def _resolved_roots(self) -> list[tuple[Path, bool]]:
         out: list[tuple[Path, bool]] = []
@@ -946,6 +965,23 @@ class PermissionEngine:
         # Custom mode auto-approves the configured tools.
         if self.mode is Mode.CUSTOM and tool_name in self.auto_allow_tools:
             return Decision(True, "auto-allowed by config")
+
+        # OPE-233: in Auto-Approve, an inert write that can be undone needs no reviewer
+        # call. It is the last check on purpose: every floor above (folders, protected
+        # files, self-protection, read-only modes) has already had its say.
+        if is_write and self.mode is Mode.AUTO_APPROVE and self.inert_writes != "off":
+            paths, _located = write_paths(tool_name, arguments)  # located: checked above
+            eligible, detail = inert_write_check(
+                arguments, [self._candidate(p) for p in paths], agent_wrote=self.agent_wrote,
+                roots=[rp for rp, writable in self._resolved_roots() if writable],
+            )
+            if eligible and self.inert_writes == "on":
+                return Decision(True, f"{INERT_WRITE_REASON}: {detail}", tier="inert_write")
+            if eligible:
+                return Decision(
+                    False, "requires approval", needs_user=True,
+                    tier="inert_write", tier_audit_only=True, tier_note=detail,
+                )
 
         # Otherwise: ask the user.
         return Decision(False, "requires approval", needs_user=True)

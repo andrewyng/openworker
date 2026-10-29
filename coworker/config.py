@@ -87,6 +87,11 @@ class Config:
     # gates (zero false-allows; ≥30% fewer prompts) get measured on real sessions. Costs
     # one model call per card while on. Off by default; user-global only.
     auto_approve_shadow: bool = False
+    # Auto-Approve gate tier (OPE-233): an inert, reversible write inside the session's
+    # folders runs without a reviewer call. "off" (default) | "audit" (record what it
+    # would have allowed, change nothing) | "on". User-global only: a cloned repo must
+    # not be able to hand itself a looser gate.
+    auto_approve_inert_writes: str = "off"
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
@@ -158,6 +163,7 @@ _FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "auto_approve_inert_writes",
     "host",
     "port",
     "web_search_provider",
@@ -184,6 +190,7 @@ _GLOBAL_ONLY_FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "auto_approve_inert_writes",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 

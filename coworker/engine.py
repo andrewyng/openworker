@@ -302,6 +302,10 @@ class TurnEngine:
         # the card and in the reviewer's request. Runtime-only, like `_ask_replies`: a
         # restart costs context (more cards), never correctness.
         self._agent_files = provenance.SessionFiles(permissions.workspace_root)
+        # The inert-writes tier (OPE-233) may rewrite a file the agent itself wrote: only
+        # the agent's own bytes are lost. An injected lookup (tests) is left alone.
+        if getattr(permissions, "agent_wrote", None) is None:
+            permissions.agent_wrote = self._agent_files.wrote
         self._tool_result_max_bytes = (
             toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES
             if tool_result_max_bytes is None
@@ -1615,6 +1619,22 @@ class TurnEngine:
                     needs_user=True,
                     human_only=True,
                 )
+
+        # OPE-233: an Auto-Approve gate tier let this call run without the reviewer —
+        # recorded, never invisible (transcript chip + audit row), like every other
+        # cardless origin.
+        if allowed and decision.tier:
+            self._approval_origins[tool_call.id] = {"origin": "gate_tier", "note": reason}
+            self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
+        elif decision.tier and decision.tier_audit_only and decision.needs_user:
+            # Audit mode: the decision is unchanged; the record notes what the tier WOULD
+            # have done, so it can be measured before anyone switches it on.
+            self._audit(
+                tool_call,
+                stage="gate_tier_shadow",
+                status="would_allow",
+                reason=f"{decision.tier}: {decision.tier_note}",
+            )
 
         if allowed and decision.rule:
             # A task-scoped standing rule auto-allowed this call: audit the exact rule

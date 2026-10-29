@@ -191,6 +191,7 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
     origin !== "reviewer" &&
     origin !== "bypass" &&
     origin !== "run_grant" &&
+    origin !== "gate_tier" &&
     !TRUST_ORIGINS.has(origin ?? "")
   )
     return null;
@@ -209,7 +210,9 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
                 ? t("transcript.approval.trusted_generic_title")
                 : origin === "run_grant"
                   ? t("transcript.approval.run_grant_title")
-                  : t("transcript.approval.bypass_title")
+                  : origin === "gate_tier"
+                    ? t("transcript.approval.gate_tier_title")
+                    : t("transcript.approval.bypass_title")
       }
     >
       {origin === "reviewer"
@@ -222,7 +225,9 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
               ? t("transcript.approval.trusted_generic")
               : origin === "run_grant"
                 ? t("transcript.approval.run_grant")
-                : t("transcript.approval.bypassed")}
+                : origin === "gate_tier"
+                  ? t("transcript.approval.gate_tier")
+                  : t("transcript.approval.bypassed")}
     </span>
   );
 }

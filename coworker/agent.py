@@ -602,6 +602,7 @@ def build_engine(
         risk_overrides=override_store.resolver(),
         trust_overrides=override_store.trusted,
         grant_trust=override_store.set_trust,
+        inert_writes=str(config.auto_approve_inert_writes),
     )
     # The plan-mode exit door — mutually exclusive with the board's decomposition
     # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never
