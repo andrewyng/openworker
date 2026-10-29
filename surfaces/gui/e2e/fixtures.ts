@@ -583,6 +583,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   };
   // Installed personas — mutable so enable/surface/delete round-trip through the UI.
   const personas: any[] = PERSONAS.personas.map((p) => ({ ...p }));
+  const personaDefinitions = new Map<string, any>();
   // Sessions — mutable so archive (PATCH), rename (PATCH), and delete round-trip.
   // UX-044: mutable binding state for the project-menu mocks.
   const projectBindings: Record<string, string> = {};
@@ -1562,6 +1563,39 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (/\/v1\/sessions\/[^/]+\/save-as-project$/.test(p) && m === "POST") {
       const b = req.postDataJSON();
       return json({ ok: true, path: b.path });
+    }
+    if (p.endsWith("/v1/persona-editor") && m === "GET") return json({
+      capabilities: [
+        { id: "files", name: "Files", description: "Read and edit workspace files", risk: ["read", "write_local"] },
+        { id: "search", name: "Search", description: "Search workspace files", risk: ["read"] },
+        { id: "shell", name: "Shell", description: "Run commands", risk: ["exec"] },
+      ],
+      connectors: [{ id: "github", name: "GitHub" }, { id: "slack", name: "Slack" }],
+      mcp: ["documents"], modes: ["interactive", "plan", "auto-approve"],
+    });
+    if (/\/v1\/personas\/[^/]+\/definition$/.test(p)) {
+      const id = p.split("/").slice(-2)[0];
+      const base = personas.find((x) => x.id === id);
+      return json({ ok: true, definition: personaDefinitions.get(id) || {
+        id, name: base.name, icon: base.icon, tagline: base.tagline,
+        description: "A careful research coworker.", system_prompt: "Research carefully and cite sources.",
+        tools: base.tools, connectors: ["github"], models: [], skills: [], mcp: [],
+        requires_folder: base.requires_folder, subagents: false, scheduling: true,
+        team: "", approval_guidance: "", default_permission_mode: "interactive",
+        version: "1", group: "general", recommends: [],
+      } });
+    }
+    if (/\/v1\/persona-editor\/(preview|save)$/.test(p) && m === "POST") {
+      const body = req.postDataJSON();
+      const d = body.definition;
+      const consent = { ...d, risk: ["read", "write_local"], recommended_mode: d.default_permission_mode, replaces: null };
+      if (p.endsWith("/preview")) return json({ ok: true, consent, markdown: `---\nid: ${d.id}\nname: ${d.name}\n---\n${d.system_prompt}` });
+      personaDefinitions.set(d.id, d);
+      const next = { ...d, builtin: false, enabled: false, surfaced: false, default: false, ships: true };
+      const existing = personas.findIndex((x) => x.id === d.id);
+      if (existing >= 0) personas[existing] = next;
+      else personas.push(next);
+      return json({ ok: true, consent: [consent], personas });
     }
     if (/\/v1\/personas\/[^/]+\/export$/.test(p) && m === "POST") {
       // Sharing v1: export the bundle zip into the chosen folder.
