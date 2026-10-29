@@ -599,7 +599,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
 
     for name in (
         "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
-        "novita", "groq",
+        "novita", "groq", "trustedrouter",
     ):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
