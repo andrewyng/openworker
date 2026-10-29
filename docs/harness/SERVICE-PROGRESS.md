@@ -496,3 +496,17 @@ credentials removed. No paid inference or cloud resources; ~204 GiB disk remains
 [sanitized evidence](evidence/service-ui-kubernetes-20261027.json).
 JavaScript syntax, diff checks and all four Helm boundary tests passed.
 AWS/GCP, live-model traffic, x86-64 and Red Hat OpenShift remain unqualified.
+
+### AWS clean-install and expiry follow-up — 29 October 2026 UTC
+
+A separate authorized AWS experiment qualifies the service on private Oregon EKS
+with managed RDS and authenticated NVIDIA OpenShell, including live-model tool
+effects and UI traces. The fresh rerun deploys gateway/service at revision 1 with
+no manual Secret, Job or Helm repair. The actual scheduled expiry removes its
+seeded artifact/upload, original stack and detached EBS workspace volumes; native
+CLI reconciliation records completion from original AWS receipts without replaying
+deletion. Earlier local-only cloud exclusions above describe M5's original scope.
+
+[Clean rerun evidence](evidence/aws-clean-expiry-20261029.json) and
+[AWS trial ledger](OWS-AWS-TRIAL-PLAN.md) record the bounded configuration,
+cleanup, budget and remaining S3 workload-transfer/final-billing limits.

@@ -137,7 +137,7 @@ interruption, partial installation cleanup and least-privilege artifact identity
 The cloud fakes run without credentials or network access. Generated templates are
 linted offline; guard and chart tests remain passing.
 
-## Next: explicitly authorized AWS trial
+## Local milestone handoff: explicitly authorized AWS trial
 
 No real AWS API calls, IAM changes, provisioned resources or uploads occurred in
 this task. Keep the $100 experiment limit and review a fresh estimate/expiry.
@@ -148,3 +148,18 @@ scope, Lambda scheduling/expiry cleanup and final resource/billing absence.
 The CLI deliberately reports `allCloudResourcesAbsent: false` after stack deletion:
 guard/bootstrap removal and final orphan/cost checks remain separate operator steps.
 The guard and budget are not a hard spending cap. GCP/Azure execution remains future work.
+
+## AWS qualification follow-up — 29 October 2026 UTC
+
+The separately authorized trial now passes fresh private EKS/RDS/OpenShell
+installation without manual Secret, Job or Helm repairs; live agent file/shell
+effects, browser traces, exact event replay, and actual scheduled expiry including
+seeded S3 object/upload and orphan EBS removal. Native expiry reconciliation succeeds
+without issuing another delete, rejects before expiry or while cleanup is pending,
+and supports observation after the cluster API is gone.
+
+See [clean rerun evidence](evidence/aws-clean-expiry-20261029.json),
+[AWS lifecycle](OWS-AWS-LIFECYCLE.md) and [trial ledger](OWS-AWS-TRIAL-PLAN.md).
+The original local-only statement above is historical. Qualification remains bounded
+to Oregon/Linux ARM64; S3 workload SDK transfer through Pod Identity, final billing
+attribution and GCP/Azure execution remain open.

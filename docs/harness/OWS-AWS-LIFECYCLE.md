@@ -1,23 +1,27 @@
 # AWS lifecycle and service installation
 
 The native `ows` CLI coordinates a reviewed AWS infrastructure bundle and the shared
-Kubernetes installer. The authorized AWS trial reached a real-model agent run on
-private EKS + RDS + authenticated OpenShell: file/shell effects, UI traces and exact
-PostgreSQL-backed event replay after both API replicas restarted. See the
-[dated evidence](evidence/aws-service-agent-20261029.json) and
-[trial ledger](OWS-AWS-TRIAL-PLAN.md) for exact repairs and qualification limits.
-The cloud path remains experimental and requires explicit opt-in. A clean fresh
-install with the final CLI, S3 workload transfers and healthy-deployment expiry
-cleanup still need qualification; the successful trial required controlled operator
-repairs, now covered by generator fixes and regression tests.
+Kubernetes installer. The AWS trial passed a fresh installation on private EKS +
+RDS + authenticated OpenShell, followed by a real-model agent run, UI traces and
+exact PostgreSQL-backed event replay. Both gateway and service deployed at Helm
+revision 1 with no manual Secret, Job or Helm repairs.
+
+The unchanged scheduled expiry guard removed the seeded object and unfinished
+multipart upload, original infrastructure and two detached workspace/gateway disks.
+The CLI reconciled that external deletion from original AWS receipts without issuing
+another delete. See the [clean-install and expiry evidence](evidence/aws-clean-expiry-20261029.json)
+and [trial ledger](OWS-AWS-TRIAL-PLAN.md). The earlier
+[run evidence](evidence/aws-service-agent-20261029.json) retains the operator repairs
+and API-restart replay qualification from the preceding attempt.
+
+The cloud path remains experimental and requires explicit opt-in. Qualification is
+limited to the tested Oregon/Linux ARM64 configuration. S3 workload SDK transfers
+through Pod Identity and final billing attribution remain unqualified; the cleanup
+fixture used an operator-uploaded object and multipart upload.
 
 The ordinary `ows deploy apply/destroy` entry points remain closed. The explicit
 `ows deploy aws lifecycle` commands below are the experimental execution path.
 GCP and Azure remain offline planners.
-
-A separately authorized [AWS trial](OWS-AWS-TRIAL-PLAN.md) is now in progress.
-Its scoped identity/guard stacks and private infrastructure have been submitted;
-live agent and installation qualification are not yet complete.
 
 ## Prepare the prerequisites
 
@@ -271,9 +275,11 @@ See [the progress ledger](OWS-CLOUD-EXECUTION-PLAN.md) and
 cloud protocol/recovery; kind tests exercise installation and sandbox effects.
 The [AWS run evidence](evidence/aws-service-agent-20261029.json) records actual IAM
 handler/rollback fixes, private connectivity, strict CNI probes, encrypted EBS tags,
-immutable ECR publication, managed RDS TLS and agent/UI/restart checks. Pod Identity
-mapping is provisioned; actual S3 transfers, healthy-deployment expiry cleanup and
-final cost reconciliation remain explicitly unqualified.
+immutable ECR publication, managed RDS TLS and agent/UI/restart checks. The
+[clean rerun](evidence/aws-clean-expiry-20261029.json) additionally qualifies
+first-attempt installation, actual scheduled expiry, orphan EBS removal and read-only
+lifecycle reconciliation. Pod Identity mapping is provisioned; workload S3 SDK
+transfers and final cost reconciliation remain explicitly unqualified.
 
 The bootstrap is exported as compact JSON and checked against CloudFormation's
 [51,200-byte inline template limit](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)

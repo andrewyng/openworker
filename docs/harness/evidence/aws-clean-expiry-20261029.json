@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-29T04:52:03.627Z",
+  "clientDate": "2026-10-28",
+  "scope": "Real AWS clean install and scheduled expiry; experimental reference, not production certification",
+  "testedSourceCommit": "35cab713",
+  "branch": "feat/openworker-service-m1",
+  "deploymentId": "ows-32a76230ebd74e71afd9ab599e774dea",
+  "bundleDigest": "aefc97484e7f8ba8459fd673b9096e3d73508f0e9b26df559e292a291e5fcca2",
+  "aws": {
+    "region": "us-west-2",
+    "privateManagementApi": true,
+    "architecture": "linux/arm64",
+    "workers": 2,
+    "kubernetes": "1.36.5",
+    "postgresql": "16.13",
+    "originalCreationSucceeded": true
+  },
+  "install": {
+    "passed": true,
+    "phase": "installed",
+    "gatewayRevision": 1,
+    "serviceRevision": 1,
+    "allOperationsComplete": true,
+    "confirmedNoEffectResets": 0,
+    "manualSecretJobOrHelmRepairs": false,
+    "sourceBuiltServiceImage": true,
+    "networkChecksPassed": true
+  },
+  "images": {
+    "harness": {
+      "image": "504150922218.dkr.ecr.us-west-2.amazonaws.com/ows-aws-clean-32a76230ebd7/harness@sha256:66fd9caa617112340eb592c181122401612ca3227affef7101a4771eca0021e0",
+      "configDigest": "sha256:99519a001a182400db6fc4aed3bde92e06f7739eeb9d24ce0c2d5e9b4aa4ebd0"
+    },
+    "runner": {
+      "image": "504150922218.dkr.ecr.us-west-2.amazonaws.com/ows-aws-clean-32a76230ebd7/runner@sha256:069abaedf7e24a81b90f10527c1b6082c1b6a465ec84610abf6d6b046e970613",
+      "configDigest": "sha256:bdc55b47fb3478f49f69a19fe20a92a4142b445f1e1bf4d48c1efd919822c6e2"
+    },
+    "service-ui": {
+      "image": "504150922218.dkr.ecr.us-west-2.amazonaws.com/ows-aws-clean-32a76230ebd7/service-ui@sha256:ab2e6a8e2eeda39962c42f6373f0a5ebc0030631a269d87c42c41470a6e254fa",
+      "configDigest": "sha256:cb83f77ae3c68ffc903d55fc33abc95492f90e2253a59397c1d84dbd1411eefe"
+    }
+  },
+  "network": {
+    "passed": true,
+    "checks": [
+      "explicit baseline allow",
+      "egress deny",
+      "egress allow",
+      "ingress deny",
+      "ingress allow"
+    ],
+    "namespace": "ow-service",
+    "cloudCalls": true,
+    "deploymentId": "ows-local-4b96fc9941b144338d99f2649a9d000d"
+  },
+  "agent": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5",
+    "status": "completed",
+    "sessionId": "s_2917b7fd1edd4bb3b6ba4236e50d2073",
+    "runId": "t_3fd5aa254080416494d8225e2431f600",
+    "modelRequests": 3,
+    "inputTokens": 3761,
+    "outputTokens": 223,
+    "tools": [
+      {
+        "name": "write_file",
+        "isError": false
+      },
+      {
+        "name": "run_shell",
+        "isError": false
+      }
+    ],
+    "runEvents": 36,
+    "exactReplay": true,
+    "workspace": {
+      "sandboxPod": "default--owr-2a2a2133a4ab4ba",
+      "volumeId": "vol-05bc1cbf18a128c6b",
+      "independentProofFile": true,
+      "encrypted": true,
+      "ownershipTag": true,
+      "sizeGiB": 1,
+      "state": "in-use",
+      "persistentWorkspace": true,
+      "claimUidVerified": true
+    }
+  },
+  "ui": {
+    "passed": true,
+    "path": "browser -> deployed UI pod -> AWS service -> durable agent records",
+    "sessionId": "s_2917b7fd1edd4bb3b6ba4236e50d2073",
+    "traceSteps": 40,
+    "liveEventConnection": true,
+    "pageErrors": 0,
+    "temporaryPresentationFixture": "missing header flush corrected in private test proxy; deployed image unchanged; strict five-second live check passes"
+  },
+  "seed": {
+    "operatorS3RoundTrip": true,
+    "unfinishedMultipartUpload": true,
+    "workloadS3SdkQualified": false
+  },
+  "expiry": {
+    "deadlineUtc": "2026-10-29T04:26:57.000Z",
+    "deadlinePacific": "2026-10-28 21:26:57 PDT",
+    "noClockOrScheduleOverride": true,
+    "noManualInfrastructureDelete": true,
+    "preExpiry": {
+      "observedAt": "2026-10-29T04:14:18.694Z",
+      "objects": 1,
+      "multipartUploads": 1,
+      "volumes": 5,
+      "destructiveActions": 0
+    },
+    "guardDeleteActor": {
+      "at": "2026-10-29T04:41:28.486Z",
+      "matches": 1,
+      "examinedEvents": 1,
+      "candidates": [
+        {
+          "eventTime": "2026-10-29T04:28:06Z",
+          "fields": [
+            "stackName",
+            "roleARN"
+          ],
+          "stackName": "arn:aws:cloudformation:us-west-2:504150922218:stack/ows-aws-clean-32a76230ebd7-infra/b17898a0-d349-11f1-a4a5-06ffec5a0451",
+          "issuer": "arn:aws:iam::504150922218:role/ows-aws-clean-32a76230ebd7-cleanup"
+        }
+      ],
+      "guardRoleVerified": true,
+      "deleteTokenVerified": true,
+      "deleteTokenEvidence": "Original CloudFormation stack event and consistent guard control receipt; CloudTrail omits clientRequestToken",
+      "requestSucceeded": true,
+      "expiryClockVerified": true,
+      "eventTime": "2026-10-29T04:28:06Z"
+    },
+    "cleanupRequestedAt": 1793248086538,
+    "originalExpiryTokenVerified": true,
+    "orphanVolumeDeleteIntents": {
+      "vol-05bc1cbf18a128c6b": true,
+      "vol-09893d64343fc0ed1": true
+    },
+    "completionObservedAt": "2026-10-29T04:48:21.396Z",
+    "logsComplete": true,
+    "guardErrors": [],
+    "localReadOnlyReconciliation": {
+      "bucketAbsent": true,
+      "controlVersion": 4,
+      "deleteToken": "ows-32a76230ebd74e71afd9ab599e774dea-expiry",
+      "expiresAtUnix": 1793248017,
+      "observedAtUnix": 1793249043,
+      "stackArn": "arn:aws:cloudformation:us-west-2:504150922218:stack/ows-aws-clean-32a76230ebd7-infra/b17898a0-d349-11f1-a4a5-06ffec5a0451",
+      "taggedVolumesAbsent": true
+    }
+  },
+  "observerAuthorization": {
+    "simulation": {
+      "simulationOnly": true,
+      "results": [
+        {
+          "name": "own control key",
+          "action": "dynamodb:GetItem",
+          "decision": "allowed",
+          "expected": "allowed",
+          "passed": true
+        },
+        {
+          "name": "foreign control key",
+          "action": "dynamodb:GetItem",
+          "decision": "implicitDeny",
+          "expected": "implicitDeny",
+          "passed": true
+        },
+        {
+          "name": "control write",
+          "action": "dynamodb:PutItem",
+          "decision": "implicitDeny",
+          "expected": "implicitDeny",
+          "passed": true
+        },
+        {
+          "name": "control scan",
+          "action": "dynamodb:Scan",
+          "decision": "implicitDeny",
+          "expected": "implicitDeny",
+          "passed": true
+        },
+        {
+          "name": "volume deletion",
+          "action": "ec2:DeleteVolume",
+          "decision": "implicitDeny",
+          "expected": "implicitDeny",
+          "passed": true
+        }
+      ]
+    },
+    "preExpiryGate": {
+      "preExpiryRefused": true,
+      "journalUnchanged": true,
+      "remoteCallsExpected": 0
+    },
+    "pendingPostExpiryGate": {
+      "pendingDeletionRefused": true,
+      "realPostExpiryGuardAndControlReadsPassed": true,
+      "journalUnchanged": true,
+      "remoteMutation": false
+    },
+    "completedAndRepeat": {
+      "positiveCompletion": true,
+      "repeatCompletion": true,
+      "remoteMutation": false,
+      "calls": 2
+    }
+  },
+  "retirement": {
+    "guardBootstrapRemovedAfterWorkloadAbsence": true,
+    "inventory": {
+      "deploymentId": "ows-32a76230ebd74e71afd9ab599e774dea",
+      "at": "2026-10-29T04:50:53.963Z",
+      "clusters": [],
+      "instances": 0,
+      "volumes": 0,
+      "vpcs": 0,
+      "addresses": 0,
+      "databases": 0,
+      "repositories": 0,
+      "roles": 0,
+      "functions": 0,
+      "controlTables": 0,
+      "schedules": 0,
+      "logGroups": 0,
+      "policies": 0,
+      "databaseSecrets": 0,
+      "buckets": 0,
+      "passed": true
+    },
+    "publisher": {
+      "codeVersionDeleted": true,
+      "publisherStackDeleted": true,
+      "bucketAbsent": true,
+      "guardAndBootstrapRetiredFirst": true
+    }
+  },
+  "tests": {
+    "cli": 61,
+    "expiryGuard": 9,
+    "failures": 0,
+    "linuxSourceBuild": true
+  },
+  "budget": {
+    "reportedAccountDailyCosts": {
+      "ResultsByTime": [
+        {
+          "TimePeriod": {
+            "Start": "2026-10-28",
+            "End": "2026-10-29"
+          },
+          "Total": {
+            "UnblendedCost": {
+              "Amount": "10.3215683861",
+              "Unit": "USD"
+            }
+          },
+          "Groups": [],
+          "Estimated": true
+        },
+        {
+          "TimePeriod": {
+            "Start": "2026-10-29",
+            "End": "2026-10-30"
+          },
+          "Total": {
+            "UnblendedCost": {
+              "Amount": "0",
+              "Unit": "USD"
+            }
+          },
+          "Groups": [],
+          "Estimated": true
+        }
+      ],
+      "DimensionValueAttributes": []
+    },
+    "billingObservedAt": "2026-10-29T04:44:03.891Z",
+    "authorizedIncrementalUsd": 100,
+    "conservativeEnvelopeUsd": 71.35,
+    "hardCap": false,
+    "billingAttributionDelayed": true,
+    "allExperimentResourcesRemoved": true
+  },
+  "remainingQualification": [
+    "S3 workload SDK transfer through Pod Identity (operator round-trip only in this trial)",
+    "Other cloud regions, architectures, providers and organizational policy combinations"
+  ],
+  "credentialsCommitted": false
+}

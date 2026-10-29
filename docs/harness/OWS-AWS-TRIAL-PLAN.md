@@ -2,6 +2,10 @@
 
 28 October 2026. Branch `feat/openworker-service-m1`, starting at `9f78b8a2`.
 User authorized the next AWS trial with the existing $100 experiment budget.
+
+**Completed:** fresh clean install, real agent/UI/replay and actual scheduled expiry
+all pass. Guard/bootstrap/code publisher are retired; independent resource inventory
+is empty. [Sanitized evidence](evidence/aws-clean-expiry-20261029.json).
 Inventory/report precedes provisioning. Never modify unrelated account workloads.
 
 ## Goal
@@ -422,3 +426,145 @@ volume/bucket inventories and the exact guard log group); it never invokes clean
 or edits the expiry clock. It will distinguish an incomplete upload and object
 cleanup from just accepting a stack-delete response. The existing publisher bucket
 is retained only while the new guard still needs its reviewed code version.
+
+V7 independent guard is CREATE_COMPLETE and passed native code/config/schedule/
+health validation. Original infrastructure create was dispatched once and is
+progressing without failed events. CLI expiry-recovery implementation is frozen in
+commit `35cab713`; dated live evidence will follow separately. Independent CloudTrail
+verification will require the cleanup role as DeleteStack actor, the original ARN,
+the stable expiry token and a request time after the actual fixed deadline.
+
+V7 real IAM simulation passes five observer checks: own deployment control-key read
+allowed; foreign-key read, control write, table scan and EC2 volume deletion denied.
+This is simulation evidence, not a substitute for the later real GetItem/volume
+reads. New EKS cluster, managed nodes, RDS and core add-ons are CREATE_COMPLETE;
+EBS add-on is finishing, with no failed infrastructure events.
+
+Fresh v7 infrastructure is CREATE_COMPLETE and native phase infrastructure_ready.
+Two managed nodes, all five add-ons, empty RDS and private SSM bridge are ready.
+Pinned source-built harness image is publishing through native ows; exact private
+endpoint/CA access is established. The clean test will use new installer state and
+new Secrets rather than carrying the earlier operator repairs forward.
+
+Fresh platform is platform_ready: all sixteen namespace/resource operations complete,
+zero explicit no-effect resets, original CNI update observed without a second update.
+Functional traffic probes are running in the owned service namespace. Authenticated
+OpenShell gateway installs separately using the exported certgen policy; no Secret,
+Job or Helm repair has occurred.
+
+All five real strict-network probes pass again; their test resources are removed.
+Fresh authenticated gateway is deployed/Ready on its first Helm revision, with no
+qualified-after-timeout flag, failed-release receipt or recovery reset. This clean
+path uses the exported narrow certgen policy directly. Fresh Secrets are staging
+through the native installer; no manual Secret or Job edits have occurred.
+
+Clean install passes: both gateway and service Helm revision 1 are deployed; every
+installer operation is complete, confirmedNoEffect is empty, no failed-release or
+qualifiedAfterTimeout receipt exists, and there are no operator repair files.
+The original bootstrap Job completed in 12 seconds. All API, worker, controller,
+platform and UI processes are Ready. This fresh empty-RDS path directly exercises
+the corrected URL generator. Seeded an owned S3 object (SHA-256 readback matches)
+and one unfinished multipart upload; this is an operator S3 round-trip, not a claim
+that the workload SDK's S3 transfer path is qualified. Agent configuration succeeded
+and a new live model submission is underway.
+
+Fresh live agent completed successfully: three real model requests and successful
+write_file/run_shell calls. Independent cat read confirms the exact file on the
+new encrypted, ownership-tagged EBS workspace. UI trace/result and live connection
+pass with a timeout covering the idle heartbeat. A five-second indicator assertion
+initially failed because the temporary TLS presentation proxy (not the shipped UI)
+omitted flushHeaders; corrected that private test fixture and rechecking it.
+No production image, Helm release, Secret or Job is being repaired or replaced.
+
+Pre-expiry observation at 04:14 UTC: main CREATE_COMPLETE, deleteIntent=null,
+no expiry delete token, one owned S3 object and one multipart upload, five encrypted
+in-use volumes, and scheduled not_due reports with zero destructive actions. The
+known workspace and gateway disks remain for the guard's orphan-volume path.
+
+UI recheck passes with the original strict five-second assertion after fixing only
+the temporary TLS fixture: live connection, 40 session trace steps, actual result,
+zero page errors. The shipped UI already called flushHeaders; no product code or
+cloud deployment changed. Completed run replay exactly matches all 36 run events
+and result; no model/tool task was resubmitted. All clean-install gates remain true.
+
+Pre-expiry reconciliation gate rejects before any provider call and leaves the local
+journal unchanged. Last pre-deadline snapshot still has all five encrypted volumes,
+one object and one upload, control version 1/deleteIntent=null, no failed resources
+and no expiry delete token. Guard logs are paged explicitly to avoid mistaking a
+partially returned CloudWatch page for complete evidence. The fixed deadline is
+now due; only read-only observations will follow until the scheduled guard finishes.
+
+The real deadline has passed. No manual infrastructure-delete request was sent for
+v7 and no clock, schedule, Lambda environment or guard control record was edited.
+Only read-only observers run while the actual five-minute schedule performs cleanup.
+Local listener PIDs are recorded for precise test-process retirement afterward.
+
+Scheduled guard automatically requested deletion at 04:28:05 UTC, 68 seconds after
+the fixed deadline. Main stack is DELETE_IN_PROGRESS with the stable original
+`<deploymentId>-expiry` token; control version 2 records that same intent. Owned
+S3 bucket is already absent, including the seeded object/upload. SSM bridge/root
+disk are gone; four encrypted in-use worker/workspace volumes remain temporarily.
+No failed CloudFormation resources or guard errors, complete paged logs. No manual
+v7 DeleteStack request was made. Next observations must prove orphan disks and all
+infrastructure absent before retiring the guard/identities.
+
+The automatic expiry delete token is confirmed in original stack-level events.
+CloudTrail actor lookup is initially empty (delivery lag); retain it as pending,
+not proof of actor absence. Real read-only native reconciliation is being checked
+while deletion is in progress: it must read its newly scoped guard/control receipts
+successfully but refuse to mark pending deletion complete or write the journal.
+
+Real post-expiry native reconciliation passes its guard identity/config/health and
+strongly consistent control read using the new setup role, then correctly rejects
+DELETE_IN_PROGRESS. Journal bytes remain unchanged and no remote mutation occurs.
+This qualifies both the new read scope and the pending-deletion safety gate against
+actual AWS, before the forthcoming positive completion path.
+
+CloudTrail now confirms one successful DeleteStack against the original main ARN,
+issued by the exact generated cleanup role at 04:28:06 UTC after expiry. CloudTrail
+omits clientRequestToken from this event; the stable expiry token is independently
+verified from original CloudFormation stack events and the consistent control record.
+At 04:41 UTC the original main stack is DELETE_COMPLETE, artifact bucket absent,
+all instances/root volumes removed. Two detached encrypted 1 GiB workspace/gateway
+volumes remain awaiting the next real scheduled guard pass. No manual volume delete
+or main-stack delete is issued. All nine expiry guard regression tests pass as well
+as the 61 native CLI tests.
+
+At 04:43 UTC the next unchanged five-minute guard schedule deleted both detached
+owned volumes. Control version 4 records each exact volume intent; independent
+EC2 inventory is empty. Bucket and main stack are absent. Native reconcile-expiry
+now succeeds against real AWS and a repeat succeeds too, with remoteMutation=false
+in both results. Original-ARN/token/config checks remain enabled. Waiting for the
+next scheduled empty-inventory completion observation before guard retirement.
+
+Billing refresh at 04:44 UTC reports $10.3215683861 for UTC 28 October and $0 so
+far for 29 October, both estimated. This is account-day billing with delayed
+attribution, not a final per-deployment bill. No EKS clusters or RDS instances remain.
+The deliberately conservative cumulative planning envelope remains $71.35 within
+the unchanged $100 authorization. Exact recorded local trial listeners were stopped;
+no unrelated processes, Docker resources or local Kubernetes workloads were changed.
+
+At 04:48:06 UTC the unchanged schedule emitted teardown_observed_complete with
+zero pending disks and zero new destructive actions. Complete paged guard logs
+contain no errors. Main DELETE_COMPLETE, original expiry token/control identity,
+bucket absence and empty owned volume inventory are independently confirmed.
+Retiring original guard, then bootstrap identities, then the now-unused shared code
+publisher; these final retirements are explicit operator actions after workload
+absence, not claims that the guard deletes its own control plane.
+
+Final retirement passed: original guard and bootstrap both DELETE_COMPLETE.
+Independent inventory at 04:50:53 UTC found zero original clusters, active instances,
+volumes, VPCs, EIPs, databases, repositories, roles, functions, control tables,
+schedules, log groups, managed policies, database Secrets or artifact buckets.
+The shared publisher's exact code version was deleted, its original stack retired,
+and its retained empty bucket deleted last; all three absence checks pass.
+Task-private credential/token/key copies and credential caches were removed after
+evidence capture; original AWS and model credentials remain untouched. No unrelated
+account resources or local baseline workloads were modified.
+
+Final checks: 61 CLI tests, 9 expiry guard tests, full Linux ARM64 source image build,
+network-disabled image CLI smoke/export, real IAM scope simulation and real
+pre-expiry/pending/completed/repeated reconciliation gates passed. Sanitized evidence
+and docs updated; publication is to public feature branch feat/openworker-service-m1,
+with no pull request or main-branch merge. S3 workload SDK/Pod Identity transfer and
+final delayed billing attribution remain follow-ups, not claimed as qualified.
