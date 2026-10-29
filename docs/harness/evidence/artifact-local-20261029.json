@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "verifiedAt": "2026-10-29T12:36:06.569Z",
-  "sourceCommit": "92e1e685 plus managed v1 artifact route follow-up",
+  "sourceCommit": "05447169",
   "scope": "Disposable local PostgreSQL/S3 and synthetic Pod Identity credential chain; not AWS qualification",
   "checks": {
     "storageAndCredentialTests": 7,

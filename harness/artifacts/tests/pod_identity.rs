@@ -193,7 +193,9 @@ async fn projected_token_refresh_and_failures_never_use_ambient_credentials() {
                 before,
                 "credential failure sent an S3 request"
             );
-            if mode != "denied" {
+            if mode == "denied" {
+                assert!(fixture.credentials.load(Ordering::SeqCst) > credential_before);
+            } else {
                 assert_eq!(
                     fixture.credentials.load(Ordering::SeqCst),
                     credential_before

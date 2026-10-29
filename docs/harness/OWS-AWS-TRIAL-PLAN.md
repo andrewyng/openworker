@@ -629,3 +629,19 @@ read versus artifact-write authority, namespace checks, transfer limits and capa
 advertisement. Fresh real Docker qualification passes all three suites with /v1,
 legacy=false, 404 on old routes and 403 on wrong namespace. Seven server unit tests
 pass. Rebuilding the source image before publication; no deployed-image repair.
+
+Managed /v1 routes and all fresh local suites pass with namespace/authority
+enforcement and compatibility disabled. Source service image rebuilt before cloud
+publication. Both associated-role and unassociated-pod probe binaries compile on
+Linux ARM64; the unassociated negative-control logic passes an offline Docker
+smoke with networking disabled. Cloud infrastructure remains CREATE_IN_PROGRESS
+with no failed events; private operator bridge is ready, EKS/RDS are still creating.
+No provisioning requests are repeated while waiting.
+
+At 12:54 UTC RDS and the operator bridge are CREATE_COMPLETE; EKS control plane
+is still creating, with no failed infrastructure events. A bounded read-only waiter
+observes the original stack ARN while provisioning completes; create is never replayed.
+The test-only unassociated mode verifies missing Pod Identity inputs plus failure to
+obtain fallback metadata credentials, and its offline smoke passes. Associated API
+and worker checks require STS identity equal to the generated artifacts role and
+real AccessDenied for both reads and conditional writes outside the owned scope.

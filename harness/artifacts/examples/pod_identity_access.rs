@@ -14,6 +14,8 @@ use std::time::Duration;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Spec {
+    #[serde(default)]
+    mode: String,
     deployment: String,
     bucket: String,
     region: String,
@@ -87,14 +89,6 @@ async fn run() -> Result<()> {
     let spec: Spec = serde_json::from_str(&std::env::var("OW_ARTIFACT_PROBE_SPEC")?)?;
     component(&spec.deployment, 64)?;
     component(&spec.nonce, 64)?;
-    ensure!(
-        spec.own_key.starts_with(&format!("{}/", spec.deployment)),
-        "Own key must bind deployment"
-    );
-    ensure!(
-        spec.foreign_bucket != spec.bucket,
-        "Foreign bucket must differ"
-    );
     // Also builds the production adapter with its normal environment chain.
     Config {
         deployment: spec.deployment.clone(),
@@ -104,6 +98,43 @@ async fn run() -> Result<()> {
         ca_file: None,
     }
     .build(None)?;
+    if spec.mode == "unassociated" {
+        ensure!(
+            std::env::var_os("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_none()
+                && std::env::var_os("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE").is_none(),
+            "Unassociated pod must not receive identity inputs"
+        );
+        let client = AmazonS3Builder::new()
+            .with_bucket_name(&spec.bucket)
+            .with_region(&spec.region)
+            .with_retry(RetryConfig {
+                max_retries: 0,
+                ..Default::default()
+            })
+            .build()?;
+        ensure!(
+            client.credentials().get_credential().await.is_err(),
+            "Unassociated pod obtained fallback metadata credentials"
+        );
+        println!(
+            "{}",
+            json!({"passed":true,"unassociated":true,"podIdentityEnvironmentAbsent":true,
+            "metadataCredentialsUnavailable":true,"staticCredentialsAbsent":true})
+        );
+        return Ok(());
+    }
+    ensure!(
+        spec.mode.is_empty() || spec.mode == "associated",
+        "Unknown probe mode"
+    );
+    ensure!(
+        spec.own_key.starts_with(&format!("{}/", spec.deployment)),
+        "Own key must bind deployment"
+    );
+    ensure!(
+        spec.foreign_bucket != spec.bucket,
+        "Foreign bucket must differ"
+    );
     let store = client(&spec, &spec.bucket)?;
     let credential = store.credentials().get_credential().await?;
     let mut request = HttpRequest::new(HttpRequestBody::empty());
