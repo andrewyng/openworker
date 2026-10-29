@@ -645,3 +645,60 @@ The test-only unassociated mode verifies missing Pod Identity inputs plus failur
 obtain fallback metadata credentials, and its offline smoke passes. Associated API
 and worker checks require STS identity equal to the generated artifacts role and
 real AccessDenied for both reads and conditional writes outside the owned scope.
+
+At 12:59 UTC original infrastructure reached CREATE_COMPLETE: private EKS 1.36.5,
+two managed ARM64 workers, RDS 16.13 and all five add-ons. Native coordinator now
+records infrastructure_ready. Reviewed source-built service and unchanged runner
+are immutably published to the new exact ECR repositories; SSM route reaches both
+original nodes without changing endpoint/CA or public access. Native installation
+handoff is prepared with scripted=true and no model-key read or model Secret.
+
+Native installer plan is bound to original cluster and namespace identities:
+`ows-local-caa24c638bab4071ac80eaa5afe8ffbf`, digest
+`3f10d5f87a004f29a89a4d80c9fd15a611c42aeb6a0e65b27df46507609bfff2`.
+The first direct planning invocation lacked the task-private AWS profile environment
+and failed during read checks before creating installer state or mutation intent.
+Running that read-only planning step through the environment wrapper passed; no
+cloud mutation was retried or repaired. Platform installation now starts normally.
+
+Platform reached platform_ready after observing its original CNI update; no second
+update was sent. All five real packet allow/deny probes pass and exact probe resources
+are removed. Authenticated pinned OpenShell gateway is openshell_ready on its first
+installation, with no no-effect resets or operator repairs. Generated TLS/RDS/bootstrap
+Secrets are now staged through the native installer, with no model Secret or key.
+
+Real S3 producer upload and cross-API SHA-256 download succeed. The first larger
+truncated transfer is rejected by the deployed TLS proxy with 413 before reaching
+the adapter: the proxy's 160 KiB JSON limit also applied to artifact bytes. Source
+fix adds a content-route-only 64 MiB streaming limit and 120-second bounds, disables
+request buffering, and keeps other routes at 160 KiB. All six Helm boundary tests
+and real nginx syntax validation pass.
+
+A reviewed chart package is being applied as an explicit one-shot Helm upgrade to
+revision 2, with original namespace/release/value/installer receipts captured and
+package SHA bound before mutation. No ConfigMap patch or installer-journal rewrite.
+This run will qualify the source fix through an upgrade, not claim a clean initial
+AWS install with the final proxy. Same artifact IDs/bytes will be reconciled; the
+producer tool is never rerun. Because native teardown correctly refuses changed
+release revisions, retain the original independent expiry guard and reconcile its
+external scheduled teardown afterward; do not forge a new installer receipt.
+
+Real /v1 S3 storage qualification passes after the reviewed proxy upgrade. The
+36-byte producer file and 2 MiB+73-byte binary download with matching SHA-256
+through both API pods. Post-fix truncated upload returns 409/stays pending; exact-ID
+retry and read-only reconciliation complete without duplicate ready events or
+producer/tool replay. Independent S3 HEAD checks verify original bucket ownership
+and SSE-S3 encryption on manifests and parts; operator performed reads only.
+
+Actual STS probes in both API and worker identify the generated artifact role,
+with static keys absent. Foreign-prefix and foreign-bucket GET and conditional
+PUT requests return permission-denied, not timeout/missing-object success. A fresh
+unassociated/default-SA non-host-network pod receives no Pod Identity environment
+and cannot obtain fallback node metadata credentials.
+
+A separately recorded UID/RV-preconditioned API rollout replaces both processes.
+Both artifacts remain hash-exact through both replacements, with two ready events
+and exactly the original two tool calls. Producer session is closed, original
+environment is deleted with zero attachments, exact sandbox pod is absent, and
+both artifacts remain retrievable. Keeping the fixed original expiry schedule for
+final infrastructure/S3/orphan-disk cleanup; no deadline or guard control edits.

@@ -95,6 +95,12 @@ require session-scoped read authority. Legacy unversioned routes remain disabled
 unless compatibility mode was explicitly enabled. `/v1/capabilities` advertises
 `features.artifacts` only when storage is configured.
 
+The reference TLS proxy allows 64 MiB only on artifact content paths, with request
+and response buffering disabled and 120-second transfer inactivity bounds. Other
+requests retain the smaller 160 KiB proxy limit. The API additionally enforces its
+size/hash, concurrency and total upload/reconciliation deadlines. Customer ingress
+or load balancers must preserve equivalent streaming and bounded-size behavior.
+
 | Request | Purpose |
 |---|---|
 | `POST /sessions/:sid/artifacts` | Register `{request_id,turn_id,name,content_type,size,sha256}`; returns pending ID. Exact retry returns the same ID, including after ready. Changed actor/payload/store is 409. |

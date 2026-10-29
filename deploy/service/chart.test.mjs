@@ -98,6 +98,16 @@ test("S3 identity is assigned only to API/worker, with no Kubernetes API role", 
     /subjects:.*test-artifacts|roleRef:.*test-artifacts/,
   );
 });
+test("artifact content streams with its own bounded limit while JSON stays small", async () => {
+  const out = await render({});
+  assert.match(out, /client_max_body_size 160k/);
+  const content = out.match(/location ~ \^\/\(v1\/\)\?sessions\/[\s\S]*?\n\s*location \//)?.[0];
+  assert.ok(content, "Missing scoped artifact content location");
+  assert.match(content, /artifacts\/\[A-Za-z0-9_-\]\+\/content\$/);
+  assert.match(content, /client_max_body_size 64m/);
+  assert.match(content, /proxy_request_buffering off/);
+  assert.match(content, /client_body_timeout 120s/);
+});
 test("invalid ownership, mutable image and inadequate drain grace fail rendering", async () => {
   await assert.rejects(render({ worker: { ownership: "mixed" } }));
   await assert.rejects(render({ image: "example:latest" }));

@@ -218,7 +218,7 @@ export async function init(root, connectionFile, image, port = 58443) {
   );
   await privateWrite(
     join(input, "nginx.conf"),
-    `pid /tmp/nginx.pid;\nerror_log /dev/stderr warn;\nevents {worker_connections 256;}\nhttp {access_log off;client_body_temp_path /tmp/body;proxy_temp_path /tmp/proxy;fastcgi_temp_path /tmp/fastcgi;uwsgi_temp_path /tmp/uwsgi;scgi_temp_path /tmp/scgi;\nserver {listen 8443 ssl;ssl_certificate /tls/tls.crt;ssl_certificate_key /tls/tls.key;ssl_protocols TLSv1.2 TLSv1.3;client_max_body_size 160k;\nlocation / {proxy_pass http://127.0.0.1:8080;proxy_http_version 1.1;proxy_set_header Connection "";proxy_buffering off;proxy_read_timeout 3600s;}}}\n`,
+    `pid /tmp/nginx.pid;\nerror_log /dev/stderr warn;\nevents {worker_connections 256;}\nhttp {access_log off;client_body_temp_path /tmp/body;proxy_temp_path /tmp/proxy;fastcgi_temp_path /tmp/fastcgi;uwsgi_temp_path /tmp/uwsgi;scgi_temp_path /tmp/scgi;\nserver {listen 8443 ssl;ssl_certificate /tls/tls.crt;ssl_certificate_key /tls/tls.key;ssl_protocols TLSv1.2 TLSv1.3;client_max_body_size 160k;\nlocation ~ ^/(v1/)?sessions/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+/content$ {client_max_body_size 64m;client_body_timeout 120s;proxy_pass http://127.0.0.1:8080;proxy_http_version 1.1;proxy_set_header Connection "";proxy_request_buffering off;proxy_buffering off;proxy_read_timeout 120s;proxy_send_timeout 120s;}\nlocation / {proxy_pass http://127.0.0.1:8080;proxy_http_version 1.1;proxy_set_header Connection "";proxy_buffering off;proxy_read_timeout 3600s;}}}\n`,
   );
   const manifest = {
     id,
