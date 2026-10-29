@@ -2,7 +2,7 @@
 use crate::http::{ApiError, App};
 use anyhow::{ensure, Result};
 use axum::{
-    extract::{Path, Query},
+    extract::{DefaultBodyLimit, Path, Query},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Extension, Json, Router,
@@ -54,9 +54,14 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("POST", ["", "v1", "sessions" | "submissions"]) => Some(Action::Submit),
         ("GET", ["", "v1", "sessions", _])
         | ("GET", ["", "v1", "sessions", _, "events"])
-        | ("GET", ["", "v1", "sessions", _, "turns" | "runs" | "controls", _]) => {
+        | ("GET", ["", "v1", "sessions", _, "artifacts"])
+        | ("GET", ["", "v1", "sessions", _, "artifacts", _, "content"])
+        | ("GET", ["", "v1", "sessions", _, "turns" | "runs" | "controls" | "artifacts", _]) => {
             Some(Action::Read)
         }
+        ("POST", ["", "v1", "sessions", _, "artifacts"])
+        | ("POST", ["", "v1", "sessions", _, "artifacts", _, "reconcile"])
+        | ("PUT", ["", "v1", "sessions", _, "artifacts", _, "content"]) => Some(Action::Artifact),
         ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
         ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
         ("GET", ["", "v1", "worker-pools"]) => Some(Action::Read),
@@ -143,13 +148,33 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/sessions/:sid/turns/:id", get(result))
         .route("/v1/sessions/:sid/controls", post(control))
         .route("/v1/sessions/:sid/controls/:id", get(control_receipt))
+        .route(
+            "/v1/sessions/:sid/artifacts",
+            get(crate::artifacts::list).post(crate::artifacts::register),
+        )
+        .route(
+            "/v1/sessions/:sid/artifacts/:id",
+            get(crate::artifacts::metadata),
+        )
+        .route(
+            "/v1/sessions/:sid/artifacts/:id/reconcile",
+            post(crate::artifacts::reconcile),
+        )
+        .route(
+            "/v1/sessions/:sid/artifacts/:id/content",
+            get(crate::artifacts::download)
+                .put(crate::artifacts::upload)
+                .layer(DefaultBodyLimit::max(
+                    openworker_artifacts::MAX_SIZE as usize + 1,
+                )),
+        )
 }
 fn cfg(app: &App) -> &ServiceConfig {
     app.service.as_ref().expect("authenticated service")
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -387,6 +412,25 @@ async fn scale_pool(
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn artifact_routes_use_explicit_read_and_write_authority() {
+        for path in [
+            "/v1/sessions/s/artifacts",
+            "/v1/sessions/s/artifacts/a",
+            "/v1/sessions/s/artifacts/a/content",
+        ] {
+            assert!(authority("GET", path) == Some(Action::Read));
+        }
+        for (method, path) in [
+            ("POST", "/v1/sessions/s/artifacts"),
+            ("POST", "/v1/sessions/s/artifacts/a/reconcile"),
+            ("PUT", "/v1/sessions/s/artifacts/a/content"),
+        ] {
+            assert!(authority(method, path) == Some(Action::Artifact));
+        }
+        assert!(authority("DELETE", "/v1/sessions/s/artifacts/a").is_none());
+        assert!(authority("POST", "/v1/sessions/s/artifacts/a/content").is_none());
+    }
     #[test]
     fn compatibility_routes_require_explicit_opt_in() {
         let mut c: ServiceConfig =

@@ -612,3 +612,20 @@ will be rechecked by native preflight. The prior conservative $71.35 envelope pl
 one more $0.33 fixed-hour allowance is $71.68, retaining the shared $25 variable
 reserve rather than treating reported delayed billing as settled cost. Guard-code
 publisher will be fresh; original retired stacks/journals are never reused.
+
+Fresh AWS preflight passes all 54 provider calls. Published one-hour trial planning
+estimate is $25.32 including its $25 variable reserve; cumulative conservative
+envelope remains $71.68 using the same shared reserve. Deployment
+`ows-d32f5ba42cd8402da0585901909bcb19`, plan digest
+`eccb73bd4c16ec96979f961183fe3c7cf25c1480aadb2fbb5c3927afb45fec1a`,
+fixed deadline 29 October 13:36:36 UTC. Fresh publisher is version-pinned; original
+trial remains retired. Generated bootstrap identities now submitted once. No model
+key is read: the installed producer agent will use the deterministic model fixture.
+
+Managed service inspection exposed a real integration gap before image publication:
+legacy artifact routes were hidden with compatibility disabled and had no /v1
+equivalent. Added /v1 routes using the existing storage/catalog handlers, explicit
+read versus artifact-write authority, namespace checks, transfer limits and capability
+advertisement. Fresh real Docker qualification passes all three suites with /v1,
+legacy=false, 404 on old routes and 403 on wrong namespace. Seven server unit tests
+pass. Rebuilding the source image before publication; no deployed-image repair.

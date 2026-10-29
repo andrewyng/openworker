@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-29T12:36:06.569Z",
+  "sourceCommit": "92e1e685 plus managed v1 artifact route follow-up",
+  "scope": "Disposable local PostgreSQL/S3 and synthetic Pod Identity credential chain; not AWS qualification",
+  "checks": {
+    "storageAndCredentialTests": 7,
+    "syntheticCredentialModes": [
+      "projected token file authentication",
+      "temporary credential and projected token refresh",
+      "credential endpoint rejects authorization",
+      "missing projected token file",
+      "container endpoint without token file",
+      "token file without container endpoint"
+    ],
+    "inheritedAwsCredentialSourcesRemovedInProbe": true,
+    "credentialFailureSendsNoS3Request": true,
+    "realDockerSuites": [
+      "managed v1 filesystem API process replacement",
+      "S3 immutable streaming, cancellation and conflict contract",
+      "managed v1 S3 API process replacement"
+    ],
+    "truncatedUploadCannotPublishReady": true,
+    "exactIdRetry": true,
+    "lostReadyCommitReconciliation": true,
+    "authenticatedCrossApiDownload": true,
+    "bothOriginalApisReplaced": true,
+    "duplicateReadyEventsPrevented": true
+  },
+  "images": {
+    "pg": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "s3": "chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+  },
+  "cleanup": {
+    "exactLabeledDockerFixturesRemoved": true,
+    "unrelatedWorkloadsModified": false
+  },
+  "cloudCalls": false,
+  "liveModelCalls": false,
+  "serviceApi": {
+    "version": "v1",
+    "legacyCompatibility": false,
+    "legacyArtifactRoutesReturn404": true,
+    "wrongNamespaceReturns403": true,
+    "authorityUnitTests": 7
+  }
+}

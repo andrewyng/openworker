@@ -88,6 +88,7 @@ async fn qualify() {
         .unwrap_or_else(|_| json!({"kind":"filesystem","root":object_root,"deployment":"storage-test","shared_durable":true}));
     let artifact_config: ArtifactConfig = serde_json::from_value(artifacts.clone()).unwrap();
     let config = json!({
+        "service":{"id":"storage-service","namespace":"storage-test","agent":"fixture","legacy_compatibility":false},
         "database_env":"OW_PG_TEST_URL","schema":format!("ow_storage_{}",uuid::Uuid::new_v4().simple()),
         "database_loopback_plaintext":true,"state_root":root.path().join("state"),
         "bundle":Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant"),
@@ -117,17 +118,41 @@ async fn qualify() {
         owner.save(&active,"turn_completed",json!({"status":"completed"})).unwrap();
         (s.id,turn)
     }}).await.unwrap();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-openworker-namespace", "storage-test".parse().unwrap());
     let client = reqwest::Client::builder()
+        .default_headers(headers)
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
     let (mut a, base_a) = api(&path, "storage-a").await;
     let (mut b, base_b) = api(&path, "storage-b").await;
+    assert_eq!(
+        client
+            .get(format!("{base_a}/sessions/{sid}/artifacts"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    assert_eq!(
+        client
+            .get(format!("{base_a}/v1/sessions/{sid}/artifacts"))
+            .bearer_auth(&token)
+            .header("x-openworker-namespace", "wrong-namespace")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
     let registration = json!({"request_id":"storage-upload","turn_id":turn,"name":"proof.bin",
         "content_type":"application/octet-stream","size":bytes.len(),"sha256":hash(&bytes)});
     let registered = metadata(
         client
-            .post(format!("{base_a}/sessions/{sid}/artifacts"))
+            .post(format!("{base_a}/v1/sessions/{sid}/artifacts"))
             .bearer_auth(&token)
             .json(&registration)
             .send()
@@ -136,7 +161,7 @@ async fn qualify() {
     )
     .await;
     let id = registered["id"].as_str().unwrap();
-    let route = format!("/sessions/{sid}/artifacts/{id}/content");
+    let route = format!("/v1/sessions/{sid}/artifacts/{id}/content");
     assert_eq!(
         client
             .get(format!("{base_b}{route}"))
@@ -172,7 +197,7 @@ async fn qualify() {
     );
     let retry = metadata(
         client
-            .post(format!("{base_b}/sessions/{sid}/artifacts"))
+            .post(format!("{base_b}/v1/sessions/{sid}/artifacts"))
             .bearer_auth(&token)
             .json(&registration)
             .send()
@@ -207,7 +232,7 @@ async fn qualify() {
     lost_registration["request_id"] = json!("lost-ready-commit");
     let lost = metadata(
         client
-            .post(format!("{base_a}/sessions/{sid}/artifacts"))
+            .post(format!("{base_a}/v1/sessions/{sid}/artifacts"))
             .bearer_auth(&token)
             .json(&lost_registration)
             .send()
@@ -226,7 +251,7 @@ async fn qualify() {
     assert_eq!(
         client
             .get(format!(
-                "{base_b}/sessions/{sid}/artifacts/{lost_id}/content"
+                "{base_b}/v1/sessions/{sid}/artifacts/{lost_id}/content"
             ))
             .bearer_auth(&token)
             .send()
@@ -238,7 +263,7 @@ async fn qualify() {
     let reconciled = metadata(
         client
             .post(format!(
-                "{base_b}/sessions/{sid}/artifacts/{lost_id}/reconcile"
+                "{base_b}/v1/sessions/{sid}/artifacts/{lost_id}/reconcile"
             ))
             .bearer_auth(&token)
             .send()
@@ -253,14 +278,14 @@ async fn qualify() {
     download(&client, &format!("{base_c}{route}"), &token, &bytes).await;
     download(
         &client,
-        &format!("{base_c}/sessions/{sid}/artifacts/{lost_id}/content"),
+        &format!("{base_c}/v1/sessions/{sid}/artifacts/{lost_id}/content"),
         &token,
         &bytes,
     )
     .await;
     let replay = metadata(
         client
-            .post(format!("{base_c}/sessions/{sid}/artifacts"))
+            .post(format!("{base_c}/v1/sessions/{sid}/artifacts"))
             .bearer_auth(&token)
             .json(&registration)
             .send()

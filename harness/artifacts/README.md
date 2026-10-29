@@ -87,6 +87,14 @@ configured principal. No public links or presigned URLs. This is single-principa
 reference authorization, **not tenant isolation**; production hosts must enforce
 principal/session access before these trusted operations.
 
+Managed OpenWorker Service exposes these same operations under
+`/v1/sessions/:sid/artifacts`. Send the service bearer credential and
+`X-OpenWorker-Namespace` header, as for other `/v1` requests. Registration,
+upload and reconciliation require `artifact.write`; listing, metadata and download
+require session-scoped read authority. Legacy unversioned routes remain disabled
+unless compatibility mode was explicitly enabled. `/v1/capabilities` advertises
+`features.artifacts` only when storage is configured.
+
 | Request | Purpose |
 |---|---|
 | `POST /sessions/:sid/artifacts` | Register `{request_id,turn_id,name,content_type,size,sha256}`; returns pending ID. Exact retry returns the same ID, including after ready. Changed actor/payload/store is 409. |
