@@ -404,3 +404,49 @@ fn managed_database_is_not_required_to_remove_a_gateway_only_installation() {
         .unwrap()
         .contains("service-install-status"));
 }
+
+#[test]
+fn failed_original_release_receipt_is_cleanup_only_and_rejects_drift() {
+    let f = Fixture::new();
+    let args = [
+        "deploy",
+        "cluster",
+        "record-failed-release",
+        "--state",
+        f.state.to_str().unwrap(),
+        "--accept-plan",
+        &f.digest,
+        "--release",
+        "service-release",
+    ];
+    assert!(!Fixture::call(f.dir.path(), &args, &[]).status.success());
+    assert!(!f.apply(&[("FAIL_RELEASE", "yes")], false).status.success());
+    let original = f.remote();
+    for field in ["version", "uid", "labels"] {
+        let mut remote = original.clone();
+        match field {
+            "version" => remote["releases"]["ow-service-m4-installer"]["ows"]["version"] = json!(2),
+            "labels" => {
+                remote["releases"]["ow-service-m4-installer"]["ows"]["labels"]
+                    ["openworker.io/operation-id"] = json!("foreign")
+            }
+            _ => continue,
+        }
+        f.set_remote(&remote);
+        assert!(!Fixture::call(f.dir.path(), &args, &[]).status.success());
+    }
+    f.set_remote(&original);
+    assert_eq!(
+        parsed(&Fixture::call(f.dir.path(), &args, &[]))["cleanupOnly"],
+        true
+    );
+    let mut changed = original.clone();
+    changed["releases"]["ow-service-m4-installer"]["ows"]["uid"] = json!("replacement");
+    f.set_remote(&changed);
+    assert!(!Fixture::call(f.dir.path(), &args, &[]).status.success());
+    assert!(!f.destroy().status.success());
+    f.set_remote(&original);
+    assert!(!f.apply(&[], false).status.success());
+    assert_eq!(f.installs(), 1);
+    assert_eq!(parsed(&f.destroy())["phase"], "destroyed");
+}

@@ -169,6 +169,7 @@ fn complete_templates_are_private_bounded_and_have_valid_dependency_graphs() {
     for t in [&infra, &boot, &guard] {
         template_consistent(t);
     }
+    assert!(fs::metadata(out.join("bootstrap.cfn.json")).unwrap().len() <= 51200);
     let r = &infra["Resources"];
     assert_eq!(
         r["Cluster"]["Properties"]["ResourcesVpcConfig"]["EndpointPublicAccess"],
@@ -293,7 +294,7 @@ fn generated_executor_cannot_mutate_identities_and_cleanup_cannot_provision() {
     let boot = read(&out, "bootstrap.cfn.json");
     let resources = boot["Resources"].as_object().unwrap();
     let executor = &resources["ExecutionRole"]["Properties"];
-    assert_eq!(executor["ManagedPolicyArns"].as_array().unwrap().len(), 5);
+    assert_eq!(executor["ManagedPolicyArns"].as_array().unwrap().len(), 6);
     assert_eq!(
         executor["AssumeRolePolicyDocument"]["Statement"][0]["Principal"]["Service"],
         "cloudformation.amazonaws.com"
@@ -311,7 +312,12 @@ fn generated_executor_cannot_mutate_identities_and_cleanup_cannot_provision() {
             for action in list(&s["Action"]) {
                 assert!(!action.contains('*'));
                 if action.starts_with("iam:") {
-                    assert!(["iam:GetRole", "iam:PassRole"].contains(&action));
+                    assert!([
+                        "iam:GetRole",
+                        "iam:PassRole",
+                        "iam:ListAttachedRolePolicies"
+                    ]
+                    .contains(&action));
                 }
                 if action == "iam:PassRole" {
                     for arn in list(&s["Resource"]) {
@@ -330,6 +336,7 @@ fn generated_executor_cannot_mutate_identities_and_cleanup_cannot_provision() {
                     "NetworkObservation",
                     "CreateTaggedPrivateCluster",
                     "GenerateDatabasePassword",
+                    "ReadDatabaseEngineDefaults",
                     "ObserveLogGroups"
                 ]
                 .contains(&s["Sid"].as_str().unwrap()));
@@ -355,7 +362,86 @@ fn generated_executor_cannot_mutate_identities_and_cleanup_cannot_provision() {
             }
         }
     }
-    assert_eq!(policy_count, 5);
+    assert_eq!(
+        read(&out, "execution-policy-data.json")["Statement"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["Sid"] == "ReadDatabaseEngineDefaults")
+            .unwrap()["Action"],
+        json!([
+            "rds:DescribeEngineDefaultParameters",
+            "rds:DescribeDBEngineVersions"
+        ])
+    );
+    // EKS uses the caller's launch permissions when a custom template tags workers.
+    // IAM validates every RunInstances resource independently; keep dependencies
+    // scoped too, rather than granting a generic regional RunInstances wildcard.
+    let nodes = read(&out, "execution-policy-nodes.json");
+    let node_statements = nodes["Statement"].as_array().unwrap();
+    assert_eq!(node_statements.len(), 8);
+    for st in node_statements {
+        assert!(!list(&st["Resource"]).contains(&"*"));
+        assert!(list(&st["Action"])
+            .iter()
+            .all(|a| ["ec2:RunInstances", "ec2:CreateTags"].contains(a)));
+        assert!(st.get("Condition").is_some());
+    }
+    let node = |sid: &str| node_statements.iter().find(|s| s["Sid"] == sid).unwrap();
+    assert_eq!(
+        node("TaggedWorkerInstances")["Condition"]["StringEquals"]["ec2:InstanceType"],
+        "t4g.large"
+    );
+    assert_eq!(
+        node("OwnedWorkerTemplate")["Condition"]["StringEquals"]
+            ["ec2:ResourceTag/ows:deployment-id"],
+        meta["deploymentId"]
+    );
+    for sid in [
+        "TaggedWorkerInstances",
+        "TaggedWorkerDisks",
+        "OwnedWorkerSubnets",
+        "OwnedWorkerSecurityGroup",
+        "WorkerAmiFromTemplate",
+        "NewWorkerInterface",
+    ] {
+        assert!(node(sid)["Condition"]["ArnLike"]["ec2:LaunchTemplate"]
+            .as_str()
+            .unwrap()
+            .contains(":launch-template/"));
+    }
+    let infrastructure = read(&out, "infrastructure.cfn.json");
+    assert_eq!(
+        infrastructure["Resources"]["LaunchTemplate"]["Properties"]["LaunchTemplateData"]
+            ["SecurityGroupIds"],
+        json!([{"Ref":"WorkerSecurityGroup"}])
+    );
+    assert_eq!(
+        infrastructure["Resources"]["DatabaseSecurityGroup"]["Properties"]["SecurityGroupIngress"]
+            [0]["SourceSecurityGroupId"],
+        json!({"Ref":"WorkerSecurityGroup"})
+    );
+    assert_eq!(
+        node("OwnedWorkerSecurityGroup")["Condition"]["StringEquals"]
+            ["ec2:ResourceTag/ows:deployment-id"],
+        meta["deploymentId"]
+    );
+    let eks_permissions = read(&out, "execution-policy-eks.json");
+    let slr = eks_permissions["Statement"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["Sid"] == "ReadRequiredServiceLinkedRoles")
+        .unwrap();
+    assert_eq!(
+        list(&slr["Action"]),
+        vec!["iam:GetRole", "iam:ListAttachedRolePolicies"]
+    );
+    assert_eq!(list(&slr["Resource"]).len(), 4);
+    assert!(list(&slr["Resource"]).iter().all(|r| r
+        .starts_with("arn:aws:iam::123456789012:role/aws-service-role/")
+        && !r.contains('*')));
+    assert_eq!(policy_count, 6);
     let cleanup = read(&out, "cleanup-policy.json");
     for s in cleanup["Statement"].as_array().unwrap() {
         for action in list(&s["Action"]) {
@@ -657,4 +743,79 @@ fn setup_can_only_publish_owned_images_and_read_the_bound_database_bootstrap_sec
     assert!(read(&out, "workload-policy.json")
         .to_string()
         .contains(&format!("{}/", meta["deploymentId"].as_str().unwrap())));
+}
+
+#[test]
+fn optional_operator_access_has_no_ingress_or_workload_identity_and_is_expiry_owned() {
+    let home = tempfile::tempdir().unwrap();
+    let mut i = input();
+    i["operatorAccess"] = json!({"mode":"ssm","amiId":"ami-11111111111111111"});
+    let (out, meta) = generate(home.path(), "private-operator", &i);
+    let infra = read(&out, "infrastructure.cfn.json");
+    let boot = read(&out, "bootstrap.cfn.json");
+    template_consistent(&infra);
+    template_consistent(&boot);
+    assert!(fs::metadata(out.join("bootstrap.cfn.json")).unwrap().len() <= 51200);
+    let instance = &infra["Resources"]["OperatorAccess"]["Properties"];
+    assert_eq!(instance["SubnetId"], json!({"Ref":"PrivateSubnet0"}));
+    assert_eq!(instance["InstanceType"], "t4g.micro");
+    assert!(
+        instance.get("KeyName").is_none()
+            && instance.get("UserData").is_none()
+            && instance.get("NetworkInterfaces").is_none()
+    );
+    assert_eq!(instance["MetadataOptions"]["HttpTokens"], "required");
+    assert_eq!(instance["BlockDeviceMappings"][0]["Ebs"]["Encrypted"], true);
+    assert_eq!(instance["PropagateTagsToVolumeOnCreation"], true);
+    assert!(infra["Resources"]["OperatorSecurityGroup"]["Properties"]
+        .get("SecurityGroupIngress")
+        .is_none());
+    assert_eq!(
+        infra["Resources"]["ManagementApiSecurityGroup"]["Properties"]["SecurityGroupIngress"][1]
+            ["SourceSecurityGroupId"],
+        json!({"Ref":"OperatorSecurityGroup"})
+    );
+    assert_eq!(
+        infra["Resources"]["Cluster"]["Properties"]["ResourcesVpcConfig"]["EndpointPublicAccess"],
+        false
+    );
+    assert_eq!(
+        boot["Resources"]["OperatorProfile"]["Properties"]["Roles"],
+        json!([{"Ref":"OperatorRole"}])
+    );
+    let role = &boot["Resources"]["OperatorRole"]["Properties"];
+    assert!(role.get("ManagedPolicyArns").is_none());
+    assert_eq!(
+        role["Policies"][0]["PolicyDocument"],
+        read(&out, "operator-policy.json")
+    );
+    let actions = list(&role["Policies"][0]["PolicyDocument"]["Statement"][0]["Action"]);
+    assert_eq!(actions.len(), 5);
+    assert!(
+        !actions.contains(&"ssm:GetParameter")
+            && !actions.contains(&"secretsmanager:GetSecretValue")
+    );
+    let permissions = read(&out, "execution-policy-access.json");
+    assert!(serde_json::to_vec(&permissions).unwrap().len() <= 6144);
+    for stmt in permissions["Statement"].as_array().unwrap() {
+        for action in list(&stmt["Action"]) {
+            assert!(![
+                "iam:CreateRole",
+                "secretsmanager:GetSecretValue",
+                "ssm:SendCommand"
+            ]
+            .contains(&action));
+        }
+        if list(&stmt["Action"]).contains(&"ec2:TerminateInstances") {
+            assert_eq!(
+                stmt["Condition"]["StringEquals"]["ec2:ResourceTag/ows:deployment-id"],
+                meta["deploymentId"]
+            );
+        }
+        if list(&stmt["Action"]).contains(&"iam:PassRole") {
+            assert!(list(&stmt["Resource"])[0].ends_with("-access"));
+        }
+    }
+    let base = read(&out, "infrastructure-inputs.json");
+    assert_eq!(base["operatorAccess"]["mode"], "ssm");
 }

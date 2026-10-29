@@ -17,6 +17,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_access(false)
+    }
+    fn with_access(access: bool) -> Self {
         let home = tempfile::tempdir().unwrap();
         let aws = home.path().join("aws");
         fs::write(&aws, include_str!("fixtures/aws-preflight.py")).unwrap();
@@ -25,6 +28,9 @@ impl Fixture {
             serde_json::from_str(include_str!("../examples/aws-infrastructure.json")).unwrap();
         input["guardCode"]["sha256"] =
             json!(format!("{:x}", Sha256::digest(b"guard-code-fixture")));
+        if access {
+            input["operatorAccess"] = json!({"mode":"ssm","amiId":"ami-11111111111111111"});
+        }
         let config = home.path().join("input.json");
         fs::write(&config, serde_json::to_vec(&input).unwrap()).unwrap();
         let plan = home.path().join("plan");
@@ -164,7 +170,7 @@ fn passes_complete_read_only_preflight_and_binds_fresh_report_to_plan() {
             .as_array()
             .unwrap()
             .len(),
-        8
+        9
     );
     let calls = f.calls();
     assert!(calls.len() > 35);
@@ -358,4 +364,35 @@ fn deadlines_and_invalid_local_inputs_prevent_unbounded_or_unreviewed_calls() {
     assert!(!r.status.success());
     assert!(!out.exists());
     assert!(f.calls().is_empty());
+}
+
+#[test]
+fn operator_access_checks_ami_offering_quota_and_includes_all_extra_fixed_costs() {
+    let f = Fixture::with_access(true);
+    let (r, _) = f.preflight("", &[]);
+    let v = report(&r);
+    assert!(r.status.success(), "{v}");
+    assert_eq!(check(&v, "operator_access")["status"], "passed");
+    assert_eq!(
+        check(&v, "quota_headroom")["detail"]["requestedStandardVCpus"],
+        6
+    );
+    let cost = &check(&v, "published_cost_estimate")["detail"]["components"];
+    assert_eq!(cost["operatorInstance"]["quantity"], 1.0);
+    assert_eq!(cost["operatorGp3Storage"]["quantity"], 8.0);
+    assert_eq!(
+        check(&v, "policy_validation")["detail"]["policiesValidated"]
+            .as_array()
+            .unwrap()
+            .len(),
+        11
+    );
+    for (scenario, name) in [
+        ("operator-ami-foreign", "operator_access"),
+        ("operator-quota-small", "quota_headroom"),
+    ] {
+        let (r, _) = f.preflight(scenario, &[]);
+        assert!(!r.status.success());
+        assert_eq!(check(&report(&r), name)["status"], "blocked");
+    }
 }

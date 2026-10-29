@@ -7,7 +7,10 @@ def debug_error(t,e,b):
  with (root/'fake-error.log').open('a') as f:traceback.print_exception(t,e,b,file=f)
 sys.excepthook=debug_error
 def arg(name):return args[args.index(name)+1]
-q=json.loads(arg('--cli-input-json'))
+if service=='lambda' and op=='invoke':
+ assert '--cli-input-json' not in args
+ q={'FunctionName':arg('--function-name'),'InvocationType':arg('--invocation-type'),'Payload':arg('--payload')}
+else:q=json.loads(arg('--cli-input-json'))
 plan=json.loads((root/'plan/deployment-plan.json').read_text())
 prefix='ows-'+plan['name']+'-'+plan['deploymentId'][4:16];account=plan['target']['account'];region=plan['target']['region']
 file=root/'remote.json';remote=json.loads(file.read_text()) if file.exists() else {}
@@ -40,7 +43,9 @@ if service=='cloudformation':
  s=find()
  if not s:
   assert op=='describe-stacks'
-  print(f'An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id {selector} does not exist',file=sys.stderr);sys.exit(77)
+  message=f'An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id {selector} does not exist'
+  if scenario=='styled-absence':message='aws: [ERROR]: '+message.replace('operation:','operation (reached max retries: 0):')
+  print(message,file=sys.stderr);sys.exit(77)
  if op=='describe-stacks':
   value={k:v for k,v in s.items() if k not in ['template','tokens']}
   if scenario=='replaced-stack':value['StackId']+='-replacement'
@@ -103,6 +108,7 @@ if service=='lambda':
   out({'FunctionArn':function,'Runtime':'nodejs22.x','Handler':'index.handler','State':'Active','LastUpdateStatus':'Successful','Role':f'arn:aws:iam::{account}:role/{prefix}-cleanup','CodeSha256':base64.b64encode(bytes.fromhex(plan['infrastructure']['guardCode']['sha256'])).decode() if scenario!='wrong-code' else 'eA==','Environment':template['Environment']})
  if op=='get-function-concurrency':out({'ReservedConcurrentExecutions':0 if scenario=='guard-disabled' else 1})
  assert op=='invoke'
+ assert arg('--function-name')==q['FunctionName'] and arg('--payload')==q['Payload']
  assert json.loads(base64.b64decode(q['Payload']))=={'mode':'health'}
  path=pathlib.Path(args[-1]);path.write_text(json.dumps({'status':'healthy','destructiveActions':0}))
  out({'StatusCode':200,**({'FunctionError':'Unhandled'} if scenario=='lambda-error' else {})})

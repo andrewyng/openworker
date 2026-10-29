@@ -77,6 +77,9 @@ pub(super) fn export(
             "Dedicated gateway namespace required"
         );
         resources.push(json!({"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"ows-trusted-gateway","namespace":ns},"spec":{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"openshell","app.kubernetes.io/instance":release}},"policyTypes":["Ingress","Egress"],"ingress":[{}],"egress":[{}]}}));
+        // The pinned pre-install hook has different labels from the gateway.
+        // It only needs Kubernetes Secret creation and DNS, not unrestricted egress.
+        resources.push(json!({"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"ows-gateway-certgen","namespace":ns},"spec":{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"openshell-certgen","app.kubernetes.io/instance":release,"app.kubernetes.io/component":"certgen"}},"policyTypes":["Ingress","Egress"],"ingress":[],"egress":[{"ports":[{"protocol":"TCP","port":443}]},{"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}],"ports":[{"protocol":"UDP","port":53},{"protocol":"TCP","port":53}]}]}}));
     }
     let artifact = json!({"apiVersion":"v1","kind":"List","items":resources});
     let bytes = json_bytes(&artifact)?;

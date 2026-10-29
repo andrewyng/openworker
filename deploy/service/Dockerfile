@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS build
+FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS source
 # This pinned image contains 1.96.1. Avoid downloading the workstation override.
 ENV RUSTUP_TOOLCHAIN=1.96.1 CARGO_BUILD_JOBS=2
 WORKDIR /src/harness
 COPY harness/ ./
 COPY deploy/service/guard/ /src/deploy/service/guard/
 COPY deploy/service/platform/ /src/deploy/service/platform/
+FROM source AS build
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
     cargo build --locked --release -p openworker-server-reference -p openworker-service-cli -p openworker-runtime && \
     mkdir /out && cp target/release/openworker-server-reference target/release/ows target/release/openworker /out/

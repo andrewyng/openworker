@@ -121,6 +121,20 @@ the installer does not silently delete and reinstall them. The old operation int
 is retained in recovery history. Keep input files unchanged; editing chart/values
 requires a newly reviewed plan rather than silently changing an accepted operation.
 
+After inspecting a terminal failed install (including hook effects), record its
+original revision-1 UID and operation provenance for cleanup:
+
+```sh
+ows deploy cluster record-failed-release --state ./install-state \
+  --accept-plan <planDigest> --release openshell-release
+```
+
+This reads the cluster and writes a local receipt only. It rejects foreign/replaced
+releases and does not make the gateway ready or replay its hooks. Use the ordinary
+identity-checked `destroy` below, then review a fresh plan. Shared platform resources
+remain in place; the fresh plan must select existing prerequisites rather than adopt
+or overwrite them. Its platform artifact may contain only the new namespace policies.
+
 Close sessions and explicitly delete their execution environments before teardown:
 
 ```sh

@@ -99,6 +99,15 @@ struct Aws {
     root: PathBuf,
     preflight: Option<PathBuf>,
 }
+// AWS CLI v2 may add a fixed log prefix and retry annotation even when attempts=1.
+// Accept only known wrappers around an exact operation/code/target/reason. Never
+// turn arbitrary stderr substrings, permission failures or expired auth into absence.
+fn exact_cli_error(message: &str, prefix: &str, reason: &str) -> bool {
+    let text = message.trim();
+    let text = text.strip_prefix("aws: [ERROR]: ").unwrap_or(text);
+    text == format!("{prefix}: {reason}")
+        || text == format!("{prefix} (reached max retries: 0): {reason}")
+}
 impl Aws {
     async fn call(
         &self,
@@ -148,11 +157,11 @@ impl Aws {
             bail!("AWS target required")
         };
         let mut c = Process::new("aws");
+        c.args([service, operation]);
+        if !(service == "lambda" && operation == "invoke") {
+            c.args(["--cli-input-json", &serde_json::to_string(&input)?]);
+        }
         c.args([
-            service,
-            operation,
-            "--cli-input-json",
-            &serde_json::to_string(&input)?,
             "--profile",
             &self.profile,
             "--region",
@@ -169,6 +178,24 @@ impl Aws {
             "--cli-binary-format",
             "base64",
         ]);
+        if service == "lambda" && operation == "invoke" {
+            // Lambda invoke is a customized AWS CLI command: unlike modeled API
+            // commands, it does not accept --cli-input-json. Use explicit argv.
+            c.args([
+                "--function-name",
+                input["FunctionName"]
+                    .as_str()
+                    .context("Guard function missing")?,
+                "--invocation-type",
+                "RequestResponse",
+                "--log-type",
+                "None",
+                "--payload",
+                input["Payload"]
+                    .as_str()
+                    .context("Guard health payload missing")?,
+            ]);
+        }
         if let Some(path) = outfile {
             c.arg(path);
         }
@@ -214,12 +241,27 @@ impl Aws {
         if !status.success() {
             // Only this exact response means absence. AccessDenied/expired login do not.
             let message = String::from_utf8_lossy(&err);
-            if service=="s3api"&&operation=="get-bucket-tagging"&&message.trim()=="An error occurred (NoSuchBucket) when calling the GetBucketTagging operation: The specified bucket does not exist"{return Ok(None)}
+            if service == "s3api"
+                && operation == "get-bucket-tagging"
+                && exact_cli_error(
+                    &message,
+                    "An error occurred (NoSuchBucket) when calling the GetBucketTagging operation",
+                    "The specified bucket does not exist",
+                )
+            {
+                return Ok(None);
+            }
             if service == "cloudformation" && operation == "describe-stacks" {
                 let selector = input["StackName"]
                     .as_str()
                     .context("Stack selector missing")?;
-                if message.trim()==format!("An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id {selector} does not exist"){return Ok(None)}
+                if exact_cli_error(
+                    &message,
+                    "An error occurred (ValidationError) when calling the DescribeStacks operation",
+                    &format!("Stack with id {selector} does not exist"),
+                ) {
+                    return Ok(None);
+                }
             }
             bail!("AWS request failed; mutation outcome may be unknown; output withheld to protect credentials")
         }
@@ -609,7 +651,7 @@ fn fresh_preflight(path: &Path, p: &Plan, j: &Journal) -> Result<()> {
                 .all(|v| v["status"] == "passed"),
         "Preflight contains blocked checks"
     );
-    for required in [
+    let mut required_checks = vec![
         "operator_identity",
         "service_linked_roles",
         "availability_zones_and_offering",
@@ -626,7 +668,14 @@ fn fresh_preflight(path: &Path, p: &Plan, j: &Journal) -> Result<()> {
         "guard_artifact_bytes",
         "policy_validation",
         "observation_freshness",
-    ] {
+    ];
+    if p.infrastructure
+        .as_ref()
+        .is_some_and(|i| i.operator_access.is_some())
+    {
+        required_checks.push("operator_access");
+    }
+    for required in required_checks {
         let matches: Vec<_> = checks.iter().filter(|v| v["name"] == required).collect();
         ensure!(
             matches.len() == 1
@@ -790,5 +839,23 @@ pub(super) async fn run(command: &Command) -> Result<()> {
             )
         }
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod cli_error_tests {
+    use super::*;
+    #[test]
+    fn known_error_wrappers_do_not_relax_code_operation_or_target_matching() {
+        let prefix =
+            "An error occurred (ValidationError) when calling the DescribeStacks operation";
+        let reason = "Stack with id original-stack does not exist";
+        for m in [
+            format!("{prefix}: {reason}"),
+            format!("aws: [ERROR]: {prefix} (reached max retries: 0): {reason}"),
+        ] {
+            assert!(exact_cli_error(&m, prefix, reason));
+        }
+        for m in [format!("aws: [ERROR]: An error occurred (AccessDenied) when calling the DescribeStacks operation: {reason}"),format!("{prefix}: Stack with id another-stack does not exist"),format!("Error retrieving credentials; {prefix}: {reason}")]{assert!(!exact_cli_error(&m,prefix,reason));}
     }
 }

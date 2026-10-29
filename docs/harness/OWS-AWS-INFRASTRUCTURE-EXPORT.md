@@ -2,8 +2,10 @@
 
 28 October 2026. Planning is an **offline export**, not a deployed service. The
 experimental [lifecycle and installation path](OWS-AWS-LIFECYCLE.md) is now implemented
-and locally tested; it requires explicit opt-in for provisioning. Ordinary deploy
-apply/destroy remain closed. No AWS provisioning was used to qualify these templates.
+and exercised in an authorized AWS agent trial; it requires explicit opt-in for
+provisioning. Ordinary deploy
+apply/destroy remain closed. See the [AWS trial ledger](OWS-AWS-TRIAL-PLAN.md) for
+live qualification; an exported plan alone is not evidence of a deployed service.
 
 The generator now produces its own CloudFormation execution role and the platform
 roles referenced by the infrastructure. The older option to supply an existing
@@ -44,10 +46,10 @@ and schema-2 bundles retain their original contents/digests and remain inspectab
 
 | Artifact | Contents |
 |---|---|
-| `bootstrap.cfn.json` | Setup, artifact, CloudFormation executor, cluster, node, EBS CSI and cleanup roles; five execution managed policies |
+| `bootstrap.cfn.json` | Setup, artifact, CloudFormation executor, cluster, node, EBS CSI and cleanup roles; six execution managed policies, plus optional SSM access role/profile/policy |
 | `infrastructure.cfn.json` | Dedicated VPC/routing/NAT, private EKS/node group, pinned add-ons, private PostgreSQL and named secret, S3 and three ECR repositories |
 | `guard.cfn.json` | Independent Lambda, DynamoDB operation journal, log group, schedule and invocation permission; uses the supplied immutable code artifact |
-| `execution-policy-*.json` | Network creation, network management, EKS, data and guard permissions |
+| `execution-policy-*.json` | Network creation, network management, EKS, worker launch, data and guard permissions |
 | `setup-policy.json`, `workload-policy.json`, `cleanup-policy.json` | Separate operator, artifact and cleanup grants |
 | `permission-review.json` | Coverage of every infrastructure/guard resource, broad-grant explanations and remaining qualification checks |
 | `guard-contract.json` | Required health, identity, expiry and ownership checks; explicitly unqualified |
@@ -57,11 +59,16 @@ and schema-2 bundles retain their original contents/digests and remain inspectab
 Planning, inspecting and validating invoke no cloud executables and read no cloud
 credentials. The exported script is an explicit IAM mutation if a customer chooses
 to run it later; it is **never executed by `ows plan`**. Locally we ran it only with
-a fake AWS executable.
+a fake AWS executable before the separately authorized AWS trial.
 
 ## Network and data choices
 
 Two fixed `t4g.large` nodes run in private subnets. The cluster management API has private access; its public endpoint is disabled.
+Workers use an explicit deployment-tagged security group in the launch template.
+Peer traffic and API/kubelet/webhook rules connect it to a separate management
+group on the control-plane ENIs; PostgreSQL accepts that worker group. An optional
+private SSM bridge gets its own API-only ingress. AWS's implicit/default groups
+are not used as worker launch dependencies.
 A single NAT gateway in the first zone provides outbound access. This costs money
 and is a single point of failure; it is an experiment topology, not HA production.
 The installer needs a network path to the cluster management API (private access). No VPN, public
@@ -87,8 +94,8 @@ to their intended services. Setup can use that executor only for the experiment'
 infra and guard stacks. It cannot modify the identity stack. Cleanup can delete the
 infra stack but cannot create/update stacks or remove its own guard/bootstrap.
 
-Five managed policies keep execution permissions below IAM's individual policy size
-limit. Every infrastructure/guard resource must have a known permission domain;
+Six managed policies (seven with optional SSM access) keep execution permissions
+below IAM's individual policy size limit. Every infrastructure/guard resource must have a known permission domain;
 adding an unrecognized type makes generation fail rather than silently granting
 all service actions. This coverage check is not proof that a cloud resource handler
 needs no further permissions; simulation and live creation/rollback still matter.
@@ -99,6 +106,11 @@ Broad grants are called out in the bundle:
   require the deployment request tag; subsequent mutations require ownership tags.
   Parent-resource permissions are separate. Ownership tags cannot be reassigned or
   removed through the generated tag-management permissions.
+- Tagged managed-node launch templates require caller EC2 launch/tag permissions.
+  These are restricted by the owned launch template/subnets, explicit worker
+  security-group ownership tag, fixed worker type, and new instance/volume ownership tags.
+  Image/interface dependencies are regional and require use of a separately
+  ownership-authorized launch template. See [AWS launch-template requirements](https://docs.aws.amazon.com/eks/latest/userguide/launch-templates.html).
 - EKS `CreateCluster` requires `Resource: "*"`. Region, ownership tag, API auth and
   private-endpoint conditions restrict it. They do **not** enforce a cluster-count
   or spending limit. Subsequent APIs are scoped to the planned cluster/children.
@@ -115,6 +127,8 @@ Broad grants are called out in the bundle:
   Runtime UI and agent identities do not inherit that access.
 
 Service-linked roles for EKS, node groups, Auto Scaling and RDS are prerequisites.
+The executor may read those exact four roles and their attached-policy names to
+perform AWS handler validation; it cannot create or modify them.
 Preflight must report missing roles and customer-bootstrap actions; the executor
 is not granted general IAM creation to make those failures disappear.
 
@@ -140,14 +154,14 @@ The guard package and simulated failure behavior are now tested locally; see
 [local qualification](OWS-LOCAL-INSTALLATION.md). Its independent DynamoDB table
 preserves stack/volume deletion intents; the cleanup role can read/write only the
 deployment's key. Local tests do not qualify the actual Lambda runtime/SDK, IAM,
-CloudFormation rollback or EBS cleanup. Keep cloud apply disabled until those pass.
+CloudFormation rollback or EBS cleanup. The experimental cloud path performs real
+health gates; destructive cleanup still requires independent qualification.
 Regenerate/review earlier development schema-3 bundles for the new table/policies.
 - Keep guard/bootstrap resources until teardown is independently verified.
 
 The schedule disables event-delivery retries; that does not remove the need for
-reconciliation on the next scheduled invocation. The cleanup implementation and
-its failure tests belong to the next lifecycle milestone. This export does not
-claim that an old cleanup script can be dropped in unchanged.
+reconciliation on the next scheduled invocation. The bundled cleanup implementation has deterministic failure tests and a packaged
+code digest. An arbitrary older cleanup script is not interchangeable with it.
 
 ## Local verification and remaining work
 

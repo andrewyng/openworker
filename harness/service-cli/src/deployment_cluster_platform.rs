@@ -124,6 +124,44 @@ fn subset(expected: &Value, actual: &Value) -> bool {
         _ => expected == actual,
     }
 }
+fn platform_matches(expected: &Value, actual: &Value) -> bool {
+    let mut expected = expected.clone();
+    // API-server omitempty drops empty NetworkPolicy rule lists. With the
+    // corresponding policyType present, absence and [] both deny that direction.
+    // Do not generalize this to selectors or allow rules (where {} means allow).
+    if expected["kind"] == "NetworkPolicy" {
+        for (field, direction) in [("ingress", "Ingress"), ("egress", "Egress")] {
+            if expected["spec"][field] == json!([])
+                && actual["spec"].get(field).is_none()
+                && expected["spec"]["policyTypes"]
+                    .as_array()
+                    .is_some_and(|a| a.contains(&json!(direction)))
+            {
+                expected["spec"].as_object_mut().unwrap().remove(field);
+            }
+        }
+    }
+    subset(&expected, actual)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn omitted_empty_network_rules_are_equivalent_only_for_explicit_deny_direction() {
+        let expected = json!({"kind":"NetworkPolicy","spec":{"policyTypes":["Ingress"],"ingress":[],"podSelector":{"matchLabels":{"app":"hook"}}}});
+        let mut actual = expected.clone();
+        actual["spec"].as_object_mut().unwrap().remove("ingress");
+        assert!(platform_matches(&expected, &actual));
+        actual["spec"]["ingress"] = json!([{}]);
+        assert!(!platform_matches(&expected, &actual));
+        actual = expected.clone();
+        actual["spec"]["podSelector"] = json!({});
+        assert!(!platform_matches(&expected, &actual));
+        actual = expected.clone();
+        actual["spec"]["policyTypes"] = json!(["Egress"]);
+        assert!(!platform_matches(&expected, &actual));
+    }
+}
 pub(super) async fn apply(
     client: &Client<'_>,
     p: &Plan,
@@ -216,7 +254,7 @@ pub(super) async fn apply(
                         .context("Platform creation not confirmed")?
                 };
                 ensure!(
-                    subset(&object, &actual),
+                    platform_matches(&object, &actual),
                     "Platform content/ownership drift; no automatic overwrite"
                 );
                 if let Some(receipt) = &op.receipt {

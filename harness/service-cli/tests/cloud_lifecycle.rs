@@ -553,6 +553,21 @@ fn offline_platform_export_and_lost_cni_reply_reconcile_without_a_second_update(
         sc["parameters"]["tagSpecification_1"],
         format!("ows:deployment-id={}", f.id)
     );
+    let hook = items
+        .iter()
+        .find(|v| v["metadata"]["name"] == "ows-gateway-certgen")
+        .unwrap();
+    assert_eq!(
+        hook["spec"]["podSelector"]["matchLabels"],
+        json!({"app.kubernetes.io/name":"openshell-certgen","app.kubernetes.io/instance":"shell","app.kubernetes.io/component":"certgen"})
+    );
+    assert_eq!(hook["spec"]["ingress"], json!([]));
+    assert_eq!(hook["spec"]["egress"][0]["ports"][0]["port"], 443);
+    assert!(hook["spec"]["egress"].as_array().unwrap().iter().all(|v| v
+        .as_object()
+        .unwrap()
+        .len()
+        > 0));
     let gateway = items
         .iter()
         .find(|v| v["metadata"]["name"] == "ows-trusted-gateway")
@@ -650,4 +665,14 @@ fn offline_platform_export_and_lost_cni_reply_reconcile_without_a_second_update(
         f.calls().iter().filter(|v| v[1] == "delete-stack").count(),
         1
     );
+}
+
+#[test]
+fn current_aws_cli_absence_wrapper_is_recognized_without_treating_denial_as_absence() {
+    let f = Fixture::new();
+    parsed(&f.apply("styled-absence", false, true));
+    assert_eq!(f.creates(), 1);
+    let g = Fixture::new();
+    assert!(!g.apply("access-denied", false, true).status.success());
+    assert_eq!(g.creates(), 0);
 }

@@ -89,6 +89,9 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
             "ec2:DescribeLaunchTemplateVersions",
             "ec2:DescribeTags",
             "ec2:DescribeAvailabilityZones",
+            "ec2:DescribeAccountAttributes",
+            "ec2:DescribeKeyPairs",
+            "ec2:DescribeNetworkAcls",
         ],
         vec!["*".into()],
         Some(regional.clone()),
@@ -299,11 +302,33 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
     }
     eks.push(statement(
         "ReadExactPlatformRoles",
-        &["iam:GetRole"],
+        &["iam:GetRole", "iam:ListAttachedRolePolicies"],
         ["cluster", "node", "ebs", "artifacts"]
             .iter()
             .map(|r| role_arn(p, r))
             .collect(),
+        None,
+    ));
+    // EKS validates that its already-created node-group service-linked role exists
+    // using the caller's GetRole authority. Preflight's operator check is not a
+    // substitute for these exact executor reads. No SLR creation/modification.
+    eks.push(statement(
+        "ReadRequiredServiceLinkedRoles",
+        &["iam:GetRole", "iam:ListAttachedRolePolicies"],
+        [
+            ("eks.amazonaws.com", "AWSServiceRoleForAmazonEKS"),
+            (
+                "eks-nodegroup.amazonaws.com",
+                "AWSServiceRoleForAmazonEKSNodegroup",
+            ),
+            ("autoscaling.amazonaws.com", "AWSServiceRoleForAutoScaling"),
+            ("rds.amazonaws.com", "AWSServiceRoleForRDS"),
+        ]
+        .iter()
+        .map(|(service, name)| {
+            format!("arn:aws:iam::{account}:role/aws-service-role/{service}/{name}")
+        })
+        .collect(),
         None,
     ));
     let db = format!("arn:aws:rds:{region}:{account}:db:{prefix}");
@@ -334,6 +359,15 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
             ],
             vec![dbsub.clone()],
             None,
+        ),
+        statement(
+            "ReadDatabaseEngineDefaults",
+            &[
+                "rds:DescribeEngineDefaultParameters",
+                "rds:DescribeDBEngineVersions",
+            ],
+            vec!["*".into()],
+            Some(regional.clone()),
         ),
         statement(
             "DatabaseParameters",
@@ -391,6 +425,20 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
                 "s3:CreateBucket",
                 "s3:DeleteBucket",
                 "s3:GetBucketLocation",
+                "s3:GetAccelerateConfiguration",
+                "s3:GetAnalyticsConfiguration",
+                "s3:GetBucketCORS",
+                "s3:GetInventoryConfiguration",
+                "s3:GetBucketLogging",
+                "s3:GetMetricsConfiguration",
+                "s3:GetBucketNotification",
+                "s3:GetBucketVersioning",
+                "s3:GetReplicationConfiguration",
+                "s3:GetBucketWebsite",
+                "s3:GetBucketObjectLockConfiguration",
+                "s3:GetBucketAcl",
+                "s3:GetIntelligentTieringConfiguration",
+                "s3:GetBucketMetadataTableConfiguration",
                 "s3:ListBucket",
                 "s3:GetBucketPolicy",
                 "s3:PutBucketPolicy",
@@ -414,6 +462,8 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
             &[
                 "ecr:CreateRepository",
                 "ecr:DescribeRepositories",
+                "ecr:GetLifecyclePolicy",
+                "ecr:GetRepositoryPolicy",
                 "ecr:DeleteRepository",
                 "ecr:TagResource",
                 "ecr:UntagResource",
@@ -599,13 +649,17 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
             None
         ),
     ]));
-    let execution = BTreeMap::from([
+    let mut execution = BTreeMap::from([
         ("NetworkCreate".into(), policy(json!(create))),
         ("NetworkManage".into(), policy(json!(network))),
         ("Eks".into(), policy(json!(eks))),
+        ("Nodes".into(), nodes::permissions(p)),
         ("Data".into(), policy(json!(data))),
         ("Guard".into(), policy(json!(guard_permissions))),
     ]);
+    if i.operator_access.is_some() {
+        execution.insert("Access".into(), access::permissions(p));
+    }
     let mut coverage = BTreeMap::new();
     for (phase, t) in [("infrastructure", infra), ("guard", guard)] {
         for (logical, r) in t["Resources"]
@@ -620,13 +674,15 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
                 | "AWS::EC2::RouteTable"
                 | "AWS::EC2::EIP"
                 | "AWS::EC2::NatGateway"
+                | "AWS::EC2::SecurityGroupIngress"
                 | "AWS::EC2::SecurityGroup"
                 | "AWS::EC2::LaunchTemplate" => vec!["NetworkCreate", "NetworkManage"],
                 "AWS::EC2::VPCGatewayAttachment"
                 | "AWS::EC2::Route"
                 | "AWS::EC2::SubnetRouteTableAssociation" => vec!["NetworkManage"],
+                "AWS::EC2::Instance" => vec!["Access"],
+                "AWS::EKS::Nodegroup" => vec!["Eks", "Nodes"],
                 "AWS::EKS::Cluster"
-                | "AWS::EKS::Nodegroup"
                 | "AWS::EKS::Addon"
                 | "AWS::EKS::AccessEntry"
                 | "AWS::EKS::PodIdentityAssociation" => vec!["Eks"],
@@ -656,9 +712,11 @@ pub(super) fn generate(p: &Plan, i: &Inputs, infra: &Value, guard: &Value) -> Re
             {"statement":"NetworkObservation","reason":"EC2 Describe APIs do not support individual resource scoping; regional metadata only"},
             {"statement":"CreateTaggedPrivateCluster","reason":"EKS CreateCluster requires Resource *; request ownership tag and region/private-endpoint conditions constrain creation but do not cap cost or count"},
             {"statement":"RegistryLogin (setup)","reason":"ECR GetAuthorizationToken requires Resource *; requested region/expiry constrain login; actual image writes are restricted to three exact repositories"},
+            {"statement":"ReadDatabaseEngineDefaults","reason":"RDS handlers read built-in engine-family defaults and engine-version metadata; this catalog API has no individual-resource authorization and is region constrained, with no database data or secret reads"},
             {"statement":"GenerateDatabasePassword","reason":"GetRandomPassword has no resource; returns generated randomness, not existing secret data"},
             {"statement":"ObserveLogGroups","reason":"DescribeLogGroups has no individual-resource authorization; regional metadata"},
             {"statement":"DescribeEncryptionKeys","reason":"Default AWS-managed key IDs resolve online; DescribeKey only within this account/region, no decrypt/grant/write"},
+            {"statement":"Worker launch dependencies","reason":"Tagged EKS launch templates require caller RunInstances/CreateTags. Regional image/interface ARNs are permitted only through a launch template that separately must have this deployment ownership tag; instance type, subnet, cluster security group and new instance/volume tags are independently constrained. EKS resolves the pinned recommended release AMI; preflight checks it, not this IAM wildcard."},
             {"statement":"EC2 create/manage","reason":"Resource IDs are not known offline; resource-type/account/region ARN scopes plus creation/ownership tags. Parent resource authorizations are separate"},
             {"statement":"AWS managed platform policies","reason":"Explicit AWS-managed cluster/node/CSI grants are attached only by customer bootstrap; review their upstream permissions and node metadata isolation"}
         ],"notGranted":["IAM identity/policy mutation by executor","arbitrary PassRole","model secret reads","unrelated object reads","account-wide AdministratorAccess","service-linked role creation"],

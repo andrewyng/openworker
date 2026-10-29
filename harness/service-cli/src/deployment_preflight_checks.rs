@@ -43,6 +43,9 @@ pub(super) async fn all(
         "availability_zones_and_offering",
         zones(aws, p).await,
     );
+    if i.operator_access.is_some() {
+        record(results, "operator_access", operator_access(aws, p).await);
+    }
     record(results, "eks_standard_support", eks_version(aws, p).await);
     record(
         results,
@@ -147,6 +150,48 @@ async fn zones(aws: &mut Aws, p: &Plan) -> Observed<Value> {
     }
     Ok(
         json!({"zones":i.availability_zones,"instanceType":"t4g.large","offered":true,"capacityReserved":false}),
+    )
+}
+async fn operator_access(aws: &mut Aws, p: &Plan) -> Observed<Value> {
+    let i = p.infrastructure.as_ref().unwrap();
+    let access = i.operator_access.as_ref().unwrap();
+    let images = aws
+        .json(
+            "ec2",
+            "describe-images",
+            args(&["--owners", "amazon", "--image-ids", &access.ami_id]),
+        )
+        .await?;
+    let rows = array(&images, "Images")?;
+    expect(
+        rows.len() == 1
+            && rows[0]["ImageId"] == access.ami_id
+            && rows[0]["State"] == "available"
+            && rows[0]["Architecture"] == "arm64"
+            && rows[0]["ImageOwnerAlias"] == "amazon"
+            && rows[0]["RootDeviceType"] == "ebs",
+    )?;
+    let offers = aws
+        .pages(
+            "ec2",
+            "describe-instance-type-offerings",
+            args(&[
+                "--location-type",
+                "availability-zone",
+                "--filters",
+                "Name=instance-type,Values=t4g.micro",
+                &format!("Name=location,Values={}", i.availability_zones[0]),
+            ]),
+            "InstanceTypeOfferings",
+        )
+        .await?;
+    expect(
+        offers
+            .iter()
+            .any(|o| o["InstanceType"] == "t4g.micro" && o["Location"] == i.availability_zones[0]),
+    )?;
+    Ok(
+        json!({"amiId":access.ami_id,"instanceType":"t4g.micro","privateSubnet":true,"publicIp":false,"sshIngress":false,"ssmAgentHealthMustBeCheckedAfterLaunch":true}),
     )
 }
 async fn eks_version(aws: &mut Aws, p: &Plan) -> Observed<Value> {
@@ -437,7 +482,12 @@ async fn quotas(aws: &mut Aws, p: &Plan) -> Observed<Value> {
     }
     // Counting every non-host On-Demand family is conservative: some families
     // consume separate quotas. Never understate usage by assuming their count zero.
-    expect(limit >= used + 4.0)?;
+    let requested = if p.infrastructure.as_ref().unwrap().operator_access.is_some() {
+        6
+    } else {
+        4
+    };
+    expect(limit >= used + f64::from(requested))?;
     let cluster_limit = quota(aws, "eks", "L-1194D53C").await?;
     let clusters = aws
         .pages("eks", "list-clusters", vec![], "clusters")
@@ -472,12 +522,12 @@ async fn quotas(aws: &mut Aws, p: &Plan) -> Observed<Value> {
     expect(db_used + 1.0 <= db_max)?;
     let _ = p;
     Ok(
-        json!({"requestedStandardVCpus":4,"regionalStandardVCpuLimit":limit,"conservativeOnDemandVCpuUsage":used,"conservativeReservedInstanceSlots":unused_reserved_instances,"eksClusterLimit":cluster_limit,"observedClusters":clusters.len(),"vpcLimit":vpc_limit,"observedVpcs":vpcs.len(),"elasticIpLimit":eip_limit,"observedElasticIps":array(&eips,"Addresses")?.len(),"natPerZoneLimit":nat_limit,"conservativeRegionalNatUsage":nats.len(),"rdsInstanceLimit":db_max,"rdsInstanceUsage":db_used,"capacityReserved":false,"usageMayChangeAfterObservation":true}),
+        json!({"requestedStandardVCpus":requested,"regionalStandardVCpuLimit":limit,"conservativeOnDemandVCpuUsage":used,"conservativeReservedInstanceSlots":unused_reserved_instances,"eksClusterLimit":cluster_limit,"observedClusters":clusters.len(),"vpcLimit":vpc_limit,"observedVpcs":vpcs.len(),"elasticIpLimit":eip_limit,"observedElasticIps":array(&eips,"Addresses")?.len(),"natPerZoneLimit":nat_limit,"conservativeRegionalNatUsage":nats.len(),"rdsInstanceLimit":db_max,"rdsInstanceUsage":db_used,"capacityReserved":false,"usageMayChangeAfterObservation":true}),
     )
 }
 #[derive(Clone, Copy)]
 enum Product {
-    Node,
+    Node(&'static str),
     Database,
     Cluster,
     Nat,
@@ -488,11 +538,11 @@ enum Product {
 async fn price(aws: &mut Aws, p: &Plan, kind: Product) -> Observed<Value> {
     let region = target(p).1;
     let (service, filters, unit) = match kind {
-        Product::Node => (
+        Product::Node(instance) => (
             "AmazonEC2",
             vec![
                 ("regionCode", region),
-                ("instanceType", "t4g.large"),
+                ("instanceType", instance),
                 ("operatingSystem", "Linux"),
                 ("tenancy", "Shared"),
                 ("preInstalledSw", "NA"),
@@ -597,7 +647,9 @@ async fn price(aws: &mut Aws, p: &Plan, kind: Product) -> Observed<Value> {
         }
         let usage = attrs["usagetype"].as_str().unwrap_or("");
         match kind {
-            Product::Node if !usage.ends_with("-BoxUsage:t4g.large") => continue,
+            Product::Node(instance) if !usage.ends_with(&format!("-BoxUsage:{instance}")) => {
+                continue
+            }
             Product::Database if !usage.ends_with("-InstanceUsage:db.t4g.micro") => continue,
             Product::Nat if !usage.ends_with("-NatGateway-Hours") => continue,
             Product::Cluster if !usage.ends_with("AmazonEKS-Hours:perCluster") => continue,
@@ -647,15 +699,22 @@ async fn price(aws: &mut Aws, p: &Plan, kind: Product) -> Observed<Value> {
 }
 async fn cost(aws: &mut Aws, p: &Plan, allowance: u32) -> Observed<Value> {
     let mut components = BTreeMap::new();
-    for (name, kind, quantity) in [
-        ("workerInstances", Product::Node, 2.0),
+    let mut lines = vec![
+        ("workerInstances", Product::Node("t4g.large"), 2.0),
         ("databaseInstance", Product::Database, 1.0),
         ("eksStandardCluster", Product::Cluster, 1.0),
         ("natGateway", Product::Nat, 1.0),
         ("natPublicIpv4", Product::Ip, 1.0),
         ("nodeGp3Storage", Product::Ebs, 60.0),
         ("databaseGp3Storage", Product::RdsStorage, 20.0),
-    ] {
+    ];
+    if p.infrastructure.as_ref().unwrap().operator_access.is_some() {
+        lines.extend([
+            ("operatorInstance", Product::Node("t4g.micro"), 1.0),
+            ("operatorGp3Storage", Product::Ebs, 8.0),
+        ]);
+    }
+    for (name, kind, quantity) in lines {
         let mut line = match price(aws, p, kind).await {
             Ok(line) => line,
             Err(e) => {
@@ -751,6 +810,9 @@ async fn policies(aws: &mut Aws, p: &Plan, root: &Path) -> Observed<Value> {
         "cleanup-policy.json".into(),
     ];
     let all = artifacts(p).map_err(|_| invalid())?;
+    if p.infrastructure.as_ref().unwrap().operator_access.is_some() {
+        names.push("operator-policy.json".into());
+    }
     names.extend(
         all.keys()
             .filter(|n| n.starts_with("execution-policy-"))

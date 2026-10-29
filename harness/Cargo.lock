@@ -1927,6 +1927,7 @@ dependencies = [
  "clap",
  "futures-util",
  "openworker-sdk",
+ "postgres",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -18,6 +18,8 @@ if args[:2]==['image','inspect']:
  identifier=hashlib.sha256(('changed' if scenario=='image-changed' else 'fixture').encode()).hexdigest()
  out([{'Id':'sha256:'+identifier,'Os':'linux','Architecture':'amd64' if scenario=='wrong-image-platform' else 'arm64','Size':1024}])
 if args[0]=='login':
+ initial=json.loads((private/'config.json').read_text());assert initial=={'auths':{args[-1]:{}}}
+ assert (private/'config.json').stat().st_mode&0o077==0
  password=sys.stdin.read();assert password=='registry-password-do-not-persist'
  (private/'config.json').write_text(json.dumps({'auths':{'fixture':{'auth':password}}}))
  out('logged in')

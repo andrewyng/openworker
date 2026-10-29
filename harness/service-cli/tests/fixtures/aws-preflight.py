@@ -49,10 +49,10 @@ if service=='iam':
     names={'AWSServiceRoleForAmazonEKS':'eks.amazonaws.com','AWSServiceRoleForAmazonEKSNodegroup':'eks-nodegroup.amazonaws.com','AWSServiceRoleForAutoScaling':'autoscaling.amazonaws.com','AWSServiceRoleForRDS':'rds.amazonaws.com'}
     name=arg('--role-name');output({'Role':{'Arn':f'arn:aws:iam::123456789012:role/aws-service-role/{names[name]}/{name}'}})
 if operation=='describe-availability-zones':output({'AvailabilityZones':[{'ZoneName':'us-west-2'+z,'State':'available','OptInStatus':'opt-in-not-required'} for z in 'ab']})
-if operation=='describe-instance-type-offerings':output({'InstanceTypeOfferings':[{'InstanceType':'t4g.large','Location':'us-west-2'+z} for z in 'ab']})
+if operation=='describe-instance-type-offerings':output({'InstanceTypeOfferings':[{'InstanceType':'t4g.micro' if any('Values=t4g.micro' in a for a in args) else 't4g.large','Location':'us-west-2'+z} for z in 'ab']})
 if operation=='describe-cluster-versions':output({'clusterVersions':[{'clusterVersion':'1.36','versionStatus':'EXTENDED_SUPPORT' if scenario=='extended-support' else 'STANDARD_SUPPORT'}]})
 if service=='ssm':output({'Parameter':{'Value':json.dumps({'release_version':'1.36.4-20261007','image_id':'ami-0123456789abcdef0'})}})
-if operation=='describe-images':output({'Images':[{'ImageId':'ami-0123456789abcdef0','State':'available','Architecture':'arm64','ImageOwnerAlias':'amazon'}]})
+if operation=='describe-images':output({'Images':[{'ImageId':arg('--image-ids'),'State':'available','Architecture':'arm64','ImageOwnerAlias':'foreign' if scenario=='operator-ami-foreign' and arg('--image-ids').startswith('ami-111') else 'amazon','RootDeviceType':'ebs'}]})
 if operation=='describe-addon-versions':
     name=arg('--addon-name');versions={'vpc-cni':'v1.21.1-eksbuild.1','kube-proxy':'v1.36.4-eksbuild.1','coredns':'v1.13.1-eksbuild.1','eks-pod-identity-agent':'v1.3.8-eksbuild.1','aws-ebs-csi-driver':'v1.48.0-eksbuild.1'}
     output({'addons':[{'addonName':name,'addonVersions':[{'addonVersion':versions[name],'architecture':['amd64'] if scenario=='wrong-architecture' else ['arm64'],'compatibilities':[{'clusterVersion':'1.36'}]}]}]})
@@ -64,6 +64,7 @@ if operation=='describe-orderable-db-instance-options':output({'OrderableDBInsta
 if operation=='get-service-quota':
     limits={'L-1216C47A':64,'L-1194D53C':10,'L-F678F1CE':5,'L-0263D0A3':5,'L-FE5A380F':5}
     value=limits[arg('--quota-code')]
+    if scenario=='operator-quota-small' and arg('--quota-code')=='L-1216C47A':value=5
     if scenario in ['quota-exhausted','reserved-capacity','scheduled-capacity'] and arg('--quota-code')=='L-1216C47A':value=4
     output({'Quota':{'ServiceCode':arg('--service-code'),'QuotaCode':arg('--quota-code'),'Value':value}})
 if operation=='describe-instances':
@@ -84,7 +85,7 @@ if service=='pricing':
     assert arg('--region')=='us-east-1'
     if scenario=='pricing-denied':fail()
     filters={v['Field']:v['Value'] for v in json.loads(arg('--filters'))}; code=arg('--service-code')
-    attrs={'regionCode':'us-west-2','usagetype':'USW2-BoxUsage:t4g.large'};unit='Hrs';rate='0.0672';sku='node'
+    attrs={'regionCode':'us-west-2','usagetype':'USW2-BoxUsage:'+filters.get('instanceType','t4g.large')};unit='Hrs';rate='0.0672';sku='node'
     if code=='AmazonEKS':unit='Hours';attrs['usagetype']='USW2-AmazonEKS-Hours:perCluster';rate='10.0' if scenario=='over-budget' else '0.1';sku='cluster'
     elif code=='AmazonVPC':attrs['usagetype']='USW2-PublicIPv4:InUseAddress';rate='0.005';sku='ipv4'
     elif code=='AmazonRDS':

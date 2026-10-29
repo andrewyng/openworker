@@ -360,6 +360,9 @@ pub(crate) async fn database_url(binding: &Binding) -> Result<String> {
         !password.is_empty() && password.len() <= 1024,
         "Invalid private database secret"
     );
+    Ok(managed_database_url(host, password))
+}
+fn managed_database_url(host: &str, password: &str) -> String {
     let encode = |s: &str| {
         s.bytes()
             .map(|b| {
@@ -371,10 +374,13 @@ pub(crate) async fn database_url(binding: &Binding) -> Result<String> {
             })
             .collect::<String>()
     };
-    Ok(format!(
-        "postgresql://openworker:{}@{host}:5432/openworker?sslmode=verify-full",
+    // rust-postgres accepts require, not libpq's verify-full spelling. The
+    // service's Verified TLS connector independently verifies CA + hostname;
+    // installation values require it and the RDS CA bundle, without opt-outs.
+    format!(
+        "postgresql://openworker:{}@{host}:5432/openworker?sslmode=require",
         encode(password)
-    ))
+    )
 }
 pub(crate) fn install_scope(binding: &Binding) -> Result<(String, String)> {
     let (_j, p, _lock) = state::load(&binding.state)?;
@@ -459,4 +465,25 @@ pub(crate) async fn enable_strict_network(binding: &Binding) -> Result<bool> {
     j.operations.get_mut(key).unwrap().status = format!("dispatched:{id}");
     state::save(&binding.state, &j)?;
     Ok(false)
+}
+
+#[cfg(test)]
+mod database_url_tests {
+    use super::*;
+    #[test]
+    fn managed_url_is_accepted_by_actual_driver_and_preserves_password() {
+        let host = "trial.fixture.us-west-2.rds.amazonaws.com";
+        let password = "test:@ /?#%+;&=雪";
+        let url = managed_database_url(host, password);
+        let parsed: postgres::Config = url
+            .parse()
+            .expect("actual driver must accept emitted configuration");
+        assert_eq!(parsed.get_password(), Some(password.as_bytes()));
+        assert_eq!(parsed.get_ssl_mode(), postgres::config::SslMode::Require);
+        assert_eq!(
+            parsed.get_hosts(),
+            &[postgres::config::Host::Tcp(host.into())]
+        );
+        assert_eq!(parsed.get_dbname(), Some("openworker"));
+    }
 }

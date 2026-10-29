@@ -1,6 +1,10 @@
 //! Schema-3 offline AWS infrastructure export. No provider calls or execution.
 //! Roles are owned by bootstrap; the infrastructure executor cannot mutate IAM.
 use super::*;
+#[path = "deployment_aws_access.rs"]
+mod access;
+#[path = "deployment_aws_nodes.rs"]
+mod nodes;
 #[path = "deployment_aws_permissions.rs"]
 mod permissions;
 
@@ -16,6 +20,8 @@ pub(super) struct Inputs {
     pub addons: Addons,
     pub guard_code: GuardCode,
     pub acknowledge_experiment_data_deletion: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_access: Option<access::Access>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -108,6 +114,9 @@ impl Inputs {
                 addon_version(pin),
                 "Pin every add-on to an explicit eksbuild version"
             );
+        }
+        if let Some(access) = &self.operator_access {
+            access.validate()?;
         }
         self.network_prefix()?;
         let code = &self.guard_code;
@@ -274,12 +283,49 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
             json!({"SubnetId":reference(&name),"RouteTableId":reference("PrivateRoutes")}),
         );
     }
+    // An unspecified group produced an untagged SG authorization context in the
+    // real EKS launch validation. Select an explicit owned group so its permission
+    // checks and actual worker networking do not depend on an implicit group.
+    add(
+        "WorkerSecurityGroup",
+        "AWS::EC2::SecurityGroup",
+        json!({"GroupDescription":"Owned EKS workers","VpcId":reference("Vpc"),"SecurityGroupIngress":[],"Tags":tags(p)}),
+    );
+    add(
+        "ManagementApiSecurityGroup",
+        "AWS::EC2::SecurityGroup",
+        json!({"GroupDescription":"Private API from owned workers and optional operator bridge","VpcId":reference("Vpc"),"SecurityGroupIngress":[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"SourceSecurityGroupId":reference("WorkerSecurityGroup")}],"Tags":tags(p)}),
+    );
+    for (logical, protocol, from, to, source) in [
+        ("WorkerPeerIngress", "-1", None, None, "WorkerSecurityGroup"),
+        (
+            "WorkerKubeletIngress",
+            "tcp",
+            Some(10250),
+            Some(10250),
+            "ManagementApiSecurityGroup",
+        ),
+        (
+            "WorkerWebhookIngress",
+            "tcp",
+            Some(443),
+            Some(443),
+            "ManagementApiSecurityGroup",
+        ),
+    ] {
+        let mut rule = json!({"GroupId":reference("WorkerSecurityGroup"),"IpProtocol":protocol,"SourceSecurityGroupId":reference(source)});
+        if let (Some(from), Some(to)) = (from, to) {
+            rule["FromPort"] = json!(from);
+            rule["ToPort"] = json!(to);
+        }
+        add(logical, "AWS::EC2::SecurityGroupIngress", rule);
+    }
     add(
         "Cluster",
         "AWS::EKS::Cluster",
         json!({"Name":prefix,"Version":i.kubernetes_version,"RoleArn":role_arn(p,"cluster"),"BootstrapSelfManagedAddons":false,
         "AccessConfig":{"AuthenticationMode":"API","BootstrapClusterCreatorAdminPermissions":false},"UpgradePolicy":{"SupportType":"STANDARD"},
-        "ResourcesVpcConfig":{"SubnetIds":[reference("PrivateSubnet0"),reference("PrivateSubnet1")],"EndpointPrivateAccess":true,"EndpointPublicAccess":false},"Tags":tags(p)}),
+        "ResourcesVpcConfig":{"SubnetIds":[reference("PrivateSubnet0"),reference("PrivateSubnet1")],"EndpointPrivateAccess":true,"EndpointPublicAccess":false,"SecurityGroupIds":[reference("ManagementApiSecurityGroup")]},"Tags":tags(p)}),
     );
     add(
         "PlatformAccess",
@@ -291,7 +337,7 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
         "LaunchTemplate",
         "AWS::EC2::LaunchTemplate",
         json!({"LaunchTemplateName":prefix,"TagSpecifications":[{"ResourceType":"launch-template","Tags":tags(p)}],
-        "LaunchTemplateData":{"MetadataOptions":{"HttpTokens":"required","HttpPutResponseHopLimit":1,"HttpEndpoint":"enabled"},"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true,"DeleteOnTermination":true}}],"TagSpecifications":[{"ResourceType":"instance","Tags":tags(p)},{"ResourceType":"volume","Tags":tags(p)}]}}),
+        "LaunchTemplateData":{"SecurityGroupIds":[reference("WorkerSecurityGroup")],"MetadataOptions":{"HttpTokens":"required","HttpPutResponseHopLimit":1,"HttpEndpoint":"enabled"},"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true,"DeleteOnTermination":true}}],"TagSpecifications":[{"ResourceType":"instance","Tags":tags(p)},{"ResourceType":"volume","Tags":tags(p)}]}}),
     );
     add(
         "Nodes",
@@ -319,7 +365,7 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
     add(
         "DatabaseSecurityGroup",
         "AWS::EC2::SecurityGroup",
-        json!({"GroupDescription":"PostgreSQL from this experiment cluster only","VpcId":reference("Vpc"),"SecurityGroupIngress":[{"IpProtocol":"tcp","FromPort":5432,"ToPort":5432,"SourceSecurityGroupId":attribute("Cluster","ClusterSecurityGroupId")}],"Tags":tags(p)}),
+        json!({"GroupDescription":"PostgreSQL from this experiment cluster only","VpcId":reference("Vpc"),"SecurityGroupIngress":[{"IpProtocol":"tcp","FromPort":5432,"ToPort":5432,"SourceSecurityGroupId":reference("WorkerSecurityGroup")}],"Tags":tags(p)}),
     );
     add(
         "DatabaseSubnets",
@@ -389,7 +435,10 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
                 "KubeProxy",
                 "NatRoute",
                 "PrivateRouteAssociation0",
-                "PrivateRouteAssociation1"
+                "PrivateRouteAssociation1",
+                "WorkerPeerIngress",
+                "WorkerKubeletIngress",
+                "WorkerWebhookIngress"
             ]),
         ),
         ("CoreDns", json!(["Nodes"])),
@@ -405,15 +454,17 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
         v["DeletionPolicy"] = json!("Delete");
         v["UpdateReplacePolicy"] = json!("Delete");
     }
+    let mut outputs = json!({
+        "Cluster":{"Value":reference("Cluster")},"Vpc":{"Value":reference("Vpc")},"PrivateSubnet0":{"Value":reference("PrivateSubnet0")},"PrivateSubnet1":{"Value":reference("PrivateSubnet1")},
+        "DatabaseEndpoint":{"Value":attribute("Database","Endpoint.Address")},"DatabaseSecretArn":{"Value":reference("DatabaseSecret")},"ArtifactBucket":{"Value":reference("Artifacts")},"ArtifactPrefix":{"Value":format!("{}/",p.deployment_id)},
+        "HarnessRepository":{"Value":attribute("HarnessImage","RepositoryUri")},"RunnerRepository":{"Value":attribute("RunnerImage","RepositoryUri")},"UiRepository":{"Value":attribute("UiImage","RepositoryUri")},
+        "ExpectedClusterArn":{"Value":format!("arn:aws:eks:{region}:{account}:cluster/{prefix}")}
+    });
+    access::infrastructure(p, &mut r, &mut outputs);
     Ok(template(
         "Disposable OpenWorker private EKS infrastructure; offline export, qualification required",
         r,
-        json!({
-            "Cluster":{"Value":reference("Cluster")},"Vpc":{"Value":reference("Vpc")},"PrivateSubnet0":{"Value":reference("PrivateSubnet0")},"PrivateSubnet1":{"Value":reference("PrivateSubnet1")},
-            "DatabaseEndpoint":{"Value":attribute("Database","Endpoint.Address")},"DatabaseSecretArn":{"Value":reference("DatabaseSecret")},"ArtifactBucket":{"Value":reference("Artifacts")},"ArtifactPrefix":{"Value":format!("{}/",p.deployment_id)},
-            "HarnessRepository":{"Value":attribute("HarnessImage","RepositoryUri")},"RunnerRepository":{"Value":attribute("RunnerImage","RepositoryUri")},"UiRepository":{"Value":attribute("UiImage","RepositoryUri")},
-            "ExpectedClusterArn":{"Value":format!("arn:aws:eks:{region}:{account}:cluster/{prefix}")}
-        }),
+        outputs,
     ))
 }
 
@@ -540,6 +591,13 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     ebs_trust["Statement"][0]["Condition"]["StringEquals"]
         ["aws:RequestTag/kubernetes-service-account"] = json!("ebs-csi-controller-sa");
     resources.insert("EbsRole".into(),resource("AWS::IAM::Role",json!({"RoleName":format!("{}-ebs",p.prefix()),"AssumeRolePolicyDocument":ebs_trust,"ManagedPolicyArns":["arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"],"Tags":tags(p)})));
+    access::bootstrap(p, resources);
+    if i.operator_access.is_some() {
+        files.insert(
+            "operator-policy.json".into(),
+            json_bytes(&access::agent_policy(p))?,
+        );
+    }
     resources.insert("CleanupRole".into(),resource("AWS::IAM::Role",json!({"RoleName":format!("{}-cleanup",p.prefix()),"AssumeRolePolicyDocument":service_trust("lambda.amazonaws.com"),"Policies":[{"PolicyName":"owned-cleanup","PolicyDocument":policies.cleanup}],"Tags":tags(p)})));
     boot["Description"]=json!("OpenWorker generated deployment identities only; no cloud infrastructure provisioned by bootstrap");
     boot["Outputs"]["ExecutionRoleArn"] = json!({"Value":attribute("ExecutionRole","Arn")});
@@ -553,7 +611,11 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         .join("\n")
         + "\n";
     files.insert("bootstrap.sh".into(), script.into_bytes());
-    files.insert("bootstrap.cfn.json".into(), json_bytes(&boot)?);
+    // CreateStack inline TemplateBody is limited to 51,200 bytes. Pretty-printing
+    // a valid policy graph can exceed it; ship compact JSON and fail before effects.
+    let bootstrap_bytes = serde_json::to_vec(&boot)?;
+    ensure!(bootstrap_bytes.len()<=51200,"Bootstrap template exceeds the inline CloudFormation body limit; split the template before provisioning");
+    files.insert("bootstrap.cfn.json".into(), bootstrap_bytes);
     files.insert("infrastructure.cfn.json".into(), json_bytes(&infra)?);
     files.insert("guard.cfn.json".into(), json_bytes(&guard)?);
     files.insert("cleanup-policy.json".into(), json_bytes(&policies.cleanup)?);
@@ -573,7 +635,7 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
 fn review(p: &Plan, i: &Inputs, policies: &BTreeMap<String, Value>) -> String {
     let (account, region) = scope(p);
     let prefix = p.prefix();
-    format!(
+    let mut text = format!(
         r#"# {} AWS experiment review
 
 Deployment `{}`; account `{account}`; region `{region}`; resource prefix `{prefix}`.
@@ -659,5 +721,9 @@ of the entire bundle. No cloud execution was performed to generate this review.
         i.vpc_cidr,
         i.availability_zones,
         policies.len()
-    )
+    );
+    if let Some(access) = &i.operator_access {
+        text.push_str(&format!("\n## Optional SSM operator bridge\n\nOne private t4g.micro, pinned AMI {}, encrypted 8 GiB disposable disk, no public IP, no inbound ports or SSH. Its instance profile permits only regional SSM heartbeat/session channels, no parameter, database, artifact or model-secret reads. The main infrastructure stack owns the instance/security groups, so normal and expiry teardown include them. Bootstrap owns the role/profile; remove those last. The existing operator login must authorize Session Manager port forwarding; it is separate from workload identity. The added instance/storage/vCPUs are included in preflight cost/quota checks.\n",access.ami_id));
+    }
+    text
 }

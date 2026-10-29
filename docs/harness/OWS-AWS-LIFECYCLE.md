@@ -1,15 +1,23 @@
 # AWS lifecycle and service installation
 
-The native `ows` CLI now coordinates a reviewed AWS infrastructure bundle and the
-shared Kubernetes installer. Recovery and installation have been qualified with
-fake AWS providers and real local kind/OpenShell/PostgreSQL. **No AWS provisioning,
-IAM changes or image uploads were performed in this qualification.** The cloud
-path requires explicit experimental opt-in; AWS IAM, VPC CNI, EBS, Pod Identity,
-Lambda expiry cleanup and actual costs still need the separately authorized trial.
+The native `ows` CLI coordinates a reviewed AWS infrastructure bundle and the shared
+Kubernetes installer. The authorized AWS trial reached a real-model agent run on
+private EKS + RDS + authenticated OpenShell: file/shell effects, UI traces and exact
+PostgreSQL-backed event replay after both API replicas restarted. See the
+[dated evidence](evidence/aws-service-agent-20261029.json) and
+[trial ledger](OWS-AWS-TRIAL-PLAN.md) for exact repairs and qualification limits.
+The cloud path remains experimental and requires explicit opt-in. A clean fresh
+install with the final CLI, S3 workload transfers and healthy-deployment expiry
+cleanup still need qualification; the successful trial required controlled operator
+repairs, now covered by generator fixes and regression tests.
 
 The ordinary `ows deploy apply/destroy` entry points remain closed. The explicit
 `ows deploy aws lifecycle` commands below are the experimental execution path.
 GCP and Azure remain offline planners.
+
+A separately authorized [AWS trial](OWS-AWS-TRIAL-PLAN.md) is now in progress.
+Its scoped identity/guard stacks and private infrastructure have been submitted;
+live agent and installation qualification are not yet complete.
 
 ## Prepare the prerequisites
 
@@ -38,7 +46,17 @@ Review the [infrastructure bundle](OWS-AWS-INFRASTRUCTURE-EXPORT.md) and
 3. Establish the route from the operator host to the future cluster management API
    (private access): for example an existing VPN or a host inside the VPC.
    The installer does not enable a public management endpoint.
-4. Review and run the generated identity bootstrap using the authorized operator
+4. If you do not already have a private network route, the infrastructure input can
+   include `"operatorAccess": {"mode":"ssm","amiId":"PINNED_AMAZON_ARM64_AMI"}`.
+   It creates a private t4g.micro bridge with an encrypted 8 GiB disk and no inbound
+   ports/public IP. Its role allows only regional SSM heartbeat/session channels;
+   it cannot read Parameter Store, database, artifacts or model credentials.
+   The main stack/expiry cleanup owns the instance; bootstrap owns its role/profile.
+   Preflight includes its AMI/offering, extra vCPUs and fixed instance/storage cost.
+   The operator still needs a Session Manager plugin and permission to start a
+   port-forwarding session to that instance. Keep the original EKS TLS host/CA;
+   an operator-side CONNECT bridge can carry it over SSM without disabling TLS.
+5. Review and run the generated identity bootstrap using the authorized operator
    login. Configure an AWS CLI role profile for the exact generated `*-setup` role,
    using that existing login as its source. Never install setup credentials in pods.
 
@@ -190,7 +208,8 @@ Create a mode-0600 JSON file, with PEM strings as values:
 Omit `model` if unused; otherwise declare a matching `secrets.model` name in Helm
 values so the worker mounts it. The cloud path obtains the exact original
 Secrets Manager database password internally, verifies host/database/user identity
-and builds a TLS-verified URL; do not supply `database-url` in cloud input.
+and builds a driver-compatible `sslmode=require` URL; the mandatory Verified TLS
+connector checks CA and hostname using the separately supplied RDS bundle; do not supply `database-url` in cloud input.
 The RDS CA must be independently obtained/reviewed for the target region.
 
 ```sh
@@ -250,6 +269,13 @@ cleanup remain available. Expiry and the $100 budget are not a hard spending cap
 See [the progress ledger](OWS-CLOUD-EXECUTION-PLAN.md) and
 [local evidence](evidence/cloud-lifecycle-20261028.json). Fake-provider tests exercise
 cloud protocol/recovery; kind tests exercise installation and sandbox effects.
-The upcoming AWS trial must still prove actual IAM handlers/rollback, private
-connectivity, strict CNI allow/deny behavior, EBS tagging and deletion, ECR publication,
-Pod Identity/S3 scope, managed RDS TLS, guard scheduling/cleanup and cost accounting.
+The [AWS run evidence](evidence/aws-service-agent-20261029.json) records actual IAM
+handler/rollback fixes, private connectivity, strict CNI probes, encrypted EBS tags,
+immutable ECR publication, managed RDS TLS and agent/UI/restart checks. Pod Identity
+mapping is provisioned; actual S3 transfers, healthy-deployment expiry cleanup and
+final cost reconciliation remain explicitly unqualified.
+
+The bootstrap is exported as compact JSON and checked against CloudFormation's
+[51,200-byte inline template limit](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)
+before a bundle is produced. Human-readable permission documents remain separate.
+SSM forwarding prerequisites are described in [AWS Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html).

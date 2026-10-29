@@ -40,6 +40,15 @@ pub enum Command {
         #[arg(long)]
         reconcile_ready_release: Option<String>,
     },
+    /// Record the original terminal failed release for cleanup; never reinstall it.
+    RecordFailedRelease {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        release: String,
+    },
     Status {
         #[arg(long)]
         state: PathBuf,
@@ -1341,6 +1350,7 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
     let state = match command {
         Command::Apply { state, .. }
         | Command::Platform { state, .. }
+        | Command::RecordFailedRelease { state, .. }
         | Command::Status { state }
         | Command::Secrets { state, .. }
         | Command::Destroy { state, .. } => state,
@@ -1357,7 +1367,12 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
             &p.config.kubeconfig,
             &p.config.context,
             &p.config.service.values_file,
-            !matches!(command, Command::Status { .. } | Command::Destroy { .. }),
+            !matches!(
+                command,
+                Command::Status { .. }
+                    | Command::Destroy { .. }
+                    | Command::RecordFailedRelease { .. }
+            ),
         )
         .await?;
     }
@@ -1384,6 +1399,67 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         inputs(&p.config)? == p.hashes,
         "Installer inputs changed; regenerate and review a new plan"
     );
+    if let Command::RecordFailedRelease {
+        accept_plan,
+        release: key,
+        ..
+    } = command
+    {
+        ensure!(accept_plan == &p.digest, "Accepted plan digest mismatch");
+        let (ns, release) = match key.as_str() {
+            "openshell-release" if matches!(p.config.openshell, Shell::Install { .. }) => {
+                let (ns, release, _) = p.config.openshell.scope();
+                (ns, release)
+            }
+            "service-release" => (
+                &p.config.service.namespace[..],
+                &p.config.service.release[..],
+            ),
+            _ => bail!("Invalid original release operation"),
+        };
+        owned(&client, &p, &j, ns)
+            .await?
+            .context("Owned namespace missing")?;
+        let op = j
+            .operations
+            .get(key)
+            .context("No original install intent; refusing adoption")?;
+        ensure!(
+            ["intent", "failed-confirmed"].contains(&op.status.as_str()),
+            "Only a failed original install may be recorded"
+        );
+        let r = client
+            .release(ns, release)
+            .await?
+            .context("Original release absent; outcome remains unknown")?;
+        ensure!(
+            r["status"] == "failed" && r["revision"] == 1,
+            "Expected original terminal failed install revision 1"
+        );
+        ensure!(
+            if op.label_provenance {
+                r["installerId"] == p.id && r["operationId"] == op.request_id
+            } else {
+                r["description"] == format!("ows:{}:{}", p.id, op.request_id)
+            },
+            "Helm release provenance mismatch"
+        );
+        if let Some(original) = &op.receipt {
+            ensure!(
+                original["uid"] == r["uid"] && original["revision"] == r["revision"],
+                "Helm release identity/revision changed"
+            );
+        }
+        // A failed hook can have side effects. This receipt permits identity-checked
+        // cleanup only; it must never authorize retrying the original installation.
+        let op = j.operations.get_mut(key).unwrap();
+        op.receipt = Some(r);
+        op.status = "failed-confirmed".into();
+        save(state, "journal.json", &j)?;
+        return crate::output(
+            json!({"deploymentId":p.id,"operation":key,"status":"failed-confirmed","cleanupOnly":true,"remoteMutation":false}),
+        );
+    }
     if let Command::Secrets {
         input, accept_plan, ..
     } = command

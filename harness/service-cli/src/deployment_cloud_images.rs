@@ -353,6 +353,23 @@ pub(super) async fn publish(
         let password = token
             .strip_prefix("AWS:")
             .context("Invalid registry user")?;
+        // Docker auto-detects an OS credential helper when a config has no auth
+        // entries. An isolated directory alone therefore still reaches Keychain/
+        // secretservice/pass. Seed a non-secret registry entry to force file-store
+        // use, then let login write only inside our mode-0700 temporary directory.
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut auth_file = options.open(temp.join("config.json"))?;
+        auth_file.write_all(&serde_json::to_vec(
+            &json!({"auths":{registry.clone():{}}}),
+        )?)?;
+        auth_file.sync_all()?;
+        drop(auth_file);
         tool(
             "docker",
             docker(strings(&[

@@ -12,6 +12,10 @@ harness/**/*.db
 !deploy/service/
 !deploy/service/Dockerfile
 !deploy/service/entrypoint.sh
+!deploy/service/guard/
+!deploy/service/guard/**
+!deploy/service/platform/
+!deploy/service/platform/**
 !deploy/service/bundle/
 !deploy/service/bundle/**
 !.ow-service-build/

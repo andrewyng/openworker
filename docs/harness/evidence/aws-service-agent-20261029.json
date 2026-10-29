@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "startedOn": "2026-10-28",
+  "verifiedAt": "2026-10-29T02:44:51.111412+00:00",
+  "branch": "feat/openworker-service-m1",
+  "baseCommit": "9f78b8a2",
+  "scope": "authorized ocw-demos experiment; real AWS, not production qualification",
+  "aws": {
+    "region": "us-west-2",
+    "clusterManagementApi": "private",
+    "workerNodes": 2,
+    "architecture": "arm64",
+    "kubernetes": "1.36.5",
+    "postgresql": "16.13",
+    "status": "CREATE_COMPLETE",
+    "unrelatedResourcesModified": false
+  },
+  "packaging": {
+    "immutableImagesPublishedAndVerified": [
+      "harness",
+      "runner",
+      "service-ui"
+    ],
+    "cloudPlanDigest": "815619c8ce18bf7ce77300c27d1169b7c6aecb0cf2b7fd45b0ca73d94b27221b"
+  },
+  "installation": {
+    "openshell": "authenticated 0.1.3, Ready",
+    "service": "installed; original hook-free failed Helm release explicitly readiness-reconciled",
+    "apiReplicas": 2,
+    "workerSlots": 2,
+    "databaseTLS": "mandatory verified native TLS with reviewed RDS CA; driver-compatible sslmode=require",
+    "operatorRepairs": [
+      "Original failed certgen release identity recorded then uninstalled; fresh namespace-only policy plan retained shared platform",
+      "Database URL parameter repaired with Secret UID/resource-version/old-value preconditions; CA/password unchanged; failed bootstrap rerun only after all original logs proved pre-connect parse failure"
+    ],
+    "freshUnattendedInstallWithFinalCliRepeated": false
+  },
+  "network": {
+    "cni": "strict",
+    "realPacketChecks": [
+      "baseline allow",
+      "egress deny",
+      "egress allow",
+      "ingress deny",
+      "ingress allow"
+    ],
+    "allPassed": true
+  },
+  "workspace": {
+    "encrypted": true,
+    "ownershipTag": true,
+    "sizeGiB": 1,
+    "state": "in-use",
+    "persistentWorkspace": true,
+    "claimUidVerified": true
+  },
+  "agent": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5",
+    "release": "proof@1",
+    "runtimeProfile": "aws@1",
+    "approvalMode": "bypass inside OpenShell",
+    "status": "completed",
+    "sessionId": "s_2e6f88407686490a8b62c98e3deea2f3",
+    "runId": "t_1e4d9a73649d46dc999260799d044a62",
+    "toolCalls": [
+      {
+        "name": "write_file",
+        "isError": false
+      },
+      {
+        "name": "run_shell",
+        "isError": false
+      }
+    ],
+    "modelRequests": 3,
+    "inputTokens": 3767,
+    "outputTokens": 201,
+    "proofFile": "/sandbox/aws-trial-proof.txt",
+    "independentKubectlRead": "OpenWorker agent ran on AWS with OpenShell.",
+    "streamedAssistantDeltas": true
+  },
+  "recovery": {
+    "runEvents": 33,
+    "exactReplayBeforeApiRestart": true,
+    "bothApiReplicasReplaced": true,
+    "exactReplayAfterApiRestart": true,
+    "modelRequestResubmitted": false,
+    "localTunnelReconnectRequired": true
+  },
+  "ui": {
+    "passed": true,
+    "path": "browser -> deployed UI pod -> AWS service -> durable agent records",
+    "sessionId": "s_2e6f88407686490a8b62c98e3deea2f3",
+    "traceSteps": 37,
+    "pageErrors": 0
+  },
+  "tests": {
+    "cli": 58,
+    "failed": 0,
+    "linuxArm64Build": "passed before final host-installer fixes; final CLI tests on macOS",
+    "guardAndChart": 14
+  },
+  "guard": {
+    "enabledFiveMinuteSchedule": true,
+    "reservedConcurrency": 1,
+    "health": "healthy",
+    "identityBound": true,
+    "healthDestructiveActions": 0,
+    "expiresAtUtc": "2026-10-29T23:24:09Z"
+  },
+  "budget": {
+    "authorizedIncrementalUsd": 100,
+    "reviewed24HourFixedEstimateUsd": 7.67,
+    "reserveUsd": 25,
+    "planningEnvelopeUsd": 32.67,
+    "hardCap": false,
+    "actualCosts": "not finalized; AWS billing attribution is delayed; existing month-to-date charges excluded"
+  },
+  "remainingQualification": [
+    "Fresh install with final CLI without operator repairs",
+    "Actual S3 workload artifact round-trip (Pod Identity mapping provisioned; no artifact upload/download claimed)",
+    "Active-turn worker crash/cancel through separate nodes on AWS (local qualification exists)",
+    "Healthy deployment expiry cleanup and final cloud-cost reconciliation"
+  ],
+  "credentialsCommitted": false
+}
