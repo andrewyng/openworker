@@ -895,19 +895,20 @@ def test_allow_anyway_cannot_unlock_a_hard_deny(tmp_path):
 
 
 def test_running_an_agent_written_script_tells_the_reviewer_so(tmp_path):
+    # Not setup.py: a build backend runs that one unnamed, so it is human-only (OPE-231).
     engine, rows, approvals = _engine(
         tmp_path,
         [
-            _tool_turn(("write_file", {"path": "setup.py", "content": "x"})),
-            _tool_turn(("run_shell", {"command": "python setup.py"})),
+            _tool_turn(("write_file", {"path": "make_report.py", "content": "x"})),
+            _tool_turn(("run_shell", {"command": "python make_report.py"})),
             AssistantTurn(text="done", finish_reason="stop"),
         ],
     )
     engine.reviewer = _FakeReviewer({"write_file": "allow", "run_shell": "allow"})
-    _run(engine, "write a setup script and run it")
+    _run(engine, "write a report script and run it")
 
     shell = [p for (name, _), p in zip(engine.reviewer.asked, engine.reviewer.provenance) if name == "run_shell"]
-    assert shell and "setup.py was created by the agent" in shell[0]
+    assert shell and "make_report.py was created by the agent" in shell[0]
     # Written (not downloaded) is a FACT, not a floor: the reviewer still decides, so
     # "write this script and run it" stays a single uninterrupted flow.
     assert approvals == []

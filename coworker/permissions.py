@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -153,20 +154,275 @@ def protected_paths() -> list[Path]:
 _PROTECTED_IN_PROJECT = (
     ".git/hooks/",
     ".github/workflows/",
+    ".github/actions/",  # actions the workflows call; they run with the workflow
     ".gitlab-ci.yml",
     ".vscode/tasks.json",
     ".coworker/",  # workspace policy + skills the agent would otherwise self-grant
+    # Run by a build backend, env tool, git or a hook manager without being named on the
+    # command line (OPE-231). package.json / pyproject.toml / setup.cfg are deliberately
+    # NOT here: users edit them constantly (versions, dependencies) and the reviewer sees
+    # the content, so it can tell a version bump from a new install script.
+    "setup.py",
+    ".envrc",
+    ".gitattributes",
+    ".pre-commit-config.yaml",
+    "tox.ini",
+    ".devcontainer/",
+    ".husky/",
+    ".circleci/",
+    "AGENTS.md",  # read into every later session's system prompt (project.py)
+    # git's own settings: they can name programs git runs (fsmonitor, pager, aliases,
+    # filters) or move the hooks folder. `info/attributes` does what `.gitattributes`
+    # does; a submodule keeps its own git folder, hooks and settings under `modules/`;
+    # a `.git` FILE names the folder git takes all of those from. `.gitmodules` stays
+    # with the reviewer: git refuses to run commands named there.
+    ".git/config",
+    ".git/info/attributes",
+    ".git/modules/",
+    ".git/worktrees/",  # each linked worktree's own settings, same role as `modules/`
+    ".git",
+    "conftest.py",  # pytest imports it on every test run, from any folder it collects
+    "pytest.ini",  # its options can load a plugin on every test run, like `tox.ini`
+    # Python imports these on every start of the interpreter that can see them.
+    "sitecustomize.py",
+    "usercustomize.py",
+    # mise loads these on entering the folder, as direnv does `.envrc`.
+    ".mise.toml",
+    "mise.toml",
+    ".mise.local.toml",
+    "mise.local.toml",
+    # CI services run these on push.
+    "azure-pipelines.yml",
+    ".travis.yml",
+    "Jenkinsfile",
+    "bitbucket-pipelines.yml",
+    ".buildkite/",
+    ".vscode/launch.json",  # what the editor runs when the user starts or debugs the program
+    # Editor settings can name programs the editor starts on its own: the terminal
+    # shell, the interpreter, formatters and linters.
+    ".vscode/settings.json",
+    # Package managers read these on every run, and a setting can name a program to run
+    # in place of (or alongside) the package manager itself.
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".pnpmfile.cjs",  # code pnpm runs on every install
+    # cargo's settings can name the program that runs, links or wraps every build.
+    ".cargo/config.toml",
+    ".cargo/config",
 )
 
 
-def _is_protected_in_project(candidate: Path) -> bool:
-    posix = candidate.as_posix()
+def _case_insensitive_fs() -> bool:
+    """Windows always, and macOS by default, treat `.GIT/hooks` and `.git/hooks` as one
+    folder. `Path.resolve()` only restores the on-disk case for parts that already exist,
+    so a not-yet-created target keeps the case the agent typed and matching has to fold
+    case itself. Folding on a case-sensitive macOS volume only adds a card, never removes
+    one."""
+    return sys.platform in ("win32", "darwin")
+
+
+def _fold(text: str) -> str:
+    return text.casefold() if _case_insensitive_fs() else text
+
+
+def _names_protected(path_text: str, markers: Optional[Sequence[str]] = None) -> bool:
+    """Whether a path, as text, names a protected in-project file or folder. Folder
+    markers match at any depth and also the folder itself (`.git/hooks`); file markers
+    match the last part only."""
+    text = "/" + _fold(path_text.replace("\\", "/")).strip("/") + "/"
     return any(
-        (f"/{marker}" in posix or posix.startswith(marker))
-        if marker.endswith("/")
-        else posix.endswith("/" + marker)
-        for marker in _PROTECTED_IN_PROJECT
+        f"/{marker}" in text if marker.endswith("/") else text.endswith(f"/{marker}/")
+        for marker in map(_fold, _PROTECTED_IN_PROJECT if markers is None else markers)
     )
+
+
+def _shell_markers() -> tuple[str, ...]:
+    """The markers matched in shell commands: all but the bare `.git`, which in a command
+    almost always names the folder being listed or left out, not a file being written."""
+    return tuple(m for m in _PROTECTED_IN_PROJECT if m != ".git")
+
+
+def _real_location(candidate: Path) -> Optional[str]:
+    """Where a write to `candidate` really lands, or None when that cannot be worked out.
+
+    The folders that exist are resolved by the operating system, so every spelling that
+    reaches them (links, junctions, Windows short names, letter case) gives the same
+    answer. Windows also reads the parts that don't exist yet in its own way: it drops
+    trailing dots and spaces from a name, and `name:stream` is a stream of the file or
+    folder `name`. Those parts are read the same way here."""
+    try:
+        real = os.path.realpath(candidate)
+    except (OSError, ValueError):
+        return None
+    if sys.platform != "win32":
+        return real
+    if real.startswith("\\\\?\\UNC\\"):
+        real = "\\\\" + real[8:]
+    elif real.startswith("\\\\?\\"):
+        real = real[4:]
+    drive, rest = os.path.splitdrive(real)
+    parts = []
+    for part in re.split(r"[\\/]+", rest):
+        if not part:
+            continue
+        name = part.split(":", 1)[0].rstrip(" .")
+        if not name:
+            return None
+        parts.append(name)
+    return drive + "\\" + "\\".join(parts)
+
+
+def _is_protected_in_project(
+    candidate: Path, *, fail_closed: bool = True, markers: Optional[Sequence[str]] = None
+) -> bool:
+    """Whether a write to `candidate` changes a protected in-project file, judged from the
+    path as given and from where it really lands on disk. With `fail_closed`, a location
+    that cannot be worked out counts as protected."""
+    if _names_protected(candidate.as_posix(), markers):
+        return True
+    real = _real_location(candidate)
+    if real is None:
+        return fail_closed
+    return _names_protected(real, markers)
+
+
+# `git config` forms that only read. Anything else (a key with a value, --unset, --edit,
+# the `set` / `unset` subcommands) changes git's settings.
+_GIT_CONFIG_READS = {
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color",
+    "--get-colorbool", "--list", "-l", "get", "list",
+}
+_GIT_CONFIG_WRITES = {
+    "--add", "--unset", "--unset-all", "--replace-all", "--rename-section",
+    "--remove-section", "--edit", "-e", "set", "unset", "rename-section",
+    "remove-section", "edit",
+}
+_GIT_CONFIG_VALUE_FLAGS = {"-f", "--file", "--blob", "-t", "--type", "--default", "--comment", "--value"}
+# Settings that only label commits or pick a default: none names a program to run, a
+# file to load, or where git fetches from. Setting one keeps its normal handling.
+_GIT_CONFIG_PLAIN_KEYS = {
+    "user.name", "user.email", "init.defaultbranch", "core.autocrlf", "pull.rebase", "color.ui",
+    "core.longpaths", "push.default", "push.autosetupremote", "fetch.prune", "rebase.autostash",
+    "merge.conflictstyle",
+}
+_GIT_CONFIG_WHOLE_FILE = {"--edit", "-e", "edit", "--rename-section", "rename-section",
+                          "--remove-section", "remove-section"}
+
+
+def _sets_only_plain_key(args: list[str]) -> bool:
+    """Whether a `git config` change sets or unsets only one of the plain settings."""
+    if any(a in _GIT_CONFIG_WHOLE_FILE for a in args):
+        return False
+    operands, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in _GIT_CONFIG_VALUE_FLAGS:
+            skip = True
+        elif not a.startswith("-"):
+            operands.append(a)
+    if operands and operands[0] in ("set", "unset"):
+        operands = operands[1:]
+    return bool(operands) and operands[0].lower() in _GIT_CONFIG_PLAIN_KEYS
+
+
+def _changes_git_config(argv: list[str]) -> bool:
+    """Whether one parsed command runs `git config` to change a setting that is not one
+    of the plain ones (name, email, default branch and the like)."""
+    for i, word in enumerate(argv):
+        program = Path(word).name.lower()
+        if program not in ("git", "git.exe"):
+            continue
+        rest = argv[i + 1 :]
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in ("-C", "-c") else 1
+        if j >= len(rest) or rest[j] != "config":
+            continue
+        args = rest[j + 1 :]
+        if _sets_only_plain_key(args):
+            continue
+        if any(a in _GIT_CONFIG_WRITES for a in args):
+            return True
+        if any(a in _GIT_CONFIG_READS for a in args):
+            continue
+        operands, skip = 0, False
+        for a in args:
+            if skip:
+                skip = False
+            elif a in _GIT_CONFIG_VALUE_FLAGS:
+                skip = True
+            elif not a.startswith("-"):
+                operands += 1
+        if operands != 1:  # `git config key value`, or a form not read here
+            return True
+    return False
+
+
+def _split_sequence(command: str) -> Optional[list[str]]:
+    """Split on top-level `;`, `&&` and `||`, outside quotes. None on unbalanced quotes."""
+    parts: list[str] = []
+    current: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+            current.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            current.append(ch)
+        elif ch == ";" or command.startswith(("&&", "||"), i):
+            parts.append("".join(current))
+            current = []
+            i += 1 if ch == ";" else 2
+            continue
+        else:
+            current.append(ch)
+        i += 1
+    if quote:
+        return None
+    parts.append("".join(current))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _is_cd(part: str) -> bool:
+    """Whether one part of a sequence only changes folder: `cd`, or `cd` and one plain
+    folder name with nothing the shell would expand."""
+    words = part.split()
+    return bool(words) and words[0] == "cd" and len(words) <= 2 and not any(
+        c in part for c in "$`(){}<>|&;*?["
+    )
+
+
+# Redirects that only throw output away. A read with its errors discarded is still a read.
+_DISCARDED_OUTPUT = re.compile(r"(?<!\S)(?:(?:[12]|&)?>{1,2}\s*/dev/null|2>&1)(?!\S)")
+
+# Characters that end a word when a shell command is read for the paths it names. Quotes
+# and PowerShell's backtick are removed first, so `".git"/hooks` reads as `.git/hooks`.
+_WORD_BREAK = re.compile(r"[\s;&|<>(){},=:]+")
+
+
+def _script_run(argv: list[str]) -> Optional[str]:
+    """The file one parsed command runs, when it runs a file: `python setup.py`,
+    `bash .husky/pre-commit`, `./setup.py`. Running a protected file is not changing it,
+    so that one word keeps its normal handling. None when no file is run this way
+    (inline code, a module, or a form not read here)."""
+    if not argv:
+        return None
+    program = Path(argv[0]).name.lower()
+    program = program[:-4] if program.endswith(".exe") else program
+    if program not in _INTERPRETERS and program not in ("py", "python2"):
+        return argv[0] if "/" in argv[0] else None
+    for arg in argv[1:]:
+        if arg in _INLINE_CODE_FLAGS or arg in ("-m", "-W", "-X", "-Q"):
+            return None
+        if not arg.startswith("-"):
+            return arg
+    return None
 
 
 def _host_of(url_or_domain: str) -> str:
@@ -533,6 +789,10 @@ class PermissionEngine:
                 # edited, but never by an auto-approve path — a human must see it.
                 if _is_protected_in_project(self._candidate(path)):
                     needs_human_for_protected = True
+        # The same files changed by a command: one that names a protected path, unless the
+        # read-only check accepts it (reading a hook or a CI file keeps its normal handling).
+        if is_shell and self._shell_changes_protected(str(arguments.get("command", ""))):
+            needs_human_for_protected = True
 
         # Asking for a site (OPE-219): a change to the allowed-sites wall. Only a person
         # answers it; full access cannot, like every other change to a wall.
@@ -996,11 +1256,78 @@ class PermissionEngine:
         paths, located = write_paths(tool_name, arguments)
         if not located:
             return None  # unlocatable writes are already failed closed by the caller
-        resolved = {str(self._candidate(p)) for p in paths}
+        resolved = {_fold(str(self._candidate(p))) for p in paths}
         for target in targets:
-            if str(Path(target).resolve()) in resolved:
+            if _fold(str(Path(target).resolve())) in resolved:
                 return target
         return None
+
+    def _only_reads(self, command: str) -> bool:
+        """The read-only check, applied to the whole command or to each part of a
+        `;` / `&&` / `||` sequence (where `cd <folder>` counts too: it changes no file),
+        after dropping redirects that only throw output away (`2>/dev/null`, `2>&1`).
+        Fails closed."""
+        from .readonly import is_readonly_command
+
+        try:
+            if self.shell_kind == "bash":
+                command = _DISCARDED_OUTPUT.sub(" ", command)
+            if is_readonly_command(command, shell=self.shell_kind):
+                return True
+            parts = _split_sequence(command)
+            return bool(parts) and len(parts) > 1 and all(
+                is_readonly_command(p, shell=self.shell_kind) or _is_cd(p) for p in parts
+            )
+        except Exception:  # noqa: BLE001 - a check that cannot finish is not a read
+            return False
+
+    def _shell_changes_protected(self, command: str) -> bool:
+        """Whether a shell command may change a protected in-project file: it is not a read
+        the read-only check accepts, and it names one (or runs `git config` to change a
+        setting). Like the settings floor this reads the command text, so it catches the
+        paths a command spells out, not ones it computes. Each word is matched as written,
+        case-folded where the file system ignores case, and also where it really lands
+        from the shell's current folder, with wildcards expanded."""
+        if not command.strip() or self._only_reads(command):
+            return False
+        text = command.replace("\\", "/")
+        run: Counter[str] = Counter()
+        for part in _split_commands(text):
+            try:
+                argv = shlex.split(part)
+            except ValueError:
+                argv = part.split()
+            if _changes_git_config(argv):
+                return True
+            script = _script_run(argv)
+            if script and not _WORD_BREAK.search(script):
+                run[script] += 1
+        base = self.workspace_root
+        if self.shell_cwd is not None:
+            try:
+                cwd = self.shell_cwd()
+            except Exception:  # noqa: BLE001 - fall back to the workspace folder
+                cwd = None
+            if cwd:
+                base = Path(cwd).expanduser()
+        words = Counter(
+            w for w in _WORD_BREAK.split(re.sub(r"[\"'`]", "", text)) if w and not w.startswith("-")
+        )
+        markers = _shell_markers()
+        # A file the command only runs is not a change to it; any other mention of the
+        # same path in the command still counts.
+        for word in [w for w, n in words.items() if n > run[w]]:
+            if _names_protected(word, markers):
+                return True
+            if word.startswith("//"):
+                continue  # a network path: matched as text only
+            full = Path(os.path.expanduser(word))
+            full = full if full.is_absolute() else base / full
+            matches = _glob.glob(str(full)) if any(c in word for c in "*?[") else []
+            for candidate in [full, *map(Path, matches)]:
+                if _is_protected_in_project(candidate, fail_closed=False, markers=markers):
+                    return True
+        return False
 
     def _domain_allowed(self, url: str, *, include_session: bool = True) -> bool:
         """True when the URL's host is an allowed egress destination — an exact match or a
