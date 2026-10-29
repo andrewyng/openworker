@@ -1633,6 +1633,73 @@ export async function installPersona(
   return out;
 }
 
+// -- Structured persona authoring ---------------------------------------------
+export interface PersonaDefinition {
+  id: string;
+  name: string;
+  icon: string;
+  tagline: string;
+  description: string;
+  system_prompt: string;
+  tools: string[];
+  connectors: string[];
+  models: string[];
+  skills: string[];
+  mcp: string[];
+  requires_folder: boolean;
+  subagents: boolean;
+  scheduling: boolean;
+  team: string;
+  approval_guidance: string;
+  default_permission_mode: string;
+  version: string;
+  group: string;
+  recommends: { kind: string; ref: string; reason: string; tier: string }[];
+}
+
+export interface PersonaEditorOptions {
+  capabilities: { id: string; name: string; description: string; risk: string[] }[];
+  connectors: { id: string; name: string }[];
+  mcp: string[];
+  modes: string[];
+}
+
+export interface PersonaEditorRequest {
+  definition: PersonaDefinition;
+  template_id?: string;
+  editing_id?: string;
+}
+
+async function personaEditorRequest<T>(path: string, machineId?: string | null, body?: PersonaEditorRequest): Promise<T> {
+  const res = await fetch(`${engineBase(machineId)}${path}`, body ? {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  } : undefined);
+  const out = await res.json();
+  if (!res.ok || out.ok === false) throw new Error(out.error || `HTTP ${res.status}`);
+  return out;
+}
+
+export function getPersonaEditorOptions(machineId?: string | null): Promise<PersonaEditorOptions> {
+  return personaEditorRequest("/v1/persona-editor", machineId);
+}
+
+export async function getPersonaDefinition(id: string, machineId?: string | null): Promise<PersonaDefinition> {
+  const out = await personaEditorRequest<{ definition: PersonaDefinition }>(`/v1/personas/${encodeURIComponent(id)}/definition`, machineId);
+  return out.definition;
+}
+
+export function previewPersonaDefinition(body: PersonaEditorRequest, machineId?: string | null): Promise<{ consent: PersonaConsent; markdown: string }> {
+  return personaEditorRequest("/v1/persona-editor/preview", machineId, body);
+}
+
+export async function savePersonaDefinition(body: PersonaEditorRequest, machineId?: string | null): Promise<{ consent: PersonaConsent[]; personas: Persona[] }> {
+  const out = await personaEditorRequest<{ consent: PersonaConsent[]; personas: Persona[] }>("/v1/persona-editor/save", machineId, body);
+  announcePersonasChanged();
+  return out;
+}
+
 // -- Persona detail + connection defaults (§5) --------------------------------
 // A persona's declared recommendation (manifest `recommends`): a connector or MCP server it works
 // best with, with a reason + tier (core/optional). `connected` is annotated server-side from the

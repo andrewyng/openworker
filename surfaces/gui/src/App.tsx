@@ -2097,6 +2097,10 @@ export function App() {
             if (ids.includes(sessionId)) setConnectNonce((n) => n + 1);
           }}
           onOpenPersona={(id, machineId) => openPersona(id, "settings", machineId)}
+          onTryPersona={(id, machineId) => {
+            startNewSession(id);
+            if (machineId) setMachine(machineId);
+          }}
           onAskWorker={(machineId) => {
             // Memory's remote CTA: the conversation IS the edit surface — a
             // fresh draft on that machine, prompt started.

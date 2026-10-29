@@ -169,6 +169,7 @@ const SET_GROUPS: { name: string; nameKey?: string; scope: "app" | "machine" | "
 export function SettingsView({
   initialTab,
   onOpenPersona,
+  onTryPersona,
   onCreateSkill,
   onAskWorker,
   onBack,
@@ -181,6 +182,7 @@ export function SettingsView({
   // "Back to app" on the rail — returns to the conversation surface.
   onBack?: () => void;
   onOpenPersona?: (id: string, machineId?: string | null) => void;
+  onTryPersona?: (id: string, machineId?: string | null) => void;
   // Skills doorway (SKILLS-SPEC §5.2): start a new conversation with the description
   // prefilled — the worker builds the skill and proposes it via save_skill. Under a
   // machine scope, that conversation runs ON the machine.
@@ -451,6 +453,7 @@ export function SettingsView({
               key={scopeId || "local"}
               machine={scoped}
               onOpenPersona={(id) => onOpenPersona?.(id, scoped?.id ?? null)}
+              onTryPersona={onTryPersona ? (id) => onTryPersona(id, scoped?.id ?? null) : undefined}
             />
           )}
         </div>
@@ -698,9 +701,11 @@ function VoiceInputSection() {
 // possible return as a first-class distribution surface, but nothing mounts it.
 function PersonasSection({
   onOpenPersona,
+  onTryPersona,
   machine,
 }: {
   onOpenPersona?: (id: string) => void;
+  onTryPersona?: (id: string) => void;
   machine?: Machine | null;
 }) {
   const { t } = useTranslation();
@@ -717,7 +722,7 @@ function PersonasSection({
       <p className="text-ui text-muted leading-relaxed max-w-[560px] mt-5 mb-1">
         {t("settings.personas_desc")}
       </p>
-      <PersonasTab onOpenPersona={onOpenPersona} machine={machine} />
+      <PersonasTab onOpenPersona={onOpenPersona} onTryPersona={onTryPersona} machine={machine} />
     </section>
   );
 }
