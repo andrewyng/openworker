@@ -676,3 +676,18 @@ fn current_aws_cli_absence_wrapper_is_recognized_without_treating_denial_as_abse
     assert!(!g.apply("access-denied", false, true).status.success());
     assert_eq!(g.creates(), 0);
 }
+
+#[test]
+fn expiry_reconcile_before_deadline_or_with_wrong_id_makes_no_cloud_calls() {
+    let f = Fixture::new();
+    for id in [&f.id[..], "ows-ffffffffffffffffffffffffffffffff"] {
+        let out = Fixture::command(f.home.path())
+            .args(["deploy", "aws", "lifecycle", "reconcile-expiry", "--state"])
+            .arg(f.home.path().join("state"))
+            .args(["--profile", "fixture-setup", "--deployment-id", id])
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(f.calls().is_empty());
+    }
+}

@@ -358,3 +358,67 @@ with the explicitly documented operator repairs. Do not call this a clean unatte
 fresh-install qualification, S3 artifact transfer qualification or a healthy full
 expiry test. Those remain follow-ups; this milestone proves AWS submission,
 sandbox execution, progress/result presentation and durable API-node replacement.
+
+## Follow-up: clean install and scheduled expiry qualification
+
+User authorized a clean-install rerun, full expiry cleanup, and pushing verified
+changes, within the same cumulative $100 experiment budget. Preserve the successful
+v6 evidence, close its session/delete sandbox, then remove the current deployment
+using native teardown before creating a fresh short-lived trial. Freeze the final
+installer and run it from fresh state against an empty EKS/RDS installation. No
+manual Secret/Job/Helm repairs may count as a clean pass. Use the actual scheduled
+expiry clock (no override or Lambda configuration edit), seed known owned data,
+and verify actual cloud-stack, volume, object and identity absence. Retain the
+independent guard until absence is confirmed. Add safe local reconciliation for
+expiry-initiated deletion if needed; never invent a local delete request or replay
+an unknown action. Update dated evidence, then push the feature branch after tests.
+
+Budget gate: prior six attempts conservatively costed as six full 24-hour fixed
+allocations is $46.02; a new one-hour fixed allocation is ~$0.33 plus a shared $25
+reserve, giving a conservative $71.35 planning envelope. All old attempts ended
+well before 24 hours. Billing attribution is delayed and the reserve is not a cap;
+read actual account costs and resource inventory before proceeding.
+
+Read-only follow-up inventory confirms only the v6 EKS cluster and its RDS instance
+are present. AWS Cost Explorer reports ~$1.11 for October 28, estimated; October 29
+is not yet attributed. V6 completed session is closed and OpenShell environment is
+now deleted through the service, including its workspace PVC. Native service teardown
+is running; successful v6 evidence remains saved.
+
+Added a read-only expiry reconciliation path: after the fixed deadline it verifies
+the original guard stack/config/code, strongly consistent deployment-keyed control
+record, original infrastructure ARN/template/creation token plus stack-level expiry
+delete token, owned-bucket absence and complete empty tagged-volume inventory. Only
+then records the observed external delete locally. It never issues DeleteStack or
+requires an API pod that expiry has already removed. The setup role gains only
+GetItem on its one control key and regional EC2 volume metadata reads, no control
+writes/deletes. Tests cover wrong identity/version/clock and no pre-expiry AWS calls.
+
+All 61 CLI tests pass, including expiry identity/clock/read-scope checks. Final Linux
+ARM64 runtime image builds from source and its packaged `reconcile-expiry` command
+passes a smoke check. Old v6 service/gateway native teardown is destroyed; main
+stack is deleting under its original recorded request, with RDS and SSM bridge
+already deleted and no failed events. Old local UI/access listeners are retired.
+
+Clean-trial image is built directly from final source (not the cached prebuilt
+service binaries). It includes the new read-only expiry observer. The forthcoming
+one-hour plan uses the same preflight-verified version catalog and exact published
+guard bytes, with a new deployment identity, empty database and fresh platform/Helm
+state. The old long-lived trial is being completely retired before its clock starts.
+
+V6 independent inventory passes: no cluster, active instances, volumes, VPC, EIPs,
+RDS, repositories, owned bucket or trial roles. Guard and bootstrap are DELETE_COMPLETE
+by original ARN. Fresh v7 one-hour deployment is `ows-32a76230ebd74e71afd9ab599e774dea`,
+fixed expiry 29 October 04:26:57 UTC / 28 October 21:26:57 Pacific. Fresh read-only
+preflight passes all required checks (54 AWS calls, eleven policies with zero Access
+Analyzer findings). Published fixed one-hour estimate is $0.32 plus $25 reserve.
+Customer bootstrap has been dispatched once. Linux image offline export independently
+shows the final observer read scopes. No manual installation repair is permitted
+for this clean qualification.
+
+Fresh plan bootstrap is progressing with no failed resources. The expiry observer
+uses only read APIs (CloudFormation events, consistent control-record read, tagged
+volume/bucket inventories and the exact guard log group); it never invokes cleanup
+or edits the expiry clock. It will distinguish an incomplete upload and object
+cleanup from just accepting a stack-delete response. The existing publisher bucket
+is retained only while the new guard still needs its reviewed code version.

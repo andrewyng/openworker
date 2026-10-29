@@ -819,3 +819,32 @@ fn optional_operator_access_has_no_ingress_or_workload_identity_and_is_expiry_ow
     let base = read(&out, "infrastructure-inputs.json");
     assert_eq!(base["operatorAccess"]["mode"], "ssm");
 }
+
+#[test]
+fn expiry_observer_can_only_read_its_control_key_and_regional_volume_metadata() {
+    let home = tempfile::tempdir().unwrap();
+    let (out, _) = generate(home.path(), "expiry-read", &input());
+    let p = read(&out, "deployment-plan.json");
+    let policy = read(&out, "setup-policy.json");
+    let statements = policy["Statement"].as_array().unwrap();
+    let control = statements
+        .iter()
+        .find(|s| s["Sid"] == "ReadOwnExpiryReceipt")
+        .unwrap();
+    assert_eq!(control["Action"], json!(["dynamodb:GetItem"]));
+    assert_eq!(
+        control["Condition"]["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"],
+        json!([p["deploymentId"]])
+    );
+    assert!(control["Resource"].as_str().unwrap().ends_with("-control"));
+    let volumes = statements
+        .iter()
+        .find(|s| s["Sid"] == "ObserveExpiredVolumes")
+        .unwrap();
+    assert_eq!(volumes["Action"], json!(["ec2:DescribeVolumes"]));
+    assert_eq!(
+        volumes["Condition"]["StringEquals"]["aws:RequestedRegion"],
+        "us-west-2"
+    );
+    assert!(serde_json::to_vec(&policy).unwrap().len() <= 10_240);
+}

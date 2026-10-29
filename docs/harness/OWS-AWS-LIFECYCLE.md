@@ -279,3 +279,28 @@ The bootstrap is exported as compact JSON and checked against CloudFormation's
 [51,200-byte inline template limit](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)
 before a bundle is produced. Human-readable permission documents remain separate.
 SSM forwarding prerequisites are described in [AWS Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html).
+
+## Reconcile scheduled expiry after the cluster is gone
+
+The expiry guard records its original infrastructure ARN and delete request in its
+own DynamoDB control table. After scheduled cleanup finishes, reconcile that
+external request without sending another delete or contacting Kubernetes:
+
+```sh
+ows deploy aws lifecycle reconcile-expiry --state ./cloud-state \
+  --profile my-ows-setup --deployment-id <originalDeploymentId>
+```
+
+The command refuses before expiry. It verifies the original guard stack, code,
+configuration and schedule; reads the exact control key consistently; matches the
+original stack template/creation identity and stack-level expiry delete token; and
+requires the owned bucket and all deployment-tagged volumes to be absent. It writes
+only a local observed-delete receipt. Pending deletion, changed identity, a different
+manual delete request, incomplete inventory or a remaining volume blocks success.
+The guard and bootstrap remain available for independent verification and retirement.
+No API-node/Kubernetes receipt is required after the cluster has actually vanished.
+
+The setup policy grants `dynamodb:GetItem` on its one deployment control key and
+regional `ec2:DescribeVolumes` metadata reads for this observation. It cannot edit
+that record or delete disks. A fresh identity bundle is required for this added read
+scope; existing immutable bundles remain usable with their original CLI for cleanup.

@@ -4,6 +4,8 @@ use base64::Engine;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command as Process};
 use zeroize::Zeroizing;
+#[path = "deployment_cloud_expiry.rs"]
+mod expiry;
 #[path = "deployment_cloud_images.rs"]
 mod images;
 #[path = "deployment_cloud_install.rs"]
@@ -80,6 +82,15 @@ pub enum Command {
         #[arg(long)]
         profile: String,
     },
+    /// Read AWS expiry receipts and update local state, without remote mutations.
+    ReconcileExpiry {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        deployment_id: String,
+    },
     Destroy {
         #[arg(long)]
         state: PathBuf,
@@ -150,6 +161,7 @@ impl Aws {
                         "describe-repositories" | "batch-get-image" | "get-authorization-token"
                     )
                     | ("ec2", "describe-volumes")
+                    | ("dynamodb", "get-item")
             ),
             "AWS lifecycle operation is not allowed"
         );
@@ -745,10 +757,18 @@ pub(super) async fn run(command: &Command) -> Result<()> {
     let (root, profile) = match command {
         Command::Apply { state, profile, .. }
         | Command::Status { state, profile }
+        | Command::ReconcileExpiry { state, profile, .. }
         | Command::Destroy { state, profile, .. } => (state, profile),
         _ => unreachable!(),
     };
     let (mut j, p, _lock) = state::load(root)?;
+    if let Command::ReconcileExpiry { deployment_id, .. } = command {
+        ensure!(deployment_id == &p.deployment_id, "Deployment ID mismatch");
+        ensure!(
+            now()? >= p.expires_at_unix,
+            "Expiry has not elapsed; no cloud calls made"
+        );
+    }
     match command {
         Command::Apply {
             allow_experimental_cloud,
@@ -810,6 +830,7 @@ pub(super) async fn run(command: &Command) -> Result<()> {
             )
         }
         Command::Status { .. } => crate::output(state::observe(&j, &p, &mut api).await?),
+        Command::ReconcileExpiry { .. } => expiry::reconcile(root, &mut j, &p, &mut api).await,
         Command::Destroy {
             installation_state, ..
         } => {

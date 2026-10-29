@@ -158,7 +158,7 @@ fn tags(p: &Plan, j: &Journal, token: &str) -> BTreeMap<String, String> {
         ("ows:expires-at".into(), p.expires_at_unix.to_string()),
     ])
 }
-fn verify(p: &Plan, j: &Journal, kind: &str, op: &Operation, s: &Stack) -> Result<()> {
+pub(super) fn verify(p: &Plan, j: &Journal, kind: &str, op: &Operation, s: &Stack) -> Result<()> {
     ensure!(
         valid_arn(p, kind, &s.arn) && s.name == name(p, kind),
         "Cloud stack scope mismatch"
