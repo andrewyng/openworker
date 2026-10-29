@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "at": "2026-10-29T23:52:40.800Z",
+  "scope": "local Docker PostgreSQL; no AWS or paid models",
+  "postgresImage": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+  "databases": 2,
+  "tests": [
+    "postgres-storage-contract",
+    "service-two-database-outage"
+  ],
+  "writeProbe": {
+    "elapsed_seconds": 0.131797,
+    "p50_write_us": 1301,
+    "p95_write_us": 1510,
+    "records": 100,
+    "records_per_second": 758.7426117438182,
+    "scope": "single local Docker connection, not a capacity guarantee",
+    "transaction_size": 1
+  },
+  "passed": true,
+  "ownedContainerRemoved": true,
+  "generatedPasswordRemoved": true,
+  "unrelatedContainersModified": false,
+  "milestone": "observability M1 recording foundation",
+  "branch": "feat/openworker-service-m1",
+  "sourceBaseCommit": "fc331130",
+  "sourceSha256": {
+    "harness/observability/src/lib.rs": "e8a0a284c2467d475f248b209b706e6b13ce697881280595d0874ec792565ea3",
+    "harness/observability/src/sqlite.rs": "1352ff837c93f0dad0e894100eb7b856e69e0db7f5b4cb6d993ded6196e2a99f",
+    "harness/observability/src/postgres.rs": "411b50fda04a826cfc2db15c73dd0f0686b7b2187f219d836543ec90e2f38b0b",
+    "harness/observability/src/writer.rs": "632f54dc62f39846aa489e14a4740011024e3733e042327471fa4b050279a4e2",
+    "harness/server-reference/src/recording.rs": "6275166800ba9556c6e5effca3588c144bbddd56477c01afbf6addb5cf4923bc",
+    "harness/server-reference/src/main.rs": "87635b2e39478ea4fed48fc76c808249c7049a59e97c2f1edaa12b139d56a1d8",
+    "harness/server-reference/src/http.rs": "4efb3e70da64c453d09789e892384f96a81ae6a0be3ed1724927626571a91ba0",
+    "harness/telemetry/src/otlp.rs": "13f8110fdea69b695f9edb85e9624619b9e8837d9cc13926e341415f47ca35a9",
+    "harness/server-reference/tests/recording.rs": "cdf782ac6e16a0eb5ec416b1d2602ea6a2b7946fad4c39b37c8eb221de5d89ea",
+    "deploy/reference/qualify-observability.mjs": "7daa5dc43243d3ebc5a8fe7442653923f39a43b2d2217b32de7304f55b1b919d"
+  },
+  "ordinaryTests": {
+    "recording": 9,
+    "serverAndConfiguration": 8,
+    "telemetryRegression": 11
+  },
+  "integrationSuites": 2,
+  "verified": {
+    "sqliteCommittedRecordsSurviveReopen": true,
+    "postgresCommittedRecordsSurviveReopen": true,
+    "immutableDuplicateAndConflictChecks": true,
+    "retentionLimitedToDeploymentAndRecordingTables": true,
+    "boundedQueueAndShutdown": true,
+    "localCommitWhileVendorStalled": true,
+    "noContentInStoredType": true,
+    "independentExporterPrivacy": true,
+    "sameTargetIndependentConnectionContention": true,
+    "separateDatabaseTargetContention": true,
+    "actualServerMigrateCommand": true,
+    "explicitBadTargetNeverFallsBack": true,
+    "separateCredentialsAndTlsConfiguration": true,
+    "defaultsRemainOptIn": true,
+    "linuxPostgresContainerMacRustHost": true
+  },
+  "cleanup": {
+    "attemptedFixtureContainers": 5,
+    "allAttemptedContainersRemoved": true,
+    "allGeneratedPasswordsRemoved": true,
+    "cloudResourcesCreated": 0,
+    "paidModelCalls": 0,
+    "unrelatedWorkloadsModified": false
+  },
+  "limitations": [
+    "Current instrumentation coverage only: missing auxiliary usage and complete cross-resume turn linkage remain M2",
+    "Committed records durable, input queue best effort; not a lossless billing or audit ledger",
+    "Public authorized query/search APIs, SDK convenience flags and management UI wiring are not implemented by M1",
+    "Deployment packaging for separate recording credentials remains later work",
+    "PostgreSQL local tests use explicit loopback plaintext; verified-TLS connector is not yet tested against a real TLS database",
+    "100-row single-connection write measurement is not production sizing guidance"
+  ]
+}

@@ -106,7 +106,7 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config: Config = serde_json::from_slice(&openworker_runtime::bundle::read_limited(
+    let mut config: Config = serde_json::from_slice(&openworker_runtime::bundle::read_limited(
         &args.config,
         64_000,
     )?)?;
@@ -115,15 +115,15 @@ async fn main() -> Result<()> {
         Command::Worker { .. } | Command::ServiceWorker { .. } => "worker",
         _ => "admin",
     };
-    let telemetry_config = config.telemetry.clone();
-    let (telemetry, controller) = tokio::task::spawn_blocking(move || match telemetry_config {
-        Some(c) => c.start(role).map(|(t, c)| (t, Some(c))).map_err(|_| {
-            anyhow::anyhow!("Telemetry configuration failed; check the explicit endpoint")
-        }),
-        None => Ok((openworker_telemetry::Telemetry::default(), None)),
+    let recording_config = config.clone();
+    let record = !matches!(args.command, Command::Migrate) && !config.recovery_read_only;
+    let started = tokio::task::spawn_blocking(move || {
+        openworker_server_reference::recording::start(&recording_config, role, record)
     })
     .await??;
-    let result = run(args, config, telemetry).await;
+    config.recording_stats = started.statistics;
+    let result = run(args, config, started.telemetry).await;
+    let controller = started.telemetry_controller;
     if let Some(controller) = controller {
         let _ = tokio::task::spawn_blocking(move || {
             let flushed = controller.shutdown(std::time::Duration::from_secs(5));
@@ -136,6 +136,16 @@ async fn main() -> Result<()> {
             }
         })
         .await;
+    }
+    // Drain the upstream dispatcher before closing the independent recording queue.
+    if let Some(controller) = started.recorder_controller {
+        let _=tokio::task::spawn_blocking(move||{
+            let flushed=controller.shutdown(std::time::Duration::from_secs(5));
+            let stats=controller.statistics().snapshot();
+            if !flushed||stats.dropped>0||stats.failed_writes>0||stats.conflicts>0||stats.rejected>0||stats.abandoned>0 {
+                eprintln!("Recording shutdown: flushed={flushed}, dropped={}, failed={}, conflicts={}, rejected={}, abandoned={}",stats.dropped,stats.failed_writes,stats.conflicts,stats.rejected,stats.abandoned);
+            }
+        }).await;
     }
     result
 }
@@ -155,6 +165,13 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
     db.telemetry = telemetry;
     if matches!(args.command, Command::Migrate) {
         PostgresStore::migrate(&db)?;
+        if let Some(options) = &config.observability {
+            let recording_database = options.database(&config)?;
+            tokio::task::spawn_blocking(move || {
+                openworker_observability::postgres::Postgres::migrate(&recording_database)
+            })
+            .await??;
+        }
         println!("Schema ready");
         return Ok(());
     }
@@ -292,7 +309,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             if let Some(options) = &config.operational_metrics {
                 options.validate()?;
                 anyhow::ensure!(
-                    db.telemetry.enabled(),
+                    config.telemetry.is_some(),
                     "Operational metrics require explicit telemetry configuration"
                 );
             }

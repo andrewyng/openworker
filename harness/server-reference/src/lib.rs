@@ -12,10 +12,16 @@ pub mod kubernetes;
 pub mod management;
 pub mod operations;
 pub mod readiness;
+pub mod recording;
 pub mod service;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub observability: Option<recording::Options>,
+    /// Process-local health only, never accepted from a configuration file.
+    #[serde(skip)]
+    pub recording_stats: Option<openworker_observability::Statistics>,
     #[serde(default)]
     pub kubernetes: Option<kubernetes::Config>,
     #[serde(default)]

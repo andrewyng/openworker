@@ -246,7 +246,7 @@ async fn authenticate_inner(mut app: App, mut request: Request, next: Next) -> R
 async fn ready(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
     app.store.ready()?;
     Ok(Json(
-        json!({"status":"ready","recovery_read_only":app.recovery_read_only,"telemetry_enabled":app.runtime.telemetry.enabled(),"telemetry":app.runtime.telemetry.snapshot()}),
+        json!({"status":"ready","recovery_read_only":app.recovery_read_only,"telemetry_enabled":app.runtime.telemetry.enabled(),"telemetry":app.runtime.telemetry.snapshot(),"recording":app.config.recording_stats.as_ref().map(|s|s.snapshot())}),
     ))
 }
 pub(crate) struct ApiError(pub(crate) anyhow::Error);

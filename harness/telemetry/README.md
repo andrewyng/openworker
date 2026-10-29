@@ -5,6 +5,14 @@ Disabled by default. No global subscriber/provider, default vendor destination,
 durable spool, change to approvals, or change to agent recovery. This is a first
 observability slice, not the complete server-spec S4 acceptance gate.
 
+Optional [local diagnostic recording](../observability/README.md) now composes
+with this instrumentation in the server reference. It has a separate bounded
+writer and SQLite/PostgreSQL storage; enabling recording does not change exporter
+content settings. Recording is opt-in, covers existing execution segments, and
+does not yet provide complete auxiliary-call usage or cross-resume turn tracing.
+The queue remains best effort; committed records survive restart, but are not
+audit or billing evidence.
+
 ## Server reference
 
 Add this optional field to the existing server-reference JSON configuration:

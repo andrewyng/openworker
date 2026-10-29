@@ -28,6 +28,8 @@ its Python harness; this directory is additive.
 - **[Memory and scheduling](../docs/harness/ASSISTANT-TOOLS.md)** — opt-in durable
   learner memory and scheduled work on SQLite or PostgreSQL.
 - **[Python/Rust tool survey](../docs/harness/TOOL-PARITY.md)** — remaining parity gaps.
+- **[Observability](../docs/harness/OBSERVABILITY.md)** — recording storage,
+  independent PostgreSQL connections and staged usage/timeline implementation.
 
 ## What the harness handles
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["runtime", "artifacts", "telemetry", "tools-sdk", "harness-sdk", "store-postgres", "server-reference", "service-cli", "examples/notification-tools", "examples/device-tools", "examples/computer-tools", "examples/native-tools-runtime"]
+members = ["runtime", "artifacts", "telemetry", "observability", "tools-sdk", "harness-sdk", "store-postgres", "server-reference", "service-cli", "examples/notification-tools", "examples/device-tools", "examples/computer-tools", "examples/native-tools-runtime"]
 resolver = "2"
 
 [workspace.package]

@@ -178,6 +178,11 @@ impl HttpClient for Client {
 }
 impl Config {
     pub fn start(&self, role: &'static str) -> Result<(Telemetry, Controller)> {
+        Telemetry::start_with_content(self.build_sink(role)?, 2048, self.content.clone())
+    }
+    /// Build instance-owned export components without installing a dispatcher.
+    /// Trusted hosts can compose an independent local recorder before export.
+    pub fn build_sink(&self, role: &'static str) -> Result<OtelSink> {
         ensure!(
             !self.deployment.is_empty()
                 && self.deployment.len() <= 64
@@ -264,11 +269,7 @@ impl Config {
         } else {
             SdkMeterProvider::builder().build()
         };
-        Telemetry::start_with_content(
-            OtelSink::with_parts(traces, logs, metrics),
-            2048,
-            self.content.clone(),
-        )
+        Ok(OtelSink::with_parts(traces, logs, metrics))
     }
     fn traces(
         &self,

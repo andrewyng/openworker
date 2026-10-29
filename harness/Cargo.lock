@@ -1841,6 +1841,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "openworker-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "native-tls",
+ "openworker-telemetry",
+ "postgres",
+ "postgres-native-tls",
+ "rusqlite",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "openworker-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1906,6 +1923,7 @@ dependencies = [
  "clap",
  "futures-util",
  "openworker-artifacts",
+ "openworker-observability",
  "openworker-runtime",
  "openworker-sdk",
  "openworker-store-postgres",

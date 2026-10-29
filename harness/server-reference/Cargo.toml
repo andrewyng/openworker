@@ -11,6 +11,7 @@ openshell-test = []
 team-test = ["openworker-store-postgres/test-support", "dep:openworker-tools"]
 
 [dependencies]
+openworker-observability = { path = "../observability", features = ["postgres"] }
 openworker-tools = { path = "../tools-sdk", optional = true }
 openworker-artifacts = { path = "../artifacts", features = ["s3"] }
 futures-util = "0.3"
