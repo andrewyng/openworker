@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+from . import plan_steps
 from . import provenance
 from . import review_facts
 from . import session_facts
@@ -351,6 +352,11 @@ class TurnEngine:
         # The batch runs only after every call is cleared, and the shell persists, so a
         # later command's folder is unknown from then on (see `current_shell_cwd`).
         self._shell_cleared_in_batch = False
+        # OPE-237 (flag `auto_approve_plan_approval`): in auto-approve, `propose_plan` takes
+        # a list of steps, and the steps the user approved are evidence for exactly those
+        # actions until the request ends (cleared with the run grants in `run`).
+        self.plan_approval: bool = False
+        self._approved_plan: list[plan_steps.PlanStep] = []
         # Shadow evaluation (spec Part 6 step 3): when True and a reviewer is attached, the
         # reviewer records what it WOULD have decided on each approval card while the human
         # still decides. Fire-and-forget — the card is never delayed, no decision is ever
@@ -548,6 +554,7 @@ class TurnEngine:
         # finally below is the braces; an abandoned generator must not leak a
         # previous answer's "Allow for this request" into this one).
         self.permissions.clear_run_allowances()
+        self._approved_plan = []
         yield Event(EventType.TURN_START, data)
         try:
             async for event in self._start_sandbox():
@@ -560,6 +567,7 @@ class TurnEngine:
             # The run boundary IS the grant's expiry — normal finish, Stop, and
             # generator teardown (disconnect) all land here.
             self.permissions.clear_run_allowances()
+            self._approved_plan = []
 
     def switch_model(self, model: str) -> Optional[str]:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
@@ -1548,7 +1556,23 @@ class TurnEngine:
                 cwd=self.permissions._shell_base(),
             )
         except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
-            return {}
+            facts = []
+        if self._approved_plan:
+            # OPE-237: one fixed line, matched by code; the plan's text never travels.
+            # Only when the action IS a step: an action outside the plan gets exactly
+            # the facts it would get without one (a "not in the plan" line made the
+            # reviewer refuse harmless extras, found live 26 Oct 2026).
+            if plan_steps.match_step(
+                self._approved_plan,
+                tool_call.name,
+                tool_call.arguments or {},
+                resolve=self.permissions._candidate,
+                egress_host=self.permissions.egress_host,
+                # A command's paths are judged from the shell's folder (OPE-232); when it
+                # cannot be known, no shell action is a step.
+                shell_base=self.permissions.shell_cwd,
+            ):
+                facts.append(review_facts.PLAN_STEP)
         return {"facts": facts} if facts else {}
 
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
@@ -2600,6 +2624,10 @@ class TurnEngine:
         approval flips the live PermissionEngine out of plan mode (the same session keeps
         going, with all its exploration context); rejection keeps plan mode and returns
         the user's feedback so the agent can revise."""
+        if self.permissions.mode is Mode.AUTO_APPROVE and self.plan_approval:
+            async for event in self._handle_step_plan(tool_call):
+                yield event
+            return
         args = tool_call.arguments or {}
         plan = str(args.get("plan", ""))
         if self.permissions.mode is not Mode.PLAN:
@@ -2658,6 +2686,82 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
+    async def _handle_step_plan(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """OPE-237: a plan in auto-approve. The user approves all of its steps or sends it
+        back; the mode never changes. Approved steps are kept (targets only, never the
+        summary) for `_facts_kw` to match later actions against, until the request ends."""
+        args = tool_call.arguments or {}
+        plan = str(args.get("plan", ""))
+        steps, dropped = plan_steps.normalize_steps(args.get("steps"))
+        if self._auto_answering():
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "No one is available to approve a plan. Carry on with the work; "
+                "each action is reviewed as usual.",
+            }
+        elif self.plan_approver is None:
+            result = {"approved": False, "error": "plan approval is not available here"}
+        elif not steps:
+            result = {
+                "approved": False,
+                "error": "list every action in `steps` (kind write / delete / run / send, its "
+                "target, and for send the destination), then propose again",
+                **({"dropped_steps": dropped} if dropped else {}),
+            }
+        else:
+            shown = [
+                {
+                    **step.as_dict(),
+                    "risky": plan_steps.step_is_risky(step, resolve=self.permissions._candidate)
+                    or (step.kind in ("write", "delete") and not self.permissions._under_writable_root(step.target)),
+                }
+                for step in steps
+            ]
+            yield Event(
+                EventType.PLAN_PROPOSED,
+                {"plan": plan, "steps": shown, "auto_approve": True, "tool_call_id": tool_call.id},
+            )
+            self._audit(tool_call, stage="plan_proposed")
+            decision = await self._wait_tool(
+                tool_call,
+                self.plan_approver({**args, "plan": plan, "steps": shown}, tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+            if decision.get("approved"):
+                self._approved_plan = steps  # a later plan replaces an earlier one
+                result = {
+                    "approved": True,
+                    "steps": [step.as_dict() for step in steps],
+                    "note": "plan approved for this request: carry out exactly these steps; "
+                    "anything else is reviewed as usual",
+                    **({"dropped_steps": dropped} if dropped else {}),
+                }
+            else:
+                result = {
+                    "approved": False,
+                    **({"error": decision["error"]} if decision.get("error") else {}),
+                    "feedback": decision.get("feedback") or "the user rejected the plan",
+                }
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(self._timed_result(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "tool_call_id": tool_call.id,
                 "result_preview": _preview(result),
             },
         )

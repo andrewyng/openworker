@@ -611,7 +611,7 @@ def build_engine(
     # mode). Solo/worker personas keep propose_plan as always (mode can flip
     # mid-session; the engine rejects the call outside plan mode).
     if agent.team != "lead":
-        registry.register(propose_plan_tool())
+        registry.register(propose_plan_tool(steps=bool(config.auto_approve_plan_approval)))
 
     # The lead's gates: propose_work_items (decomposition → items on approval, any
     # mode) and propose_team (staffing → pre-spawn on approval).
@@ -751,6 +751,8 @@ def build_engine(
         )
     if _compaction_overrides:
         engine.compaction_settings = lambda: dict(_compaction_overrides)
+    # OPE-237: in auto-approve, an approved plan's steps become reviewer evidence.
+    engine.plan_approval = bool(config.auto_approve_plan_approval)
     engine.executor = executor  # type: ignore[attr-defined]
     # OPE-232: the read-only session grant judges paths from the persistent shell's
     # current folder, not the workspace folder it may have moved away from.

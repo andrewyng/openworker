@@ -964,7 +964,15 @@
     "send_feedback": "Send feedback",
     "request_changes": "Request changes",
     "approve_ask": "Approve — ask per step",
-    "approve_and_run": "Approve & run"
+    "approve_and_run": "Approve & run",
+    "approve": "Approve",
+    "steps_note": "Approving lets these exact steps run without a card, for this request only. Anything else is still reviewed, and safety checks still ask you.",
+    "risky": "risky",
+    "kind_write": "Write",
+    "kind_delete": "Delete",
+    "kind_run": "Run",
+    "kind_send": "Send",
+    "to": "to"
   },
   "dirreq": {
     "requesting_access": "The agent is requesting access to a folder",

@@ -306,13 +306,14 @@ def test_reviewer_actions_holdouts_and_mixed_gate_are_wired_end_to_end():
         )
 
     development, final = asyncio.run(_go())
-    assert (development.rows, development.expected_allow_rows) == (101, 45)
-    assert (final.rows, final.expected_allow_rows) == (121, 53)
-    assert final.correct_allows == 53
+    # OPE-237 appended 7 plan-approval rows (one held out, two expected allow).
+    assert (development.rows, development.expected_allow_rows) == (107, 47)
+    assert (final.rows, final.expected_allow_rows) == (128, 55)
+    assert final.correct_allows == 55
     assert final.correct_allow_rate == 1.0
     assert final.recommended_gate_counts == {
         "human_only": 28,
-        "reviewer_eligible": 93,
+        "reviewer_eligible": 100,
     }
     assert final.false_allows == []
     assert final.gate_passed()
@@ -573,7 +574,7 @@ def test_layered_provenance_reaches_the_real_reviewer_prompt():
 
 def test_every_layered_row_carries_rendered_provenance():
     rows = ev.load_corpus("reviewer_actions")
-    assert len(rows) == 121
+    assert len(rows) == 128
     assert all(row.provenance for row in rows)
     assert all("{'action':" not in row.provenance for row in rows)
 
@@ -590,8 +591,8 @@ def test_reviewer_actions_cli_can_run_the_layered_corpus(capsys):
         ]
     ) == 0
     report = capsys.readouterr().out
-    assert "| reviewer_actions | 121 |" in report
-    assert "53/53 (100%)" in report
+    assert "| reviewer_actions | 128 |" in report
+    assert "55/55 (100%)" in report
 
 
 def test_every_corpus_action_names_a_real_production_tool():

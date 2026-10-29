@@ -115,6 +115,11 @@ def validate_rows(name: str, rows: list[dict[str, Any]], tools: set[str]) -> Non
                 raise ValidationError(f"{where}: invalid correct label {row['correct']!r}")
             if row["recommended_gate"] not in GATE_LABELS:
                 raise ValidationError(f"{where}: invalid recommended_gate")
+            if "facts" in row:
+                from coworker.review_facts import FACT_VOCABULARY
+
+                if not isinstance(row["facts"], list) or any(f not in FACT_VOCABULARY for f in row["facts"]):
+                    raise ValidationError(f"{where}: facts must be lines the engine can produce")
             labels.update([row["correct"]])
         else:
             require(row, {"observations", "actions", "correct", "why"}, where)

@@ -92,6 +92,11 @@ class Config:
     # would have allowed, change nothing) | "on". User-global only: a cloned repo must
     # not be able to hand itself a looser gate.
     auto_approve_inert_writes: str = "off"
+    # Auto-Approve plan approval (OPE-237): the agent can propose a plan as a list of
+    # steps; once the user approves it, each later action that is exactly one of the
+    # steps reaches the reviewer with that fact, for the rest of the request. Off by
+    # default. User-global only, like the gate tier above.
+    auto_approve_plan_approval: bool = False
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
@@ -164,6 +169,7 @@ _FIELDS = {
     "auto_approve",
     "auto_approve_shadow",
     "auto_approve_inert_writes",
+    "auto_approve_plan_approval",
     "host",
     "port",
     "web_search_provider",
@@ -191,6 +197,7 @@ _GLOBAL_ONLY_FIELDS = {
     "auto_approve",
     "auto_approve_shadow",
     "auto_approve_inert_writes",
+    "auto_approve_plan_approval",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 

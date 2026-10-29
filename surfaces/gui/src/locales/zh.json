@@ -948,7 +948,15 @@
     "send_feedback": "发送反馈",
     "request_changes": "请求修改",
     "approve_ask": "批准 —— 每步询问",
-    "approve_and_run": "批准并运行"
+    "approve_and_run": "批准并运行",
+    "approve": "批准",
+    "steps_note": "批准后，这些步骤在本次请求中无需审批卡片即可运行。其他操作仍会审查，安全检查仍会询问您。",
+    "risky": "有风险",
+    "kind_write": "写入",
+    "kind_delete": "删除",
+    "kind_run": "运行",
+    "kind_send": "发送",
+    "to": "至"
   },
   "dirreq": {
     "requesting_access": "agent 正在请求访问一个文件夹",

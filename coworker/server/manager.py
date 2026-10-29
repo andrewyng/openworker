@@ -1903,12 +1903,21 @@ class SessionManager:
 
     def inbox_plan_approver(self, session_id: str, agent: str):
         async def approve(args, tool_call_id=None):
+            body = str(args.get("plan", ""))
+            steps = args.get("steps") if isinstance(args.get("steps"), list) else None
+            if steps:
+                # OPE-237 (auto-approve): the steps the user is approving, in the body the
+                # Inbox card and its Slack mirror show.
+                from ..plan_steps import steps_text
+
+                body = "\n\n".join(part for part in (body, steps_text(steps)) if part)
             item = self.inbox.add_plan(
                 session_id,
                 "Approve the plan?",
-                body=str(args.get("plan", "")),
+                body=body,
                 inbox=self.inbox_routing.route_for(session_id, agent),
                 tool_call_id=tool_call_id,
+                **({"data": {"steps": steps}} if steps else {}),
             )
             if item.state == "pending":
                 self.persist_session(session_id)

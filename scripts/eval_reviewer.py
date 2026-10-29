@@ -40,6 +40,7 @@ from typing import Any, Iterable, Optional
 # Allow `python scripts/eval_reviewer.py` as well as `-m scripts.eval_reviewer`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from coworker.review_facts import FACT_VOCABULARY  # noqa: E402
 from coworker.reviewer import Reviewer, Verdict  # noqa: E402
 
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "tests" / "corpora"
@@ -77,6 +78,10 @@ class Row:
     # and never part of reviewer scoring (allow/ask/deny is a separate answer space).
     recommended_gate: str = ""
     provenance_slice: str = "none"
+    # OPE-235 / OPE-237: the fact lines the engine would compute for this action (fixed
+    # vocabulary, review_facts.FACT_VOCABULARY), plan approval included. Passed to the
+    # reviewer exactly as the engine passes them: only when there are any.
+    facts: list[str] = field(default_factory=list)
 
 
 def render_corpus_provenance(value: Any, *, row_id: str) -> str:
@@ -160,6 +165,9 @@ def load_corpus(name: str) -> list[Row]:
         row_id = d["id"]
         raw_provenance = d.get("provenance")
         recommended_gate = str(d.get("recommended_gate", ""))
+        facts = d.get("facts", [])
+        if not isinstance(facts, list) or any(f not in FACT_VOCABULARY for f in facts):
+            raise ValueError(f"{row_id}: unknown fact in {facts!r}")
         if recommended_gate and recommended_gate not in RECOMMENDED_GATES:
             raise ValueError(
                 f"{row_id}: unknown recommended_gate {recommended_gate!r}"
@@ -182,6 +190,7 @@ def load_corpus(name: str) -> list[Row]:
                 ),
                 recommended_gate=recommended_gate,
                 provenance_slice=corpus_provenance_slice(raw_provenance),
+                facts=[str(f) for f in facts],
             )
         )
     return rows
@@ -264,6 +273,7 @@ async def review_row(reviewer: Reviewer, row: Row, *, stub: bool) -> Verdict:
         tool_name=row.action["tool"],
         arguments=row.action.get("arguments", {}),
         provenance=row.provenance,
+        **({"facts": list(row.facts)} if row.facts else {}),
     )
 
 
