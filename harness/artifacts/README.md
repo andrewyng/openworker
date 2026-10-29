@@ -56,6 +56,15 @@ public access disabled. Encryption, lifecycle, backup, IAM and quotas remain
 operator responsibilities. Native AWS IAM/STS/KMS behavior needs cloud
 qualification; tests here use a local S3-compatible server and synthetic keys.
 
+For EKS Pod Identity, use the service's associated Kubernetes service account.
+EKS supplies `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`; do not supply static AWS keys. Both
+inputs must be present together. An incomplete pair fails configuration instead
+of falling through to instance metadata. Missing/rejected token files fail the
+transfer explicitly. The credential provider rereads the projected token file
+when refreshing temporary credentials; rotation does not require changing the
+artifact's stored backend binding.
+
 For a shared durable filesystem:
 
 ```json
@@ -153,3 +162,28 @@ larger binary, reconciles a lost ready commit and downloads after API/worker
 replacement. Set `OW_TEST_S3_ENDPOINT` for S3 instead of shared filesystem and
 `OW_PROBE_NODE` to exercise both shipped Node clients. The model is scripted;
 the storage, processes, sandbox and file operations are real.
+
+A focused storage test needs no gateway or live model. With the pinned PostgreSQL
+and SeaweedFS images from `deploy/reference/compose.yaml` cached locally, and
+`OW_PROBE_RUNNER` pointing to an existing Linux ELF runner (validated by the API
+profile but never executed in this test):
+
+```sh
+node deploy/reference/qualify-artifact-storage.mjs
+```
+
+This creates isolated loopback Docker fixtures, runs the immutable S3 contract and
+the HTTP/catalog test for both shared filesystem and S3, then removes only its
+labeled containers. It verifies truncated upload, exact-ID retry, lost-ready
+reconciliation, cross-API download and replacement of both original API processes.
+Private logs and generated fixture credentials remain in the printed state folder;
+never commit them. Local credential-chain tests additionally use a synthetic
+projected-token endpoint and signed loopback S3 fixture to check token refresh and
+fail-closed behavior, in child processes without inherited AWS credentials.
+
+The opt-in `pod_identity_access` example and
+`deploy/reference/Dockerfile.artifact-probe` are cloud qualification helpers, not
+part of the shipped service image. Run only against owned disposable resources:
+the probe conditionally attempts one-byte writes in explicitly recorded foreign
+test prefixes and requires actual AccessDenied responses, rather than treating
+timeouts or missing objects as proof of authorization.

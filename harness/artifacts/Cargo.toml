@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[[example]]
+name = "pod_identity_access"
+required-features = ["s3"]
+
 [features]
 default = []
 s3 = ["dep:object_store", "dep:url", "dep:reqwest013", "dep:rustls"]
@@ -29,5 +33,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring","std",
 url = { version = "2", optional = true }
 
 [dev-dependencies]
+axum = "0.7"
+chrono = "0.4"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }

@@ -103,6 +103,14 @@ impl Config {
         if let Some(credentials) = credentials {
             builder = builder.with_credentials(credentials);
         } else {
+            // An explicitly configured Pod Identity source must be complete.
+            // A missing token-file/endpoint must never fall through to the node's
+            // instance role, which may have a different permission boundary.
+            ensure!(
+                std::env::var_os("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_some()
+                    == std::env::var_os("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE").is_some(),
+                Error::Invalid
+            );
             // Deliberately import credential inputs only, never ambient bucket,
             // endpoint, HTTP/TLS policy or arbitrary AWS configuration overrides.
             for key in [

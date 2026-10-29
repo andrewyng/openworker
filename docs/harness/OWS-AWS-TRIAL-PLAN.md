@@ -568,3 +568,47 @@ pre-expiry/pending/completed/repeated reconciliation gates passed. Sanitized evi
 and docs updated; publication is to public feature branch feat/openworker-service-m1,
 with no pull request or main-branch merge. S3 workload SDK/Pod Identity transfer and
 final delayed billing attribution remain follow-ups, not claimed as qualified.
+
+## Artifact storage follow-up — 29 October 2026
+
+User authorized the next artifact-storage qualification under the same cumulative
+$100 budget. Keep existing resources retired and do not touch unrelated workloads.
+
+1. Inspect the existing immutable S3 adapter and artifact HTTP/catalog boundaries.
+   Exercise Pod Identity token-file authentication, credential refresh, missing or
+   denied credentials and absence of instance/operator credential fallback locally.
+2. Use isolated Docker PostgreSQL/S3 fixtures to verify upload, checksum, interrupted
+   transfer recovery, cross-API download and retrieval after API replacement. Reuse
+   cached images; remove only this qualification's containers and state afterward.
+3. Refresh AWS spend and inventory before provisioning. At 12:19 UTC, account-day
+   estimated charges total $15.58 across 28–29 October; EKS and RDS inventories are
+   empty. Billing is delayed. Prior conservative planning envelope is $71.35;
+   review any new fixed cost and reuse the existing shared variable reserve.
+4. Run the smallest bounded real EKS Pod Identity trial: the shipped adapter/API
+   must upload/read its own prefix with no static AWS credentials, survive process
+   replacement, and explicitly deny a foreign prefix/bucket and unassociated pod.
+   Use original identities and durable mutation receipts, fixed expiry and scoped
+   teardown. Never retry an uncertain tool/storage mutation blindly.
+5. Record sanitized local/cloud evidence and remaining limits, retire all owned
+   infrastructure and copied credentials, update docs and push the feature branch.
+
+Initial inspection found that an incomplete Pod Identity environment could fall
+through to instance metadata in the dependency credential chain. Require both
+the container endpoint and authorization-token file when either is configured;
+verify this fails before any network call. No change to explicit injected providers.
+
+Local artifact follow-up passes: seven ordinary storage/credential tests, including
+projected-token refresh, denied/missing token and either incomplete-pair direction;
+three real Docker-backed suites (filesystem API restart, immutable S3 streaming,
+S3 API restart). HTTP tests use a fixture completed turn, not model/tool execution.
+They prove truncated-upload pending status, exact-ID retry, checksum, lost-ready
+reconciliation, authenticated cross-API download, both original APIs replaced, and
+no duplicate ready events. Owned Docker fixtures are removed. Initial local test
+runner/ELF-path corrections affected only fixtures, not deployed service behavior.
+
+AWS gate: use one additional one-hour private EKS/RDS reference trial, deterministic
+agent only, cached reviewed images, no paid model calls. Published fixed estimate
+will be rechecked by native preflight. The prior conservative $71.35 envelope plus
+one more $0.33 fixed-hour allowance is $71.68, retaining the shared $25 variable
+reserve rather than treating reported delayed billing as settled cost. Guard-code
+publisher will be fresh; original retired stacks/journals are never reused.
