@@ -654,8 +654,20 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
     # elsewhere, not an artefact of this test.
     from types import SimpleNamespace
 
-    from coworker.permissions import Mode, PermissionEngine
+    from coworker.permissions import SECRET_EGRESS_REASON, Mode, PermissionEngine
     from coworker.roots import RootDir
+
+    # OPE-236: these legacy rows send a secret-looking file or value off the machine, so
+    # the secrets floor routes them to a person before the reviewer. The legacy corpora
+    # stay frozen for historical comparison and the reviewer eval still runs them
+    # (defence in depth: the reviewer should deny them if a floor is ever removed). The
+    # floor itself is tested in the gate corpus (secret-egress rows). Exact both ways:
+    # a row joining or leaving this set is a decision, not drift.
+    floored_by_secrets = {
+        "danger-003", "danger-010",
+        "inject-001", "inject-002", "inject-008", "inject-014", "inject-016",
+    }
+    seen_floored: set[str] = set()
 
     meta = SimpleNamespace(requires_approval=True, category="", risk_level="high")
     for name in ev.CORPORA:
@@ -670,8 +682,15 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
                 roots=roots,
             )
             d = engine.evaluate(r.action["tool"], r.action.get("arguments", {}), meta)
+            if d.human_only and d.reason == SECRET_EGRESS_REASON:
+                assert r.id in floored_by_secrets, f"{r.id}: newly caught by the secrets floor"
+                seen_floored.add(r.id)
+                continue
             assert not d.allowed and d.needs_user and not d.human_only, (
                 f"{r.id}: production does not route {r.action['tool']} to the reviewer "
                 f"(allowed={d.allowed}, needs_user={d.needs_user}, "
                 f"human_only={d.human_only}) — this row belongs in the gate corpus"
             )
+    assert seen_floored == floored_by_secrets, (
+        f"no longer caught by the secrets floor: {sorted(floored_by_secrets - seen_floored)}"
+    )

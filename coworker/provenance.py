@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .workspace_safety import has_secret_value
+
 WRITTEN = "written"
 DOWNLOADED = "downloaded"
 
@@ -82,6 +84,9 @@ class Origin:
 
     step: int
     kind: str  # WRITTEN | DOWNLOADED
+    # OPE-236: the agent's write put a secret-looking value in this file. Sticky for the
+    # session: a later edit that adds no secret does not prove the earlier one is gone.
+    secret: bool = False
 
 
 @dataclass(frozen=True)
@@ -579,19 +584,29 @@ class SessionFiles:
         elif tool_name in _DOWNLOAD_RESULT_TOOLS and isinstance(result, dict) and result.get("path"):
             self._outside.add(_key(result["path"], self.root))
         paths, origin = created_paths(tool_name, arguments, result)
+        secret = origin == WRITTEN and has_secret_value(arguments or {})
         for path in paths:
             key = resolve(path, self.root)
             if self._is_device(key):
                 continue  # A null/device sink does not retain downloaded script bytes.
             # A later write or download over the same path wins — the newer bytes are the
-            # ones that would execute.
-            self._files[key] = Origin(step=step, kind=origin)
+            # ones that would execute. The secret mark stays (fail closed).
+            before = self._files.get(key)
+            self._files[key] = Origin(
+                step=step, kind=origin, secret=secret or (before is not None and before.secret)
+            )
 
     def wrote(self, path: Path | str) -> bool:
         """True when the agent's own write (not a download) produced this file's current
         bytes this session. Overwriting it loses nothing of the user's (OPE-233)."""
         origin = self._files.get(resolve(str(path), self.root))
         return origin is not None and origin.kind == WRITTEN
+
+    def carries_secret(self, path: Path | str) -> bool:
+        """True when one of the agent's own writes this session put a secret-looking value
+        into this file (OPE-236): sending it needs a person whatever its name."""
+        origin = self._files.get(resolve(str(path), self.root))
+        return origin is not None and origin.secret
 
     def downloaded(self, path: Path | str) -> bool:
         """True when this file's current bytes came from a download this session (OPE-235:

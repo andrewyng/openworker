@@ -479,11 +479,20 @@ from .risk import (  # re-exported for back-compat (manager.py imports WRITE_TOO
     classify,
     is_consequential,
 )
-from .workspace_safety import inert_write_check
+from . import workspace_safety as _ws
+from .workspace_safety import (
+    file_has_secret,
+    has_secret_text,
+    has_secret_value,
+    inert_write_check,
+    is_sensitive_path,
+    read_capped,
+)
 
 # The reason prefix of an OPE-233 inert-write allow; the engine keys the transcript chip
 # and the audit row on `Decision.tier`, this text is what the record says.
 INERT_WRITE_REASON = "inert, reversible write inside your folders"
+SECRET_EGRESS_REASON = "this sends a secret-looking file or value off the machine — approval required"
 
 
 # The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
@@ -710,6 +719,10 @@ class PermissionEngine:
     # "Did the agent's own write produce this file this session?" — the engine's
     # provenance record. A file the agent wrote can be rewritten without losing the user's.
     agent_wrote: Optional[Callable[[Path], bool]] = None
+    # "Did the agent write a secret-looking value into this file this session?" (OPE-236).
+    # A file the agent filled with a key and then sends is caught even when the file can't
+    # be read back (moved, over the size cap, outside the folders).
+    agent_file_has_secret: Optional[Callable[[Path], bool]] = None
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
@@ -831,6 +844,15 @@ class PermissionEngine:
                 needs_user=True,
                 human_only=True,
             )
+
+        # OPE-236: secret-looking data leaving the machine reaches a person, over the
+        # reviewer, every allowlist and the allowed-sites wall. Whether an agent declines
+        # to upload a .env file is model behaviour, not policy. A backstop on top of the
+        # sandbox's network allowlist: shell egress can't be recognised completely.
+        if self._sends_secret(tool_name, arguments, risk):
+            if dangerous:
+                return _cleared("secret-looking data leaving the machine")
+            return Decision(False, SECRET_EGRESS_REASON, needs_user=True, human_only=True)
 
         # Non-consequential tools always run.
         if not consequential:
@@ -1235,6 +1257,145 @@ class PermissionEngine:
         if self._on_site_list(host):
             return True
         return any(host == d or host.endswith("." + d) for d in self.session_allow_domains)
+
+    def _shell_base(self) -> Path:
+        """The folder a shell command runs in, as far as the engine knows: the persistent
+        shell's folder when one is wired, else the workspace. Unknown (another shell call
+        in the same batch may move it) falls back to the workspace: best effort."""
+        if self.shell_cwd is not None:
+            try:
+                cwd = self.shell_cwd()
+            except Exception:  # noqa: BLE001 - a broken callback must not block the floor
+                cwd = None
+            if cwd:
+                return Path(cwd).expanduser().resolve()
+        return self.workspace_root
+
+    def _resolve_from(self, path: str, base: Path) -> Path:
+        p = Path(os.path.expanduser(path))
+        return (p if p.is_absolute() else base / p).resolve()
+
+    def _read_inside(self, path: str, base: Path, cap: int) -> Optional[str]:
+        """A file's text, only when it lies inside the session's folders and under `cap`."""
+        try:
+            full = self._resolve_from(path, base)
+            if not self._under_root(str(full)):
+                return None
+            return read_capped(full, cap)
+        except (OSError, ValueError):
+            return None
+
+    def _sent_file_has_secret(self, path: str, base: Path) -> bool:
+        try:
+            full = self._resolve_from(path, base)
+        except (OSError, ValueError):
+            return False  # an unresolvable path is judged by its name
+        if self.agent_file_has_secret is not None and self.agent_file_has_secret(full):
+            return True
+        if not self._under_root(str(full)):
+            return False
+        return bool(file_has_secret(full))
+
+    def _sends_secret(self, tool_name: str, arguments: dict[str, Any], risk: RiskClass) -> bool:
+        """OPE-236: the call sends data off the machine AND a secret is involved.
+
+        SENDING is: egress or external risk (web tools, connector writes, MCP tools); a
+        shell command that runs a network client (`curl`, `scp`, ...), a program that
+        sends or publishes (`git push`, `npm publish`, `twine upload`, `docker push`,
+        `gh release upload`, `aws s3 cp`, `rclone`, `mail`, ... see
+        `review_facts._SENDING_PROGRAMS`), or a script whose text uses the network
+        (`python upload.py` where upload.py imports requests; `-c` code too).
+
+        A SECRET is involved when:
+
+        * an argument carries a secret-looking value (`has_secret_value`); or
+        * a file the action names has a secret-looking name or path (`is_sensitive_path`:
+          `.env`, `id_rsa`, `~/.kube/config`, `*.tfstate`, ...); files a network-using
+          script names count as named by the action; or
+        * a file the action SENDS (an upload, an attachment, `scp`, a cloud copy, a file
+          a network-using script names) holds a secret-looking value: the engine recorded
+          the agent writing one into it this session, or the file is inside the session's
+          folders, no bigger than `SECRET_SCAN_MAX_BYTES`, and its contents match. A file
+          that can't be read (missing, a folder, too big, outside the folders) is judged
+          by its name alone, so an unreadable plain file is not a card; or
+        * a network-using script's own text carries a secret-looking value; or
+        * `npm`/`yarn`/`pnpm publish` runs in a folder holding a secret-named file (npm
+          sends the folder; `.npmrc`, `.git`, `node_modules` and the ignore files, which
+          npm never packs, don't count); or
+        * `git push` would push a commit holding a secret-named file, or a file whose
+          blob carries a secret-looking value (`@{u}..HEAD`, else the remote-tracking
+          branch, else the whole branch for a first push; names for every file, blobs for
+          the first hundred).
+
+        Scripts are read only inside the session's folders and up to
+        `SCRIPT_SCAN_MAX_BYTES`. Everything here reads text the agent chose: a module the
+        script imports, a compiled program, a URL assembled from data at run time, or a
+        `git push` outside a repository git can describe, is not seen, and the floor does
+        not fire. Those are left to the sandbox's network allowlist; OPE-242 is the
+        per-command outbound host report that would close the gap.
+        """
+        from . import review_facts as rf
+
+        arguments = arguments or {}
+        shell = self.shell_kind or "bash"
+        command = str(arguments.get("command", "")) if tool_name == SHELL_TOOL else ""
+        sends = risk in (RiskClass.EGRESS, RiskClass.EXTERNAL) or bool(
+            command and (rf.shell_reaches_network(command) or rf.shell_sends_data(command, shell))
+        )
+        base = self._shell_base() if command else self.workspace_root
+        network_scripts: list[str] = []
+        if command:
+            for path, code in rf.script_runs(command, shell):
+                text = code if code is not None else self._read_inside(path or "", base, _ws.SCRIPT_SCAN_MAX_BYTES)
+                if text and rf.script_uses_network(text):
+                    sends = True
+                    network_scripts.append(text)
+        if not sends:
+            return False
+        if has_secret_value(arguments):
+            return True
+        names = rf.referenced_files(tool_name, arguments, [])
+        sent = rf.sent_files(tool_name, arguments, shell)
+        for text in network_scripts:
+            if has_secret_text(text):
+                return True
+            found = rf.script_named_files(text)
+            names += found
+            sent += found
+        if any(is_sensitive_path(p) for p in names):
+            return True
+        if any(self._sent_file_has_secret(p, base) for p in sent):
+            return True
+        if command:
+            for folder in rf.publish_dirs(command, shell):
+                if self._folder_holds_secret_name(folder, base):
+                    return True
+            push = rf.pushed_files(command, base, shell)
+            if push is not None:
+                root, files = push
+                if any(is_sensitive_path(f) for f in files):
+                    return True
+                if any(rf.git_blob_has_secret(root, f) for f in files[: rf._PUSH_CONTENT_FILES]):
+                    return True
+        return False
+
+    _NEVER_PACKED = {".npmrc", ".git", "node_modules", ".gitignore", ".npmignore", ".ds_store"}
+
+    def _folder_holds_secret_name(self, folder: str, base: Path) -> bool:
+        try:
+            full = self._resolve_from(folder, base)
+            if not full.is_dir():
+                return False
+            for n, entry in enumerate(full.iterdir()):
+                if n > 500:
+                    break
+                if entry.name.lower() in self._NEVER_PACKED:
+                    continue
+                if is_sensitive_path(entry.name):
+                    return True
+        except (OSError, ValueError):
+            return False
+        return False
 
     # -- helpers ----------------------------------------------------------------
     def _candidate(self, path: str) -> Path:

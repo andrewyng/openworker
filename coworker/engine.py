@@ -310,6 +310,13 @@ class TurnEngine:
         # OPE-235: what each shell command is about to bring in from outside, keyed by tool
         # call id from just before it runs until its result is recorded.
         self._intake_plans: dict[str, Any] = {}
+        # The secrets floor (OPE-236) asks the same record whether the agent put a
+        # secret-looking value into a file it is now sending.
+        if getattr(permissions, "agent_file_has_secret", None) is None:
+            permissions.agent_file_has_secret = self._agent_files.carries_secret
+        # OPE-235: whether outside content (web, email, connectors, downloads) has entered
+        # the agent's context this session; one of the reviewer's computed facts.
+        self._external_read = False
         self._tool_result_max_bytes = (
             toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES
             if tool_result_max_bytes is None
@@ -1440,6 +1447,7 @@ class TurnEngine:
                 write_targets=targets,
                 metadata=spec.metadata if spec else None,
                 egress_host=self.permissions.egress_host,
+                cwd=self.permissions._shell_base(),
             )
         except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
             return {}

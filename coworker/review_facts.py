@@ -13,6 +13,7 @@ none of them is a permission: a destination the user named can still be misused.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -21,12 +22,15 @@ from . import provenance, public_suffix
 from .risk import RiskClass, classify
 from .workspace_safety import (
     IGNORED,
+    SECRET_SCAN_MAX_BYTES,
     TRACKED_CLEAN,
     TRACKED_MODIFIED,
     UNTRACKED,
     git_file_state,
+    has_secret_text,
     has_secret_value,
-    is_sensitive_name,
+    is_sensitive_path,
+    run_git,
 )
 
 EXTERNAL_READ = "content from outside (web, email, connectors, downloads) was read earlier in this session"
@@ -233,26 +237,485 @@ def file_state_fact(targets: list[Path]) -> str:
     return _FILE_STATE_LINES.get(worst, _FILE_STATE_LINES["unknown"])
 
 
-def referenced_names(tool_name: str, arguments: dict[str, Any], write_targets: list[Path]) -> list[str]:
-    names = [t.name for t in write_targets]
-    args = arguments or {}
+def _path_arg_values(arguments: dict[str, Any]) -> list[str]:
+    out: list[str] = []
     for key in _PATH_ARGS:
-        value = args.get(key)
+        value = (arguments or {}).get(key)
         values = value if isinstance(value, (list, tuple)) else [value]
-        names += [Path(str(v).replace("\\", "/")).name for v in values if isinstance(v, str) and v]
+        out += [str(v) for v in values if isinstance(v, str) and v]
+    return out
+
+
+def referenced_files(tool_name: str, arguments: dict[str, Any], write_targets: list[Path]) -> list[str]:
+    """Every file-like path the action names, as written (separators normalised to `/`):
+    write targets, path-shaped arguments, and for a shell command every word that could
+    be a file. A URL is a destination, not a local file, and is left out: before this,
+    `curl https://api.example.com/oauth/token` read as a file called `token`."""
+    paths = [str(t) for t in write_targets] + _path_arg_values(arguments)
     if tool_name == "run_shell":
-        for word in _words(str(args.get("command", ""))):
+        for word in _words(str((arguments or {}).get("command", ""))):
+            if "://" in word:
+                continue
             word = word.lstrip("@")  # curl -F file=@.env / --data-binary @id_rsa
             if "=" in word:
-                word = word.rsplit("=", 1)[-1].lstrip("@")
-            names.append(Path(word.replace("\\", "/")).name)
-    return [n for n in names if n]
+                word = word.rsplit("=", 1)[-1]
+                if not _FILE_LIKE_VALUE.search(word):
+                    continue
+                word = word.lstrip("@")
+            paths.append(word)
+    return [p.replace("\\", "/") for p in paths if p]
 
 
-def secret_fact(tool_name: str, arguments: dict[str, Any], write_targets: list[Path]) -> str:
+def referenced_names(tool_name: str, arguments: dict[str, Any], write_targets: list[Path]) -> list[str]:
+    """Base names of `referenced_files` (kept for callers that judge names only)."""
+    return [Path(p).name for p in referenced_files(tool_name, arguments, write_targets) if Path(p).name]
+
+
+# Shell programs that send a LOCAL FILE out, and how the file is named on their command
+# line. curl: `@file` after a data flag, `name=@file` in a form, `-T`/`--upload-file`.
+# wget: `--post-file`, `--body-file`. PowerShell: `-InFile`. scp/rsync/sftp: the local
+# arguments before the remote `host:path`.
+_UPLOAD_VALUE_FLAGS = {
+    "curl": {"-T", "--upload-file"},
+    "wget": {"--post-file", "--body-file"},
+    "invoke-webrequest": {"-infile"},
+    "iwr": {"-infile"},
+    "invoke-restmethod": {"-infile"},
+    "irm": {"-infile"},
+}
+_COPY_PROGRAMS = {"scp", "rsync", "sftp"}
+_REMOTE_ARG = re.compile(r"^(?:[\w.-]+@)?[\w.-]+:|^rsync://", re.IGNORECASE)
+_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")  # `C:\x` is a local Windows path, not `host:path`
+# A `key=value` word names a file only when the value looks like one: a variable
+# (`token=$GITHUB_TOKEN`), an `@file`, a path, or a dotted name (`--output=keys.json`).
+# `grant_type=client_credentials` is a form field, not a file called `client_credentials`.
+_FILE_LIKE_VALUE = re.compile(r"^[$@%~.]|[\\/.]")
+
+
+def _argv(part: str, shell: str = "bash") -> list[str]:
+    """shlex for a unix shell; whitespace for PowerShell (and its cmdlets anywhere), whose
+    paths use backslashes that shlex would eat."""
+    import shlex
+
+    words = _words(part)
+    if shell == "powershell":
+        return words
+    if words and Path(words[0]).name.lower().startswith(("invoke-", "iwr", "irm")):
+        return words
+    try:
+        return shlex.split(part)
+    except ValueError:
+        return words
+
+
+def _program(argv: list[str]) -> str:
+    name = Path(argv[0]).name.lower() if argv else ""
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _parts(command: str, shell: str) -> list[list[str]]:
+    from .permissions import _split_commands
+
+    return [a for a in (_argv(p, shell) for p in _split_commands(command)) if a]
+
+
+# Cloud and sync copies: the local arguments before the first remote (`s3://`, `gs://`,
+# `remote:path`) are uploaded. The verb words are skipped, not read as files.
+_CLOUD_COPY_VERBS = {
+    "aws": {"s3", "cp", "sync", "mv"},
+    "gsutil": {"cp", "rsync", "mv", "-m"},
+    "rclone": {"copy", "sync", "move", "copyto", "moveto"},
+}
+# Programs that take the files to send as plain arguments after a sub-command.
+_FILE_ARGS_AFTER = {
+    ("gh", "release", "upload"): 1,  # skip the tag
+    ("gh", "gist", "create"): 0,
+    ("twine", "upload"): 0,
+    ("gem", "push"): 0,
+}
+# Mail clients: the flag whose value is an attachment.
+_ATTACH_FLAGS = {"mutt": {"-a"}, "mail": {"-a", "-A"}, "mailx": {"-a", "-A"}, "az": {"-f", "--file"}}
+
+
+def _remote(token: str) -> bool:
+    return "://" in token or bool(_REMOTE_ARG.match(token) and not _DRIVE.match(token))
+
+
+def sent_files(tool_name: str, arguments: dict[str, Any], shell: str = "bash") -> list[str]:
+    """Local files whose CONTENTS an action sends off the machine, as written. For
+    connector, web and MCP tools: the path-shaped arguments (an attachment, an upload's
+    `path`). For a shell command: the upload positions listed above, the sources of a
+    cloud copy, the files given to `gh release upload` / `gh gist create` / `twine upload`
+    / `gem push`, a mail client's attachment. Whether the action sends at all is the
+    caller's question (`shell_reaches_network`, `shell_sends_data`, the risk class).
+
+    This reads the command TEXT and is best effort: data piped from `cat` (`@-`) and a
+    file a script opens are not here (the floor reads scripts separately, see
+    `script_runs`). What no text can show is left to the sandbox's network allowlist
+    (OPE-242)."""
+    args = arguments or {}
+    if tool_name != "run_shell":
+        return [p.replace("\\", "/") for p in _path_arg_values(args)]
+
+    out: list[str] = []
+    for argv in _parts(str(args.get("command", "")), shell):
+        program = _program(argv)
+        verbs = _CLOUD_COPY_VERBS.get(program)
+        if verbs is not None:
+            for token in argv[1:]:
+                if token.startswith("-") or token in verbs:
+                    continue
+                if _remote(token):
+                    break  # a remote source means a download; what follows is local
+                out.append(token)
+            continue
+        for key, skip in _FILE_ARGS_AFTER.items():
+            if program == key[0] and [t.lower() for t in argv[1:1 + len(key) - 1]] == list(key[1:]):
+                files = [t for t in argv[len(key):] if not t.startswith("-")]
+                out.extend(files[skip:])
+        attach = _ATTACH_FLAGS.get(program)
+        if attach:
+            for i, token in enumerate(argv[1:], start=1):
+                if token in attach and i + 1 < len(argv):
+                    out.append(argv[i + 1])
+        flags = _UPLOAD_VALUE_FLAGS.get(program)
+        if flags is not None:
+            folded = program.startswith(("invoke-", "iwr", "irm"))
+            for i, token in enumerate(argv[1:], start=1):
+                probe = token.lower() if folded else token
+                if probe in flags and i + 1 < len(argv):
+                    out.append(argv[i + 1])
+                elif probe.startswith("--") and "=" in probe:
+                    flag, _, value = token.partition("=")
+                    if flag in flags and value:
+                        out.append(value)
+                if program == "curl":
+                    if token.startswith("@") and token != "@-":
+                        out.append(token[1:])
+                    elif "=@" in token:
+                        out.append(token.split("=@", 1)[1])
+        elif program in _COPY_PROGRAMS:
+            local: list[str] = []
+            remote_seen = False
+            for token in argv[1:]:
+                if token.startswith("-"):
+                    continue
+                if _REMOTE_ARG.match(token) and not _DRIVE.match(token):
+                    remote_seen = True
+                    break  # what follows a remote source is a local destination
+                local.append(token)
+            if remote_seen:
+                out.extend(local)
+    return [p.replace("\\", "/") for p in out if p]
+
+
+# -- point 4a: programs that send or publish ---------------------------------------------
+# Program -> the sub-commands that send (None: the program always sends). Matched on the
+# first word of every part of a compound command, after `;`, `&&`, `|`. Programs that
+# EXPOSE a local port (ngrok, cloudflared, `ssh -R`) count as sending too.
+_SENDING_PROGRAMS: dict[str, Optional[frozenset[str]]] = {
+    "git": frozenset({"push", "send-email"}),  # commits, patches by mail
+    "npm": frozenset({"publish"}),  # the package folder
+    "yarn": frozenset({"publish"}),
+    "pnpm": frozenset({"publish"}),
+    "twine": frozenset({"upload"}),  # Python distributions
+    "cargo": frozenset({"publish"}),  # the crate
+    "gem": frozenset({"push"}),  # a gem file
+    "docker": frozenset({"push"}),  # an image, with whatever was baked in
+    "podman": frozenset({"push"}),
+    "gh": frozenset({"release", "gist", "api"}),  # release upload, gist create, api -f/-F/--input
+    "aws": frozenset({"s3"}),  # s3 cp / sync / mv
+    "az": frozenset({"storage"}),  # storage blob upload
+    "gsutil": frozenset({"cp", "rsync", "mv", "-m"}),
+    "rclone": frozenset({"copy", "sync", "move", "copyto", "moveto"}),
+    "mail": None,  # mail clients send whatever they are given
+    "mailx": None,
+    "sendmail": None,
+    "mutt": None,
+    "ngrok": None,  # exposes a local port
+    "cloudflared": None,
+    "ssh": frozenset({"-R"}),  # a reverse tunnel exposes a local port
+}
+# git's global options that come before the sub-command; `-C <dir>` matters (it moves the
+# repository the push reads from), `-c key=value` takes a value, the rest are flags.
+_GIT_GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+
+
+def _git_subcommand(argv: list[str]) -> tuple[str, list[str], Optional[str]]:
+    """(sub-command, its arguments, the `-C` folder or None) of a git command line."""
+    folder = None
+    i = 1
+    while i < len(argv):
+        token = argv[i]
+        if token in _GIT_GLOBAL_WITH_VALUE and i + 1 < len(argv):
+            if token == "-C":
+                folder = argv[i + 1]
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        return token, argv[i + 1:], folder
+    return "", [], folder
+
+
+def _sends(argv: list[str]) -> bool:
+    program = _program(argv)
+    if program not in _SENDING_PROGRAMS:
+        return False
+    subs = _SENDING_PROGRAMS[program]
+    if subs is None:
+        return True
+    if program == "git":
+        return _git_subcommand(argv)[0] in subs
+    if program == "gh":
+        rest = [t.lower() for t in argv[1:]]
+        if rest[:2] in (["release", "upload"], ["gist", "create"]):
+            return True
+        return rest[:1] == ["api"] and any(
+            t in ("-f", "-F", "--field", "--raw-field", "--input") for t in rest
+        )
+    if program == "az":
+        rest = [t.lower() for t in argv[1:]]
+        return rest[:1] == ["storage"] and "upload" in rest
+    if program == "aws":
+        rest = [t.lower() for t in argv[1:]]
+        return rest[:1] == ["s3"] and any(t in ("cp", "sync", "mv") for t in rest)
+    return any(t in subs for t in argv[1:])
+
+
+def shell_sends_data(command: str, shell: str = "bash") -> bool:
+    """A command line that runs a program known to send or publish (point 4a), in any part
+    of a compound command. `shell_reaches_network` covers the plain network clients."""
+    return any(_sends(argv) for argv in _parts(command or "", shell))
+
+
+# -- point 4b: what `git push` would send, what `git add -A` would stage --------------------
+_PUSH_CONTENT_FILES = 100  # blobs read per push check; names are checked for every file
+
+
+def _cwd_of(argv_parts: list[list[str]], upto: int, base: Path) -> Path:
+    """The folder a part runs in: `base`, moved by any `cd` earlier in the same command."""
+    folder = base
+    for argv in argv_parts[:upto]:
+        if _program(argv) == "cd" and len(argv) > 1 and not argv[1].startswith("-"):
+            target = Path(os.path.expanduser(argv[1]))
+            folder = target if target.is_absolute() else folder / target
+    return folder
+
+
+def pushed_files(command: str, cwd: Path, shell: str = "bash") -> Optional[tuple[Path, list[str]]]:
+    """For a `git push` in the command: (repository root, files in the commits that would
+    be pushed), or None when there is no push or git can't say. The range is
+    `@{u}..HEAD`, else `refs/remotes/<remote>/<branch>..HEAD` from the arguments, else (a
+    branch never pushed) every file in HEAD's tree. Deleted files are left out: there is
+    nothing to read. Files added and removed within the range are missed."""
+    parts = _parts(command or "", shell)
+    for i, argv in enumerate(parts):
+        if _program(argv) != "git":
+            continue
+        sub, args, folder = _git_subcommand(argv)
+        if sub != "push":
+            continue
+        where = _cwd_of(parts, i, cwd)
+        if folder:
+            target = Path(os.path.expanduser(folder))
+            where = target if target.is_absolute() else where / target
+        top = run_git(["rev-parse", "--show-toplevel"], where)
+        if top is None or top.returncode != 0:
+            return None
+        root = Path(top.stdout.decode("utf-8", "replace").strip())
+        positional = [a for a in args if not a.startswith("-")]
+        upstream = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+        base_ref = ""
+        if upstream is not None and upstream.returncode == 0 and upstream.stdout.strip():
+            base_ref = upstream.stdout.decode("utf-8", "replace").strip()
+        else:
+            remote = positional[0] if positional else "origin"
+            if len(positional) > 1:
+                branch = positional[1].split(":", 1)[0]
+            else:
+                head = run_git(["rev-parse", "--abbrev-ref", "HEAD"], root)
+                branch = head.stdout.decode("utf-8", "replace").strip() if head and head.returncode == 0 else ""
+            if branch:
+                ref = f"refs/remotes/{remote}/{branch}"
+                known = run_git(["rev-parse", "--verify", "-q", ref], root)
+                if known is not None and known.returncode == 0:
+                    base_ref = ref
+        if base_ref:
+            listing = run_git(["diff", "--name-only", "--diff-filter=d", f"{base_ref}..HEAD"], root)
+        else:
+            listing = run_git(["ls-tree", "-r", "--name-only", "HEAD"], root)
+        if listing is None or listing.returncode != 0:
+            return None
+        files = [ln.strip() for ln in listing.stdout.decode("utf-8", "replace").splitlines() if ln.strip()]
+        return root, files
+    return None
+
+
+def git_blob_has_secret(root: Path, path: str) -> bool:
+    """Whether HEAD's copy of `path` carries a secret-looking value (up to the size cap)."""
+    size = run_git(["cat-file", "-s", f"HEAD:{path}"], root)
+    if size is None or size.returncode != 0:
+        return False
+    try:
+        if int(size.stdout.decode("ascii", "replace").strip()) > SECRET_SCAN_MAX_BYTES:
+            return False
+    except ValueError:
+        return False
+    blob = run_git(["show", f"HEAD:{path}"], root)
+    if blob is None or blob.returncode != 0:
+        return False
+    return has_secret_text(blob.stdout.decode("ascii", "replace"))
+
+
+_STAGE_ALL = {"-A", "--all", ".", ":/", "-u", "--update", "--no-ignore-removal"}
+
+
+def staged_untracked_files(command: str, cwd: Path, shell: str = "bash") -> list[str]:
+    """Untracked files a `git add -A` / `git add .` / `git add -u` in the command would
+    stage, by asking git status (no shell, no lock). Empty when git can't say. `git commit
+    -a` stages only tracked files, so it is not here."""
+    parts = _parts(command or "", shell)
+    for i, argv in enumerate(parts):
+        if _program(argv) != "git":
+            continue
+        sub, args, folder = _git_subcommand(argv)
+        if sub != "add" or not any(a in _STAGE_ALL for a in args):
+            continue
+        where = _cwd_of(parts, i, cwd)
+        if folder:
+            target = Path(os.path.expanduser(folder))
+            where = target if target.is_absolute() else where / target
+        status = run_git(["status", "--porcelain=v1", "--untracked-files=all"], where)
+        if status is None or status.returncode != 0:
+            return []
+        out = []
+        for line in status.stdout.decode("utf-8", "replace").splitlines():
+            if line.startswith("?? "):
+                out.append(line[3:].strip().strip('"'))
+        return out
+    return []
+
+
+# -- point 4c: scripts that are run ---------------------------------------------------------
+_INTERPRETERS = {
+    "python", "python3", "python2", "py", "pypy", "pypy3", "node", "nodejs", "deno", "bun",
+    "ruby", "perl", "php", "bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell",
+}
+_INLINE_CODE_FLAGS = {"-c", "-e", "--eval", "-command", "-encodedcommand", "-ec"}
+_SCRIPT_FILE_FLAGS = {"-file", "-f"}  # PowerShell -File; pwsh -f
+_RUN_WORDS = {"run"}  # `deno run x.ts`, `bun run x.js`
+_SCRIPT_SUFFIXES = {".py", ".sh", ".bash", ".zsh", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php", ".ps1"}
+# Network use inside a script: a URL, an HTTP/socket/mail library, a network client.
+_NETWORK_USE = re.compile(
+    r"https?://"
+    r"|\bimport\s+(?:requests|urllib|httpx|aiohttp|socket|http\.client|httplib|smtplib|ftplib|paramiko|boto3|pycurl|websockets?)\b"
+    r"|\bfrom\s+(?:requests|urllib|httpx|aiohttp|socket|http|smtplib|ftplib|paramiko|boto3)\b"
+    r"|require\(\s*['\"](?:https?|net|dgram|tls|axios|node-fetch|got|undici|nodemailer|ws|request)['\"]"
+    r"|\bfrom\s+['\"](?:https?|net|dgram|tls|axios|node-fetch|got|undici|nodemailer|ws)['\"]"
+    r"|\bfetch\s*\(|\baxios\b|\burlopen\s*\(|\bXMLHttpRequest\b"
+    r"|Net::HTTP|LWP::|HTTP::Tiny|IO::Socket|file_get_contents\(\s*['\"]https?|\bcurl_init\b|\bfsockopen\b"
+    r"|Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b|System\.Net\.|\bHttpClient\b|Start-BitsTransfer"
+    r"|(?:^|[\s;&|(`])(?:curl|wget|scp|sftp|rsync|ssh|nc|ncat|netcat|telnet|ftp)\s",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Quoted literals in a script that look like a file name: a path, a dotted name, a dotfile.
+_QUOTED = re.compile(r"""(?<![\\])['"]([^'"\n\s]{1,200})['"]""")
+
+
+# Inline code is read off the WHOLE command line: `_split_commands` splits on `;` and `|`
+# inside the quotes too, which would cut `python -c "import requests; requests.post(...)"`
+# in half. The quoted value after the flag is the code.
+_INLINE_CODE = re.compile(
+    r"""(?:^|\s)(?:-c|-e|--eval|-Command|-EncodedCommand|-ec)\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)')""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def script_runs(command: str, shell: str = "bash") -> list[tuple[Optional[str], Optional[str]]]:
+    """(script path, inline code) pairs the command would run: `python x.py`, `node x.js`,
+    `bash x.sh`, `./x.sh`, `pwsh -File x.ps1`, and `-c` / `-e` / `-Command` code."""
+    out: list[tuple[Optional[str], Optional[str]]] = []
+    for m in _INLINE_CODE.finditer(command or ""):
+        code = m.group(1) if m.group(1) is not None else m.group(2)
+        if code:
+            out.append((None, code))
+    for argv in _parts(command or "", shell):
+        program = _program(argv)
+        if program in _INTERPRETERS:
+            i = 1
+            while i < len(argv):
+                token = argv[i]
+                low = token.lower()
+                if low in _INLINE_CODE_FLAGS:
+                    break  # inline code: read above, off the whole command line
+                if low in _SCRIPT_FILE_FLAGS and i + 1 < len(argv) and program in ("pwsh", "powershell"):
+                    # PowerShell reads a backslash as a path separator on every platform.
+                    out.append((argv[i + 1].replace("\\", "/"), None))
+                    break
+                if low == "-m":
+                    break  # a module, not a file
+                if token.startswith("-") or low in _RUN_WORDS:
+                    i += 1
+                    continue
+                out.append((token, None))
+                break
+        elif program and (
+            argv[0].startswith(("./", ".\\")) or Path(argv[0]).suffix.lower() in _SCRIPT_SUFFIXES
+        ):
+            out.append((argv[0].replace("\\", "/") if argv[0].startswith(".\\") else argv[0], None))
+    return out
+
+
+def script_uses_network(text: str) -> bool:
+    return _NETWORK_USE.search(text or "") is not None
+
+
+def script_named_files(text: str) -> list[str]:
+    """File-like names a script mentions: quoted literals that look like paths, plus (for
+    any text) the words a shell would read as files."""
+    names = [m.group(1) for m in _QUOTED.finditer(text or "") if "://" not in m.group(1)]
+    names = [n for n in names if _FILE_LIKE_VALUE.search(n)]
+    names += referenced_files("run_shell", {"command": text}, [])
+    names += sent_files("run_shell", {"command": text})
+    return [n for n in names if n and n not in (".", "..")]
+
+
+_PUBLISH_VALUE_FLAGS = {"--access", "--tag", "--otp", "--registry", "--new-version", "--tolerate-republish"}
+
+
+def publish_dirs(command: str, shell: str = "bash") -> list[str]:
+    """Folders an `npm` / `yarn` / `pnpm publish` in the command would pack: the folder
+    argument, else the current one. A tarball argument is a file, judged by its name."""
+    out: list[str] = []
+    for argv in _parts(command or "", shell):
+        if _program(argv) in ("npm", "yarn", "pnpm") and "publish" in argv[1:]:
+            rest: list[str] = []
+            skip = False
+            for token in argv[argv.index("publish") + 1:]:
+                if skip:
+                    skip = False
+                elif token in _PUBLISH_VALUE_FLAGS:
+                    skip = True
+                elif not token.startswith("-"):
+                    rest.append(token)
+            folder = rest[0] if rest and not rest[0].endswith((".tgz", ".tar.gz")) else "."
+            out.append(folder)
+    return out
+
+
+def secret_fact(
+    tool_name: str, arguments: dict[str, Any], write_targets: list[Path], *, cwd: Optional[Path] = None
+) -> str:
+    """The SECRET line. With `cwd`, a `git add -A` (or `.`, `-u`) also names the untracked
+    files it would stage, so a new `.env` reaching the index shows up for the reviewer."""
     if has_secret_value(arguments or {}):
         return SECRET_INVOLVED
-    if any(is_sensitive_name(n) for n in referenced_names(tool_name, arguments, write_targets)):
+    names = referenced_files(tool_name, arguments, write_targets)
+    if cwd is not None and tool_name == "run_shell":
+        names += staged_untracked_files(str((arguments or {}).get("command", "")), Path(cwd))
+    if any(is_sensitive_path(p) for p in names):
         return SECRET_INVOLVED
     return ""
 
@@ -266,8 +729,10 @@ def compute_facts(
     write_targets: list[Path],
     metadata: Any = None,
     egress_host: Optional[Callable[[str, dict[str, Any]], str]] = None,
+    cwd: Optional[Path] = None,
 ) -> list[str]:
-    """Every applicable fact line, in a stable order."""
+    """Every applicable fact line, in a stable order. `cwd` is the shell's folder, for the
+    checks that ask git (see `secret_fact`)."""
     facts = []
     if external_read:
         facts.append(EXTERNAL_READ)
@@ -279,7 +744,7 @@ def compute_facts(
     state = file_state_fact(write_targets)
     if state:
         facts.append(state)
-    secret = secret_fact(tool_name, arguments, write_targets)
+    secret = secret_fact(tool_name, arguments, write_targets, cwd=cwd)
     if secret:
         facts.append(secret)
     return facts

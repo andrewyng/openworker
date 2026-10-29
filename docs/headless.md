@@ -21,7 +21,7 @@ in the Inbox, or supplied by the engine. That is the *attendance* setting.
 
 ### Mode (approving)
 
-| Mode | Routine tool calls | The safety checks (run a downloaded file, write outside the workspace, edit git hooks / CI / settings files, grant authority that outlives the session) |
+| Mode | Routine tool calls | The safety checks (run a downloaded file, write outside the workspace, edit git hooks / CI / settings files, grant authority that outlives the session, send a secret-looking file or value off the machine) |
 |---|---|---|
 | `ask` | asks | asks |
 | `auto-approve` | the reviewer decides; anything it is unsure about asks | asks |

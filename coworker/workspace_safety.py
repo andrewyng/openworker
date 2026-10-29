@@ -88,16 +88,48 @@ _SENSITIVE_NAME = re.compile(
     r"|^\.(netrc|npmrc|pypirc|pgpass)$",
     re.IGNORECASE,
 )
+# Secret-looking VALUES. Every shape needs a distinctive prefix or a labelled assignment;
+# bare hex or base64 never matches on its own (a git sha is not a secret). The shapes
+# follow the gitleaks default rule set (config/gitleaks.toml, rule ids in the comments)
+# and detect-secrets' plugins where gitleaks has no rule. Where a source pins an exact
+# length (a Stripe key is 24+ chars, a HuggingFace token 34) a lower bound is used, so a
+# new key length is still caught; the prefix stays the thing that makes it distinctive.
+# Case matters for the prefixed tokens; only the labelled forms fold case.
 _SECRET_VALUE = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
-    r"|\bsk-[A-Za-z0-9_-]{20,}"
-    r"|\b(AKIA|ASIA)[A-Z0-9]{16}\b"
-    r"|\bgh[pousr]_[A-Za-z0-9]{30,}"
-    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
-    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
-    r"|\b(api[_-]?key|secret|token|password|passwd|access[_-]?key)\b[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_\-/+=]{16,}",
-    re.IGNORECASE,
+    r"(?i:-----BEGIN [A-Z ]*PRIVATE KEY-----)"  # private-key
+    r"|\bsk-[A-Za-z0-9_-]{20,}"  # openai-api-key (sk-, sk-proj-, sk-svcacct-), anthropic-api-key (sk-ant-)
+    r"|\b(?:sk|rk)_(?:test|live|prod)_[A-Za-z0-9]{10,}"  # stripe-access-token (pk_ is publishable)
+    r"|\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b"  # aws-access-token
+    r"|(?i:\baws[_-]?secret[_-]?access[_-]?key\b[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9/+=]{40}\b)"  # detect-secrets AWSKeyDetector
+    r"|\bAIza[\w-]{35}\b"  # gcp-api-key
+    r"|\bgh[pousr]_[A-Za-z0-9]{30,}"  # github-pat, github-oauth, github-app-token
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"  # github-fine-grained-pat
+    r"|\bglpat-[\w-]{20,}"  # gitlab-pat
+    r"|\bhf_[A-Za-z]{30,}\b"  # huggingface-access-token
+    r"|\bnpm_[A-Za-z0-9]{36}\b"  # npm-access-token
+    r"|_authToken=\s*(?:npm_[A-Za-z0-9]{20,}|[A-Fa-f0-9-]{36})"  # detect-secrets NpmDetector (.npmrc)
+    r"|\bxox[abprse]-[A-Za-z0-9-]{10,}"  # slack-bot-token, slack-user-token, ...
+    r"|\bxapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+"  # slack-app-token
+    r"|hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9+/]{43,56}"  # slack-webhook-url
+    r"|\bey[A-Za-z0-9]{17,}\.ey[A-Za-z0-9/_-]{17,}\.[A-Za-z0-9/_-]{10,}={0,2}"  # jwt (signed)
+    r"|\bAccountKey=[A-Za-z0-9+/=]{60,}"  # detect-secrets AzureStorageKeyDetector (88 chars)
+    # curl-auth-header: a Bearer token with at least one digit; letters-only values are
+    # placeholders (gitleaks' generic allowlist `^[a-zA-Z_.-]+$`), `$TOKEN` is a variable.
+    r"|(?i:\bBearer)\s+(?=[A-Za-z_./+=-]*\d)[A-Za-z0-9_./+=-]{20,}"
+    # An `Authorization: Basic <base64>` header, as a curl `-H` value or as the
+    # `http.extraheader = AUTHORIZATION: basic …` line GitHub Actions' checkout leaves in
+    # `.git/config`. The label is required: a bare `basic` followed by a long word is prose.
+    r"|(?i:\bauthorization\b\s*[:=]?\s*basic)\s+[A-Za-z0-9+/]{20,}={0,2}"
+    # detect-secrets BasicAuthDetector: `scheme://user:password@host`. Eight or more
+    # characters, none of `{}$` (a `${PASSWORD}` placeholder is not a password).
+    r"|://[^\s/:@{}$\"']+:[^\s/:@{}$\"']{8,}@[A-Za-z0-9.-]"
+    r"|\"private_key\"\s*:\s*\""  # a cloud service-account key file, whatever its name
+    r"|(?i:\b(?:api[_-]?key|secret|token|password|passwd|access[_-]?key)\b[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_\-/+=]{16,})"  # generic-api-key
 )
+# Contents of a file an action sends are scanned up to this many bytes (OPE-236 review).
+SECRET_SCAN_MAX_BYTES = 1_000_000
+# A script a shell command runs is read up to this many bytes (OPE-236 point 4).
+SCRIPT_SCAN_MAX_BYTES = 256_000
 
 # Git states this module reports for an existing file.
 TRACKED_CLEAN = "tracked_clean"
@@ -149,8 +181,64 @@ def _root_of(path: Path, roots: Optional[list[Path]]) -> Optional[Path]:
     return None
 
 
+# Templates and public halves of key pairs carry no secret (OPE-236): `.env.example`,
+# `credentials.sample.json`, `id_ed25519.pub`.
+_NOT_SECRET_SUFFIXES = (".example", ".sample", ".template", ".dist", ".pub")
+_NOT_SECRET_PARTS = re.compile(r"[._-](example|sample|template)[._-]", re.IGNORECASE)
+
+
 def is_sensitive_name(name: str) -> bool:
+    lowered = name.lower()
+    if lowered.endswith(_NOT_SECRET_SUFFIXES) or _NOT_SECRET_PARTS.search(lowered):
+        return False
     return bool(_SENSITIVE_NAME.search(name))
+
+
+# Secret files with ordinary names (OPE-236 review, 28 Oct 2026). A name alone misses
+# `~/.kube/config`; the path says what it is. Leaf names first, then folders.
+_SENSITIVE_LEAF = re.compile(
+    r"^_netrc$"  # the Windows spelling of .netrc
+    r"|^\.(pgpass|my\.cnf|mylogin\.cnf|git-credentials|htpasswd)$"
+    r"|^wp-config\.php$"  # database password
+    r"|^kubeconfig"  # kubeconfig, kubeconfig.yaml
+    r"|\.tfstate(\.backup)?$"  # Terraform state holds every secret in plain text
+    r"|^terraform\.tfvars$|\.auto\.tfvars$"  # auto-loaded variable files; `dev.tfvars` is not
+    r"|^(service[_-]?account.*|.*-sa)\.json$",  # cloud service-account key files
+    re.IGNORECASE,
+)
+# Whole folders whose files are credentials: every file in them, except a public key or
+# an `authorized_keys` list (public halves). `~/.aws/` includes `config` (it can hold keys
+# and `credential_process`) and the CLI's `cli/cache` and `sso/cache` (session tokens).
+_SENSITIVE_DIRS = {".ssh", ".aws", ".gnupg"}
+# Folder + specific file.
+_SENSITIVE_IN_DIR = {
+    (".kube", "config"),
+    (".docker", "config.json"),  # base64 registry logins
+    (".azure", "accesstokens.json"),
+}
+_PUBLIC_IN_DIR = {"authorized_keys"}
+
+
+def is_sensitive_path(path: str) -> bool:
+    """`is_sensitive_name` for a whole path: the leaf name, or where the file lives.
+    Takes the path as written (any separator, `~`, relative or absolute)."""
+    parts = [p for p in str(path).replace("\\", "/").split("/") if p and p != "."]
+    if not parts:
+        return False
+    leaf = parts[-1]
+    lowered = leaf.lower()
+    if lowered.endswith(_NOT_SECRET_SUFFIXES) or _NOT_SECRET_PARTS.search(lowered):
+        return False
+    if is_sensitive_name(leaf) or _SENSITIVE_LEAF.search(leaf):
+        return True
+    folders = [p.lower() for p in parts[:-1]]
+    if lowered in _SENSITIVE_DIRS:
+        return True  # the folder itself (`scp -r ~/.ssh host:`)
+    if any(f in _SENSITIVE_DIRS for f in folders):
+        return lowered not in _PUBLIC_IN_DIR
+    if any(f == ".kube" for f in folders) and "cache" not in folders:
+        return True  # `.kube/config` and any other kubeconfig kept there
+    return any((f, lowered) in _SENSITIVE_IN_DIR for f in folders)
 
 
 def _strings(value: Any, depth: int = 0) -> list[str]:
@@ -167,8 +255,43 @@ def _strings(value: Any, depth: int = 0) -> list[str]:
     return []
 
 
+def has_secret_text(text: str) -> bool:
+    """Whether a piece of text carries a secret-looking value (see `_SECRET_VALUE`)."""
+    return _SECRET_VALUE.search(text or "") is not None
+
+
 def has_secret_value(arguments: dict[str, Any]) -> bool:
-    return any(_SECRET_VALUE.search(text) for text in _strings(arguments))
+    return any(has_secret_text(text) for text in _strings(arguments))
+
+
+def read_capped(path: Path, cap: int) -> Optional[str]:
+    """A file's contents as text, or None when it can't be judged (missing, a folder,
+    unreadable, bigger than `cap`). Bytes are decoded as ASCII with replacement, so a
+    binary file is searched too, nothing can fail to decode, and a non-ASCII byte is a
+    word boundary rather than a letter."""
+    try:
+        if not path.is_file():
+            return None
+        if path.stat().st_size > cap:
+            return None
+        data = path.read_bytes()
+    except (OSError, ValueError):
+        return None
+    return data.decode("ascii", "replace")
+
+
+def file_has_secret(path: Path) -> Optional[bool]:
+    """Whether a file's CONTENTS carry a secret-looking value: True/False, or None when the
+    file can't be judged (see `read_capped`, cap `SECRET_SCAN_MAX_BYTES`). The caller
+    decides what None means; the floor falls back to the file's name."""
+    text = read_capped(path, SECRET_SCAN_MAX_BYTES)
+    return None if text is None else has_secret_text(text)
+
+
+def run_git(args: list[str], cwd: Path) -> Optional[subprocess.CompletedProcess]:
+    """Run git without a shell, never taking the index lock, 5 s timeout; None when git
+    is missing or failed to run. Shared by the file-state fact and the push check."""
+    return _git(args, cwd)
 
 
 def _written_lines(arguments: dict[str, Any]) -> list[str]:
@@ -283,7 +406,7 @@ def inert_write_check(
     parts: list[str] = []
     for target in targets:
         name = target.name
-        if not is_inert_path(target, _root_of(target, roots)) or is_sensitive_name(name):
+        if not is_inert_path(target, _root_of(target, roots)) or is_sensitive_path(str(target)):
             return False, ""
         if not target.exists():
             parts.append(f"new file {name}")
