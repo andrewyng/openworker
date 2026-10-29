@@ -702,3 +702,58 @@ and exactly the original two tool calls. Producer session is closed, original
 environment is deleted with zero attachments, exact sandbox pod is absent, and
 both artifacts remain retrievable. Keeping the fixed original expiry schedule for
 final infrastructure/S3/orphan-disk cleanup; no deadline or guard control edits.
+
+At 13:36 UTC proxy boundary checks also pass through actual nginx TLS: oversized
+metadata remains 413 and a declared 64 MiB+1 content body is rejected with 413
+before any content body is sent. No further qualification writes after deadline.
+At 13:37:20 UTC the unchanged schedule records its original expiry deletion intent
+(44 seconds after deadline) and requests cleanup once. All six SDK-created objects
+and the owned bucket are absent; original stack is DELETE_IN_PROGRESS. CloudTrail
+confirms the exact generated cleanup role as successful DeleteStack actor at
+13:37:21 UTC, correlated with original stack/control expiry-token receipts.
+No manual main-stack delete, clock/schedule change, or guard-control edits.
+
+At 13:48 UTC original main stack is DELETE_COMPLETE with the original expiry
+token, bucket absent and no failed resources/guard errors. One detached encrypted
+1 GiB gateway disk remains for the next scheduled orphan-disk pass. Guard and
+bootstrap stay intact until the disk is absent. The native reconciliation gate is
+checked against this real remaining-volume state; stack deletion alone is not
+treated as complete cleanup.
+
+Remaining-volume gate passes against real AWS: reconcile-expiry refuses completion
+while the detached tagged disk exists, leaving journal bytes unchanged and performing
+no resource mutation. At the 13:52 scheduled pass, control version 3 records that
+exact gateway volume deletion and EC2 inventory becomes empty. Main stack and
+bucket are absent, with no failed resources or guard errors. Native read-only
+expiry reconciliation now runs on those receipts without consulting the vanished
+cluster or rewriting the historical revision-1 installer journal.
+
+Native reconcile-expiry succeeds with `observed-expiry-delete` and cloud phase
+`infrastructure_deleted`; original revision-1 installer receipt remains unchanged.
+The unchanged 13:57:20 UTC scheduled pass records `teardown_observed_complete`,
+with zero volumes, absent bucket, complete log inventory and no guard errors.
+Only then were the exact original guard and bootstrap retired. Final independent
+inventory at 14:02 UTC confirms zero trial clusters, instances, disks, VPCs, EIPs,
+databases, repositories, roles, functions, tables, schedules, log groups, managed
+policies, database Secrets (including planned deletion) and artifact buckets.
+
+The exact pinned code version, original publisher stack and verified empty retained
+publisher bucket are also removed, in that order. Generated/copied trial credentials,
+API private keys, service tokens and task-private credential caches were removed
+(14 files); original user credentials were not changed. Local access listeners and
+Docker test fixtures are retired; unrelated workloads remain untouched.
+
+Final billing read at 14:03 UTC still reports estimated account-day totals of
+$12.5423 for 28 October and $3.0377 for 29 October. These delayed totals are not
+final trial attribution. Conservative cumulative planning envelope is $71.68
+(including shared $25 variable-cost reserve) against the authorized $100 budget;
+this is not a hard spending cap. No paid inference in the artifact follow-up.
+
+Completed: [sanitized AWS artifact evidence](evidence/aws-artifact-storage-20261029.json)
+and [local evidence](evidence/artifact-local-20261029.json). Seven artifact/credential
+tests, seven server tests, six Helm tests and three real Docker suites pass, plus
+real AWS role/denial, TLS transfer, recovery and cleanup checks. Proxy correction
+was qualified through a reviewed Helm upgrade; fresh final-chart AWS installation,
+customer KMS/private S3 endpoints, other configurations and final billing attribution
+remain explicit limits. Publishing only `feat/openworker-service-m1` to the public
+repository; no pull request or main-branch merge.

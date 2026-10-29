@@ -15,9 +15,15 @@ and [trial ledger](OWS-AWS-TRIAL-PLAN.md). The earlier
 and API-restart replay qualification from the preceding attempt.
 
 The cloud path remains experimental and requires explicit opt-in. Qualification is
-limited to the tested Oregon/Linux ARM64 configuration. S3 workload SDK transfers
-through Pod Identity and final billing attribution remain unqualified; the cleanup
-fixture used an operator-uploaded object and multipart upload.
+limited to the tested Oregon/Linux ARM64 configuration. The original cleanup
+fixture used an operator-uploaded object and multipart upload. A later
+[artifact trial](evidence/aws-artifact-storage-20261029.json) exercises actual S3
+transfers through Pod Identity, explicit role/prefix/bucket denial, process
+replacement and retrieval after the producer sandbox is deleted. That trial found
+and corrected the managed artifact routes and TLS proxy body limit; the proxy fix
+was qualified through a reviewed Helm upgrade to revision 2. It does not claim a
+fresh AWS initial installation with the final proxy chart. KMS/private endpoints,
+other configurations and final billing attribution remain separate qualification.
 
 The ordinary `ows deploy apply/destroy` entry points remain closed. The explicit
 `ows deploy aws lifecycle` commands below are the experimental execution path.
@@ -278,8 +284,9 @@ handler/rollback fixes, private connectivity, strict CNI probes, encrypted EBS t
 immutable ECR publication, managed RDS TLS and agent/UI/restart checks. The
 [clean rerun](evidence/aws-clean-expiry-20261029.json) additionally qualifies
 first-attempt installation, actual scheduled expiry, orphan EBS removal and read-only
-lifecycle reconciliation. Pod Identity mapping is provisioned; workload S3 SDK
-transfers and final cost reconciliation remain explicitly unqualified.
+lifecycle reconciliation. The separate [artifact evidence](evidence/aws-artifact-storage-20261029.json)
+qualifies workload S3 transfers and authorization through actual Pod Identity;
+final delayed cost attribution remains open.
 
 The bootstrap is exported as compact JSON and checked against CloudFormation's
 [51,200-byte inline template limit](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)

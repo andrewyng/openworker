@@ -647,6 +647,8 @@ OpenAPI description and SSE event schemas, including limits and structured error
 | `/submissions` | Atomic new-session + initial-run admission and receipt lookup. |
 | `/sessions`, `/sessions/{id}/turns` | Session creation/read and additional run admission. |
 | `/sessions/{id}/controls`, `/sessions/{id}/events` | Priority controls, receipts and cursor-based SSE. |
+| `/sessions/{id}/artifacts`, `/sessions/{id}/artifacts/{artifactId}` | Register pending output and inspect session-scoped metadata. |
+| `/sessions/{id}/artifacts/{artifactId}/content`, `/sessions/{id}/artifacts/{artifactId}/reconcile` | Bounded authenticated transfer and verification of the same stored bytes. |
 | `/model-providers`, `/model-providers/{id}/credentials` | Validated provider revisions, write-only secret updates, health checks. |
 | `/policies`, `/worker-pools`, `/configuration` | Validated revisions, desired capacity and operational limits. |
 | `/operations/{id}` | Durable `accepted/applying/applied/failed/unknown` status and reconciliation. |
@@ -659,6 +661,14 @@ Long operations return `202` plus an operation ID; never report success merely
 because a Kubernetes/provider request was submitted. Deletes respect active
 references and retention policy. Errors include a safe code, request ID and retry
 classification, never access tokens or raw upstream responses.
+
+The implemented artifact endpoints reuse the existing [artifact contract](../../harness/artifacts/README.md):
+registration's stable `request_id` identifies an exact file/session/turn and may
+be repeated with identical parameters. Changed parameters conflict. A transfer
+failure never authorizes regenerating a file or replaying its producing tool.
+Managed `/v1` endpoints retain namespace and session authority checks; enabling
+artifacts does not enable legacy routes. Storage credentials belong to the trusted
+service, independently of the agent's sandbox and model credentials.
 
 ### Providers, secrets and compaction
 

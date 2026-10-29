@@ -154,11 +154,20 @@ database. An interrupted destruction can be resumed with the same exact ID.
 
 Expiring service tokens, revisioned configuration and Kubernetes pool management
 are covered by the [M4 guide](../../docs/harness/SERVICE-M4-QUICKSTART.md).
-Hosted SSO and cloud qualification follow later. Model connections/secrets and
+Hosted SSO follows later. Model connections/secrets and
 worker-slot settings currently remain deployment configuration.
 
 Cloud installation uses the same native installer through `ows deploy cluster`.
 See the [experimental AWS lifecycle guide](../../docs/harness/OWS-AWS-LIFECYCLE.md)
 for planning, guard checks, image publication, private Secret handoff and recovery.
-It is locally qualified; AWS IAM/network/storage/expiry behavior still needs the
-explicitly authorized live trial.
+The bounded Oregon/Linux ARM64 [AWS artifact trial](../../docs/harness/evidence/aws-artifact-storage-20261029.json)
+also exercises actual Pod Identity/S3 transfers and scheduled cleanup. Its proxy
+fix was qualified via a reviewed chart upgrade, rather than a fresh final-chart
+AWS install. Other cloud configurations and final billing attribution remain open.
+
+Optional [durable artifacts](../../harness/artifacts/README.md) use
+`/v1/sessions/:sid/artifacts` with the same namespace/session authorization as the
+rest of the service. Only content paths accept up to 64 MiB and disable proxy
+request buffering; other requests retain the small JSON limit. Customer ingress
+must preserve those bounds and streaming behavior. Tokens, AWS credentials and
+artifact storage locations are never supplied in model output or coworker bundles.

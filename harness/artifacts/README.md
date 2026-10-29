@@ -53,8 +53,11 @@ embedders may inject an `AwsCredentialProvider`. Profile/SSO login is not an
 integration promise here. Rotation does not change storage identity. Give the
 role only required GetObject/PutObject access to its deployment prefix; keep
 public access disabled. Encryption, lifecycle, backup, IAM and quotas remain
-operator responsibilities. Native AWS IAM/STS/KMS behavior needs cloud
-qualification; tests here use a local S3-compatible server and synthetic keys.
+operator responsibilities. The separate [AWS artifact qualification](../../docs/harness/evidence/aws-artifact-storage-20261029.json)
+exercises real EKS Pod Identity, STS role identity, S3 prefix/bucket denial, encrypted
+objects and retrieval after API/sandbox deletion. It uses the regional S3 endpoint
+and SSE-S3; customer KMS keys, private endpoints and other regions remain separate
+qualification. Its proxy correction was tested through a reviewed chart upgrade.
 
 For EKS Pod Identity, use the service's associated Kubernetes service account.
 EKS supplies `AWS_CONTAINER_CREDENTIALS_FULL_URI` and

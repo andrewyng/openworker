@@ -99,5 +99,9 @@ dependencies are AWS CLI/Helm/kubectl/Docker/tar, not Python or Node.
 
 See the [operator workflow](../../docs/harness/OWS-AWS-LIFECYCLE.md) and
 [progress/evidence](../../docs/harness/OWS-CLOUD-EXECUTION-PLAN.md). Qualification
-uses fake AWS providers and real local kind/OpenShell/PostgreSQL. Actual cloud IAM,
-networking, storage, Pod Identity, guard cleanup and costs remain unqualified.
+includes fake-provider recovery, local kind/OpenShell/PostgreSQL, and the bounded
+[real AWS artifact trial](../../docs/harness/evidence/aws-artifact-storage-20261029.json).
+The Oregon/Linux ARM64 reference exercises IAM, private EKS/RDS, strict networking,
+S3 transfers through Pod Identity and actual scheduled cleanup. The artifact proxy
+fix was tested through a reviewed chart upgrade; this is not qualification of all
+cloud configurations, and final delayed billing attribution remains separate.

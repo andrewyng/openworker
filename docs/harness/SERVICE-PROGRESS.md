@@ -509,4 +509,24 @@ deletion. Earlier local-only cloud exclusions above describe M5's original scope
 
 [Clean rerun evidence](evidence/aws-clean-expiry-20261029.json) and
 [AWS trial ledger](OWS-AWS-TRIAL-PLAN.md) record the bounded configuration,
-cleanup, budget and remaining S3 workload-transfer/final-billing limits.
+cleanup, budget and the limits of that clean-install run. Subsequent artifact
+qualification is recorded below.
+
+### Durable artifact qualification — 29 October 2026 UTC
+
+Local PostgreSQL/filesystem/S3 suites and real private EKS Pod Identity/S3 tests
+verify interrupted uploads, exact-ID recovery, cross-API downloads, and retrieval
+after replacing both API processes and deleting the producing sandbox. API and
+worker roles can access the owned artifact prefix; foreign reads/writes and an
+unassociated pod are denied. No paid model calls were made in this follow-up.
+
+Fixed incomplete Pod Identity configuration falling through to instance metadata,
+missing managed /v1 artifact routes, and the TLS proxy applying its small JSON
+limit to artifact uploads. Twenty focused tests and three real Docker suites pass.
+The final proxy was qualified through a reviewed Helm revision-2 upgrade; a fresh
+AWS install of that chart was not rerun.
+
+[Artifact evidence](evidence/aws-artifact-storage-20261029.json) and the
+[trial ledger](OWS-AWS-TRIAL-PLAN.md) record the bounded configuration and cleanup.
+Customer KMS/private S3 endpoints, other cloud configurations and final delayed
+billing attribution remain outside this qualification.

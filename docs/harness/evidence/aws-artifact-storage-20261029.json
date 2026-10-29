@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-29T14:03:37.551Z",
+  "scope": "Real private EKS Pod Identity/S3 artifact qualification; experimental reference, not production certification",
+  "branch": "feat/openworker-service-m1",
+  "source": {
+    "serviceCommit": "05447169",
+    "probeCommit": "991e9d37",
+    "proxyFixCommit": "648dd3e5"
+  },
+  "deploymentId": "ows-d32f5ba42cd8402da0585901909bcb19",
+  "bundleDigest": "eccb73bd4c16ec96979f961183fe3c7cf25c1480aadb2fbb5c3927afb45fec1a",
+  "aws": {
+    "region": "us-west-2",
+    "architecture": "linux/arm64",
+    "privateClusterManagementApi": true,
+    "kubernetes": "1.36.5",
+    "postgresql": "16.13",
+    "nodes": 2,
+    "unrelatedResourcesModified": false
+  },
+  "producer": {
+    "scripted": true,
+    "paidModelCalls": 0,
+    "sessionId": "s_b94d64c1587543e695775b647a051f76",
+    "runId": "t_7ab60fe22a82498aab377031a68c58ed",
+    "toolCalls": [
+      "write_file",
+      "read_file"
+    ],
+    "toolsSucceeded": true,
+    "toolReplayed": false
+  },
+  "storage": {
+    "passed": true,
+    "sessionId": "s_b94d64c1587543e695775b647a051f76",
+    "runId": "t_7ab60fe22a82498aab377031a68c58ed",
+    "artifacts": [
+      {
+        "id": "a_2a2809ce814044e19216329a8504a872",
+        "sha256": "6a79701187dd5132a53218af8dc9571f207dabca4df70168e700e80caac545a5",
+        "size": 36,
+        "source": "actual OpenShell read_file tool output"
+      },
+      {
+        "id": "a_d21d48cf5ed945f3a3b9e14d06b481fb",
+        "sha256": "ff76f1e78e50df29549a6c1bd103ea80b98200d744e443acefbe23808dd810d6",
+        "size": 2097225,
+        "source": "bounded binary fixture"
+      }
+    ],
+    "crossApi": true,
+    "reviewedProxyUpgrade": true,
+    "initialProxyRejection": 413,
+    "interruptedUploadStatus": 409,
+    "interruptedUploadStayedPending": true,
+    "exactRetry": true,
+    "reconciled": true,
+    "readyEvents": 2,
+    "staticAwsCredentials": false,
+    "afterApiReplacement": {
+      "passed": true,
+      "allArtifactsDownloadedViaBothReplacementApis": true,
+      "sha256Verified": true,
+      "readyEventsRemain": 2,
+      "toolReplayed": false
+    },
+    "afterProducerDeletion": {
+      "passed": true,
+      "afterSandboxDeletion": true,
+      "allArtifactsDownloadedViaBothReplacementApis": true,
+      "sha256Verified": true,
+      "readyEventsRemain": 2,
+      "toolReplayed": false
+    },
+    "independentObjectChecks": {
+      "passed": true,
+      "operatorReadOnlyObservation": true,
+      "uploadsUsedPodIdentity": true,
+      "ownedBucketTagsVerified": true,
+      "objects": [
+        {
+          "artifactId": "a_2a2809ce814044e19216329a8504a872",
+          "part": "manifest",
+          "encrypted": true,
+          "size": 210
+        },
+        {
+          "artifactId": "a_2a2809ce814044e19216329a8504a872",
+          "part": "part-00",
+          "encrypted": true,
+          "size": 36
+        },
+        {
+          "artifactId": "a_d21d48cf5ed945f3a3b9e14d06b481fb",
+          "part": "manifest",
+          "encrypted": true,
+          "size": 401
+        },
+        {
+          "artifactId": "a_d21d48cf5ed945f3a3b9e14d06b481fb",
+          "part": "part-00",
+          "encrypted": true,
+          "size": 1048576
+        }
+      ]
+    },
+    "producerRetirement": {
+      "passed": true,
+      "at": "2026-10-29T13:31:09.757Z",
+      "environmentId": "env_43fbeeea465f438f9df8dc809582c6be",
+      "phase": "deleted",
+      "attachments": 0,
+      "originalSandboxPod": "default--owr-43fbeeea465f438",
+      "podAbsent": true,
+      "artifactsStillRetrievable": true
+    },
+    "credentials": "EKS Pod Identity in trusted API/worker only; no static keys or credentials in agent sandbox"
+  },
+  "authorization": {
+    "passed": true,
+    "results": [
+      {
+        "automaticMutationRetries": false,
+        "denialRequiresAccessDenied": true,
+        "foreignBucketReadDenied": true,
+        "foreignBucketWriteDenied": true,
+        "foreignPrefixReadDenied": true,
+        "foreignPrefixWriteDenied": true,
+        "identityArn": "arn:aws:sts::504150922218:assumed-role/ows-aws-artifact-d32f5ba42cd8-artifacts/eks-ows-aws-ar-ows-api-7d-cd937ada-9538-43dd-8fd8-269a9f62b4fd",
+        "ownPrefixReadable": true,
+        "passed": true,
+        "podIdentityOnly": true,
+        "role": "ows-api",
+        "podUid": "39009dae-64b3-41df-9f3a-09c33a140e0f"
+      },
+      {
+        "automaticMutationRetries": false,
+        "denialRequiresAccessDenied": true,
+        "foreignBucketReadDenied": true,
+        "foreignBucketWriteDenied": true,
+        "foreignPrefixReadDenied": true,
+        "foreignPrefixWriteDenied": true,
+        "identityArn": "arn:aws:sts::504150922218:assumed-role/ows-aws-artifact-d32f5ba42cd8-artifacts/eks-ows-aws-ar-ows-worker-7934175e-8bd6-49c9-82d1-ee584069e0d4",
+        "ownPrefixReadable": true,
+        "passed": true,
+        "podIdentityOnly": true,
+        "role": "ows-worker",
+        "podUid": "feeaae31-f35a-4fda-b39a-259371fd64aa"
+      }
+    ],
+    "staticCredentialsAbsent": true,
+    "apiAndWorkerServiceAccountVerified": true,
+    "foreignWritesConditionallyCreated": false,
+    "unassociated": {
+      "metadataCredentialsUnavailable": true,
+      "passed": true,
+      "podIdentityEnvironmentAbsent": true,
+      "staticCredentialsAbsent": true,
+      "unassociated": true,
+      "podUid": "b20c0dfb-5164-4bb9-9bbb-a0d27370c869",
+      "serviceAccount": "default",
+      "hostNetwork": false,
+      "sameTrustedNetworkPolicy": true
+    }
+  },
+  "proxy": {
+    "initialLargeTransferStatus": 413,
+    "fix": "Content-route-only 64 MiB streaming; other requests keep 160 KiB proxy bound",
+    "nginxSyntaxPassed": true,
+    "chartTests": 6,
+    "chartUpgrade": {
+      "revision": 2,
+      "status": "deployed",
+      "nonce": "b82ae2cf-2ba8-46f5-9bb3-6c2c7c12358f",
+      "packageSha256": "a338dc2fe49391e8fa006ce26562cf9643f3de8c032d7641c3155ce00099d6e0",
+      "originalInstallerJournalPreserved": true
+    },
+    "boundaries": {
+      "passed": true,
+      "metadataLimitPreserved": true,
+      "oversizedContentRejectedBeforeBody": true,
+      "metadata": {
+        "status": 413,
+        "nginxRejection": true
+      },
+      "content": {
+        "status": 413,
+        "nginxRejection": true
+      }
+    },
+    "freshFinalChartAwsInstallation": false,
+    "originalImmutableInstallerJournalPreserved": true
+  },
+  "images": {
+    "harness": {
+      "image": "504150922218.dkr.ecr.us-west-2.amazonaws.com/ows-aws-artifact-d32f5ba42cd8/harness@sha256:88b8f7b5ce18c87c08f5d78a3bd811b9b690ae1fedb1797271b7f141316294bd",
+      "configDigest": "sha256:8b7a40f0683100d156aacd55890bd83b36f45e5fe73e0eed08938efd475acde2"
+    },
+    "runner": {
+      "image": "504150922218.dkr.ecr.us-west-2.amazonaws.com/ows-aws-artifact-d32f5ba42cd8/runner@sha256:069abaedf7e24a81b90f10527c1b6082c1b6a465ec84610abf6d6b046e970613",
+      "configDigest": "sha256:bdc55b47fb3478f49f69a19fe20a92a4142b445f1e1bf4d48c1efd919822c6e2"
+    }
+  },
+  "network": {
+    "passed": true,
+    "checks": [
+      "explicit baseline allow",
+      "egress deny",
+      "egress allow",
+      "ingress deny",
+      "ingress allow"
+    ],
+    "namespace": "ow-service",
+    "cloudCalls": true,
+    "deploymentId": "ows-local-caa24c638bab4071ac80eaa5afe8ffbf"
+  },
+  "cleanup": {
+    "fixedExpiryUtc": "2026-10-29T13:36:36.000Z",
+    "noClockOrScheduleOverride": true,
+    "noManualInfrastructureDelete": true,
+    "preDeadlineObjects": 6,
+    "preDeadlineVolumes": 4,
+    "zeroPreDeadlineDestruction": true,
+    "originalExpiryTokenVerified": true,
+    "guardDeleteActor": {
+      "at": "2026-10-29T13:42:41.712Z",
+      "matches": 1,
+      "examinedEvents": 1,
+      "candidates": [
+        {
+          "eventTime": "2026-10-29T13:37:21Z",
+          "fields": [
+            "stackName",
+            "roleARN"
+          ],
+          "stackName": "arn:aws:cloudformation:us-west-2:504150922218:stack/ows-aws-artifact-d32f5ba42cd8-infra/75f8f0c0-d396-11f1-8f28-0affdf16fd37",
+          "issuer": "arn:aws:iam::504150922218:role/ows-aws-artifact-d32f5ba42cd8-cleanup"
+        }
+      ],
+      "guardRoleVerified": true,
+      "deleteTokenVerified": true,
+      "deleteTokenEvidence": "Original CloudFormation stack event and consistent guard control receipt; CloudTrail omits clientRequestToken",
+      "requestSucceeded": true,
+      "expiryClockVerified": true,
+      "eventTime": "2026-10-29T13:37:21Z"
+    },
+    "guardErrors": [],
+    "completionObservedAt": "2026-10-29T13:59:47.439Z",
+    "orphanVolumeDeleteIntents": {
+      "vol-070e0e9557c97987e": true
+    },
+    "remainingVolumeGate": {
+      "passed": true,
+      "stackDeleteCompleteInsufficient": true,
+      "remainingVolumeRefused": true,
+      "journalUnchanged": true,
+      "remoteMutation": false
+    },
+    "readOnlyReconciliation": {
+      "bucketAbsent": true,
+      "controlVersion": 3,
+      "deleteToken": "ows-d32f5ba42cd8402da0585901909bcb19-expiry",
+      "expiresAtUnix": 1793280996,
+      "observedAtUnix": 1793282016,
+      "stackArn": "arn:aws:cloudformation:us-west-2:504150922218:stack/ows-aws-artifact-d32f5ba42cd8-infra/75f8f0c0-d396-11f1-8f28-0affdf16fd37",
+      "taggedVolumesAbsent": true
+    },
+    "inventory": {
+      "deploymentId": "ows-d32f5ba42cd8402da0585901909bcb19",
+      "at": "2026-10-29T14:02:13.685Z",
+      "clusters": [],
+      "instances": 0,
+      "volumes": 0,
+      "vpcs": 0,
+      "addresses": 0,
+      "databases": 0,
+      "repositories": 0,
+      "roles": 0,
+      "functions": 0,
+      "controlTables": 0,
+      "schedules": 0,
+      "logGroups": 0,
+      "policies": 0,
+      "databaseSecrets": 0,
+      "buckets": 0,
+      "passed": true
+    },
+    "publisher": {
+      "codeVersionDeleted": true,
+      "publisherStackDeleted": true,
+      "bucketAbsent": true,
+      "guardAndBootstrapRetiredFirst": true
+    },
+    "taskPrivateCredentialFilesRemoved": 14,
+    "originalUserCredentialsModified": false
+  },
+  "tests": {
+    "artifactAndCredential": 7,
+    "serverUnit": 7,
+    "helmBoundary": 6,
+    "realDockerSuites": 3,
+    "linuxSourceServiceAndProbeBuild": true,
+    "offlineProbeSmoke": true
+  },
+  "budget": {
+    "authorizedCumulativeUsd": 100,
+    "conservativePlanningEnvelopeUsd": 71.68,
+    "reportedCosts": {
+      "ResultsByTime": [
+        {
+          "TimePeriod": {
+            "Start": "2026-10-28",
+            "End": "2026-10-29"
+          },
+          "Total": {
+            "UnblendedCost": {
+              "Amount": "12.5423353083",
+              "Unit": "USD"
+            }
+          },
+          "Groups": [],
+          "Estimated": true
+        },
+        {
+          "TimePeriod": {
+            "Start": "2026-10-29",
+            "End": "2026-10-30"
+          },
+          "Total": {
+            "UnblendedCost": {
+              "Amount": "3.0376600534",
+              "Unit": "USD"
+            }
+          },
+          "Groups": [],
+          "Estimated": true
+        }
+      ],
+      "DimensionValueAttributes": []
+    },
+    "observedAt": "2026-10-29T14:03:01.064Z",
+    "billingDelayed": true,
+    "hardCap": false,
+    "allControlledTrialResourcesRetired": true
+  },
+  "limitations": [
+    "AWS artifact test used a reviewed revision-2 source chart upgrade after finding the proxy size limit; fresh AWS installation with the final proxy chart was not rerun",
+    "Customer KMS keys, private S3 endpoints, other regions/architectures and final delayed billing attribution remain separate qualification"
+  ],
+  "credentialsCommitted": false
+}

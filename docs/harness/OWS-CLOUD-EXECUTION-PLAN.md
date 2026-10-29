@@ -161,5 +161,9 @@ and supports observation after the cluster API is gone.
 See [clean rerun evidence](evidence/aws-clean-expiry-20261029.json),
 [AWS lifecycle](OWS-AWS-LIFECYCLE.md) and [trial ledger](OWS-AWS-TRIAL-PLAN.md).
 The original local-only statement above is historical. Qualification remains bounded
-to Oregon/Linux ARM64; S3 workload SDK transfer through Pod Identity, final billing
-attribution and GCP/Azure execution remain open.
+to Oregon/Linux ARM64. The subsequent [artifact qualification](evidence/aws-artifact-storage-20261029.json)
+verifies S3 workload transfer through Pod Identity, scoped denials, interrupted
+upload recovery and retrieval after API/sandbox replacement. It also fixes managed
+/v1 artifact routes and the TLS proxy upload limit; the proxy fix was tested through
+a reviewed Helm upgrade, not a fresh final-chart AWS installation. Final delayed
+billing attribution and GCP/Azure execution remain open.
