@@ -2548,9 +2548,10 @@ class SessionManager:
         session_id: Optional[str] = None,
         connector: Optional[str] = None,
         tool: Optional[str] = None,
+        call_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         return self.audit_store.list(
-            limit=limit, session_id=session_id, connector=connector, tool=tool
+            limit=limit, session_id=session_id, connector=connector, tool=tool, call_id=call_id
         )
 
     def browser_state(self) -> dict[str, Any]:

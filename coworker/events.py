@@ -37,6 +37,9 @@ class EventType(str, Enum):
     TOOL_STARTED = "tool_started"
     TOOL_FINISHED = "tool_finished"
     ITERATION_END = "iteration_end"
+    # OPE-238: the actions auto-approve let run with no card this turn (a gate tier or a
+    # reviewer "allow"), emitted just before the event that ends the turn.
+    TURN_SUMMARY = "turn_summary"
     TURN_END = "turn_end"
     ERROR = "error"
     INTERRUPTED = "interrupted"

@@ -288,6 +288,35 @@
       "undone_forgotten": "Okay — forgotten.",
       "undone_restored": "Okay — put back the way it was.",
       "undo": "Undo"
+    },
+    "unasked": {
+      "summary": "{{count}} changes auto-approved",
+      "summary_one": "{{count}} change auto-approved",
+      "summary_none": "No changes auto-approved",
+      "failed_count": "{{count}} failed",
+      "read_count": "{{count}} read-only",
+      "read_tail": "{{count}} read-only actions ran auto-approved · not counted as changes",
+      "read_tail_one": "{{count}} read-only action ran auto-approved · not counted as changes",
+      "show_all": "Show all {{count}}",
+      "edits": "{{count}} edits",
+      "edits_one": "{{count}} edit",
+      "failed": "failed",
+      "timed_out": "timed out",
+      "background": "started in the background",
+      "by_tier": "safe change",
+      "by_reviewer": "reviewer",
+      "group_files": "Files",
+      "group_commands": "Commands",
+      "group_other": "Other actions",
+      "exit": "exit {{code}}",
+      "audit": "audit log",
+      "more_lines": "… {{count}} more lines",
+      "more_lines_one": "… {{count}} more line",
+      "created": "Created",
+      "edited": "Edited",
+      "deleted": "Deleted",
+      "moved": "Moved",
+      "moved_to": "to"
     }
   },
   "rail": {
@@ -924,7 +953,9 @@
     "fallback_tool": "tool",
     "fallback_event": "event",
     "session": "session",
-    "resource": "resource: {{value}}"
+    "resource": "resource: {{value}}",
+    "call_filter": "Showing one tool call: {{id}}",
+    "call_filter_clear": "Show all"
   },
   "plan": {
     "proposed": "The agent proposed a plan",

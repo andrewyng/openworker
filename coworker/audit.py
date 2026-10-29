@@ -210,9 +210,15 @@ class AuditStore:
         session_id: Optional[str] = None,
         connector: Optional[str] = None,
         tool: Optional[str] = None,
+        call_id: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         where = []
         params: list[Any] = []
+        if call_id:
+            # One tool call's rows (proposed, verdict, started, finished…): OPE-238 links
+            # each "changed without asking" item here.
+            where.append("call_id = ?")
+            params.append(call_id)
         if session_id:
             where.append("session_id = ?")
             params.append(session_id)

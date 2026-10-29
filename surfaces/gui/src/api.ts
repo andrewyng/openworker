@@ -1109,6 +1109,7 @@ export interface AuditEvent {
   result_preview: string;
   reason: string;
   resource: string;
+  call_id?: string;
 }
 
 export async function getAudit(params: {
@@ -1116,8 +1117,11 @@ export async function getAudit(params: {
   session_id?: string;
   connector?: string;
   tool?: string;
+  // OPE-238: one tool call's rows (the "changes made without asking" summary links here).
+  call_id?: string;
 } = {}): Promise<AuditEvent[]> {
   const q = new URLSearchParams();
+  if (params.call_id) q.set("call_id", params.call_id);
   if (params.limit) q.set("limit", String(params.limit));
   if (params.session_id) q.set("session_id", params.session_id);
   if (params.connector) q.set("connector", params.connector);

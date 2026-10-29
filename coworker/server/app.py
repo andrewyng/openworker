@@ -2336,10 +2336,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         session_id: str | None = None,
         connector: str | None = None,
         tool: str | None = None,
+        call_id: str | None = None,
     ) -> dict[str, Any]:
         return {
             "events": manager.list_audit(
-                limit=limit, session_id=session_id, connector=connector, tool=tool
+                limit=limit, session_id=session_id, connector=connector, tool=tool, call_id=call_id
             )
         }
 

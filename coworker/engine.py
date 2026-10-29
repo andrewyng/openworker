@@ -16,6 +16,7 @@ import logging
 from copy import deepcopy
 
 import asyncio
+import functools
 import json
 import time
 from dataclasses import dataclass, replace
@@ -62,6 +63,7 @@ _REVIEWER_PAUSED_TEXT = (
 )
 from .permissions import CLEARED_BY_MODE, Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
+from .risk import RiskClass, classify as _classify_risk
 from .providers.errors import friendly_model_error
 from .providers.openai_provider import looks_like_unparsed_tool_call, strip_dangling_tool_tag
 from .tools import ToolRegistry
@@ -120,6 +122,97 @@ Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
 
 async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
     return ApprovalOutcome.DENY
+
+
+# OPE-238: the approval origins that mean "ran without asking": auto-approve let the
+# action through with no card. A card the user answered, a standing rule or trust the
+# user set up, and the bypass modes are the user's own choice and are not listed.
+_UNASKED_ORIGINS = frozenset({"gate_tier", "reviewer"})
+# Every turn ends with exactly one of these; the summary goes just before it, so the
+# event that ends a turn stays the last one (the headless runner reads it that way).
+_TURN_ENDINGS = frozenset({EventType.TURN_END, EventType.INTERRUPTED, EventType.ERROR})
+
+
+def _summarizes_turn(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
+    """Wrap a turn generator (run / retry / resume) so that, when any action ran without
+    asking, one TURN_SUMMARY event lists them just before the turn ends.
+
+    An index, not a copy: tool call id, tool name, origin, status and the reviewer's
+    one-line reason. The arguments and results are already in the tool events and the
+    audit log, which can be filtered by the same call id."""
+
+    @functools.wraps(gen_fn)
+    async def wrapper(self: "TurnEngine", *args: Any, **kwargs: Any) -> AsyncIterator[Event]:
+        inner = gen_fn(self, *args, **kwargs)
+        unasked: list[dict[str, Any]] = []
+        try:
+            async for event in inner:
+                if event.type is EventType.TOOL_FINISHED:
+                    origin = event.data.get("approval_origin")
+                    if origin in _UNASKED_ORIGINS:
+                        unasked.append(
+                            {
+                                "tool_call_id": str(event.data.get("tool_call_id") or ""),
+                                "name": str(event.data.get("name") or ""),
+                                "origin": origin,
+                                # "change" or "read": only changes count as changes.
+                                "effect": str(event.data.get("approval_effect") or "change"),
+                                "status": str(event.data.get("status") or ""),
+                                **(
+                                    {"tier": str(event.data["approval_tier"])}
+                                    if event.data.get("approval_tier")
+                                    else {}
+                                ),
+                                **(
+                                    {"note": str(event.data["approval_note"])}
+                                    if event.data.get("approval_note")
+                                    else {}
+                                ),
+                                **(
+                                    {"exit_code": event.data["exit_code"]}
+                                    if "exit_code" in event.data
+                                    else {}
+                                ),
+                                **({"timed_out": True} if event.data.get("timed_out") else {}),
+                                **({"background": True} if event.data.get("background") else {}),
+                            }
+                        )
+                elif event.type in _TURN_ENDINGS and unasked:
+                    yield Event(EventType.TURN_SUMMARY, _summary_payload(unasked))
+                    unasked = []
+                yield event
+        finally:
+            # A surface that stops reading mid-turn closes this wrapper; close the turn
+            # itself too, at once, so its own cleanup (run grants) runs as before.
+            await inner.aclose()
+
+    return wrapper
+
+
+def _action_failed(action: dict[str, Any]) -> bool:
+    """A listed action that changed nothing: the call errored, the command exited
+    non-zero, or it timed out. A background start is neither done nor failed."""
+    if action.get("status") != "ok":
+        return True
+    if action.get("timed_out"):
+        return True
+    code = action.get("exit_code")
+    return isinstance(code, int) and code != 0
+
+
+def _summary_payload(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """`count` is what the header says: changes that ran without asking and worked.
+    Failed attempts and read-only actions are listed, and counted apart, so the
+    number means "things that changed state and that you did not approve"."""
+    changes = [a for a in actions if a.get("effect") != "read"]
+    failed = [a for a in changes if _action_failed(a)]
+    reads = [a for a in actions if a.get("effect") == "read"]
+    return {
+        "count": len(changes) - len(failed),
+        "failed": len(failed),
+        "reads": len(reads),
+        "actions": actions,
+    }
 
 
 class TurnEngine:
@@ -398,6 +491,7 @@ class TurnEngine:
         self._steering.append((text, source, activity))
 
     # -- main loop --------------------------------------------------------------
+    @_summarizes_turn
     async def run(
         self,
         user_input: "str | list",
@@ -532,6 +626,7 @@ class TurnEngine:
         notice.update({k: v for k, v in fields.items() if v is not None})
         self.messages.append(notice)
 
+    @_summarizes_turn
     async def retry(self) -> AsyncIterator[Event]:
         """Re-run the model loop after a provider error — no new user message; the failed
         turn's input is already the tail of history. Guarded on the tail being an error
@@ -570,6 +665,7 @@ class TurnEngine:
         info = workspace.describe()
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
 
+    @_summarizes_turn
     async def resume(self) -> AsyncIterator[Event]:
         """Continue a turn that was suspended at a prompt and persisted — durable resume after a
         restart (or engine eviction). Re-process the trailing assistant message's UNANSWERED
@@ -1154,7 +1250,9 @@ class TurnEngine:
                 continue
             yield Event(
                 EventType.TOOL_PROPOSED,
-                {"name": tool_call.name, "arguments": tool_call.arguments},
+                # The id lets a surface pair this proposal with its own finished event
+                # (OPE-238): two same-named calls in one batch must not swap results.
+                {"name": tool_call.name, "arguments": tool_call.arguments, "tool_call_id": tool_call.id},
             )
             self._audit(tool_call, stage="proposed")
             if _is_mangled(tool_call):
@@ -2116,7 +2214,26 @@ class TurnEngine:
 
         if delegated:
             self._authorized_delegates[tool_call.id] = delegated
+        origin = self._approval_origins.get(tool_call.id)
+        if origin and origin.get("origin") in _UNASKED_ORIGINS:
+            # OPE-238: what the turn summary needs to count honestly: did this call
+            # change anything, and which tier (if any) let it through.
+            origin["effect"] = self._effect(tool_call, metadata, decision.tier)
+            if decision.tier:
+                origin["tier"] = decision.tier
         yield True
+
+    def _effect(self, tool_call: ToolCall, metadata: Any, tier: str) -> str:
+        """"change" or "read", from the risk class the permission engine already uses.
+        A shell command is a change unless the read-only classifier said otherwise;
+        connector and MCP calls that reached a cardless origin are writes or sends
+        (connector reads never gate); a web read is a read."""
+        if tier == "readonly_command":
+            return "read"
+        risk = _classify_risk(tool_call.name, metadata, self.permissions.risk_overrides)
+        if risk in (RiskClass.WRITE_LOCAL, RiskClass.EXEC, RiskClass.EXTERNAL):
+            return "change"
+        return "read"
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
@@ -2182,16 +2299,21 @@ class TurnEngine:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
         origin = self._approval_origins.pop(tool_call.id, None)
+        # OPE-238: the facts the turn summary shows, kept with the result so a reload
+        # shows the same thing the live view did: whether the call failed, and for a
+        # shell command its exit status, time-out, or background start.
+        outcome = _call_outcome(tool_call, result, status)
         if origin:
             # Provenance survives reload via the same display-only sidecar as the privacy
             # counts (owner ruling 2026-08-24) — `_outbound_messages` strips it, so no
             # provider ever sees it.
             display = {
                 **(display or {}),
-                "approval_origin": origin.get("origin", ""),
-                **({"approval_note": origin["note"]} if origin.get("note") else {}),
-                **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                **_origin_fields(origin),
+                **outcome,
             }
+        elif outcome:
+            display = {**(display or {}), **outcome}
         # OPE-186 change 1: what the model sees (and re-reads on every later turn) is
         # bounded here, once, for every tool. Provenance above recorded the full result.
         result = toolresult.bound_tool_result(
@@ -2246,15 +2368,8 @@ class TurnEngine:
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
                 # (c) quiet provenance chip — same fields the `_display` sidecar persists.
-                **(
-                    {
-                        "approval_origin": origin.get("origin", ""),
-                        **({"approval_note": origin["note"]} if origin.get("note") else {}),
-                        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
-                    }
-                    if origin
-                    else {}
-                ),
+                **(_origin_fields(origin) if origin else {}),
+                **{k: v for k, v in outcome.items() if k != "status"},
             },
         )
 
@@ -3173,6 +3288,36 @@ def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
         "content": content,
         "ts": time.time(),
     }
+
+
+def _origin_fields(origin: dict[str, Any]) -> dict[str, Any]:
+    """The approval-provenance fields, as the TOOL_FINISHED event and the persisted
+    `_display` sidecar both carry them."""
+    return {
+        "approval_origin": origin.get("origin", ""),
+        **({"approval_note": origin["note"]} if origin.get("note") else {}),
+        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+        **({"approval_tier": origin["tier"]} if origin.get("tier") else {}),
+        **({"approval_effect": origin["effect"]} if origin.get("effect") else {}),
+    }
+
+
+def _call_outcome(tool_call: ToolCall, result: Any, status: str) -> dict[str, Any]:
+    """What the turn summary needs beyond the 300-char preview (OPE-238): a non-ok
+    status, and for `run_shell` the exit code (None when unknown), whether it timed
+    out, and whether it was only started in the background."""
+    out: dict[str, Any] = {}
+    if status != "ok":
+        out["status"] = status
+    if tool_call.name == "run_shell" and isinstance(result, dict):
+        if result.get("task_id") and result.get("status") == "running":
+            out["background"] = True
+        elif "exit_code" in result:
+            code = result.get("exit_code")
+            out["exit_code"] = code if isinstance(code, int) and not isinstance(code, bool) else None
+            if result.get("timed_out"):
+                out["timed_out"] = True
+    return out
 
 
 def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:

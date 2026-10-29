@@ -801,6 +801,13 @@ def test_ws_browser_tool_audit_round_trip(tmp_path):
     )
     assert any(r["tool"] == "browser_close" and r["stage"] == "finished" for r in rows)
 
+    # OPE-238: one tool call's rows, by its id (the GUI's "changes made without asking"
+    # summary links each item this way).
+    call_id = next(r["call_id"] for r in rows if r["stage"] == "finished")
+    one = client.get("/v1/audit", params={"call_id": call_id}).json()["events"]
+    assert one and {r["call_id"] for r in one} == {call_id}
+    assert client.get("/v1/audit", params={"call_id": "no-such-call"}).json()["events"] == []
+
 
 def test_open_and_recent_workspaces(tmp_path):
     proj = tmp_path / "proj"

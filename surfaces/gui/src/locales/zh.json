@@ -285,6 +285,31 @@
       "undone_forgotten": "好 —— 已忘记。",
       "undone_restored": "好 —— 已恢复原样。",
       "undo": "撤销"
+    },
+    "unasked": {
+      "summary": "{{count}} 项更改已自动批准",
+      "summary_none": "没有自动批准的更改",
+      "failed_count": "{{count}} 项失败",
+      "read_count": "{{count}} 项只读",
+      "read_tail": "{{count}} 项只读操作已自动批准 · 不计入更改",
+      "show_all": "显示全部 {{count}} 项",
+      "edits": "{{count}} 次编辑",
+      "failed": "失败",
+      "timed_out": "超时",
+      "background": "已在后台启动",
+      "by_tier": "安全更改",
+      "by_reviewer": "审核器",
+      "group_files": "文件",
+      "group_commands": "命令",
+      "group_other": "其他操作",
+      "exit": "退出码 {{code}}",
+      "audit": "审计日志",
+      "more_lines": "… 还有 {{count}} 行",
+      "created": "新建",
+      "edited": "编辑",
+      "deleted": "删除",
+      "moved": "移动",
+      "moved_to": "至"
     }
   },
   "rail": {
@@ -912,7 +937,9 @@
     "fallback_tool": "工具",
     "fallback_event": "事件",
     "session": "会话",
-    "resource": "资源：{{value}}"
+    "resource": "资源：{{value}}",
+    "call_filter": "仅显示一次工具调用：{{id}}",
+    "call_filter_clear": "显示全部"
   },
   "plan": {
     "proposed": "agent 提出了一个计划",
