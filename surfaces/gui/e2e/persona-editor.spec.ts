@@ -24,9 +24,22 @@ test("copy a built-in, configure, save, enable and try a coworker", async ({
   await editor
     .getByLabel("Instructions *", { exact: true })
     .fill("Research carefully. Link to evidence and explain uncertainty.");
-  await editor.getByRole("heading", { name: "Create coworker", exact: true }).scrollIntoViewIfNeeded();
+  await editor
+    .getByRole("heading", { name: "Create coworker", exact: true })
+    .scrollIntoViewIfNeeded();
   await page.screenshot({
     path: testInfo.outputPath("persona-editor-en.png"),
+    fullPage: true,
+  });
+  await editor
+    .getByRole("heading", { name: "Connectors", exact: true })
+    .scrollIntoViewIfNeeded();
+  const tools = editor.getByRole("region", { name: "Tools", exact: true });
+  await expect(tools.getByRole("checkbox", { name: /Files/ })).toBeChecked();
+  await expect(tools.getByRole("checkbox", { name: /Search/ })).toBeChecked();
+  await expect(tools.getByRole("checkbox", { name: /Shell/ })).not.toBeChecked();
+  await page.screenshot({
+    path: testInfo.outputPath("persona-editor-tools.png"),
     fullPage: true,
   });
   await editor.getByRole("button", { name: "Preview capabilities" }).click();
@@ -87,7 +100,7 @@ test("blank creation and custom editing preserve the identifier", async ({
   );
 });
 
-test("Chinese editor fits a narrow desktop window", async ({ page }, testInfo) => {
+test("Chinese editor fits a narrow desktop window", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("openworker.lang", "zh"));
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.goto("/");
@@ -100,10 +113,6 @@ test("Chinese editor fits a narrow desktop window", async ({ page }, testInfo) =
   await page
     .getByLabel("工作说明（提示词） *", { exact: true })
     .fill("查阅资料，注明来源，并说明结论的不确定性。");
-  await page.screenshot({
-    path: testInfo.outputPath("persona-editor-zh.png"),
-    fullPage: true,
-  });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

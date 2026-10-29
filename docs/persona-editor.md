@@ -62,6 +62,6 @@ After: copying a built-in into a visual editor with a live preview.
 
 ![Visual coworker editor](assets/persona-editor-en.png)
 
-Chinese UI in a narrow desktop window:
+Tool and connector selection in the English editor:
 
-![Chinese coworker editor](assets/persona-editor-zh.png)
+![English tool and connector options](assets/persona-editor-tools.png)
