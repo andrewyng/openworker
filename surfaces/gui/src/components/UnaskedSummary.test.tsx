@@ -501,3 +501,17 @@ describe("errorOf", () => {
     expect(errorOf(undefined)).toBe("");
   });
 });
+
+// OPE-234: a read-only command the tier let through changed nothing, so it is not one of
+// the "changes made without asking".
+describe("read-only commands are not changes", () => {
+  it("leaves them out of the summary", () => {
+    const items: Item[] = [
+      { kind: "user", text: "what changed?" },
+      { kind: "tool", id: "t1", callId: "c1", name: "run_shell", args: { command: "git status" }, status: "ok", approvalOrigin: "readonly_tier" },
+      { kind: "assistant", text: "Nothing yet." },
+    ];
+    render(<Transcript items={items} onApprove={vi.fn()} />);
+    expect(screen.queryByTestId("unasked-summary")).toBeNull();
+  });
+});

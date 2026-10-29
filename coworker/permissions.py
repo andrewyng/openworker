@@ -492,6 +492,8 @@ from .workspace_safety import (
 # The reason prefix of an OPE-233 inert-write allow; the engine keys the transcript chip
 # and the audit row on `Decision.tier`, this text is what the record says.
 INERT_WRITE_REASON = "inert, reversible write inside your folders"
+# OPE-234: the reason prefix of a read-only command the tier let through.
+READONLY_COMMAND_REASON = "read-only command inside your folders"
 SECRET_EGRESS_REASON = "this sends a secret-looking file or value off the machine — approval required"
 
 
@@ -723,6 +725,11 @@ class PermissionEngine:
     # A file the agent filled with a key and then sends is caught even when the file can't
     # be read back (moved, over the size cap, outside the folders).
     agent_file_has_secret: Optional[Callable[[Path], bool]] = None
+    # OPE-234 gate tier, Auto-Approve only: "off" (default), "audit" or "on", like
+    # `inert_writes`. User-global config, never a workspace's.
+    readonly_commands: str = "off"
+    # (The tier reads the shell's folder from `shell_cwd`, above. Unlike the session grant,
+    # it never falls back to the workspace folder: no folder, no tier.)
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
@@ -733,6 +740,8 @@ class PermissionEngine:
             self.shell_kind = "powershell" if sys.platform == "win32" else "bash"
         if self.inert_writes not in ("off", "audit", "on"):
             self.inert_writes = "off"
+        if self.readonly_commands not in ("off", "audit", "on"):
+            self.readonly_commands = "off"
 
     def _resolved_roots(self) -> list[tuple[Path, bool]]:
         out: list[tuple[Path, bool]] = []
@@ -988,6 +997,24 @@ class PermissionEngine:
         if self.mode is Mode.CUSTOM and tool_name in self.auto_allow_tools:
             return Decision(True, "auto-allowed by config")
 
+        # OPE-234: in Auto-Approve, a read-only command (or a sequence of them) inside the
+        # folders needs no reviewer call. Last checks on purpose, like the inert-write tier
+        # below: every floor above has already had its say.
+        if (
+            is_shell
+            and self.mode is Mode.AUTO_APPROVE
+            and self.readonly_commands != "off"
+            and self._readonly_tier_supported()
+        ):
+            eligible, detail = self._readonly_tier(str(arguments.get("command", "")))
+            if eligible and self.readonly_commands == "on":
+                return Decision(True, f"{READONLY_COMMAND_REASON}: {detail}", tier="readonly_command")
+            if eligible:
+                return Decision(
+                    False, "requires approval", needs_user=True,
+                    tier="readonly_command", tier_audit_only=True, tier_note=detail,
+                )
+
         # OPE-233: in Auto-Approve, an inert write that can be undone needs no reviewer
         # call. It is the last check on purpose: every floor above (folders, protected
         # files, self-protection, read-only modes) has already had its say.
@@ -1007,6 +1034,48 @@ class PermissionEngine:
 
         # Otherwise: ask the user.
         return Decision(False, "requires approval", needs_user=True)
+
+    def _readonly_tier_supported(self) -> bool:
+        """OPE-234: the read-only command tier follows the shell the session runs, not the
+        operating system: bash only. PowerShell's checker is not ready for a reviewer-less
+        clearance (OPE-232 / OPE-230), so there the reviewer decides."""
+        return self.shell_kind == "bash"
+
+    def _readonly_tier(self, command: str) -> tuple[bool, str]:
+        """OPE-234: whether `command` qualifies for the read-only tier, judged from the
+        shell's real current folder. Each part of the sequence goes through the same check
+        as the session grant (`_readonly_reads_inside`), with the secret rule on. Any
+        failure means no tier: the reviewer decides."""
+        if self.shell_cwd is None:
+            return False, ""
+        try:
+            cwd = self.shell_cwd()
+            if not cwd:
+                return False, ""
+            from .readonly import readonly_tier_check
+
+            return readonly_tier_check(
+                command,
+                cwd=Path(cwd).expanduser().resolve(),
+                inside=lambda p: self._under_root(str(p)),
+                covers=lambda text, here: self._readonly_reads_inside(text, here, secrets=True),
+            )
+        except Exception:  # noqa: BLE001 - a check that cannot finish never allows
+            return False, ""
+
+    def _secret_path(self, path: Path) -> bool:
+        """A secret-shaped file name, or one kept under a secret-shaped folder inside the
+        session's folders (`secrets/prod.json`). The folder rule looks only below the root,
+        so a project called `my-secrets` is not refused wholesale."""
+        if is_sensitive_path(str(path)):  # OPE-236: by name, and by the folders it lives in
+            return True
+        for rp, _ in self._resolved_roots():
+            try:
+                rel = path.relative_to(rp)
+            except ValueError:
+                continue
+            return any(is_sensitive_path(part) for part in rel.parts[:-1])
+        return False
 
     # -- session memory ---------------------------------------------------------
     def allow_tool_for_session(self, tool_name: str) -> None:
@@ -1039,14 +1108,10 @@ class PermissionEngine:
         as this platform's shell runs it, and every path it reads is inside the folders.
         Paths are judged from the shell's real current folder when the engine knows it,
         and wildcards are expanded with every match checked. A git command is covered only
-        when the project's own git settings are inert (coworker/git_settings.py), since
-        git obeys settings stored inside the project. Fails closed."""
-        from .git_settings import project_git_settings_inert
-        from .readonly import git_repo_dirs, is_readonly_command, read_targets
-
+        when the project's own git settings are inert (coworker/git_settings.py). Fails closed. The grant is the
+        user's own click, so it reads secret-shaped files inside the folders; the Auto-Approve
+        tier (OPE-234) runs the same check with `secrets=True`."""
         try:
-            if not is_readonly_command(command, shell=self.shell_kind):
-                return False
             if self.shell_cwd is None:
                 base = self.workspace_root
             else:
@@ -1056,23 +1121,55 @@ class PermissionEngine:
                 base = Path(cwd).expanduser().resolve()
                 if not self._under_root(str(base)):
                     return False
-            for target in read_targets(command, shell=self.shell_kind):
-                path = Path(os.path.expanduser(target))
-                full = path if path.is_absolute() else base / path
-                if any(c in target for c in "*?["):
-                    for match in _glob.glob(str(full)):
-                        if not self._under_root(str(Path(match).resolve())):
-                            return False
-                if not self._under_root(str(full.resolve())):
-                    return False
-            for repo in git_repo_dirs(command, shell=self.shell_kind):
-                path = Path(os.path.expanduser(repo))
-                full = path if path.is_absolute() else base / path
-                if not project_git_settings_inert(full, lambda p: self._under_root(str(p))):
-                    return False
-            return True
+            return self._readonly_reads_inside(command, base) is not None
         except Exception:  # noqa: BLE001 - a check that cannot finish never allows
             return False
+
+    def _readonly_reads_inside(
+        self, command: str, base: Path, *, secrets: bool = False
+    ) -> Optional[list[Path]]:
+        """The one read-only check behind the session grant and the OPE-234 tier: `command`
+        only reads, as this platform's shell runs it, and every path it reads, judged from
+        `base` with wildcards expanded, is inside the folders. Returns the resolved paths
+        it reads, or None when the command is not covered. With `secrets`, a secret-shaped
+        file (by name, by folder, or named as a git `revision:path`) and a command that
+        prints the environment or git's settings are not covered either. Raises on anything
+        unexpected; callers fail closed."""
+        from .readonly import git_revision_paths, is_readonly_command, prints_settings, read_targets
+
+        if not is_readonly_command(command, shell=self.shell_kind):
+            return None
+        if secrets and prints_settings(command, shell=self.shell_kind):
+            return None
+        reads: list[Path] = []
+        for target in read_targets(command, shell=self.shell_kind):
+            path = Path(os.path.expanduser(target))
+            full = path if path.is_absolute() else base / path
+            if any(c in target for c in "*?["):
+                for match in _glob.glob(str(full)):
+                    reads.append(Path(match).resolve())
+            reads.append(full.resolve())
+        for p in reads:
+            if not self._under_root(str(p)):
+                return None
+            if secrets and self._secret_path(p):
+                return None
+        if secrets:
+            for target in git_revision_paths(command, shell=self.shell_kind):
+                if self._secret_path((base / target.lstrip("/")).resolve()):
+                    return None
+        # A git command is covered only when the project's own git settings are inert
+        # (coworker/git_settings.py): git obeys settings stored inside the project, and
+        # some of them name programs that reading commands then run (OPE-232).
+        from .git_settings import project_git_settings_inert
+        from .readonly import git_repo_dirs
+
+        for repo in git_repo_dirs(command, shell=self.shell_kind):
+            path = Path(os.path.expanduser(repo))
+            full = path if path.is_absolute() else base / path
+            if not project_git_settings_inert(full, lambda p: self._under_root(str(p))):
+                return None
+        return reads
 
     def allow_readonly_for_session(self) -> None:
         self.session_readonly = True

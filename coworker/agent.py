@@ -603,6 +603,7 @@ def build_engine(
         trust_overrides=override_store.trusted,
         grant_trust=override_store.set_trust,
         inert_writes=str(config.auto_approve_inert_writes),
+        readonly_commands=str(config.auto_approve_readonly_commands),
     )
     # The plan-mode exit door — mutually exclusive with the board's decomposition
     # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never
@@ -754,8 +755,9 @@ def build_engine(
     # OPE-237: in auto-approve, an approved plan's steps become reviewer evidence.
     engine.plan_approval = bool(config.auto_approve_plan_approval)
     engine.executor = executor  # type: ignore[attr-defined]
-    # OPE-232: the read-only session grant judges paths from the persistent shell's
-    # current folder, not the workspace folder it may have moved away from.
+    # OPE-232 / OPE-234: the read-only session grant and the auto-approve read-only tier
+    # judge paths from the persistent shell's current folder, not the workspace folder it
+    # may have moved away from.
     if executor is not None:
         engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]

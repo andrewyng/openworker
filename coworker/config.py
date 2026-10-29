@@ -97,6 +97,9 @@ class Config:
     # steps reaches the reviewer with that fact, for the rest of the request. Off by
     # default. User-global only, like the gate tier above.
     auto_approve_plan_approval: bool = False
+    # Auto-Approve read-only command tier (OPE-234), macOS / Linux only: "off" (default),
+    # "audit" or "on". User-global only, like the gate tier above.
+    auto_approve_readonly_commands: str = "off"
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
@@ -170,6 +173,7 @@ _FIELDS = {
     "auto_approve_shadow",
     "auto_approve_inert_writes",
     "auto_approve_plan_approval",
+    "auto_approve_readonly_commands",
     "host",
     "port",
     "web_search_provider",
@@ -198,6 +202,7 @@ _GLOBAL_ONLY_FIELDS = {
     "auto_approve_shadow",
     "auto_approve_inert_writes",
     "auto_approve_plan_approval",
+    "auto_approve_readonly_commands",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 

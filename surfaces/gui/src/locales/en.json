@@ -249,7 +249,9 @@
       "run_grant": "allowed for this request",
       "run_grant_title": "you chose 'Allow for this request' earlier in this answer — this call ran without a card. Its full arguments are in this transcript and the audit log; the grant expired when the answer finished",
       "gate_tier": "safe change, no card",
-      "gate_tier_title": "Auto-approve let this run without the reviewer: an inert file (a document or image, not code or config) inside your folders that can be undone — a new file, a file unchanged in git, or one the agent wrote earlier. Its full arguments are in this transcript and the audit log"
+      "gate_tier_title": "Auto-approve let this run without the reviewer: an inert file (a document or image, not code or config) inside your folders that can be undone — a new file, a file unchanged in git, or one the agent wrote earlier. Its full arguments are in this transcript and the audit log",
+      "readonly_tier": "read-only, no card",
+      "readonly_tier_title": "Auto-approve let this run without the reviewer: a command that only reads files inside your folders (macOS / Linux). It changed nothing. Its full arguments are in this transcript and the audit log"
     },
     "step": {
       "raw": "raw",

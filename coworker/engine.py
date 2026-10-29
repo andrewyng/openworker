@@ -1503,7 +1503,7 @@ class TurnEngine:
         return match.render() if match else ""
 
     def current_shell_cwd(self) -> Optional[str]:
-        """OPE-232: the persistent shell's current folder, or None when it cannot be known
+        """OPE-232 / OPE-234: the persistent shell's current folder, or None when it cannot be known
         for the call being checked: no shell, or a shell command already cleared in this
         batch may move it before this one runs."""
         if self._shell_cleared_in_batch:
@@ -1828,7 +1828,11 @@ class TurnEngine:
         # recorded, never invisible (transcript chip + audit row), like every other
         # cardless origin.
         if allowed and decision.tier:
-            self._approval_origins[tool_call.id] = {"origin": "gate_tier", "note": reason}
+            # OPE-234: a read-only command has its own origin. It changes nothing, so it
+            # is not one of the "changes made without asking" (OPE-238), and its chip
+            # says what kind of thing ran.
+            origin = "readonly_tier" if decision.tier == "readonly_command" else "gate_tier"
+            self._approval_origins[tool_call.id] = {"origin": origin, "note": reason}
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
         elif decision.tier and decision.tier_audit_only and decision.needs_user:
             # Audit mode: the decision is unchanged; the record notes what the tier WOULD

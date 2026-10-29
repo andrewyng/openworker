@@ -136,6 +136,13 @@ describe("origin chips — standing MCP trust names its source", () => {
     expect(tier.title).toContain("without the reviewer");
     expect(tier.title).toContain("can be undone");
     expect(tier.title).toContain("a document or image"); // OPE-233: JSON/YAML left the tier
+
+    // OPE-234: a read-only command the tier let through says so, and that it changed nothing.
+    cleanup();
+    const ro = chipFor("readonly_tier");
+    expect(ro.text).toBe("read-only, no card");
+    expect(ro.title).toContain("without the reviewer");
+    expect(ro.title).toContain("only reads");
   });
 });
 

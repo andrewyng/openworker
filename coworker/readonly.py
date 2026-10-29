@@ -1426,3 +1426,274 @@ def read_targets(command: str, shell: str = "bash") -> list[str]:
     for stage, targets in zip(stages, found):
         out.extend(targets if targets is not None else _fallback_targets(stage))
     return out
+
+
+# -- the Auto-Approve tier (OPE-234) ------------------------------------------------------------
+# Stricter than the session grant above, because nothing asks the user or the reviewer
+# afterwards. A command qualifies only as ONE line made of parts joined by `;`, `&&` or
+# `||`, each a read-only command (the classifier above) or a `cd` that stays inside the
+# folders, with every file it reads inside the folders as well. The shell persists across
+# calls, so paths are judged from the shell's real current folder, which the caller passes.
+# Extra rules, each failing closed: no environment-variable prefixes (some programs run
+# what such a variable names), no brace expansion, no flag carrying a path (the target
+# table above does not follow flag values), and wildcards are expanded here and every
+# match checked, as the shell would expand them.
+
+import glob as _glob
+import os as _os
+from pathlib import Path as _Path
+from typing import Callable as _Callable
+
+_MAX_PARTS = 20
+_GLOB_CHARS = frozenset("*?[")
+_HARMLESS_REDIRECTS = frozenset({"2>/dev/null", "2>&1"})
+
+
+def _raw_tokens(text: str) -> list[str] | None:
+    """Whitespace-separated tokens with their quotes kept; None on unbalanced quoting."""
+    tokens: list[str] = []
+    cur: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in text:
+        if escaped:
+            cur.append(ch)
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            cur.append(ch)
+            escaped = True
+        elif quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            cur.append(ch)
+        elif ch in " \t":
+            if cur:
+                tokens.append("".join(cur))
+                cur = []
+        else:
+            cur.append(ch)
+    if quote or escaped:
+        return None
+    if cur:
+        tokens.append("".join(cur))
+    return tokens
+
+
+def _unquoted(token: str) -> str:
+    """The characters of a raw token the shell would see outside quotes."""
+    out: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in token:
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _split_sequence(command: str) -> list[str] | None:
+    """Split on top-level `;`, `&&`, `||`, outside quotes. None on unbalanced quoting."""
+    parts: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    escaped = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            buf.append(ch)
+            escaped = True
+        elif quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch == ";":
+            parts.append("".join(buf))
+            buf = []
+        elif command.startswith("&&", i) or command.startswith("||", i):
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+        else:
+            buf.append(ch)
+        i += 1
+    if quote or escaped:
+        return None
+    parts.append("".join(buf))
+    return [p.strip() for p in parts]
+
+
+def _without_harmless_redirects(tokens: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _HARMLESS_REDIRECTS:
+            i += 1
+            continue
+        if tok == "2>" and i + 1 < len(tokens) and tokens[i + 1] == "/dev/null":
+            i += 2
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def _flag_carries_path(token: str) -> bool:
+    if not token.startswith("-") or token in {"-", "--"}:
+        return False
+    if token.startswith("--") and "=" in token:
+        value = token.split("=", 1)[1]
+        return "/" in value or "\\" in value or value.startswith(("~", "."))
+    return "/" in token or "\\" in token or "~" in token
+
+
+_SETTINGS_PRINTERS = frozenset({"env", "printenv"})
+
+
+def _bash_stage_words(command: str) -> list[list[str]]:
+    """Each pipeline stage of a bash command with leading `NAME=value` words dropped; empty
+    when the command does not parse."""
+    stages = _stages(command)
+    if stages is None:
+        return []
+    out: list[list[str]] = []
+    for stage in stages:
+        i = 0
+        while i < len(stage) and _ENV_ASSIGN.match(stage[i]):
+            i += 1
+        if stage[i:]:
+            out.append(stage[i:])
+    return out
+
+
+def prints_settings(command: str, shell: str = "bash") -> bool:
+    """True when a stage prints the process environment or git's settings (`env`,
+    `printenv`, `git config`), which can hold credentials. The read-only session grant is
+    the user's own click and takes its own view; the Auto-Approve tier never clears these."""
+    if shell != "bash":
+        return False
+    for words in _bash_stage_words(command):
+        if words[0] in _SETTINGS_PRINTERS:
+            return True
+        if words[0] == "git" and _git_subcommand(words[1:]) == "config":
+            return True
+    return False
+
+
+def _git_subcommand(args: list[str]) -> str:
+    """The subcommand after git's leading global flags (`-C DIR` carries an operand)."""
+    i = 0
+    while i < len(args):
+        if args[i] == "-C":
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            return args[i]
+    return ""
+
+
+def git_revision_paths(command: str, shell: str = "bash") -> list[str]:
+    """The path half of every `revision:path` operand of a git stage (`git show HEAD:.env`,
+    `git cat-file -p :.env`). Git prints the file at that revision, so the path deserves the
+    same secret-name check as a plain file operand."""
+    if shell != "bash":
+        return []
+    out: list[str] = []
+    for words in _bash_stage_words(command):
+        if words[0] != "git":
+            continue
+        for tok in words[1:]:
+            if tok.startswith("-") or ":" not in tok:
+                continue
+            rev, _, path = tok.partition(":")
+            if path and "://" not in tok and not (len(rev) == 1 and rev.isalpha() and path.startswith(("\\", "/"))):
+                out.append(path)
+    return out
+
+
+def readonly_tier_check(
+    command: str,
+    *,
+    cwd: _Path,
+    inside: _Callable[[_Path], bool],
+    covers: _Callable[[str, _Path], "list[_Path] | None"],
+) -> tuple[bool, str]:
+    """(eligible, detail) for the Auto-Approve read-only tier. `cwd` is the shell's current
+    folder and `inside` says whether a path is inside the session's folders. `covers` is the
+    engine's shared read-only check, the same one behind the session grant: given one
+    command and the folder it runs from, it returns the paths the command reads, or None when
+    the command is not covered. Every rule the grant gains (flag lists, the project's git
+    settings, the secret-name rule) reaches the tier through it; this function only adds the
+    sequence handling and the extra fail-closed rules a reviewer-less clearance needs."""
+    command = str(command or "")
+    if not command.strip() or any(ord(c) < 32 and c != "\t" for c in command):
+        return False, ""  # empty, or more than one line (each line is its own command)
+    parts = _split_sequence(command)
+    if parts is None or not parts or len(parts) > _MAX_PARTS or any(not p for p in parts):
+        return False, ""
+    here = _Path(cwd)
+    if not inside(here):
+        return False, ""
+    ran: list[str] = []
+
+    for part in parts:
+        raw = _raw_tokens(part)
+        if not raw:
+            return False, ""
+        raw = _without_harmless_redirects(raw)
+        if not raw:
+            return False, ""
+        if any(c in _unquoted(t) for t in raw for c in "{}"):
+            return False, ""  # brace expansion makes words the checks cannot see
+        text = " ".join(raw)
+        stages = _stages(text)
+        if stages is None:
+            return False, ""
+        words = [w for stage in stages for w in stage]
+        if any(_ENV_ASSIGN.match(stage[0]) for stage in stages):
+            return False, ""
+        if any(_flag_carries_path(w) for w in words):
+            return False, ""
+        if words[0] == "cd":
+            if len(stages) != 1 or len(words) != 2 or words[1].startswith("-"):
+                return False, ""
+            if any(c in _GLOB_CHARS or c == "~" for c in _unquoted(raw[1])):
+                return False, ""
+            target = _Path(words[1])
+            here = (target if target.is_absolute() else here / target).resolve()
+            if not inside(here):
+                return False, ""
+            ran.append(f"cd {words[1]}")
+            continue
+        # The shared check: read-only as the shell runs it, every read (wildcards expanded)
+        # inside the folders, and whatever else the grant checks.
+        if covers(text, here) is None:
+            return False, ""
+        # A wildcard the shell would expand must be a file operand, and every match is
+        # checked by the shared check; a wildcard elsewhere (a pattern position) could
+        # become extra operands. The tier runs only on bash, so bash's operand table applies.
+        targets = read_targets(text, shell="bash")
+        globbed = {_unquoted(t) for t in raw if any(c in _GLOB_CHARS for c in _unquoted(t))}
+        if any(g not in targets for g in globbed):
+            return False, ""
+        ran.append(text)
+    return True, " ; ".join(ran)
