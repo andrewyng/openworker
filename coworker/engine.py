@@ -25,6 +25,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
 from . import provenance
+from . import review_facts
 from . import session_facts
 from . import toolchain as _toolchain
 from . import toolresult
@@ -306,6 +307,9 @@ class TurnEngine:
         # the agent's own bytes are lost. An injected lookup (tests) is left alone.
         if getattr(permissions, "agent_wrote", None) is None:
             permissions.agent_wrote = self._agent_files.wrote
+        # OPE-235: what each shell command is about to bring in from outside, keyed by tool
+        # call id from just before it runs until its result is recorded.
+        self._intake_plans: dict[str, Any] = {}
         self._tool_result_max_bytes = (
             toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES
             if tool_result_max_bytes is None
@@ -1016,6 +1020,9 @@ class TurnEngine:
                 except Exception:
                     continue
         if state is not None:
+            # OPE-235: the summarizer read every message it summarized, so outside content
+            # there may survive in the summary; and the transcript below holds it verbatim.
+            state.carries_outside = self._outside_before(state.boundary_index, summarized=True)
             # OPE-186 change 3: keep the compacted turns readable. The verbatim transcript
             # up to the boundary goes to a file next to the spilled tool results, and the
             # compacted block tells the model where it is, so a detail the summary dropped
@@ -1033,6 +1040,8 @@ class TurnEngine:
                         errors="replace",
                     )
                     state.transcript_path = str(path)
+                    if any(m.get("_outside") for m in self.messages[: state.boundary_index]):
+                        self._agent_files.mark_outside(path)
                 except OSError:
                     pass
             self.compaction_state = state
@@ -1045,10 +1054,26 @@ class TurnEngine:
                 user_budget_tokens=user_budget,
             )
             if trimmed is not None:
+                # The trim drops its span without summarizing it; only an earlier summary
+                # (kept in the block) can still carry outside content.
+                trimmed.carries_outside = self._outside_before(trimmed.boundary_index, summarized=False)
                 self.compaction_state = trimmed
                 self._last_context_tokens = None
                 return "Context trimmed — oldest turns dropped (summary unavailable)"
         return None
+
+    def _outside_before(self, boundary: int, *, summarized: bool) -> bool:
+        """OPE-235: whether the compacted block for a new boundary carries outside content:
+        the earlier summary did, or this compaction summarized a message that brought some
+        in. Messages only trimmed away leave nothing behind (the block's mechanical parts
+        are the agent's own commands and the user's messages)."""
+        prior = self.compaction_state
+        if prior is not None and prior.carries_outside:
+            return True
+        if not summarized:
+            return False
+        start = prior.boundary_index if prior is not None else 0
+        return any(m.get("_outside") for m in self.messages[start:boundary])
 
     # -- helpers ----------------------------------------------------------------
     async def _astream(self):
@@ -1374,6 +1399,52 @@ class TurnEngine:
         cwd = getattr(executor, "cwd", None) if executor is not None else None
         return str(cwd) if cwd else None
 
+    def _outside_in_context(self) -> bool:
+        """OPE-235: whether content from outside is still in what the agent is sent: a tool
+        result marked `_outside` after the compaction boundary, or a compacted summary that
+        was written from one. Outside text can carry instructions for as long as the agent
+        can see it, so the line lasts exactly that long."""
+        state = self.compaction_state
+        start = 0
+        if state is not None and 0 < state.boundary_index < len(self.messages):
+            if state.carries_outside:
+                return True
+            start = state.boundary_index
+        return any(m.get("_outside") for m in self.messages[start:])
+
+    def _shell_cwd(self) -> Optional[str]:
+        executor = getattr(self, "executor", None)
+        cwd = getattr(executor, "cwd", None) if executor is not None else None
+        return str(cwd) if cwd else None
+
+    def _facts_kw(
+        self, tool_call: ToolCall, request: str, history: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """OPE-235: what code can check about this call, as `{"facts": [...]}` for the
+        reviewer, or {} when there is nothing to say (so reviewers that predate facts keep
+        working). Fixed vocabulary (review_facts.py); a failure here never blocks a review."""
+        try:
+            from .permissions import write_paths
+            from .risk import WRITE_TOOLS
+
+            targets: list[Path] = []
+            if tool_call.name in WRITE_TOOLS:
+                paths, _located = write_paths(tool_call.name, tool_call.arguments or {})
+                targets = [self.permissions._candidate(p) for p in paths]
+            spec = self.registry.get(tool_call.name)
+            facts = review_facts.compute_facts(
+                tool_call.name,
+                tool_call.arguments or {},
+                user_texts=[request, *(str(h.get("text", "")) for h in history)],
+                external_read=self._outside_in_context(),
+                write_targets=targets,
+                metadata=spec.metadata if spec else None,
+                egress_host=self.permissions.egress_host,
+            )
+        except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
+            return {}
+        return {"facts": facts} if facts else {}
+
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
         """Fire one reviewer request per call that will escalate, all concurrently, and
         park the verdicts for `_authorize` to consume. One action per request — there is
@@ -1418,6 +1489,7 @@ class TurnEngine:
                     arguments=tc.arguments,
                     provenance=self._provenance(tc),
                     **({"action_context": context} if context else {}),
+                    **self._facts_kw(tc, request, history),
                 )
                 for tc in pending
             ]
@@ -1462,6 +1534,7 @@ class TurnEngine:
             arguments=tool_call.arguments,
             provenance=self._provenance(tool_call),
             **({"action_context": context} if context else {}),
+            **self._facts_kw(tool_call, request, history),
         )
         if (request, history, context) != self._review_inputs():
             from .reviewer import Verdict
@@ -1545,6 +1618,7 @@ class TurnEngine:
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
                     **({"action_context": context} if context else {}),
+                    **self._facts_kw(tool_call, request, history),
                 )
                 self._audit(
                     tool_call,
@@ -2043,6 +2117,16 @@ class TurnEngine:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
             if delegated and delegated != self._delegated_context(tool_call):
                 return {"error": "The worker request or its permissions changed before execution. Request a fresh decision."}, "error"
+            try:
+                # OPE-235: note what a shell command will bring in before it runs, so the
+                # folders it adds to can be compared afterwards.
+                plan = self._agent_files.before(
+                    tool_call.name, tool_call.arguments, cwd=self._shell_cwd()
+                )
+                if plan is not None:
+                    self._intake_plans[tool_call.id] = plan
+            except Exception:  # noqa: BLE001 - bookkeeping never blocks a tool
+                pass
             return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
@@ -2057,10 +2141,28 @@ class TurnEngine:
         ):
             self._yield_for_wake = True
         self._step += 1
+        plan = self._intake_plans.pop(tool_call.id, None)
+        outside = False
         if status == "ok":
+            # OPE-235: whether this result brings outside content into the agent's context
+            # (marked on its message below). Checked before recording, so reading a file
+            # that came from outside in an EARLIER call counts, not the download itself.
+            cwd = plan.cwd if plan is not None else self._shell_cwd()
+            try:
+                outside = (
+                    review_facts.is_external_read(
+                        tool_call.name, tool_call.arguments, spec.metadata if spec else None
+                    )
+                    or (plan is not None and plan.brings_outside_in)
+                    or self._agent_files.reads_outside(
+                        tool_call.name, tool_call.arguments, cwd=cwd
+                    )
+                )
+            except Exception:  # noqa: BLE001 - a fact, never a reason to fail a call
+                outside = True
             # Only successful calls: a write that raised left nothing on disk to run.
             self._agent_files.record(
-                tool_call.name, tool_call.arguments, result, step=self._step
+                tool_call.name, tool_call.arguments, result, step=self._step, cwd=cwd, plan=plan
             )
         # A `_display` key on a tool result is user-facing metadata the AGENT must
         # never see (e.g. how many gmail hits the privacy filters hid — a count
@@ -2094,6 +2196,13 @@ class TurnEngine:
         message = self._timed_result(tool_call, result)
         if display:
             message["_display"] = display
+        if outside:
+            message["_outside"] = True
+            # A result too large for the context was spilled to a file the agent may read
+            # back later: that file is outside content too.
+            if self._tool_result_spill_dir is not None:
+                for spilled in self._tool_result_spill_dir.glob(f"{self._step:04d}-*"):
+                    self._agent_files.mark_outside(spilled)
         self.messages.append(message)
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
@@ -2789,6 +2898,7 @@ class TurnEngine:
             "_activity",
             "timing",
             "_display",
+            "_outside",
             "ts",
             "reasoning",
             "usage",

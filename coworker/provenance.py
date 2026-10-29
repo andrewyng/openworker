@@ -15,9 +15,11 @@ confidence.
 
 from __future__ import annotations
 
+import os
+import re
 import shlex
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -219,6 +221,307 @@ def created_paths(
     return ([], "")
 
 
+# -- outside files (OPE-235) ------------------------------------------------------------
+# The reviewer is told when content from outside is in the agent's context. A file that
+# came from outside this session (cloned, downloaded, unpacked from a downloaded archive)
+# is outside content whenever it is read later, by any tool. These helpers work out, from
+# the command text alone, which files and folders a shell command brings in. A folder that
+# already existed is never marked wholesale (it may hold the user's own files): only the
+# names that appear in it during the call are.
+
+_CD_PROGRAMS = {"cd", "chdir", "pushd", "set-location", "sl", "push-location"}
+_GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+_GIT_CLONE_VALUE_FLAGS = {
+    "-b", "--branch", "-o", "--origin", "-c", "--config", "--depth", "--reference",
+    "--reference-if-able", "--separate-git-dir", "-j", "--jobs", "--filter", "--template",
+    "-u", "--upload-pack", "--shallow-since", "--shallow-exclude", "--server-option",
+    "--bundle-uri", "--revision",
+}
+_GIT_FETCHING = {"clone", "fetch", "pull", "submodule"}
+_VCS_FETCHING = {"svn": {"checkout", "co", "export", "update", "up"}, "hg": {"clone", "pull"}}
+# gh subcommands that never return content from GitHub.
+_GH_LOCAL = {"auth", "config", "alias", "extension", "help", "completion", "--version", "--help"}
+_UNPACKERS_STRIP = {".gz": "", ".tgz": ".tar", ".bz2": "", ".xz": "", ".zst": ""}
+
+
+def _key(path: Any, base: Path) -> str:
+    """Like `resolve`, but relative to `base` and case-folded where the file system is."""
+    return os.path.normcase(resolve(str(path), base))
+
+
+def _positionals(tokens: list[str], value_flags: set[str]) -> list[str]:
+    out: list[str] = []
+    skip = False
+    rest = False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif rest or not token.startswith("-") or token == "-":
+            out.append(token)
+        elif token == "--":
+            rest = True
+        elif token in value_flags:
+            skip = True
+    return out
+
+
+def _flag_value(tokens: list[str], names: set[str], *, folded: bool = False) -> Optional[str]:
+    """The value of the first of `names` (`-d DIR`, `--dest=DIR`), or None."""
+    for i, token in enumerate(tokens):
+        probe = token.lower() if folded else token
+        if probe in names and i + 1 < len(tokens):
+            return tokens[i + 1]
+        flag, eq, value = probe.partition("=")
+        if eq and flag in names and value:
+            return token.split("=", 1)[1]
+    return None
+
+
+def _repo_dir(source: str, *, bare: bool = False) -> str:
+    name = re.split(r"[/:\\]", source.rstrip("/\\"))[-1]
+    name = name[:-4] if name.endswith(".git") else name
+    return (name + ".git" if bare else name) if name else ""
+
+
+def _url_name(url: str) -> str:
+    path = url.split("://", 1)[-1].split("?", 1)[0].split("#", 1)[0]
+    if "/" not in path or path.endswith("/"):
+        return "index.html"
+    return path.rsplit("/", 1)[-1] or "index.html"
+
+
+def _url_host(url: str) -> str:
+    return url.split("://", 1)[-1].split("/", 1)[0].split("@")[-1].split(":", 1)[0]
+
+
+def _pip_download_index(argv: list[str]) -> int:
+    """Index of `download` in `pip download` / `python -m pip download`, or -1."""
+    lowered = [a.lower() for a in argv]
+    for i, token in enumerate(lowered):
+        if token == "download" and i > 0:
+            head = [Path(t).name for t in lowered[:i]]
+            head = [t[:-4] if t.endswith(".exe") else t for t in head]
+            if any(re.fullmatch(r"pip(\d+(\.\d+)?)?", t) for t in head):
+                return i
+    return -1
+
+
+def _git_parts(argv: list[str], cwd: Path) -> tuple[str, list[str], Path]:
+    """(git sub-command, its arguments, the folder it runs in)."""
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        if argv[i] in _GIT_GLOBAL_VALUE_FLAGS and i + 1 < len(argv):
+            if argv[i] == "-C":
+                cwd = cwd / argv[i + 1]
+            i += 2
+        else:
+            i += 1
+    if i >= len(argv):
+        return "", [], cwd
+    return argv[i].lower(), argv[i + 1:], cwd
+
+
+def fetches_outside_files(command: str) -> bool:
+    """A shell command that brings files or text from a remote repository or package index
+    without naming a URL: `git clone git@host:a/b`, `git pull`, `gh pr view`, `pip download`."""
+    for argv in _sub_commands(command):
+        program = _program(argv)
+        if program == "git" and _git_parts(argv, Path("."))[0] in _GIT_FETCHING:
+            return True
+        if program in _VCS_FETCHING and len(argv) > 1 and argv[1].lower() in _VCS_FETCHING[program]:
+            return True
+        if program == "gh" and len(argv) > 1 and argv[1].lower() not in _GH_LOCAL:
+            return True
+        if _pip_download_index(argv) > 0:
+            return True
+    return False
+
+
+@dataclass
+class IntakePlan:
+    """What one shell command brings in from outside, worked out before it runs."""
+
+    cwd: Path
+    paths: list[str] = field(default_factory=list)  # resolved files/folders it creates
+    watch: dict[str, set[str]] = field(default_factory=dict)  # folder -> names before the call
+    brings_outside_in: bool = False  # unpacking an outside archive also lists its names
+
+
+class _Planner:
+    def __init__(self, files: "SessionFiles", cwd: Path) -> None:
+        self.files = files
+        self.plan = IntakePlan(cwd=cwd)
+
+    def add(self, path: Path) -> None:
+        self.plan.paths.append(_key(path, self.files.root))
+
+    def into(self, folder: Path) -> None:
+        """Content lands in `folder`: all of it when the call creates the folder, else only
+        the names that appear in it."""
+        key = _key(folder, self.files.root)
+        try:
+            if Path(key).is_dir():
+                self.plan.watch.setdefault(key, set(os.listdir(key)))
+                return
+        except OSError:
+            return
+        self.plan.paths.append(key)
+
+    def outside(self, path: Path) -> bool:
+        key = _key(path, self.files.root)
+        return self.files.from_outside(key) or any(
+            key == p or key.startswith(p + os.sep) for p in self.plan.paths
+        )
+
+    def step(self, argv: list[str], cwd: Path) -> None:
+        program = _program(argv)
+        args = argv[1:]
+        if program == "git":
+            sub, rest, gcwd = _git_parts(argv, cwd)
+            if sub == "clone":
+                pos = _positionals(rest, _GIT_CLONE_VALUE_FLAGS)
+                bare = any(a in ("--bare", "--mirror") for a in rest)
+                if len(pos) > 1:
+                    self.into(gcwd / pos[1])
+                elif pos and _repo_dir(pos[0], bare=bare):
+                    self.into(gcwd / _repo_dir(pos[0], bare=bare))
+            elif sub == "submodule" and rest[:1] == ["add"]:
+                pos = _positionals(rest[1:], {"-b", "--branch", "--name", "--reference", "--depth"})
+                if len(pos) > 1:
+                    self.into(gcwd / pos[1])
+                elif pos and _repo_dir(pos[0]):
+                    self.into(gcwd / _repo_dir(pos[0]))
+        elif program == "gh" and len(args) > 1 and args[1].lower() == "clone":
+            pos = _positionals(args[2:], set())
+            if len(pos) > 1:
+                self.into(cwd / pos[1])
+            elif pos and _repo_dir(pos[0]):
+                self.into(cwd / _repo_dir(pos[0]))
+        elif program == "gh" and args[:2] == ["release", "download"]:
+            folder = _flag_value(args, {"-D", "--dir"})
+            self.into(cwd / folder if folder else cwd)
+        elif program == "wget":
+            self._wget(args, cwd)
+        elif program == "curl":
+            self._curl(args, cwd)
+        elif program == "start-bitstransfer":
+            dest = _flag_value(args, {"-destination"}, folded=True)
+            source = _flag_value(args, {"-source"}, folded=True) or ""
+            if dest:
+                target = cwd / dest
+                self.add(target / _url_name(source) if target.is_dir() else target)
+        elif _pip_download_index(argv) > 0:
+            folder = _flag_value(args, {"-d", "--dest", "--destination-directory"})
+            self.into(cwd / folder if folder else cwd)
+        else:
+            self._unpack(program, argv, cwd)
+
+    def _wget(self, args: list[str], cwd: Path) -> None:
+        if _flag_value(args, {"-O", "--output-document"}):
+            return  # recorded as a download by `_shell_download_paths`
+        prefix = _flag_value(args, {"-P", "--directory-prefix"})
+        base = cwd / prefix if prefix else cwd
+        urls = [a for a in args if "://" in a]
+        recursive = any(a in ("-r", "--recursive", "-m", "--mirror") for a in args)
+        flat = any(a in ("-nH", "--no-host-directories", "-nd", "--no-directories") for a in args)
+        if any(a in ("-i", "--input-file", "--content-disposition") for a in args) or (recursive and flat):
+            self.into(base)
+            return
+        for url in urls:
+            # A recursive fetch lands in a folder named after the host.
+            self.add(base / (_url_host(url) if recursive else _url_name(url)))
+
+    def _curl(self, args: list[str], cwd: Path) -> None:
+        folder = _flag_value(args, {"--output-dir"})
+        base = cwd / folder if folder else cwd
+        urls = [a for a in args if "://" in a]
+        remote = False
+        for i, token in enumerate(args):
+            letters = token[1:] if token.startswith("-") and not token.startswith("--") else ""
+            if token in ("-o", "--output") or (letters.endswith("o") and len(letters) > 1):
+                if i + 1 < len(args):
+                    self.add(base / args[i + 1])
+            elif token.startswith("--output="):
+                self.add(base / token.split("=", 1)[1])
+            if token in ("--remote-name", "--remote-name-all") or "O" in letters:
+                remote = True
+        if remote and any(a in ("-J", "--remote-header-name") for a in args):
+            self.into(base)
+        elif remote:
+            for url in urls if "--remote-name-all" in args else urls[:1]:
+                self.add(base / _url_name(url))
+
+    def _unpack(self, program: str, argv: list[str], cwd: Path) -> None:
+        args = argv[1:]
+        archive: Optional[str] = None
+        dest: Optional[str] = None
+        outputs: list[Path] = []
+        if program in ("tar", "bsdtar"):
+            old_style = args[0] if args and not args[0].startswith("-") else ""  # `tar xzf a.tgz`
+            short = [a[1:] for a in args if a.startswith("-") and not a.startswith("--")]
+            if not ("--extract" in args or "--get" in args or "x" in old_style or any("x" in s for s in short)):
+                return
+            archive = _flag_value(args, {"-f", "--file"})
+            if archive is None:
+                for i, token in enumerate(args):
+                    body = token.lstrip("-")
+                    if not token.startswith("--") and body.endswith("f") and i + 1 < len(args):
+                        archive = args[i + 1]
+                        break
+            dest = _flag_value(args, {"-C", "--directory"})
+        elif program == "unzip":
+            pos = _positionals(args, {"-d", "-P", "-x"})
+            archive = pos[0] if pos else None
+            dest = _flag_value(args, {"-d"})
+        elif program in ("7z", "7za", "7zz", "7zr") and args[:1] and args[0].lower() in ("x", "e"):
+            pos = _positionals(args[1:], set())
+            archive = pos[0] if pos else None
+            dest = next((a[2:] for a in args if a.startswith("-o") and len(a) > 2), None)
+        elif program == "expand-archive":
+            archive = _flag_value(args, {"-path", "-literalpath"}, folded=True)
+            dest = _flag_value(args, {"-destinationpath"}, folded=True)
+            pos = [a for a in args if not a.startswith("-") and a not in (archive, dest)]
+            archive = archive or (pos[0] if pos else None)
+            dest = dest or (pos[1] if len(pos) > 1 else None)
+        elif program in ("jar",) and args[:1] and "x" in args[0]:
+            pos = _positionals(args[1:], set())
+            archive = pos[0] if pos else None
+        elif program in ("python", "python3", "py") and "-m" in args:
+            module = args[args.index("-m") + 1:]
+            if module[:2] in (["zipfile", "-e"], ["tarfile", "-e"]) and len(module) > 2:
+                archive = module[2]
+                dest = module[3] if len(module) > 3 else None
+        elif program in ("gunzip", "bunzip2", "unxz", "unzstd") or (
+            program in ("gzip", "bzip2", "xz", "zstd") and any(a in ("-d", "--decompress") for a in args)
+        ):
+            for name in _positionals(args, set()):
+                path = cwd / name
+                suffix = path.suffix.lower()
+                if suffix in _UNPACKERS_STRIP and self.outside(path):
+                    self.plan.brings_outside_in = True
+                    outputs.append(path.with_suffix(_UNPACKERS_STRIP[suffix]))
+            for out in outputs:
+                self.add(out)
+            return
+        if not archive or not self.outside(cwd / archive):
+            return
+        self.plan.brings_outside_in = True
+        self.into(cwd / dest if dest else cwd)
+
+
+def _walk(command: str, cwd: Path) -> list[tuple[list[str], Path]]:
+    """Each sub-command with the folder it runs in, following `cd` within the command."""
+    out: list[tuple[list[str], Path]] = []
+    for argv in _sub_commands(command):
+        out.append((argv, cwd))
+        if _program(argv) in _CD_PROGRAMS:
+            pos = _positionals(argv[1:], set())
+            target = _flag_value(argv[1:], {"-path", "-literalpath"}, folded=True) or (pos[0] if pos else None)
+            if target and target not in ("-", "~"):
+                cwd = cwd / target
+    return out
+
+
 def referenced_paths(tool_name: str, arguments: dict[str, Any]) -> list[str]:
     """Paths a PROPOSED call would run or act on. Shell only in phase 1: it is where the
     write-then-execute chain lands, and where the command text hides the effect."""
@@ -234,12 +537,47 @@ class SessionFiles:
     def __init__(self, workspace_root: Path) -> None:
         self.root = Path(workspace_root)
         self._files: dict[str, Origin] = {}
+        # OPE-235: files and folders whose content came from outside this session, beyond
+        # the DOWNLOADED entries above (clones, unpacked archives, spilled tool output).
+        # Kept apart from `_files` so it informs the reviewer's facts without changing which
+        # commands count as running a downloaded file.
+        self._outside: set[str] = set()
+
+    def before(
+        self, tool_name: str, arguments: dict[str, Any], *, cwd: Optional[Path | str] = None
+    ) -> Optional[IntakePlan]:
+        """What a shell command is about to bring in from outside, worked out before it
+        runs so folders it adds to can be compared after. None for every other tool."""
+        if tool_name != "run_shell":
+            return None
+        planner = _Planner(self, Path(cwd) if cwd else self.root)
+        for argv, at in _walk(str((arguments or {}).get("command", "")), planner.plan.cwd):
+            planner.step(argv, at if at.is_absolute() else self.root / at)
+        return planner.plan
 
     def record(
-        self, tool_name: str, arguments: dict[str, Any], result: Any, *, step: int
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+        *,
+        step: int,
+        cwd: Optional[Path | str] = None,
+        plan: Optional[IntakePlan] = None,
     ) -> None:
         """Note what a SUCCESSFUL call created. Callers must not record failed calls: a
         write that raised left nothing on disk to run."""
+        if tool_name == "run_shell":
+            plan = plan or self.before(tool_name, arguments, cwd=cwd)
+            self._outside.update(plan.paths if plan else ())
+            for folder, names in (plan.watch if plan else {}).items():
+                try:
+                    appeared = set(os.listdir(folder)) - names
+                except OSError:
+                    continue
+                self._outside.update(os.path.normcase(os.path.join(folder, n)) for n in appeared)
+        elif tool_name in _DOWNLOAD_RESULT_TOOLS and isinstance(result, dict) and result.get("path"):
+            self._outside.add(_key(result["path"], self.root))
         paths, origin = created_paths(tool_name, arguments, result)
         for path in paths:
             key = resolve(path, self.root)
@@ -254,6 +592,66 @@ class SessionFiles:
         bytes this session. Overwriting it loses nothing of the user's (OPE-233)."""
         origin = self._files.get(resolve(str(path), self.root))
         return origin is not None and origin.kind == WRITTEN
+
+    def downloaded(self, path: Path | str) -> bool:
+        """True when this file's current bytes came from a download this session (OPE-235:
+        reading it brings outside content into the agent's context)."""
+        origin = self._files.get(resolve(str(path), self.root))
+        return origin is not None and origin.kind == DOWNLOADED
+
+    def mark_outside(self, path: Path | str) -> None:
+        """Note a file the engine itself wrote from outside content (a spilled tool result,
+        a compacted transcript)."""
+        self._outside.add(_key(path, self.root))
+
+    def _outside_keys(self) -> set[str]:
+        downloaded = {os.path.normcase(k) for k, o in self._files.items() if o.kind == DOWNLOADED}
+        return self._outside | downloaded
+
+    def from_outside(self, path: Path | str, *, cwd: Optional[Path | str] = None) -> bool:
+        """True when this file came from outside this session, or sits in a folder that did.
+        The user's own files never do: only what this session brought in is recorded."""
+        keys = self._outside_keys()
+        if not keys:
+            return False
+        key = Path(_key(path, Path(cwd) if cwd else self.root))
+        return any(str(p) in keys for p in (key, *key.parents))
+
+    def _holds_outside(self, key: str, keys: set[str]) -> bool:
+        return any(k.startswith(key.rstrip(os.sep) + os.sep) for k in keys)
+
+    def reads_outside(
+        self, tool_name: str, arguments: dict[str, Any], *, cwd: Optional[Path | str] = None
+    ) -> bool:
+        """Whether this call reads content that came from outside: it names such a file, a
+        folder holding one, or (shell) runs inside such a folder. Writes read nothing."""
+        from .risk import WRITE_TOOLS
+
+        keys = self._outside_keys()
+        if not keys or tool_name in WRITE_TOOLS:
+            return False
+        args = arguments or {}
+
+        def touches(token: str, base: Path) -> bool:
+            key = _key(token, base)
+            return self.from_outside(key) or self._holds_outside(key, keys)
+
+        if tool_name != "run_shell":
+            values = []
+            for name in ("path", "file", "files", "filename", "directory", "dir", "source", "src"):
+                value = args.get(name)
+                values += value if isinstance(value, (list, tuple)) else [value]
+            return any(touches(str(v), self.root) for v in values if isinstance(v, str) and v)
+        start = Path(cwd) if cwd else self.root
+        for argv, at in _walk(str(args.get("command", "")), start):
+            at = at if at.is_absolute() else self.root / at
+            if self.from_outside(at):
+                return True  # running inside a cloned or unpacked folder
+            for token in argv:
+                token = token.split("=", 1)[-1].lstrip("@")  # --file=x, curl -d @x
+                if token and not token.startswith("-") and "://" not in token and touches(token, at):
+                    return True
+        return False
 
     @staticmethod
     def _is_device(path: str) -> bool:

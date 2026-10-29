@@ -470,10 +470,12 @@ class _FakeReviewer:
         self.verdicts = dict(verdicts)  # tool_name -> verdict str
         self.asked: list[tuple[str, dict]] = []
         self.provenance: list[str] = []
+        self.facts: list[list[str]] = []
 
-    async def review(self, *, request, history, tool_name, arguments, provenance=""):
+    async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
         self.asked.append((tool_name, arguments))
         self.provenance.append(provenance)
+        self.facts.append(list(facts))
         verdict = self.verdicts.get(tool_name, "unsure")
         return reviewer_mod.Verdict(verdict, f"scripted {verdict}")
 
@@ -680,7 +682,7 @@ def test_allow_or_unsure_resets_the_denial_streak(tmp_path):
     )
 
     class _StreakReviewer(_FakeReviewer):
-        async def review(self, *, request, history, tool_name, arguments, provenance=""):
+        async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
             self.asked.append((tool_name, arguments))
             verdict = "allow" if "ok" in str(arguments.get("command", "")) else "deny"
             return reviewer_mod.Verdict(verdict, f"scripted {verdict}")
@@ -810,7 +812,7 @@ def test_reviewer_sees_user_words_never_tool_results(tmp_path):
     captured = {}
 
     class _Capturing(_FakeReviewer):
-        async def review(self, *, request, history, tool_name, arguments, provenance=""):
+        async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
             captured["request"] = request
             captured["history"] = history
             return await super().review(

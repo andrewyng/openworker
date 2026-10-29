@@ -52,7 +52,7 @@ class _RecordingReviewer:
         self.verdict = verdict
         self.calls = 0
 
-    async def review(self, *, request, history, tool_name, arguments, provenance=""):
+    async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
         self.calls += 1
         return reviewer_mod.Verdict(self.verdict, f"shadow says {self.verdict}")
 
@@ -433,7 +433,7 @@ def test_error_verdict_flagged_and_retried(monkeypatch):
     calls: dict[str, int] = {}
 
     class _Flaky:
-        async def review(self, *, request, history, tool_name, arguments, provenance=""):
+        async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
             n = calls.get(request, 0) + 1
             calls[request] = n
             # First corpus row: error then recover. Others: always error.
