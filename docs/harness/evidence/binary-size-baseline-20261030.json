@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "sourceCommit": "51d9ff2252f058767cf4f730269b52b117be4c37",
+  "target": "aarch64-apple-darwin",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "releaseProfile": {
+    "lto": "thin",
+    "strip": true,
+    "optLevel": "Cargo release default (3)",
+    "panic": "unwind (default)"
+  },
+  "builds": [
+    {
+      "package": "openworker-runtime",
+      "bin": "openworker",
+      "command": "cargo build --offline --locked --release --manifest-path harness/Cargo.toml -p openworker-runtime --bin openworker",
+      "measurement": {
+        "binary": "openworker",
+        "bytes": 14340128,
+        "MiB": 13.676,
+        "sha256": "e67776c0a3515f61420f81098aa7ad321c3b6d35ae7c8578db56dbc234325999",
+        "file": "harness/target/release/openworker: Mach-O 64-bit executable arm64",
+        "dependencies": [
+          "\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 61901.120.67)",
+          "\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)",
+          "\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+          "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+        ]
+      }
+    },
+    {
+      "package": "openworker-sdk",
+      "bin": "openworker-harness",
+      "command": "cargo build --offline --locked --release --manifest-path harness/Cargo.toml -p openworker-sdk --bin openworker-harness",
+      "measurement": {
+        "binary": "openworker-harness",
+        "bytes": 20961504,
+        "MiB": 19.99,
+        "sha256": "76769435dab42636d90a08cb58eaa1213893588c1a0594c283116659c399e4b3",
+        "file": "harness/target/release/openworker-harness: Mach-O 64-bit executable arm64",
+        "dependencies": [
+          "\t/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration (compatibility version 1.0.0, current version 1405.120.5)",
+          "\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)",
+          "\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 61901.120.67)",
+          "\t/usr/lib/libiconv.2.dylib (compatibility version 7.0.0, current version 7.0.0)",
+          "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+        ]
+      }
+    }
+  ],
+  "validation": {
+    "builtSeparately": true,
+    "noDwarfSections": true,
+    "helpSmokePassed": true
+  },
+  "excludes": [
+    "ows deployment CLI",
+    "server-reference binary",
+    "web UI",
+    "model weights",
+    "external sandbox/container runtime"
+  ],
+  "limits": [
+    "macOS ARM64 baseline only; not Linux/Windows/embedded measurement",
+    "file sizes are not peak RAM or full installer footprint",
+    "SDK dependency set includes PostgreSQL and OTLP; no feature changes made",
+    "compression and further optimization not applied"
+  ]
+}
