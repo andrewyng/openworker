@@ -295,6 +295,9 @@ def build_engine(
     # are user-global, preserving the "a repo can't enable this" invariant.
     auto_approve: Optional[bool] = None,
     auto_approve_shadow: Optional[bool] = None,
+    # Which reviewer (OPE-224): "session" | "openai-decisions" | "jev". None means the
+    # config.toml value.
+    auto_approve_reviewer: Optional[str] = None,
     # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
     # its skills are readable by load_skill, not just listed by the filter.
     extra_skill_dirs: Optional[list[str | Path]] = None,
@@ -864,13 +867,20 @@ def build_engine(
     )
     engine.reviewer_enabled = bool(live_on)
     if live_on or shadow_on:
-        from .reviewer import Reviewer
+        from .decision_reviewer import make_auto_reviewer, normalize_reviewer_choice
 
-        engine.reviewer = Reviewer(
+        choice = normalize_reviewer_choice(
+            auto_approve_reviewer
+            if auto_approve_reviewer is not None
+            else getattr(config, "auto_approve_reviewer", "session")
+        )
+        engine.reviewer = make_auto_reviewer(
+            choice,
             provider=provider,
             model=model,
             known_world=engine.session_facts.world.render() + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(engine.runtime_facts),
         )
+        engine.reviewer_choice = choice
         # Shadow evaluation (Part 6 step 3): with only the shadow flag on, the reviewer is
         # attached but the LIVE path stays off unless the live feature flag is also on
         # and the session is in Mode.AUTO_APPROVE. Shadow verdicts never clear actions.

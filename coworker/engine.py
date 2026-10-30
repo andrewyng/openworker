@@ -214,6 +214,12 @@ def _summary_payload(actions: list[dict[str, Any]]) -> dict[str, Any]:
         "reads": len(reads),
         "actions": actions,
     }
+def _settings_changed(verdict: Any) -> Any:
+    """An `unsure` because approval settings changed mid-review. The message is shown on the
+    card for every reviewer, including the decision models that otherwise give no reason."""
+    msg = "Approval settings changed during review; a human decision is required."
+    extra = {"card_reason": msg} if hasattr(verdict, "card_reason") else {}
+    return replace(verdict, verdict="unsure", reason=msg, **extra)
 
 
 class TurnEngine:
@@ -1629,7 +1635,7 @@ class TurnEngine:
                     or self.reviewer_settings_epoch != settings_epoch
                     or not self._reviewer_active()
                     or (request, history, context) != self._review_inputs()):
-                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
+                verdict = _settings_changed(verdict)
             self._reviewer_verdicts[tc.id] = verdict
             self._reviewer_input_snapshots[tc.id] = (request, history, context)
 
@@ -1755,6 +1761,7 @@ class TurnEngine:
                     stage="reviewer_shadow",
                     status=verdict.verdict,
                     reason=verdict.reason,
+                    reviewer=getattr(self, "reviewer_choice", "session"),
                     call_id=tool_call.id,
                     tokens_in=verdict.tokens_in,
                     tokens_out=verdict.tokens_out,
@@ -1921,6 +1928,9 @@ class TurnEngine:
 
         consulted_live = False
         unsure_note = ""  # the reviewer's hesitation, when an unsure verdict raised the card
+        # The card's wording when the reviewer gives no reason (decision models, OPE-224):
+        # "reviewer_asks" for a judgment, "reviewer_unavailable" when it could not run.
+        unsure_silent_kind = ""
         if (
             not allowed
             and decision.needs_user
@@ -1939,22 +1949,27 @@ class TurnEngine:
             if (self.reviewer is not consulted_reviewer
                     or self.reviewer_settings_epoch != settings_epoch
                     or not self._reviewer_active()):
-                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
+                verdict = _settings_changed(verdict)
             self._audit(
                 tool_call,
                 stage="reviewer_verdict",
                 status=verdict.verdict,
                 reason=verdict.reason,
+                reviewer=getattr(self, "reviewer_choice", "session"),
                 tokens_in=verdict.tokens_in,
                 tokens_out=verdict.tokens_out,
                 cache_read=verdict.cache_read,
                 cache_write=verdict.cache_write,
             )
+            # What the card may show. A decision-model verdict carries `card_reason` (empty:
+            # those reviewers give no explanation, owner ruling 2026-10-16); the session-model
+            # reviewer's one-line reason is shown as before. The audit keeps `reason` in full.
+            card_note = getattr(verdict, "card_reason", verdict.reason)
             if verdict.verdict == "allow":
                 allowed = True
                 self._reviewer_denials = 0  # streak semantics: any non-deny resets
                 self._approval_origins[tool_call.id] = {
-                    "origin": "reviewer", "note": verdict.reason
+                    "origin": "reviewer", **({"note": card_note} if card_note else {})
                 }
                 reason = f"allowed by reviewer: {verdict.reason}"
             elif verdict.verdict == "deny":
@@ -1975,7 +1990,7 @@ class TurnEngine:
                         "name": tool_call.name,
                         "status": "denied",
                         "reason": "blocked by the safety reviewer",
-                        "reviewer_reason": verdict.reason,
+                        **({"reviewer_reason": card_note} if card_note else {}),
                         "allow_anyway": True,
                         **({"reviewer_paused": _REVIEWER_PAUSED_TEXT} if tripped else {}),
                     },
@@ -1983,7 +1998,7 @@ class TurnEngine:
                 deny_msg = _tool_error_message(tool_call, self.reviewer_denial_message or AGENT_DENY_MESSAGE)
                 deny_msg["_display"] = {
                     "approval_origin": "reviewer_denied",
-                    "approval_note": verdict.reason,
+                    **({"approval_note": card_note} if card_note else {}),
                 }
                 self.messages.append(deny_msg)
                 self._audit(
@@ -1997,7 +2012,9 @@ class TurnEngine:
             # "unsure" falls through to today's card — the human decides.
             if verdict.verdict == "unsure":
                 self._reviewer_denials = 0  # streak semantics: any non-deny resets
-                unsure_note = verdict.reason
+                unsure_note = card_note
+                if not card_note:
+                    unsure_silent_kind = "reviewer_unavailable" if verdict.error else "reviewer_asks"
 
         if not allowed and decision.needs_user and self._nobody_answers_cards():
             # Attendance "auto": nobody can answer a card, and the mode did not allow
@@ -2023,6 +2040,7 @@ class TurnEngine:
             escalation = (
                 {"kind": "human_required", "reason": decision.reason} if decision.human_only else
                 {"kind": "reviewer_unsure", "reason": unsure_note} if unsure_note else
+                {"kind": unsure_silent_kind, "reason": ""} if unsure_silent_kind else
                 {"kind": "reviewer_unavailable", "reason": ""} if self.permissions.mode is Mode.AUTO_APPROVE else None
             )
             # Shadow evaluation: record what the reviewer would have said about this card.
@@ -2040,8 +2058,8 @@ class TurnEngine:
                     # An `unsure` verdict raised this card: the reviewer's one-line reason
                     # answers "why am I being asked?" in place (owner ask 2026-08-24).
                     **(
-                        {"reviewer_unsure": verdict.reason}
-                        if consulted_live and verdict.verdict == "unsure"
+                        {"reviewer_unsure": unsure_note}
+                        if consulted_live and verdict.verdict == "unsure" and unsure_note
                         else {}
                     ),
                     "category": getattr(metadata, "category", ""),

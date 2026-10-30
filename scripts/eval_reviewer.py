@@ -21,6 +21,7 @@ Usage:
     python -m scripts.eval_reviewer --model anthropic:claude-opus-5
     python -m scripts.eval_reviewer --model ... --corpus injection --include-holdout
     python -m scripts.eval_reviewer --model ... --stub    # no network; canned verdicts
+    python -m scripts.eval_reviewer --reviewer openai-decisions    # or --reviewer jev
 
 The reviewer answers allow/deny/unsure; the corpus answer key is allow/ask/deny. `unsure`
 maps to `ask` (both mean "a human decides"). A row is a FALSE-ALLOW when the reviewer says
@@ -32,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,8 +42,13 @@ from typing import Any, Iterable, Optional
 # Allow `python scripts/eval_reviewer.py` as well as `-m scripts.eval_reviewer`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from coworker.decision_reviewer import BACKENDS, build_decision_reviewer  # noqa: E402
 from coworker.review_facts import FACT_VOCABULARY  # noqa: E402
 from coworker.reviewer import Reviewer, Verdict  # noqa: E402
+
+# llm = the session-model reviewer; the others are the decision-model reviewers users can
+# choose in Settings (OPE-224), with their shipping questions and frozen cut-offs.
+REVIEWERS = ("llm",) + tuple(sorted(BACKENDS))
 
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "tests" / "corpora"
 CORPORA = ("benign", "dangerous", "injection")
@@ -251,6 +258,32 @@ class _StubProvider:
         return ModelCapabilities()
 
 
+def _stub_decision_transport(url: str, headers: dict[str, str], body: dict[str, Any]) -> tuple[int, Any]:
+    """No-network stand-in for a decision backend: reads the smuggled key out of the state
+    and answers every yes/no question consistently with it, in the response shape of the
+    backend the URL names. Plumbing check only, NOT an evaluation."""
+    m = re.search(r"__STUB_KEY__=(allow|deny|ask)", json.dumps(body))
+    key = m.group(1) if m else "ask"
+    questions = body.get("questions")
+    names = list(questions) if isinstance(questions, dict) else [q.get("name") for q in questions or []]
+    p = {n: 0.02 for n in names}
+    if key in ("allow", "ask"):
+        p["requested"] = 0.97
+    if key == "ask":
+        p["broader"] = 0.9
+    if key == "deny":
+        # Decisions asks `contrary`; Jev asks it as two parts combined in code.
+        for name in ("contrary", "user_restriction", "breaks_restriction"):
+            if name in p:
+                p[name] = 0.95
+    if url.endswith("/v1/decisions"):
+        return 200, {"model": "stub", "answers": [
+            {"name": n, "type": "predicate", "probability": v} for n, v in p.items()
+        ], "usage": {"input_tokens": 10, "output_tokens": 0}}
+    return 200, {"model": "stub", "answers": {n: {"type": "noul", "noul": v} for n, v in p.items()},
+                 "usage": {"input_tokens": 10, "output_tokens": 0}}
+
+
 def build_history(row: Row) -> list[dict[str, Any]]:
     """The reviewer's history block for a row: earlier user messages, then an ask_user
     reply tagged is_reply (§8.2) — the same shape `_user_history` produces live. The
@@ -398,7 +431,21 @@ async def run_corpus(
     )
 
 
-def build_reviewer(model: str, *, stub: bool) -> Reviewer:
+def build_reviewer(model: str, *, stub: bool, reviewer: str = "llm") -> Any:
+    if reviewer in BACKENDS:
+        # A decision-model reviewer, exactly as Settings builds it. `model` is an optional
+        # override of the pinned model. Key: env var, else the SecretStore profile.
+        from coworker.secrets import SecretStore
+
+        return build_decision_reviewer(
+            reviewer,
+            secrets=None if stub else SecretStore(),
+            api_key="stub" if stub else None,
+            model=model or None,
+            transport=_stub_decision_transport if stub else None,
+        )
+    if reviewer != "llm":
+        raise ValueError(f"unknown reviewer {reviewer!r}; one of {REVIEWERS}")
     if stub:
         return Reviewer(provider=_StubProvider(), model=model)
     from coworker.providers import ProviderRouter
@@ -520,7 +567,9 @@ def format_report(results: list[CorpusResult], model: str, stamp: str) -> str:
 
 
 async def _amain(args: argparse.Namespace) -> int:
-    reviewer = build_reviewer(args.model, stub=args.stub)
+    if args.reviewer == "llm" and not args.model:
+        raise SystemExit("--model is required for --reviewer llm")
+    reviewer = build_reviewer(args.model or "", stub=args.stub, reviewer=args.reviewer)
     names: Iterable[str] = [args.corpus] if args.corpus else CORPORA
     results = [
         await run_corpus(
@@ -532,7 +581,8 @@ async def _amain(args: argparse.Namespace) -> int:
         )
         for name in names
     ]
-    report = format_report(results, args.model, args.stamp or "unstamped")
+    label = args.model if args.reviewer == "llm" else getattr(reviewer, "model", args.reviewer)
+    report = format_report(results, label, args.stamp or "unstamped")
     if args.limit:
         report += (
             f"\n\n**SMOKE RUN (--limit {args.limit})** — plumbing check only; "
@@ -552,7 +602,13 @@ async def _amain(args: argparse.Namespace) -> int:
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(description="Evaluate the Auto-Approve reviewer against the corpora.")
-    p.add_argument("--model", required=True, help="e.g. anthropic:claude-opus-5")
+    p.add_argument("--model", help="e.g. anthropic:claude-opus-5 (required for --reviewer llm; overrides the pinned model for a decision reviewer)")
+    p.add_argument(
+        "--reviewer",
+        choices=REVIEWERS,
+        default="llm",
+        help="llm = the session-model reviewer (default); openai-decisions or jev = a decision-model reviewer (OPE-224)",
+    )
     p.add_argument(
         "--corpus",
         choices=SELECTABLE_CORPORA,

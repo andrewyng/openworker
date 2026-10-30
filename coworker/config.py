@@ -100,6 +100,9 @@ class Config:
     # Auto-Approve read-only command tier (OPE-234), macOS / Linux only: "off" (default),
     # "audit" or "on". User-global only, like the gate tier above.
     auto_approve_readonly_commands: str = "off"
+    # Which reviewer Auto-Approve uses (OPE-224): "session" (the session's own model, the
+    # default), "openai-decisions" or "jev". User-global only, like the flags above.
+    auto_approve_reviewer: str = "session"
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
@@ -174,6 +177,7 @@ _FIELDS = {
     "auto_approve_inert_writes",
     "auto_approve_plan_approval",
     "auto_approve_readonly_commands",
+    "auto_approve_reviewer",
     "host",
     "port",
     "web_search_provider",
@@ -203,6 +207,7 @@ _GLOBAL_ONLY_FIELDS = {
     "auto_approve_inert_writes",
     "auto_approve_plan_approval",
     "auto_approve_readonly_commands",
+    "auto_approve_reviewer",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 

@@ -23,6 +23,12 @@ import {
   getTrustedWorkspaces,
   setAutoApprove,
   setAutoApproveShadow,
+  setAutoApproveReviewer,
+  setAutoApproveReviewerKey,
+  getShadowSummary,
+  exportShadowResults,
+  type ReviewerChoice,
+  type ShadowSummary,
   setCompactionSettings,
   setContextBar,
   setHideReasoningRunning,
@@ -1393,15 +1399,71 @@ function AutoApproveCard() {
   const { t } = useTranslation();
   const [on, setOn] = useState<boolean | null>(null);
   const [shadow, setShadow] = useState(false);
+  const [reviewer, setReviewer] = useState<ReviewerChoice>("session");
+  const [keys, setKeys] = useState<Record<string, boolean>>({});
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const [summary, setSummary] = useState<ShadowSummary | null>(null);
+  const [exported, setExported] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  // Shadow results follow the chosen reviewer: reload when shadow turns on or the
+  // reviewer changes, so the line never mixes reviewers (OPE-224).
+  useEffect(() => {
+    setExported("");
+    if (!shadow) {
+      setSummary(null);
+      return;
+    }
+    getShadowSummary().then(setSummary).catch(() => setSummary(null));
+  }, [shadow, reviewer]);
+
+  const exportResults = async () => {
+    setExporting(true);
+    setExported("");
+    const r = await exportShadowResults().catch(() => ({ ok: false } as { ok: boolean; path?: string }));
+    setExporting(false);
+    // The time makes a repeat export visibly new: the file name is per day, so the path
+    // alone would not change between clicks.
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setExported(
+      r.ok && r.path
+        ? t("settingsx.auto_approve.shadow_export_saved", { path: r.path, time })
+        : t("settingsx.auto_approve.shadow_export_failed"),
+    );
+  };
 
   useEffect(() => {
     getSettings()
       .then((s) => {
         setOn(s.auto_approve === true);
         setShadow(s.auto_approve_shadow === true);
+        setReviewer(s.auto_approve_reviewer || "session");
+        setKeys(s.auto_approve_reviewer_keys || {});
       })
       .catch(() => setOn(false));
   }, []);
+
+  const saveReviewer = async (next: ReviewerChoice) => {
+    setReviewer(next);
+    setKeyDraft("");
+    setKeyError("");
+    await setAutoApproveReviewer(next);
+  };
+  const saveKey = async () => {
+    if (reviewer === "session" || !keyDraft.trim()) return;
+    const r = await setAutoApproveReviewerKey(reviewer, keyDraft.trim());
+    if (r.ok) {
+      setKeys(r.auto_approve_reviewer_keys || { ...keys, [reviewer]: true });
+      setKeyDraft("");
+      setKeyError("");
+    } else {
+      setKeyError(r.error || t("settingsx.auto_approve.reviewer_key_failed"));
+    }
+  };
+  const choices: ReviewerChoice[] = ["session", "openai-decisions", "jev"];
+  const choiceKey = (c: ReviewerChoice) =>
+    c === "session" ? "session" : c === "openai-decisions" ? "decisions" : "jev";
 
   const saveOn = async (next: boolean) => {
     setOn(next);
@@ -1431,7 +1493,59 @@ function AutoApproveCard() {
           </span>
         </span>
       </label>
-      <label className="flex items-start gap-3 py-2 pl-7">
+      {/* Which reviewer judges the checks (OPE-224). Shown only when something uses it:
+          Auto-approve mode, or shadow evaluation, which records that reviewer's verdicts. */}
+      {(on || shadow) && (
+      <div className="py-2" data-testid="auto-approve-reviewer">
+        <div className="flex items-center gap-2.5">
+          <span className="text-ui text-ink">{t("settingsx.auto_approve.reviewer_title")}</span>
+          <select
+            value={reviewer}
+            data-testid="auto-approve-reviewer-select"
+            className="px-2 py-1.5 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent"
+            onChange={(e) => saveReviewer(e.target.value as ReviewerChoice)}
+          >
+            {choices.map((c) => (
+              <option key={c} value={c}>
+                {t(`settingsx.auto_approve.reviewer_${choiceKey(c)}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={FIELD_HELP}>{t(`settingsx.auto_approve.reviewer_${choiceKey(reviewer)}_desc`)}</div>
+        {reviewer !== "session" && (
+          <div className="pt-2" data-testid="auto-approve-reviewer-key">
+            <div className="text-meta text-muted pb-1">{t("settingsx.auto_approve.reviewer_no_reasons")}</div>
+            {keys[reviewer] ? (
+              <div className="text-meta text-ok">{t("settingsx.auto_approve.reviewer_key_set")}</div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  className={INPUT}
+                  data-testid="auto-approve-reviewer-key-input"
+                  placeholder={t(`settingsx.auto_approve.reviewer_key_placeholder_${choiceKey(reviewer)}`)}
+                  value={keyDraft}
+                  onChange={(e) => setKeyDraft(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className={BTN_ACCENT}
+                  data-testid="auto-approve-reviewer-key-save"
+                  disabled={!keyDraft.trim()}
+                  onClick={saveKey}
+                >
+                  {t("settingsx.auto_approve.reviewer_key_save")}
+                </button>
+              </div>
+            )}
+            {keyError && <div className="text-meta text-danger pt-1">{keyError}</div>}
+          </div>
+        )}
+      </div>
+      )}
+      <label className="flex items-start gap-3 py-2">
         <input
           type="checkbox"
           className="mt-0.5"
@@ -1451,6 +1565,44 @@ function AutoApproveCard() {
           </span>
         </span>
       </label>
+      {shadow && summary && (
+        <div className="pl-7 pb-1 text-meta text-muted" data-testid="shadow-summary">
+          <div className="text-ink">
+            {t("settingsx.auto_approve.shadow_summary_title", {
+              days: summary.days,
+              reviewer: t(`settingsx.auto_approve.reviewer_${choiceKey(summary.reviewer)}`),
+            })}
+          </div>
+          {summary.checks === 0 ? (
+            <div>{t("settingsx.auto_approve.shadow_summary_empty")}</div>
+          ) : (
+            <>
+              <div>
+                {t("settingsx.auto_approve.shadow_summary_counts", {
+                  count: summary.checks, run: summary.run, asked: summary.asked, stopped: summary.stopped,
+                })}
+              </div>
+              {summary.decided > 0 && (
+                <div>{t("settingsx.auto_approve.shadow_summary_matched", { matched: summary.matched, decided: summary.decided })}</div>
+              )}
+              <button
+                type="button"
+                className="mt-1 text-accent hover:underline disabled:opacity-50"
+                data-testid="shadow-export"
+                disabled={exporting}
+                onClick={exportResults}
+              >
+                {exporting ? t("settingsx.auto_approve.shadow_exporting") : t("settingsx.auto_approve.shadow_export")}
+              </button>
+              {exported && (
+                <div className="select-all break-all" data-testid="shadow-export-path">
+                  {exported}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

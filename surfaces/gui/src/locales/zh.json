@@ -753,7 +753,8 @@
       "blocked_now": "沙盒刚刚拦截了对这个网站的访问。",
       "blocked_minutes_one": "沙盒在 {{count}} 分钟前拦截了对这个网站的访问。",
       "blocked_minutes_other": "沙盒在 {{count}} 分钟前拦截了对这个网站的访问。"
-    }
+    },
+    "escalation_reviewer_asks": "自动批准希望由你来决定此操作。"
   },
   "search": {
     "placeholder": "搜索会话",
@@ -2441,9 +2442,31 @@
     "auto_approve": {
       "title": "自动审批（实验性）",
       "enable": "启用自动审批模式",
-      "enable_desc": "在模式选择器中添加<em>自动审批</em>选项。在该模式下，会话模型会审查每个通常需要审批的操作，并放行常规操作；拿不准的仍会询问你。它永远无法允许规则禁止的操作。每次检查多一次模型调用，计入你的用量。",
-      "shadow_title": "影子评估 <faint>（用于衡量）</faint>",
-      "shadow_desc": "在任何模式下，审查器都会在你自己的选择旁记录它<em>本会</em>做出的决定 —— 不改变任何事情。让你在信任它之前先看看它的表现。每次审批同样多一次模型调用。"
+      "enable_desc": "在模式选择器中添加<em>自动审批</em>选项。在该模式下，你在下方选择的审查器会检查每个通常需要审批的操作，并放行常规操作；拿不准的仍会询问你。它永远无法允许规则禁止的操作。每次检查多一次模型调用，计入你的用量。",
+      "shadow_title": "影子评估",
+      "shadow_desc": "在任何模式下，审查器都会在你自己的选择旁记录它<em>本会</em>做出的决定 —— 不改变任何事情。让你在信任它之前先看看它的表现。每次审批同样多一次模型调用。",
+      "reviewer_title": "审查器",
+      "reviewer_session": "会话自身的模型（默认）",
+      "reviewer_session_desc": "由运行会话的模型审查每个操作，询问你时会说明原因。",
+      "reviewer_decisions": "OpenAI Decisions",
+      "reviewer_decisions_desc": "OpenAI 的快速决策模型。使用你的 OpenAI API 密钥。",
+      "reviewer_jev": "TypeSafe Jev",
+      "reviewer_jev_desc": "TypeSafe 的快速决策模型。需要 TypeSafe API 密钥。",
+      "reviewer_no_reasons": "Decisions 和 Jev 不是对话模型，因此审批卡片不会说明询问的原因。",
+      "reviewer_key_set": "已添加 API 密钥。",
+      "reviewer_key_save": "保存密钥",
+      "reviewer_key_placeholder_decisions": "OpenAI API 密钥",
+      "reviewer_key_placeholder_jev": "TypeSafe API 密钥",
+      "reviewer_key_failed": "无法保存密钥。",
+      "shadow_summary_title": "影子评估结果 · 最近 {{days}} 天，所有会话，{{reviewer}}",
+      "shadow_summary_matched": "与你自己的决定一致 {{matched}} / {{decided}} 次。",
+      "shadow_summary_empty": "尚无记录。照常使用即可；你处理的每张审批卡片都会被记录。",
+      "shadow_export": "导出完整结果",
+      "shadow_export_saved": "已于 {{time}} 保存到 {{path}}",
+      "shadow_export_failed": "无法导出结果。",
+      "shadow_summary_counts_one": "{{count}} 次检查：本会放行 {{run}} · 询问你 {{asked}} · 阻止 {{stopped}}",
+      "shadow_summary_counts_other": "{{count}} 次检查：本会放行 {{run}} · 询问你 {{asked}} · 阻止 {{stopped}}",
+      "shadow_exporting": "正在导出…"
     },
     "sandbox": {
       "title": "沙箱",
