@@ -100,6 +100,28 @@ Evidence: [live dual-UI result](evidence/observability-live-20261030/qualificati
 [persistent local setup](../../deploy/reference/LANGFUSE-LOCAL.md),
 [service progress](SERVICE-PROGRESS.md).
 
+## Canonical integration branch consolidation — October 30, 2026
+
+Fast-forwarded `openworker-harness-sdk` to the verified GCP feature work through
+`e4f96969`, preserving all four commits after the earlier `6e1bc173` baseline.
+There was no branch divergence or source conflict. This is the canonical public
+feature-development and partner-integration branch; tested feature milestones
+should return here regularly instead of accumulating only on working branches.
+
+- GCP identity bootstrap/direct preflight, private Terraform graph export, local
+  lifecycle journals and the release-size baseline are now included.
+- The exact merged CLI source passed **75 tests** and real pinned Terraform/provider
+  schema validation before integration. The fast-forward does not change that
+  source; subsequent consolidation changes are documentation only.
+- GCP remote provisioning and independent cleanup remain unimplemented gates;
+  their presence in the integration branch is not a GCP deployment qualification.
+- The Python desktop harness is unchanged. This consolidation does not merge into
+  public `main`, publish packages or announce a stable SDK release.
+
+See the [GCP ledger](OWS-GCP-TRIAL-PLAN.md) and
+[binary footprint baseline](BINARY-FOOTPRINT.md). Partner builds should pin a
+revision and keep SDK/runtime versions aligned.
+
 ## Gates before announcement
 
 - Several days of Arcade/partner dogfooding, including real provider streaming,

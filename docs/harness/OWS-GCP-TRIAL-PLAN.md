@@ -2,6 +2,8 @@
 
 Date: October 30, 2026. Branch: `feat/ows-gcp-deployment`, based on the consolidated
 `openworker-harness-sdk` at `6e1bc173`.
+Verified work through `e4f96969` is now consolidated into the public
+`openworker-harness-sdk` integration branch for partner builds.
 
 The user authorized **US$100 total** for the GCP experiment and an isolated project
 and budget setup. This allowance is cumulative for the experiment, not replenished

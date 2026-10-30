@@ -12,6 +12,22 @@ release announcement. Use a pinned checkout and build the SDK and executable fro
 the same revision. The existing OpenWorker Desktop application continues to use
 its Python harness; this directory is additive.
 
+## Integration branch
+
+Use **`openworker-harness-sdk`** in `andrewyng/openworker` for harness feature
+development and partner integration. It is the shared integration branch that
+will eventually merge into `main`. Start individual feature branches from it and
+merge verified milestones back regularly.
+
+```sh
+git fetch origin
+git switch openworker-harness-sdk
+git pull --ff-only origin openworker-harness-sdk
+```
+
+Pin a commit for reproducible partner builds, and build the SDK and harness
+executable from that same checkout. Source manifests remain development packages.
+
 ## Start here
 
 - **[Desktop QuickStart](../docs/harness/QUICKSTART.md)** — build a Windows or Mac
@@ -30,6 +46,10 @@ its Python harness; this directory is additive.
 - **[Python/Rust tool survey](../docs/harness/TOOL-PARITY.md)** — remaining parity gaps.
 - **[Observability](../docs/harness/OBSERVABILITY.md)** — recording storage,
   independent PostgreSQL connections and staged usage/timeline implementation.
+- **[Binary footprint](../docs/harness/BINARY-FOOTPRINT.md)** — measured stripped
+  release sizes and build settings.
+- **[GCP deployment progress](../docs/harness/OWS-GCP-TRIAL-PLAN.md)** — qualified
+  bootstrap/local graph checks and remaining cloud execution/cleanup gates.
 
 ## What the harness handles
 
