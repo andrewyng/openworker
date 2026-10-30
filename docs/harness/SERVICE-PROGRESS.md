@@ -530,3 +530,18 @@ AWS install of that chart was not rerun.
 [trial ledger](OWS-AWS-TRIAL-PLAN.md) record the bounded configuration and cleanup.
 Customer KMS/private S3 endpoints, other cloud configurations and final delayed
 billing attribution remain outside this qualification.
+
+## Consolidated SDK integration — October 30, 2026
+
+At the user's request, fast-forwarded `openworker-harness-sdk` to
+`feat/openworker-service-m1` at `eee4391f`. Fresh remote inspection confirmed the
+public target had no divergent commits; its 34 incoming commits include the
+existing six-commit documentation lead and the 28 service/observability commits.
+There were no merge conflicts or runtime changes introduced by integration.
+
+Updated the release checklist to identify the consolidated baseline, link the
+local PostgreSQL/OpenShell and dual-UI observability evidence, and retain fresh
+AWS installation as the next qualification gate. The follow-up changes are
+documentation only; the qualified runtime/SDK/deployment source is unchanged.
+No public-main merge, PR, release announcement or cloud provisioning is part of
+this integration.

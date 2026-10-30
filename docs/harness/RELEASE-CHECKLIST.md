@@ -11,9 +11,10 @@ integration testing, not a release announcement or a claim of stable APIs.
 - Lantern/Luma application code, custom app runtimes and obsolete app-specific
   partner-kit packaging are omitted. Notification/device/computer tool crates,
   core approval/MCP tests and independent stdio framing tests remain.
-- Internal partner notes, work ledgers, machine-specific qualification records
-  and account-specific AWS evidence are not published. AWS scripts require an
-  explicit target account/role and budget notification recipient.
+- Private partner notes, credentials, raw deployment logs and generated state
+  remain excluded. Public implementation ledgers and sanitized qualification
+  evidence accompany the service integration. AWS scripts require an explicit
+  target account/role and budget notification recipient.
 - Existing Python Desktop source is unchanged. Runtime fixtures now live inside
   `harness/tests/contracts/`; the Rust workspace does not need an external fixture
   directory just to compile.
@@ -69,6 +70,35 @@ was blocked by the local file-URL policy. No fresh GUI, signed installer, Window
 VM, live-model, AWS or OpenShell cluster qualification is claimed by these checks.
 Generator dependency installation used npm 10 with an engine warning; use the
 documented npm 11+ for supported starter development.
+
+## Service integration baseline — October 30, 2026
+
+`openworker-harness-sdk` now includes `feat/openworker-service-m1` through
+`eee4391f`. The integration is a fast-forward: the runtime/SDK/service source is
+identical to the qualified feature-branch source, with this checklist and its
+ledger updated afterward. This remains an integration branch, not a public-main
+merge or release announcement.
+
+- Authenticated service clients, RuntimeProfiles, OpenShell provisioning, management
+  UI, `ows` deployment commands, durable artifacts and observability are included.
+- Observability M1–M5 qualification covers PostgreSQL recording, model accounting,
+  authorized run search, management charts/timelines, collector export and Langfuse
+  reconciliation. See the [observability ledger](OBSERVABILITY-PROGRESS.md).
+- A real Claude Sonnet 5 agent ran file/shell tools inside local Kubernetes /
+  OpenShell. All 22 run-scoped records and 10,560 input / 222 output tokens matched
+  Langfuse; the management UI and Langfuse UI were visually verified. Records
+  survived replacement of all four Langfuse data-service pods with retained PVCs.
+- The catalog-worker instrumentation fix passed the real PostgreSQL/OpenShell
+  service suite, 13 server-reference tests and eight Helm tests. Earlier outage
+  trials retain their gaps; final qualification used a fresh explicit turn.
+- The **next cloud gate is a fresh AWS installation of this consolidated
+  baseline**, including real agent execution, recovery, telemetry and expiry
+  cleanup. Earlier AWS qualifications do not certify this newer baseline. GCP
+  and Azure require their own deployment qualification.
+
+Evidence: [live dual-UI result](evidence/observability-live-20261030/qualification.json),
+[persistent local setup](../../deploy/reference/LANGFUSE-LOCAL.md),
+[service progress](SERVICE-PROGRESS.md).
 
 ## Gates before announcement
 
