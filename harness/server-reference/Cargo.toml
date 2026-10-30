@@ -20,6 +20,7 @@ openworker-telemetry = { path = "../telemetry", features = ["otlp"] }
 openworker-runtime = { path = "../runtime" }
 openworker-store-postgres = { path = "../store-postgres" }
 anyhow = "1"
+base64 = "0.22"
 axum = "0.7"
 async-stream = "0.3"
 clap = { version = "4", features = ["derive"] }

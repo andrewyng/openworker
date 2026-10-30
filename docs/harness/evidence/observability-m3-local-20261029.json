@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "at": "2026-10-30T03:15:46.149Z",
+  "scope": "local Docker PostgreSQL; no AWS or paid models",
+  "postgresImage": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+  "linuxImage": "sha256:a3ae5a4eb16a56cfd74078202579a2ab84a7cd33988dca5d75bbb050ef9154e9",
+  "databases": 2,
+  "tests": [
+    "postgres-storage-contract",
+    "service-two-database-outage",
+    "postgres-recording-queries",
+    "authorized-recording-http",
+    "linux-worker-recovery",
+    "linux-authorized-http",
+    "linux-packaged-two-database-install"
+  ],
+  "writeProbe": {
+    "elapsed_seconds": 0.149632292,
+    "p50_write_us": 1442,
+    "p95_write_us": 1871,
+    "records": 100,
+    "records_per_second": 668.3049404870441,
+    "scope": "single local Docker connection, not a capacity guarantee",
+    "transaction_size": 1
+  },
+  "queryProbe": {
+    "fresh_read_connection_per_request": true,
+    "p50_us": 7208,
+    "p95_us": 8401,
+    "requests": 20,
+    "scanned_steps_per_request": 4,
+    "scope": "small serial local Docker/PostgreSQL HTTP probe; not capacity guidance",
+    "separate_recording_database": true,
+    "platform": "linux"
+  },
+  "passed": true,
+  "ownedContainerRemoved": true,
+  "generatedPasswordRemoved": true,
+  "unrelatedContainersModified": false,
+  "milestone": "observability M3 authorized run search, timelines and grouped summaries",
+  "branch": "feat/openworker-service-m1",
+  "sourceBaseCommit": "3e61bd4d36fc302560eb468631be385b776d0d2c",
+  "linuxToolchain": "rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663",
+  "qualificationProfile": "release with LTO disabled for test linking; qualification image only",
+  "projectionVersion": 1,
+  "limits": {
+    "timelineRows": 200,
+    "summaryRows": 4096,
+    "summaryRuns": 25,
+    "groupsPerKind": 128,
+    "recordingReadersPerApi": 4
+  },
+  "awsProvisioned": false,
+  "paidModelCalls": 0,
+  "kubernetesResourcesChanged": false,
+  "generatedPrivateFilesRemoved": true,
+  "testSuites": {
+    "linuxRuntimeRecordingServerOtlp": {
+      "passed": 225,
+      "failed": 0,
+      "ignored": 13,
+      "sha256": "ef4155c1ed9e0ef6e25303047f507ce585c869af2a99ce3b9ed9959b7c8c47a6"
+    },
+    "hostRecordingServerOtlp": {
+      "passed": 43,
+      "failed": 0,
+      "ignored": 10,
+      "sha256": "35c841c212c0de72816a688f46441919404baaaa001adce2a2705b42b48aa70e"
+    },
+    "hostPostgresStoreRegressions": {
+      "passed": 17,
+      "failed": 0,
+      "ignored": 2,
+      "sha256": "b23e8daa0f0283ca729b547dff9054f53b651fce969ab87181f4a8acdfb4d53b"
+    },
+    "linuxPostgresWorkers": {
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0,
+      "sha256": "fd9eab0388db16cdd9584b8c5af9d9482b42a41954b6b7614b8923bc403eb01a"
+    },
+    "helmRendering": {
+      "passed": 7,
+      "failed": 0,
+      "sha256": "809ee7c73408767fb2eaebb8a9145e40368097bdfca6e3cf5991816c9edb4126"
+    }
+  },
+  "checks": [
+    "all workspace features and targets compile offline/locked",
+    "Rust formatting, JavaScript/shell syntax and whitespace checks",
+    "execution authorization before recording access; owned and explicit-session scope before SQL LIMIT",
+    "literal metadata search, equal-time pagination and credential/filter-bound cursors",
+    "read-time credential revocation, namespace isolation, error no-store and bounded reader concurrency",
+    "SQLite/PostgreSQL bounded query parity, corrupt-row isolation, retention and late commits",
+    "known zero versus missing, retry usage, parent hierarchy, overlap union/exclusive phases, truncation and overflow",
+    "packaged entrypoint migrations route independent database credentials without fallback",
+    "owned Docker containers and generated secrets removed; unrelated resources untouched"
+  ],
+  "qualificationLimits": [
+    "best-effort queues and provider usage, not lossless billing/audit",
+    "grouped summary is a bounded selected run page, not a deployment-wide total",
+    "fresh projections; no materialized cache, historical backfill or frozen snapshot across requests",
+    "no management UI integration in M3",
+    "recording TLS configuration rendered; live TLS database and live Kubernetes rollout not requalified",
+    "no Windows/Python desktop, cloud load sizing or retained-baseline mixed-version qualification",
+    "worker load matrix opt-in and mixed-version baseline cases explicitly excluded"
+  ],
+  "sourceSha256": {
+    "deploy/reference/Dockerfile.observability": "d270a197d3113ee23f69896956581d6461e3d4f9b9d9df1b5fe37644c16ffdaf",
+    "deploy/reference/Dockerfile.observability.dockerignore": "65f8db809d437cdb49d254182328a7fc848f131a72ea4e52e901cbdadfb0c581",
+    "deploy/reference/qualify-observability.mjs": "e19e628ad3ee4fb7b6d2d818592a180e4b78e783a66c225c3183169693b2cd3b",
+    "deploy/service/chart.test.mjs": "00e152e2c1f019784ae88966ebafa3c15b170719d436fd265cb81106538c845e",
+    "deploy/service/chart/README.md": "b4efb1432098e8be069d7a9208010d0ef29a24514aa17663a557bb903b9f3caa",
+    "deploy/service/chart/templates/bootstrap.yaml": "269d87add45da51051f43a5b2244ac589ebe2a3a1d6452d4e74070ade2ee0f09",
+    "deploy/service/chart/templates/config.yaml": "190f64e632548650c2847ca86df2e83efc42eb275aafaa3c35f3c0d29ed86f73",
+    "deploy/service/chart/templates/workloads.yaml": "84a524abea08aa9c66213698193eaa71c44c9e1cb53296d91777229455dc6841",
+    "deploy/service/chart/values.yaml": "4bdf0eadb9f6b67273427d81cceedbc3768d2cc992bb96433965a8a6599126b6",
+    "deploy/service/entrypoint.sh": "d954b7d8c7a56324c60cfe813dba8885cbf30032059d8a1072192cd5d5d8f5a4",
+    "harness/Cargo.lock": "e186206abccd907b3b976b71e7387e7f34efba687dbd3f4cf50b4a1733b5271f",
+    "harness/observability/README.md": "3cadf5f2227b3663b5c465d7938875c617610e20f6ee73a71ec139813a2a8a67",
+    "harness/observability/src/lib.rs": "af5b13310e349237298a0fda11acc47ef031c35e61f520bb5673739ff6022159",
+    "harness/observability/src/postgres.rs": "db6bc2c7bb4de2724c417f36d2cc2b3709add5773728a413fa4a6fb2919d1cbe",
+    "harness/observability/src/query.rs": "5e96be3ae997a6cba486730f7d9d30b5a0b193d66ae0c072d776eb08c87d92ed",
+    "harness/observability/src/sqlite.rs": "5b4759d2a632dab50cec145eae07b99044358743cc5a628ed332f76e14d9d84c",
+    "harness/observability/src/summary.rs": "51bf16e43f9cb687589c638adfa7192aab76178e11e9613e6bdd1e9df9bbcfc4",
+    "harness/observability/tests/queries.rs": "e1a59b105e7991b9da902008c92ec2b94d449a9d3b677770a29d486709a9247d",
+    "harness/server-reference/Cargo.toml": "5ee7b734b8d11a0ef30a52bc6c93917efbddb1314aa49b8dc6d96843e1dbaa4e",
+    "harness/server-reference/src/authorization.rs": "d9e53db393e9b57163309c77980d35ab818d85191d515b0ae3f416a349825815",
+    "harness/server-reference/src/http.rs": "2715a1d9a726cd05594ca6f13584949dd348732ca21a98592bb8a17ecf8cb5c8",
+    "harness/server-reference/src/lib.rs": "58dbbf599733a49c44b381da1377050dba174e44826010468d0bd0446f41edf8",
+    "harness/server-reference/src/recording_query.rs": "783b34b34209a2def573bdc4fe44944d89844f445be628569fb0b954c2d56641",
+    "harness/server-reference/src/service.rs": "40bf2177cf2416fd684c7dd829f30d5ca4832ed58a44a6fde854fce6ab30045b",
+    "harness/server-reference/tests/recording_queries.rs": "a63e9b785b1a45a98eb623e7f758875789f4b9ce832f5289aba25177cfe997bf",
+    "harness/store-postgres/src/db.rs": "e82d0cd9e79d1444e67b16317fcba1148d2e732455e3aa8e332b2f1bdcc08f36",
+    "harness/store-postgres/src/lib.rs": "0f8fefe412081232604e4eab4797279ab17bfee689ebef464a3274366af9197e",
+    "harness/store-postgres/src/run_query.rs": "14503b3117b2e4f0367e8a6fde019d9991f1cca8a8f10a67e34aa014b36867be",
+    "harness/tests/contracts/observability.json": "9b78794359b03697cf328af522c97dec53322d289f993913f3d34c99a25bb9af"
+  }
+}

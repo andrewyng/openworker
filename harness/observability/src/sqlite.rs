@@ -70,10 +70,38 @@ impl Sqlite {
             }
         }
         db.prepare("SELECT cursor,deployment,span_id,session_hash,ended_ms,data FROM ow_observation_steps LIMIT 0")?;
+        db.execute_batch("CREATE INDEX IF NOT EXISTS ow_observation_turn ON ow_observation_steps(deployment,session_hash,json_extract(data,'$.turn_hash'),cursor)")?;
         Ok(Self { db })
     }
 }
 impl Store for Sqlite {
+    fn timeline(&mut self, q: &crate::query::Query) -> Result<crate::query::Page> {
+        q.validate()?;
+        let tx = self.db.transaction()?;
+        let scopes = serde_json::to_string(&q.scopes)?;
+        let max:i64=tx.query_row("SELECT COALESCE(max(cursor),0) FROM ow_observation_steps WHERE deployment=?1 AND (session_hash,json_extract(data,'$.turn_hash')) IN(SELECT json_extract(value,'$.session_hash'),json_extract(value,'$.turn_hash') FROM json_each(?2))",params![q.deployment,scopes],|r|r.get(0))?;
+        let through = q.through.unwrap_or(max as u64);
+        let rows = {
+            let mut stmt=tx.prepare("SELECT cursor,data FROM ow_observation_steps WHERE deployment=?1 AND (session_hash,json_extract(data,'$.turn_hash')) IN(SELECT json_extract(value,'$.session_hash'),json_extract(value,'$.turn_hash') FROM json_each(?2)) AND cursor>?3 AND cursor<=?4 ORDER BY cursor LIMIT ?5")?;
+            let rows = stmt.query_map(
+                params![
+                    q.deployment,
+                    scopes,
+                    q.after as i64,
+                    through as i64,
+                    i64::from(q.limit) + 1
+                ],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )?;
+            rows.map(|r| {
+                let (c, s) = r?;
+                Ok((c, serde_json::from_str(&s)?))
+            })
+            .collect::<Result<Vec<_>>>()?
+        };
+        tx.commit()?;
+        crate::query::page(rows, through, q)
+    }
     fn put(&mut self, step: &Step) -> Result<Write> {
         step.validate()?;
         let value = serde_json::to_string(step)?;

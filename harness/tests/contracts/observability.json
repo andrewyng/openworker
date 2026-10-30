@@ -1,7 +1,15 @@
 {
   "version": 1,
   "scope": "Rust runtime metadata contract; consumable by desktop and service tests",
-  "three_calls": {"purposes": ["main", "auto_approver", "compaction"], "input": 300, "output": 60},
+  "three_calls": {
+    "purposes": [
+      "main",
+      "auto_approver",
+      "compaction"
+    ],
+    "input": 300,
+    "output": 60
+  },
   "rules": [
     "Each physical request owns one completed model.attempt record",
     "Usage snapshots replace, never add; model.requested has no token usage",
@@ -9,5 +17,18 @@
     "Failed or truncated requests retain reported usage without authorizing partial tools",
     "Paused/resumed segments use distinct spans of one logical turn and explicit links",
     "A missing completion after process loss is unknown, not zero cost"
-  ]
+  ],
+  "summary_overlap": {
+    "wall_elapsed_us": 1050000,
+    "model_accumulated_us": 50000,
+    "tool_accumulated_us": 40000,
+    "exclusive_observed_us": {
+      "model": 45000,
+      "tool": 35000,
+      "parallel": 5000,
+      "policy": 10000,
+      "approval_wait": 910000,
+      "other_active": 45000
+    }
+  }
 }

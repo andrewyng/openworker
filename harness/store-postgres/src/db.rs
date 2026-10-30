@@ -104,6 +104,8 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
         tx.batch_execute(include_str!("schema.sql"))?;
         tx.execute("INSERT INTO version VALUES(TRUE,5)", &[])?;
     }
+    // Optional query accelerators; explicit migration only, no state layout change.
+    tx.batch_execute("CREATE INDEX IF NOT EXISTS submissions_recent ON submissions(created DESC,session_id DESC,sequence DESC); CREATE INDEX IF NOT EXISTS submissions_session_recent ON submissions(session_id,created DESC,sequence DESC)")?;
     crate::artifacts::migrate(&mut tx)?;
     crate::auth::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;

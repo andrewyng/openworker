@@ -18,6 +18,9 @@ spec:
           args:
             - |
               export OW_PG_URL="$(cat /run/service/database-url)"
+              if [ -f /run/observability/database-url ]; then
+                export OW_OBSERVABILITY_URL="$(cat /run/observability/database-url)"
+              fi
               i=0
               until /bin/sh /opt/openworker/entrypoint.sh bootstrap; do
                 i=$((i+1)); [ "$i" -lt 20 ] || exit 1; sleep 2
@@ -28,6 +31,9 @@ spec:
             - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
             - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
             - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            {{- if .Values.secrets.observability }}
+            - {name: observability, mountPath: /run/observability, readOnly: true}
+            {{- end }}
             - {name: bootstrap, mountPath: /bootstrap/admin-token, subPath: admin-token, readOnly: true}
             - {name: bootstrap, mountPath: /bootstrap/probe.json, subPath: probe.json, readOnly: true}
             - {name: bootstrap, mountPath: /bootstrap/probe, subPath: probe, readOnly: true}
@@ -40,4 +46,8 @@ spec:
               - secret: {name: {{ .Values.secrets.database }}, items: [{key: database-url, path: database-url}, {key: pg-ca.crt, path: pg-ca.crt}]}
         - name: bootstrap
           secret: {secretName: {{ .Values.secrets.bootstrap }}, defaultMode: 0440}
+        {{- if .Values.secrets.observability }}
+        - name: observability
+          secret: {secretName: {{ .Values.secrets.observability }}, defaultMode: 0440}
+        {{- end }}
 {{- end }}

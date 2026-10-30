@@ -135,6 +135,7 @@ impl Postgres {
               CREATE INDEX observation_expiry ON observation_steps(deployment,ended_ms,cursor);
               INSERT INTO observation_version VALUES(TRUE,1);")?;
         }
+        tx.batch_execute("CREATE INDEX IF NOT EXISTS observation_turn ON observation_steps(deployment,session_hash,(data->>'turn_hash'),cursor)")?;
         tx.commit()?;
         Ok(())
     }
@@ -155,6 +156,22 @@ impl Postgres {
     }
 }
 impl Store for Postgres {
+    fn timeline(&mut self, q: &crate::query::Query) -> Result<crate::query::Page> {
+        q.validate()?;
+        let sessions: Vec<_> = q.scopes.iter().map(|s| s.session_hash.as_str()).collect();
+        let turns: Vec<_> = q.scopes.iter().map(|s| s.turn_hash.as_str()).collect();
+        let mut tx = self
+            .client
+            .build_transaction()
+            .isolation_level(::postgres::IsolationLevel::RepeatableRead)
+            .read_only(true)
+            .start()?;
+        let max:i64=tx.query_one("SELECT COALESCE(max(cursor),0) FROM observation_steps WHERE deployment=$1 AND (session_hash,data->>'turn_hash') IN(SELECT * FROM unnest($2::text[],$3::text[]))",&[&q.deployment,&sessions,&turns])?.get(0);
+        let through = q.through.unwrap_or(max as u64);
+        let rows=tx.query("SELECT cursor,data FROM observation_steps WHERE deployment=$1 AND (session_hash,data->>'turn_hash') IN(SELECT * FROM unnest($2::text[],$3::text[])) AND cursor>$4 AND cursor<=$5 ORDER BY cursor LIMIT $6",&[&q.deployment,&sessions,&turns,&(q.after as i64),&(through as i64),&(i64::from(q.limit)+1)])?.into_iter().map(|r|Ok((r.get(0),serde_json::from_value(r.get(1))?))).collect::<Result<Vec<_>>>()?;
+        tx.commit()?;
+        crate::query::page(rows, through, q)
+    }
     fn put(&mut self, step: &Step) -> Result<Write> {
         step.validate()?;
         let value = serde_json::to_value(step)?;

@@ -214,3 +214,115 @@ Next is M3: execution-authorized run search, bounded timeline queries and groupe
 rollups, preserving unknown/incomplete coverage and distinguishing elapsed from
 accumulated/exclusive duration. Live management UI wiring remains M4. SQL batching
 remains deferred until measurements justify it.
+
+## M3 — started, 29 October 2026
+
+User authorized execution-authorized run search, timelines and grouped summaries,
+local qualification and push after verification. Baseline `3e61bd4d`; clean tree.
+No AWS provisioning, paid model calls, Python changes or live UI wiring.
+
+Implementation order and query contract:
+
+1. Execution-store run directory: a run is one canonical session/turn submission.
+   Search names/IDs literally, filter agent/time, recent-first keyset pages with
+   bounded limits. Apply current role/owned/explicit-session scopes in SQL before
+   LIMIT; return metadata only, never prompts or transcript snippets.
+2. Adapter-neutral bounded recording pages, session/turn filters and a high-water
+   cursor. Read queries use independent read-only PostgreSQL transactions. HTTP
+   authorizes the canonical run before opening recording storage and rechecks
+   current authorization before returning data. No cross-database authorization
+   trust, cached grants or user-selectable deployment/schema.
+3. Versioned rebuildable projection over at most 4,096 recorded steps. Timeline
+   pages default to 100 (max 200). Summary is a fresh bounded projection of raw
+   immutable records, not an unbounded materialized cache. Explicitly report scan
+   truncation, absent usage, unmatched open requests and missing segment coverage.
+   Retention/late commits mean a high-water cursor is not a repeatable snapshot
+   across HTTP requests; never advertise lossless completeness.
+4. Group model usage by model/purpose and tools by name; retain known/unknown
+   sample counts. Accumulated duration and interval union differ. Partition the
+   observed window into exclusive model/tool/policy/wait/other/parallel time;
+   policy and active-segment spans are containers, so nested reviewer time is
+   not added again. Unobserved gaps are not model or tool work. Wall elapsed and
+   observed partitions remain separate; missing evidence stays unknown.
+5. Add read-only REST endpoints and bounded reader concurrency, then opt-in Helm
+   recording configuration plus independently mounted database credentials/CA.
+   Test storage parity, overlapping durations, retries, incomplete coverage,
+   authorization-before-recording, scopes/revocation, pagination, separate DB
+   outage, packaging defaults and installation handoff locally. Keep caches and
+   SQL batching deferred until measured need; management UI remains M4.
+
+### M3 implementation/checkpoint
+
+Added the execution-owned run directory with literal metadata search, scoped SQL
+pagination, agent/time filters and query-bound cursors. Recording adapters now
+support bounded, validated session/turn reads, a high-water cursor and optional
+query indexes. A fresh projection v1 reconciles reported usage, model/tool groups,
+interval unions and exclusive phase partitions; it exposes unknowns, pending/orphan
+requests and truncated coverage instead of inventing totals.
+
+HTTP reads authorize before opening recording storage and recheck after it.
+Responses are non-cacheable. Four independent read-only jobs per API preserve
+permits through client cancellation. Grouped reads cover an explicitly bounded
+page of at most 25 authorized runs with one shared 4,096-step budget, not an
+unbounded deployment-wide claim. Helm opts into recording and can mount a separate
+credential/CA without exposing either to the UI or proxy.
+
+Host qualification passed SQLite/PostgreSQL query parity and the two-node HTTP
+matrix: owned/explicit scopes, literal search, equal-time pagination, cursor
+binding, absent/disabled/blocked recording, bounded reader concurrency and
+revocation during a blocked read. Fixture setup was corrected to seed sessions
+before issuing session-scoped credentials, reload revisions after checkpoints,
+and keep synchronous PostgreSQL fixture connections outside Tokio runtime
+threads. Production read connections already use blocking jobs.
+
+Native Linux, packaged entrypoint migration and final regression/evidence checks
+completed successfully; see the qualification results below.
+
+
+### M3 completed — local qualification, 29 October 2026
+
+* Added four read endpoints: authorized run search, per-run timeline, per-run
+  summary and grouped summaries of a selected run page. Authorization and run
+  existence come from execution storage before recording access, and permissions
+  are rechecked after the recording read. No recording credential grants session
+  access. Responses are non-cacheable, including error responses.
+* Projection v1 distinguishes accumulated work, interval unions, exclusive phases
+  and canonical wall elapsed. Proven descendant reviewer intervals are removed
+  from their policy container; unrelated overlapping policy work remains parallel.
+  Missing/cyclic parent relationships are flagged. Known zero, unknown counters,
+  pending human waits, overflow, truncation and missing records remain distinct.
+* All seven qualification suites passed against two independent local PostgreSQL
+  databases: storage contracts, recording outage isolation, PostgreSQL query parity,
+  two-node authorized HTTP reads, Linux worker recovery, Linux authorized HTTP
+  reads and the actual packaged entrypoint's two-database migration. The worker
+  suite passed 14 tests; its opt-in load matrix and retained-baseline mixed-version
+  test were excluded explicitly. Fault-injection diagnostics are expected.
+* The Linux release fixture passed 225 tests (13 environment-gated tests ignored
+  there; applicable database cases ran separately). Host recording/server/OTLP
+  regressions passed 43 tests (10 environment-gated cases ignored there). Eight
+  deterministic query/projection tests passed, covering golden overlap arithmetic,
+  bounds, group limits, corrupt-row isolation, unknowns and parent hierarchy.
+  Seven Helm rendering tests passed. All workspace features/targets compile
+  offline/locked; Rust formatting, JavaScript/shell syntax and diff checks pass.
+* The small Linux serial HTTP probe used 20 requests scanning four records each:
+  p50 7.208 ms / p95 8.401 ms, including a fresh recording connection per request.
+  This checks the read path, not production capacity or sizing. Keep batching and
+  materialized caches deferred until representative measurements justify them.
+* Helm recording remains opt-in. The packaged installer routed execution and
+  recording schemas to their independently mounted database URLs. Separate TLS
+  credential/CA wiring was rendered, but a live recording TLS server or Kubernetes
+  rollout was not newly qualified in this milestone.
+
+All owned qualification containers and generated password/connection/config files
+were removed; unrelated containers and Kubernetes resources were untouched. No AWS
+resources, provider keys or paid model calls were used. Build caches and the pinned
+qualification image remain for reproducible reruns.
+
+[Sanitized M3 evidence and source hashes](evidence/observability-m3-local-20261029.json).
+[Read API guide](OBSERVABILITY-QUERIES.md).
+
+Next is M4: wire the searchable run picker, grouped summaries and timelines into
+the management UI using these APIs. Recording remains best effort, not lossless
+billing/audit. Historical records are not backfilled; high-water cursors do not
+freeze late commits or retention across HTTP requests. Windows, Python desktop,
+cloud sizing and live recording TLS remain outside this qualification.

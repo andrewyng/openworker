@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::time::UNIX_EPOCH;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+pub mod query;
 pub mod sqlite;
+pub mod summary;
 mod writer;
 pub use writer::{Controller, Recorder, RecordingSink, Snapshot, Statistics};
 
@@ -326,6 +328,10 @@ pub struct StoredStep {
 /// Trusted host interface only. A service must authorize the canonical session
 /// before querying; the observation database is never an authorization authority.
 pub trait Store: Send + 'static {
+    /// Read-only bounded session/turn projection; no authorization authority.
+    fn timeline(&mut self, _query: &query::Query) -> Result<query::Page> {
+        anyhow::bail!("Recording queries unsupported by this adapter")
+    }
     fn put(&mut self, step: &Step) -> Result<Write>;
     fn get(&mut self, deployment: &str, span_id: &str) -> Result<Option<Step>>;
     fn list(

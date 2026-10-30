@@ -1,7 +1,8 @@
 # Harness observability
 
-Status: M1/M2 recording and accounting implemented and locally qualified,
-29 October 2026; authorized queries and management UI are later milestones.
+Status: M1–M3 recording, accounting and authorized queries implemented and locally
+qualified, 29 October 2026. Live management UI integration remains M4.
+[Query API guide](OBSERVABILITY-QUERIES.md).
 Companion desktop design:
 `rohitprasad15/ocw-context`, branch `docs/observability-spec`, commit `bd4dfa0`.
 The desktop spec remains the product reference; this document defines the Rust
@@ -229,3 +230,45 @@ See [implementation plan](OBSERVABILITY-PLAN.md) and
 SQLite files and exact-owned Docker PostgreSQL fixtures, including two distinct
 databases and an observability outage while execution SQL stays available. No AWS
 resources or paid model calls are required.
+
+## M3 read API and projections
+
+A run is a canonical session/turn submission, including queued work. Run search
+reads execution metadata and applies session authorization inside SQL before
+pagination. It never searches prompts or recording payloads. Search and result
+availability therefore remain meaningful when observability is disabled or down.
+
+Read endpoints (also available under the reference API without `/v1`):
+
+* `GET /v1/observability/runs`: `q`, `agent`, `from_ms`, `to_ms`, `limit`
+  (1–100, default 25), opaque `after`. Literal name/session/turn/submission search;
+  newest submissions first. Cursor binds query/service/credential context, while
+  authorization is always re-evaluated independently.
+* `GET /v1/sessions/{sid}/observability/{turn}/timeline`: `after` recording cursor,
+  optional `through` high-water cursor, `limit` (1–200, default 100). Immutable,
+  metadata-only recorded steps. No caller-controlled deployment or session hash.
+* `GET /v1/observability/summary`: the same search filters, at most 25 selected
+  runs with one shared 4,096-step budget; selection truncation and missing
+  recordings remain explicit. This is not an unbounded deployment-wide total.
+* `GET /v1/sessions/{sid}/observability/{turn}/summary`: optional `through` cursor.
+  Projection v1 rebuilt from at most 4,096 raw steps, with explicit truncation and
+  coverage. No persistent cache or stale authorization decision is involved.
+
+Canonical run access is checked before any recording connection is opened and
+again before returning recording data. Independent recording reads run on blocking
+threads behind four API-instance permits; bounded statements, rows and response
+shape prevent an unbounded scan. Recording outage returns a recording-specific
+503, never an execution-store fallback. These endpoints launch no agent work.
+
+Per-request PostgreSQL reads are repeatable within one read-only transaction.
+A high-water cursor bounds later pages but does not freeze commits or retention
+between HTTP requests. Summary values are diagnostics over available records:
+unknown usage, pending/orphaned requests, missing segments, truncation and clock
+anomalies remain explicit. A successful scan is not proof of complete billing.
+A versioned fresh projection can be rebuilt after late writes/pruning; materialized
+rollups can be added later if query measurements justify their invalidation cost.
+
+The full response/counting contract and examples are in the
+[query guide](OBSERVABILITY-QUERIES.md). Phase partitions cover observed intervals,
+not an inferred complete process history. SQL indexes are added only by explicit
+migration; materialized summary caching remains deferred pending query measurements.

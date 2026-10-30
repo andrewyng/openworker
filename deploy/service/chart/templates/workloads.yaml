@@ -70,6 +70,9 @@ spec:
             - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
             - {name: state, mountPath: /state}
             - {name: tmp, mountPath: /tmp}
+            {{- if $.Values.secrets.observability }}
+            - {name: observability, mountPath: /run/observability, readOnly: true}
+            {{- end }}
             {{- if or (eq $role "worker") (eq $role "controller") }}
             - {name: gateway, mountPath: /openshell, readOnly: true}
             {{- end }}
@@ -100,6 +103,10 @@ spec:
               - secret: {name: {{ $.Values.secrets.database }}, items: [{key: database-url, path: database-url}, {key: pg-ca.crt, path: pg-ca.crt}]}
         - {name: state, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
+        {{- if $.Values.secrets.observability }}
+        - name: observability
+          secret: {secretName: {{ $.Values.secrets.observability }}, defaultMode: 0440}
+        {{- end }}
         {{- if or (eq $role "worker") (eq $role "controller") }}
         - name: gateway
           secret: {secretName: {{ $.Values.secrets.openshell }}, defaultMode: 0440}

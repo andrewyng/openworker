@@ -122,3 +122,31 @@ browser sign-in again but do not interrupt harness sessions.
 
 Build/run details and qualification limits are in
 [the management UI guide](../../../harness/service-ui/README.md).
+
+### Optional agent recordings
+
+Recording remains disabled unless `config.observability` is present. For the same
+PostgreSQL target with an independent connection and schema:
+
+```yaml
+config:
+  observability:
+    schema: ow_observability
+    queue_capacity: 1024
+    retention_days: 30
+```
+
+To choose a separate PostgreSQL database/server/credential, additionally set
+`secrets.observability: your-recording-database-secret`. That Secret contains
+`database-url` and `ca.crt`. The chart supplies `database_env:
+OW_OBSERVABILITY_URL` and `/run/observability/ca.crt`; the entrypoint reads the
+mounted credential without placing it in the pod environment specification or
+command arguments. Optional `config.observability.database.timeout_ms` controls
+its bounded statement/connection timeout. Verified TLS is required by this chart.
+
+The mount is independent of execution/model/bootstrap credentials and is supplied
+to harness roles and the migration/bootstrap job. It is never mounted into the
+management UI or TLS proxy. Bootstrap explicitly prepares both schemas before
+normal startup; separate target failures do not silently select execution storage.
+The APIs in [the query guide](../../../docs/harness/OBSERVABILITY-QUERIES.md) use
+current service-token/session scope. Live management UI charts remain separate.

@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct App {
+    pub(crate) recording_readers: Arc<Semaphore>,
     recovery_read_only: bool,
     pub(crate) store: PostgresStore,
     pub(crate) runtime: Arc<Runtime>,
@@ -52,6 +53,7 @@ impl App {
             }
         }
         Ok(Self {
+            recording_readers: Arc::new(Semaphore::new(4)),
             config: Arc::new(config.clone()),
             service: config.service.clone(),
             recovery_read_only: config.recovery_read_only,
@@ -67,6 +69,8 @@ impl App {
     pub fn router(self) -> Router {
         Router::new()
             .merge(crate::service::router())
+            .merge(crate::recording_query::router(""))
+            .merge(crate::recording_query::router("/v1"))
             .route(
                 "/healthz",
                 get(|| async { Json(json!({"status":"up","reference":true})) }),
@@ -120,6 +124,8 @@ impl App {
     }
 }
 async fn authenticate(State(app): State<App>, request: Request, next: Next) -> Response {
+    let recording_route =
+        crate::recording_query::authority(request.method().as_str(), request.uri().path());
     let span = app
         .runtime
         .telemetry
@@ -146,6 +152,12 @@ async fn authenticate(State(app): State<App>, request: Request, next: Next) -> R
         result.headers_mut().insert(
             "x-request-id",
             openworker_runtime::id("req").parse().unwrap(),
+        );
+    }
+    if recording_route {
+        result.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
         );
     }
     span.finish(if result.status().is_success() {
@@ -257,6 +269,15 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some(error) = self.0.downcast_ref::<crate::recording_query::Error>() {
+            use crate::recording_query::Error as E;
+            let (status, code) = match error {
+                E::Invalid => (StatusCode::BAD_REQUEST, "invalid_recording_query"),
+                E::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "recording_unavailable"),
+                E::Busy => (StatusCode::TOO_MANY_REQUESTS, "recording_query_busy"),
+            };
+            return (status, Json(json!({"error":code}))).into_response();
+        }
         if let Some(error) = self
             .0
             .downcast_ref::<openworker_store_postgres::teams::Error>()

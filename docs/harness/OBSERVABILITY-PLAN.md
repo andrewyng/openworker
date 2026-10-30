@@ -47,6 +47,9 @@ features, infer unavailable counters or promise lossless billing.
 
 ## M3 — authorized queries and rollups
 
+Implemented and locally qualified. [Query guide](OBSERVABILITY-QUERIES.md).
+[Evidence](evidence/observability-m3-local-20261029.json).
+
 1. Read-only API checks execution-store principal/namespace/session access first.
 2. Search recent runs with bounded cursor pages; filter by agent, time, name/ID.
 3. Run timelines and grouped duration/call/usage queries. Version/rebuild rollups;

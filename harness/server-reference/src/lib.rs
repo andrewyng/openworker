@@ -13,6 +13,7 @@ pub mod management;
 pub mod operations;
 pub mod readiness;
 pub mod recording;
+mod recording_query;
 pub mod service;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

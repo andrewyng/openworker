@@ -8,6 +8,7 @@ secrets:
   bootstrap: ow-service-bootstrap
   probe: ow-service-probe
   model: ""
+  observability: "" # optional separate recording database: database-url + ca.crt
 apiReplicas: 1
 worker:
   replicas: 1

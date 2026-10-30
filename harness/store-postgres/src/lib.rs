@@ -8,6 +8,7 @@ mod environments;
 mod ingress;
 mod operations;
 pub mod pools;
+pub mod run_query;
 pub use operations::OperationalSnapshot;
 mod sdk_host;
 mod service;

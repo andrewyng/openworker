@@ -7,14 +7,19 @@ COPY harness/ ./
 COPY deploy/service/guard/ /src/deploy/service/guard/
 COPY deploy/service/platform/ /src/deploy/service/platform/
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
-    cargo test --locked --release -p openworker-runtime -p openworker-telemetry -p openworker-observability --all-features --tests -- --test-threads=2
+    cargo test --locked --release -p openworker-runtime -p openworker-telemetry -p openworker-observability -p openworker-server-reference --all-features --tests -- --test-threads=2
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
-    cargo test --locked --release -p openworker-store-postgres -p openworker-telemetry --all-features --test worker_recovery --no-run --message-format=json > /tmp/qualification-artifacts.jsonl && \
+    cargo test --locked --release -p openworker-store-postgres -p openworker-telemetry -p openworker-server-reference --all-features --test worker_recovery --test recording_queries --no-run --message-format=json > /tmp/qualification-artifacts.jsonl && \
     mkdir /out && cp target/release/pg-worker-fixture /out/ && \
     fixture_exe="$(sed -n '/"name":"worker_recovery"/s/.*"executable":"\([^" ]*\)".*/\1/p' /tmp/qualification-artifacts.jsonl)" && \
-    test -x "$fixture_exe" && cp "$fixture_exe" /out/worker-recovery
+    test -x "$fixture_exe" && cp "$fixture_exe" /out/worker-recovery && \
+    query_exe="$(sed -n '/"name":"recording_queries"/s/.*"executable":"\([^" ]*\)".*/\1/p' /tmp/qualification-artifacts.jsonl)" && \
+    test -x "$query_exe" && cp "$query_exe" /out/recording-queries && \
+    cp target/release/openworker-server-reference /out/
 FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663
 COPY --from=test /out/ /out/
 # Rust's test binary embeds CARGO_BIN_EXE as this absolute path.
 COPY --from=test /out/pg-worker-fixture /src/harness/target/release/pg-worker-fixture
+COPY --from=test /out/openworker-server-reference /opt/openworker/openworker-server-reference
+COPY deploy/service/entrypoint.sh /opt/openworker/entrypoint.sh
 ENTRYPOINT ["/out/worker-recovery"]

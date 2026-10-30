@@ -37,6 +37,21 @@ function deployment(out, role) {
       (s) => s.includes("kind: Deployment") && s.includes(`name: test-${role}`),
     );
 }
+test("recordings stay opt-in and a separate connection uses an independently mounted secret",async()=>{
+  const off=await render({});assert.doesNotMatch(off,/mountPath: \/run\/observability|"database_env": "OW_OBSERVABILITY_URL"/);
+  const same=await render({config:{...base.config,schema:"ow_execution",observability:{}}});
+  assert.match(same,/ow_observability/);assert.doesNotMatch(same,/mountPath: \/run\/observability/);
+  const separate=await render({config:{...base.config,schema:"ow_execution",observability:{retention_days:14}},secrets:{observability:"recording-db"}});
+  assert.match(separate,/"database_env": "OW_OBSERVABILITY_URL"/);assert.match(separate,/"database_ca": "\/run\/observability\/ca.crt"/);
+  for(const role of ["api","worker","controller","platform"]){const d=deployment(separate,role);assert.match(d,/mountPath: \/run\/observability, readOnly: true/);assert.match(d,/secretName: recording-db/);}
+  const bootstrap=separate.split("\n---").find(s=>s.includes("kind: Job")&&s.includes("name: test-bootstrap"));assert.match(bootstrap,/mountPath: \/run\/observability/);
+  for(const values of [
+    {secrets:{observability:"recording-db"}},
+    {config:{...base.config,schema:"ow_same",observability:{schema:"ow_same"}}},
+    {config:{...base.config,observability:{database:{database_env:"UNMOUNTED"}}}},
+    {config:{...base.config,observability:{database:{database_loopback_plaintext:true}}},secrets:{observability:"db"}}
+  ])await assert.rejects(()=>render(values));
+});
 test("service roles separate gateway, model, bootstrap and Kubernetes authority", async () => {
   const out = await render({ secrets: { model: "model-key" } });
   assert.equal((out.match(/kind: Deployment/g) || []).length, 4);

@@ -113,3 +113,18 @@ container and generated password. Other containers, clouds and model keys are
 untouched. Retention, privacy, duplicate/conflict, queue pressure, bounded shutdown
 and stalled-exporter isolation are covered separately. The fixture integration
 tests are explicitly ignored outside that runner.
+
+## Authorized queries (M3)
+
+The reference service exposes run search, per-turn timeline/summary and bounded
+multi-run summaries. See the [query guide](../../docs/harness/OBSERVABILITY-QUERIES.md).
+Search uses execution-store authorization before pagination. Recording reads
+recheck canonical permission after a separate read-only SQL transaction; a
+recording outage never becomes an authorization fallback.
+
+Trusted embedded hosts can call `Store::timeline` with a deployment and explicit
+session/turn-hash scopes, then `summary::build`. Both SQLite and PostgreSQL satisfy
+that bounded contract. This low-level interface has no authorization authority;
+an application must authorize the canonical sessions itself. Projection v1 is
+rebuilt from at most 4,096 raw rows and reports incomplete coverage explicitly.
+There is no persistent summary cache or mandatory additional database.

@@ -4,6 +4,19 @@
 {{- if lt (int .Values.terminationGracePeriodSeconds) (int (add .Values.worker.drainSeconds 60)) -}}{{ fail "termination grace must cover drain + 45s cleanup + 15s margin" }}{{- end -}}
 {{- if not .Values.config.service -}}{{ fail "config.service is required" }}{{- end -}}
 {{- $_ := set .Values.config.service "legacy_compatibility" false -}}
+{{- if hasKey .Values.config "observability" -}}
+{{- $obs := .Values.config.observability -}}
+{{- if not (kindIs "map" $obs) -}}{{ fail "config.observability must be an object" }}{{- end -}}
+{{- if not (hasKey $obs "schema") -}}{{- $_ := set $obs "schema" "ow_observability" -}}{{- end -}}
+{{- if eq $obs.schema .Values.config.schema -}}{{ fail "recording schema must differ from execution schema" }}{{- end -}}
+{{- if .Values.secrets.observability -}}
+{{- $db := default (dict) $obs.database -}}
+{{- if $db.database_loopback_plaintext -}}{{ fail "managed recording database requires verified TLS" }}{{- end -}}
+{{- $_ := set $db "database_env" "OW_OBSERVABILITY_URL" -}}
+{{- $_ := set $db "database_ca" "/run/observability/ca.crt" -}}
+{{- $_ := set $obs "database" $db -}}
+{{- else if hasKey $obs "database" -}}{{ fail "secrets.observability is required for a recording database override" }}{{- end -}}
+{{- else if .Values.secrets.observability -}}{{ fail "enable config.observability before providing its database secret" }}{{- end -}}
 {{- $platform := dict "endpoint" "https://kubernetes.default.svc" "caFile" "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt" "tokenFile" "/var/run/secrets/kubernetes.io/serviceaccount/token" "pools" (list (dict "id" "default" "namespace" .Release.Namespace "deployment" (printf "%s-worker" .Release.Name) "ownership" .Values.worker.ownership "maxReplicas" .Values.worker.maxReplicas)) -}}
 apiVersion: v1
 kind: ConfigMap

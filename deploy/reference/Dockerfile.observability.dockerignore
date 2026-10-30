@@ -14,3 +14,5 @@ harness/**/*.db
 !deploy/service/guard/**
 !deploy/service/platform/
 !deploy/service/platform/**
+
+!deploy/service/entrypoint.sh
