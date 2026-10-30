@@ -20,7 +20,8 @@ node deploy/reference/langfuse-kubernetes-local.mjs status \
   .ow-service-observability-live/langfuse
 
 # Reconcile the journaled, completed UI run. This never reruns the agent/tools.
-node deploy/reference/qualify-live-observability.mjs .ow-service-observability-live
+OW_SERVICE_TOKEN_FILE=.ow-service-observability-live/private/viewer-token \
+  node deploy/reference/qualify-live-observability.mjs .ow-service-observability-live
 ```
 
 Only run one view supervisor at a time. It starts the local management UI and
@@ -39,12 +40,22 @@ credentials, PVCs or the completed agent's sandbox.
 
 Credentials are deliberately absent from this document. The generated Langfuse
 email/password are in `.ow-service-observability-live/langfuse/private/credentials.json`.
-The service's existing administrator token is in `service/input/admin-token`
-under the same state root, with its **original one-hour expiry**, not a renewed
-demo lifetime. The management UI does not extend service authorization. After
-expiry an authorized administrator must supply another valid scoped credential;
-stopping/restarting the view supervisor does not renew one. Never copy private
-state or raw pod logs into commits or handoffs.
+The approved service viewer token is in
+`.ow-service-observability-live/private/viewer-token` (mode 0600, gitignored).
+Paste that file's contents into **Service token** when signing in to the management
+UI. It has the `observer` role, is restricted to the one demo session above, and
+expires **October 31, 2026 at 05:55 Pacific / 12:55 UTC**. The UI is already signed
+in with it. Browser sessions may expire earlier; sign in again with the same token
+while that token remains valid.
+
+The original administrator token in `service/input/admin-token` is expired and
+was not renewed. A private, audited 120-second recovery credential issued the
+viewer after explicit user approval. The service refused immediate self-revocation
+because it protects the last administrative credential; its short expiry was then
+confirmed against database time. Its temporary token/config files were removed.
+The management UI does not extend service authorization, and restarting the view
+supervisor does not renew credentials. Never copy private state or raw pod logs
+into commits or handoffs.
 
 For reconciliation after an authorized credential rotation, set
 `OW_SERVICE_TOKEN_FILE` to the replacement credential file. An observer scoped to

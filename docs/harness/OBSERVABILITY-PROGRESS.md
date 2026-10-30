@@ -638,3 +638,25 @@ also rejected a narrower one-day session-only observer credential because explic
 consent was required to persist new access. That request is pending with the user;
 no new service credential was created. This affects later management login, not
 the completed run, recorded evidence, Langfuse login or persistent storage.
+
+### Restricted viewer — approved, created and verified
+
+The user explicitly approved the one-day, session-only read-only login. Created
+`local-observability-viewer` with role `observer`, no environment grants, and only
+session `s_81467909b63247ac992f8c5d0abd6a8e` in its scope. It expires
+`2026-10-31T12:55:22Z` (05:55 Pacific). The token/spec/receipt remain in the ignored
+private state, with mode 0600; no credential value enters the repository.
+
+The bootstrap administrator had expired before approval arrived. Used documented
+private infrastructure recovery with a **120-second** TTL to issue the observer.
+Immediate recovery self-revocation was rejected as `credential_conflict` by the
+last-administrator guard. No second administrator was created to work around that
+guard. Confirmed the recovery credential expired against database time at
+`2026-10-30T12:57:23Z`; its temporary token/config files were removed.
+
+Verified observer identity/scope/expiry through `/v1/auth/me`, successful authorized
+run-summary reads, and **403** for administrative credential listing. The full
+22-record source/Langfuse reconciliation also passes using the observer token.
+Signed the management UI in with it and visually confirmed the same completed run,
+10,782-token usage and viewer identity. Saved `management-viewer.png`; updated the
+access guide with the private token location and expiry. No harness code changed.

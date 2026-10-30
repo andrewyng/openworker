@@ -76,7 +76,8 @@
   "screenshots": [
     "management-usage.png",
     "langfuse.png",
-    "management-timeline.png"
+    "management-timeline.png",
+    "management-viewer.png"
   ],
   "fileSha256": "2631317abf7b76b91e3dbd34e0b6cd47b3bcdeb370de261c24416530253e4d11",
   "sourceHashes": {
@@ -88,5 +89,30 @@
     "passed": true,
     "retainsCredentials": true,
     "retainsPVCs": true
+  },
+  "viewer": {
+    "principal": "local-observability-viewer",
+    "role": "observer",
+    "scope": {
+      "kind": "sessions",
+      "ids": [
+        "s_81467909b63247ac992f8c5d0abd6a8e"
+      ]
+    },
+    "expiresAt": "2026-10-31T12:55:22.000Z",
+    "verified": {
+      "identity": true,
+      "authorizedSummary": true,
+      "administrativeCredentialListStatus": 403,
+      "fullSourceVendorReconciliation": true,
+      "ui": true
+    },
+    "recovery": {
+      "ttlSeconds": 120,
+      "immediateSelfRevocation": "refused by last-administrator guard",
+      "expiredAt": "2026-10-30T12:57:23Z",
+      "expiryVerifiedAgainstDatabaseClock": true,
+      "temporaryFilesRemoved": true
+    }
   }
 }
