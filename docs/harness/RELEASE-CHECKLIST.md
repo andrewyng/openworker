@@ -142,6 +142,22 @@ unchanged from the previous integration checkpoint.
 See the [lifecycle guide](OWS-GCP-LIFECYCLE.md), [progress ledger](OWS-GCP-TRIAL-PLAN.md)
 and [sanitized evidence](evidence/gcp-lifecycle-cleanup-local-20261030.json).
 
+## GCP control-artifact installation — October 30, 2026
+
+The verified installation milestone adds private locked journals, read-only resolved
+preflight, loss-safe generation-pinned source/control/checkpoint uploads, actual
+receipt-based cleanup packages and existing job/heartbeat verification. **115 CLI
+tests pass**; both control graphs validate with pinned Terraform/Google schemas.
+No GCP Clippy diagnostics. Runtime/Rust SDK/TypeScript SDK sources are unchanged.
+
+This is not a live GCP deployment qualification. Foundation/job Terraform apply,
+scoped effective authority, fresh cost/prior-spend evidence, private installer
+access and OpenShell/live-cleanup qualification remain outstanding. No new cloud
+mutation, IAM grant, API enablement or paid resource in this milestone.
+
+See [installation guide](OWS-GCP-INSTALLATION.md), [ledger](OWS-GCP-INSTALLATION-PLAN.md)
+and [evidence](evidence/gcp-installation-local-20261030.json).
+
 ## Gates before announcement
 
 - Several days of Arcade/partner dogfooding, including real provider streaming,

@@ -964,3 +964,175 @@ fn recovery_preflight_pins_journal_account_uids_and_refuses_replacements() {
         .iter()
         .any(|r| r["name"] == "identity_executor" && r["status"] == "blocked"));
 }
+
+#[test]
+fn installation_prepare_and_status_remain_offline_and_bind_original_plan() {
+    let f = Fixture::ready();
+    let r = f.infrastructure(&graph_input(), "install-graph");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let graph = f.home.path().join("install-graph");
+    let lifecycle = f.home.path().join("install-lifecycle");
+    let state = f.home.path().join("installation");
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "lifecycle",
+        "prepare",
+        "--plan",
+        graph.to_str().unwrap(),
+        "--out",
+        lifecycle.to_str().unwrap(),
+    ]);
+    assert!(r.status.success());
+    let p: Value =
+        serde_json::from_slice(&fs::read(graph.join("deployment-plan.json")).unwrap()).unwrap();
+    let id = p["deploymentId"].as_str().unwrap();
+    let image = format!(
+        "us-central1-docker.pkg.dev/my-gcp-project/ow-{}-control-images/ows@sha256:{}",
+        &id[4..16],
+        "a".repeat(64)
+    );
+    let r = f.call(&[
+        "--config",
+        "/not-a-service-config",
+        "deploy",
+        "gcp",
+        "installation",
+        "prepare",
+        "--state",
+        lifecycle.to_str().unwrap(),
+        "--guard-image",
+        &image,
+        "--out",
+        state.to_str().unwrap(),
+    ]);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let result: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(result["cloudMutations"], 0);
+    assert_eq!(result["applyReady"], false);
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "installation",
+        "status",
+        "--state",
+        state.to_str().unwrap(),
+    ]);
+    assert!(r.status.success());
+    assert_eq!(
+        fs::metadata(&state).unwrap().permissions().mode() & 0o077,
+        0
+    );
+    let mut journal: Value =
+        serde_json::from_slice(&fs::read(state.join("installation.json")).unwrap()).unwrap();
+    journal["scope"]["guardImage"] = "other-repo/image:latest".into();
+    fs::write(
+        state.join("installation.json"),
+        serde_json::to_vec(&journal).unwrap(),
+    )
+    .unwrap();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "installation",
+            "status",
+            "--state",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+}
+
+#[test]
+fn installation_rejects_unpinned_image_and_never_uses_cloud_for_invalid_acceptance() {
+    let f = Fixture::ready();
+    assert!(f
+        .infrastructure(&graph_input(), "install-graph")
+        .status
+        .success());
+    let graph = f.home.path().join("install-graph");
+    let lifecycle = f.home.path().join("install-lifecycle");
+    let state = f.home.path().join("installation");
+    assert!(f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            graph.to_str().unwrap(),
+            "--out",
+            lifecycle.to_str().unwrap()
+        ])
+        .status
+        .success());
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "installation",
+        "prepare",
+        "--state",
+        lifecycle.to_str().unwrap(),
+        "--guard-image",
+        "example/cleanup:latest",
+        "--out",
+        state.to_str().unwrap(),
+    ]);
+    assert!(!r.status.success());
+    assert!(!state.exists());
+    let p: Value =
+        serde_json::from_slice(&fs::read(graph.join("deployment-plan.json")).unwrap()).unwrap();
+    let id = p["deploymentId"].as_str().unwrap();
+    let image = format!(
+        "us-central1-docker.pkg.dev/my-gcp-project/ow-{}-control-images/ows@sha256:{}",
+        &id[4..16],
+        "a".repeat(64)
+    );
+    assert!(f
+        .call(&[
+            "deploy",
+            "gcp",
+            "installation",
+            "prepare",
+            "--state",
+            lifecycle.to_str().unwrap(),
+            "--guard-image",
+            &image,
+            "--out",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+    // An executable that would leak/perform cloud operations is never reached.
+    fs::write(
+        f.home.path().join("gcloud"),
+        "#!/bin/sh\necho AUTH_SHOULD_NOT_RUN >&2\nexit 91\n",
+    )
+    .unwrap();
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "installation",
+        "upload",
+        "--state",
+        state.to_str().unwrap(),
+        "--accept",
+        "wrong",
+        "--allow-experimental-cloud",
+    ]);
+    assert!(!r.status.success());
+    assert!(!String::from_utf8_lossy(&r.stderr).contains("AUTH_SHOULD_NOT_RUN"));
+    assert!(!state.join("source-intent.json").exists());
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "installation",
+        "package",
+        "--state",
+        state.to_str().unwrap(),
+        "--out",
+        f.home.path().join("no-receipts").to_str().unwrap(),
+    ]);
+    assert!(!r.status.success());
+}

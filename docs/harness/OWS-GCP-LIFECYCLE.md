@@ -67,8 +67,9 @@ The package contains:
 | `permissions-request.json` | Authority requirements; **not an implemented or sufficient IAM policy** |
 
 Only local exports and Terraform `init -backend=false` / `validate` have been
-qualified. GCP installation/upload reconciliation is not automated yet. Future
-upload steps must use `ifGenerationMatch=0`, read back exact receipts and preserve
+qualified. The [installation commands](OWS-GCP-INSTALLATION.md) now automate bounded
+source/control/checkpoint uploads and read-only reconciliation. Foundation and
+job/Scheduler Terraform apply remain separate reviewed steps. Uploads use `ifGenerationMatch=0`, read back exact receipts and preserve
 an existing checkpoint. A lost upload reply requires a read before any retry.
 Never put credentials or passwords into Terraform inputs or control files.
 

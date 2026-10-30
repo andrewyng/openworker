@@ -4,6 +4,8 @@ use reqwest::{Method, StatusCode};
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 use zeroize::Zeroizing;
+#[path = "deployment_gcp_installation_api.rs"]
+mod installation;
 #[cfg(test)]
 #[path = "deployment_gcp_transport_tests.rs"]
 mod transport_tests;
@@ -62,7 +64,9 @@ impl Google {
                 "compute.googleapis.com",
                 "sqladmin.googleapis.com",
                 "container.googleapis.com",
-                "artifactregistry.googleapis.com"
+                "artifactregistry.googleapis.com",
+                "cloudresourcemanager.googleapis.com",
+                "serviceusage.googleapis.com"
             ]
             .contains(&host),
             "API host not allowed"
@@ -114,7 +118,7 @@ impl Google {
         );
         Ok(Some(body(response, max).await?.to_vec()))
     }
-    async fn json(
+    pub(super) async fn json(
         &self,
         method: Method,
         host: &str,
@@ -211,7 +215,7 @@ impl Google {
         j.validate(&self.control)?;
         Ok((j, g))
     }
-    async fn bucket(&self) -> Result<()> {
+    pub(super) async fn bucket(&self) -> Result<()> {
         let name = self.control.bucket();
         let v = self
             .json(

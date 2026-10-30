@@ -1,9 +1,15 @@
 //! GCP offline exports, bootstrap observations and local lifecycle journals.
-//! No IAM/API mutation is invoked by these commands.
+//! Mutation commands require explicit scope acceptance; offline exports never mutate cloud state.
 use super::*;
 #[path = "deployment_gcp_preflight.rs"]
 mod observation;
 pub(super) use observation::{preflight, Preflight};
+#[path = "deployment_gcp_installation.rs"]
+mod installation;
+pub(super) use installation::Command as Installation;
+pub(super) async fn install(command: &Installation) -> Result<()> {
+    installation::run(command).await
+}
 #[path = "deployment_gcp_api.rs"]
 mod api;
 #[path = "deployment_gcp_control.rs"]

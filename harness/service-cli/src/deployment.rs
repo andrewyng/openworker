@@ -128,6 +128,11 @@ pub enum GcpCommand {
         #[command(subcommand)]
         command: gcp::Lifecycle,
     },
+    /// Prepare, preflight and reconcile generation-pinned control artifacts.
+    Installation {
+        #[command(subcommand)]
+        command: gcp::Installation,
+    },
     /// Package/run cleanup independently of the workload cluster.
     Cleanup {
         #[command(subcommand)]
@@ -543,6 +548,12 @@ fn result(p: &Plan, m: &Manifest) -> Value {
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
     if let Command::Gcp {
+        command: GcpCommand::Installation { command },
+    } = command
+    {
+        return gcp::install(command).await;
+    }
+    if let Command::Gcp {
         command: GcpCommand::Lifecycle { command },
     } = command
     {
@@ -589,7 +600,10 @@ pub fn run(command: &Command) -> Result<()> {
             command: GcpCommand::Infrastructure(options),
         } => gcp::infrastructure(options),
         Command::Gcp {
-            command: GcpCommand::Lifecycle { .. } | GcpCommand::Cleanup { .. },
+            command:
+                GcpCommand::Lifecycle { .. }
+                | GcpCommand::Cleanup { .. }
+                | GcpCommand::Installation { .. },
         } => bail!("GCP lifecycle/cleanup requires asynchronous dispatch"),
         Command::Gcp {
             command: GcpCommand::Preflight(_),

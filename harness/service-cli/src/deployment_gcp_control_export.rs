@@ -50,7 +50,7 @@ fn base(p: &Plan) -> Value {
         Target::Gcp { location, .. } => location,
         _ => unreachable!(),
     };
-    json!({"terraform":{"required_version":"=1.5.7","required_providers":{"google":{"source":"hashicorp/google","version":"=6.44.0"}}},"provider":{"google":{"project":project(p),"region":region}}})
+    json!({"terraform":{"required_version":"=1.5.7","required_providers":{"google":{"source":"hashicorp/google","version":"=6.44.0"}}},"provider":{"google":{"project":project(p),"region":region,"impersonate_service_account":accounts(p)["setup"]}}})
 }
 fn write(out: &Path, files: BTreeMap<String, Vec<u8>>) -> Result<()> {
     let mut d = fs::DirBuilder::new();
@@ -87,6 +87,38 @@ fn outside(out: &Path, root: &Path) -> Result<()> {
         "Package output must be outside plan/lifecycle state"
     );
     Ok(())
+}
+pub(super) fn package(out: &Path, c: &Control, j: &Checkpoint) -> Result<()> {
+    c.validate()?;
+    j.validate(c)?;
+    let mut tf = base(&c.plan);
+    let a = accounts(&c.plan);
+    let name = format!("{}-cleanup", c.prefix());
+    tf["resource"] = json!({
+        "google_cloud_run_v2_job":{"cleanup":{"name":name,"location":c.region(),"deletion_protection":false,"template":[{"task_count":1,"parallelism":1,"template":[{"service_account":a["cleanup"],"max_retries":0,"timeout":"180s","containers":[{"image":c.guard_image,"command":["/opt/openworker/ows"],"args":tick_args(c)?,"resources":[{"limits":{"cpu":"1","memory":"512Mi"}}]}]}]}]}},
+        "google_cloud_run_v2_job_iam_member":{"invoker":{"project":project(&c.plan),"location":c.region(),"name":"${google_cloud_run_v2_job.cleanup.name}","role":"roles/run.invoker","member":format!("serviceAccount:{}",a["cleanup"])}},
+        "google_cloud_scheduler_job":{"cleanup":{"name":name,"region":c.region(),"schedule":"*/1 * * * *","time_zone":"Etc/UTC","attempt_deadline":"180s","http_target":[{"uri":format!("https://run.googleapis.com/v2/{}:run",c.job()),"http_method":"POST","headers":{"Content-Type":"application/json"},"body":"e30=","oauth_token":[{"service_account_email":a["cleanup"],"scope":"https://www.googleapis.com/auth/cloud-platform"}]}],"depends_on":["google_cloud_run_v2_job_iam_member.invoker"]}}
+    });
+    let permissions = json!({"schemaVersion":1,"policyReady":false,"granted":false,"cleanupIdentity":a["cleanup"],"setupIdentity":a["setup"],"deployment":c.deployment(),"bucket":c.bucket(),"requiredApis":["run.googleapis.com","cloudscheduler.googleapis.com","storage.googleapis.com"],"requirements":[{"resource":c.deployment(),"permissions":["config.deployments.get","config.deployments.delete","config.revisions.get"]},{"resource":c.parent(),"permissions":["config.operations.get","config.operations.list"]},{"resource":format!("{}/{}",c.bucket(),c.checkpoint_object()),"permissions":["storage.objects.get","storage.objects.create","storage.objects.delete"],"generationPreconditionRequired":true},{"resource":format!("{}/{}",c.bucket(),c.source_object()),"permissions":["storage.objects.get"]},{"resource":c.control_uri()?,"permissions":["storage.objects.get"]},{"resource":c.job(),"permissions":["run.jobs.get","run.jobs.run","cloudscheduler.jobs.get","cloudscheduler.jobs.pause"]}],"remainingAuthority":["read control bucket metadata","read named workload roots to verify absence","zone-scoped compute.instances.list and compute.disks.list; get captured instances/disks/groups/templates","installer-specific Cloud Run/Scheduler service-agent and image pull authority","resource-specific executor/node/workload roles","effective IAM/deny/condition qualification"],"constraints":["no cleanup IAM administration or workload creation authority","no cleanup source/state bucket deletion authority","operations listing is region/project scoped; do not claim per-deployment IAM fencing for it","no generic project-wide deployment delete grant is generated"]});
+    write(
+        out,
+        BTreeMap::from([
+            ("main.tf.json".into(), json_bytes(&tf)?),
+            (
+                ".terraform.lock.hcl".into(),
+                include_bytes!("../assets/gcp-google-6.44.0.lock.hcl").to_vec(),
+            ),
+            ("control.json".into(), json_bytes(&c)?),
+            ("checkpoint.json".into(), json_bytes(&j)?),
+            ("permissions-request.json".into(), json_bytes(&permissions)?),
+            (
+                "package-manifest.json".into(),
+                json_bytes(
+                    &json!({"controlUri":c.control_uri()?,"controlSha256":c.sha()?,"checkpointObject":c.checkpoint_object(),"controlUploadPrecondition":"ifGenerationMatch=0","checkpointUploadPrecondition":"ifGenerationMatch=0; never overwrite an existing checkpoint","image":c.guard_image,"cleanupInstalled":false,"liveQualificationRequired":true,"allCleanupComplete":false}),
+                )?,
+            ),
+        ]),
+    )
 }
 pub(super) fn export(command: &Command) -> Result<()> {
     match command {
@@ -156,34 +188,7 @@ pub(super) fn export(command: &Command) -> Result<()> {
             };
             c.validate()?;
             let j = Checkpoint::new(&c)?;
-            let mut tf = base(&c.plan);
-            let a = accounts(&c.plan);
-            let name = format!("{}-cleanup", c.prefix());
-            tf["resource"] = json!({
-                "google_cloud_run_v2_job":{"cleanup":{"name":name,"location":c.region(),"deletion_protection":false,"template":[{"task_count":1,"parallelism":1,"template":[{"service_account":a["cleanup"],"max_retries":0,"timeout":"180s","containers":[{"image":c.guard_image,"command":["/opt/openworker/ows"],"args":tick_args(&c)?,"resources":[{"limits":{"cpu":"1","memory":"512Mi"}}]}]}]}]}},
-                "google_cloud_run_v2_job_iam_member":{"invoker":{"project":project(&c.plan),"location":c.region(),"name":"${google_cloud_run_v2_job.cleanup.name}","role":"roles/run.invoker","member":format!("serviceAccount:{}",a["cleanup"])}},
-                "google_cloud_scheduler_job":{"cleanup":{"name":name,"region":c.region(),"schedule":"*/1 * * * *","time_zone":"Etc/UTC","attempt_deadline":"180s","http_target":[{"uri":format!("https://run.googleapis.com/v2/{}:run",c.job()),"http_method":"POST","headers":{"Content-Type":"application/json"},"body":"e30=","oauth_token":[{"service_account_email":a["cleanup"],"scope":"https://www.googleapis.com/auth/cloud-platform"}]}],"depends_on":["google_cloud_run_v2_job_iam_member.invoker"]}}
-            });
-            let permissions = json!({"schemaVersion":1,"policyReady":false,"granted":false,"cleanupIdentity":a["cleanup"],"setupIdentity":a["setup"],"deployment":c.deployment(),"bucket":c.bucket(),"requiredApis":["run.googleapis.com","cloudscheduler.googleapis.com","storage.googleapis.com"],"requirements":[{"resource":c.deployment(),"permissions":["config.deployments.get","config.deployments.delete","config.revisions.get"]},{"resource":c.parent(),"permissions":["config.operations.get","config.operations.list"]},{"resource":format!("{}/{}",c.bucket(),c.checkpoint_object()),"permissions":["storage.objects.get","storage.objects.create","storage.objects.delete"],"generationPreconditionRequired":true},{"resource":format!("{}/{}",c.bucket(),c.source_object()),"permissions":["storage.objects.get"]},{"resource":c.control_uri()?,"permissions":["storage.objects.get"]},{"resource":c.job(),"permissions":["run.jobs.get","run.jobs.run","cloudscheduler.jobs.get","cloudscheduler.jobs.pause"]}],"remainingAuthority":["read control bucket metadata","read named workload roots to verify absence","zone-scoped compute.instances.list and compute.disks.list; get captured instances/disks/groups/templates","installer-specific Cloud Run/Scheduler service-agent and image pull authority","resource-specific executor/node/workload roles","effective IAM/deny/condition qualification"],"constraints":["no cleanup IAM administration or workload creation authority","no cleanup source/state bucket deletion authority","operations listing is region/project scoped; do not claim per-deployment IAM fencing for it","no generic project-wide deployment delete grant is generated"]});
-            write(
-                out,
-                BTreeMap::from([
-                    ("main.tf.json".into(), json_bytes(&tf)?),
-                    (
-                        ".terraform.lock.hcl".into(),
-                        include_bytes!("../assets/gcp-google-6.44.0.lock.hcl").to_vec(),
-                    ),
-                    ("control.json".into(), json_bytes(&c)?),
-                    ("checkpoint.json".into(), json_bytes(&j)?),
-                    ("permissions-request.json".into(), json_bytes(&permissions)?),
-                    (
-                        "package-manifest.json".into(),
-                        json_bytes(
-                            &json!({"controlUri":c.control_uri()?,"controlSha256":c.sha()?,"checkpointObject":c.checkpoint_object(),"controlUploadPrecondition":"ifGenerationMatch=0","checkpointUploadPrecondition":"ifGenerationMatch=0; never overwrite an existing checkpoint","image":c.guard_image,"cleanupInstalled":false,"liveQualificationRequired":true,"allCleanupComplete":false}),
-                        )?,
-                    ),
-                ]),
-            )
+            package(out, &c, &j)
         }
         Command::Tick { .. } => bail!("Cleanup tick requires asynchronous dispatch"),
     }

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "scope": "installation_journal_preflight_control_artifacts_local_qualification",
+  "tests": {
+    "passed": 115,
+    "failed": 0,
+    "ignored": 0,
+    "newProtocolAndTransportTests": 18,
+    "gcpCliGroups": 17,
+    "logSha256": "7b6edef79688aedeb6232d6b90ec9f60f17a1b382f4bd64c32d8d20fd9120f45",
+    "newGcpClippyDiagnostics": 0,
+    "onlySyntheticCredentialsAndLoopbackFixtures": true
+  },
+  "terraform": {
+    "version": "1.5.7",
+    "googleProviderVersion": "6.44.0",
+    "foundationValid": true,
+    "runnerValid": true,
+    "errors": 0,
+    "warnings": 0,
+    "controlProviderUsesExplicitSetupImpersonation": true,
+    "planOrApplyRun": false
+  },
+  "protocol": [
+    "private locked graph/request/image binding",
+    "binary source MIME and generation-zero create only",
+    "intent fsync before effect and receipt after generation-pinned read-back",
+    "unknown absent outcome never replayed",
+    "read-only reconciliation never creates cloud objects",
+    "advanced checkpoint preserved; dispatched random payload never regenerated",
+    "actual-receipt package export and existing job heartbeat verification"
+  ],
+  "readOnlyCloudObservation": {
+    "projectActive": true,
+    "newCloudMutations": 0,
+    "existingProjectBootstrapRoleBindings": 3,
+    "missingApis": [
+      "cloudscheduler.googleapis.com",
+      "sqladmin.googleapis.com"
+    ],
+    "remainingCpuQuota": 200,
+    "remainingE2CpuQuota": 24,
+    "remainingSsdQuotaGb": 400,
+    "observationsAreNotReservations": true
+  },
+  "cloud": {
+    "newIamGrants": 0,
+    "apisEnabled": 0,
+    "artifactUploads": 0,
+    "registryPushes": 0,
+    "paidResourcesCreated": 0,
+    "authorizedCumulativeBudgetUsd": 100,
+    "verifiedSpendUsd": null,
+    "productionCreateGate": "closed",
+    "foundationAndCleanupTerraformApplyAutomated": false,
+    "liveInstallationQualified": false
+  },
+  "sourceSha256": {
+    "harness/service-cli/src/deployment.rs": "cd2798ec59c2acd2fd74966d5b291fa77fca15f70be4b4f24e02f82692efa7aa",
+    "harness/service-cli/src/deployment_gcp.rs": "947854c10220c5881f1d33065df436051af30098cb56c7e3f3565bc0a84fca76",
+    "harness/service-cli/src/deployment_gcp_api.rs": "1426976aa8f0941f9d9da9ad96378efa2b9e539994ae405a2a229300988929ef",
+    "harness/service-cli/src/deployment_gcp_control_export.rs": "1665f65e6826d5a06626888be8ea0ee24a72e96271ddef9ea721412b0d367649",
+    "harness/service-cli/src/deployment_gcp_installation.rs": "c818e53af2cf4a3fdd0b2182c6324598160980c628f112fe1aeaf8c45b7fbc61",
+    "harness/service-cli/src/deployment_gcp_installation_api.rs": "7c3f3bece142668371c05b8c231c1558f06d12a29626caa56584500076d19ccb",
+    "harness/service-cli/src/deployment_gcp_installation_tests.rs": "e6b9ab5478452c75f2b9801ee8c2af107f447e3bafed1824fe075d3e051c1675",
+    "harness/service-cli/src/deployment_gcp_transport_tests.rs": "83ddfa71519f35798a4f157e678ee97270611e498b515ef46fe3e47e3a7f1fc2",
+    "harness/service-cli/tests/gcp.rs": "b9d9529925a5f65e2b07dd2b833bc884ab06ad14846906349585353bad4170a1"
+  }
+}

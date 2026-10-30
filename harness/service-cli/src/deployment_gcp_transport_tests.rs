@@ -348,3 +348,198 @@ async fn dependent_inventory_pins_compute_ids_without_trusting_server_urls_or_de
     assert!(g.assets_absent(&assets).await.unwrap());
     t.join().unwrap();
 }
+
+fn installation_replies(c: &Control) -> Vec<Reply> {
+    let number = &c.plan.gcp_bootstrap.as_ref().unwrap().project_number;
+    let services = [
+        "storage.googleapis.com",
+        "artifactregistry.googleapis.com",
+        "run.googleapis.com",
+        "cloudscheduler.googleapis.com",
+        "config.googleapis.com",
+        "compute.googleapis.com",
+        "container.googleapis.com",
+        "sqladmin.googleapis.com",
+        "servicenetworking.googleapis.com",
+        "cloudbuild.googleapis.com",
+    ];
+    let i = c.plan.gcp_infrastructure.as_ref().unwrap();
+    vec![
+        reply(
+            json!({"projectId":project(&c.plan),"name":format!("projects/{number}"),"state":"ACTIVE"}),
+        ),
+        reply(
+            json!({"services":services.iter().map(|s|json!({"name":format!("projects/{number}/services/{s}"),"config":{"name":s},"state":"ENABLED"})).collect::<Vec<_>>()}),
+        ),
+        reply(
+            json!({"name":c.bucket(),"projectNumber":number,"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true},"publicAccessPrevention":"enforced"},"versioning":{"enabled":true}}),
+        ),
+        reply(
+            json!({"permissions":["storage.buckets.get","storage.objects.get","storage.objects.create"]}),
+        ),
+        reply(
+            json!({"name":format!("{}/repositories/{}-control-images/dockerImages/ows@sha256:{}",c.parent(),c.prefix(),"a".repeat(64)),"uri":c.guard_image,"imageSizeBytes":"149889372"}),
+        ),
+        reply(
+            json!({"validMasterVersions":[i.kubernetes_version],"validNodeVersions":[i.kubernetes_version],"validImageTypes":["UBUNTU_CONTAINERD"]}),
+        ),
+        reply(
+            json!({"name":c.region(),"quotas":[{"metric":"CPUS","limit":24,"usage":2},{"metric":"E2_CPUS","limit":24,"usage":2},{"metric":"SSD_TOTAL_GB","limit":1000,"usage":100}]}),
+        ),
+    ]
+}
+#[tokio::test]
+async fn installation_upload_uses_binary_mime_generation_zero_and_exact_object_scope() {
+    let c = super::super::lifecycle_tests::control();
+    let bytes = source_zip(&c.plan).unwrap();
+    let (base, records, t) = server(vec![reply(
+        json!({"bucket":c.bucket(),"name":c.source_object(),"generation":"321"}),
+    )]);
+    let g = api(base);
+    assert_eq!(
+        g.initial_object(&c.source_object(), &bytes, "application/zip")
+            .await
+            .unwrap(),
+        "321"
+    );
+    t.join().unwrap();
+    {
+        let r = records.lock().unwrap();
+        assert_eq!(r.len(), 1);
+        let request = &r[0];
+        assert!(request.starts_with("POST /upload/storage/v1/b/"));
+        assert!(request
+            .to_lowercase()
+            .contains("content-type: application/zip"));
+        assert!(request.contains("ifGenerationMatch=0"));
+        assert!(request.contains("uploadType=media"));
+        assert!(request.contains("PK\u{3}\u{4}"));
+    }
+    assert!(g
+        .initial_object("elsewhere/other.zip", &bytes, "application/zip")
+        .await
+        .is_err());
+    assert!(g
+        .initial_object(&c.source_object(), &bytes, "application/json")
+        .await
+        .is_err());
+}
+#[tokio::test]
+async fn installation_upload_refuses_redirects_conflicts_and_transport_retries() {
+    for status in [307, 412, 429, 503] {
+        let c = super::super::lifecycle_tests::control();
+        let bytes = source_zip(&c.plan).unwrap();
+        let (base, records, t) = server(vec![Reply {
+            status,
+            body: b"fixture".to_vec(),
+            headers: "Location: https://not-google.invalid/steal\r\n".into(),
+        }]);
+        let g = api(base);
+        assert!(g
+            .initial_object(&c.source_object(), &bytes, "application/zip")
+            .await
+            .is_err());
+        t.join().unwrap();
+        assert_eq!(records.lock().unwrap().len(), 1);
+    }
+}
+#[tokio::test]
+async fn installation_upload_receipt_cannot_change_bucket_name_or_generation() {
+    for field in ["bucket", "name", "generation"] {
+        let c = super::super::lifecycle_tests::control();
+        let bytes = source_zip(&c.plan).unwrap();
+        let mut receipt = json!({"bucket":c.bucket(),"name":c.source_object(),"generation":"321"});
+        receipt[field] = "other".into();
+        let (base, _, t) = server(vec![reply(receipt)]);
+        let g = api(base);
+        assert!(g
+            .initial_object(&c.source_object(), &bytes, "application/zip")
+            .await
+            .is_err());
+        t.join().unwrap();
+    }
+}
+#[tokio::test]
+async fn resolved_preflight_checks_exact_zone_versions_transient_quota_and_effective_upload_permissions(
+) {
+    let c = super::super::lifecycle_tests::control();
+    let (base, records, t) = server(installation_replies(&c));
+    let g = api(base);
+    let report = g.installation_preflight(c.plan.created_at_unix + 1).await;
+    t.join().unwrap();
+    assert_eq!(report["artifactUploadReady"], true);
+    assert_eq!(report["applyReady"], false);
+    assert_eq!(report["budget"]["verifiedActualSpendUsd"], Value::Null);
+    let checks = report["checks"].as_array().unwrap();
+    assert!(checks.iter().all(|c| c["status"] == "ok"));
+    let quota = checks
+        .iter()
+        .find(|r| r["name"] == "transient_topology_quota")
+        .unwrap();
+    assert_eq!(quota["detail"]["requiredCpuIncludingTransientPool"], 6.0);
+    let r = records.lock().unwrap();
+    assert_eq!(r.len(), 7);
+    assert!(r.iter().all(|r| r.starts_with("GET ")));
+    assert!(r[5].contains("/locations/us-central1-a/serverConfig"));
+    assert!(r[3].contains("permissions=storage.objects.create"));
+}
+#[tokio::test]
+async fn installation_preflight_blocks_expired_scope_denial_missing_permissions_and_truncated_inventory(
+) {
+    for scenario in [
+        "expired",
+        "project",
+        "bucket_denied",
+        "permission",
+        "image",
+        "pagination",
+    ] {
+        let c = super::super::lifecycle_tests::control();
+        let mut replies = installation_replies(&c);
+        let mut at = c.plan.created_at_unix + 1;
+        match scenario {
+            "expired" => at = c.plan.expires_at_unix,
+            "project" => replies[0] = reply(json!({"projectId":"other","state":"ACTIVE"})),
+            "bucket_denied" => replies[2].status = 403,
+            "permission" => replies[3] = reply(json!({"permissions":["storage.objects.get"]})),
+            "image" => {
+                replies[4] =
+                    reply(json!({"name":"other","uri":c.guard_image,"imageSizeBytes":"200"}))
+            }
+            "pagination" => replies[1] = reply(json!({"services":[],"nextPageToken":"more"})),
+            _ => unreachable!(),
+        }
+        let (base, records, t) = server(replies);
+        let g = api(base);
+        let report = g.installation_preflight(at).await;
+        t.join().unwrap();
+        assert_eq!(report["artifactUploadReady"], false, "{scenario}");
+        assert_eq!(report["applyReady"], false);
+        assert_eq!(records.lock().unwrap().len(), 7);
+    }
+}
+#[tokio::test]
+async fn source_upload_readiness_never_certifies_insufficient_workload_quota_or_unavailable_gke_version(
+) {
+    let c = super::super::lifecycle_tests::control();
+    let mut replies = installation_replies(&c);
+    replies[5] = reply(
+        json!({"validMasterVersions":["other"],"validNodeVersions":["other"],"validImageTypes":["COS_CONTAINERD"]}),
+    );
+    replies[6] = reply(
+        json!({"name":c.region(),"quotas":[{"metric":"CPUS","limit":5,"usage":0},{"metric":"E2_CPUS","limit":5,"usage":0},{"metric":"SSD_TOTAL_GB","limit":50,"usage":0}]}),
+    );
+    let (base, _, t) = server(replies);
+    let g = api(base);
+    let report = g.installation_preflight(c.plan.created_at_unix + 1).await;
+    t.join().unwrap();
+    assert_eq!(report["artifactUploadReady"], true);
+    assert_eq!(report["applyReady"], false);
+    for name in ["pinned_gke_version_and_image", "transient_topology_quota"] {
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == name && r["status"] == "blocked"));
+    }
+}

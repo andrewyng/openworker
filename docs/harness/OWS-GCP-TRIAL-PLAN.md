@@ -354,8 +354,8 @@ updates are fenced. The permission-request artifact explicitly remains
 
 Workload creation still refuses in the production authorizer. Full effective IAM,
 prices/prior spend, quotas/versions, private access and OpenShell compatibility
-remain unresolved. Source/control upload and cloud installation reconciliation
-need wiring. Live Cloud Run metadata/authentication, expiry/restart and real GKE
+remain unresolved. At this checkpoint, source/control upload and cloud installation reconciliation
+still needed wiring; the artifact stage is implemented in the later milestone below. Live Cloud Run metadata/authentication, expiry/restart and real GKE
 label/PVC dependent discovery require a separately qualified cloud drill.
 `managedDependentAbsenceQualified` and `allCleanupComplete` remain false so local
 fixtures cannot claim an orphan-free account or completed billing cleanup.
@@ -380,3 +380,33 @@ Fast-forwarded verified lifecycle/cleanup milestone `c918b486` into
 introduced by the merge. Cloud provisioning and the remaining live qualification
 gates above remain outstanding. The Python harness and Rust runtime/SDK source
 are unchanged by this management-CLI milestone.
+
+## GCP installation wiring — October 30
+
+Feature: `feat/ows-gcp-installation`, from `02ea4790`.
+[Plan/progress](OWS-GCP-INSTALLATION-PLAN.md) · [Command guide](OWS-GCP-INSTALLATION.md).
+
+Implemented a private locked installation journal and exact-plan/image binding;
+resolved project/API/version/transient-quota and setup bucket-permission
+observations; create-only source/control/checkpoint upload; generation/byte
+read-back; no-write reconciliation; original checkpoint preservation; receipt-based
+cleanup package export; and strict existing-job/heartbeat verification.
+Control Terraform explicitly impersonates the bound setup identity. No runtime,
+Rust SDK, TypeScript SDK or Python harness source changes in this milestone.
+
+A read-only observation of the existing trial project confirms it is active and
+the three project-level bootstrap-role bindings remain present. Cloud Scheduler
+and Cloud SQL APIs are missing. Regional quota shows 200 total CPUs, 24 E2 CPUs
+and 400 GB SSD quota remaining at observation, with zero reported usage for those
+metrics. Current available GKE versions differ from the old schema-test pins.
+These observations are not reservations or effective workload-IAM/cost proof.
+No API was enabled, role granted, image pushed or paid resource provisioned.
+
+Verified: **115 CLI tests passed**, no GCP Clippy diagnostics, and both updated
+control Terraform graphs validated with zero errors/warnings. Offline native CLI
+prepare/status/foundation/package smoke passed. See
+[sanitized evidence](evidence/gcp-installation-local-20261030.json).
+Remaining cloud gates: reviewed foundation and job installation, executor/node/
+cleanup authority, SQL/NAT/address quotas, private installer connectivity,
+OpenShell/runtime compatibility, fresh pricing/cumulative spend and the live
+independent expiry/teardown drill. The GCP production-create gate stays closed.
