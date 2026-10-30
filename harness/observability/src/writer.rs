@@ -322,16 +322,12 @@ impl Sink for RecordingSink {
             for record in &mut outgoing {
                 match self.export_capture {
                     Capture::Off => record.attributes.clear(),
-                    Capture::Metadata => record.attributes.retain(|(key, _)| {
-                        matches!(
-                            *key,
-                            "gen_ai.operation.name"
-                                | "langfuse.observation.type"
-                                | "gen_ai.request.model"
-                                | "gen_ai.tool.name"
-                        )
+                    Capture::Metadata => record.attributes.retain(|(key, value)| {
+                        openworker_telemetry::metadata_attribute(key, value)
                     }),
-                    Capture::Full => {}
+                    Capture::Full => record
+                        .attributes
+                        .retain(|(key, value)| openworker_telemetry::export_attribute(key, value)),
                 }
             }
             ok = exporter.export(&outgoing, stats) && ok;

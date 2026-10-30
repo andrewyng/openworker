@@ -132,8 +132,10 @@ latencies, errors, reported tokens/retries, policy/decision transitions, recover
 unknown effects and telemetry health. There is no invented active-session gauge,
 approval-wait timer, total-cost calculation or successful-tool retry. A missing
 sample remains no data, not zero; scripted model runs do not report token usage.
-Cross-worker activity currently correlates by pseudonymous identity hashes, not
-one distributed trace. See [telemetry limitations](../../harness/telemetry/README.md).
+Durable logical-turn context preserves linked execution segments across worker
+changes; other lifecycle activity also correlates through pseudonymous hashes.
+See [telemetry configuration and limits](../../harness/telemetry/README.md), and
+[collector/Langfuse qualification](EXPORT-QUALIFICATION.md).
 
 Both UIs are optional. Customers can keep their own UI and OTel backend. The
 console is a small buildless Node/browser app without framework/npm runtime

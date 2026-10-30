@@ -1,7 +1,8 @@
 # Harness observability
 
-Status: M1–M4 recording, accounting, authorized queries and management UI
-implemented and locally qualified, 29 October 2026.
+Status: M1–M5 recording, accounting, authorized queries, management UI and export
+alignment implemented and locally qualified, 29 October 2026.
+[M5 qualification evidence](evidence/observability-m5-local-20261029.json).
 [Query API guide](OBSERVABILITY-QUERIES.md).
 Companion desktop design:
 `rohitprasad15/ocw-context`, branch `docs/observability-spec`, commit `bd4dfa0`.
@@ -298,3 +299,31 @@ remain non-cacheable.
 
 [UI operation/qualification](../../harness/service-ui/README.md#observability).
 [M4 evidence](evidence/observability-m4-local-20261029.json).
+
+## Export alignment (M5)
+
+The shared [attribute registry](../../harness/telemetry/attributes.json) versions
+keys, types, capture classes and legal metric dimensions. Generated Rust constants
+are checked in, so consumers need no Python runtime. Selected GenAI attributes
+are pinned to 1.41.0; OpenWorker operation names and recording JSON remain stable.
+The OTLP cache-creation key changes from the old nonstandard `cache_write` spelling
+to `gen_ai.usage.cache_creation.input_tokens`. Local `cache_write` stays unchanged.
+
+Exports derive generation/event/tool/agent hints from the operation even with
+content capture off. Only completed provider requests own usage. Hash-based
+conversation/session correlation and linked turn segments survive worker changes;
+private names/text do not become necessary to obtain useful vendor traces. Metric
+dimensions remain fixed enums, never model/tool names or identity hashes.
+
+Authentication is explicit, via secret environment references; arbitrary ambient
+OTEL headers/resources/proxies are ignored. Standard OTLP acknowledgements are
+strictly validated, including partial rejection. Langfuse v4's nonstandard queue
+receipt uses an explicit traces-only `acknowledgement: "langfuse_v4"` mode. Neither
+path copies receiver error text or replays failed exports/tool work. A receipt is
+not a durable vendor-read guarantee: local qualification also fetches observations
+and reconciles normalized cache/reasoning buckets, known zero and unknown usage.
+
+See [configuration and limits](../../harness/telemetry/README.md) and the
+[pinned collector/Langfuse fixture](../../deploy/reference/EXPORT-QUALIFICATION.md).
+Recording remains the independent diagnostic source for management queries;
+external export does not add a mandatory database/vendor or change authorization.

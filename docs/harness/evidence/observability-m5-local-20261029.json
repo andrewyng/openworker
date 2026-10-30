@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "at": "2026-10-30T05:32:10.038733+00:00",
+  "milestone": "observability M5 \u2014 export alignment and collector/Langfuse qualification",
+  "branch": "feat/openworker-service-m1",
+  "sourceBaseCommit": "151e67115d54ec98242e8edd49ae3557940f556c",
+  "passed": true,
+  "scope": "Local Docker/native Linux and Mac host; synthetic metadata; no AWS or paid models",
+  "contract": {
+    "registryVersion": "1",
+    "selectedGenAiAttributeVersion": "1.41.0",
+    "fullGenAiConformance": false,
+    "defaultCapture": "off"
+  },
+  "tests": {
+    "host": {
+      "passed": 49,
+      "ignored": 10
+    },
+    "linux": {
+      "passed": 231,
+      "ignored": 13
+    },
+    "postgresSuites": 7,
+    "linuxWorkerRecoveryCases": 14,
+    "registryGenerationCheck": true,
+    "noDefaultFeaturesCheck": true,
+    "rustfmtAndNodeSyntaxChecks": true
+  },
+  "exports": {
+    "version": 1,
+    "at": "2026-10-30T05:31:25.490Z",
+    "passed": true,
+    "scope": "local Docker and synthetic metadata, no paid model/tool execution",
+    "images": {
+      "collector": "otel/opentelemetry-collector-contrib@sha256:e7c92c715f28ff142f3bcaccd4fc5603cf4c71276ef09954a38eb4038500a5a5",
+      "langfuse": "docker.langfuse.com/langfuse/langfuse@sha256:c311fd9db4b69f6514fdcb1b86a2a105d5a4ed51fbf0ded033ff2722459c804a",
+      "worker": "docker.langfuse.com/langfuse/langfuse-worker@sha256:aa1724b989a00f1e4ca9930709202489c73deaaf2f1116bbd3d71c77edb8fedb",
+      "clickhouse": "clickhouse/clickhouse-server@sha256:7d93fb39bb2bfc8509bd621241db974e41041ac0ae626a5b06e172431fc709f7",
+      "postgres": "postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+      "redis": "redis@sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba",
+      "minio": "minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "mc": "minio/mc@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3"
+    },
+    "checks": [
+      "official collector protobuf ingestion, all signals, registry and recording reconciliation",
+      "default-off content/name exclusion, typed generations, request-only usage and resume links",
+      "actual Langfuse v4 OTLP auth/ingestion and v2 observation reads",
+      "vendor generation classification, pseudonymous session grouping, exclusive cache buckets and no content"
+    ],
+    "cleanup": {
+      "networkRemoved": true,
+      "generatedSecretsRemoved": true,
+      "ownedContainersRemoved": true,
+      "unrelatedResourcesModified": false
+    },
+    "vendorEnabled": true,
+    "probeSha256": "ac19aeb7414daafea5ea9f8732fee77f71461c09b1994732b51f0f4bb6366602",
+    "internalNetwork": true,
+    "loopbackIngressBridge": true,
+    "collector": {
+      "steps": 13,
+      "modelRequests": 4,
+      "input": 110,
+      "output": 22,
+      "resources": 4,
+      "probe": {
+        "capture": "off",
+        "exporter": [
+          {
+            "accepted": 9,
+            "dropped": 0,
+            "export_failures": 0
+          },
+          {
+            "accepted": 4,
+            "dropped": 0,
+            "export_failures": 0
+          }
+        ],
+        "fixture": "export_reconciliation",
+        "pause_ms": [
+          11
+        ],
+        "recording": {
+          "abandoned": 0,
+          "accepted": 13,
+          "conflicts": 0,
+          "dropped": 0,
+          "duplicates": 0,
+          "failed_writes": 0,
+          "last_success_ms": 1793338290682,
+          "pending": 0,
+          "persisted": 13,
+          "prune_failures": 0,
+          "pruned": 0,
+          "rejected": 0
+        },
+        "schema": "1",
+        "semconv": "1.41.0",
+        "steps": 13,
+        "version": 1
+      },
+      "summary": {
+        "input": {
+          "total": 110,
+          "known": 3,
+          "unknown": 1,
+          "overflow": false
+        },
+        "output": {
+          "total": 22,
+          "known": 3,
+          "unknown": 1,
+          "overflow": false
+        }
+      }
+    },
+    "langfusePreflight": {
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 2,
+      "jsonKeys": []
+    },
+    "langfuse": {
+      "observations": 13,
+      "generations": 4,
+      "knownTokenTotal": 132,
+      "unknownUsageTransform": [
+        {
+          "keys": [],
+          "total": null
+        }
+      ],
+      "probe": {
+        "capture": "off",
+        "exporter": [
+          {
+            "accepted": 9,
+            "dropped": 0,
+            "export_failures": 0
+          },
+          {
+            "accepted": 4,
+            "dropped": 0,
+            "export_failures": 0
+          }
+        ],
+        "fixture": "export_reconciliation",
+        "pause_ms": [
+          12
+        ],
+        "recording": {
+          "abandoned": 0,
+          "accepted": 13,
+          "conflicts": 0,
+          "dropped": 0,
+          "duplicates": 0,
+          "failed_writes": 0,
+          "last_success_ms": 1793338305908,
+          "pending": 0,
+          "persisted": 13,
+          "prune_failures": 0,
+          "pruned": 0,
+          "rejected": 0
+        },
+        "schema": "1",
+        "semconv": "1.41.0",
+        "steps": 13,
+        "version": 1
+      }
+    }
+  },
+  "postgres": {
+    "version": 1,
+    "at": "2026-10-30T05:30:55.857Z",
+    "scope": "local Docker PostgreSQL; no AWS or paid models",
+    "postgresImage": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "linuxImage": "sha256:bf96ad1e3ccf021846d9cb6700bb3731c28cb06c7e8b9aaf437f08a8fa74d3d9",
+    "databases": 2,
+    "tests": [
+      "postgres-storage-contract",
+      "service-two-database-outage",
+      "postgres-recording-queries",
+      "authorized-recording-http",
+      "linux-worker-recovery",
+      "linux-authorized-http",
+      "linux-packaged-two-database-install"
+    ],
+    "writeProbe": {
+      "elapsed_seconds": 0.127270458,
+      "p50_write_us": 1284,
+      "p95_write_us": 1570,
+      "records": 100,
+      "records_per_second": 785.72829524979,
+      "scope": "single local Docker connection, not a capacity guarantee",
+      "transaction_size": 1
+    },
+    "queryProbe": {
+      "fresh_read_connection_per_request": true,
+      "p50_us": 7442,
+      "p95_us": 8942,
+      "requests": 20,
+      "scanned_steps_per_request": 4,
+      "scope": "small serial local Docker/PostgreSQL HTTP probe; not capacity guidance",
+      "separate_recording_database": true,
+      "platform": "linux"
+    },
+    "passed": true,
+    "ownedContainerRemoved": true,
+    "generatedPasswordRemoved": true,
+    "unrelatedContainersModified": false
+  },
+  "recordingProbe": {
+    "disabled_loop_ns": 160375,
+    "exporter": {
+      "accepted": 1000,
+      "dropped": 0,
+      "export_failures": 0
+    },
+    "recording": {
+      "abandoned": 0,
+      "accepted": 1000,
+      "conflicts": 0,
+      "dropped": 0,
+      "duplicates": 0,
+      "failed_writes": 0,
+      "last_success_ms": 1793336684687,
+      "pending": 0,
+      "persisted": 1000,
+      "prune_failures": 0,
+      "pruned": 0,
+      "rejected": 0
+    },
+    "recording_enqueue_ns": 15518750,
+    "recording_total_seconds": 0.150712,
+    "records": 1000,
+    "records_per_second": 6635.171718244068,
+    "scope": "1000 synthetic tool metadata records, local SQLite, one record/transaction; not full-agent overhead or capacity guidance"
+  },
+  "sourceSha256": {
+    "harness/telemetry/attributes.json": "1a91fcd8cedf428ebbd13a03d48a8c27f1bd9187d41afb811821ddcf82854316",
+    "harness/telemetry/src/attributes.rs": "e114580b437bb8e0c173e4e664fd5f17a56af58e3f52bf07b1df934ba20a8fc2",
+    "harness/telemetry/scripts/generate-attributes.py": "cd7dd8652f429eef904eb14d83b82d55f68012cecabd03c6346c0b525bc82238",
+    "harness/telemetry/src/lib.rs": "c3ab9085c588447375d7e560bbdb6471731a33e4b95a9fde4d8d4ff6fc7830c6",
+    "harness/telemetry/src/otel.rs": "c98cb1b3a31f4f2a8ebddc083eaf61f59dd143328e1852f93dd6ea2683967d94",
+    "harness/telemetry/src/otlp.rs": "a3aa2faf929a995d0626314855a0f04127a56a19b369616e8bf2d9c8e797830f",
+    "harness/telemetry/tests/alignment.rs": "e97eb90ab441fb6a9ba246724c20a0ce704aeaf6ba6d20f1daf6eee04093604e",
+    "harness/telemetry/tests/boundaries.rs": "278249ab5e3a4cb8a4a5c1290c22fc5861e37afe7d4ded39fb26ecb514bc68f8",
+    "harness/telemetry/tests/wire.rs": "fc94151c1dacd911431b2a5132ae4db1452c1e732d89baf012e7428631bc0c39",
+    "harness/observability/src/writer.rs": "04325038a63705f637a1b9fd0ed63c4262693e8b764e96b3e2167bf983ea4fc3",
+    "harness/observability/examples/export_probe.rs": "e73a7fc7d1aa13e629b2f9dc6be4f0db3dd739c5880fa7c1a5830f57af0bf007",
+    "harness/observability/examples/recording_probe.rs": "a7776462b38b9d04f5ae8710ed316efa55a72e4f474506483853104d4700ca09",
+    "deploy/reference/qualify-exports.mjs": "d8708add803124fb1b6055ad3f8be29e63dd39e563a6b6b51f374141ded50c08",
+    "deploy/reference/export-contract.mjs": "29289f9ee37be753427fc618a9cfe468bac329efc905c6197732a3c98bfcd064",
+    "deploy/reference/export-qualification-images.json": "4586b8e15b3b5f0b89d30abbe4b0c29e534ec67a806bc2fd05c152cef0773306"
+  },
+  "privateQualificationLogSha256": {
+    "host": "4974f17daaee505b524c26d74df9bbeb61ac3071ed369449bd113e8f579a6519",
+    "linuxBuildAndTests": "f8f442eccaa69823cf3f14604640c2148591516deda10cec1244c1da23fb5e50",
+    "postgres": "7806e098945f9be72134cb6ee84ebe59f768f25af1e7d4797076ab10f3e25d46",
+    "collectorAndLangfuse": "ea32618020b89d511aae4909b94c480d4ecb39cae409478154840020ce301384",
+    "optionalCore": "8a1bc99aac17072682d3feb56c2e5ac57d4ff73976ebf05f767c862c738c9c08"
+  },
+  "compatibility": [
+    "OTLP cache_write.input_tokens replaced by cache_creation.input_tokens; local recording cache_write unchanged.",
+    "Standard binary/JSON OTLP acknowledgements remain the default; Langfuse v4 queue receipts require explicit traces-only mode.",
+    "Source known zero and unknown usage reconcile with actual Langfuse exclusive cache/reasoning buckets and totals.",
+    "No arbitrary metadata keys or names/identities as metric dimensions; full content is separately opt-in."
+  ],
+  "limits": [
+    "Best-effort diagnostic queues, not lossless billing or tamper-proof audit.",
+    "Fixture throughput is a small local measurement, not agent overhead/capacity guidance; no SQL micro-batching added.",
+    "Vendor qualification uses pinned local Langfuse images and synthetic observations, not a hosted/cloud acceptance claim.",
+    "No new management UI changes; M4 visual evidence remains separate.",
+    "Fresh-cloud, Windows and multi-AZ qualification remain separate."
+  ]
+}

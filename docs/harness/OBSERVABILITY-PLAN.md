@@ -71,9 +71,12 @@ operational charts and display recorder/exporter health without noisy banners.
 
 ## M5 — export alignment and qualification
 
+Implemented and locally qualified. [Evidence](evidence/observability-m5-local-20261029.json).
+[Reproduction and receiver setup](../../deploy/reference/EXPORT-QUALIFICATION.md).
+
 Align typed records with the shared attribute registry and pinned OTel conventions.
 Export usage on model spans and preserve context across worker changes; verify
-metadata-only/default-off content against a local collector and Langfuse-compatible
-fixture. Test outages, shutdown, pruning, queue pressure and local throughput.
+metadata-only/default-off content against the pinned official collector and actual
+local Langfuse v4 ingestion/observation reads. Test outages, shutdown, pruning, queue pressure and local throughput.
 Only add SQL micro-batching if measurements justify it. Fresh AWS installation of
 the final release candidate remains a separate bounded cloud qualification.

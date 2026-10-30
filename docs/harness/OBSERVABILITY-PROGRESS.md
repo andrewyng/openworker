@@ -408,3 +408,126 @@ Next is M5: export alignment and collector/Langfuse-compatible qualification.
 Recording remains best effort. No live Kubernetes rollout, cloud qualification,
 production load/sizing, new live recording TLS server, SSO, Windows/Python desktop
 or worker-global health aggregation is claimed by M4.
+
+## M5 — started, 29 October 2026
+
+User authorized export alignment, local collector/Langfuse qualification, ledger
+updates and push after verification. Baseline `151e6711`; clean tree. No AWS,
+paid models, new Python/desktop tracing API, or hosted vendor credentials.
+
+Order:
+1. Pin a supported OTel GenAI attribute revision and add one shared machine-readable
+   registry with Rust constants and privacy/type classifications. Keep existing
+   OpenWorker operation names, unknown usage and metric cardinality contracts.
+   Align cache creation, typed operation/vendor observation hints and pseudonymous
+   session/turn correlation without enabling name/content capture by default.
+2. Reconcile the same deterministic turn records through local recording and OTLP:
+   main/reviewer/compaction attempts, retries, known zero/unknown, cross-worker
+   segments/links, tool bytes and human waits. Never roll model usage onto parents.
+3. Qualify real local OTLP protobuf ingestion with a pinned collector and an
+   authenticated Langfuse-compatible traces-only receiver. Check attributes and
+   mapped generation usage, not just HTTP 200. Keep full Langfuse deployment/cloud
+   acceptance distinct from protocol/mapping compatibility.
+4. Recheck privacy, ambient-header/proxy isolation, redirects/auth/partial failures,
+   queue pressure, bounded shutdown, recording/exporter independence and retention.
+   Measure a small local throughput fixture before deciding about batching.
+5. Update export/setup documentation and sanitized reproducible evidence; push the
+   existing feature branch after verification. No automatic cloud rollout.
+
+### M5 checkpoint — wire/collector alignment
+
+Added `harness/telemetry/attributes.json` and checked-in generated Rust constants
+(pinned OTel GenAI attribute subset 1.41.0). Derived operation/Langfuse type and
+pseudonymous conversation/session correlation remain available with capture off;
+model/tool names and payload keys stay separately gated. Cache creation now uses
+the pinned standard name. Model usage is emitted only on request-completion spans,
+not parents/start markers. Fixed metric dimensions are unchanged.
+
+The OTLP client validates protobuf acknowledgements, counts partial rejection,
+malformed/oversized acknowledgement and authentication/redirect failures without
+replaying batches, and suppresses receiver-supplied error bodies/text. Registry
+bounds disallow arbitrary metadata/content keys and duplicate-attribute growth.
+Default-off/private-key laziness, ambient proxy/header/resource isolation, bounded
+shutdown and queue-pressure tests pass. Typed unknown timing remains visible in
+logs even when an invalid-clock span is withheld.
+
+The pinned official collector has ingested all three signals and reconciled 13
+records, four model requests, 110 input/22 output tokens, known zero, unknown usage,
+wait timing and resume links with local SQLite recordings. Cumulative metric
+snapshots are reconciled per process/dimension rather than added repeatedly. The
+fixture now handles empty OTLP log bodies correctly. Docker Desktop requires a
+loopback ingress bridge in addition to its internal service network; only the
+collector/web ingress joins it. Dependencies stay internal, vendor telemetry/AI
+features are disabled and no real credentials are provided.
+
+Actual pinned Langfuse v4 self-host qualification is in progress. Its first web
+readiness run exposed a container-interface binding issue; the fixture now sets
+`HOSTNAME=0.0.0.0` explicitly. Failed/interrupted fixture resources were removed by
+exact ownership labels (including a manually recovered collector from a Node
+lifetime/abort-timer exit). Later runs journal ownership and keep deadline timers
+alive. No harness execution or tool behavior was changed by fixture corrections.
+
+### M5 checkpoint — actual Langfuse reconciliation
+
+The real pinned Langfuse v4 receiver returns `{}` for an empty request and a
+nonstandard ingestion-job JSON receipt for populated batches. This was initially
+reported as failed export despite successful ingestion. Added explicit
+`telemetry.acknowledgement: "langfuse_v4"` (traces only), with narrow receipt-marker
+validation. Standard OTLP remains the default and rejects that envelope. Both
+modes reject partial/malformed acknowledgements; receiver job/error metadata is
+never logged or retained by the exporter. Tests cover JSON and binary responses,
+wrong-signal counts, authorization failure, redirects and no automatic replay.
+
+Full local collector/Langfuse fixture `exports-l` passed: 13 observations, four
+generations, correct parent/session identity, no name/content export, known-zero
+reviewer and absent compaction usage. Actual Langfuse normalization yielded 50
+uncached + 40 cache-read + 10 cache-created input and 15 ordinary + 5 reasoning
+output on the successful working request; its total stays 120. Including the
+failed 12-token request gives 132, matching source 110 input/22 output. Vendor
+cache-creation bucket is `input_cache_creation`; the qualification comparator now
+uses the real API field. Source OTLP counters remain inclusive and unchanged.
+
+All fixture resources were cleaned up by exact ownership. A small synthetic
+SQLite probe persisted 1,000 records without loss (~6,635 records/second including
+drain on this Mac); this is not an agent throughput or overhead claim. No new SQL
+batching was justified or added. Native Linux/PostgreSQL final regressions are
+running before M5 is marked complete/pushed.
+
+## M5 — complete and locally qualified
+
+Final collector/Langfuse run `exports-m` passes using the final probe binary and
+scripts, including explicit v4 receipt handling, error-status mapping, parent
+identity, request-only usage and empty unknown-usage preservation. All 13 source
+records reconcile; four generations total 110 input/22 output without counting
+cache/reasoning twice. Zero exporter losses. Owned containers/anonymous volumes,
+network and private generated configuration were removed; captured container logs
+are scrubbed of known generated fixture secrets. The ownership journal also
+records intended names before creation for interrupted-run recovery.
+
+Final validation:
+- **49 host tests pass**, 10 environment-dependent tests intentionally ignored.
+- **231 native Linux tests pass**, 13 fixture/environment-dependent tests ignored
+  in that phase. Separate native PostgreSQL qualification then runs **14 worker
+  recovery cases**, authorized recording HTTP and packaged two-database migrations.
+- **Seven real PostgreSQL suites pass**: storage/retention contract, recording outage
+  independent of execution, recording queries, authorized HTTP, Linux replacement
+  recovery, Linux authorized HTTP and packaged separate-target installation.
+- Default/no-exporter feature check, registry-generation check, Rust formatting,
+  Node syntax and whitespace checks pass. No new management UI code in M5; M4
+  browser/visual evidence remains separate.
+
+The native fixture image was resolved with `docker image inspect` before the final
+recovery run. An earlier invocation supplied the OCI configuration digest instead
+of Docker's image ID; it stopped before creating a Linux worker, cleaned up the
+owned PostgreSQL fixture, and was rerun with the inspected immutable image ID.
+Final image `sha256:bf96ad1e3ccf021846d9cb6700bb3731c28cb06c7e8b9aaf437f08a8fa74d3d9`.
+
+[Sanitized evidence](evidence/observability-m5-local-20261029.json) includes exact
+image pins, source/probe/log hashes, request/usage reconciliation, database tests,
+cleanup and measurement limits. [Export setup/reproduction](../../deploy/reference/EXPORT-QUALIFICATION.md)
+and [telemetry configuration](../../harness/telemetry/README.md) document the new
+explicit Langfuse dialect and cache-creation wire-key compatibility change.
+
+No cloud resources, paid model calls, Python harness changes or SQL batching.
+Recording/export remain best effort, independent of agent authorization/recovery.
+Fresh AWS installation of the final release candidate remains a separate gate.

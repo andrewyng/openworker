@@ -1,6 +1,6 @@
 //! Explicit OpenTelemetry component injection. Components remain app-owned;
 //! this sink flushes but never shuts down an application's providers.
-use crate::{Outcome, Record, Sink, Snapshot};
+use crate::{attributes as a, Operation, Outcome, Record, Sink, Snapshot, TokenUsage};
 use opentelemetry::{
     logs::{LogRecord, Logger, LoggerProvider, Severity},
     metrics::{Counter, Gauge, Histogram, MeterProvider},
@@ -65,10 +65,7 @@ impl OtelSink {
                 .build(),
             tokens: meter.u64_counter("openworker.model.tokens").build(),
             retries: meter.u64_counter("openworker.model.retry.count").build(),
-            first: meter
-                .f64_histogram("openworker.model.first_output.duration")
-                .with_unit("s")
-                .build(),
+            first: meter.f64_histogram(a::FIRST_OUTPUT).with_unit("s").build(),
             drops: meter.u64_gauge("openworker.telemetry.dropped").build(),
             failures: meter
                 .u64_gauge("openworker.telemetry.export_failures")
@@ -89,8 +86,8 @@ impl Sink for OtelSink {
         let logger = self.logs.logger("openworker.harness");
         for r in records {
             let labels = [
-                KeyValue::new("openworker.operation", r.operation.name()),
-                KeyValue::new("openworker.outcome", r.outcome.name()),
+                KeyValue::new(a::OPERATION, r.operation.name()),
+                KeyValue::new(a::OUTCOME, r.outcome.name()),
             ];
             self.operations.add(1, &labels);
             // A timestamp also catches the first error of a short-lived process,
@@ -128,72 +125,120 @@ impl Sink for OtelSink {
             if r.operation == crate::Operation::Model && r.attempt.is_some_and(|n| n > 1) {
                 self.retries.add(1, &[]);
             }
-            for (kind, value) in [("input", r.input_tokens), ("output", r.output_tokens)] {
+            // Only completed provider requests own usage. Parent/container spans
+            // and immutable open-request markers never duplicate those counters.
+            let usage = TokenUsage {
+                input: r.input_tokens,
+                output: r.output_tokens,
+                cache_read: r.usage_details.cache_read,
+                cache_write: r.usage_details.cache_write,
+                reasoning: r.usage_details.reasoning,
+            };
+            let model = r.operation == Operation::Model;
+            let valid_usage = model && usage.validate();
+            for (kind, value) in [("input", usage.input), ("output", usage.output)] {
+                if !valid_usage {
+                    continue;
+                }
                 if let Some(n) = value {
-                    let mut dimensions = vec![KeyValue::new("direction", kind)];
+                    let mut dimensions = vec![KeyValue::new(a::DIRECTION, kind)];
                     if let Some(p) = r.purpose {
-                        dimensions.push(KeyValue::new("openworker.model.purpose", p.name()));
+                        dimensions.push(KeyValue::new(a::PURPOSE, p.name()));
                     }
                     self.tokens.add(n, &dimensions);
                 }
             }
-            if let Some(d) = r.first_output {
+            if let Some(d) = r
+                .first_output
+                .filter(|d| model && r.timing_known && *d <= r.elapsed)
+            {
                 self.first.record(d.as_secs_f64(), &[]);
             }
             let mut attrs = labels.to_vec();
             if let Some(s) = r.identity.session {
-                attrs.push(KeyValue::new("openworker.session.hash", hex(&s)));
+                attrs.push(KeyValue::new(a::SESSION_HASH, hex(&s)));
             }
             if let Some(s) = r.identity.action {
-                attrs.push(KeyValue::new("openworker.action.hash", hex(&s)));
+                attrs.push(KeyValue::new(a::ACTION_HASH, hex(&s)));
             }
             if let Some(n) = r.attempt {
-                attrs.push(KeyValue::new("openworker.attempt", i64::from(n)));
+                attrs.push(KeyValue::new(a::ATTEMPT, i64::from(n)));
             }
             if let Some(t) = r.turn_hash {
-                attrs.push(KeyValue::new("openworker.turn.hash", hex(&t)));
+                attrs.push(KeyValue::new(a::TURN_HASH, hex(&t)));
             }
             if let Some(p) = r.purpose {
-                attrs.push(KeyValue::new("openworker.model.purpose", p.name()));
+                attrs.push(KeyValue::new(a::PURPOSE, p.name()));
             }
-            attrs.push(KeyValue::new("openworker.timing.known", r.timing_known));
+            attrs.push(KeyValue::new(a::TIMING_KNOWN, r.timing_known));
             let trace_id = TraceId::from_bytes(r.context.trace);
             let span_id = SpanId::from_bytes(r.context.span);
             // Opt-in metadata/content goes on spans only, never on metric
             // labels or the lifecycle log stream.
             let mut span_attrs = attrs.clone();
             for (key, value) in [
-                ("gen_ai.usage.input_tokens", r.input_tokens),
-                ("gen_ai.usage.output_tokens", r.output_tokens),
                 (
-                    "gen_ai.usage.cache_read.input_tokens",
-                    r.usage_details.cache_read,
+                    a::INPUT_TOKENS,
+                    valid_usage.then_some(usage.input).flatten(),
                 ),
                 (
-                    "gen_ai.usage.cache_write.input_tokens",
-                    r.usage_details.cache_write,
+                    a::OUTPUT_TOKENS,
+                    valid_usage.then_some(usage.output).flatten(),
                 ),
                 (
-                    "gen_ai.usage.reasoning.output_tokens",
-                    r.usage_details.reasoning,
+                    a::CACHE_READ_TOKENS,
+                    valid_usage.then_some(usage.cache_read).flatten(),
                 ),
-                ("openworker.tool.returned_bytes", r.output_bytes),
+                (
+                    a::CACHE_WRITE_TOKENS,
+                    valid_usage.then_some(usage.cache_write).flatten(),
+                ),
+                (
+                    a::REASONING_TOKENS,
+                    valid_usage.then_some(usage.reasoning).flatten(),
+                ),
+                (
+                    a::RETURNED_BYTES,
+                    (r.operation == Operation::Tool)
+                        .then_some(r.output_bytes)
+                        .flatten(),
+                ),
             ] {
                 if let Some(n) = value.and_then(|n| i64::try_from(n).ok()) {
                     span_attrs.push(KeyValue::new(key, n));
                 }
             }
-            if !r.attributes.is_empty() {
-                if let Some(s) = r.identity.session {
-                    // Trace grouping for LLM backends (still the hash, not the ID).
-                    span_attrs.push(KeyValue::new("session.id", hex(&s)));
-                }
-                span_attrs.extend(
-                    r.attributes
-                        .iter()
-                        .map(|(k, v)| KeyValue::new(*k, v.clone())),
-                );
+            // Classification is derived from the operation, not a model name:
+            // content-off generations still map correctly in Langfuse, while
+            // model.requested remains an event even if it carries a model name.
+            span_attrs.push(KeyValue::new(
+                a::OBSERVATION_TYPE,
+                r.operation.observation_type(),
+            ));
+            if let Some(operation) = r.operation.gen_ai_name() {
+                span_attrs.push(KeyValue::new(a::GEN_AI_OPERATION, operation));
             }
+            if let Some(session) = r.identity.session {
+                span_attrs.push(KeyValue::new(a::SESSION_ID, hex(&session)));
+                span_attrs.push(KeyValue::new(a::CONVERSATION_ID, hex(&session)));
+            }
+            if let Some(d) = r
+                .first_output
+                .filter(|d| model && r.timing_known && *d <= r.elapsed)
+            {
+                span_attrs.push(KeyValue::new(a::FIRST_OUTPUT, d.as_secs_f64()));
+            }
+            if r.outcome == Outcome::Error {
+                span_attrs.push(KeyValue::new(a::ERROR_TYPE, "operation_failed"));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            span_attrs.extend(
+                r.attributes
+                    .iter()
+                    .take(12)
+                    .filter(|(key, value)| crate::export_attribute(key, value) && seen.insert(*key))
+                    .map(|(key, value)| KeyValue::new(*key, value.clone())),
+            );
             // Cross-worker wall clocks can disagree. Preserve the unknown wait in
             // recording/logs; do not export an invalid negative-duration span.
             if let Some(traces) = self.traces.as_ref().filter(|_| r.timing_known) {
@@ -207,10 +252,15 @@ impl Sink for OtelSink {
                     ),
                     parent_span_id: r
                         .parent
+                        .filter(|p| p.trace == r.context.trace)
                         .map(|p| SpanId::from_bytes(p.span))
                         .unwrap_or(SpanId::INVALID),
                     parent_span_is_remote: false,
-                    span_kind: SpanKind::Internal,
+                    span_kind: if model {
+                        SpanKind::Client
+                    } else {
+                        SpanKind::Internal
+                    },
                     name: r.operation.name().into(),
                     start_time: r.started,
                     end_time: r.ended,
@@ -258,6 +308,7 @@ impl Sink for OtelSink {
                 match a.value {
                     opentelemetry::Value::String(s) => log.add_attribute(a.key, s.to_string()),
                     opentelemetry::Value::I64(n) => log.add_attribute(a.key, n),
+                    opentelemetry::Value::Bool(b) => log.add_attribute(a.key, b),
                     _ => {}
                 }
             }

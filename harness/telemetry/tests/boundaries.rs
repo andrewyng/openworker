@@ -191,3 +191,44 @@ fn disabled_and_abandoned_spans_are_truthful() {
     assert_eq!(rows[1].outcome, Outcome::Interrupted);
     assert_eq!(rows[1].input_tokens, None);
 }
+
+#[test]
+fn shared_registry_bounds_names_and_content_and_reserves_typed_fields() {
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (t, c) = Telemetry::start_with_content(
+        Capture(rows.clone()),
+        16,
+        ContentPolicy {
+            capture: openworker_telemetry::Capture::Full,
+            max_bytes: 64,
+            redact_secrets: true,
+        },
+    )
+    .unwrap();
+    let mut model = t.span(Operation::Model, None, None);
+    model.content("private.reasoning", || {
+        panic!("Unknown/private content keys must stay lazy")
+    });
+    model.metadata("gen_ai.usage.input_tokens", "12345");
+    model.metadata(
+        "gen_ai.request.model",
+        "https://user:password@private.example",
+    );
+    for _ in 0..100 {
+        model.metadata("gen_ai.request.model", "safe-model");
+    }
+    model.content("gen_ai.prompt", || "a safe prompt".repeat(100));
+    model.usage(0, 0);
+    model.usage(u64::MAX, u64::MAX);
+    model.finish(Outcome::Ok);
+    assert!(c.shutdown(Duration::from_secs(2)));
+    let rows = rows.lock().unwrap();
+    let r = &rows[0];
+    assert_eq!(r.attributes.len(), 2);
+    assert_eq!(r.input_tokens, Some(0));
+    assert_eq!(r.output_tokens, Some(0));
+    assert!(r
+        .attributes
+        .iter()
+        .all(|(k, v)| export_attribute(k, v) && v.len() <= 67));
+}

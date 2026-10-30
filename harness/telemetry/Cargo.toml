@@ -8,7 +8,7 @@ license.workspace = true
 [features]
 default = []
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
-otlp = ["otel", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:reqwest", "dep:http", "dep:bytes", "dep:async-trait"]
+otlp = ["otel", "dep:opentelemetry-otlp", "dep:opentelemetry-http", "dep:reqwest", "dep:http", "dep:bytes", "dep:async-trait", "dep:prost", "dep:opentelemetry-proto", "dep:serde_json"]
 
 [dependencies]
 anyhow = "1"
@@ -24,6 +24,9 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 http = { version = "1", optional = true }
 bytes = { version = "1", optional = true }
 async-trait = { version = "0.1", optional = true }
+prost = { version = "=0.14.4", optional = true }
+opentelemetry-proto = { version = "=0.33.1", default-features = false, features = ["gen-tonic-messages", "trace", "metrics", "logs"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 axum = "0.7"

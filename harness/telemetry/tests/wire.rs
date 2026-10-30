@@ -168,7 +168,7 @@ async fn all_signals_have_valid_otlp_and_no_payload_or_metric_identifiers() {
     for (key, value) in [
         ("gen_ai.usage.input_tokens", 42),
         ("gen_ai.usage.cache_read.input_tokens", 12),
-        ("gen_ai.usage.cache_write.input_tokens", 5),
+        ("gen_ai.usage.cache_creation.input_tokens", 5),
         ("gen_ai.usage.reasoning.output_tokens", 3),
     ] {
         assert!(child.attributes.iter().any(|a|a.key==key&&matches!(a.value.as_ref().and_then(|v|v.value.as_ref()),Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(n)) if *n==value)));
@@ -297,6 +297,7 @@ async fn authenticated_base_path_traces_only_with_opt_in_content() {
             otlp::Header::literal("x-langfuse-ingestion-version", "4"),
         ],
         signals: vec![otlp::Signal::Traces],
+        acknowledgement: otlp::Acknowledgement::Otlp,
         content: ContentPolicy {
             capture: Capture::Full,
             max_bytes: 64,
@@ -329,6 +330,7 @@ async fn authenticated_base_path_traces_only_with_opt_in_content() {
     for (path, headers, body) in seen.iter() {
         assert_eq!(path, "/api/public/otel/v1/traces", "only selected signals");
         assert_eq!(headers["authorization"], "Basic dGVzdDpzZWNyZXQ=");
+        assert_eq!(headers["accept"], "application/x-protobuf");
         assert_eq!(headers["x-langfuse-ingestion-version"], "4");
         let text = String::from_utf8_lossy(body);
         assert!(
@@ -354,6 +356,7 @@ fn content_off_by_default_and_header_rules_enforced() {
             "OW_TEST_DEFINITELY_UNSET",
         )],
         vec![otlp::Header::literal("content-type", "text/plain")],
+        vec![otlp::Header::literal("Authorization", "Basic fixture-only")],
         vec![otlp::Header::literal("proxy-authorization", "x")],
         vec![otlp::Header::secret("Authorization", "lower_case")],
         vec![otlp::Header {
@@ -399,4 +402,185 @@ fn redaction_masks_common_credentials() {
     assert_eq!(r, "a\n[REDACTED PRIVATE KEY]\nb");
     assert_eq!(redact("ask-me about sk-short"), "ask-me about sk-short");
     assert_eq!(redact("naïve café"), "naïve café");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejection_redirect_partial_malformed_and_large_acknowledgements_are_not_success_or_retried(
+) {
+    use axum::{
+        body::Body,
+        http::{Response, StatusCode},
+    };
+    use opentelemetry_proto::tonic::collector::trace::v1::{
+        ExportTracePartialSuccess, ExportTraceServiceResponse,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for mode in [
+        "unauthorized",
+        "redirect",
+        "partial",
+        "warning",
+        "malformed",
+        "oversized",
+        "json_ok",
+        "json_partial",
+        "json_malformed",
+        "json_wrong_signal",
+        "job_standard",
+        "job_vendor",
+        "job_invalid",
+    ] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/v1/traces",
+            post(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    let (status, body) = match mode {
+                        "unauthorized" => {
+                            (StatusCode::UNAUTHORIZED, b"PRIVATE_COLLECTOR_ECHO".to_vec())
+                        }
+                        "redirect" => (StatusCode::TEMPORARY_REDIRECT, vec![]),
+                        "partial" | "warning" => (
+                            StatusCode::OK,
+                            ExportTraceServiceResponse {
+                                partial_success: Some(ExportTracePartialSuccess {
+                                    rejected_spans: if mode == "partial" { 1 } else { 0 },
+                                    error_message: "PRIVATE_COLLECTOR_ECHO".into(),
+                                }),
+                            }
+                            .encode_to_vec(),
+                        ),
+                        "job_standard" | "job_vendor" | "job_invalid" => (StatusCode::OK, serde_json::to_vec(&serde_json::json!({"name":"otel-ingestion-job","id":"fixture","data":{"name":"otel-ingestion-job","payload":{"ingestionVersion":"4","authCheck":{"validKey":mode != "job_invalid"}}}})).unwrap()),
+                        "json_ok" => (StatusCode::OK, b"{}".to_vec()),
+                        "json_partial" => (StatusCode::OK, br#"{"partialSuccess":{"rejectedSpans":"1"}}"#.to_vec()),
+                        "json_malformed" => (StatusCode::OK, b"not json".to_vec()),
+                        "json_wrong_signal" => (StatusCode::OK, br#"{"partialSuccess":{"rejectedDataPoints":0}}"#.to_vec()),
+                        "malformed" => (StatusCode::OK, vec![0xff]),
+                        "oversized" => (StatusCode::OK, vec![0; 65537]),
+                        _ => unreachable!(),
+                    };
+                    Response::builder()
+                        .status(status)
+                        .header("location", "http://127.0.0.1:1/not-followed")
+                        .header("content-type", if mode.starts_with("json_") || mode.starts_with("job_") { "application/json; charset=utf-8" } else { "application/x-protobuf" })
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (t, c) = tokio::task::spawn_blocking(move || {
+            otlp::Config {
+                endpoint,
+                signals: vec![otlp::Signal::Traces],
+                acknowledgement: if mode == "job_vendor" || mode == "job_invalid" {
+                    otlp::Acknowledgement::LangfuseV4
+                } else {
+                    otlp::Acknowledgement::Otlp
+                },
+                ..Default::default()
+            }
+            .start("test")
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        t.event(
+            Operation::Tool,
+            Outcome::Unknown,
+            Some("private-session"),
+            None,
+        );
+        let c = tokio::task::spawn_blocking(move || {
+            assert!(c.shutdown(Duration::from_secs(5)));
+            c
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "{mode}: never replay a rejected/unknown export batch"
+        );
+        assert!(
+            (c.snapshot().export_failures == 0) == (mode == "json_ok" || mode == "job_vendor"),
+            "{mode}: report only complete acceptance: {:?}",
+            c.snapshot()
+        );
+        server.abort();
+    }
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn ambient_headers_resources_and_proxy_are_not_inherited() {
+    struct Reset(Vec<(&'static str, Option<String>)>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                if let Some(v) = v {
+                    std::env::set_var(k, v)
+                } else {
+                    std::env::remove_var(k)
+                }
+            }
+        }
+    }
+    let names = [
+        (
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "x-ambient=PRIVATE_AMBIENT_SECRET",
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+            "x-signal=PRIVATE_SIGNAL_SECRET",
+        ),
+        ("OTEL_RESOURCE_ATTRIBUTES", "ambient.key=PRIVATE_RESOURCE"),
+        ("HTTP_PROXY", "http://127.0.0.1:1"),
+        ("HTTPS_PROXY", "http://127.0.0.1:1"),
+    ];
+    let _reset = Reset(
+        names
+            .iter()
+            .map(|(k, v)| {
+                let old = std::env::var(k).ok();
+                std::env::set_var(k, v);
+                (*k, old)
+            })
+            .collect(),
+    );
+    let seen = Seen::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route("/v1/traces", post(receive_with_headers))
+        .with_state(seen.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (t, c) = tokio::task::spawn_blocking(move || {
+        otlp::Config {
+            endpoint,
+            signals: vec![otlp::Signal::Traces],
+            ..Default::default()
+        }
+        .start("test")
+        .unwrap()
+    })
+    .await
+    .unwrap();
+    t.event(Operation::Model, Outcome::Ok, None, None);
+    assert!(
+        tokio::task::spawn_blocking(move || c.shutdown(Duration::from_secs(5)))
+            .await
+            .unwrap()
+    );
+    let rows = seen.lock().unwrap();
+    assert_eq!(rows.len(), 1);
+    for (_, headers, body) in rows.iter() {
+        assert!(headers.get("x-ambient").is_none() && headers.get("x-signal").is_none());
+        assert!(!String::from_utf8_lossy(body).contains("PRIVATE"));
+    }
+    server.abort();
 }

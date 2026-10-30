@@ -1,6 +1,6 @@
 # Diagnostic recording storage
 
-M1 foundation for [harness observability](../../docs/harness/OBSERVABILITY.md).
+Storage and query foundation for [harness observability](../../docs/harness/OBSERVABILITY.md).
 Metadata-only immutable steps, SQLite/PostgreSQL adapters and a bounded independent
 writer. Does not depend on an OpenTelemetry exporter. Committed rows survive
 restart; the queue is not a durable outbox, billing ledger or audit record.
@@ -61,7 +61,8 @@ does not fail agent readiness. A failed write can mean an unconfirmed commit;
 inspect the stable step ID rather than assume absence or replay agent work. There
 is no automatic connection replacement or write retry in M1; after a broken
 connection, restart the process to establish a fresh writer. A lock timeout leaves
-the connection reusable. Queries are trusted host APIs, not public HTTP endpoints.
+the connection reusable. The low-level Store API is trusted-host only; service reads use the
+authorized [recording query API](../../docs/harness/OBSERVABILITY-QUERIES.md).
 Counters are process-local diagnostics, not durable accounting. Local PostgreSQL
 qualification uses explicit loopback plaintext; the new recording connector's
 verified-TLS path has not yet been qualified against a real TLS database.
@@ -129,3 +130,10 @@ that bounded contract. This low-level interface has no authorization authority;
 an application must authorize the canonical sessions itself. Projection v1 is
 rebuilt from at most 4,096 raw rows and reports incomplete coverage explicitly.
 There is no persistent summary cache or mandatory additional database.
+
+## Export alignment
+
+Local recording and remote export share the [typed attribute registry](../telemetry/attributes.json).
+Capture policy and failure handling remain independent. The [local qualification](../../deploy/reference/EXPORT-QUALIFICATION.md)
+reconciles source records against the official collector and actual Langfuse
+observations, including cache/reasoning normalization and cross-worker context.

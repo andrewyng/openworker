@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 mod accounting;
+pub mod attributes;
 mod observation;
 pub use accounting::{ModelPurpose, TokenUsage};
 #[cfg(feature = "otel")]
@@ -18,6 +19,27 @@ pub mod otel;
 #[cfg(feature = "otlp")]
 pub mod otlp;
 pub use observation::{Gauge, Observation};
+
+/// Names are bounded identifiers, never paths, endpoints or credential-shaped
+/// strings. Reserved typed fields cannot be overridden via metadata strings.
+pub fn metadata_attribute(key: &str, value: &str) -> bool {
+    attributes::field(key).is_some_and(|f| f.capture == attributes::CaptureClass::Metadata)
+        && !value.is_empty()
+        && value.len() <= 256
+        && !value.starts_with('/')
+        && !value.contains("://")
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-./:".contains(&b))
+        && redact(value) == value
+        && (key != attributes::POLICY_DIGEST
+            || value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+pub fn export_attribute(key: &str, value: &str) -> bool {
+    metadata_attribute(key, value)
+        || attributes::field(key)
+            .is_some_and(|f| f.capture == attributes::CaptureClass::Full && value.len() <= 65539)
+}
 
 /// What, beyond content-free timings, outcomes and token counts, may leave the
 /// process. Every level above `Off` is an explicit operator decision.
@@ -38,7 +60,7 @@ pub enum Capture {
     /// Content-free (the default).
     #[default]
     Off,
-    /// Model and tool names plus observation-type hints; no text, arguments
+    /// Registered model/tool names and sandbox/policy identifiers; no text, arguments
     /// or results.
     Metadata,
     /// Also prompts, completions, tool arguments and tool results, truncated
@@ -199,6 +221,31 @@ pub enum Operation {
     UnknownOutcome,
 }
 impl Operation {
+    /// Fixed hints are safe even when identifying metadata/content is off.
+    pub fn gen_ai_name(self) -> Option<&'static str> {
+        match self {
+            Self::Model => Some("chat"),
+            Self::Tool => Some("execute_tool"),
+            Self::Turn => Some("invoke_agent"),
+            _ => None,
+        }
+    }
+    pub fn observation_type(self) -> &'static str {
+        match self {
+            Self::Model => "generation",
+            Self::Turn => "agent",
+            Self::Tool => "tool",
+            Self::Policy => "guardrail",
+            Self::ModelStarted
+            | Self::ApprovalRequested
+            | Self::ApprovalResolved
+            | Self::QuestionRequested
+            | Self::QuestionResolved
+            | Self::Cancellation
+            | Self::UnknownOutcome => "event",
+            _ => "span",
+        }
+    }
     pub fn name(self) -> &'static str {
         match self {
             Self::Api => "api.request",
@@ -620,16 +667,19 @@ impl Span {
         }
     }
     pub fn usage(&mut self, input: u64, output: u64) {
-        if let Some(r) = &mut self.record {
-            r.input_tokens = Some(input);
-            r.output_tokens = Some(output);
-            r.usage_details.input = Some(input);
-            r.usage_details.output = Some(output);
-        }
+        self.reported_usage(TokenUsage {
+            input: Some(input),
+            output: Some(output),
+            ..Default::default()
+        });
     }
     pub fn reported_usage(&mut self, usage: TokenUsage) {
         if usage.validate() {
-            if let Some(r) = &mut self.record {
+            if let Some(r) = self
+                .record
+                .as_mut()
+                .filter(|r| r.operation == Operation::Model)
+            {
                 r.input_tokens = usage.input;
                 r.output_tokens = usage.output;
                 r.usage_details = usage;
@@ -684,8 +734,6 @@ impl Span {
             r.first_output = None;
             r.attributes
                 .retain(|(key, _)| matches!(*key, "gen_ai.request.model"));
-            r.attributes
-                .push(("langfuse.observation.type", "event".into()));
             self.telemetry.record(r);
         }
     }
@@ -704,15 +752,13 @@ impl Span {
     /// Short identifying metadata such as a model or tool name. Recorded at
     /// `Capture::Metadata` and above. Bounded to 256 bytes.
     pub fn metadata(&mut self, key: &'static str, value: &str) {
-        if self.policy().is_some() {
+        if self.policy().is_some() && metadata_attribute(key, value) {
             let mut end = value.len().min(256);
             while !value.is_char_boundary(end) {
                 end -= 1;
             }
             let value = value[..end].to_owned();
-            if let Some(r) = &mut self.record {
-                r.attributes.push((key, value));
-            }
+            self.push_attribute(key, value);
         }
     }
     /// Payload text, computed lazily and only at `Capture::Full`. Keeps the
@@ -726,12 +772,22 @@ impl Span {
         self.push_content(key, value, true);
     }
     fn push_content(&mut self, key: &'static str, value: impl FnOnce() -> String, tail: bool) {
+        if !attributes::field(key).is_some_and(|f| f.capture == attributes::CaptureClass::Full) {
+            return;
+        }
         let Some(policy) = self.policy().filter(|p| p.capture == Capture::Full) else {
             return;
         };
         let text = policy.bound(&value(), tail);
+        self.push_attribute(key, text);
+    }
+    fn push_attribute(&mut self, key: &'static str, value: String) {
         if let Some(r) = &mut self.record {
-            r.attributes.push((key, text));
+            if let Some((_, old)) = r.attributes.iter_mut().find(|(k, _)| *k == key) {
+                *old = value;
+            } else if r.attributes.len() < 12 {
+                r.attributes.push((key, value));
+            }
         }
     }
     pub fn first_output(&mut self) {

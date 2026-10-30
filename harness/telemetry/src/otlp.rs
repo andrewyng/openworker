@@ -30,6 +30,9 @@ pub struct Config {
     /// traces (e.g. Langfuse) should select `traces` only.
     #[serde(default = "all_signals")]
     pub signals: Vec<Signal>,
+    /// Explicit receiver dialect; standard OTLP remains the default.
+    #[serde(default)]
+    pub acknowledgement: Acknowledgement,
     /// Opt-in content capture. Off by default: records stay content-free.
     #[serde(default)]
     pub content: crate::ContentPolicy,
@@ -41,6 +44,7 @@ impl Default for Config {
             deployment: default_deployment(),
             headers: vec![],
             signals: all_signals(),
+            acknowledgement: Acknowledgement::default(),
             content: crate::ContentPolicy::default(),
         }
     }
@@ -57,6 +61,15 @@ pub enum Signal {
     Traces,
     Metrics,
     Logs,
+}
+/// Langfuse v4 currently returns a queue-job JSON receipt for nonempty batches.
+/// Select it explicitly; arbitrary HTTP 200 bodies are never assumed successful.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Acknowledgement {
+    #[default]
+    Otlp,
+    LangfuseV4,
 }
 /// One request header. Exactly one of `value` (non-secret literal, e.g. a
 /// protocol version) or `value_env` (name of an environment variable holding
@@ -94,6 +107,7 @@ impl Header {
             !matches!(
                 name.as_str(),
                 "host"
+                    | "accept"
                     | "content-type"
                     | "content-length"
                     | "content-encoding"
@@ -109,7 +123,13 @@ impl Header {
             name
         );
         let raw = match (&self.value, &self.value_env) {
-            (Some(v), None) => v.clone(),
+            (Some(v), None) => {
+                ensure!(
+                    !matches!(name.as_str(), "authorization" | "api-key" | "x-api-key"),
+                    "Telemetry authentication must use value_env"
+                );
+                v.clone()
+            }
             (None, Some(env)) => {
                 ensure!(
                     !env.is_empty()
@@ -133,6 +153,7 @@ impl Header {
 }
 #[derive(Clone)]
 struct Client {
+    acknowledgement: Acknowledgement,
     client: reqwest::blocking::Client,
     headers: Arc<Vec<(http::HeaderName, http::HeaderValue)>>,
 }
@@ -158,12 +179,31 @@ impl HttpClient for Client {
         let mut post = self
             .client
             .post(request.uri().to_string())
+            .header("accept", "application/x-protobuf")
             .header("content-type", "application/x-protobuf");
+        let signal = request
+            .uri()
+            .path()
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_owned();
         for (name, value) in self.headers.iter() {
             post = post.header(name.clone(), value.clone());
         }
         let response = post.body(request.into_body()).send()?;
         let status = response.status();
+        let json_ack = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .eq_ignore_ascii_case("application/json")
+            });
         // OTLP success responses are tiny. Bound an adversarial collector body.
         use std::io::Read;
         let mut body = Vec::new();
@@ -171,10 +211,156 @@ impl HttpClient for Client {
         if body.len() > 65536 {
             return Err("Collector response exceeds limit".into());
         }
+        if status.is_success() {
+            if json_ack {
+                if self.acknowledgement == Acknowledgement::LangfuseV4 {
+                    langfuse_acknowledgement(&signal, &body)?;
+                } else {
+                    json_acknowledgement(&signal, &body)?;
+                }
+                // The official exporter is configured for binary requests. A
+                // validated JSON response (Langfuse) must not be decoded as proto.
+                body.clear();
+            } else {
+                acknowledgement(&signal, &body)?;
+            }
+        } else {
+            // The SDK may log rejection bodies. Do not let an untrusted collector
+            // echo payloads/credentials into diagnostics. Status is sufficient.
+            body.clear();
+        }
         Ok(http::Response::builder()
             .status(status)
             .body(bytes::Bytes::from(body))?)
     }
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonAck {
+    #[serde(default, rename = "partialSuccess", alias = "partial_success")]
+    partial: Option<JsonPartial>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonPartial {
+    #[serde(default, rename = "rejectedSpans", alias = "rejected_spans")]
+    spans: Option<JsonCount>,
+    #[serde(default, rename = "rejectedDataPoints", alias = "rejected_data_points")]
+    metrics: Option<JsonCount>,
+    #[serde(default, rename = "rejectedLogRecords", alias = "rejected_log_records")]
+    logs: Option<JsonCount>,
+    #[serde(default, rename = "errorMessage", alias = "error_message")]
+    message: Option<String>,
+}
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum JsonCount {
+    Int(i64),
+    Text(String),
+}
+fn langfuse_acknowledgement(signal: &str, body: &[u8]) -> Result<(), HttpError> {
+    if json_acknowledgement(signal, body).is_ok() {
+        return Ok(());
+    }
+    // Never reinterpret a rejected OTLP partial-success response as a job receipt.
+    let value: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| -> HttpError { "Invalid Langfuse acknowledgement".into() })?;
+    if value.get("partialSuccess").is_some() || value.get("partial_success").is_some() {
+        return Err("Invalid Langfuse acknowledgement".into());
+    }
+    // Validate only receipt markers. Do not retain/log server queue metadata,
+    // storage references, authentication scope or receiver-supplied error text.
+    #[derive(serde::Deserialize)]
+    struct Receipt {
+        name: String,
+        id: String,
+        data: Job,
+    }
+    #[derive(serde::Deserialize)]
+    struct Job {
+        name: String,
+        payload: Payload,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Payload {
+        ingestion_version: String,
+        auth_check: Auth,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Auth {
+        valid_key: bool,
+    }
+    let receipt: Receipt = serde_json::from_slice(body)
+        .map_err(|_| -> HttpError { "Invalid Langfuse acknowledgement".into() })?;
+    if signal != "traces"
+        || receipt.name != "otel-ingestion-job"
+        || receipt.data.name != "otel-ingestion-job"
+        || receipt.id.is_empty()
+        || receipt.id.len() > 256
+        || receipt.data.payload.ingestion_version != "4"
+        || !receipt.data.payload.auth_check.valid_key
+    {
+        return Err("Invalid Langfuse acknowledgement".into());
+    }
+    Ok(())
+}
+fn json_acknowledgement(signal: &str, body: &[u8]) -> Result<(), HttpError> {
+    let invalid = || -> HttpError { "Invalid collector acknowledgement".into() };
+    let ack: JsonAck = serde_json::from_slice(body).map_err(|_| invalid())?;
+    if let Some(p) = ack.partial {
+        let value = match signal {
+            "traces" if p.metrics.is_none() && p.logs.is_none() => p.spans,
+            "metrics" if p.spans.is_none() && p.logs.is_none() => p.metrics,
+            "logs" if p.spans.is_none() && p.metrics.is_none() => p.logs,
+            _ => return Err(invalid()),
+        };
+        let count = match value {
+            None => 0,
+            Some(JsonCount::Int(n)) => n,
+            Some(JsonCount::Text(n)) => {
+                if n.is_empty() || n.len() > 19 || !n.bytes().all(|b| b.is_ascii_digit()) {
+                    return Err(invalid());
+                }
+                n.parse::<i64>().map_err(|_| invalid())?
+            }
+        };
+        if count < 0 {
+            return Err(invalid());
+        }
+        if count > 0 || p.message.is_some_and(|m| !m.is_empty()) {
+            return Err("Collector reported incomplete acceptance".into());
+        }
+    }
+    Ok(())
+}
+fn acknowledgement(signal: &str, body: &[u8]) -> Result<(), HttpError> {
+    use opentelemetry_proto::tonic::collector::{
+        logs::v1::ExportLogsServiceResponse, metrics::v1::ExportMetricsServiceResponse,
+        trace::v1::ExportTraceServiceResponse,
+    };
+    use prost::Message;
+    let rejected = match signal {
+        "traces" => ExportTraceServiceResponse::decode(body).map(|r| {
+            r.partial_success
+                .is_some_and(|p| p.rejected_spans != 0 || !p.error_message.is_empty())
+        }),
+        "metrics" => ExportMetricsServiceResponse::decode(body).map(|r| {
+            r.partial_success
+                .is_some_and(|p| p.rejected_data_points != 0 || !p.error_message.is_empty())
+        }),
+        "logs" => ExportLogsServiceResponse::decode(body).map(|r| {
+            r.partial_success
+                .is_some_and(|p| p.rejected_log_records != 0 || !p.error_message.is_empty())
+        }),
+        _ => return Err("Invalid telemetry signal".into()),
+    }
+    .map_err(|_| -> HttpError { "Invalid collector acknowledgement".into() })?;
+    if rejected {
+        return Err("Collector reported incomplete acceptance".into());
+    }
+    Ok(())
 }
 impl Config {
     pub fn start(&self, role: &'static str) -> Result<(Telemetry, Controller)> {
@@ -233,7 +419,12 @@ impl Config {
             );
             headers.push((name, value));
         }
+        ensure!(
+            self.acknowledgement != Acknowledgement::LangfuseV4 || self.signals == [Signal::Traces],
+            "Langfuse v4 acknowledgements require traces only"
+        );
         let client = Client {
+            acknowledgement: self.acknowledgement,
             client: reqwest::blocking::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -244,7 +435,19 @@ impl Config {
         };
         let resource = Resource::builder_empty()
             .with_attributes([
-                opentelemetry::KeyValue::new("service.name", "openworker"),
+                opentelemetry::KeyValue::new(crate::attributes::SERVICE_NAME, "openworker"),
+                opentelemetry::KeyValue::new(
+                    crate::attributes::SERVICE_VERSION,
+                    env!("CARGO_PKG_VERSION"),
+                ),
+                opentelemetry::KeyValue::new(
+                    crate::attributes::SCHEMA_VERSION,
+                    crate::attributes::VERSION,
+                ),
+                opentelemetry::KeyValue::new(
+                    crate::attributes::SEMCONV_VERSION,
+                    crate::attributes::SEMCONV,
+                ),
                 opentelemetry::KeyValue::new(
                     "service.instance.id",
                     uuid::Uuid::new_v4().to_string(),
@@ -348,5 +551,61 @@ impl Config {
                     .build(),
             )
             .build())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prost::Message;
+    #[test]
+    fn acknowledgements_are_typed_bounded_and_never_echo_receiver_text() {
+        use opentelemetry_proto::tonic::collector::trace::v1::{
+            ExportTracePartialSuccess, ExportTraceServiceResponse,
+        };
+        for signal in ["traces", "metrics", "logs"] {
+            assert!(acknowledgement(signal, &[]).is_ok());
+            assert!(acknowledgement(signal, &[0xff]).is_err());
+        }
+        let rejected = ExportTraceServiceResponse {
+            partial_success: Some(ExportTracePartialSuccess {
+                rejected_spans: 1,
+                error_message: "PRIVATE_COLLECTOR_ECHO".into(),
+            }),
+        }
+        .encode_to_vec();
+        let error = acknowledgement("traces", &rejected)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "Collector reported incomplete acceptance");
+        assert!(!error.contains("PRIVATE"));
+        assert!(json_acknowledgement("traces", br#"{}"#).is_ok());
+        assert!(json_acknowledgement(
+            "metrics",
+            br#"{"partialSuccess":{"rejectedDataPoints":"0"}}"#
+        )
+        .is_ok());
+        let receipt = br#"{"name":"otel-ingestion-job","id":"fixture","data":{"name":"otel-ingestion-job","payload":{"ingestionVersion":"4","authCheck":{"validKey":true}}}}"#;
+        assert!(langfuse_acknowledgement("traces", receipt).is_ok());
+        assert!(json_acknowledgement("traces", receipt).is_err());
+        assert!(langfuse_acknowledgement("logs", receipt).is_err());
+        let mut hybrid: serde_json::Value = serde_json::from_slice(receipt).unwrap();
+        hybrid["partialSuccess"] = serde_json::json!({"rejectedSpans":1});
+        assert!(langfuse_acknowledgement("traces", &serde_json::to_vec(&hybrid).unwrap()).is_err());
+        assert!(Config {
+            endpoint: "http://127.0.0.1:4318".into(),
+            acknowledgement: Acknowledgement::LangfuseV4,
+            ..Default::default()
+        }
+        .build_sink("test")
+        .is_err());
+        for body in [
+            br#"{"success":true}"#.as_slice(),
+            br#"{"partialSuccess":{"rejectedSpans":-1}}"#,
+            br#"{"partialSuccess":{"rejectedDataPoints":0}}"#,
+            br#"{"partialSuccess":{"rejectedSpans":"1","errorMessage":"PRIVATE_ECHO"}}"#,
+        ] {
+            assert!(json_acknowledgement("traces", body).is_err());
+        }
     }
 }

@@ -9,6 +9,7 @@ publish = false
 [features]
 default = []
 postgres = ["dep:postgres", "dep:postgres-native-tls", "dep:native-tls", "dep:rustls-pemfile", "dep:zeroize"]
+otlp = ["openworker-telemetry/otlp"]
 
 [dependencies]
 openworker-telemetry = { path = "../telemetry" }
@@ -24,3 +25,8 @@ zeroize = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["rt", "time"] }
+
+[[example]]
+name = "export_probe"
+required-features = ["otlp"]

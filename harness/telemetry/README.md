@@ -1,173 +1,181 @@
 # Optional harness telemetry
 
-Content-free traces, metrics and structured lifecycle logs using OpenTelemetry.
-Disabled by default. No global subscriber/provider, default vendor destination,
-durable spool, change to approvals, or change to agent recovery. This is a first
-observability slice, not the complete server-spec S4 acceptance gate.
+Instance-owned OpenTelemetry traces, metrics and lifecycle logs. Disabled by
+default; no global subscriber/provider or default vendor destination. The server
+reference composes export with optional [local recording](../observability/README.md).
+Recording has its own bounded writer and independently configurable SQLite or
+PostgreSQL connection. Enabling recording does not enable remote metadata/content.
+Neither system is a lossless billing ledger or security audit log.
 
-Optional [local diagnostic recording](../observability/README.md) now composes
-with this instrumentation in the server reference. It has a separate bounded
-writer and SQLite/PostgreSQL storage; enabling recording does not change exporter
-content settings. Recording is opt-in, covers existing execution segments, and
-does not yet provide complete auxiliary-call usage or cross-resume turn tracing.
-The queue remains best effort; committed records survive restart, but are not
-audit or billing evidence.
+## Configure an exporter
 
-## Server reference
-
-Add this optional field to the existing server-reference JSON configuration:
+Add `telemetry` to the server-reference JSON configuration:
 
 ```json
-"telemetry": {"endpoint": "http://127.0.0.1:4318"}
+{
+  "telemetry": {
+    "endpoint": "http://127.0.0.1:4318",
+    "deployment": "development"
+  }
+}
 ```
 
-The API/worker binary configures its own components once. The endpoint is an
-origin, not `/v1/traces`; export uses `/v1/traces`, `/v1/metrics`, `/v1/logs`.
-HTTPS is required except literal loopback addresses or localhost. Paths, query
-strings, URL credentials and fragments reject. Invalid configuration fails
-startup; an unreachable collector does **not** fail startup or agent execution.
-Authenticated `/readyz` includes local telemetry counters without making
-collector availability a readiness dependency. Shutdown emits at most one
-content-free diagnostic summary when records dropped or flushing failed.
+Use a collector **base URL**, optionally with a path. The exporter appends
+`/v1/traces`, `/v1/metrics` and `/v1/logs`. HTTPS is required except loopback HTTP.
+URL credentials, queries, fragments and signal-specific endpoint paths reject at
+startup. Unreachable exporters do not block agent execution or service readiness.
+Authenticated health responses expose local queue/export-failure counters.
 
-The reference transport has verified TLS, no redirects, no ambient proxy, no
-inherited OTEL HTTP headers, no automatic resource detection, no exporter retries,
-a 3-second HTTP deadline and a 64-KiB collector response-body cap. Collector
-authentication/custom CA configuration is not exposed in this first reference;
-use a local collector/sidecar or app-owned export components. Do not place secrets
-in the endpoint. No API/model/tool credentials are forwarded to the collector.
+For Langfuse, select traces only. Configure authentication using a named
+environment variable containing `Basic <base64(public-key:secret-key)>`:
 
-## Embedded/runtime integration
-
-The core `openworker-telemetry` crate has no OpenTelemetry SDK/exporter dependency
-unless `otel`/`otlp` is enabled. Existing Runtime constructors, stdio and Harness
-SDK defaults remain off. The high-level Harness SDK has no new configuration API.
-Trusted Rust hosts can use `Runtime::open_instrumented`, which takes the existing
-constructor arguments plus a `Telemetry` handle. PostgreSQL hosts also set
-`Config.telemetry` so worker slots/storage share that handle.
-
-```rust,ignore
-let (telemetry, controller) = openworker_telemetry::Telemetry::start(sink, 2048)?;
-db_config.telemetry = telemetry.clone();
-// Pass telemetry to Runtime::open_instrumented(..., telemetry).
-// After stopping agent work, from a blocking thread:
-let flushed = controller.shutdown(std::time::Duration::from_secs(5));
+```json
+{
+  "telemetry": {
+    "endpoint": "https://cloud.langfuse.com/api/public/otel",
+    "deployment": "production",
+    "signals": ["traces"],
+    "acknowledgement": "langfuse_v4",
+    "headers": [
+      {"name": "Authorization", "value_env": "OW_TELEMETRY_AUTH"},
+      {"name": "x-langfuse-ingestion-version", "value": "4"}
+    ]
+  }
+}
 ```
 
-`Sink` receives fixed-shape completed records on a dedicated thread. The `otel`
-feature supplies `otel::OtelSink::new(Arc<dyn SpanProcessor>, SdkLoggerProvider,
-SdkMeterProvider)` for app-owned OpenTelemetry components. Completed spans go to
-the processor's `on_end`; this is not a global tracing-subscriber integration or
-an application TracerProvider's sampler/on_start hook. Keep an owner for shared
-components: the sink flushes but does not explicitly shut down app providers.
-Custom sinks/providers own any extra resource metadata or content they add.
+Supply the secret through the application's secret manager or deployment secret;
+never put it in JSON, a bundle, URL or process argument. Header values are resolved
+at startup; rotating them requires restarting the exporter. Nonsecret protocol
+headers can use `value`. Authentication headers require `value_env`. Do not reuse
+model/service credentials. Langfuse ingests traces; send all signals to an OTel
+collector when you also need metrics/logs and configure its destinations separately.
+See [Langfuse's OTLP integration](https://langfuse.com/integrations/native/opentelemetry).
 
-The `otlp` feature supplies `otlp::Config::start(role)`. Construct it on a blocking
-thread when embedding in Tokio (the reference does this). Official components
-are pinned at **0.33.1**. Rust traces/exporters are beta; metrics/logs are stable
-per the official status documentation. We use versioned `openworker.*` attributes
-and metrics, not an assertion of conformance to evolving GenAI conventions.
-[Research and sources](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+The transport has verified TLS, no redirects/ambient proxies, no inherited OTEL
+headers or automatic resource detection, no exporter retries, a three-second HTTP
+deadline and a 64-KiB response cap. Custom CA configuration is not exposed; use a
+trusted local collector or app-owned components when required. Binary and declared
+JSON OTLP acknowledgements are validated. `acknowledgement: "langfuse_v4"` explicitly
+accepts Langfuse v4's identified ingestion-job receipt as well as OTLP responses;
+it requires traces-only export. The default `"otlp"` rejects that vendor envelope. Partial rejection, warnings, malformed
+or oversized acknowledgements and non-success HTTP responses count as failed
+batches. Receiver error text is never copied into diagnostic errors. HTTP success
+is not proof that a downstream vendor has durably indexed the data.
 
-## Meaning of the signals
+## Attribute and privacy contract
+
+[attributes.json](attributes.json) is the machine-readable registry for exported
+keys, types, capture classes and allowed metric dimensions. Its schema is version
+1, with a selected OTel GenAI **1.41.0** attribute subset; this is not a claim of
+complete or latest GenAI semantic-convention conformance. The generator produces
+checked-in [Rust constants](src/attributes.rs):
+
+```sh
+python3 harness/telemetry/scripts/generate-attributes.py --check
+```
+
+Python is a development-time generator only; building/shipping the Rust harness
+requires no Python runtime. The registry can later generate constants for other
+languages; the Python harness is unchanged.
+
+With default `content.capture: "off"`, exports contain fixed operations/outcomes,
+hashed identities, timestamps/durations, numeric usage and derived operation/type
+hints. `session.id` and `gen_ai.conversation.id` contain the same SHA-256 session
+hash as `openworker.session.hash`. These are pseudonymous, not anonymous. Raw
+session IDs, prompts, messages, reasoning, paths, URLs, credentials and model/tool
+names are excluded. Error status text is constant, never an exception string.
+
+`"content": {"capture": "metadata"}` opts into registered, validated model/tool
+identifiers and sandbox/policy metadata. `"full"` also admits registered payload
+keys, bounded by `max_bytes` and optional best-effort secret redaction. Full capture
+is sensitive and redaction cannot guarantee secret removal. Unknown keys, reserved
+typed keys, URL/path-shaped metadata and repeated-attribute growth are rejected.
+Recording metadata and remote capture remain independently controlled.
+
+The standard cache-creation key is `gen_ai.usage.cache_creation.input_tokens`.
+M5 replaces the old nonstandard `gen_ai.usage.cache_write.input_tokens` wire key;
+local recording's `cache_write` field is unchanged. Consumers of the old wire key
+must update their queries. Model names and content compatibility keys retain their
+existing names; no full migration to structured GenAI message events is claimed.
+See the [pinned convention](https://github.com/open-telemetry/semantic-conventions/blob/v1.41.0/docs/gen-ai/gen-ai-spans.md).
+
+## Counting and context
 
 | Operation | Meaning |
 |---|---|
-| `api.request` / `command.admission` | HTTP handler/response preparation and durable command admission, not SSE stream lifetime or applied approval. |
-| `runtime.command` | Local protocol command, with no method payload exported. |
-| `agent.execute` | One active execution segment. Ends when parked; a resumed segment has a new trace. |
-| `model.attempt` | Main agent model attempt, including preparation/checkpoint overhead; each retry is separate. |
-| `tool.execute` | Actual admitted harness/MCP/internal tool execution. Denial is not a tool execution. Missing result is unknown, not success. |
-| `policy.review` | Authorization/reviewer path. Includes waiting/denied outcomes. |
-| `environment.operation` | Tool/environment preparation. Not full provider lifecycle coverage. |
-| `storage.call` / `worker.activation` / `worker.lease` | Bounded store operation, claimed worker slot lifetime, and lease renewal. |
-| `session.recovery_scan` / `session.recovery` | Startup scan versus actual committed per-session PostgreSQL recovery transitions. |
-| `approval.*` / `question.*` | Newly committed request/response transitions, not replayed events. |
-| `turn.cancellation` / `tool.unknown_outcome` | Observed cancelled completion or uncertain effects; no rollback claim. |
+| `api.request` / `command.admission` | HTTP response preparation or committed command admission, not SSE lifetime or applied approval. |
+| `agent.execute` | An execution segment of a logical turn; parking ends the segment. |
+| `model.requested` | Start marker/event; no completed request usage. |
+| `model.attempt` | One main/reviewer/compaction provider request, including retries and failed streams. |
+| `tool.execute` | Admitted execution; missing effects/result remain unknown. |
+| `policy.review` | Authorization/reviewer path, including waiting/denied outcomes. |
+| `approval.*` / `question.*` | Committed transitions and measured human-wait intervals. |
+| `environment.operation` | Execution-environment preparation, not complete provider lifecycle coverage. |
+| `storage.call` / `worker.*` / `session.recovery*` | Bounded storage, worker ownership and committed recovery activity. |
 
-Real parent/child relationships are maintained with task-local context within an
-execution segment. New Tokio jobs and database actors do not implicitly inherit
-context. Cross-process activity correlates through SHA-256 session/action hashes
-on spans/logs, not a fabricated shared trace ID. Durable distributed trace links
-are deferred. Hashes are pseudonymous identifiers, **not anonymization**.
+Usage belongs only to completed model-request records. Parent/turn/tool spans do
+not repeat it. Known zero remains zero; unknown stays absent. Input/output totals
+include cache/reasoning subsets, which must not be added again. Cache creation,
+cache read and reasoning counts remain optional. Each attempt has its own identity
+and main/auto-approver/compaction purpose. Vendor ingestion may normalize counters;
+compare vendor totals with local recording before using them for reporting.
 
-No prompts, answers, messages, images, tool arguments/results/names, URLs, file
-paths, SQL, raw errors, private reasoning, headers or arbitrary baggage are
-accepted into instrumentation records. Only fixed operations/outcomes, identity
-hashes, generated trace/span IDs, durations, attempt numbers and numeric usage
-are available. Error status text is a constant, never an exception string.
+Models are CLIENT spans with `gen_ai.operation.name=chat` and
+`langfuse.observation.type=generation`, even when names/content are off. Start
+markers are events. Derived vendor hints cannot be overridden by string metadata.
+Stable turn context survives durable parking/resume and worker replacement;
+segments have distinct span IDs and explicit links. Task-local child context
+requires explicit propagation. Session/turn hashes correlate auxiliary lifecycle
+activity without inventing parentage. Invalid-clock intervals stay visible as
+unknown timing in recording/logs and do not manufacture invalid-duration spans.
 
-Metrics use only bounded operation/outcome/direction dimensions:
-Resource identity also contains the fixed service/role and a generated process
-instance UUID, keeping different workers' cumulative counters separate, plus an
-explicit non-sensitive deployment identifier (default `default` for old JSON).
+## Metrics and bounds
 
-- `openworker.operation.count` and `openworker.operation.duration` (seconds).
-  Transition events have counts, not duration samples.
-- `openworker.model.tokens`: reported input/output tokens for completed main
-  model attempts. Missing usage stays absent. Not a billing ledger.
-- `openworker.model.retry.count`: observed main model attempts numbered >1.
-- `openworker.model.first_output.duration`: first nonempty visible delta from
-  attempt start. Not provider-internal token generation time.
-- `openworker.telemetry.dropped`: cumulative local enqueue/drain drops.
-- `openworker.telemetry.export_failures`: failed export/flush batches, not an
-  exact HTTP request count. Both gauges are snapshots on subsequent exports;
-  `Telemetry::snapshot`/`Controller::snapshot` remain available during an outage.
-- `openworker.operation.last_error_timestamp_seconds`: latest model/tool error
-  completion time per process/operation; catches a first error without requiring
-  an earlier zero counter sample. Still best-effort, not an audit record.
-- Optional fixed numeric server/worker gauges cover queue depth, active turns,
-  current pending interactions, queue age, potential stalls, recent unknown
-  transitions, sampler/database health, worker slots and freshness timestamps.
-  `Sink::observe` is optional for older custom sinks. `observe_many` accepts or
-  drops an entire bounded snapshot atomically. No trace/log is manufactured.
-  See the [operations runbook](../../deploy/reference/OPERATIONS.md) for exact
-  meanings, configuration, replica deduplication and missing-data handling.
+Metric dimensions are limited to operation, outcome, model purpose and token
+direction. No model/tool name, prompt, user/session ID or trace ID is a metric
+dimension. Resources include explicit deployment/role, generated process instance,
+service version and registry/convention versions. Keep cumulative samples separate
+by process instance; do not sum repeated snapshots from the same stream.
 
-## Bounds and failure behavior
+- `openworker.operation.count` / `.duration`: completed work and active seconds;
+  transition events have counts, not duration samples.
+- `openworker.model.tokens`: known input/output per model request and purpose.
+- `openworker.model.retry.count`: attempts numbered above one.
+- `openworker.model.first_output.duration`: first visible output latency, including
+  transport/queue/preparation; not provider-internal generation time.
+- `openworker.telemetry.dropped` / `.export_failures`: local drop and failed-batch
+  snapshots, not exact HTTP request counts or a durable global ledger.
+- Fixed server gauges and last model/tool error timestamps support operational
+  charts; see [operations guidance](../../deploy/reference/OPERATIONS.md).
 
-The execution-side queue is at most 2,048 fixed-shape messages plus an in-flight
-batch of at most 128. A message is one record or up to 14 fixed numeric gauges;
-an observation-only batch creates no spans/logs. Enqueue never waits on a collector. The official trace/log
-processors also have explicit 2,048-entry caps and 128-record batch limits; a
-single dispatcher flushes each batch before submitting another. Metric dimensions
-are fixed and bounded. No per-session in-memory span registry is retained.
+The execution queue holds up to 2,048 messages plus 128 in flight. The trace/log
+processors also cap queues at 2,048 and batches at 128. Producers never wait for
+receivers. Full queues drop visibly. No per-session in-memory span registry,
+durable export spool or automatic agent/tool retry is introduced. All admitted
+records are sampled; configurable sampling is not implemented.
 
-Full/closed queues drop new records and increment local counters. Export failures
-lose telemetry rather than retry agent work. Metrics/logs/traces are best-effort,
-not exactly-once and not durable audit. Drops can leave incomplete trace trees.
-Sampling is not implemented; all admitted records are sampled.
+Shutdown fences producers and drains within a total budget (normally five seconds).
+An in-flight batch may complete later; a custom blocking sink cannot be forcibly
+killed. Recording commits survive restart, but queues/crashes/outages can lose
+observations. Missing telemetry never authorizes replay of an uncertain tool.
 
-Shutdown fences producers, drains within a deadline and waits at most five
-seconds **total**. It returns false if incomplete and does not wait for every
-queued record individually. An in-flight export batch may finish afterward;
-custom app sinks that ignore deadlines cannot be forcibly killed. No new batch
-starts after the drain deadline. Keep this distinction when hosting in-process.
+## Embedded integration
 
-## Qualification
+The core crate has no OTel SDK/exporter dependency unless `otel`/`otlp` is enabled.
+Existing runtime/stdio/Harness SDK defaults stay off; no new high-level SDK API.
+Trusted hosts can pass `Telemetry` to `Runtime::open_instrumented` and PostgreSQL
+`Config.telemetry`. `otlp::Config::start(role)` builds instance-owned exporters;
+construct it on a blocking thread when embedding in Tokio.
 
-```sh
-# harness/
-cargo test --locked -p openworker-telemetry --all-features
-cargo test --locked -p openworker-runtime --test telemetry # Linux/Windows
-cargo run --locked -p openworker-telemetry --features otlp --example collector -- http://127.0.0.1:4318
-```
+`otel::OtelSink::new` accepts app-owned processors/providers. It calls completed
+spans' `on_end`, not global sampler/on_start hooks. Keep ownership of shared
+providers: the sink flushes but does not explicitly shut them down. Official
+Rust OTel components are pinned to 0.33.1. Custom sinks own any extra fields they add.
 
-`collector.yaml` is a disposable local collector configuration; bind any Docker
-published port to host loopback. Verified image:
-`otel/opentelemetry-collector-contrib@sha256:e7c92c715f28ff142f3bcaccd4fc5603cf4c71276ef09954a38eb4038500a5a5`
-(0.147.0). Debug export exposes all received attributes, so this fixture must
-never receive private application payloads from other clients.
+## Reproduce qualification
 
-Set `OW_TEST_OTLP_ENDPOINT` on the existing server-reference replica test to
-enable real API/worker telemetry while it exercises PostgreSQL and OpenShell.
-Wire tests decode all three protobuf signals and check parent IDs/privacy;
-fault tests cover full queues, blocked sinks, refused/slow collectors and bounded
-shutdown. A real runtime test covers human allow/deny/resume and actual native
-tool execution without exporting content.
-
-Remaining: durable cross-worker propagation/sampling, active-session/queue-depth
-gauges, durable approval-wait durations, per-model error classification, separate
-reviewer/compaction token accounting, full environment lifecycle coverage,
-collector auth/CA configuration and production dashboards/alerts. No Windows
-VM requalification or cloud/multi-AZ observability acceptance is claimed here.
+See [export qualification](../../deploy/reference/EXPORT-QUALIFICATION.md) for the
+pinned local collector/Langfuse fixture, fault tests, recording reconciliation and
+limits. The fixture uses synthetic measurements, no paid models or real tools.
+Fresh-cloud, Windows VM and multi-AZ qualification remain separate work.
