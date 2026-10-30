@@ -27,9 +27,10 @@ Authorization: implement and test locally; **do not provision AWS resources**.
 
 GCP follow-up (October 30): the user approved a separate **$100 total** experiment.
 Isolated project/budget setup and the implementation sequence are recorded in the
-[GCP trial plan and ledger](OWS-GCP-TRIAL-PLAN.md). GCP remains offline-plan-only;
-the new project's budget is not evidence of a live deployment adapter or cleanup
-guard.
+[GCP trial plan and ledger](OWS-GCP-TRIAL-PLAN.md). Identity-only bootstrap export
+and read-only bootstrap preflight are now implemented and qualified. GCP
+infrastructure apply and independent cleanup remain disabled; bootstrap readiness
+does not qualify those paths. See the [GCP command guide](OWS-GCP-BOOTSTRAP.md).
 
 ## D1 order
 

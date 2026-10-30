@@ -11,15 +11,16 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Capability | AWS | GCP | Azure |
 |---|---|---|---|
 | Offline typed plan, resource graph, inspect/validate/status | Implemented | Implemented | Implemented |
-| Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Design below | Design below |
+| Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Identity-only export implemented; [guide](OWS-GCP-BOOTSTRAP.md) | Design below |
 | Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
-| Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Not yet | Not yet |
+| Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Bootstrap/direct IAM checks qualified; infrastructure checks pending | Not yet |
 | Provisioning and cleanup | Experimental opt-in; locally tested recovery, AWS trial pending | Disabled | Disabled |
 
-Nothing in this milestone has been run against a cloud account. Generated AWS
-bootstrap is structurally tested and exercised against a fake AWS executable;
-that is not live IAM qualification. GCP/Azure output is a plan, not a Terraform or
-Bicep installer. `applyReady` remains false on all clouds.
+The original design milestone was offline. Subsequent cloud qualification is
+recorded in the provider ledgers. GCP identity bootstrap and read-only bootstrap
+preflight are now live-qualified in the [GCP ledger](OWS-GCP-TRIAL-PLAN.md), with
+infrastructure apply still disabled. Azure remains plan-only. Generated artifacts
+or fake-CLI tests alone do not qualify real IAM or infrastructure behavior.
 
 ## Separate the authorities
 
@@ -150,6 +151,13 @@ Permission simulation, actual resource creation permissions and cleanup behavior
 still require separate authorized AWS qualification.
 
 ## GCP: plan implemented, identity/installer design
+
+October 30 implementation update: `ows deploy gcp bootstrap` exports the explicit
+identity setup, and `ows deploy gcp preflight` verifies required direct bindings and
+optionally pins account UIDs to creation receipts. See the
+[command guide](OWS-GCP-BOOTSTRAP.md). The broader flow below remains the target:
+resource-specific execution grants, Terraform lifecycle and independent cleanup
+are not implemented yet. Bootstrap readiness never implies infrastructure readiness.
 
 ```sh
 ows deploy gcp plan --project my-ows-project --location us-central1 \

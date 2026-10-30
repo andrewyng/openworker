@@ -4,6 +4,8 @@
 mod bootstrap;
 #[path = "deployment_cloud.rs"]
 mod cloud;
+#[path = "deployment_gcp.rs"]
+mod gcp;
 #[path = "deployment_guard.rs"]
 mod guard;
 #[path = "deployment_infrastructure.rs"]
@@ -115,6 +117,10 @@ pub struct AwsPlan {
 #[derive(Subcommand)]
 pub enum GcpCommand {
     Plan(GcpPlan),
+    /// Export identity-only customer-run bootstrap from a reviewed GCP plan.
+    Bootstrap(gcp::Bootstrap),
+    /// Observe bootstrap prerequisites without enabling APIs or changing IAM.
+    Preflight(gcp::Preflight),
 }
 #[derive(Subcommand)]
 pub enum AzureCommand {
@@ -200,6 +206,8 @@ struct Plan {
     bootstrap: Option<bootstrap::AwsIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     infrastructure: Option<infrastructure::Inputs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gcp_bootstrap: Option<gcp::Identity>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -316,6 +324,13 @@ impl Plan {
             );
             identity.validate(self)?;
         }
+        if let Some(identity) = &self.gcp_bootstrap {
+            ensure!(
+                self.bootstrap.is_none() && self.infrastructure.is_none(),
+                "GCP identity bundle cannot contain AWS authority"
+            );
+            identity.validate(self)?;
+        }
         if let Some(inputs) = &self.infrastructure {
             ensure!(
                 self.schema_version == 3 && self.bootstrap.is_some(),
@@ -408,6 +423,13 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
             "No bootstrap.sh is emitted until its permissions and operations are implemented.",
             "Identity-only bootstrap artifacts are included. Read BOOTSTRAP.md before use. The existing execution role and complete infrastructure deployment are NOT generated or qualified here.").into_bytes();
     }
+    if plan.gcp_bootstrap.is_some() {
+        files.extend(gcp::artifacts(plan)?);
+        let review = files.get_mut("REVIEW.md").unwrap();
+        *review = String::from_utf8(review.clone())?.replace(
+            "Bootstrap and deployment executors for this provider are not implemented.",
+            "Identity-only bootstrap is exported; read GCP-BOOTSTRAP.md. Infrastructure permissions, cloud lifecycle and automatic cleanup are not implemented.").into_bytes();
+    }
     Ok(files)
 }
 fn write_bundle(root: &Path, p: &Plan) -> Result<Manifest> {
@@ -497,9 +519,15 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
 }
 fn result(p: &Plan, m: &Manifest) -> Value {
     json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix,
-        "identityBootstrap": if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
+        "identityBootstrap": if p.gcp_bootstrap.is_some() { "exported_gcp_identity_only" } else if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
+    if let Command::Gcp {
+        command: GcpCommand::Preflight(options),
+    } = command
+    {
+        return gcp::preflight(options).await;
+    }
     if let Command::Cluster { command } = command {
         return local::run_cluster(command).await;
     }
@@ -522,6 +550,12 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Gcp {
+            command: GcpCommand::Bootstrap(options),
+        } => gcp::bootstrap(options),
+        Command::Gcp {
+            command: GcpCommand::Preflight(_),
+        } => bail!("Preflight requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Lifecycle { .. },
         } => bail!("Cloud lifecycle requires asynchronous dispatch"),
@@ -656,6 +690,7 @@ fn create(
         target,
         bootstrap,
         infrastructure,
+        gcp_bootstrap: None,
         created_at_unix: created,
         expires_at_unix: created
             .checked_add(u64::from(a.ttl_hours) * 3600)
@@ -767,6 +802,7 @@ mod tests {
             },
             bootstrap: None,
             infrastructure: None,
+            gcp_bootstrap: None,
             topology: Topology {
                 cluster_mode: "new".into(),
                 node_count: 2,

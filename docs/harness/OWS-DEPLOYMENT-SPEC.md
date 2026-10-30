@@ -186,7 +186,9 @@ Provider scope validation is syntactic; it does not assert cloud availability.
 AWS may receive paired `--operator-arn` and `--execution-role-arn` options to export
 identity-only bootstrap. The execution role is customer-provided, not auto-generated
 or policy-audited. These extra artifacts are integrity-checked along with the plan.
-No identity artifacts are emitted for GCP/Azure yet. Their identity/resource designs
+GCP now supports a separate identity-only bootstrap export and read-only bootstrap
+preflight; see the [GCP guide](OWS-GCP-BOOTSTRAP.md). Infrastructure apply remains
+disabled. Azure has no identity export yet. Their broader identity/resource designs
 and remaining qualification gates are in [cloud identities](OWS-CLOUD-IDENTITY-DESIGN.md).
 
 ## Schema 3: generated AWS infrastructure and identities

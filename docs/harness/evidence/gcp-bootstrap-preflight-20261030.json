@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "scope": "gcp_identity_bootstrap_and_read_only_preflight",
+  "result": "qualified_with_recorded_live_reconciliation",
+  "local": {
+    "command": "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-service-cli",
+    "passed": 70,
+    "failed": 0,
+    "ignored": 0,
+    "gcpIntegrationGroups": 9,
+    "testLogSha256": "6793d7063228d30d72ec323f6c9291ec11c4cd0c41fa21d12bd9d31225e269d7",
+    "defaultClippyExitCode": 0,
+    "newGcpClippyDiagnostics": 0,
+    "strictClippy": "blocked_by_pre_existing_lints",
+    "finalExportedScript": "fake_gcloud_full_execution_only"
+  },
+  "live": {
+    "bootstrapReady": true,
+    "applyReady": false,
+    "readOnlyGcloudInvocations": 15,
+    "preflightCloudMutations": 0,
+    "receiptMatchedAccountUids": 5,
+    "requiredChecksPassed": true,
+    "bootstrapSetupSeparateFromPreflight": {
+      "reviewedApisEnabled": 7,
+      "customerManagedAccountsCreated": 5,
+      "reviewedBindingsConfirmed": 6,
+      "googleInfrastructureManagerIdentityInitialized": true,
+      "explicitUserApprovalReceived": true,
+      "partialBootstrap": "read_live_ids_and_policies_then_apply_only_confirmed_missing_approved_bindings",
+      "automaticResumeImplemented": false
+    },
+    "paidInfrastructureLaunched": false,
+    "serviceAccountKeysCreated": false,
+    "rawReceipts": "retained_privately_not_in_repository",
+    "preflightReportSha256": "bb2d8230d308378564b4a4ab9f0b792566f75593dc71b17e1d75a478e0c36e48"
+  },
+  "budget": {
+    "authorizedUsd": 100,
+    "variableReserveUsd": 25,
+    "actualSpendVerified": false,
+    "estimatedCost": null,
+    "hardSpendingCap": false
+  },
+  "remainingGates": [
+    "resolved Terraform graph and resource-specific executor permissions",
+    "effective organization policies and private cluster-management connectivity",
+    "pinned GKE/node OS, OpenShell and image compatibility",
+    "full topology quotas and conservative price estimate",
+    "independent expiry/cleanup implementation and qualification",
+    "cloud lifecycle implementation"
+  ],
+  "sourceSha256": {
+    "harness/service-cli/src/deployment.rs": "e045e535eac4f01ee5741e46d4b0e7f4499da9431466aec45a2520a2356ca04a",
+    "harness/service-cli/src/deployment_gcp.rs": "70a359dbac118cd15709db524700767bffca89be229bca3c8f0beb896673875d",
+    "harness/service-cli/src/deployment_gcp_preflight.rs": "c67c1580587edd6ca35d5c01ce141027e0f34f925704e204e65673d5baba6f18",
+    "harness/service-cli/tests/gcp.rs": "6330ac2b69701371ee4454ed47517ad282cef6f649056ff7b6b02cb7ed2ae029",
+    "harness/service-cli/tests/fixtures/gcp-bootstrap.py": "925d59cb167712b9c58369acc37da5f413f71766f0081d7bfa042231efc73b12",
+    "harness/service-cli/tests/fixtures/gcp-preflight.py": "14711182d5607e9a72cae9fc1c354f7211f8300a84c4ea4578ea27fe662ff7a0"
+  }
+}
