@@ -25,6 +25,12 @@ Authorization: implement and test locally; **do not provision AWS resources**.
 - D6: Separately authorized AWS experiment; actual IAM/cost/guard checks. Then qualify
   GCP/Azure bootstrap/execution adapters against the same lifecycle contract.
 
+GCP follow-up (October 30): the user approved a separate **$100 total** experiment.
+Isolated project/budget setup and the implementation sequence are recorded in the
+[GCP trial plan and ledger](OWS-GCP-TRIAL-PLAN.md). GCP remains offline-plan-only;
+the new project's budget is not evidence of a live deployment adapter or cleanup
+guard.
+
 ## D1 order
 
 1. Record design/command semantics and unsupported boundaries.
