@@ -13,8 +13,9 @@ raw provider logs. Existing projects and unrelated workloads are outside this tr
 
 The native `ows deploy gcp plan` command exists and is qualified for offline
 planning. Identity-only bootstrap export and read-only **bootstrap** preflight
-are now implemented and qualified below. Full infrastructure preflight and GCP
-apply/status/destroy remain **not implemented**. Existing AWS qualification does not
+are now implemented and qualified below. G2a adds a locally schema-validated
+infrastructure export and private lifecycle prepare/local-status commands. Full
+infrastructure preflight and GCP cloud apply/status/destroy remain **not implemented**. Existing AWS qualification does not
 qualify those GCP paths. The shared Kubernetes/Helm installer and harness service
 can be reused after GCP infrastructure and provider access are verified.
 
@@ -204,6 +205,80 @@ paths and exact provider IDs remain under `.ow-service-gcp-20261030/`.
 
 [Command guide](OWS-GCP-BOOTSTRAP.md) ·
 [Sanitized evidence](evidence/gcp-bootstrap-preflight-20261030.json).
+
+## G2 execution plan — October 30
+
+Proceed in three reviewable slices. This work is in the separate `ows` CLI crate;
+it does not add code/dependencies to either measured agent binary. The
+[release-size baseline](BINARY-FOOTPRINT.md) is recorded before this work.
+
+1. **G2a: immutable infrastructure export and recovery rules.** Export a pinned
+   Terraform JSON graph for a private zonal GKE Standard cluster (two fixed AMD64
+   Ubuntu nodes), private Cloud SQL, dedicated VPC/NAT, artifacts and image
+   registry. Validate explicit versions, bounded disks and non-overlapping private
+   address ranges. Describe separate control-state/source storage and independent
+   cleanup authority; never delete Terraform state with the workload graph.
+   Add/test the lifecycle decision rules for persisted create/delete intents,
+   pinned provider operation/creation receipts, revision and ambiguous outcomes. Qualify the generated
+   graph with the real pinned provider schema locally, without Terraform apply.
+2. **G2b: provider transport and full preflight.** Wire the recovery rules to
+   Infra Manager's create-only REST method (not gcloud's create-or-update wrapper),
+   durable journals, private generation-pinned source, bounded authenticated
+   observations and a resolved permission/cost/access check. No API failure or
+   interrupted create automatically becomes permission to retry a mutation.
+3. **G3: independent cleanup deployment and qualification.** Install a separately
+   owned authenticated scheduler/cleanup runner outside GKE, with exact acknowledged operation,
+   creation time, revision and expiry receipts kept in durable control storage. Confirm its health
+   before workload apply. Exercise teardown failure/restart and prove absence;
+   retain source/state/receipts until destruction is verified. Only then review
+   the fresh cost estimate and remaining cumulative allowance for a paid trial.
+
+G2a exports remain non-applicable. A Terraform schema pass is not GCP IAM,
+organization-policy, OpenShell compatibility, price or lifecycle qualification.
+No new cloud grants or paid resources are required for these local tests.
+
+### G2a implementation and qualification
+
+Implemented the native infrastructure export, immutable provider checksum lock,
+twelve-address workload graph and separate cleanup contract. Private GKE/SQL
+networking, both Calico enablement controls, fixed node counts, dedicated node
+identity (including the transient default pool), Workload Identity, public bucket
+access prevention and trial deletion behavior are explicit. VPC, pod, service,
+control-plane and SQL ranges must be canonical, private and non-overlapping.
+Disk/machine/TTL bounds and exact Terraform/provider pins reject unreviewed inputs.
+
+Implemented private fsynced lifecycle preparation and locked **local-only** status,
+binding the immutable graph to a fixed request UUID. Recovery decisions never
+choose a replay for a persisted intent/unknown outcome. Names and labels are not
+ownership receipts. Google's Deployment API does not expose a UID; acknowledged
+operation, creation time and revision evidence must be retained by the future
+transport. A missing acknowledgement needs explicit ownership reconciliation,
+even if a subsequent read says the name is absent.
+
+Downloaded the official Terraform **1.5.7** ARM64 archive and verified its published
+SHA-256. `init -backend=false` installed Google **6.44.0**, signature-verified by
+Terraform; the resulting provider checksum lock is included in exports. Real
+`terraform validate -json` passed with **zero errors and zero warnings**. The
+provider's local IPC socket needed execution outside the desktop filesystem
+sandbox; this was local validation, not a Google API or Terraform apply operation.
+No Terraform plan/apply, new GCP grant or paid resource was created.
+
+The complete CLI suite passed **75 tests**, including thirteen GCP integration
+groups, the recovery-decision unit test and the existing AWS/install regression
+suites. Tests cover immutable graph/lock checks, unsafe address/version/capacity
+inputs, private journal permissions/reopening, graph/scope drift and missing
+ownership receipts. Default Clippy completed without diagnostics in the GCP
+files. Formatting, local documentation links and whitespace checks pass.
+
+The checked-in example GKE version is syntactic test input only. Regional version
+availability, node/kernel/OpenShell compatibility, actual NetworkPolicy isolation,
+effective permissions, private installer access, costs and independent cleanup
+remain unqualified. The control source/state bucket and cleanup scheduler/runner
+are deliberately outside the workload graph. **G2b and G3 remain outstanding**;
+`applyReady` remains false and cloud mutation commands are not exposed.
+
+[Infrastructure/recovery guide](OWS-GCP-INFRASTRUCTURE.md) ·
+[Sanitized G2a evidence](evidence/gcp-infrastructure-local-20261030.json).
 
 ## References
 

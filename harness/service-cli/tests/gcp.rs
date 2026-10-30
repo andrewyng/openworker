@@ -12,6 +12,21 @@ struct Fixture {
     home: tempfile::TempDir,
 }
 impl Fixture {
+    fn infrastructure(&self, value: &Value, name: &str) -> Output {
+        let input = self.home.path().join(format!("{name}.json"));
+        fs::write(&input, serde_json::to_vec(value).unwrap()).unwrap();
+        self.call(&[
+            "deploy",
+            "gcp",
+            "infrastructure",
+            "--plan",
+            self.home.path().join("bootstrap").to_str().unwrap(),
+            "--config",
+            input.to_str().unwrap(),
+            "--out",
+            self.home.path().join(name).to_str().unwrap(),
+        ])
+    }
     fn command(&self) -> Command {
         let mut c = Command::new(BIN);
         c.env_clear()
@@ -98,6 +113,272 @@ impl Fixture {
         let v = serde_json::from_slice(&fs::read(out.join("preflight.json")).unwrap()).unwrap();
         (r, v)
     }
+}
+
+fn graph_input() -> Value {
+    serde_json::json!({"zone":"us-central1-a","kubernetesVersion":"1.33.5-gke.1162000","terraformVersion":"1.5.7","googleProviderVersion":"6.44.0","nodeMachineType":"e2-standard-2","nodeDiskGb":40,"postgresVersion":"POSTGRES_16","postgresTier":"db-f1-micro","postgresDiskGb":10,"subnetCidr":"10.70.0.0/16","podCidr":"10.72.0.0/14","serviceCidr":"10.76.0.0/20","controlPlaneCidr":"172.16.0.0/28","sqlCidr":"10.80.0.0/16"})
+}
+
+#[test]
+fn graph_is_private_bounded_pinned_and_offline_with_cleanup_outside_workload() {
+    let f = Fixture::ready();
+    let r = f.infrastructure(&graph_input(), "infra");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let result: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(result["applyReady"], false);
+    let root = f.home.path().join("infra");
+    let tf: Value =
+        serde_json::from_slice(&fs::read(root.join("gcp-main.tf.json")).unwrap()).unwrap();
+    let resources = &tf["resource"];
+    assert_eq!(resources.as_object().unwrap().len(), 12);
+    let cluster = &resources["google_container_cluster"]["workload"];
+    assert_eq!(
+        cluster["private_cluster_config"][0]["enable_private_endpoint"],
+        true
+    );
+    assert_eq!(
+        cluster["private_cluster_config"][0]["enable_private_nodes"],
+        true
+    );
+    assert_eq!(
+        resources["google_container_node_pool"]["workload"]["node_count"],
+        2
+    );
+    assert_eq!(
+        resources["google_container_node_pool"]["workload"]["node_config"][0]["image_type"],
+        "UBUNTU_CONTAINERD"
+    );
+    assert_eq!(
+        resources["google_sql_database_instance"]["workload"]["settings"][0]["ip_configuration"][0]
+            ["ipv4_enabled"],
+        false
+    );
+    assert_eq!(
+        resources["google_storage_bucket"]["artifacts"]["public_access_prevention"],
+        "enforced"
+    );
+    assert_eq!(
+        resources["google_storage_bucket"]["artifacts"]["force_destroy"],
+        true
+    );
+    assert_eq!(tf["terraform"]["required_version"], "=1.5.7");
+    assert_eq!(
+        tf["terraform"]["required_providers"]["google"]["version"],
+        "=6.44.0"
+    );
+    assert!(tf["terraform"].get("backend").is_none());
+    assert_eq!(cluster["network_policy"][0]["enabled"], true);
+    assert_eq!(cluster["network_policy"][0]["provider"], "CALICO");
+    assert_eq!(
+        cluster["addons_config"][0]["network_policy_config"][0]["disabled"],
+        false
+    );
+    assert_eq!(
+        cluster["node_config"][0]["service_account"],
+        resources["google_container_node_pool"]["workload"]["node_config"][0]["service_account"]
+    );
+    assert!(root.join("gcp-provider.lock.hcl").is_file());
+    for kind in resources.as_object().unwrap().keys() {
+        assert!(
+            !kind.contains("iam") && !kind.contains("scheduler") && !kind.contains("cloud_run")
+        );
+    }
+    let cleanup: Value =
+        serde_json::from_slice(&fs::read(root.join("gcp-cleanup-contract.json")).unwrap()).unwrap();
+    assert_eq!(cleanup["outsideWorkloadCluster"], true);
+    assert_eq!(cleanup["installed"], false);
+    assert_eq!(cleanup["authorityReady"], false);
+    let r = f.call(&["deploy", "validate", "--plan", root.to_str().unwrap()]);
+    assert!(r.status.success());
+    assert!(!f.home.path().join("calls.jsonl").exists());
+    // The manifest binds the actual Terraform graph; editing it invalidates inspection.
+    fs::write(root.join("gcp-main.tf.json"), b"{}").unwrap();
+    assert!(!f
+        .call(&["deploy", "validate", "--plan", root.to_str().unwrap()])
+        .status
+        .success());
+}
+
+#[test]
+fn graph_rejects_unbounded_unpinned_overlapping_and_injected_inputs() {
+    let f = Fixture::ready();
+    let cases = [
+        ("zone", serde_json::json!("europe-west1-a")),
+        ("kubernetesVersion", serde_json::json!("latest")),
+        ("terraformVersion", serde_json::json!(">=1.5")),
+        ("googleProviderVersion", serde_json::json!("latest")),
+        ("nodeMachineType", serde_json::json!("n2-highmem-128")),
+        ("nodeDiskGb", serde_json::json!(101)),
+        ("postgresTier", serde_json::json!("db-custom-64-245760")),
+        ("postgresDiskGb", serde_json::json!(0)),
+        ("subnetCidr", serde_json::json!("8.8.0.0/16")),
+        ("podCidr", serde_json::json!("10.70.0.0/16")),
+        ("serviceCidr", serde_json::json!("10.76.0.1/20")),
+        ("sqlCidr", serde_json::json!("10.70.0.0/24")),
+        ("controlPlaneCidr", serde_json::json!("10.72.0.0/28")),
+        (
+            "provisioner",
+            serde_json::json!({"local-exec":"curl attacker"}),
+        ),
+    ];
+    for (n, (key, value)) in cases.into_iter().enumerate() {
+        let mut input = graph_input();
+        input[key] = value;
+        let name = format!("bad-{n}");
+        assert!(!f.infrastructure(&input, &name).status.success(), "{key}");
+        assert!(!f.home.path().join(name).exists());
+    }
+    let mut outside = graph_input();
+    outside["podCidr"] = serde_json::json!("192.168.0.0/14");
+    assert!(!f
+        .infrastructure(&outside, "extends-public")
+        .status
+        .success());
+    let input = f.home.path().join("symlink.json");
+    let original = f.home.path().join("real.json");
+    fs::write(&original, serde_json::to_vec(&graph_input()).unwrap()).unwrap();
+    std::os::unix::fs::symlink(&original, &input).unwrap();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "infrastructure",
+            "--plan",
+            f.home.path().join("bootstrap").to_str().unwrap(),
+            "--config",
+            input.to_str().unwrap(),
+            "--out",
+            f.home.path().join("symlink-out").to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!f.home.path().join("calls.jsonl").exists());
+}
+
+#[test]
+fn lifecycle_journal_is_private_durable_bound_to_graph_and_never_applies() {
+    let f = Fixture::ready();
+    assert!(f.infrastructure(&graph_input(), "infra").status.success());
+    let plan = f.home.path().join("infra");
+    let state = f.home.path().join("state");
+    let args = [
+        "deploy",
+        "gcp",
+        "lifecycle",
+        "prepare",
+        "--plan",
+        plan.to_str().unwrap(),
+        "--out",
+        state.to_str().unwrap(),
+    ];
+    let r = f.call(&args);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(!f.call(&args).status.success());
+    let first: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(first["cloudObservation"], "not_checked");
+    assert_eq!(first["applyReady"], false);
+    assert_eq!(first["next"], "await_qualification");
+    assert!(uuid::Uuid::parse_str(first["requestId"].as_str().unwrap()).is_ok());
+    assert_eq!(
+        fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let journal = state.join("gcp-journal.json");
+    assert_eq!(
+        fs::metadata(&journal).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let status = [
+        "deploy",
+        "gcp",
+        "lifecycle",
+        "status",
+        "--state",
+        state.to_str().unwrap(),
+    ];
+    let again = f.call(&status);
+    assert!(again.status.success());
+    assert_eq!(
+        first,
+        serde_json::from_slice::<Value>(&again.stdout).unwrap()
+    );
+    let mut saved: Value = serde_json::from_slice(&fs::read(&journal).unwrap()).unwrap();
+    saved["phase"] = serde_json::json!("create_unknown");
+    fs::write(&journal, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let r = f.call(&status);
+    assert!(r.status.success());
+    let value: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(value["next"], "require_ownership_receipt");
+    assert_eq!(value["automaticRetry"], false);
+    saved["createOperation"] =
+        serde_json::json!("projects/wrong/locations/us-central1/operations/foreign");
+    fs::write(&journal, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert!(!f.call(&status).status.success());
+    saved["createOperation"] = Value::Null;
+    saved["phase"] = serde_json::json!("active");
+    fs::write(&journal, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert!(!f.call(&status).status.success());
+    saved["phase"] = serde_json::json!("prepared");
+    saved["bundleDigest"] = serde_json::json!("replaced");
+    fs::write(&journal, serde_json::to_vec(&saved).unwrap()).unwrap();
+    assert!(!f.call(&status).status.success());
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "apply",
+            "--state",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "destroy",
+            "--state",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!f.home.path().join("calls.jsonl").exists());
+}
+
+#[test]
+fn lifecycle_preparation_rejects_bootstrap_only_or_nested_outputs() {
+    let f = Fixture::ready();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            f.home.path().join("bootstrap").to_str().unwrap(),
+            "--out",
+            f.home.path().join("bad-state").to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(f.infrastructure(&graph_input(), "infra").status.success());
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            f.home.path().join("infra").to_str().unwrap(),
+            "--out",
+            f.home.path().join("infra/nested").to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!f.home.path().join("infra/nested").exists());
+    assert!(!f.home.path().join("calls.jsonl").exists());
 }
 #[test]
 fn export_is_offline_immutable_scoped_and_does_not_claim_deployment_readiness() {

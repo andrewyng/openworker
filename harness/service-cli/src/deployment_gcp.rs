@@ -1,8 +1,20 @@
-//! GCP identity export only. No IAM/API mutation is invoked by these commands.
+//! GCP offline exports, bootstrap observations and local lifecycle journals.
+//! No IAM/API mutation is invoked by these commands.
 use super::*;
 #[path = "deployment_gcp_preflight.rs"]
 mod observation;
 pub(super) use observation::{preflight, Preflight};
+#[path = "deployment_gcp_recovery.rs"]
+mod recovery;
+#[path = "deployment_gcp_infrastructure.rs"]
+mod resources;
+pub(super) use recovery::Lifecycle;
+pub(super) use resources::{
+    artifacts as infrastructure_artifacts, export as infrastructure, Infrastructure, Inputs,
+};
+pub(super) fn lifecycle(command: &Lifecycle) -> Result<()> {
+    recovery::run(command)
+}
 
 pub(super) const BOOTSTRAP_APIS: &[&str] = &[
     "iam.googleapis.com",

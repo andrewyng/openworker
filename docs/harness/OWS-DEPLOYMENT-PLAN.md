@@ -31,6 +31,8 @@ Isolated project/budget setup and the implementation sequence are recorded in th
 and read-only bootstrap preflight are now implemented and qualified. GCP
 infrastructure apply and independent cleanup remain disabled; bootstrap readiness
 does not qualify those paths. See the [GCP command guide](OWS-GCP-BOOTSTRAP.md).
+G2a adds a pinned Terraform export and local lifecycle prepare/status commands;
+see the [infrastructure guide](OWS-GCP-INFRASTRUCTURE.md) for the remaining gates.
 
 ## D1 order
 

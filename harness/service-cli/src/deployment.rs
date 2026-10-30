@@ -1,4 +1,4 @@
-//! Offline planning/packaging, local kind installation and read-only AWS preflight.
+//! Offline planning/packaging, local kind installation and cloud preflight.
 //! Offline commands do not invoke cloud tools or load service authentication.
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
@@ -121,6 +121,13 @@ pub enum GcpCommand {
     Bootstrap(gcp::Bootstrap),
     /// Observe bootstrap prerequisites without enabling APIs or changing IAM.
     Preflight(gcp::Preflight),
+    /// Export a private trial infrastructure graph; never runs Terraform or cloud tools.
+    Infrastructure(gcp::Infrastructure),
+    /// Prepare/inspect a private lifecycle journal locally. Cloud mutations are not enabled.
+    Lifecycle {
+        #[command(subcommand)]
+        command: gcp::Lifecycle,
+    },
 }
 #[derive(Subcommand)]
 pub enum AzureCommand {
@@ -208,6 +215,8 @@ struct Plan {
     infrastructure: Option<infrastructure::Inputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gcp_bootstrap: Option<gcp::Identity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gcp_infrastructure: Option<gcp::Inputs>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -331,6 +340,9 @@ impl Plan {
             );
             identity.validate(self)?;
         }
+        if let Some(inputs) = &self.gcp_infrastructure {
+            inputs.validate(self)?;
+        }
         if let Some(inputs) = &self.infrastructure {
             ensure!(
                 self.schema_version == 3 && self.bootstrap.is_some(),
@@ -429,6 +441,9 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         *review = String::from_utf8(review.clone())?.replace(
             "Bootstrap and deployment executors for this provider are not implemented.",
             "Identity-only bootstrap is exported; read GCP-BOOTSTRAP.md. Infrastructure permissions, cloud lifecycle and automatic cleanup are not implemented.").into_bytes();
+    }
+    if plan.gcp_infrastructure.is_some() {
+        files.extend(gcp::infrastructure_artifacts(plan)?);
     }
     Ok(files)
 }
@@ -553,6 +568,12 @@ pub fn run(command: &Command) -> Result<()> {
         Command::Gcp {
             command: GcpCommand::Bootstrap(options),
         } => gcp::bootstrap(options),
+        Command::Gcp {
+            command: GcpCommand::Infrastructure(options),
+        } => gcp::infrastructure(options),
+        Command::Gcp {
+            command: GcpCommand::Lifecycle { command },
+        } => gcp::lifecycle(command),
         Command::Gcp {
             command: GcpCommand::Preflight(_),
         } => bail!("Preflight requires asynchronous dispatch"),
@@ -691,6 +712,7 @@ fn create(
         bootstrap,
         infrastructure,
         gcp_bootstrap: None,
+        gcp_infrastructure: None,
         created_at_unix: created,
         expires_at_unix: created
             .checked_add(u64::from(a.ttl_hours) * 3600)
@@ -803,6 +825,7 @@ mod tests {
             bootstrap: None,
             infrastructure: None,
             gcp_bootstrap: None,
+            gcp_infrastructure: None,
             topology: Topology {
                 cluster_mode: "new".into(),
                 node_count: 2,

@@ -188,7 +188,8 @@ identity-only bootstrap. The execution role is customer-provided, not auto-gener
 or policy-audited. These extra artifacts are integrity-checked along with the plan.
 GCP now supports a separate identity-only bootstrap export and read-only bootstrap
 preflight; see the [GCP guide](OWS-GCP-BOOTSTRAP.md). Infrastructure apply remains
-disabled. Azure has no identity export yet. Their broader identity/resource designs
+disabled. A pinned [GCP workload graph and local lifecycle journal](OWS-GCP-INFRASTRUCTURE.md)
+are also available for local qualification. Azure has no identity export yet. Their broader identity/resource designs
 and remaining qualification gates are in [cloud identities](OWS-CLOUD-IDENTITY-DESIGN.md).
 
 ## Schema 3: generated AWS infrastructure and identities

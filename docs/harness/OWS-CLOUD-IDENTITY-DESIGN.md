@@ -155,8 +155,10 @@ still require separate authorized AWS qualification.
 October 30 implementation update: `ows deploy gcp bootstrap` exports the explicit
 identity setup, and `ows deploy gcp preflight` verifies required direct bindings and
 optionally pins account UIDs to creation receipts. See the
-[command guide](OWS-GCP-BOOTSTRAP.md). The broader flow below remains the target:
-resource-specific execution grants, Terraform lifecycle and independent cleanup
+[command guide](OWS-GCP-BOOTSTRAP.md). G2a also implements a locally schema-validated
+[private Terraform graph and lifecycle journal preparation](OWS-GCP-INFRASTRUCTURE.md).
+The broader flow below remains the target:
+resource-specific execution grants, remote Terraform lifecycle and independent cleanup
 are not implemented yet. Bootstrap readiness never implies infrastructure readiness.
 
 ```sh

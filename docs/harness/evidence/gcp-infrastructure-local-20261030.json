@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "milestone": "G2a",
+  "scope": "offline_infrastructure_export_and_local_lifecycle_preparation",
+  "passed": 75,
+  "failed": 0,
+  "ignored": 0,
+  "gcpIntegrationGroups": 13,
+  "testCommand": "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-service-cli",
+  "testLogSha256": "ba248ef44cb839ab62342cc9836202f3bbf241b00349a7c9d9228030adc6f929",
+  "terraform": {
+    "version": "1.5.7",
+    "platform": "darwin_arm64",
+    "archiveChecksumVerified": true,
+    "provider": "hashicorp/google",
+    "providerVersion": "6.44.0",
+    "providerSignatureVerifiedByTerraformInit": true,
+    "providerLockExported": true,
+    "initBackend": false,
+    "lockfile": "readonly",
+    "validate": {
+      "format_version": "1.0",
+      "valid": true,
+      "error_count": 0,
+      "warning_count": 0,
+      "diagnostics": []
+    },
+    "validateReportSha256": "4cd9eddc4d07c5aff74dadb6b3544f98186f6705ac60e0d94d545fc42b45b9b6",
+    "graphSha256": "3298bfae784b79c8e9e9c6c3fefa716075dd79d7ad151eb331089e598ea08386",
+    "planOrApplyExecuted": false
+  },
+  "lifecycle": {
+    "journalPrivate": true,
+    "stableRequestIdSurvivesReopen": true,
+    "cloudObservation": "not_checked",
+    "automaticReplay": false,
+    "applyReady": false,
+    "remoteTransportImplemented": false,
+    "independentCleanupInstalled": false
+  },
+  "newCloudMutations": 0,
+  "paidResourcesLaunched": false,
+  "newCloudGrants": false,
+  "authorizedCumulativeBudgetUsd": 100,
+  "remaining": [
+    "G2b bounded provider transport, ownership receipts and durable remote recovery",
+    "effective executor/node/workload/cleanup IAM",
+    "exact regional versions, quota, private access and OpenShell compatibility",
+    "conservative cumulative cost estimate",
+    "G3 independent cleanup installation and failure/restart qualification"
+  ],
+  "sourceSha256": {
+    "harness/service-cli/src/deployment.rs": "e2423a075ed99c2844c7fb1172d0d2a11fffb47abf8a308a5dda50fed5f2e826",
+    "harness/service-cli/src/deployment_gcp.rs": "aae109b0fb55602586971bc1ac0a6c024f243aa1e6f7d25dedbad31d0d380751",
+    "harness/service-cli/src/deployment_gcp_infrastructure.rs": "c78d481d06df3954346f3d75b0266954a1dcc6346b0a49855b1981078d781e3e",
+    "harness/service-cli/src/deployment_gcp_recovery.rs": "8c71fbdc080ecd0e564cf55a9d46c27c2b6c216e3afba47b01b0bc81fb3fed99",
+    "harness/service-cli/tests/gcp.rs": "6f5ad6b56196d85e294d999a9ca71f71c7974c63e15711d20bb3bc54da269b77",
+    "harness/service-cli/assets/gcp-google-6.44.0.lock.hcl": "7018e36bde6616c1af404342d5cdefe296afc82026a3e3b50ff45600ae896c1f"
+  }
+}

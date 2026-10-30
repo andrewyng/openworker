@@ -3,6 +3,7 @@
 These commands prepare and inspect the identities for a GCP deployment. They do
 not install a cluster or launch an agent. GCP infrastructure lifecycle and automatic
 cleanup remain separate implementation gates in the [trial ledger](OWS-GCP-TRIAL-PLAN.md).
+The next local step is the [infrastructure export and lifecycle preparation](OWS-GCP-INFRASTRUCTURE.md).
 
 Use the Rust toolchain from this checkout to build `ows`:
 
