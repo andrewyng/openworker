@@ -122,3 +122,19 @@ Run the normal explicit migration before deployment to add the optional query
 indexes and recording schema. Execution/recording SQL layouts remain unchanged;
 JSON records are still v1/v2. Large-table index rollout, lost-record recovery,
 materialized rollups, and live management UI integration are separate work.
+
+
+## Management UI and process health
+
+The management UI's **Observability** page uses these authenticated APIs through
+its existing fixed-upstream proxy. It provides a searchable run picker, usage
+summaries, model/tool groups and an expandable timeline. Recording remains opt-in;
+there is no sample-data fallback. [UI operation and qualification](../../harness/service-ui/README.md#observability).
+
+`GET /v1/observability/health` requires administrator authority. It returns
+`scope: api_instance`, `recording_enabled`, optional recorder counters,
+`exporter_enabled` and exporter counters from the serving process. No connection
+settings or credentials are included. These counters are not filtered by session
+ownership and therefore are not exposed to ordinary read credentials. They are
+not worker/cluster aggregates, a database-readiness probe or lossless delivery
+proof. UI and API responses remain non-cacheable.

@@ -1,3 +1,5 @@
+import { mountObservability } from "./observability.js";
+let disposeObservability = null;
 const paths = {
   overview: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
   agents: "M8 4V2m8 2V2M5 7h14v13H5zM9 12h.01M15 12h.01M9 16h6M2 11v5m20-5v5",
@@ -98,6 +100,8 @@ function toast(text) {
   setTimeout(() => $("#toast").classList.remove("show"), 4000);
 }
 function stop() {
+  disposeObservability?.();
+  disposeObservability = null;
   stream?.close();
   stream = null;
   clearTimeout(reconnect);
@@ -127,9 +131,10 @@ function loggedOut(message = "") {
   $("#token").value = "";
   $("#login-error").textContent = message;
 }
-async function api(path, method = "GET", data, key) {
+async function api(path, method = "GET", data, key, signal) {
   const r = await fetch("/api" + path, {
     method,
+    signal,
     headers:
       method === "GET"
         ? {}
@@ -287,6 +292,7 @@ const nav = [
   ["agents", "Agents", "agents"],
   ["sessions", "Sessions", "sessions"],
   ["activity", "Activity", "activity"],
+  ["observability", "Observability", "chart"],
   ["infrastructure", "Infrastructure", "infra"],
 ];
 $("#nav").innerHTML = nav
@@ -547,6 +553,14 @@ async function render() {
   }
   main.innerHTML = empty("Loading…");
   try {
+    if (page === "observability") {
+      disposeObservability = mountObservability(main, {
+        request: (path, signal) =>
+          api(path, "GET", undefined, undefined, signal),
+        isAdmin: can.admin(),
+      });
+      return;
+    }
     let html;
     if (
       page === "overview" ||

@@ -41,7 +41,7 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
         .unwrap_or_else(|| path.into());
     matches!(
         path.split('/').collect::<Vec<_>>().as_slice(),
-        ["", "observability", "runs" | "summary"]
+        ["", "observability", "runs" | "summary" | "health"]
             | [
                 "",
                 "sessions",
@@ -52,8 +52,18 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
             ]
     )
 }
+pub(crate) fn action(method: &str, path: &str) -> Option<Action> {
+    authority(method, path).then(|| {
+        if matches!(path, "/observability/health" | "/v1/observability/health") {
+            Action::Admin
+        } else {
+            Action::Read
+        }
+    })
+}
 pub(crate) fn router(prefix: &str) -> Router<App> {
     Router::new()
+        .route(&format!("{prefix}/observability/health"), get(health))
         .route(&format!("{prefix}/observability/runs"), get(search))
         .route(&format!("{prefix}/observability/summary"), get(grouped))
         .route(
@@ -64,6 +74,17 @@ pub(crate) fn router(prefix: &str) -> Router<App> {
             &format!("{prefix}/sessions/:sid/observability/:turn/summary"),
             get(summary),
         )
+}
+async fn health(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
+    // These counters cover the serving API process, not an authorized run or
+    // the cluster. Never expose other principals' traffic through a read token.
+    app.store.authorize(Action::Admin, None, None)?;
+    Ok(Json(json!({
+        "scope":"api_instance", "recording_enabled":app.config.observability.is_some(),
+        "recording":app.config.recording_stats.as_ref().map(|s|s.snapshot()),
+        "exporter_enabled":app.runtime.telemetry.enabled(),
+        "exporter":app.runtime.telemetry.snapshot()
+    })))
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -317,6 +338,7 @@ mod tests {
             for path in [
                 "/observability/runs",
                 "/observability/summary",
+                "/observability/health",
                 "/sessions/s/observability/t/timeline",
                 "/sessions/s/observability/t/summary",
             ] {
@@ -327,6 +349,10 @@ mod tests {
                 }
             }
         }
+        assert!(matches!(
+            action("GET", "/v1/observability/health"),
+            Some(Action::Admin)
+        ));
         for path in [
             "/v1evil/observability/runs",
             "/v1/observability/runs/extra",

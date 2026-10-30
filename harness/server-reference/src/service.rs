@@ -44,8 +44,8 @@ impl ServiceConfig {
     }
 }
 pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
-    if crate::recording_query::authority(method, path) {
-        return Some(Action::Read);
+    if let Some(action) = crate::recording_query::action(method, path) {
+        return Some(action);
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {

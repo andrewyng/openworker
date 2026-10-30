@@ -61,6 +61,9 @@ Implemented and locally qualified. [Query guide](OBSERVABILITY-QUERIES.md).
 
 ## M4 — management UI
 
+Implemented and locally/visually qualified. [Evidence](evidence/observability-m4-local-20261029.json).
+[UI guide](../../harness/service-ui/README.md#observability).
+
 Use the approved mock's grouped summaries, model/tool tables and turn timeline.
 Add the searchable run picker and progressive detail. Replace sample data only
 when each metric's query and completeness contract are implemented. Keep current

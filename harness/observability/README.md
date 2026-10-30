@@ -78,7 +78,8 @@ intervals. Session/turn/action IDs are hashed; model/tool names are allowlisted
 metadata. Optional typed call contexts let hosts bind additional model purposes;
 they do not introduce a helper/title feature. New payloads use v2 while v1 remains
 readable in the unchanged indexed SQL schema. No historical values are inferred.
-Rollups, authorized search and management UI integration remain later milestones.
+Authorized search, bounded rollups and management UI integration are implemented
+by the service/UI adapters; this crate remains the trusted storage/projection seam.
 Never display an incomplete total as complete. See the
 [M2 accounting contract](../../docs/harness/OBSERVABILITY.md#m2-accounting-contract).
 

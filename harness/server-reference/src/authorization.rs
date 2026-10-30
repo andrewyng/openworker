@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 /// Deny unmatched/new routes until their required authority is explicit.
 /// Resource scope is rechecked with decoded IDs inside store transactions.
 pub(crate) fn route(method: &str, path: &str) -> Option<Action> {
-    if crate::recording_query::authority(method, path) {
-        return Some(Action::Read);
+    if let Some(action) = crate::recording_query::action(method, path) {
+        return Some(action);
     }
     if path.starts_with("/v1/") {
         return crate::service::authority(method, path);

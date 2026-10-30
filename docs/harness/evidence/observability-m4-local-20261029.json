@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "at": "2026-10-30T03:43:28.910Z",
+  "scope": "local Docker PostgreSQL; no AWS or paid models",
+  "postgresImage": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+  "linuxImage": null,
+  "databases": 2,
+  "tests": [
+    "postgres-storage-contract",
+    "service-two-database-outage",
+    "postgres-recording-queries",
+    "authorized-recording-http"
+  ],
+  "writeProbe": {
+    "elapsed_seconds": 0.130268333,
+    "p50_write_us": 1290,
+    "p95_write_us": 1403,
+    "records": 100,
+    "records_per_second": 767.6462705636987,
+    "scope": "single local Docker connection, not a capacity guarantee",
+    "transaction_size": 1
+  },
+  "queryProbe": {
+    "fresh_read_connection_per_request": true,
+    "p50_us": 52084,
+    "p95_us": 54668,
+    "requests": 20,
+    "scanned_steps_per_request": 4,
+    "scope": "small serial local Docker/PostgreSQL HTTP probe; not capacity guidance",
+    "separate_recording_database": true,
+    "platform": "host"
+  },
+  "passed": true,
+  "ownedContainerRemoved": true,
+  "generatedPasswordRemoved": true,
+  "unrelatedContainersModified": false,
+  "milestone": "observability M4 management UI",
+  "branch": "feat/openworker-service-m1",
+  "sourceBaseCommit": "76fdd56a1ca52450fd1b307ed9a9e7f147d221d1",
+  "ui": {
+    "version": 1,
+    "at": "2026-10-30T03:43:28.403Z",
+    "passed": true,
+    "scope": "real local Rust HTTP + UI process + separate PostgreSQL databases; deterministic metadata fixture, no model/tools",
+    "uiImage": "sha256:1ae1e267507b0b50126949730cc3ea239341633bbec808adb14a42eec037ce12",
+    "browserVersion": "148.0.7778.96",
+    "browserViewports": [
+      {
+        "width": 1440,
+        "height": 1000
+      },
+      {
+        "width": 390,
+        "height": 844
+      }
+    ],
+    "checks": [
+      "real scoped recent-page summary, no foreign runs or process counters",
+      "summary page navigation preserves bounded selected-page scope",
+      "literal percent/Unicode search, empty results, paginated dropdown",
+      "keyboard selection, reported/unknown usage, grouped model/tool data",
+      "watermarked timeline pagination, parallel intervals, step details and tool filtering",
+      "narrow viewport without document overflow",
+      "real empty recording remains unknown, no sample fallback",
+      "stale search response cannot replace newer results; Escape closes picker",
+      "busy/transport errors clear previous metrics and recover on explicit refresh",
+      "partial scan/group coverage is visible and expandable; no unbounded totals",
+      "Activity charts preserved; route return resets selection",
+      "real disabled recording service still supports authorized run search",
+      "real administrator-only process health without DB credentials",
+      "real service revocation signs out and erases metrics"
+    ],
+    "consoleErrors": [],
+    "screenshots": [
+      "usage-desktop.png",
+      "timeline-desktop.png",
+      "usage-mobile.png",
+      "timeline-mobile.png",
+      "empty-run.png",
+      "recording-disabled.png",
+      "instance-health.png",
+      "recent-runs.png",
+      "run-picker.png",
+      "partial-coverage.png"
+    ]
+  },
+  "awsProvisioned": false,
+  "paidModelCalls": 0,
+  "kubernetesResourcesChanged": false,
+  "ownedUiContainerRemoved": true,
+  "temporaryUiConfigurationRemoved": true,
+  "testSuites": {
+    "hostRecordingServerOtlp": {
+      "passed": 43,
+      "failed": 0,
+      "ignored": 10,
+      "sha256": "e8409b0becd09bcad4a08b2a75479f71bea5924bf5d148281e64874ce14b31bd"
+    },
+    "nodeProxySecurityPresentation": {
+      "passed": 6,
+      "failed": 0,
+      "sha256": "c8faf16f6913f3cb90b454e3c8aa3a84d96fbadad71c03552ee81868ae3979b1"
+    },
+    "helmRendering": {
+      "passed": 7,
+      "failed": 0,
+      "sha256": "4fceb3aa024c3bb86991090108e0fb3418c040767e71fba1e156512f77eb91b1"
+    }
+  },
+  "workspaceCompile": {
+    "allFeatures": true,
+    "allTargets": true,
+    "offlineLocked": true,
+    "sha256": "ebbcfd7d940f5aea370a37deb7a9eef94435c1e993a299ecfa0444c3197a73c1"
+  },
+  "qualificationLogSha256": "f903d07b34895c9e86762ec3bd0c552d955fd84734cbce3ba21c1c84c83695f2",
+  "limits": [
+    "summary covers one authorized page of at most 25 runs, with 4096 raw steps and 128 groups per kind",
+    "browser retains at most 100 run-search matches and 1000 timeline records; explicit refresh, no background polling",
+    "best-effort recordings and provider-reported usage, not billing/audit completeness",
+    "process health is serving-API-only, not a database probe or worker/cluster aggregation",
+    "browser race/busy/transport/partial fixtures are injected; real DB outage/scopes/revocation are independently exercised",
+    "Linux UI container + macOS Rust API + Docker PostgreSQL + Chromium; no new live Kubernetes/cloud/Windows/SSO/recording TLS qualification",
+    "qualification metadata is deterministic fixture data; no live model/tool calls"
+  ],
+  "screenshotSha256": {
+    "usage-desktop.png": "492541a899a73cacaf731bc8ab5f2bfa383c57749f940b3463b8f55f0300e785",
+    "timeline-desktop.png": "466359bcc9fc58214842cad5e84389f4fe437c695d46c7ca5705f8a8a9cae43f",
+    "usage-mobile.png": "b1a1d6d5b9736252d664d96597f4e2abb1149b103e216d98346163dbd476e63a",
+    "timeline-mobile.png": "168513d36702079ecd472aacd3cafdcc1f0f06b558cc90df7b30d7f4c2c05e42",
+    "empty-run.png": "011359f0e7261197b9e6ac24271c145d99405b7a0dc54d0a027198be973f63fe",
+    "recording-disabled.png": "87abea1ad2357d67834c05ba076ac03dc29f7a1f8e783ff5acbd39412c7f860b",
+    "instance-health.png": "94414c106eb968b03e08c4ae477c3e3906f4a015d6b411cba88427409ecfea08",
+    "recent-runs.png": "865a847598f40919ba99301de03b34ef19af476c39409b0490d992977453ea63",
+    "run-picker.png": "39ae6608772e16205d9ce51b6cd14f0eaef850dba55b35bb78ae802c701cd1dd",
+    "partial-coverage.png": "6a7b1fffee9a3d8694d22759eeaf5e3129c62ae852e0d4f0f3302cd9dd4e3529"
+  },
+  "savedScreenshots": {
+    "docs/harness/evidence/observability-m4/mobile.png": "b1a1d6d5b9736252d664d96597f4e2abb1149b103e216d98346163dbd476e63a",
+    "docs/harness/evidence/observability-m4/timeline.png": "466359bcc9fc58214842cad5e84389f4fe437c695d46c7ca5705f8a8a9cae43f",
+    "docs/harness/evidence/observability-m4/usage.png": "492541a899a73cacaf731bc8ab5f2bfa383c57749f940b3463b8f55f0300e785"
+  },
+  "sourceSha256": {
+    "harness/observability/README.md": "f5b27ca523cdc3af96e3ec1f40d81acc5513b409084c019f302c00d94103d781",
+    "harness/server-reference/src/authorization.rs": "bf8642c2f959f9a086844ea86f2de0ac69d73ccb0fbd0f98ec5f3e9954d91b3a",
+    "harness/server-reference/src/recording_query.rs": "dc0234091bf6cfa81f39f8fa9a86b391b316f90ffad935fe9f2c944774ef308d",
+    "harness/server-reference/src/service.rs": "a51627655be722d61026bb68102233d823c656e0263b89f65605bf79e2d4b3be",
+    "harness/server-reference/tests/recording_queries.rs": "eb9c99a04578c95229ec54b064616073315ee4e76802b2f33c14b2b50d108d9d",
+    "harness/service-ui/.dockerignore": "a2fc4a8c0b60da9e243716b8d0aa33bba1540e5124ae09f8799f955c016f1f9c",
+    "harness/service-ui/Dockerfile": "36ea10858fdfb5f37f99335a42af972d411c861c1e8f7098160a86c86e571e49",
+    "harness/service-ui/README.md": "705352781925140ebb38ed0b05665af1e3105577dfc2ececb69a30956ec4951a",
+    "harness/service-ui/package.json": "9f3640d268457b1175994929b504b7a13e43f224c147f0b9dbbac509d3c1b869",
+    "harness/service-ui/public/app.js": "ea00ac79d70a4991d5832d49aed711b3b64657c315bc03d8454bd279af46d19c",
+    "harness/service-ui/public/observability-data.js": "129ec099572f9d81f455795c44276a630f812ec60c3fbf0a627443c8721f142a",
+    "harness/service-ui/public/observability.js": "c305e8ef762559ae693ececc931562482eaa1c49bedb048bec3f117848817c35",
+    "harness/service-ui/public/style.css": "345ba4019199687004d74eb55281a935efd58a0bd10698c6b0fb87904695008d",
+    "harness/service-ui/server.mjs": "23b5043c9754ee89d4ce103b42566add5d734f0e7933c417896f4cef7c6ccabb",
+    "harness/service-ui/test/observability-live.mjs": "e45771cedaf60854648c3a846ff69cdb1f392957e920fa2d0659b1fe0ed5bf71",
+    "harness/service-ui/test/observability.test.mjs": "5751ef9411f7130bc18c9a0bafb3dd9ab954bb6fb661ae4dc00a9714de0de074"
+  },
+  "packagedAssetSha256": {
+    "server.mjs": "23b5043c9754ee89d4ce103b42566add5d734f0e7933c417896f4cef7c6ccabb",
+    "package.json": "9f3640d268457b1175994929b504b7a13e43f224c147f0b9dbbac509d3c1b869",
+    "public/app.js": "ea00ac79d70a4991d5832d49aed711b3b64657c315bc03d8454bd279af46d19c",
+    "public/style.css": "345ba4019199687004d74eb55281a935efd58a0bd10698c6b0fb87904695008d",
+    "public/observability.js": "c305e8ef762559ae693ececc931562482eaa1c49bedb048bec3f117848817c35",
+    "public/observability-data.js": "129ec099572f9d81f455795c44276a630f812ec60c3fbf0a627443c8721f142a"
+  }
+}

@@ -326,3 +326,85 @@ the management UI using these APIs. Recording remains best effort, not lossless
 billing/audit. Historical records are not backfilled; high-water cursors do not
 freeze late commits or retention across HTTP requests. Windows, Python desktop,
 cloud sizing and live recording TLS remain outside this qualification.
+
+## M4 — started, 29 October 2026
+
+User authorized management UI wiring, local and visual qualification, ledger updates
+and push after verification. Baseline `76fdd56a`; clean tree. No cloud provisioning
+or paid models. Preserve Activity/Overview operational charts and the browser's
+in-memory credential, fixed-upstream and strict route boundaries.
+
+Implementation order:
+1. Add exact read-only proxy routes/validated query encoding for M3 search,
+   summaries and timelines. Keep arbitrary scope/database selection forbidden.
+2. Add Observability with a debounced, cancellable, paginated run combobox,
+   selected-page summaries, model/tool groups, and per-turn timeline/drill-down.
+   Never substitute sample values, zero for missing usage or unbounded totals.
+3. Keep coverage, exporter/recorder health and counting explanations in progressive
+   detail. Health is API-instance-only and restricted to administrators because
+   process counters are not filtered by session ownership.
+4. Test proxy bounds and rendering math; drive the UI in a real browser against
+   separate PostgreSQL execution/recording databases. Include search races,
+   keyboard/pagination, unknown/empty/partial, outages, revocation and navigation.
+   Inspect desktop and narrow layouts visually, then record evidence and push.
+
+
+### M4 completed — local and visual qualification, 29 October 2026
+
+Added **Observability** beside the existing Activity page, preserving operational
+charts. The fixed-upstream proxy now allowlists exact recording reads, including
+bounded percent/Unicode search, query-bound run cursors and numeric timeline
+bounds. Unknown/duplicate query fields, alternate scopes/databases and encoded
+path separators stay rejected. No browser database or exporter credentials.
+
+The run picker searches after 250 ms, cancels old requests and discards stale
+responses. It pages 10 results at a time, retaining at most 100. Recent summaries
+cover one authorized page of at most 25 runs. Selecting a run aligns its initial
+100-row timeline and summary with one high-water cursor; explicit pagination
+retains at most 1,000 browser rows. Selecting a tool filters loaded calls; selecting
+a timeline bar exposes timing, usage, result size, outcome and record metadata.
+There is no new background polling or request fan-out per model/tool chart.
+
+The UI keeps measured zero, absent usage/duration and partial reported totals
+separate. It shows accumulated versus exclusive time, concurrent phases, model
+first-output averages from known samples, and tool result bytes. Scan/group caps
+show a small Partial summary marker and expandable coverage. Read errors remove
+old metrics. Administrator-only process health is expandable and explicitly scoped
+to the serving API, not a worker/cluster aggregate. Service revocation signs out
+and clears rendered metrics; no browser credential storage was added.
+
+Verification:
+* Four local PostgreSQL qualification suites passed: storage contracts, separate
+  recording-database outage isolation, query parity and the actual two-node Rust
+  HTTP authorization matrix. Optional browser QA runs within that HTTP fixture.
+* All 14 browser check groups passed, both in a host UI run and the final Linux
+  UI container against the real host Rust API and separate PostgreSQL databases.
+  Real checks include owned scopes, page/keyboard navigation, timeline pagination,
+  tool drill-down, missing/empty recordings, disabled recording, administrator
+  health and actual service-token revocation. Browser-only delayed searches,
+  busy/transport errors and partial-cap flags are explicitly injected over the
+  real read path; these are not claimed as new worker/cloud failures.
+* Six Node proxy/security/presentation tests and seven Helm rendering tests pass.
+  Host recording/server/OTLP regressions pass 43 tests (10 environment-gated tests
+  ignored there; applicable PostgreSQL cases run separately). Workspace packages,
+  targets and features compile offline/locked. Formatting, syntax and diff checks
+  pass. The read-only, unprivileged Linux UI image builds using its cached pinned
+  Node base without network access; packaged asset hashes match source.
+* Captured ten deterministic fixture screenshots. Reviewed desktop (1440 px) and
+  narrow (390 px) layouts, search/dropdown, timeline, unknown/partial/error states
+  and instance health. No page overflow, JavaScript exception or CSP error. Selected
+  screenshots are saved with the sanitized evidence, clearly labeled fixture data.
+
+Final UI image: `sha256:1ae1e267507b0b50126949730cc3ea239341633bbec808adb14a42eec037ce12`.
+All exact labeled fixture containers, generated PostgreSQL passwords and temporary
+UI connection configurations were removed. No unrelated containers, Kubernetes
+resources, AWS resources, real model keys or paid models were used/modified. Build
+caches/images remain for reruns; about 188 GiB free, no extra space request needed.
+
+[Sanitized M4 evidence](evidence/observability-m4-local-20261029.json).
+[UI screenshots](evidence/observability-m4/README.md).
+
+Next is M5: export alignment and collector/Langfuse-compatible qualification.
+Recording remains best effort. No live Kubernetes rollout, cloud qualification,
+production load/sizing, new live recording TLS server, SSO, Windows/Python desktop
+or worker-global health aggregation is claimed by M4.

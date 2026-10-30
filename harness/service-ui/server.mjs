@@ -31,6 +31,9 @@ function endpoint(raw, allowInternalHttp = false) {
   return u.origin;
 }
 export function allowed(method, path) {
+  // Search text is URL encoded; path IDs remain strictly unencoded. This is
+  // deliberately not a generic proxy or an arbitrary query passthrough.
+  if (method === "GET" && allowedRecording(path)) return true;
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
     return false;
   const u = new URL(path, "http://local");
@@ -83,6 +86,69 @@ export function allowed(method, path) {
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );
+}
+function allowedRecording(path) {
+  if (path.length > 4000 || path.includes("#")) return false;
+  const u = new URL(path, "http://local");
+  if (u.pathname + u.search !== path) return false;
+  const listing = /^\/v1\/observability\/(runs|summary)$/.test(u.pathname);
+  const timeline = new RegExp(
+    `^/v1/sessions/${id}/observability/${id}/timeline$`,
+  ).test(u.pathname);
+  const summary = new RegExp(
+    `^/v1/sessions/${id}/observability/${id}/summary$`,
+  ).test(u.pathname);
+  const health = u.pathname === "/v1/observability/health";
+  if (!listing && !timeline && !summary && !health) return false;
+  try {
+    decodeURIComponent(u.search.replaceAll("+", " "));
+  } catch {
+    return false;
+  }
+  const seen = new Set();
+  for (const [key, value] of u.searchParams) {
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (listing) {
+      if (
+        key === "q" &&
+        Buffer.byteLength(value) <= 200 &&
+        !/[\x00-\x1f\x7f-\x9f]/.test(value)
+      )
+        continue;
+      if (
+        key === "agent" &&
+        value.length > 0 &&
+        Buffer.byteLength(value) <= 128 &&
+        !/[\x00-\x1f\x7f-\x9f]/.test(value)
+      )
+        continue;
+      if (
+        ["from_ms", "to_ms"].includes(key) &&
+        /^\d{1,15}$/.test(value) &&
+        BigInt(value) <= 253402300799000n
+      )
+        continue;
+      if (key === "after" && /^[A-Za-z0-9_-]{1,1024}$/.test(value)) continue;
+    }
+    if (
+      key === "limit" &&
+      (listing || timeline) &&
+      /^[1-9]\d{0,2}$/.test(value) &&
+      Number(value) <=
+        (timeline ? 200 : u.pathname.endsWith("/summary") ? 25 : 100)
+    )
+      continue;
+    if (
+      ((timeline && key === "after") ||
+        ((timeline || summary) && key === "through")) &&
+      /^\d{1,19}$/.test(value) &&
+      BigInt(value) <= 9223372036854775807n
+    )
+      continue;
+    return false;
+  }
+  return true;
 }
 async function body(req) {
   if (req.headers["content-type"]?.split(";")[0] !== "application/json")
@@ -409,6 +475,8 @@ export async function start(config) {
         "/": ["index.html", "text/html"],
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
+        "/observability.js": ["observability.js", "text/javascript"],
+        "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],
       };
       if (["GET", "HEAD"].includes(method) && assets[path]) {

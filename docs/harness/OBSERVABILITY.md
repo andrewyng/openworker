@@ -1,7 +1,7 @@
 # Harness observability
 
-Status: M1–M3 recording, accounting and authorized queries implemented and locally
-qualified, 29 October 2026. Live management UI integration remains M4.
+Status: M1–M4 recording, accounting, authorized queries and management UI
+implemented and locally qualified, 29 October 2026.
 [Query API guide](OBSERVABILITY-QUERIES.md).
 Companion desktop design:
 `rohitprasad15/ocw-context`, branch `docs/observability-spec`, commit `bd4dfa0`.
@@ -17,8 +17,8 @@ vendor. OpenTelemetry and Langfuse receive exports of the same measurements.
 
 The run selector is a search field with recent results and server-side,
 authorization-filtered search, bounded pages and cancellation of stale searches.
-It must not download all runs into a dropdown. The current UI design is a mock;
-its numbers are not measurements of the deployed service.
+It does not download all runs into a dropdown. The management UI now reads live
+authorized service data; the separate design mock remains sample data.
 
 ## Records and counting
 
@@ -184,8 +184,8 @@ instrument today. Team agents run their own ordinary sessions; `helper`, `title`
 and `probe` are reserved purposes for hosts using the same explicit call-context
 seam. Unbound provider connection probes do not belong to a session's totals.
 This remains best-effort diagnostics: dropped records, absent usage and orphaned
-open facts must remain visible as incomplete coverage. Authorized query/rollup
-APIs and the management UI remain M3/M4.
+open facts remain visible as incomplete coverage in the authorized query/rollup
+APIs and management UI.
 
 ## Service configuration
 
@@ -272,3 +272,29 @@ The full response/counting contract and examples are in the
 [query guide](OBSERVABILITY-QUERIES.md). Phase partitions cover observed intervals,
 not an inferred complete process history. SQL indexes are added only by explicit
 migration; materialized summary caching remains deferred pending query measurements.
+
+
+## M4 management UI
+
+The separate UI process proxies exact authorized recording read routes; it has no
+recording database or exporter credentials. **Observability** starts with a bounded
+recent run-page summary. The debounced searchable picker pages through matching
+names/IDs, discards stale responses and supports keyboard selection. Selected
+runs expose grouped usage, first-output timing, tool duration/result bytes, phase
+partitions and a watermarked timeline with step details. Activity/Overview retain
+their existing operational charts. Refresh is explicit; no new polling loop.
+
+Missing counters show unknown, known zero remains zero, and scan/group truncation
+has a visible partial-summary marker with expandable coverage. Reader errors clear
+previous metrics; disabled recording does not disable canonical run search. The
+browser retains at most 100 search matches and 1,000 timeline records; summaries
+use the API's separate 4,096-step/25-run bounds.
+
+An administrator-only `/v1/observability/health` read exposes serving-API process
+recorder/exporter counters in an expandable UI section. These are not aggregated
+worker/cluster health or a database-readiness promise. No secrets or endpoint
+configuration are returned. UI tokens remain server-memory-only and responses
+remain non-cacheable.
+
+[UI operation/qualification](../../harness/service-ui/README.md#observability).
+[M4 evidence](evidence/observability-m4-local-20261029.json).

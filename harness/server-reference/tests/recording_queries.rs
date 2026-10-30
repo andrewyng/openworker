@@ -224,6 +224,11 @@ fn authorized_search_timeline_summaries_revocation_and_separate_database_outage(
         PostgresStore::open(db.clone()).unwrap(),
         runtime.clone(),
     ));
+    assert_eq!(get(&rt, &url1, ALICE, "/v1/observability/health").0, 403);
+    let (code, health) = get(&rt, &url1, ADMIN, "/v1/observability/health");
+    assert_eq!(code, 200);
+    assert_eq!(health["scope"], "api_instance");
+    assert_eq!(health["recording_enabled"], true);
     assert_eq!(
         get(&rt, &url1, "invalid-token", "/v1/observability/runs").0,
         401
@@ -471,6 +476,122 @@ fn authorized_search_timeline_summaries_revocation_and_separate_database_outage(
         get(&rt, &disabled_url, ALICE, "/v1/observability/runs").0,
         200
     );
+    if std::env::var("OW_OBSERVABILITY_UI_BROWSER").as_deref() == Ok("1") {
+        // Optional real browser/UI qualification, with separate DBs and the
+        // same actual HTTP authorization boundary. Metadata-only fixture rows.
+        for n in 0..27 {
+            let sid = format!("s_practice_{n}");
+            seed(&mut owner, &sid, &format!("Practice task {n}"));
+            exec_sql
+                .execute(
+                    &format!("INSERT INTO {schema}.api_session_owners VALUES($1,'alice')"),
+                    &[&sid],
+                )
+                .unwrap();
+        }
+        let turns = seed(&mut owner, "s_ui", "Deployment diagnosis");
+        exec_sql
+            .execute(
+                &format!("INSERT INTO {schema}.api_session_owners VALUES('s_ui','alice')"),
+                &[],
+            )
+            .unwrap();
+        let tid = &turns[0];
+        let mut root_step = row(&schema, "s_ui", tid, 200, "agent.execute", 0);
+        root_step.duration_us = Some(240_000_000);
+        root_step.ended_ms = 241000;
+        store.put(&root_step).unwrap();
+        for n in 0..3 {
+            let mut s = row(
+                &schema,
+                "s_ui",
+                tid,
+                201 + n,
+                "model.attempt",
+                if n == 0 { 10000 } else { 400 },
+            );
+            s.parent_trace_id = Some(root_step.trace_id.clone());
+            s.parent_span_id = Some(root_step.span_id.clone());
+            s.started_ms = 2000 + n * 60000;
+            s.duration_us = Some(30_000_000);
+            s.ended_ms = s.started_ms + 30000;
+            s.first_output_us = Some(2_000_000 + n * 1000000);
+            s.purpose = Some(["main", "auto_approver", "compaction"][n as usize].into());
+            if n == 2 {
+                s.usage = None;
+            } else {
+                s.usage.as_mut().unwrap().output = Some(if n == 0 { 2000 } else { 100 });
+            }
+            store.put(&s).unwrap();
+            let mut requested = s.clone();
+            requested.span_id = format!("{:016x}", 210 + n);
+            requested.parent_span_id = Some(s.span_id.clone());
+            requested.operation = "model.requested".into();
+            requested.duration_us = Some(0);
+            requested.ended_ms = requested.started_ms;
+            requested.usage = None;
+            requested.first_output_us = None;
+            store.put(&requested).unwrap();
+        }
+        for n in 0..115 {
+            let mut s = row(&schema, "s_ui", tid, 300 + n, "tool.execute", 0);
+            s.parent_trace_id = Some(root_step.trace_id.clone());
+            s.parent_span_id = Some(root_step.span_id.clone());
+            s.tool = Some(
+                if n % 3 == 0 {
+                    "coding.run_shell"
+                } else {
+                    "coding.read_file"
+                }
+                .into(),
+            );
+            s.started_ms = 32000 + n * 1500;
+            s.duration_us = Some(if n == 2 { 0 } else { 900000 });
+            s.ended_ms = s.started_ms + if n == 2 { 0 } else { 900 };
+            s.output_bytes = Some(1200);
+            if n == 3 {
+                s.duration_us = None;
+            }
+            store.put(&s).unwrap();
+        }
+        let mut wait = row(&schema, "s_ui", tid, 450, "approval.wait", 0);
+        wait.started_ms = 210000;
+        wait.duration_us = Some(20_000_000);
+        wait.ended_ms = 230000;
+        store.put(&wait).unwrap();
+        let mut session = owner.get("s_ui").unwrap();
+        session.turn.as_mut().unwrap().observation = Some(TurnObservation {
+            first_started_at_ms: 1000,
+            last_segment: TraceContext {
+                trace: [1; 16],
+                span: 200u64.to_be_bytes(),
+            },
+            segments: 1,
+        });
+        owner
+            .save(
+                &session,
+                "execution_segment_started",
+                json!({"observation":session.turn.as_ref().unwrap().observation}),
+            )
+            .unwrap();
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../service-ui/test/observability-live.mjs");
+        let status = std::process::Command::new("node")
+            .arg(script)
+            .env("OW_UI_TEST_URL", &url1)
+            .env("OW_UI_DISABLED_URL", &disabled_url)
+            .env("OW_UI_USER", ALICE)
+            .env("OW_UI_ADMIN", ADMIN)
+            .env("OW_UI_RUN", tid)
+            .env("OW_UI_EMPTY_RUN", &c[0])
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "Browser observability qualification failed"
+        );
+    }
     disabled_server.abort();
     let _ = rt.block_on(disabled_server);
     // Revoke after the pre-read check while the recording read is blocked. The

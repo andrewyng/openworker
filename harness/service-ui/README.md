@@ -5,7 +5,8 @@ REST API as `ows`; it has no PostgreSQL, Kubernetes, model, or OpenShell credent
 
 ## Start locally
 
-Requires Node.js 20+ and a running OpenWorker Service with the M5 listing endpoints.
+Requires Node.js 20+ and a running OpenWorker Service from the same revision,
+including its listing and observability endpoints.
 There is no package install or frontend build step. Rebuild/redeploy the service
 from the same revision first if your existing image predates the listing endpoints;
 see [service build instructions](../../deploy/service/README.md#build).
@@ -38,6 +39,10 @@ or default password. Use separate runner/publisher/administrator credentials as 
 
 - **Overview / Activity:** real, scope-filtered session summaries and session counts
   by day. Charts describe only the loaded page; they are not global usage totals.
+- **Observability:** authorized run search, selected-page usage summaries,
+  model/purpose and tool groups, and watermarked turn timelines. Missing usage
+  stays unknown; scan/group limits remain visible. See below for counting and
+  process-health scope.
 - **Agents:** visible immutable releases, definition inspection, publication,
   activation, and task submission. Release JSON selects tools already installed in
   the service. It cannot upload native binaries or arbitrary server launchers.
@@ -135,7 +140,7 @@ support is needed before scaling UI replicas. SSO remains a later addition.
 ## Verification
 
 ```sh
-node --test harness/service-ui/test/server.test.mjs
+node --test harness/service-ui/test/server.test.mjs harness/service-ui/test/observability.test.mjs
 node --test deploy/service/chart.test.mjs
 ```
 
@@ -213,3 +218,72 @@ node deploy/service/kubernetes-local.mjs destroy .ow-service-ui EXACT_DEPLOYMENT
 Then dispose of copied private input/token files. Keep only the sanitized report and
 screenshots needed for review. This fixture is local ARM64 kind/OpenShell qualification;
 AWS/GCP, x86-64, and Red Hat OpenShift require their own deployment evidence.
+
+
+## Observability
+
+Open **Observability** for summaries of a recent page of up to 25 authorized runs.
+A run is one submitted turn, not an entire session. Page navigation replaces the
+selection; these charts are not unbounded deployment totals. Activity and Overview
+retain their existing operational session charts.
+
+**Find a run** queries the service as you type (250 ms debounce). Results are
+paginated, with at most 100 matches retained in the picker; narrow the search for
+more. Arrow keys and Enter choose a result; Escape closes the picker. Stale search
+responses are discarded. No full run directory is downloaded. Selecting a run
+loads its timeline and summary at the same high-water cursor. Refresh explicitly
+to rebuild the view; there is no new background polling.
+
+Usage includes reported tokens by purpose, model/tool call counts, accumulated
+work, exclusive phase duration, average first output from known model samples,
+and returned tool-result bytes. Missing values show `—`; a partial reported total
+says `+ unknown`. Cache/reasoning counters are subsets. A truncated scan/group list
+shows **Partial summary**, with coverage/counting details available on expansion.
+
+Timeline pages load 100 records at a time (at most 1,000 retained in the browser).
+The summary independently scans up to 4,096 records. Select a bar for timing,
+usage, outcome and metadata, or select a tool in the Usage table to filter its
+loaded timeline calls. Parallel spans retain their actual positions; absent
+duration is a marker, not a zero-length measured action. High-water cursors bound
+reads but do not freeze late commits or retention across requests.
+
+Administrators can expand **Recorder & exporter health** for the serving API's
+process counters. These are not aggregated across workers/API replicas and do not
+prove database connectivity or lossless recording. Observer/runner credentials
+cannot retrieve those process-wide counters. Credentials, database URLs and
+exporter configuration are never returned by that endpoint.
+
+Deploy API and UI from the same revision. Enable recording in the existing service
+configuration and run explicit migrations as described in the
+[chart guide](../../deploy/service/chart/README.md#optional-agent-recordings).
+If recording is disabled or unavailable, run search remains usable; no sample data
+or execution-database fallback replaces missing recording data.
+[REST contracts](../../docs/harness/OBSERVABILITY-QUERIES.md).
+
+### Browser qualification
+
+With an installed Playwright module/browser and Docker running, the existing
+owned-container qualification helper can also drive this UI against two disposable
+PostgreSQL databases and the real Rust API:
+
+```sh
+OW_OBSERVABILITY_UI_BROWSER=1 \
+OW_PLAYWRIGHT_MODULE=/absolute/path/to/playwright-or-playwright-test \
+OW_OBSERVABILITY_UI_OUTPUT="$PWD/.ow-service-observability-ui-screens" \
+  node deploy/reference/qualify-observability.mjs .ow-service-observability-ui-test
+```
+
+The state directory must be new and gitignored. The output contains deterministic
+fixture screenshots and a sanitized UI report. No provider key is needed; no tools
+execute. Add `OW_OBSERVABILITY_UI_IMAGE=sha256:YOUR_LOCAL_UI_IMAGE_ID` to test the
+read-only Linux UI container instead of a host UI process. The image must already
+exist locally; the fixture never pulls it. The container test uses Docker Desktop's
+`host.docker.internal` to reach the temporary host API, with explicitly enabled
+local HTTP. Production TLS verification is unchanged. Only the test's exact labeled
+container and temporary connection-only configuration directory are removed.
+
+The browser checks real scoped reads, separate recording storage, pagination,
+unknown/empty records, disabled recording and service-token revocation. Delayed
+searches and busy/transport/partial-coverage cases are injected at the browser
+boundary and identified separately in the report. Screens are reviewed at 1440 px
+and 390 px widths; no full Kubernetes rollout or cloud sizing is implied.
