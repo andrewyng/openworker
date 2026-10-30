@@ -122,7 +122,8 @@ npm run dev        # browser UI on the Vite dev port
 ```
 
 The standalone server creates a per-launch token at
-`<state-dir>/sidecar-8765.token`; Vite reads that user-only file when it starts.
+`<state-dir>/sidecar-8765.token`; Vite reads that user-only file on each page load,
+so after a server restart a browser reload picks up the new token.
 For direct API calls, send its value in the `X-OpenWorker-Token` header. The
 desktop app uses an in-memory launch token instead and never writes it to disk.
 

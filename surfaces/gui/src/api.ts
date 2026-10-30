@@ -11,8 +11,6 @@ import {
 } from "./cardPayloads";
 import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
 
-declare const __COWORKER_DEV_TOKEN__: string;
-
 // Endpoint resolution order: runtime-injected globals (Tauri sets `window.__COWORKER_HTTP__`
 // for its dynamically-chosen sidecar port) → Vite env → same-origin when the page itself is
 // served over https (the hosted dashboard: the service serves both SPA and API) → the
@@ -31,7 +29,9 @@ const wsBase = (): string =>
 const apiToken = (): string =>
   (globalThis as any).__COWORKER_API_TOKEN__ ||
   (import.meta as any).env?.VITE_COWORKER_API_TOKEN ||
-  (typeof __COWORKER_DEV_TOKEN__ === "string" ? __COWORKER_DEV_TOKEN__ : "");
+  // Browser dev only: vite.config.ts injects the standalone server's token per page load.
+  (globalThis as any).__COWORKER_DEV_TOKEN__ ||
+  "";
 
 // The org this browser acts in (hosted multi-tenant only; empty elsewhere). Set at cloud
 // boot from /v1/me and by the org switcher; rides every request so the backend's resolver
@@ -48,9 +48,10 @@ export function getActiveOrg(): string {
 // All local REST calls pass through this module, so a module-local wrapper applies launch
 // authentication without asking every endpoint helper to remember the security header.
 /** Fired (once per burst) when OUR OWN backend answers 401: the launch token this
- * window carries no longer matches the running service — a sidecar restarted under a
- * dev GUI that baked the old token, or a stale tab. The App renders a plain signed-out
- * state instead of crashing on the error body (ledger 2026-09-01: `undefined.includes`). */
+ * window carries no longer matches the running service — a sidecar restarted under an
+ * open dev GUI tab (Reload reads the new token), or a stale tab. The App renders a plain
+ * signed-out state instead of crashing on the error body (ledger 2026-09-01:
+ * `undefined.includes`). */
 export const API_UNAUTHORIZED = "openworker:api-unauthorized";
 let unauthorizedAnnounced = 0;
 const announceUnauthorized = () => {
