@@ -125,7 +125,7 @@ revision and keep SDK/runtime versions aligned.
 
 ## GCP lifecycle recovery and independent cleanup — October 30, 2026
 
-The verified milestone is ready to return to `openworker-harness-sdk` from
+Fast-forwarded `openworker-harness-sdk` to verified milestone `c918b486` from
 `feat/ows-gcp-lifecycle`. Changes are confined to the management CLI, cleanup
 container and documentation. The runtime, Rust SDK and TypeScript SDK sources are
 unchanged from the previous integration checkpoint.

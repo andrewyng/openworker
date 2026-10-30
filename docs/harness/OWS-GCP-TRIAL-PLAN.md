@@ -372,3 +372,11 @@ G3 qualification are not complete**.
 - [Google Infrastructure Manager](https://docs.cloud.google.com/infrastructure-manager/docs/overview)
 - [Google Cloud budget behavior](https://docs.cloud.google.com/billing/docs/how-to/budgets)
 - [Budget periods, credits and threshold rules](https://docs.cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets)
+
+### Integration checkpoint
+
+Fast-forwarded verified lifecycle/cleanup milestone `c918b486` into
+`openworker-harness-sdk` on October 30. No source conflicts or source changes were
+introduced by the merge. Cloud provisioning and the remaining live qualification
+gates above remain outstanding. The Python harness and Rust runtime/SDK source
+are unchanged by this management-CLI milestone.
