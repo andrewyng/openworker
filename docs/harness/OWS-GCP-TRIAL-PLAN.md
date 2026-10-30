@@ -410,3 +410,7 @@ Remaining cloud gates: reviewed foundation and job installation, executor/node/
 cleanup authority, SQL/NAT/address quotas, private installer connectivity,
 OpenShell/runtime compatibility, fresh pricing/cumulative spend and the live
 independent expiry/teardown drill. The GCP production-create gate stays closed.
+
+Installation milestone `a5e2cc37` is fast-forwarded into `openworker-harness-sdk`.
+No source changes were introduced by integration. No paid GCP resource was created;
+remaining cloud gates and the cumulative $100 allowance are unchanged.

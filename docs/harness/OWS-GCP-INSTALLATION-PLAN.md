@@ -87,3 +87,9 @@ approval. Local tests use synthetic identities and no paid resources.
 - [Sanitized qualification evidence](evidence/gcp-installation-local-20261030.json).
 - Next: return this verified milestone to the integration branch, then exercise a
   longer coding agent on local Kubernetes/OpenShell in a separate configuration.
+
+### Integration
+
+Fast-forwarded verified milestone `a5e2cc37` into `openworker-harness-sdk` with no
+source changes/conflicts. The next working branch will isolate local long-running
+agent acceptance from this GCP management-CLI milestone.
