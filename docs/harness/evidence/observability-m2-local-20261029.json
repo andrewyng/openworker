@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "at": "2026-10-30T01:13:41.376Z",
+  "scope": "local Docker PostgreSQL; no AWS or paid models",
+  "postgresImage": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+  "linuxImage": "sha256:d9692f3bc30a6591add70c7c63f8612a8dd74af0aa1b9dd45456d01673112bdf",
+  "databases": 2,
+  "tests": [
+    "postgres-storage-contract",
+    "service-two-database-outage",
+    "linux-worker-recovery"
+  ],
+  "writeProbe": {
+    "elapsed_seconds": 0.177272,
+    "p50_write_us": 1733,
+    "p95_write_us": 2096,
+    "records": 100,
+    "records_per_second": 564.1048783789881,
+    "scope": "single local Docker connection, not a capacity guarantee",
+    "transaction_size": 1
+  },
+  "passed": true,
+  "ownedContainerRemoved": true,
+  "generatedPasswordRemoved": true,
+  "unrelatedContainersModified": false,
+  "testSuites": {
+    "linuxRuntime": {
+      "passed": 204,
+      "failed": 0,
+      "ignored": 2,
+      "sha256": "da63808926a02f4dd00542bbe4c36902fbd41e49ea3692b3c19bc8f378089321"
+    },
+    "hostRecordingServerOtlp": {
+      "passed": 33,
+      "failed": 0,
+      "ignored": 8,
+      "sha256": "0d0f93ddc73e8c1020281326ac976c572bb56c958146424f86131f8372e91540"
+    },
+    "hostRuntimeModel": {
+      "passed": 64,
+      "failed": 0,
+      "ignored": 0,
+      "sha256": "bb5d499164886f5e94993fb8125ac54aeb85e02ea2a4139af1ead5cc9b6536c8"
+    },
+    "postgresWorkers": {
+      "passed": 14,
+      "failed": 0,
+      "filtered": 2,
+      "excluded": [
+        "mixed_versions_keep_native_identity_pinned_and_old_pool_can_resume requires retained baseline executable",
+        "bounded_load_matrix requires explicit load-test opt-in"
+      ],
+      "sha256": "941d5dc81c4eeafdb561c3856f5ee78f7d4c79c88d79136d111005f128bafe37"
+    }
+  },
+  "milestone": "observability M2 complete model accounting and turn continuity",
+  "branch": "feat/openworker-service-m1",
+  "sourceBaseCommit": "213d8ea7c3ef910df29f8a2c39f29443b3910e20",
+  "linuxToolchain": "rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663",
+  "qualificationProfile": "release with LTO disabled for test linking, not production deployment",
+  "fixtureArtifactSelection": "Cargo compiler-artifact JSON exact executable path; no cache glob selection",
+  "checks": [
+    "all workspace packages, targets and features compile offline/locked",
+    "Rust formatting, JavaScript syntax and whitespace checks",
+    "shared model boundary: main/reviewer/compaction, three provider APIs, auth-refresh requests, partial/truncated usage, known zero, cancellation and runtime retry accounting",
+    "SQLite reopen plus real PostgreSQL format-v1/v2 parity, immutable IDs, retention and independent recording-connection contention",
+    "Linux SQLite human approval/restart, question answer/cancel, internal plan/memory/scheduling and content exclusion",
+    "PostgreSQL worker replacement keeps turn identity/segment links and measured approval wait; crash/DB-loss/cancellation do not replay effects",
+    "OTLP numeric usage, links, pseudonymous turn correlation and no identifier metric dimensions"
+  ],
+  "generatedLinuxEnvRemoved": true,
+  "awsProvisioned": false,
+  "paidModelCalls": 0,
+  "kubernetesResourcesChanged": false,
+  "limits": [
+    "best-effort queues and incomplete provider usage; not lossless billing or audit",
+    "legacy records readable, no historical usage or timing backfill",
+    "no new built-in helper/title feature; reserved purposes use explicit host binding",
+    "no public query/rollup API or live management UI wiring in M2",
+    "local PostgreSQL plaintext fixture; recording TLS integration not requalified",
+    "Windows, Python desktop, load sizing and mixed-version baseline are not claimed by this qualification"
+  ],
+  "sourceSha256": {
+    "deploy/reference/Dockerfile.observability": "cf2511268534d45d3b14ba12712db2d2d93b7f1627febbeb44cf5fa0868d309c",
+    "deploy/reference/Dockerfile.observability.dockerignore": "a36af198e4f7ecaf8059ed965c08ff22d4faf8f73645ab2829844bb80502e640",
+    "deploy/reference/qualify-observability.mjs": "973004cbd7f9e2fcb79dcfa28d8c79839d16858fcee7cac75243ae6507f1e29f",
+    "harness/observability/README.md": "6f739a3fdfc63227064518f93727eabe46984eb91e3ad1c7b25c2726313b3f25",
+    "harness/observability/src/lib.rs": "ab282b402db8f2cbe019251b1621665f24f2af388c3c1e5fc6914df5c8db06c4",
+    "harness/observability/src/postgres.rs": "ce29ca75311333ffb092fbdaf4e559c64d50797d8affaf7aed398198518679dd",
+    "harness/observability/tests/storage.rs": "91ca985d7ee39cb855134cce68bc8c07cc8b4fb84ab03a46e4dc7a7641f805ff",
+    "harness/observability/tests/writer.rs": "77c08ee96bc7c4d839e10b35d2753ee3dfc58a9ef9ab7ffef99c23146b0b6ded",
+    "harness/runtime/examples/provider_probe.rs": "e0d35a93982b9a32587cc5e34c9ce7dc861c7f0b275dea182f83cd3c38ee7c26",
+    "harness/runtime/src/anthropic.rs": "dcb2e80d85fa5a065c6089835976d0300806c740cf56400693f6a0b711a3ea48",
+    "harness/runtime/src/chat_completions.rs": "e77f9af526c67fa2c300b177af4dd0e03b9085450d2928ce6da58dbc57896eae",
+    "harness/runtime/src/model.rs": "4cb056d94a7937089f48333197ad8a857b6c11823c6168a86bd520b4635ea04b",
+    "harness/runtime/src/provider.rs": "7fdab3981d0f79f09aeff683467ecd005a98850eaa32fef0807e3b14a6d436a8",
+    "harness/runtime/src/runtime.rs": "3d1d7239ffa733dd3eaf4f2cb40af4d0166c0073d17dbeb129a7bdd103292487",
+    "harness/runtime/src/runtime_accounting.rs": "d9e34db446d3bafb9cbf03ac9f15733c992909cb9420753fca56c178f544ba09",
+    "harness/runtime/src/runtime_m2_tests.rs": "b944493f8202ac015be666b8a2d3e21db839f084afce1e621a81e3c59d26dc3c",
+    "harness/runtime/src/runtime_policy_tests.rs": "b726482c6e5b5f84caaf0b9929cb84ca5fc7724b2f1330b624fe9a281c76db3c",
+    "harness/runtime/src/store.rs": "942750ad53ad9bdb28d62790d6d9b06b27d95d8ae4043d4caf0b6b50dbdacc32",
+    "harness/runtime/tests/anthropic.rs": "8b4ad3a1ca1534b97d7d7c75b3fb691f37053a3777be956b08d79359a3771a03",
+    "harness/runtime/tests/core.rs": "38a5973ccd049a7af5bdea1e6d9d4517d40b9d1de4ff9faa80d1e94b90ba50e6",
+    "harness/runtime/tests/model_accounting.rs": "0a76523554ef9f4753ccb1e0ba1c05e1073dfc31597247738c5ae98e6b825a95",
+    "harness/runtime/tests/model_endpoints.rs": "9a550c8dd1e793f7a0c6a8b21cc38a172201e421c1893347eab45eb90040c981",
+    "harness/runtime/tests/provider.rs": "473cb223b04c79da8688f51b84057f87dbb898bb8f1581d23e1efffd35fc28b0",
+    "harness/runtime/tests/telemetry.rs": "1fc17b53f983ffa86af622b183b85393a8eca8e022d51020836657f7953a4cbf",
+    "harness/store-postgres/src/db.rs": "f00a8815ab691f868a07495e691a354cb2f9913c453be4ab698f1d423b921d8b",
+    "harness/store-postgres/tests/support/recovery.rs": "516b103e9bbe43c137774470a0fc1ee0f54fc8a1b8c21c6deecd2e1c36288508",
+    "harness/store-postgres/tests/support/worker.rs": "810f92955be21b10853bb2c6a1134d5cb9e315c0001ab5b431977704a64e03a6",
+    "harness/store-postgres/tests/worker_recovery.rs": "f918ad6503d4e0c7489237a7b99f211c4e3d6781d1e776706d254f6eb3cbefc5",
+    "harness/telemetry/src/accounting.rs": "45f118f49ada7fe444054d934c94fa4b39fe7b4a22f58dba914944fde41ebcfc",
+    "harness/telemetry/src/lib.rs": "c4dcba1d1e68b53861c6c0e9ae8280154d0457c7d9fd825aaa2ff2126a24ebe9",
+    "harness/telemetry/src/otel.rs": "2c2fe61e113a58d176d8c60fdca754a267486d2a250b5816bd7b00bd248a3c44",
+    "harness/telemetry/tests/boundaries.rs": "f1d30550567ce777072c80e1e95096927446a86fcd2264da962878ff2e2cb091",
+    "harness/telemetry/tests/wire.rs": "2351b2ad0f18ea4b31ec9f8c6a1c28739e78aee86efda3ec3a3d9b5de082d264",
+    "harness/tests/contracts/observability.json": "a2aa40ff221646a42f5e383d2ab7a067ea231198150c7c942734af4071618370"
+  }
+}

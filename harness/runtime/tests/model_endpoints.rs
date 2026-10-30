@@ -70,6 +70,7 @@ async fn local_chat_completions_streams_without_authorization_header() {
     .await
     .unwrap()
     .unwrap();
+    assert!(matches!(rx.recv().await, Some(Progress::OutputStarted)));
     assert!(matches!(rx.recv().await,Some(Progress::Delta(s)) if s=="Hello"));
     assert!(
         matches!(rx.recv().await,Some(Progress::Complete(c)) if c.output[0]["content"][0]["text"]=="Hello")

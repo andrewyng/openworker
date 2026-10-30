@@ -1,0 +1,16 @@
+**
+!harness/
+!harness/**
+harness/target/
+harness/**/node_modules/
+harness/**/target/
+harness/**/test-output/
+harness/**/.env*
+harness/**/*.sqlite*
+harness/**/*.db
+!deploy/
+!deploy/service/
+!deploy/service/guard/
+!deploy/service/guard/**
+!deploy/service/platform/
+!deploy/service/platform/**

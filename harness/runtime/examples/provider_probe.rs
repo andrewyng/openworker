@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Delta(_))=>delta_count+=1,
                     Some(Progress::Complete(c))=>complete=Some(c),
+                    Some(Progress::OutputStarted|Progress::Usage(_))=>{},
                     None=>closed=true,
                 }
             }

@@ -7,6 +7,7 @@ pub struct Model {
     pub provider: crate::provider::Kind,
     pub name: String,
     pub scripted: bool,
+    pub observation: Option<CallContext>,
     pub connection: Option<(
         std::sync::Arc<crate::connections::Manager>,
         crate::connections::Selection,
@@ -28,7 +29,22 @@ pub type SampleHook = std::sync::Arc<
 pub type SummaryHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
 pub enum Progress {
     Delta(String),
+    /// Internal measurement only; never authorizes partial provider output.
+    OutputStarted,
+    /// Latest cumulative provider snapshot, not a token increment.
+    Usage(crate::telemetry::TokenUsage),
     Complete(crate::provider::Completion),
+}
+#[derive(Clone)]
+/// Explicit host binding for a model request's logical turn and purpose. The
+/// runtime supplies this for main, auto-approver and compaction requests.
+pub struct CallContext {
+    pub telemetry: crate::telemetry::Telemetry,
+    pub session: String,
+    pub turn: String,
+    pub action: String,
+    pub purpose: crate::telemetry::ModelPurpose,
+    pub attempt: u32,
 }
 
 impl Model {
@@ -74,6 +90,7 @@ impl Model {
             provider: crate::provider::Kind::Openai,
             name,
             scripted,
+            observation: None,
             connection: None,
             #[cfg(test)]
             sample_hook: None,
@@ -92,10 +109,16 @@ impl Model {
     ) -> Result<()> {
         #[cfg(test)]
         if let Some(hook) = &self.sample_hook {
-            return hook(instructions.into(), history.to_vec(), tx).await;
+            return self
+                .observed(instructions, history, tx, |tx| {
+                    hook(instructions.into(), history.to_vec(), tx)
+                })
+                .await;
         }
         if self.scripted {
-            return self.fixture(history, tx).await;
+            return self
+                .observed(instructions, history, tx, |tx| self.fixture(history, tx))
+                .await;
         }
         self.request(instructions, history, tools, 8192, None, tx)
             .await
@@ -170,6 +193,116 @@ impl Model {
     }
     #[allow(clippy::too_many_arguments)]
     async fn request_with_key(
+        &self,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        max_tokens: usize,
+        format: Option<Value>,
+        tx: mpsc::Sender<Progress>,
+        key: &str,
+    ) -> Result<()> {
+        self.observed(instructions, history, tx, |tx| {
+            self.request_plain(instructions, history, tools, max_tokens, format, tx, key)
+        })
+        .await
+    }
+    pub fn accounted(mut self, context: CallContext) -> Self {
+        self.observation = Some(context);
+        self
+    }
+    async fn observed<F, Fut>(
+        &self,
+        instructions: &str,
+        history: &[Value],
+        tx: mpsc::Sender<Progress>,
+        request: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(mpsc::Sender<Progress>) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        let Some(context) = self.observation.as_ref().filter(|c| c.telemetry.enabled()) else {
+            return request(tx).await;
+        };
+        let mut span = context.telemetry.span(
+            crate::telemetry::Operation::Model,
+            Some(&context.session),
+            Some(&context.action),
+        );
+        span.turn(&context.turn);
+        span.purpose(context.purpose);
+        span.attempt(context.attempt);
+        span.metadata("gen_ai.operation.name", "chat");
+        span.metadata("langfuse.observation.type", "generation");
+        span.metadata("gen_ai.request.model", &self.name);
+        span.model_started();
+        span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":&history[history.len().saturating_sub(20)..]})).unwrap_or_default());
+        let (inner, mut rx) = mpsc::channel(32);
+        let future = request(inner);
+        tokio::pin!(future);
+        let mut finished = None;
+        let mut closed = false;
+        let mut completed = false;
+        while finished.is_none() || !closed {
+            let Some(progress) = (tokio::select! {
+                result = &mut future, if finished.is_none() => { finished=Some(result); continue; },
+                progress = rx.recv(), if !closed => progress,
+            }) else {
+                closed = true;
+                continue;
+            };
+            match &progress {
+                Progress::Delta(text) if !text.is_empty() => span.first_output(),
+                Progress::OutputStarted => span.first_output(),
+                Progress::Usage(usage) => span.reported_usage(*usage),
+                Progress::Complete(completion) => {
+                    if completed {
+                        span.finish(crate::telemetry::Outcome::Error);
+                        bail!("Duplicate provider completion");
+                    }
+                    completed = true;
+                    if let Some(usage) = &completion.usage {
+                        span.reported_usage(usage.reported());
+                    }
+                    if completion.output.iter().any(|item| {
+                        item["type"] == "function_call"
+                            || item["type"] == "message"
+                                && item["content"].as_array().is_some_and(|parts| {
+                                    parts.iter().any(|part| {
+                                        part["text"].as_str().is_some_and(|text| !text.is_empty())
+                                    })
+                                })
+                    }) {
+                        span.first_output();
+                    }
+                    span.content("gen_ai.completion", || {
+                        serde_json::to_string(&completion.output).unwrap_or_default()
+                    });
+                }
+                _ => {}
+            }
+            if tx.send(progress).await.is_err() {
+                span.finish(crate::telemetry::Outcome::Interrupted);
+                bail!("Model consumer closed");
+            }
+        }
+        let result = finished.unwrap().and_then(|()| {
+            if completed {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Missing provider completion"))
+            }
+        });
+        span.finish(if result.is_ok() {
+            crate::telemetry::Outcome::Ok
+        } else {
+            crate::telemetry::Outcome::Error
+        });
+        result
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn request_plain(
         &self,
         instructions: &str,
         history: &[Value],
@@ -296,7 +429,7 @@ impl Model {
                 r=&mut request,if !finished=>{r?;finished=true;},
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Complete(r))=>response=Some(r),
-                    Some(Progress::Delta(_))=>{},None=>closed=true
+                    Some(Progress::Delta(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
                 }
             }
         }

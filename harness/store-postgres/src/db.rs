@@ -724,6 +724,7 @@ impl Database {
             if row.get::<_, String>(2) != "queued" {
                 if s.turn.as_ref().is_none_or(|t| t.id != tid) {
                     s.turn = Some(Turn {
+                        observation: None,
                         id: tid,
                         submission_id: key.into(),
                         text: old,
@@ -794,6 +795,7 @@ impl Database {
         s.history.push(input);
         s.compaction_action = None;
         s.turn = Some(Turn {
+            observation: None,
             id: turn_id,
             submission_id: key.into(),
             text: text.into(),

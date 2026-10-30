@@ -166,8 +166,26 @@ pub struct Decoder {
     reason: Option<String>,
     blocks: BTreeMap<u64, Block>,
     usage: Usage,
+    output_known: bool,
+    input_known: bool,
 }
 impl Decoder {
+    fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
+        self.input_known.then(|| {
+            let mut u = self.usage.reported();
+            if !self.output_known {
+                u.output = None;
+            }
+            u
+        })
+    }
+    fn output_started(&self) -> bool {
+        self.blocks.values().any(|b| {
+            b.value["type"] == "tool_use"
+                || b.value["type"] == "text"
+                    && b.value["text"].as_str().is_some_and(|s| !s.is_empty())
+        })
+    }
     pub fn event(&mut self, event: &Value) -> Result<Option<String>, Error> {
         let result = self.accept(event);
         if result.is_err() {
@@ -200,7 +218,14 @@ impl Decoder {
                     .checked_add(cache_read)
                     .and_then(|n| n.checked_add(cache_write))
                     .ok_or_else(invalid)?;
+                self.input_known = true;
+                if let Some(output) = u["output_tokens"].as_u64() {
+                    self.usage.output_tokens = output;
+                    self.output_known = true;
+                }
                 self.usage.cached_input_tokens = cache_read;
+                self.usage.cache_read_input_tokens = u["cache_read_input_tokens"].as_u64();
+                self.usage.cache_write_input_tokens = u["cache_creation_input_tokens"].as_u64();
             }
             Some("content_block_start") => {
                 if !self.started || self.reason.is_some() || self.blocks.values().any(|b| !b.closed)
@@ -289,6 +314,7 @@ impl Decoder {
                 }
                 self.usage.output_tokens =
                     e["usage"]["output_tokens"].as_u64().ok_or_else(invalid)?;
+                self.output_known = true;
                 let reason = e["delta"]["stop_reason"].as_str().ok_or_else(invalid)?;
                 match reason {
                     "end_turn" | "tool_use" => {
@@ -418,6 +444,8 @@ pub async fn request(
     let mut decoder = Decoder::default();
     let mut buffer = vec![];
     let mut total = 0;
+    let mut previous_usage = None;
+    let mut first_sent = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| Error::new(Failure::Transport))?;
         total += chunk.len();
@@ -430,7 +458,24 @@ pub async fn request(
             let line = std::str::from_utf8(&line).map_err(|_| invalid())?.trim();
             if let Some(data) = line.strip_prefix("data:") {
                 let event: Value = serde_json::from_str(data).map_err(|_| invalid())?;
-                if let Some(text) = decoder.event(&event)? {
+                let decoded = decoder.event(&event);
+                if let Some(usage) = decoder
+                    .usage_report()
+                    .filter(|u| u.present() && Some(*u) != previous_usage)
+                {
+                    tx.send(Progress::Usage(usage))
+                        .await
+                        .map_err(|_| Error::new(Failure::Transport))?;
+                    previous_usage = Some(usage);
+                }
+                let decoded = decoded?;
+                if !first_sent && decoder.output_started() {
+                    tx.send(Progress::OutputStarted)
+                        .await
+                        .map_err(|_| Error::new(Failure::Transport))?;
+                    first_sent = true;
+                }
+                if let Some(text) = decoded {
                     tx.send(Progress::Delta(text))
                         .await
                         .map_err(|_| Error::new(Failure::Transport))?;

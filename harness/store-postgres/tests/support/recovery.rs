@@ -74,6 +74,7 @@ fn main() -> Result<()> {
                     role: Role::Observer,
                     scope: Scope::All,
                     environments: vec![],
+                    expires_at: None,
                 },
                 revoked_token.trim(),
             )?;

@@ -8,6 +8,10 @@ use std::{fs::OpenOptions, path::Path};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Interaction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_id: Option<String>,
     pub id: String,
     pub turn_id: String,
@@ -28,6 +32,8 @@ pub struct Interaction {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<TurnObservation>,
     pub id: String,
     pub submission_id: String,
     pub text: String,
@@ -42,6 +48,19 @@ pub struct Turn {
     pub continuations: u32,
     #[serde(default)]
     pub reviewer_denials: u32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TurnObservation {
+    pub first_started_at_ms: u64,
+    pub last_segment: crate::telemetry::TraceContext,
+    pub segments: u32,
+}
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as u64
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
@@ -640,6 +659,7 @@ impl Store {
             let event: Value = serde_json::from_str(&raw)?;
             // Return the original durable identity without altering current session state.
             s.turn = Some(Turn {
+                observation: None,
                 id: tid,
                 submission_id: key.into(),
                 text: old,
@@ -689,6 +709,7 @@ impl Store {
         // A bookkeeping decision belongs to the old turn, not the next task.
         s.compaction_action = None;
         s.turn = Some(Turn {
+            observation: None,
             id: crate::id("t"),
             submission_id: key.into(),
             text: text.into(),

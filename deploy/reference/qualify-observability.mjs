@@ -18,6 +18,25 @@ const password=randomBytes(24).toString("hex");
 const secret=join(root,"postgres-password");await writeFile(secret,password,{mode:0o600,flag:"wx"});
 const docker=async(...args)=>(await exec("docker",args,{timeout:60000,maxBuffer:1048576})).stdout.trim();
 const results=[];let intent=false,removed=false,writeProbe=null;
+// Optional pinned image built by Dockerfile.observability. Never pull a remote
+// image or pass model/cloud credentials into this native-Linux recovery fixture.
+const linuxImage=process.env.OW_OBSERVABILITY_LINUX_IMAGE;
+if(linuxImage)assert.match(linuxImage,/^sha256:[a-f0-9]{64}$/);
+async function linuxRecovery(pg){
+  const name=`ow-observability-linux-${id}`,envFile=join(root,"linux-test-env");
+  await writeFile(envFile,`OW_PG_TEST_URL=postgresql://openworker:${password}@127.0.0.1:5432/execution\n`,{mode:0o600,flag:"wx"});
+  let owned;
+  try{
+    owned=await docker("create","--pull=never","--name",name,"--label",`${label}=${id}`,"--network",`container:${pg}`,"--memory=2g","--env-file",envFile,linuxImage,"--ignored","--test-threads=1","--skip","mixed_versions_keep_native_identity_pinned_and_old_pool_can_resume","--skip","bounded_load_matrix");
+    const output=await exec("docker",["start","-a",owned],{timeout:600000,maxBuffer:4194304});
+    await writeFile(join(root,"linux-worker-recovery.log"),output.stdout+output.stderr,{mode:0o600,flag:"wx"});
+    const inspected=JSON.parse(await docker("inspect",owned))[0];assert.equal(inspected.State.ExitCode,0,"Linux worker recovery failed; inspect private fixture log");
+    results.push("linux-worker-recovery");console.log("PASS linux-worker-recovery");
+  }finally{
+    if(owned){const inspected=JSON.parse(await docker("inspect",owned))[0];assert.equal(inspected.Config.Labels[label],id);await docker("rm","-f",owned);}
+    await unlink(envFile);
+  }
+}
 async function test(name,args,variables={}){
   const env={...process.env,...variables};
   // Keep application/model/AWS credentials out of the fixture process.
@@ -43,13 +62,14 @@ try{
   const vars={OW_EXECUTION_TEST_URL:`${base}/execution`,OW_OBSERVABILITY_TEST_URL:`${base}/observability`};
   await test("postgres-storage-contract",["-p","openworker-observability","--all-features","--test","storage","--","--ignored","--nocapture"],vars);
   await test("service-two-database-outage",["-p","openworker-server-reference","--test","recording","--","--ignored"],vars);
+  if(linuxImage)await linuxRecovery(container);
 }finally{
   if(intent){
     const i=JSON.parse(await docker("inspect",name))[0];assert.equal(i.Config.Labels[label],id,"Refusing to remove unowned container");
     await docker("rm","-f",i.Id);removed=true;
     await unlink(secret); // Generated fixture password only; original credentials untouched.
   }
-  const report={version:1,at:new Date().toISOString(),scope:"local Docker PostgreSQL; no AWS or paid models",postgresImage:image,databases:2,tests:results,writeProbe,passed:results.length===2&&removed,ownedContainerRemoved:removed,generatedPasswordRemoved:removed,unrelatedContainersModified:false};
+  const report={version:1,at:new Date().toISOString(),scope:"local Docker PostgreSQL; no AWS or paid models",postgresImage:image,linuxImage:linuxImage??null,databases:2,tests:results,writeProbe,passed:results.length===(linuxImage?3:2)&&removed,ownedContainerRemoved:removed,generatedPasswordRemoved:removed,unrelatedContainersModified:false};
   await writeFile(join(root,"qualification.json"),JSON.stringify(report,null,2)+"\n",{mode:0o600,flag:"wx"});
   console.log(JSON.stringify(report));
 }

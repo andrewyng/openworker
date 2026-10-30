@@ -115,12 +115,14 @@ impl Sink for OtelSink {
             if !matches!(
                 r.operation,
                 crate::Operation::ApprovalRequested
+                    | crate::Operation::ModelStarted
                     | crate::Operation::ApprovalResolved
                     | crate::Operation::Cancellation
                     | crate::Operation::UnknownOutcome
                     | crate::Operation::QuestionRequested
                     | crate::Operation::QuestionResolved
-            ) {
+            ) && r.timing_known
+            {
                 self.duration.record(r.elapsed.as_secs_f64(), &labels);
             }
             if r.operation == crate::Operation::Model && r.attempt.is_some_and(|n| n > 1) {
@@ -128,7 +130,11 @@ impl Sink for OtelSink {
             }
             for (kind, value) in [("input", r.input_tokens), ("output", r.output_tokens)] {
                 if let Some(n) = value {
-                    self.tokens.add(n, &[KeyValue::new("direction", kind)]);
+                    let mut dimensions = vec![KeyValue::new("direction", kind)];
+                    if let Some(p) = r.purpose {
+                        dimensions.push(KeyValue::new("openworker.model.purpose", p.name()));
+                    }
+                    self.tokens.add(n, &dimensions);
                 }
             }
             if let Some(d) = r.first_output {
@@ -144,11 +150,39 @@ impl Sink for OtelSink {
             if let Some(n) = r.attempt {
                 attrs.push(KeyValue::new("openworker.attempt", i64::from(n)));
             }
+            if let Some(t) = r.turn_hash {
+                attrs.push(KeyValue::new("openworker.turn.hash", hex(&t)));
+            }
+            if let Some(p) = r.purpose {
+                attrs.push(KeyValue::new("openworker.model.purpose", p.name()));
+            }
+            attrs.push(KeyValue::new("openworker.timing.known", r.timing_known));
             let trace_id = TraceId::from_bytes(r.context.trace);
             let span_id = SpanId::from_bytes(r.context.span);
             // Opt-in metadata/content goes on spans only, never on metric
             // labels or the lifecycle log stream.
             let mut span_attrs = attrs.clone();
+            for (key, value) in [
+                ("gen_ai.usage.input_tokens", r.input_tokens),
+                ("gen_ai.usage.output_tokens", r.output_tokens),
+                (
+                    "gen_ai.usage.cache_read.input_tokens",
+                    r.usage_details.cache_read,
+                ),
+                (
+                    "gen_ai.usage.cache_write.input_tokens",
+                    r.usage_details.cache_write,
+                ),
+                (
+                    "gen_ai.usage.reasoning.output_tokens",
+                    r.usage_details.reasoning,
+                ),
+                ("openworker.tool.returned_bytes", r.output_bytes),
+            ] {
+                if let Some(n) = value.and_then(|n| i64::try_from(n).ok()) {
+                    span_attrs.push(KeyValue::new(key, n));
+                }
+            }
             if !r.attributes.is_empty() {
                 if let Some(s) = r.identity.session {
                     // Trace grouping for LLM backends (still the hash, not the ID).
@@ -160,7 +194,9 @@ impl Sink for OtelSink {
                         .map(|(k, v)| KeyValue::new(*k, v.clone())),
                 );
             }
-            if let Some(traces) = &self.traces {
+            // Cross-worker wall clocks can disagree. Preserve the unknown wait in
+            // recording/logs; do not export an invalid negative-duration span.
+            if let Some(traces) = self.traces.as_ref().filter(|_| r.timing_known) {
                 traces.on_end(SpanData {
                     span_context: SpanContext::new(
                         trace_id,
@@ -181,7 +217,23 @@ impl Sink for OtelSink {
                     attributes: span_attrs,
                     dropped_attributes_count: 0,
                     events: Default::default(),
-                    links: Default::default(),
+                    links: {
+                        let mut links = opentelemetry_sdk::trace::SpanLinks::default();
+                        for c in &r.links {
+                            links.links.push(opentelemetry::trace::Link::new(
+                                SpanContext::new(
+                                    TraceId::from_bytes(c.trace),
+                                    SpanId::from_bytes(c.span),
+                                    TraceFlags::SAMPLED,
+                                    false,
+                                    TraceState::default(),
+                                ),
+                                vec![],
+                                0,
+                            ));
+                        }
+                        links
+                    },
                     status: if r.outcome == Outcome::Error {
                         Status::error("operation_failed")
                     } else {

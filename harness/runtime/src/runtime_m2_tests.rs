@@ -176,6 +176,43 @@ async fn fixture(model: Model, attended: bool) -> (tempfile::TempDir, Arc<Runtim
 }
 
 #[tokio::test]
+async fn segment_checkpoint_preserves_history_and_rolls_back_failed_event() {
+    struct Discard;
+    impl crate::telemetry::Sink for Discard {
+        fn export(
+            &mut self,
+            _: &[crate::telemetry::Record],
+            _: crate::telemetry::Snapshot,
+        ) -> bool {
+            true
+        }
+    }
+    let (tmp, mut rt, sid) = fixture(Model::new("fixture".into(), true), true).await;
+    let (t, c) = crate::telemetry::Telemetry::start(Discard, 16).unwrap();
+    Arc::get_mut(&mut rt).unwrap().telemetry = t;
+    let original = rt.store.lock().unwrap().get(&sid).unwrap().history;
+    let db = rusqlite::Connection::open(tmp.path().join("state/runtime.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_segment BEFORE INSERT ON events WHEN NEW.kind='execution_segment_started' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(rt.begin_segment(&sid).is_err());
+    let s = rt.store.lock().unwrap().get(&sid).unwrap();
+    assert_eq!(s.history, original);
+    assert!(s.turn.unwrap().observation.is_none());
+    db.execute_batch("DROP TRIGGER fail_segment").unwrap();
+    let (first, turn) = rt.begin_segment(&sid).unwrap();
+    let context = first.context();
+    first.finish(Outcome::Waiting);
+    let (second, same) = rt.begin_segment(&sid).unwrap();
+    assert_eq!(turn, same);
+    assert_eq!(context.trace, second.context().trace);
+    assert_ne!(context.span, second.context().span);
+    second.finish(Outcome::Ok);
+    let s = rt.store.lock().unwrap().get(&sid).unwrap();
+    assert_eq!(s.history, original);
+    assert_eq!(s.turn.unwrap().observation.unwrap().segments, 2);
+    assert!(c.shutdown(std::time::Duration::from_secs(2)));
+}
+
+#[tokio::test]
 async fn completed_turn_cleanup_cannot_accept_and_strand_the_next_submission() {
     let (_tmp, rt, sid) = fixture(Model::new("fixture".into(), true), true).await;
     rt.update(&sid, "turn_completed", json!({"status":"completed"}), |s| {
@@ -378,6 +415,13 @@ async fn retries_keep_partial_attempts_separate_and_do_not_touch_tools_or_histor
             ))
             .await
             .unwrap();
+            tx.send(Progress::Usage(crate::telemetry::TokenUsage {
+                input: Some(10),
+                output: Some(2),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
             if n == 0 {
                 return Err(Error {
                     kind: Failure::RateLimit,
@@ -390,12 +434,47 @@ async fn retries_keep_partial_attempts_separate_and_do_not_touch_tools_or_histor
             Ok(())
         })
     }));
-    let (_tmp, rt, sid) = fixture(model, true).await;
+    let (_tmp, mut rt, sid) = fixture(model, true).await;
+    struct Capture(Arc<Mutex<Vec<crate::telemetry::Record>>>);
+    impl crate::telemetry::Sink for Capture {
+        fn export(
+            &mut self,
+            r: &[crate::telemetry::Record],
+            _: crate::telemetry::Snapshot,
+        ) -> bool {
+            self.0.lock().unwrap().extend_from_slice(r);
+            true
+        }
+    }
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (telemetry, controller) =
+        crate::telemetry::Telemetry::start(Capture(rows.clone()), 64).unwrap();
+    Arc::get_mut(&mut rt).unwrap().telemetry = telemetry;
     let before = rt.store.lock().unwrap().get(&sid).unwrap().history;
     let result = rt.sample(&sid, &before, &[]).await.unwrap();
     assert!(!serde_json::to_string(&result.output)
         .unwrap()
         .contains("failed partial"));
+    assert!(controller.shutdown(std::time::Duration::from_secs(2)));
+    let records = rows.lock().unwrap();
+    let requests: Vec<_> = records
+        .iter()
+        .filter(|r| r.operation == Op::Model)
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].attempt, Some(1));
+    assert_eq!(requests[1].attempt, Some(2));
+    assert_eq!(requests[0].context.trace, requests[1].context.trace);
+    assert_ne!(requests[0].identity.action, requests[1].identity.action);
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.input_tokens.unwrap())
+            .sum::<u64>(),
+        20
+    );
+    assert_eq!(requests[0].outcome, Outcome::Error);
+    assert_eq!(requests[1].outcome, Outcome::Ok);
     let db = rt.store.lock().unwrap();
     let attempts = db.attempts(&sid).unwrap();
     assert_eq!(attempts.len(), 2);
@@ -585,6 +664,8 @@ async fn compaction_retry_and_pending_approval_survive_the_same_restart_scenario
             t.queue = vec![call.clone()];
             t.status = "waiting".into();
             s.interactions.push(Interaction {
+                requested_at_ms: None,
+                resolved_at_ms: None,
                 grant_id: None,
                 id: "i_stable".into(),
                 turn_id: t.id.clone(),

@@ -372,11 +372,37 @@ async fn production_worker_parks_approval_reclaims_for_answer_and_keeps_session_
     .await
     .unwrap();
     assert!(!root.path().join("work/proof.txt").exists());
+    let first_observation = api.inspect(sid).unwrap().turn.unwrap().observation.unwrap();
+    assert_eq!(first_observation.segments, 1);
     stop_service(&mut a).await;
     let decision = decision(sid, &pending, "allow-session", "session");
     api.submit_control(decision.clone()).unwrap();
     let mut b = service(root.path(), &config.schema, "b", sid);
     terminal_receipt(&api, sid, "one", SubmissionStatus::Completed).await;
+    let after_resume = api.inspect(sid).unwrap();
+    let resumed = after_resume
+        .turn
+        .as_ref()
+        .unwrap()
+        .observation
+        .as_ref()
+        .unwrap();
+    assert_eq!(resumed.segments, 2);
+    assert_eq!(
+        resumed.first_started_at_ms,
+        first_observation.first_started_at_ms
+    );
+    assert_eq!(
+        resumed.last_segment.trace,
+        first_observation.last_segment.trace
+    );
+    assert_ne!(
+        resumed.last_segment.span,
+        first_observation.last_segment.span
+    );
+    let interaction = &after_resume.interactions[0];
+    assert!(interaction.requested_at_ms.is_some());
+    assert!(interaction.resolved_at_ms >= interaction.requested_at_ms);
     assert_eq!(
         api.control_receipt(sid, "allow-session").unwrap().status,
         ControlStatus::Applied
@@ -389,6 +415,22 @@ async fn production_worker_parks_approval_reclaims_for_answer_and_keeps_session_
     .unwrap();
     terminal_receipt(&api, sid, "two", SubmissionStatus::Completed).await;
     stop_service(&mut b).await;
+    let records: Vec<Value> = std::fs::read_to_string(root.path().join("observations.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    assert!(records.iter().any(|r| r["operation"] == "agent.execute"
+        && r["links"]
+            .as_array()
+            .is_some_and(|links| links.contains(&json!(first_observation.last_segment)))));
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r["operation"] == "approval.wait" && r["timing_known"] == true)
+            .count(),
+        1
+    );
     assert_eq!(
         std::fs::read_to_string(root.path().join("work/proof.txt"))
             .unwrap()

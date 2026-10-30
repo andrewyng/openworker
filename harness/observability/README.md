@@ -71,11 +71,16 @@ expired deletes for its own deployment only. Pruning never touches execution,
 audit or artifact tables. Backlogs may require multiple passes. History is bounded
 by deployment/session/cursor and a maximum page of 1,000 rows.
 
-Existing instrumentation supplies active execution segments, main model usage,
-most tool durations, policy and lifecycle events. Session/action IDs are hashed;
-models/tools are allowlisted metadata. Full turn linkage, auxiliary model usage,
-cache/reasoning breakdowns, rollups, search and management UI integration remain
-later milestones. Never display an incomplete total as complete.
+Runtime instrumentation supplies linked execution segments of one logical turn,
+main/reviewer/compaction requests, provider-reported cache/reasoning subsets,
+tool durations/result sizes, policy and lifecycle facts, and durable human-wait
+intervals. Session/turn/action IDs are hashed; model/tool names are allowlisted
+metadata. Optional typed call contexts let hosts bind additional model purposes;
+they do not introduce a helper/title feature. New payloads use v2 while v1 remains
+readable in the unchanged indexed SQL schema. No historical values are inferred.
+Rollups, authorized search and management UI integration remain later milestones.
+Never display an incomplete total as complete. See the
+[M2 accounting contract](../../docs/harness/OBSERVABILITY.md#m2-accounting-contract).
 
 ## Local tests
 
@@ -83,6 +88,21 @@ later milestones. Never display an incomplete total as complete.
 cargo test --locked --manifest-path harness/Cargo.toml -p openworker-observability --all-features
 node deploy/reference/qualify-observability.mjs
 ```
+
+For native Linux runtime/restart and real PostgreSQL worker-replacement tests:
+
+```sh
+docker build -f deploy/reference/Dockerfile.observability \
+  -t openworker-observability-qualification:m2 .
+OW_OBSERVABILITY_LINUX_IMAGE="$(docker image inspect --format '{{.Id}}' openworker-observability-qualification:m2)" \
+  node deploy/reference/qualify-observability.mjs
+```
+
+This pinned test image disables LTO to shorten qualification linking. It contains
+test executables only and must not be deployed as a service. The helper accepts
+an exact local image ID, never pulls it, and removes its labeled Linux/PostgreSQL
+fixtures and generated password files. Build caches and the test image remain
+available for reruns; unrelated containers are never changed.
 
 The second command requires Docker and the cached pinned PostgreSQL image; it
 creates a labeled loopback-only container and two databases, tests adapter parity

@@ -1,6 +1,8 @@
 # Harness observability
 
-Status: implementation specification, 29 October 2026. Companion desktop design:
+Status: M1/M2 recording and accounting implemented and locally qualified,
+29 October 2026; authorized queries and management UI are later milestones.
+Companion desktop design:
 `rohitprasad15/ocw-context`, branch `docs/observability-spec`, commit `bd4dfa0`.
 The desktop spec remains the product reference; this document defines the Rust
 storage/service work. No Python engine changes are part of this implementation.
@@ -122,6 +124,67 @@ correlation, missing model purposes, full usage and distributed resume links bef
 the UI displays those totals as complete. Keep fields/fixtures aligned with the
 desktop spec rather than copying desktop-only remote-machine assumptions into the
 service. No mandatory OTel dependency for local recording.
+
+## M2 accounting contract
+
+The shared model request boundary now records the working agent, separate
+auto-approver and compaction model. Each HTTP request has its own span, including
+the second HTTP request after a rejected access token is refreshed. Runtime
+retries retain their retry ordinal and distinct action identities; authentication
+refresh attempts share the runtime attempt identity but have distinct spans.
+Provider usage snapshots replace the latest values; they are never accumulated
+as additional calls. Only `model.attempt` owns tokens. `model.requested` is an
+immutable, zero-duration open fact whose parent identifies the request span.
+A missing completion remains unknown after process loss; it cannot be interpreted
+as zero tokens or a successful response.
+
+Input/output, cache read/write and reasoning counts are individually optional.
+Anthropic input includes ordinary input plus cache reads and cache creation;
+cache breakdowns are subsets. Responses and Chat Completions retain reported
+cache/reasoning subsets. Impossible breakdowns are omitted, never added to the
+total. A truncated, failed or cancelled request retains usage already reported.
+It still cannot authorize an incomplete tool call. Reported zero remains zero;
+unreported usage remains absent. Token totals are not dollar-cost estimates.
+
+First output means accepted nonempty text, tool identity/arguments, or useful
+content in a completed response. Keepalives, created events, usage-only updates
+and private thinking do not start that timer. The timer starts at the request
+boundary, after credential acquisition; it includes client/transport overhead,
+not just model inference. There is no additional streaming/polling mechanism.
+
+The logical trace is a versioned digest of session and turn identities. Each
+active execution segment has a fresh span and links to the previous segment,
+whose context and first execution time are saved in canonical turn metadata
+before execution starts. These canonical writes use the existing ownership fence;
+the independent recording writer never acquires execution authority. A worker
+replacement can retain identity without pretending that the stopped process kept
+running. Request/tool children share the turn identity. Approvals and questions
+carry durable request/resolution timestamps; explicit cancellation ends the wait
+without inventing a human answer. Shutdown leaves a parked wait open. Clock skew
+produces unknown duration; the raw endpoints remain recorded and an invalid
+negative-duration span is not sent to OTLP. Older interactions without timestamps
+cannot yield measured historical waits.
+
+Tool executions include internal planning, team/message-board, memory and
+scheduling operations. Returned bytes measure the serialized result returned by
+the tool, not created workspace files or a fabricated per-tool token cost.
+Sandbox provider, enforcement and the tool-policy digest are recorded when
+applicable. These facts describe execution; a tool label still cannot weaken
+access policy. Internal metadata operations are marked `session-metadata-only`.
+
+New recordings write format v2 and read v1; the indexed SQL schema remains v1
+because the payload is versioned JSON. Existing session JSON uses optional new
+fields. No historical usage or segment linkage is backfilled. The shared fixture
+is `harness/tests/contracts/observability.json`. It is consumable by desktop/service
+tests; this qualification exercises Rust, not the Python desktop engine.
+
+There is no built-in Rust title generator or inline helper-model feature to
+instrument today. Team agents run their own ordinary sessions; `helper`, `title`
+and `probe` are reserved purposes for hosts using the same explicit call-context
+seam. Unbound provider connection probes do not belong to a session's totals.
+This remains best-effort diagnostics: dropped records, absent usage and orphaned
+open facts must remain visible as incomplete coverage. Authorized query/rollup
+APIs and the management UI remain M3/M4.
 
 ## Service configuration
 

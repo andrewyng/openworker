@@ -40,6 +40,38 @@ fn record() -> Record {
     r
 }
 #[test]
+fn typed_purpose_and_reported_breakdowns_survive_conversion_without_inference() {
+    let mut r = record();
+    assert!(Step::from_record("test", "worker", &r)
+        .unwrap()
+        .purpose
+        .is_none());
+    r.purpose = Some(openworker_telemetry::ModelPurpose::Compaction);
+    r.turn_hash = Some([7; 32]);
+    r.links.push(openworker_telemetry::TraceContext {
+        trace: [3; 16],
+        span: [4; 8],
+    });
+    r.usage_details = openworker_telemetry::TokenUsage {
+        input: Some(100),
+        output: Some(20),
+        cache_read: Some(40),
+        cache_write: Some(10),
+        reasoning: Some(5),
+    };
+    let step = Step::from_record("test", "worker", &r).unwrap();
+    assert_eq!(step.version, 2);
+    assert_eq!(step.purpose.as_deref(), Some("compaction"));
+    assert_eq!(step.links.len(), 1);
+    let usage = step.usage.as_ref().unwrap();
+    assert_eq!(usage.cache_read, Some(40));
+    assert_eq!(usage.cache_write, Some(10));
+    assert_eq!(usage.reasoning, Some(5));
+    let encoded = serde_json::to_string(&step).unwrap();
+    assert!(!encoded.contains("private"));
+    assert_eq!(serde_json::from_str::<Step>(&encoded).unwrap(), step);
+}
+#[test]
 fn real_instrumentation_reopens_metadata_only_and_keeps_export_off() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("obs.db");

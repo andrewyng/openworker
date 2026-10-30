@@ -511,6 +511,8 @@ async fn reviewer_context_excludes_agent_history_and_skipped_answers() {
     );
     let question = json!({"call_id":"q1","name":"ask_user","arguments":json!({"question":"Deploy now?","options":[]}).to_string()});
     s.interactions.push(Interaction {
+        requested_at_ms: None,
+        resolved_at_ms: None,
         grant_id: None,
         id: "i_question".into(),
         turn_id: s.turn.as_ref().unwrap().id.clone(),

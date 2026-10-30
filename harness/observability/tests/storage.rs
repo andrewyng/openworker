@@ -16,12 +16,18 @@ fn sample(n: u64) -> Step {
         outcome: "ok".into(),
         started_ms: 1000,
         ended_ms: 1100,
-        duration_us: 100000,
+        duration_us: Some(100000),
         first_output_us: Some(40000),
         attempt: Some(1),
         model: Some("claude-sonnet".into()),
         tool: None,
         purpose: Some("main".into()),
+        turn_hash: None,
+        links: vec![],
+        output_bytes: None,
+        sandbox: None,
+        enforcement: None,
+        policy_digest: None,
         usage: Some(Usage {
             input: Some(100),
             output: Some(20),
@@ -40,7 +46,7 @@ fn contract(store: &mut dyn Store) {
         Some(a.clone())
     );
     let mut changed = a.clone();
-    changed.duration_us += 1;
+    changed.duration_us = changed.duration_us.map(|n| n + 1);
     assert!(store.put(&changed).unwrap_err().is::<Conflict>());
     assert_eq!(
         store.get("development", &a.span_id).unwrap(),
@@ -79,6 +85,43 @@ fn contract(store: &mut dyn Store) {
         store.list("other_deployment", None, 0, 100).unwrap().len(),
         1
     );
+    // v1 JSON had none of the v2 correlation/fact fields. Read it unchanged,
+    // then persist/reopen an unknown-duration v2 wait beside it in either store.
+    let mut legacy = serde_json::to_value(sample(7)).unwrap();
+    for field in [
+        "turn_hash",
+        "links",
+        "output_bytes",
+        "sandbox",
+        "enforcement",
+        "policy_digest",
+    ] {
+        legacy.as_object_mut().unwrap().remove(field);
+    }
+    let mut legacy: Step = serde_json::from_value(legacy).unwrap();
+    assert_eq!(legacy, sample(7));
+    legacy.deployment = "version_contract".into();
+    store.put(&legacy).unwrap();
+    let mut wait = sample(8);
+    wait.deployment = "version_contract".into();
+    wait.version = 2;
+    wait.turn_hash = Some(format!("{:064x}", 4));
+    wait.operation = "approval.wait".into();
+    wait.usage = None;
+    wait.purpose = None;
+    wait.first_output_us = None;
+    wait.duration_us = None;
+    wait.ended_ms = 999;
+    wait.links = vec![openworker_observability::StepLink {
+        trace_id: sample(1).trace_id,
+        span_id: sample(1).span_id,
+    }];
+    store.put(&wait).unwrap();
+    assert_eq!(
+        store.get("version_contract", &wait.span_id).unwrap(),
+        Some(wait)
+    );
+    store.prune("version_contract", 1101, 100).unwrap();
 }
 #[test]
 fn sqlite_contract_restart_and_retention_isolation() {
@@ -113,7 +156,7 @@ fn sqlite_contract_restart_and_retention_isolation() {
 fn validation_rejects_content_overflow_inconsistent_usage_and_unknown_fields() {
     sample(1).validate().unwrap();
     let invalid: Vec<Box<dyn Fn(&mut Step)>> = vec![
-        Box::new(|s| s.version = 2),
+        Box::new(|s| s.version = 3),
         Box::new(|s| s.ended_ms = 999),
         Box::new(|s| s.span_id = "not-hex".into()),
         Box::new(|s| s.parent_span_id = Some("0000000000000001".into())),

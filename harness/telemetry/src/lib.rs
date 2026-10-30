@@ -10,7 +10,9 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+mod accounting;
 mod observation;
+pub use accounting::{ModelPurpose, TokenUsage};
 #[cfg(feature = "otel")]
 pub mod otel;
 #[cfg(feature = "otlp")]
@@ -178,6 +180,9 @@ pub enum Operation {
     Command,
     Turn,
     Model,
+    ModelStarted,
+    ApprovalWait,
+    QuestionWait,
     Tool,
     Policy,
     Environment,
@@ -201,6 +206,9 @@ impl Operation {
             Self::Command => "runtime.command",
             Self::Turn => "agent.execute",
             Self::Model => "model.attempt",
+            Self::ModelStarted => "model.requested",
+            Self::ApprovalWait => "approval.wait",
+            Self::QuestionWait => "question.wait",
             Self::Tool => "tool.execute",
             Self::Policy => "policy.review",
             Self::Environment => "environment.operation",
@@ -241,12 +249,13 @@ impl Outcome {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceContext {
     pub trace: [u8; 16],
     pub span: [u8; 8],
 }
 tokio::task_local! {static CURRENT: TraceContext;}
+tokio::task_local! {static CURRENT_TURN: [u8;32];}
 
 /// Fixed-size identity hashes, not payload redaction or anonymization.
 #[derive(Clone, Copy, Debug, Default)]
@@ -268,6 +277,12 @@ pub struct Record {
     pub outcome: Outcome,
     pub context: TraceContext,
     pub parent: Option<TraceContext>,
+    pub links: Vec<TraceContext>,
+    pub turn_hash: Option<[u8; 32]>,
+    pub purpose: Option<ModelPurpose>,
+    pub usage_details: TokenUsage,
+    pub timing_known: bool,
+    pub output_bytes: Option<u64>,
     pub identity: Identity,
     pub started: SystemTime,
     pub ended: SystemTime,
@@ -493,6 +508,12 @@ impl Telemetry {
                 },
                 context,
                 parent,
+                links: vec![],
+                turn_hash: CURRENT_TURN.try_with(|t| *t).ok(),
+                purpose: None,
+                usage_details: TokenUsage::default(),
+                timing_known: true,
+                output_bytes: None,
                 identity: Identity::new(session, action),
                 started: now,
                 ended: now,
@@ -544,6 +565,39 @@ impl Telemetry {
     pub fn event(&self, op: Operation, outcome: Outcome, sid: Option<&str>, action: Option<&str>) {
         self.span(op, sid, action).finish(outcome);
     }
+    /// A completed cross-process wait uses durable wall-clock endpoints. Clock
+    /// skew remains unknown, never a fabricated zero-duration interval.
+    pub fn interval(
+        &self,
+        op: Operation,
+        outcome: Outcome,
+        sid: &str,
+        turn: &str,
+        action: &str,
+        started_ms: u64,
+        ended_ms: u64,
+    ) {
+        if started_ms > i64::MAX as u64 || ended_ms > i64::MAX as u64 {
+            return;
+        }
+        let mut span = self.span(op, Some(sid), Some(action));
+        span.turn(turn);
+        if let Some(mut r) = span.record.take() {
+            r.started = std::time::UNIX_EPOCH + Duration::from_millis(started_ms);
+            r.ended = std::time::UNIX_EPOCH + Duration::from_millis(ended_ms);
+            r.timing_known = ended_ms >= started_ms;
+            r.elapsed = Duration::from_millis(ended_ms.saturating_sub(started_ms));
+            r.outcome = outcome;
+            let mut h = Sha256::new();
+            h.update(b"openworker.wait.v1\0");
+            h.update(r.context.trace);
+            h.update(action.as_bytes());
+            h.update(op.name().as_bytes());
+            r.context.span = h.finalize()[..8].try_into().unwrap();
+            r.parent = None;
+            self.record(r);
+        }
+    }
 }
 pub struct Span {
     telemetry: Telemetry,
@@ -569,6 +623,70 @@ impl Span {
         if let Some(r) = &mut self.record {
             r.input_tokens = Some(input);
             r.output_tokens = Some(output);
+            r.usage_details.input = Some(input);
+            r.usage_details.output = Some(output);
+        }
+    }
+    pub fn reported_usage(&mut self, usage: TokenUsage) {
+        if usage.validate() {
+            if let Some(r) = &mut self.record {
+                r.input_tokens = usage.input;
+                r.output_tokens = usage.output;
+                r.usage_details = usage;
+            }
+        }
+    }
+    pub fn purpose(&mut self, purpose: ModelPurpose) {
+        if let Some(r) = &mut self.record {
+            r.purpose = Some(purpose);
+        }
+    }
+    pub fn output_bytes(&mut self, n: u64) {
+        if let Some(r) = &mut self.record {
+            r.output_bytes = Some(n);
+        }
+    }
+    pub fn link(&mut self, context: TraceContext) {
+        if let Some(r) = &mut self.record {
+            if context.trace != [0; 16] && context.span != [0; 8] && r.links.len() < 4 {
+                r.links.push(context);
+            }
+        }
+    }
+    /// Stable logical-turn trace, with a distinct span for each active segment.
+    pub fn turn(&mut self, turn: &str) {
+        if let Some(r) = &mut self.record {
+            let hash = accounting::turn_hash(turn);
+            r.turn_hash = Some(hash);
+            if let Some(session) = r.identity.session {
+                r.context.trace = accounting::turn_trace(session, hash);
+                self.context = r.context;
+                if r.parent.is_some_and(|p| p.trace != r.context.trace) {
+                    r.parent = None;
+                }
+            }
+        }
+    }
+    /// Immutable open-request fact, linked to its eventual completed request.
+    /// Missing completion after a crash is unknown, not a successful zero-token call.
+    pub fn model_started(&self) {
+        if let Some(record) = &self.record {
+            let mut r = record.clone();
+            r.operation = Operation::ModelStarted;
+            r.outcome = Outcome::Waiting;
+            r.parent = Some(record.context);
+            r.context.span = uuid::Uuid::new_v4().as_bytes()[..8].try_into().unwrap();
+            r.ended = r.started;
+            r.elapsed = Duration::ZERO;
+            r.input_tokens = None;
+            r.output_tokens = None;
+            r.usage_details = TokenUsage::default();
+            r.first_output = None;
+            r.attributes
+                .retain(|(key, _)| matches!(*key, "gen_ai.request.model"));
+            r.attributes
+                .push(("langfuse.observation.type", "event".into()));
+            self.telemetry.record(r);
         }
     }
     fn policy(&self) -> Option<&ContentPolicy> {
@@ -638,4 +756,9 @@ impl Drop for Span {
 }
 pub async fn scope<F: Future>(context: TraceContext, f: F) -> F::Output {
     CURRENT.scope(context, f).await
+}
+pub async fn scope_turn<F: Future>(turn: &str, context: TraceContext, f: F) -> F::Output {
+    CURRENT_TURN
+        .scope(accounting::turn_hash(turn), CURRENT.scope(context, f))
+        .await
 }

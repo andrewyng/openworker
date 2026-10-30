@@ -20,6 +20,8 @@ use std::{
 use tokio::sync::{broadcast, mpsc, Mutex as AsyncMutex};
 use tokio_util::sync::CancellationToken;
 
+#[path = "runtime_accounting.rs"]
+mod accounting;
 #[cfg(test)]
 #[path = "runtime_m2_tests.rs"]
 mod m2_tests;
@@ -305,8 +307,11 @@ impl Runtime {
             } else {
                 event.turn_id.as_deref()
             };
-            self.telemetry
-                .event(op, outcome, Some(&event.session_id), action);
+            let mut span = self.telemetry.span(op, Some(&event.session_id), action);
+            if let Some(turn) = &event.turn_id {
+                span.turn(turn);
+            }
+            span.finish(outcome);
         }
         let _ = self.events.send(event);
     }
@@ -372,20 +377,17 @@ impl Runtime {
                 Ok(())
             })?;
             let id = crate::id("attempt");
-            let mut observation = self.telemetry.span(Op::Model, Some(sid), Some(&id));
-            observation.attempt(number);
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
             self.publish(event);
             let (tx, mut rx) = mpsc::channel(32);
             let s = self.store.lock().unwrap().metadata(sid)?;
-            let model = self.session_model(&s);
-            // Opt-in only: no-ops unless the operator enabled content capture.
-            observation.metadata("gen_ai.operation.name", "chat");
-            observation.metadata("langfuse.observation.type", "generation");
-            observation.metadata("gen_ai.request.model", &model.name);
-            observation.content_tail("gen_ai.prompt", || {
-                let start = history.len().saturating_sub(20);
-                serde_json::to_string(&history[start..]).unwrap_or_default()
+            let model = self.session_model(&s).accounted(crate::model::CallContext {
+                telemetry: self.telemetry.clone(),
+                session: sid.into(),
+                turn: s.turn.as_ref().context("No current turn")?.id.clone(),
+                action: id.clone(),
+                purpose: crate::telemetry::ModelPurpose::Main,
+                attempt: number,
             });
             let mut instructions = self.bundle.instructions_for(&s.skills, &s.loaded_skills);
             if s.package.memory {
@@ -446,9 +448,9 @@ impl Runtime {
                     r=&mut request,if result.is_none()=>{result=Some(r);},
                     p=rx.recv(),if !closed=>match p {
                         Some(Progress::Delta(text))=>{
-                            if !text.is_empty(){observation.first_output();}
                             let e=self.store.lock().unwrap().attempt_delta(sid,&id,&text)?;self.publish(e);
                         },
+                        Some(Progress::Usage(_)|Progress::OutputStarted)=>{},
                         Some(Progress::Complete(r))=>{if completed.is_some(){bail!("Duplicate provider completion");}completed=Some(r);},
                         None=>closed=true
                     }
@@ -463,17 +465,9 @@ impl Runtime {
                             .unwrap()
                             .finish_attempt(sid, &id, "completed", None)?;
                     self.publish(event);
-                    if let Some(usage) = &response.usage {
-                        observation.usage(usage.input_tokens, usage.output_tokens);
-                    }
-                    observation.content("gen_ai.completion", || {
-                        serde_json::to_string(&response.output).unwrap_or_default()
-                    });
-                    observation.finish(Outcome::Ok);
                     return Ok(response);
                 }
                 Err(error) => {
-                    observation.finish(Outcome::Error);
                     let failure = error.downcast_ref::<crate::provider::Error>();
                     let event = self.store.lock().unwrap().finish_attempt(
                         sid,
@@ -565,6 +559,15 @@ impl Runtime {
             }
             for attempt in 1..=2 {
                 let result = summarizer
+                    .clone()
+                    .accounted(crate::model::CallContext {
+                        telemetry: self.telemetry.clone(),
+                        session: sid.into(),
+                        turn: turn_id.clone(),
+                        action: crate::id("summary"),
+                        purpose: crate::telemetry::ModelPurpose::Compaction,
+                        attempt,
+                    })
                     .summarize(
                         c::REFERENCE["prompts"]["system"].as_str().unwrap(),
                         &candidate.prompt,
@@ -611,6 +614,8 @@ impl Runtime {
                 candidate.state.model = summarizer.name.clone();
             } else if !cfg.auto_trim_on_failure {
                 let i = Interaction {
+                    requested_at_ms: Some(crate::store::now_ms()),
+                    resolved_at_ms: None,
                     grant_id: None,
                     id: crate::id("i"),
                     turn_id: turn_id.clone(),
@@ -1150,21 +1155,17 @@ impl Runtime {
             }
             jobs.insert(sid.into(), token.clone());
         }
+        let (span, turn_id) = match self.begin_segment(sid) {
+            Ok(v) => v,
+            Err(e) => {
+                self.jobs.lock().unwrap().remove(sid);
+                return Err(e);
+            }
+        };
         let rt = self.clone();
         let sid = sid.to_owned();
         tokio::spawn(async move {
-            let action = if rt.telemetry.enabled() {
-                rt.store
-                    .lock()
-                    .unwrap()
-                    .metadata(&sid)
-                    .ok()
-                    .and_then(|s| s.turn.map(|t| t.id))
-            } else {
-                None
-            };
-            let span = rt.telemetry.span(Op::Turn, Some(&sid), action.as_deref());
-            crate::telemetry::scope(span.context(), async {
+            crate::telemetry::scope_turn(&turn_id, span.context(), async {
                 // Finish the bounded lifecycle request before cancellation cleanup.
                 // Dropping create mid-flight could race a late-created sandbox and
                 // falsely report cancellation after observing an empty listing.
@@ -1704,6 +1705,8 @@ impl Runtime {
             serde_json::from_str(call["arguments"].as_str().context("Missing args")?)?;
         let binding = self.bundle.tools.bindings.get(alias);
         let mut i = Interaction {
+            requested_at_ms: None,
+            resolved_at_ms: None,
             grant_id: None,
             id: crate::id("i"),
             turn_id: t.id.clone(),
@@ -1761,7 +1764,19 @@ impl Runtime {
                     } else {
                         match permissions::review_context(&s, &self.bundle, call) {
                             Ok(input) => match reviewer {
-                                Some(model) => model.review(&input).await,
+                                Some(model) => {
+                                    model
+                                        .accounted(crate::model::CallContext {
+                                            telemetry: self.telemetry.clone(),
+                                            session: sid.into(),
+                                            turn: t.id.clone(),
+                                            action: crate::id("review"),
+                                            purpose: crate::telemetry::ModelPurpose::AutoApprover,
+                                            attempt: 1,
+                                        })
+                                        .review(&input)
+                                        .await
+                                }
                                 None => Verdict::unsure(
                                     "Configure a separate reviewer model or ask a human.",
                                 ),
@@ -1784,6 +1799,9 @@ impl Runtime {
             }
         }
         let waiting = i.response.is_none();
+        if waiting {
+            i.requested_at_ms = Some(crate::store::now_ms());
+        }
         self.check_backend(sid)?; // policy may have changed during AI review
         let mut data = serde_json::to_value(&i)?;
         data["interaction_id"] = json!(i.id);
@@ -1855,11 +1873,19 @@ impl Runtime {
                 }
                 if crate::teams::internal(alias) {
                     self.check_backend(sid)?;
+                    let mut observation =
+                        self.internal_observation(sid, &t.id, alias, call["call_id"].as_str());
                     let event = self
                         .store
                         .lock()
                         .unwrap()
                         .team_call(sid, &t.id, call, &args)?;
+                    observation.output_bytes(event.data["result"].to_string().len() as u64);
+                    observation.finish(if event.data["result"]["isError"] == true {
+                        Outcome::Error
+                    } else {
+                        Outcome::Ok
+                    });
                     self.publish(event);
                     continue;
                 }
@@ -1905,12 +1931,18 @@ impl Runtime {
                         let mut span =
                             self.telemetry
                                 .span(Op::Tool, Some(sid), call["call_id"].as_str());
+                        span.turn(&t.id);
                         span.metadata("gen_ai.tool.name", alias);
+                        span.metadata("openworker.sandbox.provider", "not-applicable");
+                        span.metadata("openworker.sandbox.enforcement", "session-metadata-only");
                         let result = self
                             .store
                             .lock()
                             .unwrap()
                             .assistant_call(sid, &t.id, call, &args);
+                        if let Ok(event) = &result {
+                            span.output_bytes(event.data["result"].to_string().len() as u64);
+                        }
                         span.finish(match &result {
                             Ok(e) if e.data["result"]["isError"] != true => Outcome::Ok,
                             _ => Outcome::Error,
@@ -1924,7 +1956,27 @@ impl Runtime {
                             .span(Op::Tool, Some(sid), call["call_id"].as_str());
                     observation.metadata("gen_ai.operation.name", "execute_tool");
                     observation.metadata("langfuse.observation.type", "tool");
+                    observation.turn(&t.id);
                     observation.metadata("gen_ai.tool.name", alias);
+                    observation.metadata(
+                        "openworker.sandbox.provider",
+                        if alias == "read_history" || crate::skills::internal(alias) {
+                            "not-applicable"
+                        } else {
+                            backend.name()
+                        },
+                    );
+                    observation.metadata(
+                        "openworker.sandbox.enforcement",
+                        if alias == "read_history" {
+                            "session-read-only"
+                        } else if crate::skills::internal(alias) {
+                            "bundle-read-only"
+                        } else {
+                            backend.enforcement()
+                        },
+                    );
+                    observation.metadata("openworker.policy.digest", &interaction.policy_digest);
                     observation.content("gen_ai.tool.call.arguments", || args.to_string());
                     let result = crate::telemetry::scope(observation.context(), async {
                         let value = if crate::skills::internal(alias) {
@@ -1966,6 +2018,9 @@ impl Runtime {
                         anyhow::Ok(value)
                     })
                     .await;
+                    if let Ok(value) = &result {
+                        observation.output_bytes(value.to_string().len() as u64);
+                    }
                     observation.content("gen_ai.tool.call.result", || match &result {
                         Ok(v) => v.to_string(),
                         Err(e) => format!("error: {e}"),
@@ -2079,6 +2134,8 @@ impl Runtime {
             bail!("Plan update unavailable, stale or cancelled");
         }
         let call_id = call["call_id"].as_str().context("Missing plan call ID")?;
+        let mut observation =
+            self.internal_observation(sid, turn_id, crate::planning::TOOL, Some(call_id));
         let (kind, output) = match crate::planning::next(
             session.plan.as_ref(),
             turn_id,
@@ -2103,8 +2160,14 @@ impl Runtime {
         if kind == "plan_updated" {
             data["plan"] = json!(session.plan);
         }
+        observation.output_bytes(output.to_string().len() as u64);
         let event = db.save(&session, kind, data)?;
         drop(db);
+        observation.finish(if kind == "plan_updated" {
+            Outcome::Ok
+        } else {
+            Outcome::Error
+        });
         self.publish(event);
         Ok(())
     }
@@ -2133,6 +2196,8 @@ impl Runtime {
             let mut pending = interaction.clone();
             pending.id = crate::id("i");
             pending.response = None;
+            pending.requested_at_ms = Some(crate::store::now_ms());
+            pending.resolved_at_ms = None;
             pending.origin = None;
             pending.grant_id = None;
             let mut event_data = serde_json::to_value(&pending)?;
@@ -2416,7 +2481,9 @@ impl Runtime {
         let approval = i.kind == "approval";
         let denied = approval && response == "deny";
         i.response = Some(response);
+        i.resolved_at_ms = Some(crate::store::now_ms());
         i.origin = Some(origin.into());
+        let resolved_interaction = i.clone();
         let tool = i.call["name"].clone();
         if let Some(grant) = &new_grant {
             s.approval_grants.retain(|g| g.tool != grant.tool);
@@ -2427,22 +2494,28 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"session_grant":new_grant}),
+                json!({"interaction_id":iid,"origin":origin,"tool":tool,"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;
         drop(db);
         self.publish(event);
-        self.telemetry.event(
+        self.record_wait(
+            sid,
+            &resolved_interaction,
+            if denied { Outcome::Denied } else { Outcome::Ok },
+        );
+        let mut resolution = self.telemetry.span(
             if approval {
                 Op::ApprovalResolved
             } else {
                 Op::QuestionResolved
             },
-            if denied { Outcome::Denied } else { Outcome::Ok },
             Some(sid),
             Some(iid),
         );
+        resolution.turn(&resolved_interaction.turn_id);
+        resolution.finish(if denied { Outcome::Denied } else { Outcome::Ok });
         self.spawn(sid)?;
         Ok(json!({"interaction_id":iid,"duplicate":false}))
     }
@@ -2585,7 +2658,11 @@ impl Runtime {
         } else {
             "cancelled"
         };
+        let mut ended_waits = vec![];
         self.update(sid, "turn_completed", json!({"status":status,"outcome_unknown_count":uncertain.len()}), |s| {
+            if status=="cancelled"{let tid=s.turn.as_ref().context("No current turn")?.id.clone();let now=crate::store::now_ms();
+                for i in &mut s.interactions{if i.turn_id==tid&&i.response.is_none()&&i.resolved_at_ms.is_none(){i.resolved_at_ms=Some(now);ended_waits.push(i.clone());}}
+            }
             for call in &uncertain {
                 let output=json!({"type":"tool_outcome_unknown","source":"harness_cancellation","may_still_be_running":true,"message":"Cancellation requested after tool admission. No durable result; inspect original environment before any retry."});
                 s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
@@ -2594,6 +2671,9 @@ impl Runtime {
             s.turn.as_mut().unwrap().status = status.into();
             Ok(())
         })?;
+        for i in ended_waits {
+            self.record_wait(sid, &i, Outcome::Cancelled);
+        }
         Ok(())
     }
     /// Synchronous admission fence for a worker supervisor losing ownership.

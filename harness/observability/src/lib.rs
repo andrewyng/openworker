@@ -1,7 +1,7 @@
 //! Metadata-only diagnostic recordings. Separate from execution state and audit.
 //! Committed rows survive restart; the bounded input queue is not a durable outbox.
 use anyhow::{ensure, Result};
-use openworker_telemetry::{Operation, Record};
+use openworker_telemetry::Record;
 use serde::{Deserialize, Serialize};
 use std::time::UNIX_EPOCH;
 #[cfg(feature = "postgres")]
@@ -10,7 +10,7 @@ pub mod sqlite;
 mod writer;
 pub use writer::{Controller, Recorder, RecordingSink, Snapshot, Statistics};
 
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 pub const MAX_RECORD_BYTES: usize = 8192;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,8 +23,8 @@ pub struct Usage {
     pub reasoning: Option<u64>,
 }
 
-/// Current instrumentation supplies pseudonymous session/action hashes. Explicit
-/// logical-turn correlation and auxiliary usage are subsequent instrumentation work.
+/// Versioned recording with pseudonymous session/turn/action correlation.
+/// A logical turn can contain multiple linked active segments across workers.
 /// Arbitrary attributes/content deliberately have no field in this contract.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,17 +38,35 @@ pub struct Step {
     pub parent_span_id: Option<String>,
     pub session_hash: Option<String>,
     pub action_hash: Option<String>,
+    #[serde(default)]
+    pub turn_hash: Option<String>,
+    #[serde(default)]
+    pub links: Vec<StepLink>,
     pub operation: String,
     pub outcome: String,
     pub started_ms: u64,
     pub ended_ms: u64,
-    pub duration_us: u64,
+    pub duration_us: Option<u64>,
     pub first_output_us: Option<u64>,
     pub attempt: Option<u32>,
     pub model: Option<String>,
     pub tool: Option<String>,
     pub purpose: Option<String>,
     pub usage: Option<Usage>,
+    #[serde(default)]
+    pub output_bytes: Option<u64>,
+    #[serde(default)]
+    pub sandbox: Option<String>,
+    #[serde(default)]
+    pub enforcement: Option<String>,
+    #[serde(default)]
+    pub policy_digest: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepLink {
+    pub trace_id: String,
+    pub span_id: String,
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -87,13 +105,15 @@ impl Step {
                 .filter(|v| label(v))
                 .cloned()
         };
-        let usage = (r.input_tokens.is_some() || r.output_tokens.is_some()).then_some(Usage {
-            input: r.input_tokens,
-            output: r.output_tokens,
-            cache_read: None,
-            cache_write: None,
-            reasoning: None,
-        });
+        let usage =
+            (r.input_tokens.is_some() || r.output_tokens.is_some() || r.usage_details.present())
+                .then_some(Usage {
+                    input: r.input_tokens,
+                    output: r.output_tokens,
+                    cache_read: r.usage_details.cache_read,
+                    cache_write: r.usage_details.cache_write,
+                    reasoning: r.usage_details.reasoning,
+                });
         let s = Self {
             version: VERSION,
             deployment: deployment.into(),
@@ -104,11 +124,23 @@ impl Step {
             parent_span_id: r.parent.map(|p| hex(&p.span)),
             session_hash: r.identity.session.map(|s| hex(&s)),
             action_hash: r.identity.action.map(|s| hex(&s)),
+            turn_hash: r.turn_hash.map(|s| hex(&s)),
+            links: r
+                .links
+                .iter()
+                .map(|c| StepLink {
+                    trace_id: hex(&c.trace),
+                    span_id: hex(&c.span),
+                })
+                .collect(),
             operation: r.operation.name().into(),
             outcome: r.outcome.name().into(),
             started_ms: u64::try_from(r.started.duration_since(UNIX_EPOCH)?.as_millis())?,
             ended_ms: u64::try_from(r.ended.duration_since(UNIX_EPOCH)?.as_millis())?,
-            duration_us: u64::try_from(r.elapsed.as_micros())?,
+            duration_us: r
+                .timing_known
+                .then(|| u64::try_from(r.elapsed.as_micros()))
+                .transpose()?,
             first_output_us: r
                 .first_output
                 .map(|d| u64::try_from(d.as_micros()))
@@ -116,14 +148,21 @@ impl Step {
             attempt: r.attempt,
             model: attribute("gen_ai.request.model"),
             tool: attribute("gen_ai.tool.name"),
-            purpose: (r.operation == Operation::Model).then(|| "main".into()),
+            purpose: r.purpose.map(|p| p.name().to_owned()),
             usage,
+            output_bytes: r.output_bytes,
+            sandbox: attribute("openworker.sandbox.provider"),
+            enforcement: attribute("openworker.sandbox.enforcement"),
+            policy_digest: attribute("openworker.policy.digest").filter(|s| hex_id(s, 64)),
         };
         s.validate()?;
         Ok(s)
     }
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.version == VERSION, "Unsupported observation version");
+        ensure!(
+            (1..=VERSION).contains(&self.version),
+            "Unsupported observation version"
+        );
         ensure!(
             identifier(&self.deployment) && identifier(&self.role),
             "Invalid observation scope"
@@ -148,7 +187,8 @@ impl Step {
         );
         ensure!(
             self.session_hash.as_ref().is_none_or(|v| hex_id(v, 64))
-                && self.action_hash.as_ref().is_none_or(|v| hex_id(v, 64)),
+                && self.action_hash.as_ref().is_none_or(|v| hex_id(v, 64))
+                && self.turn_hash.as_ref().is_none_or(|v| hex_id(v, 64)),
             "Invalid correlation hash"
         );
         ensure!(
@@ -159,6 +199,9 @@ impl Step {
                     | "runtime.command"
                     | "agent.execute"
                     | "model.attempt"
+                    | "model.requested"
+                    | "approval.wait"
+                    | "question.wait"
                     | "tool.execute"
                     | "policy.review"
                     | "environment.operation"
@@ -184,13 +227,15 @@ impl Step {
             "Invalid observation outcome"
         );
         ensure!(
-            self.ended_ms >= self.started_ms
+            (self.duration_us.is_none() || self.ended_ms >= self.started_ms)
                 && self.ended_ms <= i64::MAX as u64
-                && self.duration_us <= i64::MAX as u64,
+                && self.started_ms <= i64::MAX as u64
+                && self.duration_us.is_none_or(|n| n <= i64::MAX as u64),
             "Invalid observation timing"
         );
         ensure!(
-            self.first_output_us.is_none_or(|v| v <= self.duration_us),
+            self.first_output_us
+                .is_none_or(|v| self.duration_us.is_some_and(|d| v <= d)),
             "First output exceeds request duration"
         );
         ensure!(
@@ -205,13 +250,30 @@ impl Step {
         ensure!(
             self.purpose.as_ref().is_none_or(|v| matches!(
                 v.as_str(),
-                "main" | "auto_approver" | "compaction" | "helper" | "title"
+                "main" | "auto_approver" | "compaction" | "helper" | "title" | "probe"
             )),
             "Invalid model purpose"
         );
         ensure!(
-            self.operation == "model.attempt" || (self.usage.is_none() && self.purpose.is_none()),
+            self.operation == "model.attempt"
+                || (self.usage.is_none()
+                    && (self.operation == "model.requested" || self.purpose.is_none())),
             "Usage belongs to model requests"
+        );
+        ensure!(
+            self.links.len() <= 4
+                && self
+                    .links
+                    .iter()
+                    .all(|l| hex_id(&l.trace_id, 32) && hex_id(&l.span_id, 16)),
+            "Invalid observation links"
+        );
+        ensure!(
+            self.output_bytes.is_none_or(|n| n <= i64::MAX as u64)
+                && self.sandbox.as_ref().is_none_or(|s| label(s))
+                && self.enforcement.as_ref().is_none_or(|s| label(s))
+                && self.policy_digest.as_ref().is_none_or(|s| hex_id(s, 64)),
+            "Invalid tool facts"
         );
         if let Some(u) = &self.usage {
             ensure!(

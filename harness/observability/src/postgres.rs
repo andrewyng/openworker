@@ -167,7 +167,7 @@ impl Store for Postgres {
                     &[&step.deployment, &step.span_id],
                 )?
                 .get(0);
-            if old != value {
+            if serde_json::from_value::<Step>(old)? != *step {
                 return Err(Conflict.into());
             }
         }

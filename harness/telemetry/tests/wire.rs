@@ -83,15 +83,27 @@ async fn all_signals_have_valid_otlp_and_no_payload_or_metric_identifiers() {
     })
     .await
     .unwrap();
-    let root = t.span(
+    let mut root = t.span(
         Operation::Turn,
         Some("SECRET_SESSION"),
         Some("PROMPT_SECRET"),
     );
+    root.turn("SECRET_TURN");
     let cx = root.context();
-    scope(cx, async {
+    scope_turn("SECRET_TURN", cx, async {
         let mut child = t.span(Operation::Model, Some("SECRET_SESSION"), None);
-        child.usage(42, 9);
+        child.reported_usage(TokenUsage {
+            input: Some(42),
+            output: Some(9),
+            cache_read: Some(12),
+            cache_write: Some(5),
+            reasoning: Some(3),
+        });
+        child.purpose(ModelPurpose::Compaction);
+        child.link(TraceContext {
+            trace: [1; 16],
+            span: [2; 8],
+        });
         child.first_output();
         child.finish(Outcome::Error)
     })
@@ -151,11 +163,26 @@ async fn all_signals_have_valid_otlp_and_no_payload_or_metric_identifiers() {
         .unwrap();
     assert_eq!(child.parent_span_id, parent.span_id);
     assert_eq!(child.trace_id, parent.trace_id);
+    assert_eq!(child.links.len(), 1);
+    assert_eq!(child.links[0].span_id, vec![2; 8]);
+    for (key, value) in [
+        ("gen_ai.usage.input_tokens", 42),
+        ("gen_ai.usage.cache_read.input_tokens", 12),
+        ("gen_ai.usage.cache_write.input_tokens", 5),
+        ("gen_ai.usage.reasoning.output_tokens", 3),
+    ] {
+        assert!(child.attributes.iter().any(|a|a.key==key&&matches!(a.value.as_ref().and_then(|v|v.value.as_ref()),Some(opentelemetry_proto::tonic::common::v1::any_value::Value::IntValue(n)) if *n==value)));
+    }
+    assert!(child
+        .attributes
+        .iter()
+        .any(|a| a.key == "openworker.turn.hash"));
     let m = format!("{metrics:?}");
     assert!(m.contains("openworker.model.tokens"));
     assert!(m.contains("openworker.operation.last_error_timestamp_seconds"));
     assert!(!m.contains("session.hash"));
     assert!(!m.contains("action.hash"));
+    assert!(!m.contains("turn.hash"));
     let queued = metrics
         .iter()
         .find(|m| m.name == Gauge::TurnsQueued.name())

@@ -129,6 +129,16 @@ pub struct Decoder {
     bytes: usize,
 }
 impl StreamDecoder for Decoder {
+    fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
+        self.usage.as_ref().map(Usage::reported)
+    }
+    fn output_started(&self) -> bool {
+        !self.text.is_empty()
+            || self
+                .calls
+                .values()
+                .any(|c| !c.name.is_empty() || !c.arguments.is_empty())
+    }
     fn event(&mut self, event: &Value) -> Result<Option<String>, Error> {
         if self.done || self.accounting_tail || event.get("error").is_some() {
             return Err(invalid());
@@ -153,6 +163,11 @@ impl StreamDecoder for Decoder {
                     cached_input_tokens: usage["prompt_tokens_details"]["cached_tokens"]
                         .as_u64()
                         .unwrap_or(0),
+                    cache_read_input_tokens: usage["prompt_tokens_details"]["cached_tokens"]
+                        .as_u64(),
+                    cache_write_input_tokens: None,
+                    reasoning_output_tokens: usage["completion_tokens_details"]["reasoning_tokens"]
+                        .as_u64(),
                 })
             })
             .transpose()?;

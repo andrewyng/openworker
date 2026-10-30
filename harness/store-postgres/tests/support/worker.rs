@@ -4,6 +4,32 @@ use openworker_store_postgres::{Config, PostgresStore, Tls};
 use openworker_tools::{Tool, ToolContext, ToolDescriptor, ToolFuture, ToolOutput, ToolRegistry};
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
+// Fixture-only metadata capture, flushed before graceful worker exit. Never ship
+// this executable or include prompt/tool content in qualification output.
+struct Capture(PathBuf);
+impl openworker_runtime::telemetry::Sink for Capture {
+    fn export(
+        &mut self,
+        records: &[openworker_runtime::telemetry::Record],
+        _: openworker_runtime::telemetry::Snapshot,
+    ) -> bool {
+        use std::io::Write;
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.0)
+        else {
+            return false;
+        };
+        for r in records {
+            let value = json!({"operation":r.operation.name(),"outcome":r.outcome.name(),"context":r.context,"links":r.links,"turn_hash":r.turn_hash,"timing_known":r.timing_known});
+            if file.write_all(format!("{value}\n").as_bytes()).is_err() {
+                return false;
+            }
+        }
+        file.sync_all().is_ok()
+    }
+}
 struct Probe;
 impl Tool for Probe {
     fn descriptor(&self) -> ToolDescriptor {
@@ -66,6 +92,10 @@ impl Tool for Probe {
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let root = PathBuf::from(&args[0]);
+    let (telemetry, recording) = openworker_runtime::telemetry::Telemetry::start(
+        Capture(root.join("observations.jsonl")),
+        2048,
+    )?;
     let mut c = Config::new(std::env::var("OW_PG_TEST_URL")?, args[1].clone());
     c.tls = Tls::LoopbackPlaintext;
     c.lease_duration = Duration::from_secs(3);
@@ -102,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
         let factory = std::sync::Arc::new(move |sid: &str, store: PostgresStore| {
             let mut tools = ToolRegistry::default();
             tools.register(Probe)?;
-            Runtime::open_with_store(
+            Runtime::open_instrumented(
                 &root.join(&label).join(sid),
                 &root.join("bundle"),
                 &std::env::current_exe()?,
@@ -112,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
                 None,
                 tools,
                 Some(Box::new(store)),
+                telemetry.clone(),
             )
         });
         let stop = tokio_util::sync::CancellationToken::new();
@@ -163,7 +194,7 @@ async fn main() -> anyhow::Result<()> {
             },
             factory,
         )?;
-        return if draining {
+        let result = if draining {
             worker
                 .run_with_drain(
                     drain,
@@ -179,6 +210,11 @@ async fn main() -> anyhow::Result<()> {
         } else {
             worker.run(stop).await
         };
+        anyhow::ensure!(
+            recording.shutdown(Duration::from_secs(3)),
+            "Fixture recording did not flush"
+        );
+        return result;
     }
     let store = PostgresStore::open(c)?;
     if let Some(sid) = args.get(3) {
@@ -197,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
     });
     let mut tools = ToolRegistry::default();
     tools.register(Probe)?;
-    let runtime = Runtime::open_with_store(
+    let runtime = Runtime::open_instrumented(
         &root.join(&args[2]),
         &root.join("bundle"),
         &std::env::current_exe()?,
@@ -207,6 +243,7 @@ async fn main() -> anyhow::Result<()> {
         None,
         tools,
         Some(Box::new(store.clone())),
+        telemetry,
     )?;
     // Fixture-only queue pump. A production scheduler must manage lease loss,
     // backoff, metrics and compatible environment placement separately.
@@ -247,5 +284,9 @@ async fn main() -> anyhow::Result<()> {
         pump.abort();
         let _ = pump.await;
     }
+    anyhow::ensure!(
+        recording.shutdown(Duration::from_secs(3)),
+        "Fixture recording did not flush"
+    );
     result
 }

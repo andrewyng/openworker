@@ -124,6 +124,7 @@ async fn real_http_parser_handles_rate_limit_and_truncated_stream() {
         .unwrap_err();
     server.await.unwrap();
     assert_eq!(error.kind, Failure::IncompleteStream);
+    assert!(matches!(rx.recv().await, Some(Progress::OutputStarted)));
     assert!(matches!(rx.recv().await,Some(Progress::Delta(t)) if t=="partial"));
     assert!(rx.recv().await.is_none());
 }

@@ -53,6 +53,74 @@ async fn hierarchy_is_task_local_and_only_hashes_cross_the_boundary() {
     assert!(model.first_output.is_some());
 }
 struct Block(mpsc::SyncSender<()>, mpsc::Receiver<()>);
+#[tokio::test]
+async fn durable_turn_identity_links_segments_without_counting_pause_as_execution() {
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (t, c) = Telemetry::start(Capture(rows.clone()), 32).unwrap();
+    let mut first = t.span(Operation::Turn, Some("session"), Some("turn"));
+    first.turn("turn");
+    let a = first.context();
+    first.finish(Outcome::Waiting);
+    let mut second = t.span(Operation::Turn, Some("session"), Some("turn"));
+    second.turn("turn");
+    second.link(a);
+    let b = second.context();
+    scope_turn("turn", b, async {
+        let mut model = t.span(Operation::Model, Some("session"), None);
+        model.purpose(ModelPurpose::Main);
+        model.reported_usage(TokenUsage {
+            input: Some(0),
+            output: Some(0),
+            ..Default::default()
+        });
+        model.finish(Outcome::Ok);
+    })
+    .await;
+    second.finish(Outcome::Ok);
+    t.interval(
+        Operation::ApprovalWait,
+        Outcome::Ok,
+        "session",
+        "turn",
+        "approval",
+        1000,
+        6000,
+    );
+    t.interval(
+        Operation::QuestionWait,
+        Outcome::Ok,
+        "session",
+        "turn",
+        "question",
+        7000,
+        6500,
+    );
+    assert!(c.shutdown(Duration::from_secs(2)));
+    let r = rows.lock().unwrap();
+    assert_eq!(a.trace, b.trace);
+    assert_ne!(a.span, b.span);
+    assert_eq!(r[0].turn_hash, r[1].turn_hash);
+    let resumed = r.iter().find(|r| r.context == b).unwrap();
+    assert_eq!(resumed.links, vec![a]);
+    assert!(resumed.elapsed < Duration::from_secs(1));
+    let m = r.iter().find(|r| r.operation == Operation::Model).unwrap();
+    assert_eq!(m.parent, Some(b));
+    assert_eq!(m.context.trace, a.trace);
+    assert_eq!(m.input_tokens, Some(0));
+    let wait = r
+        .iter()
+        .find(|r| r.operation == Operation::ApprovalWait)
+        .unwrap();
+    assert_eq!(wait.elapsed, Duration::from_secs(5));
+    assert!(wait.timing_known);
+    assert_eq!(wait.context.trace, a.trace);
+    assert!(
+        !r.iter()
+            .find(|r| r.operation == Operation::QuestionWait)
+            .unwrap()
+            .timing_known
+    );
+}
 impl Sink for Block {
     fn export(&mut self, _: &[Record], _: Snapshot) -> bool {
         let _ = self.0.try_send(());

@@ -203,6 +203,9 @@ async fn actual_http_sse_headers_and_terminal_completion() {
     anthropic::request(&reqwest::Client::new(), &url, "test-only", json!({}), tx)
         .await
         .unwrap();
+    assert!(matches!(rx.recv().await, Some(Progress::Usage(_))));
+    assert!(matches!(rx.recv().await, Some(Progress::OutputStarted)));
+    assert!(matches!(rx.recv().await, Some(Progress::Usage(_))));
     assert!(matches!(rx.recv().await, Some(Progress::Complete(_))));
     task.await.unwrap();
 }

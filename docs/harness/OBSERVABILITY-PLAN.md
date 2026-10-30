@@ -26,15 +26,24 @@ database failure triggers a tool retry. No management UI is connected yet.
 
 ## M2 — complete runtime accounting
 
+Implemented and locally qualified. [Evidence](evidence/observability-m2-local-20261029.json).
+
 1. Stable session/turn/request/step identities and durable timing fields for start,
    first output and completion. Resume/worker change uses links/segments of one turn.
 2. One model-call recording path for main, reviewer, compaction and helpers. Cache
    read/write and reasoning remain optional provider-reported subsets.
 3. Durable approval/question wait intervals, sandbox facts and tool output sizes.
    Cover internal planning/team/memory tools consistently.
-4. Shared deterministic fixtures/golden tests with the desktop spec. Reconcile
+4. Shared deterministic metadata fixtures consumable by desktop/service tests. Reconcile
    request usage once, including retries; test parallel duration accounting and
    unknown outcomes. No claims of completeness from missing historical records.
+
+M2 exit: provider request tests reconcile working/reviewer/summary usage, including
+failed streams, retries, refresh and cancellation. Native Linux SQLite restart
+and PostgreSQL worker replacement preserve turn identity and measured waits.
+Existing permission, uncertain-outcome, privacy/export and storage-isolation
+regressions pass. The metadata contract does not create unimplemented helper/title
+features, infer unavailable counters or promise lossless billing.
 
 ## M3 — authorized queries and rollups
 
