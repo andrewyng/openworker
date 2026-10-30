@@ -21,3 +21,14 @@ FROM base AS prebuilt
 COPY .ow-service-build/out/ /opt/openworker/
 FROM base AS runtime
 COPY --from=build /out/ /opt/openworker/
+FROM source AS cleanup-build
+ARG TARGETARCH
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=ow-gcp-target-${TARGETARCH},target=/src/harness/target \
+    cargo build --locked --release -p openworker-service-cli --bin ows && \
+    mkdir /out && cp target/release/ows /out/
+FROM base AS gcp-cleanup
+# Same Rust recovery engine; no gcloud, Python, model key or Kubernetes access.
+COPY --from=cleanup-build /out/ows /opt/openworker/ows
+ENTRYPOINT ["/opt/openworker/ows"]
+CMD ["deploy", "gcp", "cleanup", "--help"]

@@ -128,6 +128,11 @@ pub enum GcpCommand {
         #[command(subcommand)]
         command: gcp::Lifecycle,
     },
+    /// Package/run cleanup independently of the workload cluster.
+    Cleanup {
+        #[command(subcommand)]
+        command: gcp::Cleanup,
+    },
 }
 #[derive(Subcommand)]
 pub enum AzureCommand {
@@ -538,6 +543,18 @@ fn result(p: &Plan, m: &Manifest) -> Value {
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
     if let Command::Gcp {
+        command: GcpCommand::Lifecycle { command },
+    } = command
+    {
+        return gcp::lifecycle(command).await;
+    }
+    if let Command::Gcp {
+        command: GcpCommand::Cleanup { command },
+    } = command
+    {
+        return gcp::cleanup(command).await;
+    }
+    if let Command::Gcp {
         command: GcpCommand::Preflight(options),
     } = command
     {
@@ -572,8 +589,8 @@ pub fn run(command: &Command) -> Result<()> {
             command: GcpCommand::Infrastructure(options),
         } => gcp::infrastructure(options),
         Command::Gcp {
-            command: GcpCommand::Lifecycle { command },
-        } => gcp::lifecycle(command),
+            command: GcpCommand::Lifecycle { .. } | GcpCommand::Cleanup { .. },
+        } => bail!("GCP lifecycle/cleanup requires asynchronous dispatch"),
         Command::Gcp {
             command: GcpCommand::Preflight(_),
         } => bail!("Preflight requires asynchronous dispatch"),

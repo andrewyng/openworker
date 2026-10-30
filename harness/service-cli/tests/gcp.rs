@@ -105,7 +105,9 @@ impl Fixture {
                 "--timeout-seconds",
                 "1",
                 "--overall-timeout-seconds",
-                "3",
+                // Leave room for Python fixture startup on loaded CI hosts.
+                // Timeout scenarios still have a one-second per-call deadline.
+                "10",
             ])
             .args(extra)
             .output()
@@ -117,6 +119,187 @@ impl Fixture {
 
 fn graph_input() -> Value {
     serde_json::json!({"zone":"us-central1-a","kubernetesVersion":"1.33.5-gke.1162000","terraformVersion":"1.5.7","googleProviderVersion":"6.44.0","nodeMachineType":"e2-standard-2","nodeDiskGb":40,"postgresVersion":"POSTGRES_16","postgresTier":"db-f1-micro","postgresDiskGb":10,"subnetCidr":"10.70.0.0/16","podCidr":"10.72.0.0/14","serviceCidr":"10.76.0.0/20","controlPlaneCidr":"172.16.0.0/28","sqlCidr":"10.80.0.0/16"})
+}
+
+#[test]
+fn independent_cleanup_packages_keep_control_storage_outside_workload_and_no_cloud_calls() {
+    let f = Fixture::ready();
+    assert!(f.infrastructure(&graph_input(), "infra").status.success());
+    let plan = f.home.path().join("infra");
+    let foundation = f.home.path().join("foundation");
+    let args = [
+        "deploy",
+        "gcp",
+        "cleanup",
+        "foundation",
+        "--plan",
+        plan.to_str().unwrap(),
+        "--out",
+        foundation.to_str().unwrap(),
+    ];
+    let r = f.call(&args);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(!f.call(&args).status.success());
+    let tf: Value =
+        serde_json::from_slice(&fs::read(foundation.join("main.tf.json")).unwrap()).unwrap();
+    assert_eq!(tf["resource"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        tf["resource"]["google_storage_bucket"]["control"]["force_destroy"],
+        false
+    );
+    assert_eq!(
+        tf["resource"]["google_storage_bucket"]["control"]["versioning"][0]["enabled"],
+        true
+    );
+    let p: Value =
+        serde_json::from_slice(&fs::read(plan.join("deployment-plan.json")).unwrap()).unwrap();
+    let id = p["deploymentId"].as_str().unwrap();
+    let prefix = &id[4..16];
+    let state = f.home.path().join("state");
+    assert!(f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            plan.to_str().unwrap(),
+            "--out",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+    let image = format!(
+        "us-central1-docker.pkg.dev/my-gcp-project/ow-{prefix}-control-images/ows@sha256:{}",
+        "a".repeat(64)
+    );
+    let out = f.home.path().join("package");
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "cleanup",
+        "package",
+        "--state",
+        state.to_str().unwrap(),
+        "--source-generation",
+        "123",
+        "--guard-image",
+        &image,
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let control: Value =
+        serde_json::from_slice(&fs::read(out.join("control.json")).unwrap()).unwrap();
+    assert_eq!(control["sourceGeneration"], "123");
+    let tf: Value = serde_json::from_slice(&fs::read(out.join("main.tf.json")).unwrap()).unwrap();
+    let resources = &tf["resource"];
+    assert_eq!(resources.as_object().unwrap().len(), 3);
+    assert!(resources.get("google_container_cluster").is_none());
+    assert!(resources.get("google_storage_bucket").is_none());
+    let task = &resources["google_cloud_run_v2_job"]["cleanup"]["template"][0];
+    assert_eq!(task["task_count"], 1);
+    assert_eq!(task["template"][0]["max_retries"], 0);
+    assert_eq!(task["template"][0]["containers"][0]["image"], image);
+    assert_eq!(
+        task["template"][0]["containers"][0]["command"][0],
+        "/opt/openworker/ows"
+    );
+    assert!(task["template"][0]["containers"][0].get("env").is_none());
+    assert_eq!(
+        resources["google_cloud_scheduler_job"]["cleanup"]["http_target"][0]["body"],
+        "e30="
+    );
+    let permission: Value =
+        serde_json::from_slice(&fs::read(out.join("permissions-request.json")).unwrap()).unwrap();
+    assert_eq!(permission["policyReady"], false);
+    assert_eq!(permission["granted"], false);
+    let control_file = out.join("control.json");
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "lifecycle",
+        "apply",
+        "--control",
+        control_file.to_str().unwrap(),
+        "--accept",
+        control["bundleDigest"].as_str().unwrap(),
+    ]);
+    assert!(!r.status.success());
+    assert!(!f.home.path().join("calls.jsonl").exists());
+}
+
+#[test]
+fn cleanup_export_and_tick_reject_unsafe_inputs_before_files_credentials_or_network() {
+    let f = Fixture::ready();
+    assert!(f.infrastructure(&graph_input(), "infra").status.success());
+    let plan = f.home.path().join("infra");
+    let state = f.home.path().join("state");
+    assert!(f
+        .call(&[
+            "deploy",
+            "gcp",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            plan.to_str().unwrap(),
+            "--out",
+            state.to_str().unwrap()
+        ])
+        .status
+        .success());
+    let r = f.call(&[
+        "deploy",
+        "gcp",
+        "cleanup",
+        "foundation",
+        "--plan",
+        plan.to_str().unwrap(),
+        "--out",
+        plan.join("nested").to_str().unwrap(),
+    ]);
+    assert!(!r.status.success());
+    assert!(!plan.join("nested").exists());
+    for (n, generation, image) in [
+        ("zero", "0", "other:latest"),
+        ("unpin", "123", "other:latest"),
+    ] {
+        let out = f.home.path().join(n);
+        assert!(!f
+            .call(&[
+                "deploy",
+                "gcp",
+                "cleanup",
+                "package",
+                "--state",
+                state.to_str().unwrap(),
+                "--source-generation",
+                generation,
+                "--guard-image",
+                image,
+                "--out",
+                out.to_str().unwrap()
+            ])
+            .status
+            .success());
+        assert!(!out.exists());
+    }
+    assert!(!f
+        .call(&[
+            "deploy",
+            "gcp",
+            "cleanup",
+            "tick",
+            "--control-uri",
+            "file:///tmp/control",
+            "--control-sha256",
+            "bad",
+            "--service-account",
+            "other"
+        ])
+        .status
+        .success());
+    assert!(!f.home.path().join("calls.jsonl").exists());
 }
 
 #[test]

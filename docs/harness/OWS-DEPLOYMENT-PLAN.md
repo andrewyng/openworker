@@ -29,8 +29,10 @@ GCP follow-up (October 30): the user approved a separate **$100 total** experime
 Isolated project/budget setup and the implementation sequence are recorded in the
 [GCP trial plan and ledger](OWS-GCP-TRIAL-PLAN.md). Identity-only bootstrap export
 and read-only bootstrap preflight are now implemented and qualified. GCP
-infrastructure apply and independent cleanup remain disabled; bootstrap readiness
-does not qualify those paths. See the [GCP command guide](OWS-GCP-BOOTSTRAP.md).
+production infrastructure creation remains gated; bootstrap readiness
+does not qualify a paid deployment. Local lifecycle recovery and independent
+cleanup packaging now pass qualification in the [lifecycle guide](OWS-GCP-LIFECYCLE.md).
+Source/control installation, effective IAM and live cleanup still need qualification. See the [GCP command guide](OWS-GCP-BOOTSTRAP.md).
 G2a adds a pinned Terraform export and local lifecycle prepare/status commands;
 see the [infrastructure guide](OWS-GCP-INFRASTRUCTURE.md) for the remaining gates.
 

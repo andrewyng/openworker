@@ -2,7 +2,8 @@
 
 This is the local G2a step. It exports a Terraform graph and prepares a durable
 lifecycle journal. **It does not provision infrastructure or install cleanup.**
-Paid apply/destroy commands remain disabled pending G2b/G3 qualification.
+Production workload creation remains gated. The current cloud reconciliation and
+owned-deployment cleanup commands are in the [lifecycle guide](OWS-GCP-LIFECYCLE.md).
 
 ## Export the workload graph
 
@@ -107,9 +108,10 @@ the creation/revision receipts before declaring ownership. A name/label match or
 | Delete intent/unknown with receipt, or deleting | Observe the original delete |
 | Destroyed | Keep receipts; no further action |
 
-These are implemented decision rules, not a cloud executor. G2b still needs the
-bounded authenticated provider transport, atomic journal updates for each remote
-step, source-generation receipts and interruption/restart tests against it.
+These are implemented decision rules, not a cloud executor. The bounded provider transport, durable
+remote checkpoints and independent runner now have local qualification in the
+[lifecycle guide](OWS-GCP-LIFECYCLE.md). Full cloud preflight/install and live
+metadata/IAM/cleanup qualification remain outstanding.
 
 ## Independent cleanup boundary
 

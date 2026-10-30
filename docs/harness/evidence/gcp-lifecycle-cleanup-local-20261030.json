@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-30",
+  "scope": "local_lifecycle_and_independent_cleanup_protocol_packaging",
+  "tests": {
+    "passed": 95,
+    "failed": 0,
+    "ignored": 0,
+    "gcpEngineAndTransportTests": 19,
+    "gcpCliIntegrationGroups": 15,
+    "command": "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-service-cli -- --test-threads=2",
+    "logSha256": "2f75e0ad82c500e62a51751437f634ff045d2eee2302eed081e94a0e6f497527",
+    "newGcpClippyDiagnostics": 0,
+    "loopbackFixturesOnly": true,
+    "syntheticCredentialsOnly": true
+  },
+  "terraform": {
+    "engineVersion": "1.5.7",
+    "googleProviderVersion": "6.44.0",
+    "foundationValid": true,
+    "runnerValid": true,
+    "errors": 0,
+    "warnings": 0,
+    "sourceZipCrcAndContentsVerified": true,
+    "controlDigestVerified": true,
+    "planOrApplyExecuted": false,
+    "foundationReportSha256": "4cd9eddc4d07c5aff74dadb6b3544f98186f6705ac60e0d94d545fc42b45b9b6",
+    "runnerReportSha256": "4cd9eddc4d07c5aff74dadb6b3544f98186f6705ac60e0d94d545fc42b45b9b6"
+  },
+  "container": {
+    "imageId": "sha256:3834515ec64e9d9c65d2183dd53d45ff046ca11f879151927dad945092b2d21c",
+    "platform": "linux/amd64",
+    "user": "1000:1000",
+    "imageSizeBytes": 149889372,
+    "builtLocally": true,
+    "helpSmokeExitCode": 0,
+    "malformedControlExitCode": 1,
+    "smokeConfiguration": [
+      "network none",
+      "read-only root",
+      "all capabilities dropped",
+      "no new privileges",
+      "32 pids",
+      "256 MiB memory",
+      "1 CPU"
+    ],
+    "registryPushPerformed": false,
+    "metadataIdentityLiveQualified": false
+  },
+  "recovery": [
+    "create/delete intent persisted before effects",
+    "generation CAS fences competing writers",
+    "lost mutation/CAS responses read-reconciled without blind replay",
+    "original operation/target/time/source/executor/revision ownership fences",
+    "expiry runner has no Mac or GKE dependency",
+    "capture and verify discoverable compute instance/disk/group/template receipts",
+    "direct named-root and captured-asset absence; denial is not absence",
+    "scheduler-pause intent and lost-pause reconciliation",
+    "control source/state retained"
+  ],
+  "cloud": {
+    "newMutations": 0,
+    "newIamGrants": 0,
+    "paidInfrastructureLaunched": false,
+    "cleanupInstalled": false,
+    "productionWorkloadCreateGate": "closed_in_code",
+    "fullDeploymentPreflightQualified": false,
+    "managedDependentCoverageLiveQualified": false,
+    "allAccountCleanupClaimed": false,
+    "authorizedCumulativeBudgetUsd": 100,
+    "actualSpendMeasured": false
+  },
+  "remaining": [
+    "resource-specific executor/node/workload/cleanup policies and effective permission qualification",
+    "source/control upload and cloud installation reconciliation",
+    "full regional quota/version/OpenShell/private-access and fresh cumulative cost preflight",
+    "live Cloud Run metadata/IAM, failure/expiry/restart and GKE dependent-inventory qualification",
+    "retained control/registry/bootstrap/billing decommission"
+  ],
+  "sourceSha256": {
+    "harness/service-cli/src/deployment.rs": "3fb883c43b74541b72b649693939ff331735db53bcf764f9bdc6c69c420a31f3",
+    "harness/service-cli/src/deployment_gcp.rs": "77a9663c0c5e42dc26a32c0a8caff2dabe2ff13de0f00c07bc675c9902206449",
+    "harness/service-cli/src/deployment_gcp_api.rs": "e902001140c938c56b6e6efe47978a488d1ac0b6669d677dea0cbf43adcce969",
+    "harness/service-cli/src/deployment_gcp_control.rs": "c7629a874ba68783485a58983327942813150864409d94dbfdf8f04afcbebe8d",
+    "harness/service-cli/src/deployment_gcp_control_export.rs": "4fb451d4a747d97af5e944b7fdaa2511cec7b7fc9061b207459e9eaf9ce46536",
+    "harness/service-cli/src/deployment_gcp_engine.rs": "5ade877d46ede0d9aef4e5f850ee25645f3d59a4848494fedf05eeb74dbdc285",
+    "harness/service-cli/src/deployment_gcp_recovery.rs": "a372da410d73cf06c6995b4a67bf73e767f846a709626a319e9536adedd790ca",
+    "harness/service-cli/src/deployment_gcp_lifecycle_tests.rs": "a032d1264a9e7ec88b1362f0e0d0f9db51edc6b8e0648cd843352183457e9fff",
+    "harness/service-cli/src/deployment_gcp_transport_tests.rs": "da1bbd45ceeb3f1e0abbb43c88fa279cc3318343d73365f5c6e71c6489786e2a",
+    "harness/service-cli/tests/gcp.rs": "239193f76a5b51169114d9afbf0809b59a8c7cea487e71b3e61c1f757137a10f",
+    "deploy/service/Dockerfile": "f86ce6d68ca58a38336be16119d3757c663a51140991fbe42ed4df6775cebc18",
+    "harness/service-cli/Cargo.toml": "a4fb07f238507354e392eaced4b0286ec3ab640a0deb893526d3020bbb7642ce",
+    "harness/Cargo.lock": "e1d02ccaba1411d4a3509b8c907100a31c3e427cc9929208683833e748ae6139"
+  }
+}

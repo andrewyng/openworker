@@ -1,10 +1,16 @@
-//! Local GCP lifecycle preparation and recovery contract. No provider mutations.
+//! Local preparation and explicit cloud lifecycle dispatch.
 //! Unknown outcome from connection loss must be returned to the caller/LLM. It
 //! must read/check status before deciding to retry non-idempotent tool actions.
 use super::*;
 
 #[derive(Subcommand)]
 pub enum Lifecycle {
+    /// Reconcile original cloud receipts; writes checkpoint observations with CAS.
+    Reconcile(Remote),
+    /// Experimental workload creation. Full production preflight is still gated.
+    Apply(Remote),
+    /// Delete only an acknowledged owned deployment; no blind retries.
+    Destroy(Remote),
     /// Persist a fixed request identity before any future provider create call.
     Prepare {
         #[arg(long)]
@@ -17,6 +23,16 @@ pub enum Lifecycle {
         #[arg(long)]
         state: PathBuf,
     },
+}
+#[derive(Args)]
+pub struct Remote {
+    #[arg(long)]
+    control: PathBuf,
+    #[arg(long)]
+    allow_experimental_cloud: bool,
+    /// Bundle digest for apply; deployment ID for destroy/reconcile.
+    #[arg(long)]
+    accept: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -185,6 +201,9 @@ fn private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 pub(super) fn run(command: &Lifecycle) -> Result<()> {
     match command {
+        Lifecycle::Apply(_) | Lifecycle::Reconcile(_) | Lifecycle::Destroy(_) => {
+            bail!("Cloud lifecycle requires asynchronous dispatch")
+        }
         Lifecycle::Prepare { plan, out } => {
             let (p, manifest) = inspect(plan)?;
             ensure!(
@@ -263,6 +282,50 @@ pub(super) fn run(command: &Lifecycle) -> Result<()> {
             summary(&j)
         }
     }
+}
+
+pub(super) fn binding(state: &Path) -> Result<(Plan, Manifest, String, PathBuf)> {
+    let j: Journal = serde_json::from_slice(&read_file(state, "gcp-journal.json")?)?;
+    let (p, m) = inspect(&j.plan)?;
+    j.validate(&p, &m.bundle_digest)?;
+    ensure!(
+        j.phase == Phase::Prepared,
+        "Remote packaging requires an unstarted local journal"
+    );
+    Ok((p, m, j.request_id, j.plan))
+}
+pub(super) async fn run_async(command: &Lifecycle) -> Result<()> {
+    let (o, mode) = match command {
+        Lifecycle::Apply(o) => (o, super::engine::Mode::Apply),
+        Lifecycle::Reconcile(o) => (o, super::engine::Mode::Reconcile),
+        Lifecycle::Destroy(o) => (o, super::engine::Mode::Destroy),
+        _ => return run(command),
+    };
+    ensure!(
+        o.allow_experimental_cloud,
+        "Explicit --allow-experimental-cloud required"
+    );
+    let parent = o.control.parent().unwrap_or(Path::new("."));
+    let name = o
+        .control
+        .file_name()
+        .and_then(|v| v.to_str())
+        .context("Invalid control path")?;
+    let c: super::control::Control = serde_json::from_slice(&read_file(parent, name)?)?;
+    c.validate()?;
+    ensure!(
+        o.accept
+            == if matches!(mode, super::engine::Mode::Apply) {
+                c.bundle_digest.clone()
+            } else {
+                c.plan.deployment_id.clone()
+            },
+        "Explicit scope acceptance mismatch"
+    );
+    let token = super::api::login(&c, false).await?;
+    let mut api = super::api::Google::new(c.clone(), token)?;
+    let (mut j, mut g) = api.load().await?;
+    crate::output(super::engine::drive(&mut api, &c, &mut j, &mut g, mode, now()?).await?)
 }
 
 fn summary(j: &Journal) -> Result<()> {

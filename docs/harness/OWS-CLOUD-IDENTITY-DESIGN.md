@@ -14,12 +14,14 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Identity-only export implemented; [guide](OWS-GCP-BOOTSTRAP.md) | Design below |
 | Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
 | Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Bootstrap/direct IAM checks qualified; infrastructure checks pending | Not yet |
-| Provisioning and cleanup | Experimental opt-in; locally tested recovery, AWS trial pending | Disabled | Disabled |
+| Provisioning and cleanup | Experimental opt-in; locally tested recovery, AWS trial pending | [Local recovery/cleanup qualified](OWS-GCP-LIFECYCLE.md); production create gated | Disabled |
 
 The original design milestone was offline. Subsequent cloud qualification is
 recorded in the provider ledgers. GCP identity bootstrap and read-only bootstrap
 preflight are now live-qualified in the [GCP ledger](OWS-GCP-TRIAL-PLAN.md), with
-infrastructure apply still disabled. Azure remains plan-only. Generated artifacts
+production infrastructure creation still gated. Local lifecycle recovery and
+independent cleanup packaging are qualified in the [lifecycle guide](OWS-GCP-LIFECYCLE.md);
+cloud installation and effective permissions remain unqualified. Azure remains plan-only. Generated artifacts
 or fake-CLI tests alone do not qualify real IAM or infrastructure behavior.
 
 ## Separate the authorities

@@ -4,17 +4,32 @@ use super::*;
 #[path = "deployment_gcp_preflight.rs"]
 mod observation;
 pub(super) use observation::{preflight, Preflight};
+#[path = "deployment_gcp_api.rs"]
+mod api;
+#[path = "deployment_gcp_control.rs"]
+mod control;
+#[path = "deployment_gcp_control_export.rs"]
+mod control_export;
+#[path = "deployment_gcp_engine.rs"]
+mod engine;
 #[path = "deployment_gcp_recovery.rs"]
 mod recovery;
 #[path = "deployment_gcp_infrastructure.rs"]
 mod resources;
+pub(super) use control_export::Command as Cleanup;
+pub(super) async fn cleanup(command: &Cleanup) -> Result<()> {
+    control_export::run(command).await
+}
 pub(super) use recovery::Lifecycle;
 pub(super) use resources::{
     artifacts as infrastructure_artifacts, export as infrastructure, Infrastructure, Inputs,
 };
-pub(super) fn lifecycle(command: &Lifecycle) -> Result<()> {
-    recovery::run(command)
+pub(super) async fn lifecycle(command: &Lifecycle) -> Result<()> {
+    recovery::run_async(command).await
 }
+#[cfg(test)]
+#[path = "deployment_gcp_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 pub(super) const BOOTSTRAP_APIS: &[&str] = &[
     "iam.googleapis.com",

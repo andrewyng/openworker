@@ -21,6 +21,8 @@ zeroize = "1"
 sha2 = "0.10"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 [dev-dependencies]
 tempfile = "3"
 postgres = "0.19"

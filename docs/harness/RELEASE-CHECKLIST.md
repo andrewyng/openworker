@@ -113,14 +113,34 @@ should return here regularly instead of accumulating only on working branches.
 - The exact merged CLI source passed **75 tests** and real pinned Terraform/provider
   schema validation before integration. The fast-forward does not change that
   source; subsequent consolidation changes are documentation only.
-- GCP remote provisioning and independent cleanup remain unimplemented gates;
-  their presence in the integration branch is not a GCP deployment qualification.
+- At this consolidation checkpoint, GCP remote provisioning and independent
+  cleanup were unimplemented gates. The local lifecycle milestone below supersedes
+  that implementation status without claiming a qualified GCP deployment.
 - The Python desktop harness is unchanged. This consolidation does not merge into
   public `main`, publish packages or announce a stable SDK release.
 
 See the [GCP ledger](OWS-GCP-TRIAL-PLAN.md) and
 [binary footprint baseline](BINARY-FOOTPRINT.md). Partner builds should pin a
 revision and keep SDK/runtime versions aligned.
+
+## GCP lifecycle recovery and independent cleanup — October 30, 2026
+
+The verified milestone is ready to return to `openworker-harness-sdk` from
+`feat/ows-gcp-lifecycle`. Changes are confined to the management CLI, cleanup
+container and documentation. The runtime, Rust SDK and TypeScript SDK sources are
+unchanged from the previous integration checkpoint.
+
+- **95 CLI tests pass**, including loopback transport, lost responses, checkpoint
+  compare-and-swap, ownership fences and scheduler pause reconciliation.
+- Pinned Terraform validates both control foundation and runner graphs with zero
+  errors/warnings. A Linux AMD64 cleanup image builds and passes network-disabled,
+  read-only, unprivileged container smoke checks.
+- Production workload creation remains closed in code. No new cloud mutation,
+  IAM grant or paid resource was created during this milestone. Full preflight,
+  source/control installation and live independent cleanup remain to be qualified.
+
+See the [lifecycle guide](OWS-GCP-LIFECYCLE.md), [progress ledger](OWS-GCP-TRIAL-PLAN.md)
+and [sanitized evidence](evidence/gcp-lifecycle-cleanup-local-20261030.json).
 
 ## Gates before announcement
 

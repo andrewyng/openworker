@@ -16,8 +16,9 @@ raw provider logs. Existing projects and unrelated workloads are outside this tr
 The native `ows deploy gcp plan` command exists and is qualified for offline
 planning. Identity-only bootstrap export and read-only **bootstrap** preflight
 are now implemented and qualified below. G2a adds a locally schema-validated
-infrastructure export and private lifecycle prepare/local-status commands. Full
-infrastructure preflight and GCP cloud apply/status/destroy remain **not implemented**. Existing AWS qualification does not
+infrastructure export and private lifecycle prepare/local-status commands. Remote reconciliation and owned-deployment deletion now have a locally tested
+transport/engine and independent runner package. Full infrastructure preflight,
+cloud installation and real workload creation remain **gated and unqualified**. Existing AWS qualification does not
 qualify those GCP paths. The shared Kubernetes/Helm installer and harness service
 can be reused after GCP infrastructure and provider access are verified.
 
@@ -276,11 +277,93 @@ The checked-in example GKE version is syntactic test input only. Regional versio
 availability, node/kernel/OpenShell compatibility, actual NetworkPolicy isolation,
 effective permissions, private installer access, costs and independent cleanup
 remain unqualified. The control source/state bucket and cleanup scheduler/runner
-are deliberately outside the workload graph. **G2b and G3 remain outstanding**;
-`applyReady` remains false and cloud mutation commands are not exposed.
+are deliberately outside the workload graph. **At this G2a checkpoint, G2b and G3 remained outstanding**;
+`applyReady` was false and cloud mutation commands were not exposed. The local
+lifecycle/cleanup implementation and its remaining cloud gates are recorded below.
 
 [Infrastructure/recovery guide](OWS-GCP-INFRASTRUCTURE.md) ·
 [Sanitized G2a evidence](evidence/gcp-infrastructure-local-20261030.json).
+
+## G2b/G3 execution — local protocol and packaging qualified
+
+Working branch: `feat/ows-gcp-lifecycle`, from consolidated `f1fd671f`.
+Merge verified checkpoints back to `openworker-harness-sdk`.
+
+Implementation order:
+
+1. Add a bounded Google REST transport and typed durable control/checkpoint
+   contract. Use exact API hosts, no redirects/retries, ephemeral credentials and
+   generation-preconditioned GCS writes. Pin the immutable source ZIP generation,
+   digest, deployment scope and executor; keep control objects outside GKE.
+2. Implement create/reconcile/delete decision execution with intent persisted
+   before a request, acknowledged operation/creation/revision receipts, and
+   restart-safe compare-and-swap checkpoints. Unknown responses remain unknown;
+   a 404, name or label alone never authorizes a retry/adoption/deletion.
+3. Package an independent Cloud Run cleanup job and authenticated Cloud Scheduler
+   trigger, including exact image/control digest, expiry, bounded tasks/retries,
+   and separate authority requirements. The cleanup runner uses metadata identity
+   and the same recovery engine, with no Mac/GKE dependency.
+4. Qualify complete lifecycle, concurrent runners, lost replies, provider failures,
+   changed ownership/source/revisions, delayed deletion and post-expiry operation
+   locally against isolated HTTP/storage fixtures. Validate exported control
+   Terraform with the pinned provider. No paid GCP deployment or new grant in
+   these tests. The real workload-create gate stays closed while full cost,
+   effective IAM/private access and live guard qualification are outstanding.
+
+The $100 cumulative trial allowance is unchanged. Control installation itself
+also requires a reviewed cost/permission check before any paid trial.
+
+### Verified result
+
+Implemented fixed-host, bounded Google REST calls with redirects/retries disabled,
+short-lived credentials and no token persistence. The shared CLI/Cloud Run engine
+persists create/delete/pause intents before effects and uses generation-CAS for
+checkpoint writes. Operation discovery after a lost reply requires one matching
+original operation plus target/verb/time, source, executor and creation/revision
+receipts. Missing/ambiguous outcomes never trigger an automatic mutation replay.
+
+Before deletion, capture discoverable GKE instance, boot/PVC disk, group and template
+IDs. Provider deletion alone is insufficient: observe named roots and captured
+assets, reject replacement IDs, then persist and confirm the scheduler pause.
+Keep source/state/receipts outside the workload. Pause recovery also observes its
+original outcome instead of blindly repeating the request. Retained control,
+registry, IAM and delayed billing remain a separate decommission responsibility.
+
+The independent package contains a private versioned source/control bucket and
+separate image registry, a digest-pinned Rust cleanup job, exact job invoker and
+OAuth Scheduler trigger. Source uploads are generation-pinned and checkpoint
+updates are fenced. The permission-request artifact explicitly remains
+`policyReady=false`; it is not a sufficient IAM policy or an applied grant.
+
+- **95 CLI tests passed**, including nineteen GCP engine/transport unit tests and
+  fifteen GCP CLI integration groups, plus existing AWS/installer regressions.
+  Nominal fake-gcloud startup allowance increased for loaded CI; explicit per-call
+  timeout scenarios remain bounded. The final full suite used two test threads.
+- Both independent Terraform graphs passed **Terraform 1.5.7 / Google 6.44.0**
+  schema validation with zero errors/warnings. No Terraform plan/apply ran.
+- The actual **Linux AMD64** runner image built locally and passed help/invalid-input
+  smoke checks with no network, read-only root, all capabilities dropped, no new
+  privileges, 32 PIDs, one CPU and 256 MiB RAM. Image size: **142.95 MiB**. No image
+  was pushed to a registry. This qualifies packaging, not metadata/IAM behavior.
+- Default Clippy reports no diagnostics in GCP files. Formatting, whitespace,
+  private-state exclusion and local documentation links pass.
+- **No new GCP API mutation, IAM grant or paid infrastructure** in this work. The
+  authorized budget remains $100 cumulative; actual billing is not measured here.
+
+### Remaining cloud gates
+
+Workload creation still refuses in the production authorizer. Full effective IAM,
+prices/prior spend, quotas/versions, private access and OpenShell compatibility
+remain unresolved. Source/control upload and cloud installation reconciliation
+need wiring. Live Cloud Run metadata/authentication, expiry/restart and real GKE
+label/PVC dependent discovery require a separately qualified cloud drill.
+`managedDependentAbsenceQualified` and `allCleanupComplete` remain false so local
+fixtures cannot claim an orphan-free account or completed billing cleanup.
+The G2b protocol and G3 package are qualified locally; **full G2b preflight and live
+G3 qualification are not complete**.
+
+[Lifecycle guide](OWS-GCP-LIFECYCLE.md) ·
+[Sanitized evidence](evidence/gcp-lifecycle-cleanup-local-20261030.json).
 
 ## References
 
