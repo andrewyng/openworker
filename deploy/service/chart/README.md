@@ -150,3 +150,16 @@ management UI or TLS proxy. Bootstrap explicitly prepares both schemas before
 normal startup; separate target failures do not silently select execution storage.
 The APIs in [the query guide](../../../docs/harness/OBSERVABILITY-QUERIES.md) use
 current service-token/session scope. Live management UI charts remain separate.
+
+### Optional exporter authentication
+
+Set `secrets.telemetry` to an existing Secret with key `authorization`, containing
+the exporter Authorization header value. Harness roles and bootstrap mount it
+read-only at `/run/telemetry/authorization`; the entrypoint supplies
+`OW_TELEMETRY_AUTH`. Reference that environment name through a telemetry header's
+`value_env`, keeping the credential outside public configuration. The UI and TLS
+sidecar do not receive this mount. Nothing is mounted when the value is empty.
+
+Use verified HTTPS for production exports. See the
+[local Langfuse guide](../../reference/LANGFUSE-LOCAL.md) for a complete telemetry
+configuration example and the explicitly local relay used during qualification.

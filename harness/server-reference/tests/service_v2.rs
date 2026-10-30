@@ -88,11 +88,19 @@ async fn qualify() {
     )
     .unwrap();
 
-    let value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    let value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let cfg: Config = serde_json::from_value(value).unwrap();
     let db = cfg.database().unwrap();
     PostgresStore::migrate(&db).unwrap();
+    let recording_db = cfg.observability.as_ref().unwrap().database(&cfg).unwrap();
+    let recording_setup = recording_db.clone();
+    tokio::task::spawn_blocking(move || {
+        openworker_observability::postgres::Postgres::migrate(&recording_setup)
+    })
+    .await
+    .unwrap()
+    .unwrap();
     let store = PostgresStore::open(db.clone()).unwrap();
     store.auth_bootstrap(&token, "tester").unwrap();
 
@@ -241,6 +249,42 @@ async fn qualify() {
             .await
             .unwrap();
         assert_eq!(run.result().await.unwrap().status, "completed");
+        // Exercise the actual catalog service-worker factory. A live monitor can
+        // emit storage spans even when slot connections accidentally lose their
+        // instrumentation, so storage counters alone do not prove coverage.
+        let recording_setup = recording_db.clone();
+        let query = openworker_observability::query::Query {
+            deployment: cfg.schema.clone(),
+            scopes: vec![openworker_observability::query::Scope {
+                session_hash: openworker_runtime::bundle::digest(reference.session_id.as_bytes()),
+                turn_hash: openworker_runtime::bundle::digest(run.id.as_bytes()),
+            }],
+            after: 0,
+            through: None,
+            limit: 1000,
+        };
+        tokio::task::spawn_blocking(move || {
+            use openworker_observability::Store as RecordingStore;
+            let mut recordings =
+                openworker_observability::postgres::Postgres::open(&recording_setup).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let rows = recordings.timeline(&query).unwrap();
+                if ["model.attempt", "tool.execute", "agent.execute"]
+                    .iter()
+                    .all(|op| rows.steps.iter().any(|r| r.step.operation == *op))
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Catalog worker lost model/tool/turn instrumentation"
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })
+        .await
+        .unwrap();
         let env = service.environment(&environment_id).await.unwrap();
         assert_eq!(env["runtimeProfile"], "team@1");
         assert_eq!(env["principal"], "alice");
@@ -315,8 +359,11 @@ async fn qualify() {
     }
     tokio::task::spawn_blocking(move || {
         let mut pg = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
-        pg.batch_execute(&format!("DROP SCHEMA {} CASCADE", db.schema))
-            .unwrap();
+        pg.batch_execute(&format!(
+            "DROP SCHEMA {} CASCADE; DROP SCHEMA {} CASCADE",
+            db.schema, recording_db.schema
+        ))
+        .unwrap();
     })
     .await
     .unwrap();

@@ -531,3 +531,110 @@ explicit Langfuse dialect and cache-creation wire-key compatibility change.
 No cloud resources, paid model calls, Python harness changes or SQL batching.
 Recording/export remain best effort, independent of agent authorization/recovery.
 Fresh AWS installation of the final release candidate remains a separate gate.
+
+## Persistent local dual-UI qualification — started
+
+User authorized a persistent local Langfuse installation, latest-harness
+end-to-end run and visual verification of the same run in management/Langfuse UIs.
+Baseline `b3ae6a3f`. Existing local kind cluster and OpenShell are healthy; the
+older `ow-helm-eval` service remains untouched. No cloud provisioning.
+
+Plan:
+1. Create dedicated namespaces/private state with pinned Langfuse images and PVCs;
+   preserve data across pod restarts. Keep UI/API ingress on host loopback.
+2. Build/import the current harness and matching ToolRunner; deploy a fresh
+   service with local recording plus a fixed local relay forwarding OTLP traces
+   to Langfuse. Keep exporter/provider credentials outside public configuration.
+3. Publish a small agent, execute real OpenShell file/shell work with a live model,
+   and reconcile session/turn IDs, tool effects and provider usage in both stores.
+4. Verify management UI and Langfuse UI visually, test persistence, leave both
+   available, and save screenshots, access/run instructions and evidence.
+
+The ClickHouse adapter remains a separate design decision. Langfuse's own
+ClickHouse dependency does not change the harness recording backend (PostgreSQL).
+
+### Persistent setup checkpoint — real execution exposed a worker wiring gap
+
+Pinned Langfuse v4.72.0 is running in `ow-langfuse-observe20261030` with four
+bound PVCs (PostgreSQL, ClickHouse, Redis and MinIO). Current harness/runner run in
+`ow-service-m4-observe20261030`; the management UI is a local Node process using
+verified TLS to its API pod. Both frontends use loopback-only access.
+
+The real Claude Sonnet 5 task created/read `hello-observability.md` and verified
+SHA-256 `2631317abf7b76b91e3dbd34e0b6cd47b3bcdeb370de261c24416530253e4d11`.
+Four tool approvals were submitted through the management UI; an independent
+read/checksum inside the owned OpenShell sandbox confirmed the effect.
+
+Two concrete issues surfaced:
+- MinIO's one-second default readiness check plus a tight CPU/memory setting caused
+  its Service to lose endpoints. Explicit GOMAXPROCS=2, 512 MiB/2 CPU limits and
+  five-second readiness restored ingestion. The source recorder stayed usable;
+  failed telemetry batches are not replayed or hidden.
+- Catalog `management::worker_with_options` rebuilt slot database configuration
+  without copying `store.telemetry()`. That disabled runtime/model/tool records
+  even though the worker monitor recorded storage activity. Carry the existing
+  instance-owned handle into the worker's slot connections, matching the legacy
+  worker path. The final qualification must assert actual model/tool/turn records
+  from a catalog agent, not just synthetic records or direct-worker fixtures.
+
+A separate seven-day all-scope credential request was rejected by automatic
+approval review as unnecessary; it was not created. The demo uses the existing
+bootstrap credential and its original expiry. No workaround or broader grant.
+
+### Persistent dual-UI qualification — verified
+
+The catalog-worker fix passed **13 server-reference tests** (eight environmental
+cases intentionally ignored there), plus the strengthened real PostgreSQL /
+OpenShell `service_v2` suite: two API nodes/controllers, bounded catalog worker,
+shared coder/verifier and Rust/TypeScript SDKs. That suite now asserts actual
+model/tool/execution recording. **Eight Helm tests** pass, including optional
+read-only exporter-secret mounting into harness roles/bootstrap only. Rust
+formatting, Node syntax, shell syntax and whitespace checks pass.
+
+The first post-fix turn completed but had incomplete vendor export during the
+Langfuse outage. ClickHouse's 128-thread global pool starved HTTP/native queries
+and async inserts; the real UI also exceeded the synthetic fixture's memory cap.
+The retained local setup uses a 1024-thread global ceiling, independently bounded
+two-thread queries/300 MB per-query memory, 1.8 GB server memory and a 2560 MiB pod
+limit. Readiness uses HTTP `/ping`. These are local demo settings, not production
+sizing guarantees. No source recording was rewritten to conceal vendor gaps.
+
+A fresh UI-submitted **read-only** turn completed after recovery:
+
+| Identity / measurement | Verified value |
+|---|---|
+| Session | `s_81467909b63247ac992f8c5d0abd6a8e` |
+| Run | `t_d63713b94609450b9222d7f488f3ce86` |
+| Trace | `86ba88d0f039172690283117373d726b` |
+| Model | Claude Sonnet 5, three requests |
+| Tools | `read_file`, `run_shell`, one call each |
+| Usage | 10,560 input + 222 output = **10,782 tokens** |
+| Recording/export | All **22 source span IDs** matched in **148** Langfuse observations |
+
+Both tool approvals used **Allow once** through the management UI. The final file
+checksum matches the independently inspected OpenShell file. Reconciliation reads
+the authorized source API and authenticated vendor API, checking parents, trace,
+hashed session, request-only generation accounting and absence of prompt/tool
+payloads. Additional vendor storage/lifecycle spans are not counted as model calls.
+No lost-outcome tool retry, completed-turn replay or manual trace backfill occurred.
+
+The same final records and usage survived replacement of **all four data-service
+pods** (ClickHouse, PostgreSQL, Redis, MinIO), retaining their original PVCs. The
+management usage/timeline and Langfuse trace/usage breakdown were visually verified
+and captured. Both frontends remain loopback-only; the dedicated namespaces,
+completed OpenShell sandbox, private state and generated credentials are retained
+intentionally. Unrelated workloads were not removed. Host disk has ~167 GiB free.
+
+New helpers provide retained Langfuse installation/status, supervised UI/API
+port-forwards, and read-only live-run reconciliation. The actual local export path
+uses a fixed nginx relay, not a collector transformation; M5's independently tested
+collector path remains separate. Exporter auth is a private Kubernetes Secret.
+
+[Setup/access and reproduction](../../deploy/reference/LANGFUSE-LOCAL.md) ·
+[Evidence and screenshots](evidence/observability-live-20261030/qualification.json).
+
+The bootstrap administrator retains its original expiry. Automatic approval review
+also rejected a narrower one-day session-only observer credential because explicit
+consent was required to persist new access. That request is pending with the user;
+no new service credential was created. This affects later management login, not
+the completed run, recorded evidence, Langfuse login or persistent storage.

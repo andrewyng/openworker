@@ -480,7 +480,11 @@ pub async fn worker_with_options(
     >::new()));
     let cached = cache.clone();
     let catalog: Catalog = Arc::new(move || Ok(cached.lock().unwrap().values().cloned().collect()));
-    let db = config.database()?;
+    // Slot connections must retain the process-owned instrumentation. Rebuilding
+    // only database credentials here silently disabled model/tool/turn recording
+    // for catalog-deployed agents, while the monitor still emitted storage spans.
+    let mut db = config.database()?;
+    db.telemetry = store.telemetry();
     let default_config = config.clone();
     let default_factory: Factory = Arc::new(move |sid, s| {
         default_config.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)

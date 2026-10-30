@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "at": "2026-10-30T07:03:03.597Z",
+  "passed": true,
+  "scope": "real live-model agent, local Kubernetes + OpenShell; source and vendor reads",
+  "sessionId": "s_81467909b63247ac992f8c5d0abd6a8e",
+  "runId": "t_d63713b94609450b9222d7f488f3ce86",
+  "traceId": "86ba88d0f039172690283117373d726b",
+  "sourceRecords": 22,
+  "vendorRecordsInTrace": 148,
+  "matchedSourceRecords": 22,
+  "modelRequests": 3,
+  "tools": [
+    "read_file",
+    "run_shell"
+  ],
+  "inputTokens": 10560,
+  "outputTokens": 222,
+  "contentCapture": "metadata only; no prompts, arguments or results",
+  "model": "claude-sonnet-5",
+  "managementUrl": "http://127.0.0.1:58650/#observability",
+  "langfuseUrl": "http://127.0.0.1:59600/project/openworker-local/traces",
+  "checks": [
+    "UI-submitted run completed, actual sandbox file independently verified",
+    "source model/tool/turn records from catalog service-worker",
+    "all source span IDs, parent IDs, trace and pseudonymous session match vendor",
+    "three actual model requests reconcile inclusive/exclusive usage",
+    "no prompts or file/tool payloads in vendor records"
+  ],
+  "limits": [
+    "Earlier trials retain their recording/export gaps; no automatic backfill or agent replay",
+    "Vendor records include additional correlated storage/lifecycle spans",
+    "Local integration settings are not a production Langfuse sizing recommendation"
+  ],
+  "pins": {
+    "langfuse": {
+      "collector": "otel/opentelemetry-collector-contrib@sha256:e7c92c715f28ff142f3bcaccd4fc5603cf4c71276ef09954a38eb4038500a5a5",
+      "langfuse": "docker.langfuse.com/langfuse/langfuse@sha256:c311fd9db4b69f6514fdcb1b86a2a105d5a4ed51fbf0ded033ff2722459c804a",
+      "worker": "docker.langfuse.com/langfuse/langfuse-worker@sha256:aa1724b989a00f1e4ca9930709202489c73deaaf2f1116bbd3d71c77edb8fedb",
+      "clickhouse": "clickhouse/clickhouse-server@sha256:7d93fb39bb2bfc8509bd621241db974e41041ac0ae626a5b06e172431fc709f7",
+      "postgres": "postgres@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+      "redis": "redis@sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba",
+      "minio": "minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e",
+      "mc": "minio/mc@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3"
+    },
+    "service": {
+      "tag": "openworker-service:observability-live-fixed",
+      "id": "sha256:2df7dd8dc0e1b6915604e899048e869c11b69582d1e81ab30208b6477a1a8816",
+      "canonical": "docker.io/library/openworker-service@sha256:2df7dd8dc0e1b6915604e899048e869c11b69582d1e81ab30208b6477a1a8816"
+    },
+    "runner": "docker.io/library/openworker-runner@sha256:406ad5f537252544088c9d71142a4f476a2de55bb44b13ec41aee0ff61c4214b"
+  },
+  "persistence": {
+    "verified": true,
+    "method": "replace all four Langfuse data-service pods; re-read same trace and source after replacements",
+    "retainedPVCs": [
+      "clickhouse-data",
+      "minio-data",
+      "postgres-data",
+      "redis-data"
+    ]
+  },
+  "validation": {
+    "serverReference": {
+      "passed": 13,
+      "ignored": 8
+    },
+    "realPostgresOpenShellCatalogSuite": "passed, 70.39 seconds",
+    "helmTests": {
+      "passed": 8
+    },
+    "rustFormatting": "passed",
+    "nodeSyntax": "passed",
+    "shellSyntax": "passed"
+  },
+  "screenshots": [
+    "management-usage.png",
+    "langfuse.png",
+    "management-timeline.png"
+  ],
+  "fileSha256": "2631317abf7b76b91e3dbd34e0b6cd47b3bcdeb370de261c24416530253e4d11",
+  "sourceHashes": {
+    "harness/server-reference/src/management.rs": "1690b966c3f1c7234282adb11f5bffd3f7449683791034e6cd27bc3fb93f4ee0",
+    "harness/server-reference/tests/service_v2.rs": "b0d8e02bca41e341729499eefd46db40927425d36fd2a4fd73d747412e12cf92",
+    ".ow-service-build/observability-live-catalog-regression.log": "2b77aaaa920c5e007941e24dc67d528096a526afad390aadd415988902a3a3f9"
+  },
+  "repeatUp": {
+    "passed": true,
+    "retainsCredentials": true,
+    "retainsPVCs": true
+  }
+}

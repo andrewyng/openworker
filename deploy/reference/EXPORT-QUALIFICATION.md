@@ -1,5 +1,9 @@
 # Local collector and Langfuse qualification
 
+For the retained Kubernetes installation and a real UI-submitted model/tool run,
+see [Persistent local Langfuse](LANGFUSE-LOCAL.md). The fixture below remains
+disposable and synthetic.
+
 This fixture sends the **same synthetic turn measurements** to local SQLite,
 a pinned official OTel collector, and optionally a pinned real self-hosted
 Langfuse v4 installation. It reads the collector's exported records and Langfuse's

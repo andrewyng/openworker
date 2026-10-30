@@ -171,3 +171,28 @@ test("management UI has no execution, database, or cluster authority", async () 
     render({ managementUI: { ...uiValues, serviceUrl: "http://test-api" } }),
   );
 });
+test("exporter authentication mounts only into harness roles and remains opt-in", async () => {
+  const off = await render({});
+  assert.doesNotMatch(off, /mountPath: \/run\/telemetry/);
+  const out = await render({
+    secrets: { telemetry: "export-auth" },
+    managementUI: {
+      enabled: true,
+      image: "ui@sha256:" + "b".repeat(64),
+      publicOrigin: "https://manage.example.test",
+      serviceUrl: "https://test-api.default.svc",
+    },
+  });
+  for (const role of ["api", "worker", "controller", "platform"]) {
+    const d = deployment(out, role);
+    assert.match(d, /mountPath: \/run\/telemetry, readOnly: true/);
+    assert.match(d, /secretName: export-auth/);
+  }
+  const ui = deployment(out, "ui");
+  assert.doesNotMatch(ui, /export-auth|\/run\/telemetry/);
+  const bootstrap = out
+    .split("\n---")
+    .find((s) => s.includes("kind: Job") && s.includes("name: test-bootstrap"));
+  assert.match(bootstrap, /OW_TELEMETRY_AUTH/);
+  assert.match(bootstrap, /secretName: export-auth/);
+});

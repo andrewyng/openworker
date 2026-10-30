@@ -9,6 +9,7 @@ secrets:
   probe: ow-service-probe
   model: ""
   observability: "" # optional separate recording database: database-url + ca.crt
+  telemetry: "" # optional OTLP secret containing authorization (complete header value)
 apiReplicas: 1
 worker:
   replicas: 1
