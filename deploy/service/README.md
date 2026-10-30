@@ -107,6 +107,12 @@ The default bundle contains `read_file`, `write_file`, and `run_shell`. In this
 milestone the OpenShell workspace is `/sandbox` and the execution network policy is
 network-deny. Approval bypass does not disable sandbox policy.
 
+An opt-in [coding runner and catalog](../../docs/harness/LOCAL-CODING-ACCEPTANCE.md)
+adds bounded search/patch/Git and managed-process tools, with Node, Python, Git and
+curl in the development image. It does not change this minimal default. The local
+real-model exercise found remaining turn-budget, argument-error and cross-turn
+process-lifetime gaps; it is **not yet a passing long-running coding acceptance**.
+
 ## End-to-end qualification
 
 Against a scripted deployment and a real local OpenShell gateway:

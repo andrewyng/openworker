@@ -6,6 +6,7 @@ export function localValues(input, m) {
   return {
     image: m.imageRef,
     config,
+    secrets: { model: config.scripted === false ? "ow-service-model" : "" },
     worker: { ownership: "manual", maxReplicas: 4, slots: 2, drainSeconds: 30 },
     terminationGracePeriodSeconds: 90,
   };

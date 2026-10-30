@@ -39,7 +39,7 @@ if (action === "init") {
   const current = (await kube(c, ["config", "current-context"])).trim();
   if (current !== c.context) throw Error("Kubecontext mismatch");
   // The connection file must use the gateway DNS address reachable from pods, not localhost.
-  const m = await init(state, c.connectionFile, c.image, 58444);
+  const m = await init(state, c.connectionFile, c.image, c.apiPort ?? 58444);
   await writeFile(join(state, "input/probe"), randomBytes(32).toString("hex"), {
     mode: 0o600,
     flag: "wx",
@@ -101,6 +101,9 @@ if (action === "init") {
         },
       ]);
     const input = join(state, "input");
+    const config = JSON.parse(
+      await readFile(join(input, "config.json"), "utf8"),
+    );
     const read = async (name) =>
       (await readFile(join(input, name))).toString("base64");
     const probe = (await readFile(join(input, "probe"), "utf8")).trim();
@@ -138,6 +141,16 @@ if (action === "init") {
         ).toString("base64"),
       }),
     ];
+    if (action !== "database-fixture" && config.scripted === false) {
+      const provider = config.model_provider;
+      if (!["openai", "anthropic"].includes(provider))
+        throw Error("Unsupported live model provider");
+      fixtureSecrets.push(
+        secret(m.namespace, "ow-service-model", {
+          [provider]: await read(`model-${provider}`),
+        }),
+      );
+    }
     await apply(
       m,
       action === "database-fixture"
@@ -242,9 +255,6 @@ if (action === "init") {
       "deployment/postgres",
       "--timeout=120s",
     ]);
-    const config = JSON.parse(
-      await readFile(join(input, "config.json"), "utf8"),
-    );
     const values = localValues(config, m);
     await writeFile(
       join(state, "values.json"),
@@ -279,7 +289,7 @@ if (action === "init") {
         namespace: m.namespace,
         url: m.url,
         cliConfig: join(state, "cli.json"),
-        portForward: `kubectl --kubeconfig ${m.kubeconfig} --context ${m.context} -n ${m.namespace} port-forward service/ows-api 58444:443 --address 127.0.0.1`,
+        portForward: `kubectl --kubeconfig ${m.kubeconfig} --context ${m.context} -n ${m.namespace} port-forward service/ows-api ${m.port}:443 --address 127.0.0.1`,
       }),
     );
   } else if (action === "destroy") {

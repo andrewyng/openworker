@@ -93,3 +93,13 @@ approval. Local tests use synthetic identities and no paid resources.
 Fast-forwarded verified milestone `a5e2cc37` into `openworker-harness-sdk` with no
 source changes/conflicts. The next working branch will isolate local long-running
 agent acceptance from this GCP management-CLI milestone.
+
+### Local real-agent checkpoint
+
+GCP installation code is integrated at `85849303` on `openworker-harness-sdk`.
+The subsequent [local coding acceptance](LOCAL-CODING-ACCEPTANCE.md) found and fixed
+worker-only model Secret wiring and qualified opt-in development packaging. A real
+OpenShell app build passed 39 domain tests and API reconnection, but hit runtime
+step-budget, argument-error and cross-turn process-lifetime gaps. Its complete
+long-task acceptance remains open. No paid GCP action occurred; cloud readiness
+and the original cumulative US$100 budget boundaries above remain unchanged.

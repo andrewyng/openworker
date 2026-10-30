@@ -1,0 +1,73 @@
+{
+  "server": {
+    "id": "coding",
+    "program": "$OPENWORKER",
+    "args": [
+      "mcp-coding",
+      "--workspace",
+      "$WORKSPACE"
+    ]
+  },
+  "bindings": {
+    "read_file": {
+      "server": "coding",
+      "tool": "read_file"
+    },
+    "write_file": {
+      "server": "coding",
+      "tool": "write_file"
+    },
+    "edit_file": {
+      "server": "coding",
+      "tool": "edit_file"
+    },
+    "list_files": {
+      "server": "coding",
+      "tool": "list_files"
+    },
+    "search_files": {
+      "server": "coding",
+      "tool": "search_files"
+    },
+    "apply_patch": {
+      "server": "coding",
+      "tool": "apply_patch"
+    },
+    "run_shell": {
+      "server": "coding",
+      "tool": "run_shell"
+    },
+    "process_start": {
+      "server": "coding",
+      "tool": "process_start"
+    },
+    "process_status": {
+      "server": "coding",
+      "tool": "process_status"
+    },
+    "process_logs": {
+      "server": "coding",
+      "tool": "process_logs"
+    },
+    "process_stop": {
+      "server": "coding",
+      "tool": "process_stop"
+    },
+    "git_status": {
+      "server": "coding",
+      "tool": "git_status"
+    },
+    "git_diff": {
+      "server": "coding",
+      "tool": "git_diff"
+    },
+    "git_log": {
+      "server": "coding",
+      "tool": "git_log"
+    },
+    "web_fetch": {
+      "server": "coding",
+      "tool": "web_fetch"
+    }
+  }
+}

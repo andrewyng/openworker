@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-30",
+  "scope": "local kind/OpenShell ARM64; isolated real-model coding fixture",
+  "overall": "partial_acceptance_runtime_gaps_open",
+  "cloud": {
+    "paidResourcesCreated": 0,
+    "iamChanges": 0,
+    "registryPushes": 0,
+    "budgetUSD": 100,
+    "cumulativeSpendMeasured": false
+  },
+  "images": {
+    "image": "docker.io/library/openworker-service@sha256:0f381e8a814a441ea4137a7ef297aed3b4dd4ef54048eb65385c7e81a49c0eb9",
+    "runnerImage": "docker.io/library/openworker-runner@sha256:7778d3f6b07e639b06365fcc2e3ec12bf6b6d2d50a756e77fe60cf8b460dc9fd"
+  },
+  "checks": {
+    "helmValuesTests": {
+      "passed": 10,
+      "failed": 0
+    },
+    "containerSmoke": {
+      "passed": true,
+      "scope": "network-disabled read-only container; no OpenShell claim",
+      "tools": 15,
+      "node24": true,
+      "managedProcessSurvivedToolCalls": true,
+      "hostCredentialsPassed": false
+    },
+    "credentials": {
+      "modelSecretMatchesPrivateInput": true,
+      "modelSecretMountedOnlyInWorker": true,
+      "sandboxModelSecretVolume": false,
+      "sandboxModelKeyEnv": false,
+      "openshellBootstrapPlumbing": "present; distinct from model keys"
+    },
+    "generatedAppDomainTests": {
+      "passed": 39,
+      "failed": 0,
+      "independentlyRerun": true
+    },
+    "eventViewerReconnect": true,
+    "apiReplicaReplacement": true,
+    "sameRunContinued": true,
+    "workerCrashTested": false,
+    "nodeFailoverTested": false,
+    "workspaceRetainedForFollowup": true,
+    "browserStaticCopy": {
+      "taskCreation": true,
+      "moveToDone": true,
+      "reloadPersistence": true,
+      "liveSandboxPreview": false
+    },
+    "managementRunSearchAndAccounting": true
+  },
+  "build": {
+    "terminalStatus": "failed",
+    "modelRequests": 20,
+    "executedToolCalls": 19,
+    "inputTokens": 601140,
+    "outputTokens": 39851,
+    "elapsedUs": 338007000,
+    "coverage": {
+      "all_visible_segments_closed": true,
+      "clock_or_range_anomaly": false,
+      "completions_without_start": 0,
+      "expected_segments": 1,
+      "group_truncated": false,
+      "guarantee": "best_effort",
+      "hierarchy_incomplete": false,
+      "pending_waits": 0,
+      "recorded_segments": 1,
+      "requests_without_completion": 0,
+      "scan_truncated": false,
+      "scanned_steps": 81,
+      "unknown_outcome_steps": 0,
+      "unknown_timing_steps": 0
+    }
+  },
+  "gaps": [
+    "Hardcoded 20-step cutoff failed the first turn after app creation and successful tests",
+    "Follow-up failed on invalid tool arguments rather than returning a correctable tool response",
+    "Old process handle was unavailable in the new runner; prior endpoint became unresponsive while its port stayed bound",
+    "File-tool absolute-path errors currently use a generic policy-denial response",
+    "Minimal developer image has no ps utility"
+  ],
+  "followupFeatureCompleted": false,
+  "langfuseExportConfiguredForThisFixture": false
+}
