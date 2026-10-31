@@ -105,3 +105,21 @@ the Rust-owned versioned JSON; no agent loop is duplicated across SDKs.
 Delegated isolated placement, artifact handoff, constrained
 GitHub publishing, CLI credentials and the combined multi-team recovery matrix
 are tracked separately as C3–C7. Passing C1/C2 does not qualify those features.
+
+## Child environment allocation and recovery
+
+The PostgreSQL placement outbox contracts check original per-instance identity,
+atomic ownership/quota accounting, one create dispatch, inspect-only recovery,
+claim expiration and stale result rejection. Concurrent reservations cannot
+exceed the submitting principal's quota. Unknown create outcomes retain quota.
+Pause blocks first dispatch; revocation or retirement cancels only an allocation
+proven never dispatched. Inspection of an already dispatched original resource
+remains possible after revocation, without authorizing a child tool/model turn.
+Changed profiles and foreign deployment identities reject before allocation.
+
+Cases: five `placement_outbox_*` tests in
+[provider outbox contracts](../../harness/server-reference/src/service_team_placements_tests.rs).
+These use isolated PostgreSQL schemas and synthetic provider observations, with
+no gateway/model traffic. They establish database/controller contracts, not
+physical sandbox isolation or resource enforcement. Public provisioning remains
+gated until real OpenShell qualification.

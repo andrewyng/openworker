@@ -713,7 +713,7 @@ impl crate::db::Database {
         tx.query_one("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('service-environment-quota'))",&[])?;
         let pending: i64 = tx
             .query_one(
-                "SELECT count(*) FROM service_operations WHERE status NOT IN ('complete','failed')",
+                "SELECT (SELECT count(*) FROM service_operations WHERE status NOT IN ('complete','failed'))+(SELECT count(*) FROM service_team_environments WHERE status NOT IN ('ready','failed'))",
                 &[],
             )?
             .get(0);

@@ -358,3 +358,30 @@ reject unbound non-Team choices at both preparation and admission rather than
 running them in the lead/host environment. The TypeScript serializer rejects
 unknown settings instead of silently dropping them. No New/Member provisioning
 is enabled yet; provider binding/lifecycle remains the next C3 slice.
+
+### C3 journal — provider outbox contract, October 31
+
+Added a private PostgreSQL outbox for per-instance New placement. Reservation
+atomically records the original environment/spec/profile, principal/project,
+quota ownership and durable dispatch marker before provider I/O. Immutable
+RuntimeProfile IDs and exact configured CPU/memory are required; unsupported
+file/network/credential grants and foreign deployment identities reject.
+Child and source releases must permit the target profile. Existing admission
+quotas count pending and unknown team environments alongside ordinary sessions.
+
+Recovery uses a fenced claim: only its first dispatch may create; subsequent
+claims inspect the original identity. A stale/expired claim cannot update either
+the environment binding or the outbox. The shared environment observation logic
+now participates in that same transaction. Matched lead/team/outbox lock ordering
+to avoid a claim-versus-reservation deadlock. Revocation/retirement before the
+first dispatch cancels only a proven-unstarted allocation; uncertainty after
+dispatch retains ownership/quota and allows original-resource inspection.
+
+Five new PostgreSQL contract tests and all 21 server-library cases passed in
+1.51 seconds. They cover lost-create replies, concurrent controllers/quota,
+changed/foreign identity, stale receipts, pause/unpause, credential revocation,
+retirement and quota preservation after unknown outcomes. One initial assertion
+used a reopened store without claiming the lead lease; corrected that fixture
+read to use its original owning store. These use synthetic provider observations;
+OpenShell creation and public placement admission remain gated pending the next
+C3 binding/controller/cleanup qualification. C3 is not complete or merged.

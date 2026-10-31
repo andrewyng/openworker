@@ -629,3 +629,6 @@ async fn unchanged_prebuilt_team_retry_does_not_require_rewriting_old_receipts()
         .unwrap();
     assert_eq!(again["id"], created["id"]);
 }
+
+#[path = "service_team_placements_tests.rs"]
+mod placements;
