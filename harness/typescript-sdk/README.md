@@ -418,3 +418,14 @@ A new message can override them with `session.send(text, { limits })`; the servi
 SDK accepts the same limits plus its usual `idempotencyKey`. Resuming keeps the
 original budget. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
 for counting rules, the final-summary reserve and sandbox-owned process tools.
+
+### Service teams with private types
+
+`ServiceSession.createTeam` accepts optional `delegation: { tools, models? }`.
+Tools must belong to the lead's activated release; models must be explicitly
+allowed by that release. The lead can then use `team_define_type` through the
+existing exact-definition approval flow. Definitions remain private to that lead.
+The service controller and worker restore the same approved revision after restart.
+This adapter currently shares the original team environment; nondefault remote
+workspace/new/member placement is still gated. See the
+[team design and deployment limits](../../docs/harness/TEAM-TYPES-AND-SANDBOXES.md#service-side-scoped-types).

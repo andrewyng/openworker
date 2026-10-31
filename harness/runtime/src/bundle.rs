@@ -25,6 +25,40 @@ pub struct Tools {
     pub servers: BTreeMap<String, Server>,
     pub bindings: BTreeMap<String, Binding>,
 }
+impl Tools {
+    /// Resolve a trusted installed alias or fully-qualified server/tool name.
+    /// Ambiguity fails closed; a convenient spelling must not select more access.
+    pub fn alias(&self, name: &str) -> Result<String> {
+        let matches: std::collections::BTreeSet<_> = self
+            .bindings
+            .iter()
+            .filter(|(alias, b)| {
+                alias.as_str() == name || format!("{}.{}", b.server, b.tool) == name
+            })
+            .map(|(alias, _)| alias.clone())
+            .collect();
+        anyhow::ensure!(
+            matches.len() == 1,
+            "Unknown or ambiguous installed tool: {name}"
+        );
+        Ok(matches.into_iter().next().unwrap())
+    }
+    pub fn select<'a>(&self, names: impl IntoIterator<Item = &'a String>) -> Result<Self> {
+        let mut aliases = std::collections::BTreeSet::new();
+        for name in names {
+            anyhow::ensure!(
+                aliases.insert(self.alias(name)?),
+                "Duplicate tool selection"
+            );
+        }
+        let mut tools = self.clone();
+        tools.bindings.retain(|id, _| aliases.contains(id));
+        tools
+            .servers
+            .retain(|id, _| tools.bindings.values().any(|b| b.server == *id));
+        Ok(tools)
+    }
+}
 impl Serialize for Tools {
     fn serialize<S: serde::Serializer>(
         &self,
@@ -517,4 +551,48 @@ pub fn bound_tools(
         bail!("Combined tool schemas exceed 256 KB");
     }
     Ok(tools)
+}
+
+#[cfg(test)]
+mod tool_selection_tests {
+    use super::*;
+    fn tools() -> Tools {
+        serde_json::from_str(r#"{"version":2,"servers":[{"id":"coding","program":"$OPENWORKER"}],"bindings":{"read_file":{"server":"coding","tool":"read_file"},"write_file":{"server":"coding","tool":"write_file"}}}"#).unwrap()
+    }
+    #[test]
+    fn aliases_and_qualified_names_select_only_the_installed_binding() {
+        let tools = tools();
+        let short = tools.select(&["read_file".into()]).unwrap();
+        let qualified = tools.select(&["coding.read_file".into()]).unwrap();
+        assert_eq!(
+            serde_json::to_value(short).unwrap(),
+            serde_json::to_value(qualified).unwrap()
+        );
+        assert!(tools.select(&["other.read_file".into()]).is_err());
+        assert!(tools
+            .select(&["read_file".into(), "coding.read_file".into()])
+            .is_err());
+    }
+    #[test]
+    fn alias_collisions_and_duplicate_remote_bindings_fail_closed() {
+        let mut tools = tools();
+        tools.bindings.insert(
+            "coding.read_file".into(),
+            Binding {
+                server: "coding".into(),
+                tool: "write_file".into(),
+            },
+        );
+        assert!(tools.alias("coding.read_file").is_err());
+        tools.bindings.remove("coding.read_file");
+        tools.bindings.insert(
+            "second_alias".into(),
+            Binding {
+                server: "coding".into(),
+                tool: "read_file".into(),
+            },
+        );
+        assert!(tools.alias("coding.read_file").is_err());
+        assert_eq!(tools.alias("second_alias").unwrap(), "second_alias");
+    }
 }

@@ -18,6 +18,7 @@ pub(crate) struct Create {
     #[serde(default)]
     policy: openworker_runtime::team_coordination::Policy,
     limits: Option<openworker_runtime::budget::Limits>,
+    delegation: Option<openworker_runtime::team_definition::Delegation>,
 }
 fn lead() -> String {
     "lead".into()
@@ -36,6 +37,11 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         (1..=32).contains(&body.agent_types.len()),
         "Register 1..32 team types"
     );
+    app.store.authorize(
+        openworker_store_postgres::auth::Action::Control,
+        Some(&sid),
+        None,
+    )?;
     let snapshot = app.store.read_snapshot(&sid)?;
     let identity = app
         .store
@@ -50,6 +56,24 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         profile.activated && p.sharing == openworker_runtime::environment::Sharing::Shared,
         "Teams require an activated shared RuntimeProfile"
     );
+    let mut models = BTreeMap::new();
+    if let Some(d) = &body.delegation {
+        let release = app.store.catalog_get(
+            "release",
+            identity["releaseId"]
+                .as_str()
+                .context("Missing lead release")?,
+        )?;
+        let source = management::release_config(&app.config, &release, &profile)?;
+        let bundle = openworker_runtime::bundle::Bundle::load(&source.bundle)?;
+        crate::service_team_types::validate_delegation(d, &bundle)?;
+        for choice in &d.models {
+            models.insert(
+                openworker_store_postgres::service_team_types::model_key(choice)?,
+                app.runtime.connections.resolve(choice)?,
+            );
+        }
+    }
     let mut templates = BTreeMap::new();
     for (kind, release_id) in &body.agent_types {
         let entry = app.store.catalog_get("release", release_id)?;
@@ -75,7 +99,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         templates.insert(kind.clone(), (release_id.clone(), template));
     }
     let keys: Vec<_> = body.agent_types.keys().cloned().collect();
-    app.store.configure_agent_team(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits}),templates)
+    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation}),templates,models)
 }
 pub(crate) async fn snapshot(
     Extension(app): Extension<App>,

@@ -54,7 +54,7 @@ fn plan(tool: &str, args: Value) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL and OW_PROBE_* local OpenShell"]
 async fn releases_profiles_provisioning_and_shared_verifier() {
-    tokio::time::timeout(Duration::from_secs(240), qualify())
+    tokio::time::timeout(Duration::from_secs(360), qualify())
         .await
         .unwrap();
 }
@@ -278,7 +278,8 @@ async fn qualify() {
                 }
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "Catalog worker lost model/tool/turn instrumentation"
+                    "Catalog worker lost model/tool/turn instrumentation; observed operations: {:?}",
+                    rows.steps.iter().map(|r|&r.step.operation).collect::<Vec<_>>()
                 );
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -288,6 +289,35 @@ async fn qualify() {
         let env = service.environment(&environment_id).await.unwrap();
         assert_eq!(env["runtimeProfile"], "team@1");
         assert_eq!(env["principal"], "alice");
+        // Private dynamic types reuse this original sandbox. Two independent
+        // controllers race deterministic compilation; a replacement worker must
+        // reconstruct the same approved runtime before the next child can run.
+        let lead=coder.new_session_with(openworker_sdk::service::SessionOptions {
+            environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()
+        },Some("private-type-lead")).await.unwrap();
+        let team=lead.create_team(serde_json::from_value(json!({"agentId":"lead","agentTypes":{"verifier":"verifier@1"},"policy":{"communication":{"board":true,"directMessages":false},"max_instances":8},"limits":null,"delegation":{"tools":["example-tools.read_file"],"placements":["team"],"models":[],"profiles":{}}})).unwrap()).await.unwrap();
+        let define=lead.send(&plan("team_define_type",json!({"name":"reader","instructions":"Read the requested file and return evidence. Do not write.","tools":["example-tools.read_file"]})),Some("define-reader")).await.unwrap();
+        assert_eq!(define.result().await.unwrap().status,"completed");
+        let member=team.spawn("spawn-reader-one","reader","reader-one",&plan("read_file",json!({"path":"shared-proof.txt"}))).await.unwrap();
+        let child_id=member["instance"]["session_id"].as_str().unwrap();
+        let waiting=lead.send(&plan("team_wait_agent",json!({"agent_ids":["reader-one"],"timeout_ms":120000})),Some("wait-reader-one")).await.unwrap();
+        assert_eq!(waiting.result().await.unwrap().status,"completed");
+        let child=service.json("GET",&format!("/v1/sessions/{child_id}"),None,None).await.unwrap();
+        assert_eq!(child["session"]["environment"]["environment_id"],environment_id);
+        assert!(child["session"]["coworker"].as_str().unwrap().starts_with("tt_"));
+        let evidence=service.json("GET",&format!("/v1/sessions/{child_id}/events/page?after=0"),None,None).await.unwrap();
+        assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("coder output for verifier")),"{evidence}");
+        worker.kill().await.unwrap();let _=worker.wait().await;worker=role("service-worker");
+        let member=team.spawn("spawn-reader-two","reader","reader-two",&plan("read_file",json!({"path":"shared-proof.txt"}))).await.unwrap();
+        let second_id=member["instance"]["session_id"].as_str().unwrap();
+        let waiting=lead.send(&plan("team_wait_agent",json!({"agent_ids":["reader-two"],"timeout_ms":120000})),Some("wait-reader-two")).await.unwrap();
+        assert_eq!(waiting.result().await.unwrap().status,"completed");
+        let second=service.json("GET",&format!("/v1/sessions/{second_id}"),None,None).await.unwrap();
+        assert_eq!(second["session"]["coworker"],child["session"]["coworker"]);
+        let evidence=service.json("GET",&format!("/v1/sessions/{second_id}/events/page?after=0"),None,None).await.unwrap();
+        assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("coder output for verifier")),"{evidence}");
+        assert_eq!(store.service_team_type_page(&openworker_server_reference::management::installation(&cfg).unwrap(),"",8).unwrap().len(),1);
+        eprintln!("PASS approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads");
         let status = Command::new("node")
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))

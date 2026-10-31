@@ -215,6 +215,16 @@ impl crate::PostgresStore {
         args: Value,
         templates: std::collections::BTreeMap<String, (String, Session)>,
     ) -> Result<Value> {
+        self.configure_agent_team_models(sid, args, templates, Default::default())
+    }
+    /// Deployment-owned model references, never API keys, are pinned with templates.
+    pub fn configure_agent_team_models(
+        &self,
+        sid: &str,
+        args: Value,
+        templates: std::collections::BTreeMap<String, (String, Session)>,
+        models: std::collections::BTreeMap<String, openworker_runtime::connections::Selection>,
+    ) -> Result<Value> {
         let sid = sid.to_owned();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
@@ -259,6 +269,7 @@ impl crate::PostgresStore {
                     crate::service_catalog::allowed(p, &release.allowed_principals)?;
                 }
             }
+            crate::service_team_types::validate_models(&mut tx, &lead, &args, &models)?;
             let keys: Vec<_> = templates.keys().cloned().collect();
             ensure!(
                 args["agent_types"] == json!(keys),
@@ -273,7 +284,7 @@ impl crate::PostgresStore {
             )?;
             let team = result["id"].as_str().context("Missing team ID")?;
             for (kind, (release, template)) in templates {
-                let payload = json!({"release":release,"session":template});
+                let payload = json!({"release":release,"session":template,"models":models});
                 tx.execute(
                     "INSERT INTO agent_team_templates VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
                     &[&team, &kind, &payload],
@@ -288,6 +299,11 @@ impl crate::PostgresStore {
                 // fields are pinned. Reserved instance IDs replace only this ID.
                 let mut expected = payload;
                 expected["session"]["id"] = stored["session"]["id"].clone();
+                // Older prebuilt-only receipts have no model-reference map.
+                // Accept only an unchanged empty delegation, never add authority.
+                if stored.get("models").is_none() && models.is_empty() {
+                    expected.as_object_mut().unwrap().remove("models");
+                }
                 ensure!(stored == expected, "Changed team type template");
             }
             if was_unbound {
@@ -304,14 +320,34 @@ impl crate::PostgresStore {
     /// Private controller: one reservation becomes one child and initial queued
     /// task atomically. It never creates/rebinds/deletes the shared environment.
     pub fn provision_agent_team_child(&self) -> Result<bool> {
+        self.provision_agent_team_child_for(None)
+    }
+    pub fn provision_agent_team_child_for(&self, installation: Option<&str>) -> Result<bool> {
         ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
+        let installation = installation.map(str::to_owned);
         self.call(move|db|{
             let mut tx=db.client.transaction()?;
-            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM agent_team_templates x WHERE x.team=t.id) AND EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='reserved') AND NOT coalesce((t.data->>'stopped')::boolean,false) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[])? else {tx.commit()?;return Ok(false)};
+            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved') AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
             let mut doc:Document=serde_json::from_value(row.get(1))?;
-            let instance=doc.roster.instances().find(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).context("No reservation")?.clone();
-            let template:Value=tx.query_one("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&instance.agent_type])?.get(0);
+            let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).cloned().collect();
+            let mut selected=None;
+            for i in candidates {let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}}
+            let instance=selected.context("No prepared reservation")?;
+            let kind=agent_team::runtime_type(&doc,&instance)?;
+            let Some(template_row)=tx.query_opt("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])? else {tx.commit()?;return Ok(false)};
+            let template:Value=template_row.get(0);
+            if let Some(error)=template["error"].as_str() {
+                doc.roster.close(&instance.agent_id)?;
+                doc.failures.insert(instance.agent_id.clone(),error.to_owned());
+                Tx(&mut tx).write(&doc,false)?;tx.commit()?;return Ok(true);
+            }
+
             let mut child:Session=serde_json::from_value(template["session"].clone())?;
+            if let Some(choice)=doc.roster.request(&instance.agent_id).and_then(|r|r.model.as_ref()) {
+                let selected:openworker_runtime::connections::Selection=serde_json::from_value(template["models"][crate::service_team_types::model_key(choice)?].clone()).context("Missing delegated model reference")?;
+                ensure!(selected.connection==choice.connection && selected.model==choice.model,"Changed delegated model");
+                child.model=selected.model.clone();child.model_provider=selected.provider;child.model_selection=Some(selected);
+            }
             child.id=instance.session_id.clone();child.name=doc.roster.request(&instance.agent_id).and_then(|r| r.title.as_ref()).unwrap_or(&instance.agent_id).clone();
             child.agent_team=Some(agent_team::Membership{team_id:doc.id.clone(),agent_id:instance.agent_id.clone(),inbox_cursor:0,last_output:None,notices:vec![],waiting:None});
             let lead=doc.roster.instance(&doc.lead).context("Lead missing")?;
@@ -320,12 +356,18 @@ impl crate::PostgresStore {
             let principal:String=origin.get(0);let credential:String=origin.get(1);
             let release_id=template["release"].as_str().context("Release missing")?;
             let authorization=(||->Result<crate::auth::Identity>{
+            crate::service_team_types::check_template(&mut tx, &doc, &instance, &template)?;
             let spec:crate::auth::Spec=serde_json::from_value(tx.query_opt("SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp()))",&[&credential])?.context("Submitting credential expired or revoked")?.get(0))?;
             ensure!(spec.principal==principal && spec.role.permits(crate::auth::Action::Submit),crate::auth::Error::Forbidden);
             let identity=crate::auth::Identity{credential_id:credential,principal:principal.clone(),role:spec.role,scope:spec.scope,environments:spec.environments,expires_at:spec.expires_at};
             let release_entry=crate::service_catalog::entry(&mut tx,"release",release_id)?;
             let release:crate::service_catalog::Release=serde_json::from_value(release_entry.definition)?;
             ensure!(release_entry.activated,"Delegated release deactivated");crate::service_catalog::allowed(&identity,&release.allowed_principals)?;
+            let profile_id:String=origin.get(3);
+            let profile_entry=crate::service_catalog::entry(&mut tx,"profile",&profile_id)?;
+            let profile:crate::service_catalog::Profile=serde_json::from_value(profile_entry.definition)?;
+            ensure!(profile_entry.activated && release.runtime_profiles.contains(&profile_id),"Delegated RuntimeProfile unavailable");
+            crate::service_catalog::allowed(&identity,&profile.allowed_principals)?;
             Ok(identity)
             })();
             let identity=match authorization {

@@ -85,29 +85,40 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     manifest.default_model = r.default_model;
     manifest.limits = r.limits;
     manifest.memory_scope = None;
-    let mut tools = base.tools.clone();
-    ensure!(
-        r.tools.iter().all(|id| tools.bindings.contains_key(id)),
-        "Tool is not in the installed catalog"
-    );
-    tools.bindings.retain(|id, _| r.tools.contains(id));
-    tools
-        .servers
-        .retain(|id, _| tools.bindings.values().any(|b| b.server == *id));
+    let tools = base.tools.select(&r.tools)?;
     let manifest_text = format!(
         "---\n{}\n---\n{}\n",
         serde_json::to_string(&manifest)?,
         r.instructions
     );
     let tools_text = serde_json::to_string(&tools)?;
+    let dir = publish_bundle(config, &release.digest, &base, &manifest_text, &tools_text)?;
+    let mut c = config.clone();
+    c.bundle = dir;
+    c.openshell.cpu = Some(p.cpu);
+    c.openshell.memory_mb = Some(p.memory_mb);
+    Ok(c)
+}
+/// Both published releases and scoped types use deterministic, verified files.
+pub(crate) fn publish_bundle(
+    config: &Config,
+    key: &str,
+    base: &Bundle,
+    manifest_text: &str,
+    tools_text: &str,
+) -> Result<std::path::PathBuf> {
+    ensure!(
+        key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid cache key"
+    );
     let root = config.state_root.join("service-bundles");
     std::fs::create_dir_all(&root)?;
-    let dir = root.join(&release.digest);
+    let dir = root.join(key);
     if !dir.exists() {
         let tmp = root.join(openworker_runtime::id("prepare"));
         std::fs::create_dir_all(tmp.join("coworker"))?;
-        std::fs::write(tmp.join("coworker/manifest.md"), &manifest_text)?;
-        std::fs::write(tmp.join("tools.json"), &tools_text)?;
+        std::fs::write(tmp.join("coworker/manifest.md"), manifest_text)?;
+        std::fs::write(tmp.join("tools.json"), tools_text)?;
         if base.root.join("coworker/skills").exists() {
             copy_tree(
                 &base.root.join("coworker/skills"),
@@ -128,12 +139,9 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
             && std::fs::read_to_string(dir.join("tools.json"))? == tools_text,
         "Installed release cache changed"
     );
-    let mut c = config.clone();
-    c.bundle = dir;
-    c.openshell.cpu = Some(p.cpu);
-    c.openshell.memory_mb = Some(p.memory_mb);
-    Ok(c)
+    Ok(dir)
 }
+
 pub(crate) async fn put_profile(
     Extension(app): Extension<App>,
     headers: HeaderMap,
@@ -157,7 +165,7 @@ pub(crate) async fn put_release(
         return Err(ApiError(SubmissionError::Conflict.into()));
     }
     let base = Bundle::load(&app.config.bundle)?;
-    if !r.tools.iter().all(|t| base.tools.bindings.contains_key(t)) {
+    if base.tools.select(&r.tools).is_err() {
         return Err(ApiError(SubmissionError::InvalidRequest.into()));
     }
     for m in r
@@ -359,9 +367,11 @@ pub async fn controller(
     service.validate()?;
     store.bind_service(&service.id, &service.namespace)?;
     let installed = installation(&config)?;
+    let mut type_cursor = String::new();
     while !stop.is_cancelled() {
+        crate::service_team_types::refresh(&config, &store, &installed, &mut type_cursor).await?;
         delete_once(&config, &store, &installed).await?;
-        store.provision_agent_team_child()?;
+        store.provision_agent_team_child_for(Some(&installed))?;
         store.reconcile_stopped_agent_team()?;
         store.reconcile_unstarted_retirement()?;
         if !control_matching(&config, &store, &installed).await? {
@@ -516,6 +526,7 @@ pub async fn worker_with_options(
     );
     let installed = installation(&config)?;
     let monitor = async {
+        let mut type_cursor = String::new();
         while !abort.is_cancelled() {
             provider.check_gateway().await?;
             store.advertise_worker(
@@ -548,6 +559,44 @@ pub async fn worker_with_options(
                     )?;
                     let select = selector(&c, &rt)?;
                     rt.shutdown().await?;
+                    let factory: Factory = Arc::new(move |sid, s| {
+                        c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
+                    });
+                    cache.lock().unwrap().insert(key, (select, factory));
+                }
+            }
+            let page = store.service_team_type_page(&installed, &type_cursor, 8)?;
+            if page.is_empty() {
+                type_cursor.clear()
+            }
+            for team in page {
+                type_cursor = team.document.id.clone();
+                if !team.release.activated || !team.profile.activated {
+                    continue;
+                }
+                let Some(types) = &team.document.type_catalog else {
+                    continue;
+                };
+                for record in
+                    types.records.values().flatten().filter(|r| {
+                        r.status == openworker_runtime::team_type_catalog::Status::Approved
+                    })
+                {
+                    let key = record.runtime_id();
+                    if cache.lock().unwrap().contains_key(&key)
+                        || !store.service_team_type_ready(&team.document.id, &key)?
+                    {
+                        continue;
+                    }
+                    let c = crate::service_team_types::config(&config, &team, record)?;
+                    let rt = c.runtime(&format!("private-{}", &key[3..23]), store.clone())?;
+                    let select = selector(&c, &rt)?;
+                    rt.shutdown().await?;
+                    store.verify_service_team_type_runtime(
+                        &team.document.id,
+                        &key,
+                        &select.bundle_digest,
+                    )?;
                     let factory: Factory = Arc::new(move |sid, s| {
                         c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
                     });
