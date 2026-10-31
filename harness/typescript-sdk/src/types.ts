@@ -8,6 +8,8 @@ export interface WorkspaceDefaults {
   agentTypes:string[];
 }
 export interface ChildSpawnOptions {
+  /** Selection is bounded by the type/app envelope. Unqualified adapters reject. */
+  sandbox?: SandboxChoice;
   /** Working model only; must be in the app-delegated model choices. */
   model?: { provider: string; name: string };
   /** A directory/worktree is a working location, not a security boundary. */
@@ -18,6 +20,9 @@ export interface ChildSpawnOptions {
   /** Fresh conversation state. Inherited snapshots are not yet supported. */
   context?: { mode: "fresh" };
 }
+export type SandboxChoice = {mode:"team"}|{mode:"member";agentId:string}|{
+  mode:"new";profile:string;files?:string[];network?:string[];credentials?:string[];cpu?:number;memoryMB?:number;
+};
 export interface AccessToken {
   accessToken: string;
   /** Unix timestamp in seconds, supplied by the issuer (not milliseconds). */

@@ -140,7 +140,7 @@ impl Default for Sandbox {
     }
 }
 impl Sandbox {
-    fn validate(&self, ceiling: &Ceiling) -> Result<()> {
+    pub fn validate(&self, ceiling: &Ceiling) -> Result<()> {
         let placement = match self {
             Self::Team {} => Placement::Team,
             Self::Member { agent_id } => {
@@ -176,6 +176,47 @@ impl Sandbox {
             "Sandbox placement is not delegated"
         );
         Ok(())
+    }
+    /// An instance cannot enlarge or change the exact type's approved sandbox
+    /// envelope. Resolving named grants and checking actual shared policies is
+    /// still the trusted provider adapter's duty before any dispatch.
+    pub fn require_subset_of(&self, maximum: &Self) -> Result<()> {
+        match (self, maximum) {
+            (Self::Team {}, Self::Team {}) => Ok(()),
+            (Self::Member { agent_id: a }, Self::Member { agent_id: b }) if a == b => Ok(()),
+            (
+                Self::New {
+                    profile,
+                    files,
+                    network,
+                    credentials,
+                    cpu,
+                    memory_mb,
+                },
+                Self::New {
+                    profile: expected,
+                    files: max_files,
+                    network: max_network,
+                    credentials: max_credentials,
+                    cpu: max_cpu,
+                    memory_mb: max_memory,
+                },
+            ) if profile == expected => Grants {
+                files: files.clone(),
+                network: network.clone(),
+                credentials: credentials.clone(),
+                cpu: *cpu,
+                memory_mb: *memory_mb,
+            }
+            .require_subset_of(&Grants {
+                files: max_files.clone(),
+                network: max_network.clone(),
+                credentials: max_credentials.clone(),
+                cpu: *max_cpu,
+                memory_mb: *max_memory,
+            }),
+            _ => anyhow::bail!("Instance sandbox choice differs from the approved type envelope"),
+        }
     }
 }
 

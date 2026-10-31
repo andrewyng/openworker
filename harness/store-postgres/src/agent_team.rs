@@ -398,6 +398,7 @@ impl crate::PostgresStore {
             );
             // Adapter capability, never a caller-configured permission switch.
             args["workspace_selection"] = json!(true);
+            args["placement_selection"] = json!(false);
             let result = agent_team::apply(
                 &mut Tx(&mut tx),
                 &mut lead,
@@ -460,6 +461,7 @@ impl crate::PostgresStore {
                 let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}
             }
             let Some(instance)=selected else {tx.commit()?;return Ok(false)};
+            ensure!(doc.sandbox_choices.get(&instance.agent_id).is_none_or(|s|s==&openworker_runtime::team_definition::Sandbox::default()),"Child placement has no qualified provider binding; refusing shared-environment fallback");
             let kind=agent_team::runtime_type(&doc,&instance)?;
             let Some(template_row)=tx.query_opt("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])? else {tx.commit()?;return Ok(false)};
             let template:Value=template_row.get(0);

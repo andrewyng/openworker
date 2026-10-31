@@ -1,5 +1,6 @@
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
+import {sandboxWire} from "./team-placement.js";
 import {
   type Json,
   type JournalEvent,
@@ -828,6 +829,7 @@ export class ServiceAgentTeam {
     return this.command(key, "team_spawn", {
       ...options,
       model: options.model ? {connection:options.model.provider,model:options.model.name} : undefined,
+      sandbox:sandboxWire(options.sandbox),
       agent_type: agentType,
       agent_id: agentId,
       message,

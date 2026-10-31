@@ -49,6 +49,8 @@ pub struct SpawnRequest {
     pub workspace: crate::team_workspace::Selection,
     #[serde(default)]
     pub model: Option<crate::connections::Choice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<crate::team_definition::Sandbox>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
