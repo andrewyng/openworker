@@ -78,6 +78,7 @@ import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
+import { NEW_CHAT_DRAFT_KEY } from "./components/composerDraft";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
@@ -123,6 +124,17 @@ import { shouldStartWindowDrag } from "./windowDrag";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
+
+// Session ids this window minted for a brand-new chat. Until such a chat has its first
+// message it has no sidebar row to come back to, and picking a coworker or folder mints
+// another id — so the composer keeps its unsent text in one shared new-chat draft slot
+// (NEW_CHAT_DRAFT_KEY) instead of under the throwaway id.
+const mintedSessionIds = new Set<string>();
+const newSessionId = () => {
+  const id = newId();
+  mintedSessionIds.add(id);
+  return id;
+};
 
 // Hero task suggestions — translated at call time (module scope can't see React hooks).
 // Keys live under `hero.suggest_*`; resolved in the component via useTranslation.
@@ -297,7 +309,7 @@ export function App() {
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
-  const [sessionId, setSessionId] = useState<string>(newId());
+  const [sessionId, setSessionId] = useState<string>(newSessionId());
   // Remote homes (UX-045): which joined machine the CURRENT session runs on
   // (null = This Mac). Fixed at creation via the setup row's runs-on chip;
   // restored from the session row on select/resume. Routes the session socket
@@ -1523,7 +1535,7 @@ export function App() {
     }
     setDraftFolderPicked(false);
     setTempWorkspace(false);
-    setSessionId(newId());
+    setSessionId(newSessionId());
   };
   // UX-029: re-target the DRAFT session (no messages yet) to another coworker. Unlike
   // switchAgent this never resumes that coworker's last conversation — the user is
@@ -1541,7 +1553,7 @@ export function App() {
     }
     setTempWorkspace(false);
     setShowGate(false);
-    setSessionId(newId());
+    setSessionId(newSessionId());
   };
   // UX-029: the setup row's folder chip — bind the draft to a folder before the first
   // message. A fresh id re-triggers the connection effect with the folder attached.
@@ -1550,7 +1562,7 @@ export function App() {
     setBranch(b ?? null);
     setDraftFolderPicked(true);
     setTempWorkspace(false);
-    setSessionId(newId());
+    setSessionId(newSessionId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
   // UX-029 send-time dialog resolutions: bind the folder, park the stashed message for
@@ -1564,13 +1576,13 @@ export function App() {
     setBranch(b ?? null);
     setTempWorkspace(false);
     pendingPromptRef.current = { ...gate, model };
-    setSessionId(newId());
+    setSessionId(newSessionId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
   const startTempAndSend = async () => {
     const gate = sendGate;
     if (!gate) return;
-    const sid = newId();
+    const sid = newSessionId();
     const res = await createTempWorkspace(sid, true, machine);
     if (!res.ok || !res.path) {
       setSendGate(null);
@@ -1747,7 +1759,7 @@ export function App() {
       return;
     }
 
-    const id = newId();
+    const id = newSessionId();
     const fallback = gatesWorkspace(name) ? fallbackWorkspace(inheritable, knownProjects) : "";
     if (fallback && fallback !== workspace) {
       setWorkspace(fallback);
@@ -1769,7 +1781,7 @@ export function App() {
     setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
-    setSessionId(newId());
+    setSessionId(newSessionId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
   // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
@@ -1786,7 +1798,7 @@ export function App() {
     if (target !== agent) setAgent(target);
     setWorkspace(null);
     setBranch(null);
-    setSessionId(newId());
+    setSessionId(newSessionId());
     setGateCreate(true);
     setShowGate(true);
   };
@@ -1808,7 +1820,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      setSessionId(newSessionId());
     }
   };
   const deleteConversation = async (id: string) => {
@@ -1821,7 +1833,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      setSessionId(newSessionId());
     }
   };
 
@@ -2509,7 +2521,9 @@ export function App() {
               attendance={attendance}
               onAutoAnswerChange={agent !== "chat" ? toggleAutoAnswer : undefined}
               prefill={composerPrefill}
-              resetKey={sessionId}
+              resetKey={
+                idle && !curSession && mintedSessionIds.has(sessionId) ? NEW_CHAT_DRAFT_KEY : sessionId
+              }
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
