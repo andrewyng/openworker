@@ -376,3 +376,41 @@ reconnecting clients receive its final events even after it leaves the live rost
 Roster pages and wait notices carry the last turn outcome and a conservative
 `outcome_unknown` flag; closing the agent is not evidence that uncertain external
 changes were rolled back. Saved API controls retain priority during retirement.
+
+## Qualified per-child working model selection (M3c)
+
+SDK teams may override the working model for a spawn when the application has
+supplied that exact provider/model pair in `delegation.models`. This works with
+SQLite or PostgreSQL, embedded Rust or a managed child process. Omission keeps the
+registered type's default model. The approver's model is configured separately.
+
+```typescript
+const team = await harness.newTeam("lead", {
+  workspace: projectDirectory,
+  agentTypes: ["builder"],
+  delegation: {
+    tools: ["coding.read_file"],
+    models: [{ provider: "Local", name: "builder-model" }],
+  },
+});
+await team.spawn("build-ui-v1", "builder", "builder-ui", "Build the UI", {
+  model: { provider: "Local", name: "builder-model" },
+});
+```
+
+Rust uses `ChildOptions { model: Some(Model::new("Local", "builder-model")),
+..Default::default() }`. The provider must already be configured on the harness;
+credentials and endpoint configuration are not part of the child arguments.
+Internal model tools use the existing `{ connection, model }` wire shape. Validation
+checks exact pairs, not a cross-product of allowed providers and model names.
+
+The full spawn request pins the override; retries cannot change it. The resolved
+selection is saved on the child session and survives restart. If its provider is
+unavailable before session admission, that reservation closes with an explicit
+configuration failure: no child task starts and no other model is substituted.
+The host remains usable. Fixing configuration does not replay a failed spawn;
+inspect current status and explicitly use a new instance ID for new work.
+
+The distributed service's release-backed custom-type/placement adapter remains a
+separate M3 item. Its current API rejects undelegated child overrides; SDK support
+on PostgreSQL should not be confused with that deployment adapter's feature gate.

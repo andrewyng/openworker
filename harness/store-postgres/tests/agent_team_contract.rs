@@ -402,3 +402,15 @@ fn pending_cancel_fences_work_without_blocking_team_reads_or_reconciliation() {
         "{error}"
     );
 }
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn postgres_child_model_selection_contract() {
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_model_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::exercise_child_model_selection(&mut db);
+}

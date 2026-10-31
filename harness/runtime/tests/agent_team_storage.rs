@@ -402,3 +402,7 @@ fn workspace_dispatch_survives_reopen_without_mutation_permission() {
 fn sqlite_retirement_contract() {
     contract::exercise_retirement(&mut Store::memory().unwrap());
 }
+#[test]
+fn sqlite_child_model_selection_contract() {
+    contract::exercise_child_model_selection(&mut Store::memory().unwrap());
+}
