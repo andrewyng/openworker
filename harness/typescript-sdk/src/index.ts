@@ -652,8 +652,14 @@ export class Session {
     options: RunOptions = {},
   ): Promise<Run | { accepted: true; runId: string | null }> {
     aborted(options.signal);
+    if (options.limits && this.harness.capabilities.turn_limits !== true) {
+      throw new HarnessError("Setup", "Host does not support turn limits");
+    }
     const value = typeof input === "string" ? { text: input } : input;
     const control = value.type === "approval" || value.type === "answer";
+    if (control && options.limits !== undefined) {
+      throw new HarnessError("InvalidInput", "Limits apply only to new message turns");
+    }
     const allowed = control
       ? value.type === "approval"
         ? ["type", "interactionId", "targetSessionId", "decision"]
@@ -681,6 +687,7 @@ export class Session {
         session_id: this.id,
         submission_id: submissionId,
         input: wire,
+        limits: options.limits,
       }),
     );
     if (control)

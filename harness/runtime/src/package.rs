@@ -35,6 +35,8 @@ pub struct Manifest {
     pub team_role: Option<crate::teams::Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<crate::connections::Choice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<crate::budget::Limits>,
 }
 fn one() -> u32 {
     1
@@ -65,6 +67,9 @@ pub fn parse(text: &str) -> Result<(Manifest, String)> {
     let (header, body) = frontmatter(text)?;
     let mut m: Manifest =
         serde_yaml::from_str(header).context("Invalid/unsupported native coworker manifest")?;
+    if let Some(l) = &m.limits {
+        l.validate()?;
+    }
     if m.schema_version != 1 {
         bail!("Unsupported coworker schema_version; expected 1");
     }

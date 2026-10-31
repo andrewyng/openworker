@@ -99,6 +99,7 @@ async fn main() -> Result<()> {
             )?;
             store.save(&s, "session_created", json!({}))?;
             store.submit_turn(TurnSubmission {
+                limits: None,
                 session_id: id.into(),
                 submission_id: "one".into(),
                 text: "SECRET".into(),
@@ -114,6 +115,7 @@ async fn main() -> Result<()> {
             store.release(id)?;
         }
         store.submit_turn(TurnSubmission {
+            limits: None,
             session_id: "s_waiting".into(),
             submission_id: "two".into(),
             text: "SECRET".into(),

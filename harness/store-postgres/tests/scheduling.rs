@@ -32,6 +32,7 @@ fn fixture() -> (Config, PostgresStore) {
         owner.save(&s, "session_created", json!({})).unwrap();
         owner
             .submit_turn(TurnSubmission {
+                limits: None,
                 session_id: id.into(),
                 submission_id: "one".into(),
                 text: "hello".into(),
@@ -94,6 +95,7 @@ fn incompatible_pools_and_parked_approval_do_not_spin_or_steal() {
     worker.save(&s, "checkpoint", json!({})).unwrap();
     worker
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: s.id.clone(),
             submission_id: "two".into(),
             text: "later".into(),

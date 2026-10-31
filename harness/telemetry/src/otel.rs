@@ -116,6 +116,11 @@ impl Sink for OtelSink {
                     | crate::Operation::ApprovalResolved
                     | crate::Operation::Cancellation
                     | crate::Operation::UnknownOutcome
+                    | crate::Operation::BudgetExceeded
+                    | crate::Operation::ToolValidationFailed
+                    | crate::Operation::ProcessStarted
+                    | crate::Operation::ProcessStopped
+                    | crate::Operation::ProcessStale
                     | crate::Operation::QuestionRequested
                     | crate::Operation::QuestionResolved
             ) && r.timing_known

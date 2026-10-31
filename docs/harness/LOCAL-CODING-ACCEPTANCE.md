@@ -173,3 +173,47 @@ those receipts to retry. Resume/reconcile the original operation instead. Keep t
 service's normal token expiry; these helpers do not extend access. Stop loopback
 views with Ctrl-C and use only the owned fixture's documented destroy operation
 when its diagnostic state is no longer needed.
+
+## October 30 follow-up: continuity fixes qualified
+
+The three gaps above are implemented; see the [plan and progress ledger](CODING-CONTINUITY-PLAN.md)
+and [budget/process API contract](TURN-LIMITS-AND-PROCESSES.md). A fresh build
+completed after 24 main requests, and an explicitly recovered follow-up completed
+with 55 main requests plus two compactions. The original server's handle and PID
+survived turn completion and same-image worker replacement. All 45 final generated
+tests passed independently. Live browser checks used the actual OpenShell server,
+including preserved data through the agent's update and a browser-feedback CSS fix.
+
+A deliberate low-budget turn refused its queued write, gave a short final model
+response and left no file. The next turn used the normal defaults. Budget,
+validation and process lifecycle events are present in the recording database.
+The first build was journaled before recording was enabled; no retroactive metrics
+or new Langfuse qualification is claimed. One interrupted follow-up and an earlier
+failed admission remain failed. Recovery inspected state before deciding further
+work; it did not transparently retry the unknown tool action.
+
+The local connection JSON can now opt into recording at initialization:
+
+```json
+"observability": {"schema":"ow_observability","queue_capacity":1024,"retention_days":7}
+```
+
+Run the normal explicit migration/bootstrap with this configuration before serving
+recordings. Existing installations require migration before updating their pods.
+The recorder has its own connection even when it shares the execution database.
+
+`qualify-coding-service.mjs STATE start|observe|followup|recover ATTEMPT` keeps
+separate write-once receipts for explicitly numbered trials. `recover` requires an
+inspected failed follow-up and first asks the model to reconcile its partial state.
+`qualify-coding-limits.mjs STATE ATTEMPT` verifies the stop and following-turn
+behavior. Its `resume-budget` / `resume-results` options inspect saved probes and
+never submit the already admitted action again. Validation is also covered by the
+deterministic runtime suite; a schema-enforcing model need not emit malformed calls.
+
+The local gateway qualification helpers under `harness/runtime/examples/` use
+verified mTLS and loopback listeners. The process probe saves creation intent before
+provisioning and offers read-only original-object reconciliation; the preview uses
+the pinned OpenShell 0.1.3 workspace-scoped forwarding protocol. Private configs
+and credentials are never checked in. Sandbox process deadlines still apply.
+
+[Sanitized continuity evidence](evidence/coding-continuity-20261030.json).

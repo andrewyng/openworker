@@ -111,7 +111,8 @@ async fn qualify() {
             "schema_digest":null,"interactions":[],"turn":null,"sandbox":null,"closed":false,
             "resource_policy":openworker_runtime::resource_policy::Resolved::default()})).unwrap();
         owner.save(&s,"session_created",json!({})).unwrap();
-        owner.submit_turn(TurnSubmission{session_id:s.id.clone(),submission_id:"storage-turn".into(),text:"fixture completed output".into()}).unwrap();
+        owner.submit_turn(TurnSubmission{
+            limits: None,session_id:s.id.clone(),submission_id:"storage-turn".into(),text:"fixture completed output".into()}).unwrap();
         let (mut active,_,_)=owner.accept(&s.id,"storage-turn","fixture completed output").unwrap();
         let turn=active.turn.as_ref().unwrap().id.clone();
         active.turn.as_mut().unwrap().status="completed".into();

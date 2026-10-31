@@ -322,14 +322,30 @@ impl Session {
             cursors,
         })
     }
+    pub async fn send_with_limits(&self, text: &str, limits: super::TurnLimits) -> Result<Run> {
+        self.send_with_id_and_limits(&openworker_runtime::id("sub"), text, Some(limits))
+            .await
+    }
     pub async fn send_with_id(&self, id: &str, text: &str) -> Result<Run> {
-        let started = self
-            .client
-            .request(
-                "session/send",
-                json!({"session_id":self.id(),"submission_id":id,"input":{"text":text}}),
-            )
-            .await?;
+        self.send_with_id_and_limits(id, text, None).await
+    }
+    pub async fn send_with_id_and_limits(
+        &self,
+        id: &str,
+        text: &str,
+        limits: Option<super::TurnLimits>,
+    ) -> Result<Run> {
+        if limits.is_some() && self.client.info()["capabilities"]["turn_limits"] != true {
+            return Err(crate::Error::Setup(
+                "Host does not support turn limits".into(),
+            ));
+        }
+        let mut parameters =
+            json!({"session_id":self.id(),"submission_id":id,"input":{"text":text}});
+        if let Some(limits) = limits {
+            parameters["limits"] = json!(limits);
+        }
+        let started = self.client.request("session/send", parameters).await?;
         Ok(Run {
             session: self.clone(),
             submission: id.into(),

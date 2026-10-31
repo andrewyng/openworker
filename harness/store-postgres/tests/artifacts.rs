@@ -16,6 +16,7 @@ fn fixture() -> (Config, PostgresStore, Session, Registration) {
     owner.save(&s, "session_created", json!({})).unwrap();
     owner
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: s.id.clone(),
             submission_id: "one".into(),
             text: "make file".into(),

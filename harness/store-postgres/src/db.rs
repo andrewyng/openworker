@@ -104,8 +104,10 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
         tx.batch_execute(include_str!("schema.sql"))?;
         tx.execute("INSERT INTO version VALUES(TRUE,5)", &[])?;
     }
-    // Optional query accelerators; explicit migration only, no state layout change.
+    // Optional query accelerators; explicit migration only.
     tx.batch_execute("CREATE INDEX IF NOT EXISTS submissions_recent ON submissions(created DESC,session_id DESC,sequence DESC); CREATE INDEX IF NOT EXISTS submissions_session_recent ON submissions(session_id,created DESC,sequence DESC)")?;
+    // Nullable for existing submissions; queued overrides require explicit migration.
+    tx.batch_execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS limits JSONB")?;
     crate::artifacts::migrate(&mut tx)?;
     crate::auth::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;
@@ -708,24 +710,43 @@ impl Database {
         key: &str,
         text: &str,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_limits(sid, key, text, None)
+    }
+    pub fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        if let Some(l) = &limits {
+            l.validate()?;
+        }
         let epoch = self.epoch(sid)?;
         let mut tx = self.client.transaction()?;
         let mut s = locked(&mut tx, sid, Some((&self.owner, epoch)))?;
         crate::submissions::verify(&mut tx, sid)?;
         read_history(&mut tx, &mut s)?;
         let existing = tx.query_opt(
-            "SELECT text,turn_id,status FROM submissions WHERE session_id=$1 AND id=$2",
+            "SELECT text,turn_id,status,limits FROM submissions WHERE session_id=$1 AND id=$2",
             &[&sid, &key],
         )?;
         if let Some(row) = &existing {
             let old: String = row.get(0);
             let tid: String = row.get(1);
-            if old != text {
+            if old != text
+                || row.get::<_, Option<Value>>(3)
+                    != limits.as_ref().map(serde_json::to_value).transpose()?
+            {
                 return Err(crate::SubmissionError::Conflict.into());
             }
             if row.get::<_, String>(2) != "queued" {
                 if s.turn.as_ref().is_none_or(|t| t.id != tid) {
                     s.turn = Some(Turn {
+                        budget: openworker_runtime::budget::State::new(
+                            s.package.limits.as_ref(),
+                            limits.clone(),
+                        )?,
                         observation: None,
                         id: tid,
                         submission_id: key.into(),
@@ -770,6 +791,7 @@ impl Database {
                     session_id: sid.into(),
                     submission_id: key.into(),
                     text: text.into(),
+                    limits: limits.clone(),
                 },
                 "started",
                 Some(epoch),
@@ -797,6 +819,10 @@ impl Database {
         s.history.push(input);
         s.compaction_action = None;
         s.turn = Some(Turn {
+            budget: openworker_runtime::budget::State::new(
+                s.package.limits.as_ref(),
+                limits.clone(),
+            )?,
             observation: None,
             id: turn_id,
             submission_id: key.into(),

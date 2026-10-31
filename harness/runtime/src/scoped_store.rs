@@ -198,6 +198,18 @@ impl StateStore for ScopedStore {
     ) -> Result<(Session, bool, Option<Event>)> {
         self.inner.lock().unwrap().accept(sid, key, text)
     }
+    fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .accept_with_limits(sid, key, text, limits)
+    }
     fn cursor(&self, sid: &str) -> Result<i64> {
         self.inner.lock().unwrap().cursor(sid)
     }

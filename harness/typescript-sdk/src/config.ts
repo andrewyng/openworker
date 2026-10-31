@@ -146,6 +146,7 @@ export function agentWire(a: Agent, depth = 0): object {
     name: a.name,
     description: a.description,
     instructions: a.instructions,
+    limits: a.limits,
     tools: a.tools,
     model: a.model,
     provider: a.provider,

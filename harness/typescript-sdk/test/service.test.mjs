@@ -171,7 +171,8 @@ test("provisioning wait transport errors retain operation identity and admission
   );
 });
 
-test("combined submit preserves alias and idempotency key without two-step creation", async (t) => {
+test("combined submit preserves alias, limits and idempotency without two-step creation", async (t) => {
+  const limits = {maxModelCalls:2,maxOutputTokens:2048,summaryTokens:256};
   let posts = 0;
   const url = await server(t, (q, r) => {
     headers(r);
@@ -198,6 +199,7 @@ test("combined submit preserves alias and idempotency key without two-step creat
         agent: "builder",
         text: "Build it",
         project: "game",
+        limits,
       });
       r.end(
         JSON.stringify({
@@ -215,6 +217,7 @@ test("combined submit preserves alias and idempotency key without two-step creat
   const operation = await service.submit("builder", "Build it", {
     project: "game",
     idempotencyKey: "original",
+    limits,
   });
   assert.equal(operation.runId, "run-one");
   assert.equal(posts, 1);

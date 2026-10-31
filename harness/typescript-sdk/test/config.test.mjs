@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOptions, hostConfig } from "../dist/config.js";
+import { resolveOptions, hostConfig, agentWire } from "../dist/config.js";
 
 test("trusted coworker packages preserve policy and server registration", () => {
   const root = join(tmpdir(), "ow-package-config");
@@ -73,3 +73,5 @@ for (const kind of ["directory", "file", "resources"])
       runtime,
     );
   });
+
+ test("agent budgets retain their typed wire values",()=>{const limits={maxModelCalls:40,maxOutputTokens:64000,summaryTokens:512};const wire=agentWire({id:"builder",instructions:"Build",tools:["coding.read_file"],limits});assert.deepEqual(wire.limits,limits);});

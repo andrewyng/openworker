@@ -59,10 +59,15 @@ pub struct Release {
     pub reviewer_model: Option<openworker_runtime::connections::Choice>,
     #[serde(default)]
     pub model_overrides: Vec<openworker_runtime::connections::Choice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<openworker_runtime::budget::Limits>,
 }
 impl Release {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        if let Some(l) = &self.limits {
+            l.validate()?;
+        }
         ensure!(
             !self.instructions.trim().is_empty()
                 && self.instructions.len() <= 32000
@@ -138,6 +143,8 @@ pub struct Admission {
     pub agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<openworker_runtime::budget::Limits>,
     #[serde(default)]
     pub model: Option<openworker_runtime::connections::Choice>,
     #[serde(default)]
@@ -338,10 +345,10 @@ impl PostgresStore {
                     if !manages && allowed(p, &principals).is_err() {
                         continue;
                     }
-                    if !e.activated
-                        && !(p.role.permits(Action::Publish)
-                            || p.role.permits(Action::Activate)
-                            || p.role.permits(Action::Admin))
+                    if !(e.activated
+                        || p.role.permits(Action::Publish)
+                        || p.role.permits(Action::Activate)
+                        || p.role.permits(Action::Admin))
                     {
                         continue;
                     }
@@ -383,6 +390,13 @@ impl PostgresStore {
             SubmissionError::InvalidRequest
         );
         spec.validate()?;
+        ensure!(
+            input.limits.is_none() || input.initial_message.is_some(),
+            SubmissionError::InvalidRequest
+        );
+        if let Some(l) = &input.limits {
+            l.validate().map_err(|_| SubmissionError::InvalidRequest)?;
+        }
         if let Some(text) = &input.initial_message {
             crate::submissions::validate_id(text, 32000)?;
         }
@@ -873,6 +887,7 @@ impl crate::db::Database {
                 session_id: o.session_id.clone(),
                 submission_id: o.submission_id.clone().expect("initial task identity"),
                 text,
+                limits: input.limits.clone(),
             };
             let receipt = crate::submissions::insert_reserved(
                 &mut tx,

@@ -26,6 +26,7 @@ fn admin(c: &Config) -> postgres::Client {
 }
 fn request(id: &str, text: &str) -> TurnSubmission {
     TurnSubmission {
+        limits: None,
         session_id: "s_queue".into(),
         submission_id: id.into(),
         text: text.into(),
@@ -474,4 +475,53 @@ fn deleted_receipts_do_not_turn_a_duplicate_into_new_work() {
     );
     error(owner.next_turn("s_queue"), SubmissionError::IncompleteState);
     assert_eq!(owner.get("s_queue").unwrap().history.len(), length);
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn turn_limits_survive_queue_and_bind_idempotency() {
+    use openworker_runtime::budget::Limits;
+    let (config, mut owner) = fixture(4);
+    let api = PostgresStore::open(config).unwrap();
+    let mut request = request("limited", "Build only");
+    request.limits = Some(Limits {
+        max_model_calls: 2,
+        max_output_tokens: 2048,
+        summary_tokens: 256,
+    });
+    let receipt = api.submit_turn(request.clone()).unwrap();
+    assert_eq!(
+        api.submit_turn(request.clone()).unwrap().turn_id,
+        receipt.turn_id
+    );
+    let mut changed = request.clone();
+    changed.limits.as_mut().unwrap().max_model_calls = 3;
+    assert!(api.submit_turn(changed).is_err());
+    let queued = owner.next_turn("s_queue").unwrap().unwrap();
+    assert_eq!(queued.limits, request.limits);
+    let (state, fresh, _) = owner
+        .accept_with_limits(
+            "s_queue",
+            &queued.submission_id,
+            &queued.text,
+            queued.limits.clone(),
+        )
+        .unwrap();
+    assert!(fresh);
+    assert_eq!(
+        state.turn.as_ref().unwrap().budget.limits,
+        request.limits.unwrap()
+    );
+    let mut state = state;
+    state.turn.as_mut().unwrap().budget.model_calls = 1;
+    state.turn.as_mut().unwrap().budget.charged_output_tokens = 17;
+    owner
+        .save(&state, "budget_test_checkpoint", json!({}))
+        .unwrap();
+    let copy = owner.get("s_queue").unwrap();
+    assert_eq!(copy.turn.unwrap().budget.model_calls, 1);
+    complete(&mut owner);
+    let (next, fresh, _) = owner.accept("s_queue", "next", "Next task").unwrap();
+    assert!(fresh);
+    assert_eq!(next.turn.unwrap().budget.limits, Limits::default());
 }

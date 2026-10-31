@@ -111,23 +111,6 @@ pub fn runner_executable(bytes: &[u8], backend: crate::execution::Backend) -> Re
     }
 }
 
-#[cfg(test)]
-mod runner_tests {
-    use super::*;
-    #[test]
-    fn runner_validation_uses_execution_location() {
-        use crate::execution::Backend;
-        assert!(runner_executable(b"\x7fELF", Backend::Openshell).is_ok());
-        assert!(runner_executable(b"#!/bin/sh", Backend::Openshell).is_err());
-        assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Openshell).is_err());
-        #[cfg(target_os = "macos")]
-        {
-            assert!(runner_executable(b"\x7fELF", Backend::Off).is_err());
-            assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Off).is_ok());
-        }
-    }
-}
-
 pub fn executable(bytes: &[u8]) -> Result<()> {
     #[cfg(windows)]
     {
@@ -176,4 +159,21 @@ pub fn clean_environment(cmd: &mut std::process::Command, workspace: &Path) {
     cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin")
         .env("LANG", "C.UTF-8");
     cmd.env("HOME", workspace);
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    #[test]
+    fn runner_validation_uses_execution_location() {
+        use crate::execution::Backend;
+        assert!(runner_executable(b"\x7fELF", Backend::Openshell).is_ok());
+        assert!(runner_executable(b"#!/bin/sh", Backend::Openshell).is_err());
+        assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Openshell).is_err());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(runner_executable(b"\x7fELF", Backend::Off).is_err());
+            assert!(runner_executable(b"\xcf\xfa\xed\xfe", Backend::Off).is_ok());
+        }
+    }
 }

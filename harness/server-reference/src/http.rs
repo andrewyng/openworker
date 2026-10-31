@@ -391,6 +391,8 @@ pub(crate) async fn session_page(
 struct Turn {
     submission_id: String,
     text: String,
+    #[serde(default)]
+    limits: Option<openworker_runtime::budget::Limits>,
 }
 async fn submit(
     Extension(app): Extension<App>,
@@ -403,6 +405,7 @@ async fn submit(
             session_id: sid,
             submission_id: body.submission_id,
             text: body.text,
+            limits: body.limits,
         })?),
     )
         .into_response())

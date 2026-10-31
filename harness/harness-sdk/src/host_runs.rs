@@ -94,6 +94,10 @@ impl Host {
         let sid = text(p, "session_id")?;
         let submission = text(p, "submission_id")?;
         let input = openworker_runtime::runtime::text(p, "text", 32000)?;
+        if let Some(value) = p.get("limits").filter(|v| !v.is_null()) {
+            let limits: openworker_runtime::budget::Limits = serde_json::from_value(value.clone())?;
+            limits.validate()?;
+        }
         let existing = self
             .store
             .lock()
@@ -101,7 +105,7 @@ impl Host {
             .agent_run(sid, Some(submission))?;
         let mut record = if let Some(record) = existing {
             ensure!(
-                record["text"] == input,
+                record["text"] == input && record["limits"] == p["limits"],
                 "Submission ID reused with different text"
             );
             if !record["turn"].is_null() || record.get("result").is_some() {
@@ -131,8 +135,7 @@ impl Host {
             for (s, _) in &members {
                 cursors.insert(s.clone(), json!(self.store.lock().unwrap().cursor(s)?));
             }
-            let record =
-                json!({"submission_id":submission,"text":input,"cursors":cursors,"turn":null});
+            let record = json!({"submission_id":submission,"text":input,"limits":p["limits"],"cursors":cursors,"turn":null});
             // The original cursors and input survive even a lost start response.
             self.save_run(sid, &record)?;
             record
@@ -140,7 +143,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"]}),
             )
             .await;
         match started {
@@ -257,7 +260,8 @@ impl Host {
             p.as_object().is_some_and(|p| p.keys().all(|k| [
                 "session_id",
                 "submission_id",
-                "input"
+                "input",
+                "limits"
             ]
             .contains(&k.as_str()))),
             "Unknown send options"
@@ -281,8 +285,12 @@ impl Host {
             fields.keys().all(|k| allowed.contains(&k.as_str())),
             "Mixed or unknown input fields"
         );
+        ensure!(
+            kind == "message" || p.get("limits").is_none_or(Value::is_null),
+            "Limits apply only to new message turns"
+        );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?})).await;
+            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"]})).await;
         }
         let target = input
             .get("target_session_id")

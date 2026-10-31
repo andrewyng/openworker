@@ -362,3 +362,45 @@ async fn raw_protocol_over_a_child_process() {
     );
     c.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_defaults_and_per_turn_budget_override_reach_the_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let h = harness(
+        &root,
+        vec![Agent::new("limited")
+            .instructions("Use the probe when asked.")
+            .tool("sdk.probe")
+            .approvals(Approvals::Never)
+            .limits(TurnLimits {
+                max_model_calls: 1,
+                ..Default::default()
+            })],
+    )
+    .await;
+    let s = h.session("limited", workspace(&root)).await.unwrap();
+    let first = within(s.send(probe_plan())).await.unwrap();
+    let result = within(first.result()).await.unwrap();
+    assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(s.state().await.unwrap()["last_outcome"], "completed");
+    assert!(!root.join("work/proof.txt").exists());
+    let next = within(s.send_with_limits(
+        &probe_plan(),
+        TurnLimits {
+            max_model_calls: 4,
+            ..Default::default()
+        },
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        within(next.result()).await.unwrap().status,
+        RunStatus::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("work/proof.txt")).unwrap(),
+        "called\n"
+    );
+    h.shutdown().await.unwrap();
+}

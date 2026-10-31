@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "date": "2026-10-30",
+  "base": "019e6b68",
+  "integration_branch": "openworker-harness-sdk",
+  "cloud_provisioning": false,
+  "gcp_budget_usd": 100,
+  "local_only": true,
+  "model": "claude-sonnet-5",
+  "images": {
+    "image": "docker.io/library/openworker-service@sha256:fafa2d974febfe535a704f7614cf3f959a1ce9ddafa1542cafe482546074cbc1",
+    "runnerImage": "docker.io/library/openworker-runner@sha256:89c7522475bb16462a1dc236490d3b674e828c565ac6992b606114dbfbae59f7"
+  },
+  "results": {
+    "start": {
+      "main_requests": 24,
+      "executed_tools": 20,
+      "validation_errors": 2,
+      "compactions": 0
+    },
+    "followup": {
+      "main_requests": 11,
+      "executed_tools": 10,
+      "validation_errors": 1,
+      "compactions": 0
+    },
+    "recover": {
+      "main_requests": 55,
+      "executed_tools": 53,
+      "validation_errors": 1,
+      "compactions": 2
+    },
+    "budget": {
+      "main_requests": 2,
+      "executed_tools": 0,
+      "validation_errors": 0,
+      "compactions": 0
+    },
+    "recovery": {
+      "main_requests": 6,
+      "executed_tools": 4,
+      "validation_errors": 0,
+      "compactions": 0
+    },
+    "visual-fix": {
+      "main_requests": 13,
+      "executed_tools": 12,
+      "validation_errors": 0,
+      "compactions": 0
+    }
+  },
+  "generated_tests": {
+    "initial_passed": 28,
+    "final_independently_passed": 45
+  },
+  "process": {
+    "same_handle_across_turns_and_worker_replacement": true,
+    "same_os_pid": true,
+    "http_file_read_after_attachment_close": true,
+    "automatic_launch_replay": false,
+    "control_sentinel_readable_without_openshell": true,
+    "sentinel_denied_by_openshell": "EACCES",
+    "model_key_in_tool_env": false,
+    "budget_proof_file_created": false
+  },
+  "recorded_operations": {
+    "budget": {
+      "environment.operation": 1,
+      "model.requested": 2,
+      "model.attempt": 2,
+      "turn.budget_exceeded": 1,
+      "agent.execute": 1
+    },
+    "recovery": {
+      "environment.operation": 1,
+      "model.requested": 6,
+      "model.attempt": 6,
+      "policy.review": 5,
+      "tool.execute": 4,
+      "process.started": 1,
+      "process.stopped": 1,
+      "agent.execute": 1
+    }
+  },
+  "visual": {
+    "live_openshell_forward": true,
+    "new_task_survives_reload_and_agent_update": true,
+    "due_date_and_inline_status": true,
+    "hidden_view_issue_fixed_by_agent": true
+  },
+  "failures_retained": [
+    "timed-out standalone bootstrap reconciled without repeated create; gateway rollback confirmed",
+    "pre-model service admission ended as failed after NotFound and no created session",
+    "follow-up interrupted after connection loss; new explicit recovery first inspected state"
+  ],
+  "limits": {
+    "working_model_calls": 1,
+    "additional_summary_calls": 1,
+    "summary_inside_total_output_budget": true,
+    "following_turn_uses_agent_defaults": true
+  },
+  "recording_note": "First build kept its durable journal but recording was not enabled. Follow-up/recovery/budget/lifecycle probes were recorded after explicit migration and configuration. No new Langfuse export configured.",
+  "scope_note": "Same-image worker replacement and local ARM64 OpenShell qualification; not a physical-node or runner-profile upgrade test.",
+  "verification": {
+    "linux_runtime": 71,
+    "linux_sdk": 13,
+    "linux_coding_core_permissions": 32,
+    "linux_recording_export": 23,
+    "linux_approval_resume_telemetry": 1,
+    "linux_total_passed": 140,
+    "native_runtime": 70,
+    "native_sdk_suite": "passed",
+    "postgres": 28,
+    "typescript_config_transport": 18,
+    "typescript_service": 8,
+    "helm_local_setup": 11,
+    "linux_and_native_clippy_all_targets": "passed",
+    "ignored": "Explicit PostgreSQL SDK/recording and opt-in HTTP cases; no ignored case counted as passed."
+  },
+  "cleanup": {
+    "standalone_probe1": "gateway rollback confirmed",
+    "standalone_probe2": "late-created original object reconciled and deleted by saved identity",
+    "standalone_probe3": "verified then explicitly deleted",
+    "main_app": "retained with original bounded server lifetime"
+  }
+}

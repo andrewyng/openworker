@@ -66,6 +66,7 @@ fn request(actor: &str, id: &str, env: &str) -> SessionCreation {
 }
 fn submit(sid: &str, id: &str) -> TurnSubmission {
     TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: id.into(),
         text: "private prompt marker".into(),

@@ -34,6 +34,7 @@ fn version_catalog_preserves_identity_counts_idle_sessions_and_expires_presence(
     }
     store
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: "waiting".into(),
             submission_id: "one".into(),
             text: "SECRET".into(),
@@ -45,6 +46,7 @@ fn version_catalog_preserves_identity_counts_idle_sessions_and_expires_presence(
     store.save(&waiting, "checkpoint", json!({})).unwrap();
     store
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: "waiting".into(),
             submission_id: "two".into(),
             text: "SECRET".into(),

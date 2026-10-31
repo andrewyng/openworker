@@ -59,6 +59,7 @@ pub(super) fn submit(
     id: &str,
 ) -> openworker_store_postgres::SubmissionReceipt {
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: id.into(),
         text: plan("write_gate"),

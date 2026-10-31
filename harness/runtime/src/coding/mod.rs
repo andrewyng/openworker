@@ -1,6 +1,8 @@
 //! First-party coding tools. Runs in the session tool runner, never the SDK host.
 mod files;
 mod git;
+#[cfg(target_os = "linux")]
+pub mod manager;
 mod patch;
 mod processes;
 mod web;
@@ -32,8 +34,8 @@ pub fn schemas() -> Vec<Value> {
         schema("list_files", "List workspace files in sorted order with glob filtering and gitignore support. No symlink traversal. Narrow the directory when truncated.", json!({"path":{"type":"string"},"include_hidden":{"type":"boolean"},"glob":{"type":"string"},"recursive":{"type":"boolean"},"respect_gitignore":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":1000}}), &[]),
         schema("search_files", "Search UTF-8 files using literal text or bounded regular expressions, glob filtering and gitignore support. Returns file/line matches. No symlink traversal.", json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},"case_sensitive":{"type":"boolean"},"include_hidden":{"type":"boolean"},"glob":{"type":"string"},"recursive":{"type":"boolean"},"respect_gitignore":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}}), &["query"]),
         schema("run_shell", "Run a command in a fresh shell in the workspace. Returns after yield_ms (default 1000, max 10000); if still running, use the returned process_id with process_status/logs/stop. timeout_seconds defaults to 60, maximum 86400. Cwd/environment changes do not persist between calls. Isolation is supplied by the selected execution backend.", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400},"yield_ms":{"type":"integer","minimum":0,"maximum":10000}}), &["command"]),
-        schema("process_start", "Start a managed server/build in the workspace and return its opaque process_id. Survives turn completion, not runner shutdown/recovery. Default lifetime 3600 seconds; maximum 86400. No automatic restart. Linux only in this release.", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400}}), &["command"]),
-        schema("process_status", "Get status/exit code of a process owned by this session runner. Does not accept OS PIDs.", json!({"process_id":{"type":"string"}}), &["process_id"]),
+        schema("process_start", "Start a managed server/build in the workspace and return its opaque process_id. Owned by the workspace process manager across turn/tool connections; not sandbox or manager crashes. Default lifetime 3600 seconds; maximum 86400. No automatic restart. Linux only in this release.", json!({"command":{"type":"string"},"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400}}), &["command"]),
+        schema("process_status", "Get status/exit code of a process owned by this workspace manager generation. Does not accept OS PIDs.", json!({"process_id":{"type":"string"}}), &["process_id"]),
         schema("process_logs", "Read the bounded stdout/stderr tails of an owned process; truncation is reported. This is a snapshot, not a durable log archive.", json!({"process_id":{"type":"string"}}), &["process_id"]),
         schema("process_stop", "Stop an owned process group. Never restarts it or targets another session's process.", json!({"process_id":{"type":"string"}}), &["process_id"]),
         schema("apply_patch", "Apply a bounded Codex-style or unified patch. All hunks are validated before writing; exact matching only. Supports add/update/delete, not moves, binary diffs or unified no-newline markers. Atomic per file, not crash-atomic across files.", json!({"patch":{"type":"string"},"expected_hashes":{"type":"object","additionalProperties":{"type":"string"},"maxProperties":32}}), &["patch"]),
@@ -47,6 +49,8 @@ pub fn schemas() -> Vec<Value> {
 #[derive(Default)]
 pub struct CodingTools {
     processes: processes::Processes,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    environment_owned: bool,
 }
 impl CodingTools {
     pub async fn call(&mut self, root: &Path, name: &str, args: &Value) -> Result<Value> {
@@ -60,6 +64,10 @@ impl CodingTools {
             "git_status" | "git_diff" | "git_log" => git::call(root, name, args).await,
             "web_fetch" => web::fetch(args).await,
             "run_shell" | "process_start" | "process_status" | "process_logs" | "process_stop" => {
+                #[cfg(target_os = "linux")]
+                if self.environment_owned {
+                    return manager::call(root, name, args).await;
+                }
                 self.processes.call(root, name, args).await
             }
             _ => files::call(root, name, args),
@@ -71,8 +79,14 @@ impl CodingTools {
 }
 
 pub async fn serve(root: &Path) -> Result<()> {
+    serve_scoped(root, false).await
+}
+pub async fn serve_scoped(root: &Path, environment_owned: bool) -> Result<()> {
     let root = root.canonicalize()?;
-    let mut tools = CodingTools::default();
+    let mut tools = CodingTools {
+        environment_owned: environment_owned && cfg!(target_os = "linux"),
+        ..Default::default()
+    };
     let mut input = BufReader::new(tokio::io::stdin());
     let mut output = tokio::io::stdout();
     let mut initialized = false;
@@ -88,7 +102,7 @@ pub async fn serve(root: &Path) -> Result<()> {
                 "initialize" => { initialized = true; json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"openworker-coding","version":"1"}}) },
                 "tools/list" if initialized => json!({"tools":schemas()}),
                 "tools/call" if initialized => match tools.call(&root, v["params"]["name"].as_str().unwrap_or(""), &v["params"]["arguments"]).await {
-                    Ok(data) => json!({"content":[{"type":"text","text":data.to_string()}],"isError":false}),
+                    Ok(data) => json!({"content":[{"type":"text","text":data.to_string()}],"isError":data["isError"]==true}),
                     Err(e) => json!({"content":[{"type":"text","text":e.to_string()}],"isError":true}),
                 },
                 _ => {

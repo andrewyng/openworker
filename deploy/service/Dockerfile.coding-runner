@@ -2,8 +2,11 @@
 # openworker executable. Never copy a host home, key file, or repository .env.
 FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git python3 && \
+    ca-certificates curl git python3 procps && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /sandbox && chown 1000:1000 /sandbox
+# Public read-control fixture: ordinary uid 10001 can read it in Docker, while
+# the qualified OpenShell policy grants /opt/openworker, not this directory.
+RUN mkdir -p /opt/probe-denied && printf 'nonsecret qualification sentinel\n' > /opt/probe-denied/sentinel && chmod 0444 /opt/probe-denied/sentinel
 COPY --chmod=0555 openworker /opt/openworker/openworker
 # OpenShell supplies isolation and launches the session's tool process. This
 # image supplies developer programs; installing them grants no network permission.

@@ -253,3 +253,10 @@ reattachment, no repeated uncertain effects, transient access revocation, bounde
 restart exhaustion and in-flight outcome uncertainty. Test/debug binaries have
 large hashed identities: Linux container runs use the normal 60-second request
 timeout and serial test execution. Mac host compilation is not a native Mac port.
+
+### Turn limits
+
+Set an agent default with `.limits(TurnLimits { ..Default::default() })`; use
+`session.send_with_limits(text, limits)` for one new message. Resuming keeps the
+original limits and consumption. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
+for the bounded final-summary reserve and sandbox-owned process tools.

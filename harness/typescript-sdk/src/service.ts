@@ -1,6 +1,6 @@
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
-import { type Json, type JournalEvent, type RunEvent } from "./types.js";
+import { type Json, type JournalEvent, type RunEvent, type TurnLimits } from "./types.js";
 
 export interface ServiceOptions {
   url: string;
@@ -26,6 +26,7 @@ export interface RuntimeProfile {
   autoSkipQuestions?: boolean;
 }
 export interface AgentRelease {
+  limits?: TurnLimits;
   id: string;
   instructions: string;
   tools: string[];
@@ -59,6 +60,7 @@ export interface ServiceOperation {
   error: string | null;
 }
 export interface ServiceSessionOptions {
+  limits?: TurnLimits;
   environmentId?: string;
   runtimeProfile?: string;
   project?: string;
@@ -588,7 +590,7 @@ export class ServiceAgent {
     public readonly id: string,
   ) {}
   async newSession(
-    options: ServiceSessionOptions = {},
+    options: Omit<ServiceSessionOptions, "limits"> = {},
   ): Promise<ServiceSession> {
     if (
       Object.keys(options).some(
@@ -660,13 +662,13 @@ export class ServiceSession {
   }
   async send(
     text: string,
-    options: { idempotencyKey?: string } = {},
+    options: { idempotencyKey?: string; limits?: TurnLimits } = {},
   ): Promise<ServiceRun> {
     const key = options.idempotencyKey ?? randomUUID();
     const r = await this.service.json(
       "POST",
       `/v1/sessions/${segment(this.id)}/turns`,
-      { text },
+      { text, limits: options.limits },
       key,
     );
     return new ServiceRun(this.service, this.ref, r.submissionId, r.runId);

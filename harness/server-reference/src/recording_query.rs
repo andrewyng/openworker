@@ -53,7 +53,7 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
     )
 }
 pub(crate) fn action(method: &str, path: &str) -> Option<Action> {
-    authority(method, path).then(|| {
+    authority(method, path).then_some({
         if matches!(path, "/observability/health" | "/v1/observability/health") {
             Action::Admin
         } else {

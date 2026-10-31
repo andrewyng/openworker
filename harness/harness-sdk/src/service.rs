@@ -146,6 +146,8 @@ pub struct SessionOptions {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<openworker_runtime::connections::Choice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<openworker_runtime::budget::Limits>,
 }
 pub type Events = Pin<Box<dyn Stream<Item = Result<openworker_runtime::store::Event>> + Send>>;
 fn id(value: &str) -> Result<&str> {
@@ -405,7 +407,8 @@ impl Service {
                         if !r.headers().get("content-type").and_then(|v|v.to_str().ok()).is_some_and(|s|s.contains("text/event-stream")){Err(error("invalid_event_stream"))?;}
                         let mut bytes=r.bytes_stream();let mut decoder=Sse::default();
                         loop{let chunk=tokio::select!{_=service.0.stop.cancelled()=>None,c=bytes.next()=>c};let Some(Ok(chunk))=chunk else{break};
-                            let decoded=match decoder.push(&chunk){Ok(v)=>v,Err(e) if e.code=="stream_reconcile"=>break,Err(e)=>Err(e)?};for event in decoded{if event.session_id!=sid{Err(error("invalid_event"))?;}if event.event_id<=after{continue;}after=event.event_id;failures=0;yield event;}
+                            let decoded=match decoder.push(&chunk){Ok(v)=>v,Err(e) if e.code=="stream_reconcile"=>break,Err(e)=>Err(e)?};for event in decoded{if event.session_id!=sid{Err(error("invalid_event"))?;}
+                            if event.event_id<=after{continue;}after=event.event_id;failures=0;yield event;}
                         }
                     }
                     Err(e) if e.code=="unavailable"=>{},
@@ -431,6 +434,9 @@ impl Agent {
         .await
     }
     pub async fn admit_session(&self, options: SessionOptions, key: &str) -> Result<Value> {
+        if options.limits.is_some() {
+            return Err(error("turn_limits_require_message"));
+        }
         if options.environment_id.is_some() && options.runtime_profile.is_some() {
             return Err(error("conflicting_environment_options"));
         }
@@ -626,13 +632,28 @@ impl Session {
             .await
     }
     pub async fn send(&self, text: &str, key: Option<&str>) -> Result<Run> {
+        self.send_with_limits(text, None, key).await
+    }
+    pub async fn send_with_limits(
+        &self,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        key: Option<&str>,
+    ) -> Result<Run> {
+        let mut body = json!({"text":text});
+        if let Some(limits) = limits {
+            limits
+                .validate()
+                .map_err(|_| error("invalid_turn_limits"))?;
+            body["limits"] = json!(limits);
+        }
         let generated = openworker_runtime::id("idem");
         let r = self
             .service
             .json(
                 "POST",
                 &format!("/v1/sessions/{}/turns", id(self.id())?),
-                Some(json!({"text":text})),
+                Some(body),
                 Some(key.unwrap_or(&generated)),
             )
             .await?;
@@ -819,6 +840,7 @@ impl Sse {
 pub trait ConnectTarget {
     type Connected;
     type Error;
+    #[allow(clippy::type_complexity)] // Associated output/error types support both connection targets.
     fn connect(
         self,
     ) -> Pin<

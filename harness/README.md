@@ -41,6 +41,8 @@ executable from that same checkout. Source manifests remain development packages
   REST/SSE, PostgreSQL, workers and deployment references.
 - **[Coding tools and unattended sessions](../docs/harness/CODING-TOOLS.md)** —
   file editing/search, managed preview processes and auto-skip questions.
+- **[Turn limits and process ownership](../docs/harness/TURN-LIMITS-AND-PROCESSES.md)** —
+  agent defaults, per-turn budgets, correctable arguments and OpenShell server lifetime.
 - **[Memory and scheduling](../docs/harness/ASSISTANT-TOOLS.md)** — opt-in durable
   learner memory and scheduled work on SQLite or PostgreSQL.
 - **[Python/Rust tool survey](../docs/harness/TOOL-PARITY.md)** — remaining parity gaps.

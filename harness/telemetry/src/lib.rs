@@ -219,6 +219,11 @@ pub enum Operation {
     QuestionResolved,
     Cancellation,
     UnknownOutcome,
+    BudgetExceeded,
+    ToolValidationFailed,
+    ProcessStarted,
+    ProcessStopped,
+    ProcessStale,
 }
 impl Operation {
     /// Fixed hints are safe even when identifying metadata/content is off.
@@ -242,7 +247,12 @@ impl Operation {
             | Self::QuestionRequested
             | Self::QuestionResolved
             | Self::Cancellation
-            | Self::UnknownOutcome => "event",
+            | Self::UnknownOutcome
+            | Self::BudgetExceeded
+            | Self::ToolValidationFailed
+            | Self::ProcessStarted
+            | Self::ProcessStopped
+            | Self::ProcessStale => "event",
             _ => "span",
         }
     }
@@ -270,6 +280,11 @@ impl Operation {
             Self::QuestionResolved => "question.resolved",
             Self::Cancellation => "turn.cancellation",
             Self::UnknownOutcome => "tool.unknown_outcome",
+            Self::BudgetExceeded => "turn.budget_exceeded",
+            Self::ToolValidationFailed => "tool.validation_failed",
+            Self::ProcessStarted => "process.started",
+            Self::ProcessStopped => "process.stopped",
+            Self::ProcessStale => "process.stale",
         }
     }
 }
@@ -614,6 +629,7 @@ impl Telemetry {
     }
     /// A completed cross-process wait uses durable wall-clock endpoints. Clock
     /// skew remains unknown, never a fabricated zero-duration interval.
+    #[allow(clippy::too_many_arguments)] // Durable identity plus both clock endpoints.
     pub fn interval(
         &self,
         op: Operation,

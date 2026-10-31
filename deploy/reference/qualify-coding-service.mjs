@@ -4,17 +4,18 @@ import assert from "node:assert/strict";
 import { readFile, writeFile, appendFile, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { Harness } from "../../harness/typescript-sdk/dist/index.js";
-const [directory, mode = "start"] = process.argv.slice(2);
+const [directory, mode = "start", attempt = "1"] = process.argv.slice(2);
+assert(/^[1-9][0-9]?$/.test(attempt), "Explicit qualification attempt 1..99 required");
 assert(
-  directory && ["start", "observe", "followup"].includes(mode),
+  directory && ["start", "observe", "followup", "recover"].includes(mode),
   "Usage: qualify-coding-service.mjs STATE start|observe|followup",
 );
 const root = resolve(directory),
-  state = join(root, "acceptance");
+  state = join(root, attempt === "1" ? "acceptance" : `acceptance-${attempt}`);
 const m = JSON.parse(await readFile(join(root, "service/kubernetes.json")));
 assert(
   m.context.startsWith("kind-") &&
-    m.namespace === "ow-service-m4-coding20261030",
+    /^ow-service-m4-coding[0-9]{8}$/.test(m.namespace),
   "Explicit owned local coding fixture required",
 );
 await mkdir(state, { recursive: true, mode: 0o700 });
@@ -42,7 +43,7 @@ try {
     await save("submission-intent.json", {
       serviceId: m.id,
       agent: "daylight@1",
-      idempotencyKey: "daylight-build-1",
+      idempotencyKey: `daylight-build-${attempt}`,
       task,
     });
     await service.registerRuntimeProfile(
@@ -64,6 +65,7 @@ try {
     await service.deployAgent(
       {
         id: "daylight@1",
+        limits: {maxModelCalls:100,maxOutputTokens:128000,summaryTokens:512},
         instructions:
           "Build and verify the requested project only in its assigned OpenShell workspace. Use tools rather than describing hypothetical work. Inspect results and correct errors. Do not access host credentials or broaden sandbox policy.",
         tools: [
@@ -95,7 +97,7 @@ try {
     const op = await service.submit("daylight", task, {
       project: "daylight",
       name: "Daylight web-app build",
-      idempotencyKey: "daylight-build-1",
+      idempotencyKey: `daylight-build-${attempt}`,
     });
     await save("admission.json", op);
     console.log(
@@ -114,17 +116,20 @@ try {
   } else {
     const ref = JSON.parse(await readFile(join(state, "session.json")));
     session = await service.resume(ref);
-    if (mode === "followup") {
-      const request =
+    if (mode === "followup" || mode === "recover") {
+      if (mode === "recover") {
+        assert.equal(JSON.parse(await readFile(join(state,"followup-result.json"))).status,"failed","Inspect the original failed follow-up first");
+      }
+      const request = (mode === "recover" ? "The previous follow-up was interrupted during a run_shell call after some edits. Its outcome is unknown. Inspect existing files, process status/logs and current test results before deciding what remains; do not blindly repeat an uncertain action. The saved app server remains live and must not be restarted merely because the worker changed. Finish only the incomplete work. " : "") +
         "Improve Daylight with a compact table view toggle and due dates including overdue indicators. Preserve existing data. Add migration/default handling for older saved tasks and meaningful tests. Re-run the full test suite, check the existing managed server before deciding whether it needs restarting, and verify the HTTP routes. Keep the design consistent. Do not install packages or expose credentials. Update README and report actual results.";
-      await save("followup-intent.json", {
+      await save(mode+"-intent.json", {
         text: request,
-        idempotencyKey: "daylight-followup-1",
+        idempotencyKey: `daylight-${mode}-${attempt}`,
       });
       run = await session.send(request, {
-        idempotencyKey: "daylight-followup-1",
+        idempotencyKey: `daylight-${mode}-${attempt}`,
       });
-      await save("followup-run.json", {
+      await save(mode+"-run.json", {
         runId: run.id,
         submissionId: run.submissionId,
       });

@@ -83,6 +83,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     manifest.name = r.id.clone();
     manifest.version = release.digest.clone();
     manifest.default_model = r.default_model;
+    manifest.limits = r.limits;
     manifest.memory_scope = None;
     let mut tools = base.tools.clone();
     ensure!(
@@ -322,7 +323,8 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         let c=release_config(config,&rel,&profile)?;let rt=c.api_runtime(&format!("admit-{}",&op.id[3..19]),store.clone())?;
         let input=store.service_input(&op.id)?;let r:Release=serde_json::from_value(rel.definition.clone())?;let p:Profile=serde_json::from_value(profile.definition.clone())?;
         let mut parameters=json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":env.id,"name":input.name.unwrap_or(op.release_id),"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
-        if let Some(model)=input.model{parameters["model"]=json!(model);}if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
+        if let Some(model)=input.model{parameters["model"]=json!(model);}
+        if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
         let configured=store.service_operation_configuration(&op.id)?;parameters["compaction"]=json!(configured.configuration.compaction);
         let session=rt.prepare_session(parameters)?;
         let service=config.service.as_ref().context("Service config required")?;
@@ -419,6 +421,7 @@ pub async fn worker(
     )
     .await
 }
+#[allow(clippy::too_many_arguments)] // Worker resource and shutdown ownership are explicit.
 pub async fn worker_with_options(
     config: Config,
     store: PostgresStore,
