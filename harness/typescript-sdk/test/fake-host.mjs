@@ -60,6 +60,12 @@ for await (const line of lines) {
     );
   else if (method === "run/cancel" || method === "agent/close")
     reply(id, { errors: { worker: "busy" } });
+  else if (method === "session/send") {
+    // Dynamic team membership belongs to the host. This fixture has only s.
+    if (params.input?.target_session_id !== "s")
+      process.stdout.write(JSON.stringify({jsonrpc:"2.0",id,error:{code:-32602,message:"Target is not a session member"}})+"\n");
+    else reply(id, {});
+  }
   else if (method === "session/attach") {
     // First process dies during a safe read; the replacement observes the marker.
     if (params.session_id === "crash-once") {

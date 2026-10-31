@@ -179,6 +179,12 @@ fn revisions_ownership_and_recovery_are_session_scoped() {
     assert!(b.get("s_a").is_err());
     let stale = a.get("s_a").unwrap();
     a.append_event("s_a", "progress", json!({})).unwrap();
+    // Journal-only progress changes the event cursor, not canonical metadata.
+    // A real metadata write must still invalidate the old snapshot.
+    let mut updated = a.get("s_a").unwrap();
+    assert_eq!(updated.storage_revision, stale.storage_revision);
+    updated.name = "Renamed".into();
+    a.save(&updated, "renamed", json!({})).unwrap();
     assert!(a.save(&stale, "stale", json!({})).is_err());
     a.accept("s_a", "a", "Hello").unwrap();
     b.accept("s_b", "b", "Other").unwrap();

@@ -113,6 +113,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::pools::migrate(&mut tx)?;
     crate::teams::migrate(&mut tx)?;
     crate::assistant::migrate(&mut tx)?;
+    crate::agent_team::migrate(&mut tx)?;
     crate::service::migrate(&mut tx)?;
     crate::service_catalog::migrate(&mut tx)?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS sdk_host_mode(singleton BOOLEAN PRIMARY KEY CHECK(singleton), mode TEXT NOT NULL CHECK(mode='sdk'))")?;
@@ -236,6 +237,32 @@ pub(crate) fn event(
     kind: &str,
     data: Value,
 ) -> Result<Event> {
+    write_event(tx, s, owner, epoch, kind, data, true)
+}
+/// Progress/journal receipts do not change canonical session state. Preserve the
+/// revision so an unchanged metadata snapshot is not invalidated by a reader's
+/// run receipt or another profile's roster reconciliation. Ownership is still
+/// checked at commit, and every event gets a new serialized journal cursor.
+pub(crate) fn progress_event(
+    tx: &mut Transaction<'_>,
+    s: &Session,
+    owner: &str,
+    epoch: i64,
+    kind: &str,
+    data: Value,
+) -> Result<Event> {
+    write_event(tx, s, owner, epoch, kind, data, false)
+}
+#[allow(clippy::too_many_arguments)] // One fenced writer; canonical state and progress share cursor/audit invariants.
+fn write_event(
+    tx: &mut Transaction<'_>,
+    s: &Session,
+    owner: &str,
+    epoch: i64,
+    kind: &str,
+    data: Value,
+    canonical: bool,
+) -> Result<Event> {
     if kind.len() > 100 || data.to_string().len() > 1024 * 1024 {
         bail!("Event exceeds storage limit");
     }
@@ -243,7 +270,7 @@ pub(crate) fn event(
     crate::team_execution::check(tx, s, kind)?;
     // The row lock serializes cursor allocation and ownership transfer. A final
     // database-time check guards each commit, never a cached local lease alone.
-    let row=tx.query_opt("UPDATE sessions SET cursor=cursor+1,revision=revision+1 WHERE id=$1 AND owner=$2 AND epoch=$3 AND expires>clock_timestamp() AND revision=$4 RETURNING cursor", &[&s.id,&owner,&epoch,&s.storage_revision])?.context("Session ownership or revision changed before commit")?;
+    let row=tx.query_opt("UPDATE sessions SET cursor=cursor+1,revision=revision+CASE WHEN $5 THEN 1 ELSE 0 END WHERE id=$1 AND owner=$2 AND epoch=$3 AND expires>clock_timestamp() AND revision=$4 RETURNING cursor", &[&s.id,&owner,&epoch,&s.storage_revision,&canonical])?.context("Session ownership or revision changed before commit")?;
     let cursor: i64 = row.get(0);
     let tid = s.turn.as_ref().map(|t| t.id.clone());
     tx.execute(
@@ -367,7 +394,13 @@ impl Database {
                OR (COALESCE(data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated')
                    AND NOT COALESCE((data->>'provider_blocked')::boolean,FALSE)
                    AND EXISTS(SELECT 1 FROM submissions q WHERE q.session_id=s.id AND q.status='queued'))
-               OR COALESCE(data->'turn'->>'status','idle') IN ('accepted','running','executing','cancelling'))
+               OR (s.data->'agent_team'->>'team_id' IS NOT NULL AND NOT COALESCE((s.data->>'provider_blocked')::boolean,FALSE)
+                  AND NOT EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND (t.data->>'stopped')::boolean)
+                  AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed') OR s.data->'turn'->>'status'='waiting_agents')
+                  AND (EXISTS(SELECT 1 FROM agent_team_messages m WHERE m.team=s.data->'agent_team'->>'team_id' AND m.seq>COALESCE((s.data->'agent_team'->>'inbox_cursor')::bigint,0) AND m.data->'recipients' ? (s.data->'agent_team'->>'agent_id'))
+                       OR (s.data->'turn'->>'status'='waiting_agents' AND ((s.data->'agent_team'->'waiting'->>'deadline_ms')::bigint<=extract(epoch FROM clock_timestamp())*1000
+                           OR EXISTS(SELECT 1 FROM agent_teams t,jsonb_each(t.data->'roster'->'instances') i WHERE t.id=s.data->'agent_team'->>'team_id' AND (s.data->'agent_team'->'waiting'->'agent_ids') ? i.key AND (i.value->>'phase'='closed' OR EXISTS(SELECT 1 FROM sessions c WHERE c.id=i.value->>'session_id' AND c.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated'))))))))
+               OR COALESCE(data->'turn'->>'status','idle') IN ('accepted','running','executing','cancelling','resuming_agents'))
              ORDER BY expires,created LIMIT 1 FOR UPDATE SKIP LOCKED",
             &[&selector.coworker,&selector.bundle_digest,&selector.backend.name(),&selector.scripted,&selector.environment_provider.as_deref().unwrap_or(""),&selector.fallback_model,&selector.environment_identity.as_deref().unwrap_or(""),&selector.environment_profile.as_deref().unwrap_or(""),&selector.model_provider.name(),&json!(selector.model_connections)])?;
         let Some(row) = row else {
@@ -455,7 +488,7 @@ impl Database {
         let epoch = self.epoch(sid)?;
         let mut tx = self.client.transaction()?;
         let s = locked(&mut tx, sid, Some((&self.owner, epoch)))?;
-        let e = event(&mut tx, &s, &self.owner, epoch, kind, data)?;
+        let e = progress_event(&mut tx, &s, &self.owner, epoch, kind, data)?;
         tx.commit()?;
         Ok(e)
     }
@@ -818,6 +851,9 @@ impl Database {
         }
         s.history.push(input);
         s.compaction_action = None;
+        if let Some(member) = &mut s.agent_team {
+            member.waiting = None;
+        }
         s.turn = Some(Turn {
             budget: openworker_runtime::budget::State::new(
                 s.package.limits.as_ref(),
@@ -861,7 +897,9 @@ impl Database {
             let mut changed = false;
             let mut unknown = 0;
             if let Some(t) = &mut s.turn {
-                if !terminal(&t.status) {
+                if !terminal(&t.status)
+                    && !matches!(t.status.as_str(), "waiting_agents" | "resuming_agents")
+                {
                     let pending = s
                         .interactions
                         .iter()

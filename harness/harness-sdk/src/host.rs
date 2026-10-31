@@ -551,7 +551,148 @@ impl Host {
             self.store.lock().unwrap().team_cancel_settled(&sid, &tid)?;
         }
         for s in sessions {
+            if s.closed {
+                continue;
+            }
             let rt = self.runtime(&s.coworker)?;
+            if let Some(member) = &s.agent_team {
+                if self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .agent_team(&s.id, "snapshot", &json!({}), None)?["stopped"]
+                    == true
+                {
+                    // The durable team stop is an outbox, not just an admission
+                    // flag. Reconcile every active member after response loss or
+                    // host restart, including parked children. Cancelling only
+                    // the lead would leave a running child behind.
+                    if let Some(turn) = &s.turn {
+                        if !terminal(&turn.status) && turn.status != "cancelling" {
+                            rt.dispatch(
+                                "turn/cancel",
+                                json!({"session_id":s.id,"turn_id":turn.id}),
+                            )
+                            .await?;
+                        }
+                    }
+                    continue;
+                }
+
+                if !rt.is_busy(&s.id) && rt.has_capacity() && rt.model_credentials_ready(&s) {
+                    if s.turn
+                        .as_ref()
+                        .is_some_and(|t| t.status == "resuming_agents")
+                    {
+                        rt.dispatch("team/resume", json!({"session_id":s.id}))
+                            .await?;
+                        continue;
+                    }
+                    let wake =
+                        self.store
+                            .lock()
+                            .unwrap()
+                            .agent_team(&s.id, "wake", &json!({}), None)?;
+                    if wake["resume"] == true {
+                        rt.dispatch("team/resume", json!({"session_id":s.id}))
+                            .await?;
+                        continue;
+                    }
+                    if wake["wake"] == true {
+                        rt.dispatch("turn/start",json!({"session_id":s.id,"submission_id":format!("inbox-{}",member.inbox_cursor),"text":"Continue from the agent inbox. Collaborator messages are not human approval."})).await?;
+                        continue;
+                    }
+                }
+                let pending =
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .agent_team(&s.id, "pending", &json!({}), None)?;
+                // Only the lead's host reconciles reservations. Stored canonical
+                // IDs make restart reconciliation idempotent, never spawn twice.
+                for entry in pending.as_array().context("Invalid pending instances")? {
+                    let instance: openworker_runtime::team_coordination::Instance =
+                        serde_json::from_value(entry["instance"].clone())?;
+                    let doc: openworker_runtime::agent_team::Document =
+                        serde_json::from_value(self.store.lock().unwrap().agent_team(
+                            &s.id,
+                            "snapshot",
+                            &json!({}),
+                            None,
+                        )?)?;
+                    if member.agent_id != doc.lead {
+                        break;
+                    }
+                    let child_rt = self.runtime(&instance.agent_type)?;
+                    let exists = self
+                        .store
+                        .lock()
+                        .unwrap()
+                        .list_metadata()?
+                        .iter()
+                        .any(|v| v.id == instance.session_id);
+                    if !exists {
+                        let mut parameters = json!({"workspace":s.workspace,"name":instance.agent_id,"coworker":instance.agent_type,"permissions":s.permissions,"compaction":s.compaction_config});
+                        let definition = self
+                            .registry
+                            .read()
+                            .unwrap()
+                            .definitions
+                            .get(&instance.agent_type)
+                            .cloned()
+                            .context("Registered team type missing")?;
+                        parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
+                        if let Some(model) = definition.model {
+                            parameters["model"] = json!(model);
+                        }
+                        if let crate::agents::Approvals::Auto(model) = definition.approvals {
+                            parameters["reviewer_model"] = json!(model);
+                        }
+                        if let Some(binding) = &s.environment {
+                            parameters["environment_id"] = json!(binding.environment_id);
+                        }
+                        let mut child = child_rt.prepare_session(parameters)?;
+                        child.id = instance.session_id.clone();
+                        child.agent_team = Some(openworker_runtime::agent_team::Membership {
+                            team_id: doc.id.clone(),
+                            agent_id: instance.agent_id.clone(),
+                            inbox_cursor: 0,
+                            last_output: None,
+                            notices: vec![],
+                            waiting: None,
+                        });
+                        self.store.lock().unwrap().save(
+                            &child,
+                            "team_instance_created",
+                            json!({"parent_session_id":s.id,"agent_id":instance.agent_id}),
+                        )?;
+                    }
+                    self.store.lock().unwrap().agent_team(
+                        &s.id,
+                        "ready",
+                        &json!({"agent_id":instance.agent_id}),
+                        None,
+                    )?;
+                }
+                // Start each reserved task exactly once through normal turn dedup.
+                let doc: openworker_runtime::agent_team::Document = serde_json::from_value(
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .agent_team(&s.id, "snapshot", &json!({}), None)?,
+                )?;
+                if s.turn.is_none()
+                    && member.agent_id != doc.lead
+                    && rt.has_capacity()
+                    && rt.model_credentials_ready(&s)
+                {
+                    if let Some(message) = doc.tasks.get(&member.agent_id) {
+                        rt.dispatch("turn/start",json!({"session_id":s.id,"submission_id":format!("initial-{}",member.agent_id),"text":openworker_runtime::agent_team::delegated_task(message)})).await?;
+                        continue;
+                    }
+                }
+            }
+
             if let Some(db) = &self.postgres {
                 if let Some(c) = db.next_control(&s.id)? {
                     rt.apply_control(&s.id, &c.command.request_id).await?;
@@ -689,6 +830,10 @@ impl Host {
             {
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("agent_runs".into(), json!(true));
+                c.insert(
+                    "agent_teams".into(),
+                    json!(self.store.lock().unwrap().supports_agent_teams()),
+                );
                 c.insert("dynamic_agents".into(), json!(true));
                 c.insert("session_model_override".into(), json!(true));
                 c.insert("sdk_question_policy".into(), json!(true));
@@ -763,6 +908,60 @@ impl Host {
                     "execution":{"sandbox":self.config.sandbox},
                     "capabilities":{"push":true,"event_replay":true,"durable_teams":true}}),
                 );
+            }
+            "agent-team/create" => {
+                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
+                ensure!(
+                    p.as_object().is_some_and(|p| p.keys().all(|k| [
+                        "session_id",
+                        "agent_id",
+                        "agent_types",
+                        "policy",
+                        "limits"
+                    ]
+                    .contains(&k.as_str()))),
+                    "Unknown team configuration"
+                );
+                let lead = self.store.lock().unwrap().metadata(sid)?;
+                ensure!(
+                    lead.package.team_role.is_none(),
+                    "Use standalone agent definitions for named teams"
+                );
+                ensure!(lead.execution_backend==openworker_runtime::execution::Backend::Off || lead.environment.as_ref().is_some_and(|e|e.spec.sharing==openworker_runtime::environment::Sharing::Shared),"Named OpenShell teams require a shared service environment; connect to the service with a shared RuntimeProfile");
+                let types: Vec<String> = serde_json::from_value(p["agent_types"].clone())?;
+                {
+                    let registry = self.registry.read().unwrap();
+                    for kind in &types {
+                        ensure!(
+                            registry.definitions.contains_key(kind),
+                            "Unknown registered agent type"
+                        );
+                    }
+                }
+                return self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .agent_team(sid, "create", &p, None)
+                    .map(openworker_runtime::agent_team::public_snapshot);
+            }
+            "agent-team/command" => {
+                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
+                let operation = openworker_runtime::runtime::text(&p, "operation", 64)?;
+                ensure!(
+                    matches!(operation, "snapshot" | "command" | "team_read_board"),
+                    "Unsupported application team command"
+                );
+                let result =
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .agent_team(sid, operation, &p["arguments"], None)?;
+                return Ok(if operation == "snapshot" {
+                    openworker_runtime::agent_team::public_snapshot(result)
+                } else {
+                    result
+                });
             }
             "team/create" => {
                 return self

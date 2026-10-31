@@ -1,4 +1,5 @@
 //! Optional PostgreSQL StateStore adapter. No automatic claims, heartbeat or replay.
+mod agent_team;
 mod artifacts;
 mod assistant;
 pub mod auth;
@@ -499,6 +500,32 @@ fn sanitize(e: anyhow::Error) -> anyhow::Error {
 }
 
 impl StateStore for PostgresStore {
+    fn supports_agent_teams(&self) -> bool {
+        true
+    }
+    fn agent_team(
+        &mut self,
+        sid: &str,
+        operation: &str,
+        args: &Value,
+        call: Option<(&str, &Value)>,
+    ) -> Result<Value> {
+        let (sid, operation, args, call) = (
+            sid.to_owned(),
+            operation.to_owned(),
+            args.clone(),
+            call.map(|(t, c)| (t.to_owned(), c.clone())),
+        );
+        self.call(move |db| {
+            db.agent_team(
+                &sid,
+                &operation,
+                &args,
+                call.as_ref().map(|(t, c)| (t.as_str(), c)),
+            )
+        })
+    }
+
     fn agent_run(&self, sid: &str, submission: Option<&str>) -> Result<Option<Value>> {
         let (sid, submission) = (sid.to_owned(), submission.map(str::to_owned));
         self.call(move |db| db.agent_run(&sid, submission.as_deref()))

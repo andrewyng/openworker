@@ -324,6 +324,7 @@ impl Bundle {
         for (alias, b) in &tools.bindings {
             if !safe_name(alias)
                 || crate::teams::internal(alias)
+                || crate::agent_team::internal(alias)
                 || crate::assistant_tools::internal(alias)
                 || matches!(
                     alias.as_str(),

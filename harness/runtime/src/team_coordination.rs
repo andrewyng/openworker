@@ -95,6 +95,12 @@ fn session_id(id: &str) -> Result<()> {
     Ok(())
 }
 impl Roster {
+    pub fn policy(&self) -> &Policy {
+        &self.policy
+    }
+    pub fn spawn_types(&self) -> &BTreeSet<String> {
+        &self.spawn_types
+    }
     pub fn new(lead: Instance, spawn_types: BTreeSet<String>, policy: Policy) -> Result<Self> {
         ensure!(
             (1..=1024).contains(&policy.max_instances),

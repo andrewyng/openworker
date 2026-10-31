@@ -195,7 +195,7 @@ fn op(row: &postgres::Row) -> Operation {
         error: row.get("error"),
     }
 }
-fn entry(tx: &mut Transaction<'_>, kind: &str, id: &str) -> Result<Entry> {
+pub(crate) fn entry(tx: &mut Transaction<'_>, kind: &str, id: &str) -> Result<Entry> {
     let r = tx
         .query_opt(
             "SELECT data,activated FROM service_catalog WHERE kind=$1 AND id=$2 FOR SHARE",
@@ -206,7 +206,7 @@ fn entry(tx: &mut Transaction<'_>, kind: &str, id: &str) -> Result<Entry> {
     e.activated = r.get(1);
     Ok(e)
 }
-fn allowed(p: &Identity, list: &[String]) -> Result<()> {
+pub(crate) fn allowed(p: &Identity, list: &[String]) -> Result<()> {
     ensure!(
         p.role.permits(Action::Admin) || list.contains(&p.principal),
         auth::Error::Forbidden

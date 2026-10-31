@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 fn session() -> Session {
     Session {
+        agent_team: None,
         environment: None,
         storage_revision: 0,
         approval_grants: vec![],

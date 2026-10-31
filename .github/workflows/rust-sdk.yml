@@ -61,7 +61,7 @@ jobs:
       - name: Compile and test the native desktop host
         run: |
           rustup show active-toolchain
-          cargo test --locked -p openworker-sdk --features test-support --lib --test desktop_api -- --test-threads=1
+          cargo test --locked -p openworker-sdk --features test-support --lib --test desktop_api --test agent_team -- --test-threads=1
           cargo test --locked -p openworker-runtime --test connections --test model_endpoints --test direct_macos --test coding --test coding_extended --test assistant
           cargo test --locked -p openworker-sdk --features test-support --test coding --test assistant -- --test-threads=1
           npm --prefix typescript-sdk ci
@@ -71,7 +71,7 @@ jobs:
           else
             export OW_TS_TEST_HOST="$PWD/target/debug/sdk-test-host"
           fi
-          node --test typescript-sdk/test/desktop-api.test.mjs
+          node --test typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
           node --test typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
           node --test desktop-starters/test.mjs
           node --test tests/stdio-client.test.mjs tests/release-layout.test.mjs
@@ -138,7 +138,7 @@ jobs:
           npm --prefix typescript-sdk test
           OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" npm --prefix typescript-sdk run test:integration
           OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" npm --prefix typescript-sdk run test:dynamic-agents
-          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" node --test typescript-sdk/test/desktop-api.test.mjs
+          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" node --test typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
           OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" node --test typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
           node --test desktop-starters/test.mjs
           (cd typescript-sdk && npm pack --dry-run)
@@ -151,4 +151,4 @@ jobs:
       - name: Shared PostgreSQL team contract
         env:
           OW_PG_TEST_URL: postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests
-        run: cargo test --locked -p openworker-store-postgres --test team_contract -- --ignored
+        run: cargo test --locked -p openworker-store-postgres --features test-support --test team_contract --test agent_team_contract --test agent_team_worker -- --ignored --test-threads=1

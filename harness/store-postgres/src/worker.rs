@@ -4,7 +4,7 @@
 use crate::{Config, PostgresStore};
 use anyhow::{bail, Context, Result};
 use openworker_runtime::telemetry::{Gauge, Telemetry};
-use openworker_runtime::{execution::Backend, runtime::Runtime};
+use openworker_runtime::{execution::Backend, runtime::Runtime, store::StateStore};
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -488,6 +488,47 @@ async fn execute_inner(
                     .apply_control(sid, &control.command.request_id)
                     .await?;
             } else if !runtime.is_busy(sid) {
+                let metadata = store.clone().metadata(sid)?;
+                if metadata.agent_team.is_some() {
+                    if store
+                        .clone()
+                        .agent_team(sid, "snapshot", &serde_json::json!({}), None)?["stopped"]
+                        == true
+                    {
+                        return Ok(());
+                    }
+                    if metadata
+                        .turn
+                        .as_ref()
+                        .is_some_and(|t| t.status == "resuming_agents")
+                    {
+                        runtime
+                            .dispatch("team/resume", serde_json::json!({"session_id":sid}))
+                            .await?;
+                        continue;
+                    }
+                    let wake =
+                        store
+                            .clone()
+                            .agent_team(sid, "wake", &serde_json::json!({}), None)?;
+                    if wake["resume"] == true {
+                        runtime
+                            .dispatch("team/resume", serde_json::json!({"session_id":sid}))
+                            .await?;
+                        continue;
+                    }
+                    if wake["wake"] == true {
+                        store.enqueue_agent_inbox_wake(sid)?;
+                    }
+
+                    if metadata
+                        .turn
+                        .as_ref()
+                        .is_some_and(|t| t.status == "waiting_agents")
+                    {
+                        return Ok(());
+                    }
+                }
                 if drain.is_requested() {
                     return Ok(());
                 }

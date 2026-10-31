@@ -13,7 +13,9 @@ pub use mcp::McpServer;
 mod driver;
 pub mod host;
 mod providers;
-pub use agents::{Agent, AgentHandle, Harness, HarnessBuilder};
+pub use agents::{
+    Agent, AgentHandle, AgentTeam, AgentTeamRef, Harness, HarnessBuilder, TeamOptions, TeamPolicy,
+};
 pub use agents::{Run, Session, SessionInput, TurnLimits};
 pub use desktop::{DesktopOptions, SessionOptions};
 mod transport;

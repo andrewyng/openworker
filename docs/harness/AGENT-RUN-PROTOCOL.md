@@ -14,6 +14,29 @@ Transport is the existing [stdio protocol](../../harness/partner/PROTOCOL.md):
 newline-delimited JSON-RPC 2.0, 1 MiB frames, `initialize` first. Requests are
 answered in order, so long-polls are bounded (`run/wait` ≤ 5 s).
 
+## Named agent teams
+
+Check `capabilities.agent_teams`. `agent-team/create` accepts a lead
+`session_id`, `agent_id` (normally `lead`), registered `agent_types`, optional
+`policy:{communication:{board,directMessages},max_instances}` and aggregate
+`limits`. Identical retries attach to the original team; changed configuration
+rejects. These are ordinary registered agent definitions, separate from legacy
+`.subagent()` work-item definitions.
+
+`agent-team/command` accepts `{session_id,operation,arguments}`. Read operations
+are `snapshot` and `team_read_board`. Application writes use `operation:command`
+with `{request_id,operation,arguments}`; the inner operation is `team_spawn`,
+`team_post_board`, `team_send_message` or `stop`. Command IDs are scoped to their
+author and persist with the result. Disabled channels reject at dispatch.
+
+`run/wait` includes new ready members and preserves per-member journal cursors.
+Attributed events carry `agent_id` and `team_id`, in addition to the registered
+type in `agent`. `session/send` validates response targets against the live roster;
+clients must not use a stale local member list to reject newly spawned children.
+Waits, inbox batches, aggregate limits and stop reconciliation belong to the host.
+See the [team QuickStart](AGENT-TEAMS-QUICKSTART.md) and
+[decisions](AGENT-TEAMS-DECISIONS.md) for tools and delivery semantics.
+
 ## Desktop extensions (22 October 2026)
 
 These apply to the SDK host, not the old single-coworker CLI endpoint. Check
