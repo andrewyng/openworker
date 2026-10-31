@@ -178,3 +178,8 @@ See the [team QuickStart](../docs/harness/AGENT-TEAMS-QUICKSTART.md),
 [decisions](../docs/harness/AGENT-TEAMS-DECISIONS.md),
 [test cases](../docs/harness/AGENT-TEAMS-TEST-CASES.md), and
 [qualification ledger](../docs/harness/AGENT-TEAMS-IMPLEMENTATION.md).
+
+The accepted follow-up for session-defined types, per-member sandbox placement and
+dynamic retirement is recorded in [Team types and sandboxes](../docs/harness/TEAM-TYPES-AND-SANDBOXES.md).
+Its [implementation ledger](../docs/harness/TEAM-TYPES-AND-SANDBOXES-PLAN.md) distinguishes
+the current trusted outside harness from the future sandbox-contained MCP integration.
