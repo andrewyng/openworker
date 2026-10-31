@@ -13,6 +13,8 @@ use serde_json::{json, Value};
 use std::path::Path;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TeamOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
     pub agent_id: String,
     pub agent_types: Vec<String>,
     #[serde(default)]
@@ -26,6 +28,7 @@ pub struct TeamOptions {
 impl TeamOptions {
     pub fn new(types: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
+            workspace_defaults: None,
             agent_id: "lead".into(),
             agent_types: types.into_iter().map(Into::into).collect(),
             policy: TeamPolicy::default(),

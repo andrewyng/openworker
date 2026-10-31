@@ -33,7 +33,7 @@ Extend the same primitives through the remaining deployment adapters.
 | ID | Deliverable | Dependency | Status |
 | --- | --- | --- | --- |
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
-| C2 | Single coding-agent and shared-team presets | C1 | Pending |
+| C2 | Single coding-agent and shared-team presets | C1 | In progress |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
@@ -284,3 +284,16 @@ placement remain separate work. Host free disk after qualification is about
 58 GiB; incremental compilation was disabled. Temporary TLS/runner/forward and
 the disposable PostgreSQL remain available only while the next local milestone
 needs them, then will be removed; retained demos were not changed.
+
+### C2 journal — October 31
+
+C1 merged/pushed as `40c41898`. Continuing on
+`feat/coding-presets-c2-20261031`. Added versioned coding definitions (one
+canonical configuration, generated TypeScript copy), standard Agent customization,
+and service-release conversion with explicit RuntimeProfile compatibility checks.
+Shared-team builder worktrees are resolved by the runtime before reservation,
+using an app-pinned base SHA and team/instance-derived paths/branches; this is not
+left to prompt compliance. Verifiers select the submitted builder directory
+explicitly. The lead integrates in the supplied repository's existing main
+worktree; no implicit branch switch, commit, merge, push or credential grant.
+Implementation/qualification remains in progress.

@@ -47,6 +47,7 @@ pub mod team_lifecycle;
 pub mod team_service;
 pub mod team_type_catalog;
 pub mod team_workspace;
+pub mod team_workspace_defaults;
 pub mod teams;
 mod tool_images;
 pub mod tool_policy;

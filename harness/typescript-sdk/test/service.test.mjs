@@ -246,7 +246,8 @@ test("team delegation pins qualified tools and working-model pairs at service cr
   });
   const service=await Harness.connect(options(url));t.after(()=>service.disconnect());
   const session=await service.resume({serviceId:"service-one",namespace:"test",sessionId:"lead",agent:"lead@1",runtimeProfile:"shared@1",environmentId:"env",project:"test"});
-  await session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],models:[{provider:"primary",name:"working"}]}});
+  await session.createTeam({agentTypes:{builder:"builder@1"},workspaceDefaults:{repository:"source",base:"a".repeat(40),agentTypes:["builder"]},delegation:{tools:["coding.read_file"],models:[{provider:"primary",name:"working"}]}});
+  assert.deepEqual(bodies[0].workspaceDefaults,{repository:"source",base:"a".repeat(40),agent_types:["builder"]});
   assert.deepEqual(bodies[0].delegation,{tools:["coding.read_file"],models:[{connection:"primary",model:"working"}],placements:["team"],profiles:{}});
   assert.equal(bodies[0].agentId,"lead");
   await assert.rejects(session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],placements:["new"]}}), e=>e.code==="unsupported_team_delegation");

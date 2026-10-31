@@ -43,6 +43,7 @@
 //! ```
 mod agent_team;
 mod bundle;
+pub mod coding;
 pub(crate) mod compile;
 mod harness;
 mod session;
