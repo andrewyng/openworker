@@ -22,6 +22,10 @@ fn request(id: &str, kind: &str) -> SpawnRequest {
         agent_type: kind.into(),
         agent_id: id.into(),
         message: format!("Task for {id}"),
+        title: None,
+        background: None,
+        context: Default::default(),
+        workspace: Default::default(),
     }
 }
 fn add(r: &mut Roster, id: &str, kind: &str) {
@@ -301,4 +305,41 @@ fn invalid_history_anchor_order_duplicates_and_oversized_reads_are_rejected() {
     assert!(history_page(&q, Some(10), (11..=22).map(row).collect()).is_err());
     assert!(history_page(&query(None, Direction::Before, 51), None, vec![]).is_err());
     assert!(history_page(&query(None, Direction::Before, 0), None, vec![]).is_err());
+}
+#[test]
+fn retiring_members_hold_capacity_until_closed_and_identities_never_recycle() {
+    let mut r = Roster::new(
+        Instance {
+            agent_type: "lead".into(),
+            agent_id: "lead".into(),
+            session_id: "s_lead".into(),
+            phase: Phase::Ready,
+        },
+        ["builder".into()].into(),
+        Policy {
+            max_instances: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    add(&mut r, "first", "builder");
+    r.retire("first").unwrap();
+    assert!(r
+        .reserve(request("second", "builder"), || panic!(
+            "retiring capacity is still held"
+        ))
+        .is_err());
+    assert!(r.ready("first", "s_first").is_err());
+    assert!(r.direct_recipient("lead", "first", "new task").is_err());
+    r.close("first").unwrap();
+    add(&mut r, "second", "builder");
+    assert_eq!(
+        r.reserve(request("first", "builder"), || panic!(
+            "historical id must never allocate"
+        ))
+        .unwrap()
+        .instance
+        .phase,
+        Phase::Closed
+    );
 }

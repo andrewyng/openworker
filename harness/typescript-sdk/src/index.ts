@@ -36,6 +36,7 @@ import {
   type ConnectionState,
   type AgentDefinition,
   type SessionOptions,
+  type ChildSpawnOptions,
 } from "./types.js";
 export * from "./types.js";
 
@@ -483,6 +484,11 @@ export class Harness {
           max_instances: options.maxInstances ?? 32,
         },
         ...(options.limits ? { limits: options.limits } : {}),
+        ...(options.delegation ? { delegation: {
+          tools: options.delegation.tools,
+          models: (options.delegation.models ?? []).map(model => ({connection: model.provider, model: model.name})),
+          placements: ["team"], profiles: {},
+        }} : {}),
       }),
     );
     return new AgentTeam(this, lead, String(doc.id));
@@ -1130,6 +1136,9 @@ export interface AgentTeamOptions {
   agentId?: string;
   communication?: { board: boolean; directMessages: boolean };
   maxInstances?: number;
+  /** App-owned custom-role ceiling; omission disables team_define_type.
+   * Custom roles currently share the team's authorized execution environment. */
+  delegation?: { tools: string[]; models?: { provider: string; name: string }[] };
   limits?: {
     maxModelCalls: number;
     maxOutputTokens: number;
@@ -1170,12 +1179,21 @@ export class AgentTeam {
     agentType: string,
     agentId: string,
     message: string,
+    options: ChildSpawnOptions = {},
   ): Promise<unknown> {
     return this.command(requestId, "team_spawn", {
+      ...options,
       agent_type: agentType,
       agent_id: agentId,
       message,
+      context: options.context ?? {mode:"fresh"},
     });
+  }
+  members(options: {after?: string; limit?: number} = {}): Promise<unknown> {
+    return this.query("team_manage", {...options, action:"list"});
+  }
+  retire(requestId: string, agentId: string, mode: "finish_current" | "cancel" = "finish_current"): Promise<unknown> {
+    return this.command(requestId,"team_manage",{action:"retire",agent_id:agentId,mode});
   }
   post(requestId: string, message: string): Promise<unknown> {
     return this.command(requestId, "team_post_board", { message });

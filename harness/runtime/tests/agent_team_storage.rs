@@ -7,6 +7,10 @@ fn sqlite_contract() {
     contract::exercise(&mut Store::memory().unwrap());
 }
 #[test]
+fn sqlite_child_briefing_contract() {
+    contract::exercise_briefing(&mut Store::memory().unwrap());
+}
+#[test]
 fn restart_preserves_inbox_receipts_and_waits() {
     let root = tempfile::tempdir().unwrap();
     let mut db = Store::open(root.path()).unwrap();
@@ -354,4 +358,47 @@ fn wake_checkpoint_survives_restart_and_wait_notices_follow_parallel_tool_result
         None,
     )
     .expect("Parallel tool ordering must remain valid for Chat Completions");
+}
+#[test]
+fn sqlite_workspace_intent_contract() {
+    contract::exercise_workspace_intent(&mut Store::memory().unwrap());
+}
+#[test]
+fn workspace_dispatch_survives_reopen_without_mutation_permission() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = Store::open(tmp.path()).unwrap();
+    db.save(&contract::session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    db.agent_team(
+        "lead",
+        "create",
+        &json!({"agent_id":"lead","agent_types":["builder"],"workspace_selection":true}),
+        None,
+    )
+    .unwrap();
+    db.agent_team("lead","team_spawn",&json!({"agent_id":"builder-one","agent_type":"builder","message":"Build","workspace":{"mode":"directory","path":"ui"}}),None).unwrap();
+    let first = db
+        .agent_team(
+            "lead",
+            "workspace_dispatch",
+            &json!({"agent_id":"builder-one"}),
+            None,
+        )
+        .unwrap();
+    drop(db);
+    let mut db = Store::open(tmp.path()).unwrap();
+    let recovered = db
+        .agent_team(
+            "lead",
+            "workspace_dispatch",
+            &json!({"agent_id":"builder-one"}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(recovered["dispatch"], false);
+    assert_eq!(first["intent"], recovered["intent"]);
+}
+#[test]
+fn sqlite_retirement_contract() {
+    contract::exercise_retirement(&mut Store::memory().unwrap());
 }

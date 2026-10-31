@@ -1,9 +1,13 @@
 //! First-class named team instances. No second scheduler or agent loop.
 use super::{Harness, Session, SessionRef, TurnLimits};
 use crate::{Error, HarnessClient, Result};
+pub use openworker_runtime::team_briefing::{Context as ChildContext, Options as ChildOptions};
 pub use openworker_runtime::team_coordination::{
     Communication, HistoryPage, HistoryQuery, Instance, Policy as TeamPolicy,
 };
+pub use openworker_runtime::team_definition::Delegation as TeamDelegation;
+pub use openworker_runtime::team_lifecycle::Mode as RetirementMode;
+pub use openworker_runtime::team_workspace::Selection as ChildWorkspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -15,6 +19,9 @@ pub struct TeamOptions {
     pub policy: TeamPolicy,
     #[serde(default)]
     pub limits: Option<TurnLimits>,
+    /// App-owned ceiling for custom roles. Omit to disable custom definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<TeamDelegation>,
 }
 impl TeamOptions {
     pub fn new(types: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -23,6 +30,7 @@ impl TeamOptions {
             agent_types: types.into_iter().map(Into::into).collect(),
             policy: TeamPolicy::default(),
             limits: None,
+            delegation: None,
         }
     }
 }
@@ -105,10 +113,47 @@ impl AgentTeam {
         agent_id: &str,
         message: &str,
     ) -> Result<Value> {
+        self.spawn_with_options(
+            request_id,
+            agent_type,
+            agent_id,
+            message,
+            ChildOptions::default(),
+        )
+        .await
+    }
+    pub async fn spawn_with_options(
+        &self,
+        request_id: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+        options: ChildOptions,
+    ) -> Result<Value> {
+        let mut args =
+            serde_json::to_value(options).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        args["agent_type"] = json!(agent_type);
+        args["agent_id"] = json!(agent_id);
+        args["message"] = json!(message);
+        self.command(request_id, "team_spawn", args).await
+    }
+    pub async fn members(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        let mut args = json!({"action":"list","limit":limit});
+        if let Some(after) = after {
+            args["after"] = json!(after);
+        }
+        self.query("team_manage", args).await
+    }
+    pub async fn retire(
+        &self,
+        request_id: &str,
+        agent_id: &str,
+        mode: RetirementMode,
+    ) -> Result<Value> {
         self.command(
             request_id,
-            "team_spawn",
-            json!({"agent_type":agent_type,"agent_id":agent_id,"message":message}),
+            "team_manage",
+            json!({"action":"retire","agent_id":agent_id,"mode":mode}),
         )
         .await
     }

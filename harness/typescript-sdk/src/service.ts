@@ -5,6 +5,7 @@ import {
   type JournalEvent,
   type RunEvent,
   type TurnLimits,
+  type ChildSpawnOptions,
 } from "./types.js";
 
 export interface ServiceOptions {
@@ -810,12 +811,22 @@ export class ServiceAgentTeam {
     agentType: string,
     agentId: string,
     message: string,
+    options: ChildSpawnOptions = {},
   ): Promise<any> {
     return this.command(key, "team_spawn", {
+      ...options,
       agent_type: agentType,
       agent_id: agentId,
       message,
+      context: options.context ?? {mode:"fresh"},
     });
+  }
+  members(options: {after?: string; limit?: number} = {}): Promise<any> {
+    return this.service.json("POST",`/v1/sessions/${segment(this.lead.id)}/team/commands`,
+      {operation:"team_manage",arguments:{...options,action:"list"}});
+  }
+  retire(key:string,agentId:string,mode:"finish_current"|"cancel"="finish_current"):Promise<any>{
+    return this.command(key,"team_manage",{action:"retire",agent_id:agentId,mode});
   }
   post(key: string, message: string): Promise<any> {
     return this.command(key, "team_post_board", { message });

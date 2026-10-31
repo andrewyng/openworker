@@ -394,6 +394,7 @@ impl Database {
                OR (COALESCE(data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated')
                    AND NOT COALESCE((data->>'provider_blocked')::boolean,FALSE)
                    AND EXISTS(SELECT 1 FROM submissions q WHERE q.session_id=s.id AND q.status='queued'))
+               OR EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated') OR t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel'))
                OR (s.data->'agent_team'->>'team_id' IS NOT NULL AND NOT COALESCE((s.data->>'provider_blocked')::boolean,FALSE)
                   AND NOT EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND (t.data->>'stopped')::boolean)
                   AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed') OR s.data->'turn'->>'status'='waiting_agents')
@@ -797,6 +798,7 @@ impl Database {
                 return Ok((s, false, None));
             }
         }
+        crate::agent_team::ensure_admission(&mut tx, &s)?;
         if s.closed {
             bail!("Session is closed");
         }

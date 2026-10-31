@@ -20,6 +20,10 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 #[path = "host_catalog.rs"]
 mod catalog;
+#[path = "host_named_lifecycle.rs"]
+mod named_lifecycle;
+#[path = "host_named_types.rs"]
+mod named_types;
 #[path = "host_runs.rs"]
 mod runs;
 
@@ -28,6 +32,7 @@ struct Registry {
     profiles: BTreeMap<String, Arc<Runtime>>,
     agents: BTreeMap<String, crate::agents::compile::AgentProfile>,
     definitions: BTreeMap<String, crate::agents::Agent>,
+    private_profiles: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -267,8 +272,12 @@ impl Host {
         let connections = Arc::new(openworker_runtime::connections::Manager::open(
             &config.state_dir,
         )?);
-        let definitions = catalog::merge(&config.agents, catalog.load()?)?;
+        let mut definitions = catalog::merge(&config.agents, catalog.load()?)?;
         let flat = crate::agents::compile::flatten(&definitions)?;
+        ensure!(
+            flat.keys().all(|id| !id.starts_with("tt_")),
+            "The tt_ namespace is reserved for session-scoped type revisions"
+        );
         ensure!(
             flat.len() + config.coworkers.len() <= 16,
             "Saved agents exceed host capacity"
@@ -285,11 +294,15 @@ impl Host {
             }
             let bundle =
                 openworker_runtime::bundle::Bundle::load_with_registry(&c.bundle, &registry)?;
+            ensure!(
+                !bundle.id.starts_with("tt_"),
+                "The tt_ namespace is reserved for session-scoped type revisions"
+            );
             ensure!(ids.insert(bundle.id.clone()), "Duplicate coworker identity");
             agents.entry(bundle.id.clone()).or_insert_with(|| {
                 crate::agents::compile::AgentProfile::plain(&bundle.id, &bundle.name)
             });
-            prepared.push((c, registry, bundle));
+            prepared.push((c.clone(), registry, bundle));
         }
         let pg = config
             .storage
@@ -298,13 +311,64 @@ impl Host {
             .transpose()?;
         // This SDK host owns its schema's execution. Distributed server worker
         // scheduling remains a separate host mode, not a property of SQL syntax.
-        if let Some(db) = &pg {
-            db.claim_sdk_host(ids.into_iter().collect())?;
-        }
+        let mut restored = if let Some(db) = &pg {
+            db.claim_sdk_host(ids.iter().cloned().collect())?
+        } else {
+            vec![]
+        };
         let mut storage: Box<dyn StateStore> = match &pg {
             Some(db) => Box::new(db.clone()),
             None => Box::new(sqlite.context("SQLite store missing")?),
         };
+        if pg.is_none() {
+            for s in storage
+                .list_metadata()?
+                .into_iter()
+                .filter(|s| s.agent_team.is_some())
+            {
+                let doc: openworker_runtime::agent_team::Document = serde_json::from_value(
+                    storage.agent_team(&s.id, "snapshot", &json!({}), None)?,
+                )?;
+                if doc
+                    .roster
+                    .instance(&doc.lead)
+                    .is_some_and(|i| i.session_id == s.id)
+                {
+                    restored.extend(openworker_runtime::team_type_catalog::restore(
+                        &doc, &s, &ids,
+                    )?);
+                }
+            }
+        }
+        let mut private_profiles = std::collections::BTreeSet::new();
+        for (lead, record) in restored {
+            let source = definitions
+                .iter()
+                .find(|a| a.id == lead.coworker)
+                .context("Scoped type's parent definition is missing")?;
+            let agent = named_types::scoped_agent(&lead, &record, source)?;
+            ensure!(
+                private_profiles.len() < 128 && !ids.contains(&agent.id),
+                "Scoped runtime capacity or identity conflict"
+            );
+            private_profiles.insert(agent.id.clone());
+            let (configs, extra) =
+                crate::agents::compile::compile(&config.state_dir, std::slice::from_ref(&agent))?;
+            for (id, mut profile) in extra {
+                profile.worker_only = true;
+                agents.insert(id, profile);
+            }
+            for c in configs {
+                let mut registry = registry.clone();
+                if let Some(p) = &c.servers {
+                    openworker_runtime::servers::load(p, &c.bundle, &mut registry)?;
+                }
+                let bundle =
+                    openworker_runtime::bundle::Bundle::load_with_registry(&c.bundle, &registry)?;
+                prepared.push((c, registry, bundle));
+            }
+            definitions.push(agent);
+        }
         storage.recover()?;
         let store = Arc::new(Mutex::new(storage));
         // The exporter builds a blocking HTTP client, which must not happen on
@@ -363,6 +427,7 @@ impl Host {
                 profiles,
                 agents,
                 definitions: definitions.into_iter().map(|a| (a.id.clone(), a)).collect(),
+                private_profiles,
             }),
             config: config.clone(),
             tools: RwLock::new(registry),
@@ -449,6 +514,10 @@ impl Host {
         );
         let agent: crate::agents::Agent = serde_json::from_value(p["agent"].clone())?;
         let flat = crate::agents::compile::flatten(std::slice::from_ref(&agent))?;
+        ensure!(
+            flat.keys().all(|id| !id.starts_with("tt_")),
+            "The tt_ namespace is reserved for session-scoped type revisions"
+        );
         {
             let registry = self.registry.read().unwrap();
             if let Some(existing) = registry.definitions.get(&agent.id) {
@@ -531,11 +600,13 @@ impl Host {
     async fn tick(&self) -> Result<()> {
         let _admission = self.admission.lock().await;
         let sessions = self.store.lock().unwrap().list_metadata()?;
+        self.refresh_named_types(&sessions).await?;
         if let Some(db) = &self.postgres {
             for s in &sessions {
                 db.renew(&s.id)?;
             }
         }
+        self.reconcile_named_retirements(&sessions).await?;
         self.store.lock().unwrap().team_tick()?;
         let cancellations = self.store.lock().unwrap().team_cancellations()?;
         for (sid, tid) in cancellations {
@@ -555,7 +626,21 @@ impl Host {
                 continue;
             }
             let rt = self.runtime(&s.coworker)?;
+            if let Some(db) = &self.postgres {
+                if let Some(c) = db.next_control(&s.id)? {
+                    rt.apply_control(&s.id, &c.command.request_id).await?;
+                    continue;
+                }
+            }
             if let Some(member) = &s.agent_team {
+                let snapshot =
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .agent_team(&s.id, "snapshot", &json!({}), None)?;
+                if snapshot["roster"]["instances"][&member.agent_id]["phase"] != "ready" {
+                    continue;
+                }
                 if self
                     .store
                     .lock()
@@ -623,7 +708,13 @@ impl Host {
                     if member.agent_id != doc.lead {
                         break;
                     }
-                    let child_rt = self.runtime(&instance.agent_type)?;
+                    let runtime_type =
+                        openworker_runtime::agent_team::runtime_type(&doc, &instance)?;
+                    let child_rt = self.runtime(&runtime_type)?;
+                    let Some(workspace) = self.prepare_named_workspace(&s, &doc, &instance).await?
+                    else {
+                        continue;
+                    };
                     let exists = self
                         .store
                         .lock()
@@ -632,13 +723,18 @@ impl Host {
                         .iter()
                         .any(|v| v.id == instance.session_id);
                     if !exists {
-                        let mut parameters = json!({"workspace":s.workspace,"name":instance.agent_id,"coworker":instance.agent_type,"permissions":s.permissions,"compaction":s.compaction_config});
+                        let title = doc
+                            .roster
+                            .request(&instance.agent_id)
+                            .and_then(|r| r.title.as_deref())
+                            .unwrap_or(&instance.agent_id);
+                        let mut parameters = json!({"workspace":workspace,"name":title,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
                         let definition = self
                             .registry
                             .read()
                             .unwrap()
                             .definitions
-                            .get(&instance.agent_type)
+                            .get(&runtime_type)
                             .cloned()
                             .context("Registered team type missing")?;
                         parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
@@ -667,6 +763,15 @@ impl Host {
                             json!({"parent_session_id":s.id,"agent_id":instance.agent_id}),
                         )?;
                     }
+                    let saved_run = self.store.lock().unwrap().agent_run(&s.id, None)?;
+                    if let Some(mut run) = saved_run {
+                        if run.get("result").is_none()
+                            && run["cursors"].get(&instance.session_id).is_none()
+                        {
+                            run["cursors"][&instance.session_id] = json!(0);
+                            self.save_run(&s.id, &run)?;
+                        }
+                    }
                     self.store.lock().unwrap().agent_team(
                         &s.id,
                         "ready",
@@ -693,12 +798,6 @@ impl Host {
                 }
             }
 
-            if let Some(db) = &self.postgres {
-                if let Some(c) = db.next_control(&s.id)? {
-                    rt.apply_control(&s.id, &c.command.request_id).await?;
-                    continue;
-                }
-            }
             if s.closed
                 || s.provider_blocked
                 || rt.is_busy(&s.id)
@@ -910,25 +1009,27 @@ impl Host {
                 );
             }
             "agent-team/create" => {
-                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
+                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?.to_owned();
                 ensure!(
                     p.as_object().is_some_and(|p| p.keys().all(|k| [
                         "session_id",
                         "agent_id",
                         "agent_types",
                         "policy",
-                        "limits"
+                        "limits",
+                        "delegation"
                     ]
                     .contains(&k.as_str()))),
                     "Unknown team configuration"
                 );
-                let lead = self.store.lock().unwrap().metadata(sid)?;
+                let lead = self.store.lock().unwrap().metadata(&sid)?;
                 ensure!(
                     lead.package.team_role.is_none(),
                     "Use standalone agent definitions for named teams"
                 );
                 ensure!(lead.execution_backend==openworker_runtime::execution::Backend::Off || lead.environment.as_ref().is_some_and(|e|e.spec.sharing==openworker_runtime::environment::Sharing::Shared),"Named OpenShell teams require a shared service environment; connect to the service with a shared RuntimeProfile");
                 let types: Vec<String> = serde_json::from_value(p["agent_types"].clone())?;
+                self.validate_named_delegation(&lead, &p)?;
                 {
                     let registry = self.registry.read().unwrap();
                     for kind in &types {
@@ -938,19 +1039,30 @@ impl Host {
                         );
                     }
                 }
+                // Only a qualified local adapter advertises workspace preparation.
+                // Remote ToolRunner preparation is gated until service wiring passes.
+                p["workspace_selection"] =
+                    json!(lead.execution_backend == openworker_runtime::execution::Backend::Off);
                 return self
                     .store
                     .lock()
                     .unwrap()
-                    .agent_team(sid, "create", &p, None)
+                    .agent_team(&sid, "create", &p, None)
                     .map(openworker_runtime::agent_team::public_snapshot);
             }
             "agent-team/command" => {
                 let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
                 let operation = openworker_runtime::runtime::text(&p, "operation", 64)?;
                 ensure!(
-                    matches!(operation, "snapshot" | "command" | "team_read_board"),
+                    matches!(
+                        operation,
+                        "snapshot" | "command" | "team_read_board" | "team_manage"
+                    ),
                     "Unsupported application team command"
+                );
+                ensure!(
+                    operation != "team_manage" || p["arguments"]["action"] == "list",
+                    "Membership mutations require a durable command ID"
                 );
                 let result =
                     self.store
@@ -1033,6 +1145,15 @@ impl Host {
         };
         let rt = self.runtime(&coworker)?;
         if method == "session/create" {
+            ensure!(
+                !self
+                    .registry
+                    .read()
+                    .unwrap()
+                    .private_profiles
+                    .contains(&coworker),
+                "Scoped types can only be spawned by their owning team"
+            );
             let workspace =
                 std::path::Path::new(openworker_runtime::runtime::text(&p, "workspace", 4096)?)
                     .canonicalize()?;

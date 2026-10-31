@@ -39,12 +39,21 @@ pub struct SpawnRequest {
     pub agent_type: String,
     pub agent_id: String,
     pub message: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub background: Option<String>,
+    #[serde(default)]
+    pub context: crate::team_briefing::Context,
+    #[serde(default)]
+    pub workspace: crate::team_workspace::Selection,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     Reserved,
     Ready,
+    Retiring,
     Closed,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +110,17 @@ impl Roster {
     pub fn spawn_types(&self) -> &BTreeSet<String> {
         &self.spawn_types
     }
+    /// Trusted catalog resolution calls this only after persisting an exact
+    /// approved definition in the same transaction. It grants no host authority.
+    pub fn register_type(&mut self, name: &str) -> Result<()> {
+        identifier(name)?;
+        ensure!(
+            self.spawn_types.contains(name) || self.spawn_types.len() < 96,
+            "Team type capacity reached"
+        );
+        self.spawn_types.insert(name.into());
+        Ok(())
+    }
     pub fn new(lead: Instance, spawn_types: BTreeSet<String>, policy: Policy) -> Result<Self> {
         ensure!(
             (1..=1024).contains(&policy.max_instances),
@@ -127,6 +147,9 @@ impl Roster {
     pub fn instance(&self, id: &str) -> Option<&Instance> {
         self.instances.get(id)
     }
+    pub fn request(&self, id: &str) -> Option<&SpawnRequest> {
+        self.requests.get(id)
+    }
     pub fn instances(&self) -> impl Iterator<Item = &Instance> {
         self.instances.values()
     }
@@ -138,9 +161,15 @@ impl Roster {
         request: SpawnRequest,
         allocate_session: impl FnOnce() -> String,
     ) -> Result<Reservation> {
+        request.workspace.validate()?;
         identifier(&request.agent_id)?;
         identifier(&request.agent_type)?;
         text(&request.message, 16000)?;
+        crate::team_briefing::validate(
+            request.title.as_deref(),
+            &request.message,
+            request.background.as_deref(),
+        )?;
         ensure!(
             self.spawn_types.contains(&request.agent_type),
             "Agent type is not registered for this team"
@@ -153,7 +182,13 @@ impl Roster {
             });
         }
         ensure!(
-            self.instances.len() < self.policy.max_instances,
+            self.instances.len() < 4096
+                && self
+                    .instances
+                    .values()
+                    .filter(|i| i.phase != Phase::Closed)
+                    .count()
+                    < self.policy.max_instances,
             "Team instance capacity reached"
         );
         let sid = allocate_session();
@@ -179,10 +214,16 @@ impl Roster {
     pub fn ready(&mut self, id: &str, sid: &str) -> Result<()> {
         let i = self.instances.get_mut(id).context("Unknown instance")?;
         ensure!(
-            i.session_id == sid && i.phase != Phase::Closed,
+            i.session_id == sid && matches!(i.phase, Phase::Reserved | Phase::Ready),
             "Instance reference changed or was closed"
         );
         i.phase = Phase::Ready;
+        Ok(())
+    }
+    pub fn retire(&mut self, id: &str) -> Result<()> {
+        let i = self.instances.get_mut(id).context("Unknown instance")?;
+        ensure!(i.phase != Phase::Closed, "Instance already closed");
+        i.phase = Phase::Retiring;
         Ok(())
     }
     pub fn close(&mut self, id: &str) -> Result<()> {
@@ -196,7 +237,7 @@ impl Roster {
         ensure!(
             self.instances
                 .get(id)
-                .is_some_and(|i| i.phase == Phase::Ready),
+                .is_some_and(|i| matches!(i.phase, Phase::Ready | Phase::Retiring)),
             "Sender is not an active team instance"
         );
         Ok(())
@@ -204,7 +245,7 @@ impl Roster {
     fn recipient(&self, id: &str) -> Result<Instance> {
         self.instances
             .get(id)
-            .filter(|i| i.phase != Phase::Closed)
+            .filter(|i| matches!(i.phase, Phase::Ready | Phase::Reserved))
             .cloned()
             .context("Mention/recipient is not a current team instance")
     }
@@ -223,7 +264,10 @@ impl Roster {
                 recipients.extend(
                     self.instances
                         .values()
-                        .filter(|i| i.agent_id != sender && i.phase != Phase::Closed)
+                        .filter(|i| {
+                            i.agent_id != sender
+                                && matches!(i.phase, Phase::Ready | Phase::Reserved)
+                        })
                         .map(|i| i.agent_id.clone()),
                 );
             } else {

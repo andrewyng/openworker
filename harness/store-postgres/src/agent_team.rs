@@ -81,12 +81,11 @@ impl Transaction for Tx<'_, '_> {
     fn anchor(&mut self, team: &str, id: &str) -> Result<u64> {
         Ok(self.0.query_opt("SELECT seq FROM agent_team_messages WHERE team=$1 AND id=$2 AND (data->>'board')::boolean",&[&team,&id])?.context("Unknown board message ID")?.get::<_,i64>(0) as u64)
     }
-    fn session(&mut self, id: &str) -> Result<Session> {
-        Ok(serde_json::from_value(
-            self.0
-                .query_one("SELECT data FROM sessions WHERE id=$1", &[&id])?
-                .get(0),
-        )?)
+    fn optional_session(&mut self, id: &str) -> Result<Option<Session>> {
+        self.0
+            .query_opt("SELECT data FROM sessions WHERE id=$1", &[&id])?
+            .map(|row| Ok(serde_json::from_value(row.get(0))?))
+            .transpose()
     }
 }
 impl Database {
@@ -110,7 +109,12 @@ impl Database {
         if call.is_some() {
             db::read_history(&mut tx, &mut s)?;
         }
-        crate::controls::before_event(&mut tx, &s, "tool_started", &json!({}))?;
+        // A pending cancellation fences new model/tool authority, not reads or
+        // cleanup reconciliation. Workers must inspect state to apply that cancel.
+        if call.is_some() || matches!(operation, "reserve_model" | "type_prepare" | "type_resolve")
+        {
+            crate::controls::before_event(&mut tx, &s, "tool_started", &json!({}))?;
+        }
         let now = tx
             .query_one(
                 "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
@@ -174,7 +178,7 @@ impl crate::PostgresStore {
         let (sid, operation) = (sid.to_owned(), operation.to_owned());
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let action = if matches!(operation.as_str(), "snapshot" | "team_read_board") {
+            let action = if matches!(operation.as_str(), "snapshot" | "team_read_board") || (operation=="team_manage" && args["action"]=="list") {
                 crate::auth::Action::Read
             } else {
                 crate::auth::Action::Control
@@ -183,10 +187,11 @@ impl crate::PostgresStore {
             ensure!(
                 matches!(
                     operation.as_str(),
-                    "snapshot" | "team_read_board" | "command"
+                    "snapshot" | "team_read_board" | "command" | "team_manage"
                 ),
                 "Unsupported API coordination command"
             );
+            ensure!(operation!="team_manage" || args["action"]=="list","Membership mutations require a durable command ID");
             let mut session = db::locked(&mut tx, &sid, None)?;
             let result = agent_team::apply(
                 &mut Tx(&mut tx),
@@ -307,7 +312,7 @@ impl crate::PostgresStore {
             let instance=doc.roster.instances().find(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).context("No reservation")?.clone();
             let template:Value=tx.query_one("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&instance.agent_type])?.get(0);
             let mut child:Session=serde_json::from_value(template["session"].clone())?;
-            child.id=instance.session_id.clone();child.name=instance.agent_id.clone();
+            child.id=instance.session_id.clone();child.name=doc.roster.request(&instance.agent_id).and_then(|r| r.title.as_ref()).unwrap_or(&instance.agent_id).clone();
             child.agent_team=Some(agent_team::Membership{team_id:doc.id.clone(),agent_id:instance.agent_id.clone(),inbox_cursor:0,last_output:None,notices:vec![],waiting:None});
             let lead=doc.roster.instance(&doc.lead).context("Lead missing")?;
             // Delegation inherits the submitting principal, never a stronger role.
@@ -348,17 +353,17 @@ impl crate::PostgresStore {
         ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
         let cancelled_queued=self.call(|db|{
             let mut tx=db.client.transaction()?;
-            let row=tx.query_opt("SELECT s.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' WHERE (t.data->>'stopped')::boolean AND EXISTS(SELECT 1 FROM submissions q WHERE q.session_id=s.id AND q.status='queued') ORDER BY s.id LIMIT 1 FOR UPDATE OF s SKIP LOCKED",&[])?;
+            let row=tx.query_opt("SELECT s.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' WHERE ((t.data->>'stopped')::boolean OR t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring') AND EXISTS(SELECT 1 FROM submissions q WHERE q.session_id=s.id AND q.status='queued') ORDER BY s.id LIMIT 1 FOR UPDATE OF s SKIP LOCKED",&[])?;
             let Some(row)=row else{tx.commit()?;return Ok(false)};
             let sid:String=row.get(0);
             let rows=tx.query("UPDATE submissions SET status='cancelled' WHERE session_id=$1 AND status='queued' RETURNING id,turn_id",&[&sid])?;
-            for row in rows {let id:String=row.get(0);let tid:String=row.get(1);crate::team_execution::session_event(&mut tx,&sid,Some(&tid),"team_turn_cancelled",json!({"submission_id":id,"reason":"team_stopped","executed":false}))?;}
+            for row in rows {let id:String=row.get(0);let tid:String=row.get(1);crate::team_execution::session_event(&mut tx,&sid,Some(&tid),"team_turn_cancelled",json!({"submission_id":id,"reason":"team_or_member_stopped","executed":false}))?;}
             tx.commit()?;Ok(true)
         })?;
         if cancelled_queued {
             return Ok(true);
         }
-        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',o.principal,t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' JOIN api_session_owners o ON o.session_id=s.id WHERE (t.data->>'stopped')::boolean AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
+        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel')) AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
         let Some((sid, tid, actor, team)) = target else {
             return Ok(false);
         };
@@ -391,6 +396,10 @@ impl crate::PostgresStore {
             if queued {tx.commit()?;return Ok(());}
             let pending:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM agent_team_messages WHERE team=$1 AND seq>$2 AND data->'recipients' ? $3)",&[&member.team_id,&(member.inbox_cursor as i64),&member.agent_id])?.get(0);
             if !pending && member.notices.is_empty(){tx.commit()?;return Ok(());}
+            if let Err(error)=ensure_admission(&mut tx,&s) {
+                if error.downcast_ref::<crate::SubmissionError>()==Some(&crate::SubmissionError::Closed){tx.commit()?;return Ok(());}
+                return Err(error);
+            }
             let key=format!("inbox-{}",member.inbox_cursor);
             let existing:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND id=$2)",&[&sid,&key])?.get(0);
             if !existing {
@@ -398,6 +407,47 @@ impl crate::PostgresStore {
                 let receipt=crate::submissions::insert(&mut tx,&request,"queued",None)?;crate::submissions::journal_acceptance(&mut tx,&receipt,None)?;
             }
             tx.commit()?;Ok(())
+        })
+    }
+}
+
+/// Called under the session lock at admission/promotion. Share the team row lock
+/// with retirement so a checked turn cannot slip through after the gate commits.
+pub(crate) fn ensure_admission(tx: &mut postgres::Transaction<'_>, s: &Session) -> Result<()> {
+    if let Some(member) = &s.agent_team {
+        let doc: Document = serde_json::from_value(
+            tx.query_one(
+                "SELECT data FROM agent_teams WHERE id=$1 FOR SHARE",
+                &[&member.team_id],
+            )?
+            .get(0),
+        )?;
+        ensure!(
+            openworker_runtime::team_lifecycle::admits(&doc, s),
+            crate::SubmissionError::Closed
+        );
+    }
+    Ok(())
+}
+
+impl crate::PostgresStore {
+    /// Controller reconciliation for a retired reservation that never acquired a
+    /// session. Team-row serialization excludes concurrent child provisioning.
+    pub fn reconcile_unstarted_retirement(&self) -> Result<bool> {
+        ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
+        self.call(|db|{
+            let mut tx=db.client.transaction()?;
+            let row=tx.query_opt("SELECT t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='retiring' AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id')) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[])?;
+            let Some(row)=row else {tx.commit()?;return Ok(false)};
+            let mut doc:Document=serde_json::from_value(row.get(0))?;
+            let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Retiring).cloned().collect();
+            for i in candidates {
+                if Tx(&mut tx).optional_session(&i.session_id)?.is_none(){
+                    openworker_runtime::team_lifecycle::settle(&mut Tx(&mut tx),&mut doc,&i.agent_id,openworker_runtime::store::now_ms())?;
+                    Tx(&mut tx).write(&doc,false)?;tx.commit()?;return Ok(true);
+                }
+            }
+            tx.commit()?;Ok(false)
         })
     }
 }

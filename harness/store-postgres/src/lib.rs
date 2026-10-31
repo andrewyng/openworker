@@ -463,7 +463,15 @@ impl PostgresStore {
     /// Claim a dedicated SDK schema. Rejects concurrent SDK owners and adoption
     /// of existing distributed sessions. Connection loss releases the host lock;
     /// ordinary session epochs continue to fence every state/effect checkpoint.
-    pub fn claim_sdk_host(&self, coworkers: Vec<String>) -> Result<()> {
+    pub fn claim_sdk_host(
+        &self,
+        coworkers: Vec<String>,
+    ) -> Result<
+        Vec<(
+            openworker_runtime::store::Session,
+            openworker_runtime::team_type_catalog::Record,
+        )>,
+    > {
         self.call(move |db| db.claim_sdk_host(&coworkers))
     }
     pub fn renew(&self, sid: &str) -> Result<Lease> {

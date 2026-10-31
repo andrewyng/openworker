@@ -2,26 +2,61 @@ use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
-async fn run(root: &Path, args: &[String]) -> Result<String> {
-    let mut child = tokio::process::Command::new("git")
+pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
+    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let hooks = format!("core.hooksPath={null}");
+    // Never resolve a repository-provided git/helper through the app's PATH.
+    #[cfg(not(windows))]
+    let executable = ["/usr/bin/git", "/usr/local/bin/git"]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .find(|p| p.is_file())
+        .context("Git must be installed outside the project")?;
+    #[cfg(windows)]
+    let executable = [
+        std::env::var_os("ProgramFiles")
+            .map(|p| std::path::PathBuf::from(p).join("Git/cmd/git.exe")),
+        std::env::var_os("LOCALAPPDATA")
+            .map(|p| std::path::PathBuf::from(p).join("Programs/Git/cmd/git.exe")),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|p| p.is_file() && !p.starts_with(root))
+    .context("Install Git for Windows outside the project")?;
+    let mut command = tokio::process::Command::new(executable);
+    let mut child = command
         .args([
             "--no-pager",
             "--no-optional-locks",
             "-c",
             "core.fsmonitor=false",
             "-c",
-            "core.hooksPath=/dev/null",
+            hooks.as_str(),
             "-c",
             "color.ui=false",
+            "-c",
+            "submodule.recurse=false",
         ])
         .args(args)
         .current_dir(root)
         .env_clear()
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env(
+            "PATH",
+            if cfg!(windows) {
+                "C:\\Windows\\System32"
+            } else {
+                "/usr/local/bin:/usr/bin:/bin"
+            },
+        )
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_GLOBAL", null)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .envs(if cfg!(windows) {
+            std::env::var_os("SystemRoot").map(|v| ("SystemRoot", v))
+        } else {
+            None
+        })
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

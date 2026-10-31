@@ -749,15 +749,26 @@ impl Model {
                 let content = content
                     .strip_prefix(crate::agent_team::DELEGATION_PREFIX)
                     .unwrap_or(content);
+                // Deterministic fixtures still exercise the real structured
+                // briefing path; only the task drives their scripted steps.
+                if let Some(briefing) = content.strip_prefix(crate::team_briefing::PREFIX) {
+                    return serde_json::from_str::<Value>(briefing)
+                        .ok()?
+                        .get("task")?
+                        .as_str()
+                        .map(str::to_owned);
+                }
                 if v["_runtime_notice"] == "scheduled_task" {
-                    content.strip_prefix(crate::assistant_tools::SCHEDULE_PREFIX)
+                    content
+                        .strip_prefix(crate::assistant_tools::SCHEDULE_PREFIX)
+                        .map(str::to_owned)
                 } else {
-                    Some(content)
+                    Some(content.to_owned())
                 }
             })
-            .and_then(|s| s.strip_prefix("TEST_RESOURCE_GRANTS "))
+            .and_then(|s| s.strip_prefix("TEST_RESOURCE_GRANTS ").map(str::to_owned))
         {
-            let steps: Vec<Value> = serde_json::from_str(plan)?;
+            let steps: Vec<Value> = serde_json::from_str(&plan)?;
             let output = if let Some(step) = steps.get(calls.len()) {
                 vec![
                     json!({"type":"function_call","call_id":crate::id("call"),"name":step["name"],"arguments":step["arguments"].to_string()}),

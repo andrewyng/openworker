@@ -959,10 +959,54 @@ impl AgentTeam {
         agent_id: &str,
         message: &str,
     ) -> Result<Value> {
+        self.spawn_with_options(
+            key,
+            agent_type,
+            agent_id,
+            message,
+            crate::agents::ChildOptions::default(),
+        )
+        .await
+    }
+    pub async fn spawn_with_options(
+        &self,
+        key: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+        options: crate::agents::ChildOptions,
+    ) -> Result<Value> {
+        let mut args = serde_json::to_value(options).map_err(|_| error("invalid_team_spawn"))?;
+        args["agent_type"] = json!(agent_type);
+        args["agent_id"] = json!(agent_id);
+        args["message"] = json!(message);
+        self.command(key, "team_spawn", args).await
+    }
+    pub async fn members(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        let mut args = json!({"action":"list","limit":limit});
+        if let Some(after) = after {
+            args["after"] = json!(after);
+        }
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/commands", id(self.lead.id())?),
+                Some(json!({"operation":"team_manage","arguments":args})),
+                None,
+            )
+            .await
+    }
+    pub async fn retire(
+        &self,
+        key: &str,
+        agent_id: &str,
+        mode: crate::agents::RetirementMode,
+    ) -> Result<Value> {
         self.command(
             key,
-            "team_spawn",
-            json!({"agent_type":agent_type,"agent_id":agent_id,"message":message}),
+            "team_manage",
+            json!({"action":"retire","agent_id":agent_id,"mode":mode}),
         )
         .await
     }
