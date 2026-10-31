@@ -93,6 +93,7 @@ class AuditStore:
             # (OPE-224): "session", "openai-decisions" or "jev". Lets shadow results be
             # summarised per reviewer instead of mixing them.
             ("reviewer", "TEXT DEFAULT ''"),
+            ("occurrence_id", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(
@@ -100,6 +101,7 @@ class AuditStore:
                 )
             except sqlite3.OperationalError:
                 pass  # column already exists
+        self._conn.execute("CREATE INDEX IF NOT EXISTS audit_occurrence ON audit_events(session_id, occurrence_id, stage, id)")
         self._conn.commit()
         # Export hooks (remote/audit_export.py): told after every commit, outside the
         # lock, with the row's id — the emitter reads the row back by cursor.
@@ -137,8 +139,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, reviewer)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, reviewer, occurrence_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -161,6 +163,7 @@ class AuditStore:
                     str(event.get("actor") or ""),
                     str(event.get("approved_by") or ""),
                     str(event.get("reviewer") or ""),
+                    str(event.get("occurrence_id") or ""),
                 ),
             )
             self._conn.commit()
@@ -209,10 +212,10 @@ class AuditStore:
         return {"live": _bucket("reviewer_verdict"), "shadow": _bucket("reviewer_shadow")}
 
     def shadow_rows(self, reviewer: str, *, days: int = 30) -> list[dict[str, Any]]:
-        """Shadow verdicts of one reviewer over the last `days`, each joined to the human's
-        own decision on the same tool call (OPE-224). `decision` is "approved", "denied" or
-        "" when the card was never answered by a person (unattended auto-refusals and
-        superseded calls are not a person's decision)."""
+        """Shadow verdicts joined by session and unique call occurrence, including late
+        shadow responses. Legacy rows without an occurrence ID have unknown decisions;
+        guessing from reusable provider IDs would corrupt the reported agreement rate.
+        Unattended auto-refusals and superseded calls are not human decisions either."""
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -220,7 +223,8 @@ class AuditStore:
                        s.reason, s.call_id,
                        COALESCE((
                            SELECT d.status FROM audit_events d
-                           WHERE d.call_id = s.call_id AND s.call_id != ''
+                           WHERE d.session_id = s.session_id
+                             AND d.occurrence_id = s.occurrence_id AND s.occurrence_id != ''
                              AND d.stage = 'approval_resolved'
                              AND d.status IN ('approved', 'denied')
                              AND COALESCE(d.approval, '') != 'auto_refused'

@@ -19,6 +19,7 @@ import asyncio
 import functools
 import json
 import time
+import uuid
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -2464,6 +2465,13 @@ class TurnEngine:
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:
             return
+        # Provider IDs can repeat across sessions and model rounds (Gemini's call_0).
+        # The call object lives through authorization, execution and its asynchronous
+        # shadow review, so bind the occurrence to that object rather than its ID.
+        occurrence = getattr(tool_call, "_audit_occurrence_id", None)
+        if occurrence is None:
+            occurrence = uuid.uuid4().hex
+            setattr(tool_call, "_audit_occurrence_id", occurrence)
         payload = {
             **self.audit_context,
             "tool": tool_call.name,
@@ -2474,6 +2482,7 @@ class TurnEngine:
             # site can't forget it. `**event` spreads last: a call site that means
             # something else by `call_id` still wins.
             "call_id": tool_call.id,
+            "occurrence_id": occurrence,
             **event,
         }
         try:
