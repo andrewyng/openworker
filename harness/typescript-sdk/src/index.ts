@@ -36,6 +36,7 @@ import {
   type ConnectionState,
   type AgentDefinition,
   type SessionOptions,
+  type ChildSpawnOptions,
 } from "./types.js";
 export * from "./types.js";
 
@@ -1178,11 +1179,14 @@ export class AgentTeam {
     agentType: string,
     agentId: string,
     message: string,
+    options: ChildSpawnOptions = {},
   ): Promise<unknown> {
     return this.command(requestId, "team_spawn", {
+      ...options,
       agent_type: agentType,
       agent_id: agentId,
       message,
+      context: options.context ?? {mode:"fresh"},
     });
   }
   post(requestId: string, message: string): Promise<unknown> {

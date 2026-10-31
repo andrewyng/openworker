@@ -959,12 +959,28 @@ impl AgentTeam {
         agent_id: &str,
         message: &str,
     ) -> Result<Value> {
-        self.command(
+        self.spawn_with_options(
             key,
-            "team_spawn",
-            json!({"agent_type":agent_type,"agent_id":agent_id,"message":message}),
+            agent_type,
+            agent_id,
+            message,
+            crate::agents::ChildOptions::default(),
         )
         .await
+    }
+    pub async fn spawn_with_options(
+        &self,
+        key: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+        options: crate::agents::ChildOptions,
+    ) -> Result<Value> {
+        let mut args = serde_json::to_value(options).map_err(|_| error("invalid_team_spawn"))?;
+        args["agent_type"] = json!(agent_type);
+        args["agent_id"] = json!(agent_id);
+        args["message"] = json!(message);
+        self.command(key, "team_spawn", args).await
     }
     pub async fn post(&self, key: &str, message: &str) -> Result<Value> {
         self.command(key, "team_post_board", json!({"message":message}))

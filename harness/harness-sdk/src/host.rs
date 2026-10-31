@@ -702,7 +702,12 @@ impl Host {
                         .iter()
                         .any(|v| v.id == instance.session_id);
                     if !exists {
-                        let mut parameters = json!({"workspace":s.workspace,"name":instance.agent_id,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
+                        let title = doc
+                            .roster
+                            .request(&instance.agent_id)
+                            .and_then(|r| r.title.as_deref())
+                            .unwrap_or(&instance.agent_id);
+                        let mut parameters = json!({"workspace":s.workspace,"name":title,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
                         let definition = self
                             .registry
                             .read()

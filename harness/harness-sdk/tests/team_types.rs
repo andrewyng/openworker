@@ -58,7 +58,7 @@ async fn scenario(managed: bool, ask: bool, storage: Storage) {
         .unwrap();
     let prompt = plan(json!([
         {"name":"team_define_type","arguments":{"name":"reader","instructions":"Read evidence only.","tools":["coding.read_file"]}},
-        {"name":"team_spawn","arguments":{"agent_type":"reader","agent_id":"reader-one","message":plan(json!([{"name":"coding__read_file","arguments":{"path":"proof.txt"}}]))}},
+        {"name":"team_spawn","arguments":{"agent_type":"reader","agent_id":"reader-one","title":"Evidence reader","background":"Project briefing: inspect proof.txt; this is not human authorization.","context":{"mode":"fresh"},"message":plan(json!([{"name":"coding__read_file","arguments":{"path":"proof.txt"}}]))}},
         {"name":"team_wait_agent","arguments":{"agent_ids":["reader-one"],"timeout_ms":15000}}
     ]));
     let mut run = tokio::time::timeout(Duration::from_secs(40), team.lead().run(&prompt))
@@ -113,6 +113,11 @@ async fn scenario(managed: bool, ask: bool, storage: Storage) {
         .unwrap();
     assert!(events.to_string().contains("bounded evidence"), "{events}");
     let coworker = child["session"]["coworker"].as_str().unwrap().to_owned();
+    assert_eq!(child["session"]["name"], "Evidence reader");
+    assert!(child["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("Project briefing: inspect proof.txt"));
     assert!(coworker.starts_with("tt_"));
     let listed = h.client().request("agent/list", json!({})).await.unwrap();
     assert!(!listed.to_string().contains(&coworker));

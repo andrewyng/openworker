@@ -193,3 +193,43 @@ pub fn exercise(db: &mut dyn StateStore) {
         doc["id"]
     );
 }
+
+pub fn exercise_briefing(db: &mut dyn StateStore) {
+    create(db);
+    let args = json!({"agent_type":"builder","agent_id":"briefed-builder","message":"Build the report.","title":"Report builder","background":"Private project facts for the assigned task.","context":{"mode":"fresh"}});
+    let first = db.agent_team("lead", "team_spawn", &args, None).unwrap();
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &args, None).unwrap(),
+        json!({"instance":first["instance"],"created":false})
+    );
+    let doc = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    let parsed: openworker_runtime::agent_team::Document =
+        serde_json::from_value(doc.clone()).unwrap();
+    assert_eq!(
+        parsed
+            .roster
+            .request("briefed-builder")
+            .unwrap()
+            .title
+            .as_deref(),
+        Some("Report builder")
+    );
+    assert!(parsed.tasks["briefed-builder"].contains(openworker_runtime::team_briefing::PREFIX));
+    assert!(parsed.tasks["briefed-builder"].contains("Private project facts"));
+    let public = openworker_runtime::agent_team::public_snapshot(doc);
+    assert!(!public.to_string().contains("Private project facts"));
+    for (field, value) in [
+        ("title", json!("Changed")),
+        ("background", json!("Changed facts")),
+        ("context", json!({"mode":"snapshot"})),
+        ("cwd", json!("/host/escape")),
+        ("initiation", json!("user_asked")),
+    ] {
+        let mut changed = args.clone();
+        changed[field] = value;
+        assert!(
+            db.agent_team("lead", "team_spawn", &changed, None).is_err(),
+            "{field}"
+        );
+    }
+}

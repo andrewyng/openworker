@@ -39,6 +39,12 @@ pub struct SpawnRequest {
     pub agent_type: String,
     pub agent_id: String,
     pub message: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub background: Option<String>,
+    #[serde(default)]
+    pub context: crate::team_briefing::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +144,9 @@ impl Roster {
     pub fn instance(&self, id: &str) -> Option<&Instance> {
         self.instances.get(id)
     }
+    pub fn request(&self, id: &str) -> Option<&SpawnRequest> {
+        self.requests.get(id)
+    }
     pub fn instances(&self) -> impl Iterator<Item = &Instance> {
         self.instances.values()
     }
@@ -152,6 +161,11 @@ impl Roster {
         identifier(&request.agent_id)?;
         identifier(&request.agent_type)?;
         text(&request.message, 16000)?;
+        crate::team_briefing::validate(
+            request.title.as_deref(),
+            &request.message,
+            request.background.as_deref(),
+        )?;
         ensure!(
             self.spawn_types.contains(&request.agent_type),
             "Agent type is not registered for this team"

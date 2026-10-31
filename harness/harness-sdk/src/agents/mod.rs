@@ -54,8 +54,8 @@ pub use crate::{
     TelemetrySignal, TokenRefreshReason, ToolRegistry,
 };
 pub use agent_team::{
-    AgentTeam, AgentTeamRef, Communication, HistoryPage, HistoryQuery, Instance, TeamDelegation,
-    TeamOptions, TeamPolicy,
+    AgentTeam, AgentTeamRef, ChildContext, ChildOptions, Communication, HistoryPage, HistoryQuery,
+    Instance, TeamDelegation, TeamOptions, TeamPolicy,
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{

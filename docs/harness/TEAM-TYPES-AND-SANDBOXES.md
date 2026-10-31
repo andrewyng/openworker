@@ -185,8 +185,26 @@ blocks new work and automatic wakes. Listing/state expose these distinctions.
 Messages still wake idle agents and reach busy agents before the next model call;
 pending human approvals and cancelled turns are not implicitly approved/resumed.
 
-These are target contracts. Current `team_spawn` has only type/ID/message until
-the individual adapter/SDK paths below are implemented and qualified.
+Title, background and explicit fresh context are implemented in the common spawn
+contract and both SDKs. Workspace/worktree selection, inherited snapshots,
+per-instance model overrides and separate sandbox placement remain subsequent
+adapter work. Unsupported fields/modes reject; they are not silently ignored.
+
+```typescript
+await team.spawn("build-report", "builder", "builder-report", "Build the report page.", {
+  title: "Report builder",
+  background: "The existing app uses React and the shared report API.",
+  context: { mode: "fresh" },
+});
+```
+
+Rust exposes the same fields with `spawn_with_options(..., ChildOptions { ... })`;
+ordinary `spawn(...)` still uses defaults. Service clients use the same shape.
+The harness stores the title as the child's display name while preserving its
+stable instance ID. Briefing/task fields enter the initial conversation as
+separate structured collaborator data, not another system prompt or copied
+history. Identical spawn retries reuse the child; changed titles/briefings reject.
+Combined encoded briefing/task size is bounded before reserving the instance.
 
 ## Sandbox placement and ownership
 
