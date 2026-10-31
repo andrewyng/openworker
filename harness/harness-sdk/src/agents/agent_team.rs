@@ -6,6 +6,7 @@ pub use openworker_runtime::team_coordination::{
     Communication, HistoryPage, HistoryQuery, Instance, Policy as TeamPolicy,
 };
 pub use openworker_runtime::team_definition::Delegation as TeamDelegation;
+pub use openworker_runtime::team_lifecycle::Mode as RetirementMode;
 pub use openworker_runtime::team_workspace::Selection as ChildWorkspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -135,6 +136,26 @@ impl AgentTeam {
         args["agent_id"] = json!(agent_id);
         args["message"] = json!(message);
         self.command(request_id, "team_spawn", args).await
+    }
+    pub async fn members(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        let mut args = json!({"action":"list","limit":limit});
+        if let Some(after) = after {
+            args["after"] = json!(after);
+        }
+        self.query("team_manage", args).await
+    }
+    pub async fn retire(
+        &self,
+        request_id: &str,
+        agent_id: &str,
+        mode: RetirementMode,
+    ) -> Result<Value> {
+        self.command(
+            request_id,
+            "team_manage",
+            json!({"action":"retire","agent_id":agent_id,"mode":mode}),
+        )
+        .await
     }
     pub async fn post(&self, request_id: &str, message: &str) -> Result<Value> {
         self.command(request_id, "team_post_board", json!({"message":message}))

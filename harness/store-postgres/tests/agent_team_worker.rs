@@ -44,9 +44,7 @@ fn selector(rt: &Runtime) -> Selector {
         environment_profile: None,
     }
 }
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires isolated OW_PG_TEST_URL"]
-async fn one_slot_wait_releases_and_resumes_across_worker_ownership() {
+async fn scenario(retire_mode: Option<openworker_runtime::team_lifecycle::Mode>) {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     std::fs::create_dir(root.join("work")).unwrap();
@@ -165,7 +163,95 @@ async fn one_slot_wait_releases_and_resumes_across_worker_ownership() {
     })
     .await
     .expect("Lead must park before child admission");
-    seed.submit_turn(TurnSubmission{session_id:child.id.clone(),submission_id:"child-task".into(),text:plan(json!([{"name":"team_post_board","arguments":{"message":"@lead verified child proof"}}])),limits:None}).unwrap();
+    let child_steps = if let Some(mode) = retire_mode {
+        json!([{"name":"team_wait_agent","arguments":{"agent_ids":["lead"],"timeout_ms":if mode==openworker_runtime::team_lifecycle::Mode::Cancel {60000}else{1500}}},{"name":"team_post_board","arguments":{"message":"@lead verified child proof"}}])
+    } else {
+        json!([{"name":"team_post_board","arguments":{"message":"@lead verified child proof"}}])
+    };
+    seed.submit_turn(TurnSubmission {
+        session_id: child.id.clone(),
+        submission_id: "child-task".into(),
+        text: plan(child_steps),
+        limits: None,
+    })
+    .unwrap();
+    if let Some(mode) = retire_mode {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if seed.read_snapshot(&child.id).unwrap()["turn"]["status"] == "waiting_agents" {
+                    break;
+                }
+                assert!(!task.is_finished());
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Child must park before retirement");
+        seed.submit_turn(TurnSubmission {
+            session_id: child.id.clone(),
+            submission_id: "queued-later".into(),
+            text: "Never start after retirement".into(),
+            limits: None,
+        })
+        .unwrap();
+        seed.agent_team_api(&lead.id,"command",json!({"request_id":"retire-child","operation":"team_manage","arguments":{"action":"retire","agent_id":"builder-ui","mode":mode}})).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                seed.reconcile_stopped_agent_team().unwrap();
+                let status = seed.submission(&child.id, "queued-later").unwrap().status;
+                assert_ne!(
+                    status,
+                    openworker_store_postgres::SubmissionStatus::Started,
+                    "Retirement cannot promote queued followups"
+                );
+                if status == openworker_store_postgres::SubmissionStatus::Cancelled {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Controller must reconcile even when a worker temporarily holds the row lock");
+        assert!(seed
+            .submit_turn(TurnSubmission {
+                session_id: child.id.clone(),
+                submission_id: "too-late".into(),
+                text: "Blocked".into(),
+                limits: None
+            })
+            .is_err());
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                seed.reconcile_stopped_agent_team().unwrap();
+                let s = seed.read_snapshot(&child.id).unwrap();
+                let doc = seed
+                    .agent_team_api(&lead.id, "snapshot", json!({}))
+                    .unwrap();
+                if s["session"]["closed"] == true
+                    && doc["roster"]["instances"]["builder-ui"]["phase"] == "closed"
+                {
+                    break;
+                }
+                assert!(!task.is_finished());
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("Owning worker must settle retirement");
+        assert_eq!(
+            seed.submission(&child.id, "queued-later").unwrap().status,
+            openworker_store_postgres::SubmissionStatus::Cancelled
+        );
+        assert_eq!(
+            seed.read_snapshot(&child.id).unwrap()["turn"]["status"],
+            if mode == openworker_runtime::team_lifecycle::Mode::Cancel {
+                "cancelled"
+            } else {
+                "completed"
+            }
+        );
+    }
+
     let result = tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             let s = seed.read_snapshot(&lead.id).unwrap();
@@ -189,10 +275,31 @@ async fn one_slot_wait_releases_and_resumes_across_worker_ownership() {
         events.iter().filter(|e| e.kind == "owner_claimed").count() >= 2,
         "Lead must release and reacquire ownership"
     );
-    assert!(result["messages"]
-        .to_string()
-        .contains("verified child proof"));
+    if retire_mode != Some(openworker_runtime::team_lifecycle::Mode::Cancel) {
+        assert!(result["messages"]
+            .to_string()
+            .contains("verified child proof"));
+    }
     assert!(!result["messages"]
         .to_string()
         .contains("\\\"timeout\\\":true"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn one_slot_wait_releases_and_resumes_across_worker_ownership() {
+    scenario(None).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn finish_current_retirement_resumes_parked_work_and_cancels_queued_followups() {
+    scenario(Some(
+        openworker_runtime::team_lifecycle::Mode::FinishCurrent,
+    ))
+    .await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn cancel_retirement_settles_parked_work_and_releases_its_slot() {
+    scenario(Some(openworker_runtime::team_lifecycle::Mode::Cancel)).await;
 }

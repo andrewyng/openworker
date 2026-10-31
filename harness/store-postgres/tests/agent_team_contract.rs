@@ -145,6 +145,16 @@ fn observer_and_unrelated_session_scopes_cannot_send_or_read_other_teams() {
             result.err().unwrap().downcast_ref::<Error>(),
             Some(&Error::Forbidden)
         );
+        let roster =
+            caller.agent_team_api("lead", "team_manage", json!({"action":"list","limit":10}));
+        assert_eq!(roster.is_ok(), name == "observer");
+        assert!(caller
+            .agent_team_api(
+                "lead",
+                "team_manage",
+                json!({"action":"retire","agent_id":"builder"})
+            )
+            .is_err());
         if name == "unrelated" {
             assert!(caller
                 .agent_team_api("lead", "snapshot", json!({}))
@@ -309,4 +319,86 @@ fn postgres_workspace_intent_contract() {
     openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
     let mut store = openworker_store_postgres::PostgresStore::open(config).unwrap();
     contract::exercise_workspace_intent(&mut store);
+}
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn postgres_retirement_contract() {
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_retire_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::exercise_retirement(&mut db);
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn controller_retires_an_unprovisioned_reservation_without_creating_a_session() {
+    use openworker_runtime::store::StateStore;
+    use serde_json::json;
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_empty_retire_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::create(&mut db);
+    let reserved = db
+        .agent_team(
+            "lead",
+            "team_spawn",
+            &json!({"agent_id":"never-started","agent_type":"builder","message":"Work"}),
+            None,
+        )
+        .unwrap();
+    db.agent_team_api("lead","command",json!({"request_id":"retire","operation":"team_manage","arguments":{"action":"retire","agent_id":"never-started"}})).unwrap();
+    assert!(db.reconcile_unstarted_retirement().unwrap());
+    assert!(!db.reconcile_unstarted_retirement().unwrap());
+    assert!(db
+        .get(reserved["instance"]["session_id"].as_str().unwrap())
+        .is_err());
+    assert_eq!(
+        db.agent_team_api("lead", "snapshot", json!({})).unwrap()["roster"]["instances"]
+            ["never-started"]["phase"],
+        "closed"
+    );
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn pending_cancel_fences_work_without_blocking_team_reads_or_reconciliation() {
+    use openworker_runtime::store::StateStore;
+    use serde_json::json;
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_cancel_read_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::create(&mut db);
+    let (s, _, _) = db.accept("lead", "running", "Work").unwrap();
+    db.submit_control(openworker_runtime::control::Command {
+        session_id: "lead".into(),
+        request_id: "cancel".into(),
+        turn_id: s.turn.unwrap().id,
+        actor: "trusted-test-controller".into(),
+        action: openworker_runtime::control::Action::Cancel,
+    })
+    .unwrap();
+    assert!(db.agent_team("lead", "snapshot", &json!({}), None).is_ok());
+    assert!(db.agent_team("lead", "pending", &json!({}), None).is_ok());
+    assert!(db
+        .agent_team_api("lead", "team_manage", json!({"action":"list"}))
+        .is_ok());
+    let error = db
+        .agent_team("lead", "reserve_model", &json!({}), None)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("Cancellation intent pending"),
+        "{error}"
+    );
 }

@@ -772,6 +772,7 @@ impl Store {
             reviewer_denials: 0,
         });
         let tx = self.db.transaction()?;
+        sqlite_agent_team::ensure_admission(&tx, &s)?;
         Self::append_history(&tx, &s)?;
         tx.execute("UPDATE team_queue SET status='accepted' WHERE session_id=? AND id=? AND status='queued'", params![sid,key])?;
         tx.execute(

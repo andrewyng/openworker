@@ -53,6 +53,7 @@ pub struct SpawnRequest {
 pub enum Phase {
     Reserved,
     Ready,
+    Retiring,
     Closed,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,7 +182,13 @@ impl Roster {
             });
         }
         ensure!(
-            self.instances.len() < self.policy.max_instances,
+            self.instances.len() < 4096
+                && self
+                    .instances
+                    .values()
+                    .filter(|i| i.phase != Phase::Closed)
+                    .count()
+                    < self.policy.max_instances,
             "Team instance capacity reached"
         );
         let sid = allocate_session();
@@ -207,10 +214,16 @@ impl Roster {
     pub fn ready(&mut self, id: &str, sid: &str) -> Result<()> {
         let i = self.instances.get_mut(id).context("Unknown instance")?;
         ensure!(
-            i.session_id == sid && i.phase != Phase::Closed,
+            i.session_id == sid && matches!(i.phase, Phase::Reserved | Phase::Ready),
             "Instance reference changed or was closed"
         );
         i.phase = Phase::Ready;
+        Ok(())
+    }
+    pub fn retire(&mut self, id: &str) -> Result<()> {
+        let i = self.instances.get_mut(id).context("Unknown instance")?;
+        ensure!(i.phase != Phase::Closed, "Instance already closed");
+        i.phase = Phase::Retiring;
         Ok(())
     }
     pub fn close(&mut self, id: &str) -> Result<()> {
@@ -224,7 +237,7 @@ impl Roster {
         ensure!(
             self.instances
                 .get(id)
-                .is_some_and(|i| i.phase == Phase::Ready),
+                .is_some_and(|i| matches!(i.phase, Phase::Ready | Phase::Retiring)),
             "Sender is not an active team instance"
         );
         Ok(())
@@ -232,7 +245,7 @@ impl Roster {
     fn recipient(&self, id: &str) -> Result<Instance> {
         self.instances
             .get(id)
-            .filter(|i| i.phase != Phase::Closed)
+            .filter(|i| matches!(i.phase, Phase::Ready | Phase::Reserved))
             .cloned()
             .context("Mention/recipient is not a current team instance")
     }
@@ -251,7 +264,10 @@ impl Roster {
                 recipients.extend(
                     self.instances
                         .values()
-                        .filter(|i| i.agent_id != sender && i.phase != Phase::Closed)
+                        .filter(|i| {
+                            i.agent_id != sender
+                                && matches!(i.phase, Phase::Ready | Phase::Reserved)
+                        })
                         .map(|i| i.agent_id.clone()),
                 );
             } else {

@@ -1189,6 +1189,12 @@ export class AgentTeam {
       context: options.context ?? {mode:"fresh"},
     });
   }
+  members(options: {after?: string; limit?: number} = {}): Promise<unknown> {
+    return this.query("team_manage", {...options, action:"list"});
+  }
+  retire(requestId: string, agentId: string, mode: "finish_current" | "cancel" = "finish_current"): Promise<unknown> {
+    return this.command(requestId,"team_manage",{action:"retire",agent_id:agentId,mode});
+  }
   post(requestId: string, message: string): Promise<unknown> {
     return this.command(requestId, "team_post_board", { message });
   }

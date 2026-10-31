@@ -489,12 +489,63 @@ async fn execute_inner(
                     .await?;
             } else if !runtime.is_busy(sid) {
                 let metadata = store.clone().metadata(sid)?;
-                if metadata.agent_team.is_some() {
-                    if store
-                        .clone()
-                        .agent_team(sid, "snapshot", &serde_json::json!({}), None)?["stopped"]
-                        == true
-                    {
+                if let Some(member) = &metadata.agent_team {
+                    let doc: openworker_runtime::agent_team::Document = serde_json::from_value(
+                        store
+                            .clone()
+                            .agent_team(sid, "snapshot", &serde_json::json!({}), None)?,
+                    )?;
+                    if doc.roster.instance(&member.agent_id).is_some_and(|i| {
+                        i.phase == openworker_runtime::team_coordination::Phase::Retiring
+                    }) {
+                        if metadata
+                            .turn
+                            .as_ref()
+                            .is_none_or(|t| openworker_runtime::store::terminal(&t.status))
+                        {
+                            if runtime
+                                .dispatch("session/close", serde_json::json!({"session_id":sid}))
+                                .await
+                                .is_ok()
+                            {
+                                store.clone().agent_team(
+                                    sid,
+                                    "retirement_settle",
+                                    &serde_json::json!({"agent_id":member.agent_id}),
+                                    None,
+                                )?;
+                                return Ok(());
+                            } else if doc.retirements[&member.agent_id].pending_reason.as_deref()
+                                != Some("cleanup_not_confirmed")
+                            {
+                                store.clone().agent_team(sid,"retirement_error",&serde_json::json!({"agent_id":member.agent_id,"reason":"cleanup_not_confirmed"}),None)?;
+                            }
+                        } else if metadata
+                            .turn
+                            .as_ref()
+                            .is_some_and(|t| t.status == "resuming_agents")
+                        {
+                            runtime
+                                .dispatch("team/resume", serde_json::json!({"session_id":sid}))
+                                .await?;
+                            continue;
+                        } else if member.waiting.is_some() {
+                            let wake = store.clone().agent_team(
+                                sid,
+                                "wake",
+                                &serde_json::json!({}),
+                                None,
+                            )?;
+                            if wake["resume"] == true {
+                                runtime
+                                    .dispatch("team/resume", serde_json::json!({"session_id":sid}))
+                                    .await?;
+                                continue; // Keep the owning runtime alive for this continuation.
+                            }
+                        }
+                        return Ok(()); // Parked work keeps durable state, not a worker slot.
+                    }
+                    if doc.stopped {
                         return Ok(());
                     }
                     if metadata

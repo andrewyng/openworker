@@ -279,3 +279,62 @@ qualification remains a separate gate rather than a claim made by these fixtures
 
 Sources: `team_workspace.rs`, `agent_team_storage.rs`, shared
 `agent_team_contract.rs`, SDK `team_workspaces.rs` and TypeScript `team-types.test.mjs`.
+
+## M4a — membership gates and existing-environment retirement
+
+- Added lead `team_manage` with bounded, cursor-based roster pages and pinned
+  `finish_current` / `cancel` retirement. Rust and TypeScript SDKs expose members
+  and retire for managed/embedded hosts and remote service clients. Lists include
+  stable type/instance/session, resolved working/model/environment metadata and
+  retirement status; prompts, background and secret values remain excluded.
+- Added durable retiring state, timestamps and metadata-only pending-cleanup reasons.
+  Retirement immediately blocks new turns, direct messages, mentions and inbox
+  wakes. Existing turn continuations and their wait notices still work. Current-turn
+  cancellation remains separate from permanent retirement and explicit follow-up.
+- Active capacity includes reserved/ready/retiring instances. It is released only
+  after owning runtime closure; 4,096 retained identities separately bound history.
+  SQLite acceptance and PostgreSQL submission/promotion use the canonical team gate.
+  PostgreSQL admission shares the team row lock with retirement. Queue reconciliation
+  cancels unstarted work, and workers can claim idle retiring members for cleanup.
+- SDK host and service worker paths reconcile through normal cancellation/closure,
+  retaining original identities and unknown outcomes. A never-provisioned reservation
+  is closed without creating a session. Shared files/environments are retained.
+- Qualification found and fixed a genuine graceful-retirement continuation bug:
+  a worker resumed a parked member and immediately released that runtime, interrupting
+  the resumed turn. It now keeps ownership while the continuation runs. Transient
+  row-lock skipping is tested across controller passes; it is not treated as proof
+  that queued work is absent. An already-stopped team's next-turn read remains empty.
+- Rust embedded/managed × SQLite/PostgreSQL passes both retirement modes, including
+  parked work, admission blocking, capacity release, stable IDs and host restart.
+  TypeScript scoped-type/workspace/retirement/restart passes on both databases.
+  The one-slot PostgreSQL worker suite covers graceful and cancellation retirement,
+  queued follow-up suppression, parent resumption and the existing slot-release case.
+- Preserved final child events in each run's durable replay set before task admission.
+  A slow/reconnecting consumer still receives completion and closure after the child
+  leaves the live roster. Graceful retirement keeps current human-answer routing and
+  saved PostgreSQL API control priority. Cancellation fences work, not state reads or
+  cleanup; an explicit regression prevents that control-path deadlock. Wait notices
+  and roster pages preserve interrupted/possibly-unknown outcomes after closure.
+- M4a gate: **110 successful targeted checks** across 50 runtime/SQLite contracts,
+  15 real PostgreSQL contract/worker checks, 17 Rust SDK checks, two TypeScript
+  process/database integrations and 26 TypeScript configuration/service/transport
+  regressions. The four Rust process/database retirement tests each exercise both
+  modes (eight scenarios); additional tests cover human answers, external controls
+  and delayed event replay. Strict all-target Clippy passes for runtime/store/SDK/server
+  with test support; formatting, diff and documentation checks pass.
+- The existing local kind/OpenShell/Langfuse fixtures were inspected read-only and
+  remain healthy. This slice was not deployed to OpenShell and is not mixed-placement
+  qualification. Approximately 44 GiB remains free. Only task-owned local database/
+  executable fixtures were created; no cloud resources, IAM or paid model calls.
+- Remaining M4 work is owned exclusive-environment release after M3 provisioning;
+  new/member sandbox selection, service-scoped type compilation, provider enforcement,
+  model override selection and mixed-placement/OpenShell qualification remain open.
+
+### Lifecycle test groups and purpose
+
+| Group | Checks | Why |
+| --- | --- | --- |
+| Admission and identity | Retiring capacity, blocked messages/turns/wakes, no reactivation/recycling, bounded pages and immutable command receipts. | Retirement cannot silently admit more work or free capacity before settlement. |
+| Storage and authorization | Identical SQLite/PostgreSQL rules, admission/promotion fencing, observer lists, denied mutations and unrelated scopes. | Any API node sees the same durable gate without borrowing worker ownership. |
+| Worker control | One slot, parked current turns, graceful completion, cancellation, queued suppression, never-created reservations and cleanup settlement. | Parents cannot starve children, and cleanup cannot restart a retired member. |
+| SDK/restart | Both modes through embedded/managed Rust and both databases; TypeScript subprocess parity and persisted retirement. | Process/storage choices preserve lifecycle semantics and original IDs. |

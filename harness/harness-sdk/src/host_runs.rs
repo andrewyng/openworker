@@ -79,7 +79,7 @@ fn busy(e: &anyhow::Error) -> bool {
 }
 
 impl Host {
-    fn save_run(&self, sid: &str, record: &Value) -> Result<()> {
+    pub(super) fn save_run(&self, sid: &str, record: &Value) -> Result<()> {
         let event =
             self.store
                 .lock()
@@ -417,7 +417,11 @@ impl Host {
             {
                 for i in doc.roster.instances().filter(|i| {
                     i.session_id != sid
-                        && i.phase == openworker_runtime::team_coordination::Phase::Ready
+                        && matches!(
+                            i.phase,
+                            openworker_runtime::team_coordination::Phase::Ready
+                                | openworker_runtime::team_coordination::Phase::Retiring
+                        )
                 }) {
                     members.push((
                         i.session_id.clone(),
@@ -731,7 +735,7 @@ impl Host {
         let deadline = Instant::now() + wait;
         let mut rx = self.events.subscribe();
         loop {
-            let (members, team) = self.members(&sid)?;
+            let (mut members, team) = self.members(&sid)?;
             // Prevent a scheduler/app admission between the idle snapshot and
             // queue/outbox check. Model completion may still advance the journal.
             let admission = self.admission.lock().await;
@@ -748,6 +752,27 @@ impl Host {
                 submission.is_none() || record.is_some(),
                 "Unknown agent run submission"
             );
+            // Retired members leave the live roster but not this run's event
+            // replay set. The host registered each child before task admission.
+            if let Some(r) = &record {
+                let db = self.store.lock().unwrap();
+                if let Some(root) = db.metadata(&sid)?.agent_team {
+                    for id in r["cursors"].as_object().into_iter().flat_map(|m| m.keys()) {
+                        if members.iter().any(|(s, _)| s == id) {
+                            continue;
+                        }
+                        let child = db.metadata(id)?;
+                        ensure!(
+                            child
+                                .agent_team
+                                .as_ref()
+                                .is_some_and(|m| m.team_id == root.team_id),
+                            "Saved run member belongs to another team"
+                        );
+                        members.push((id.clone(), child.coworker));
+                    }
+                }
+            }
             let cached = record.as_ref().and_then(|r| r.get("result")).cloned();
             let mut snaps = Vec::with_capacity(members.len());
             for (s, agent) in &members {
@@ -848,7 +873,11 @@ impl Host {
                 let mut pending = false;
                 if !doc.stopped {
                     for i in doc.roster.instances() {
-                        if i.phase == openworker_runtime::team_coordination::Phase::Reserved {
+                        if matches!(
+                            i.phase,
+                            openworker_runtime::team_coordination::Phase::Reserved
+                                | openworker_runtime::team_coordination::Phase::Retiring
+                        ) {
                             pending = true;
                             continue;
                         }

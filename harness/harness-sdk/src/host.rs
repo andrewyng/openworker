@@ -20,6 +20,8 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 #[path = "host_catalog.rs"]
 mod catalog;
+#[path = "host_named_lifecycle.rs"]
+mod named_lifecycle;
 #[path = "host_named_types.rs"]
 mod named_types;
 #[path = "host_runs.rs"]
@@ -604,6 +606,7 @@ impl Host {
                 db.renew(&s.id)?;
             }
         }
+        self.reconcile_named_retirements(&sessions).await?;
         self.store.lock().unwrap().team_tick()?;
         let cancellations = self.store.lock().unwrap().team_cancellations()?;
         for (sid, tid) in cancellations {
@@ -623,7 +626,21 @@ impl Host {
                 continue;
             }
             let rt = self.runtime(&s.coworker)?;
+            if let Some(db) = &self.postgres {
+                if let Some(c) = db.next_control(&s.id)? {
+                    rt.apply_control(&s.id, &c.command.request_id).await?;
+                    continue;
+                }
+            }
             if let Some(member) = &s.agent_team {
+                let snapshot =
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .agent_team(&s.id, "snapshot", &json!({}), None)?;
+                if snapshot["roster"]["instances"][&member.agent_id]["phase"] != "ready" {
+                    continue;
+                }
                 if self
                     .store
                     .lock()
@@ -746,6 +763,15 @@ impl Host {
                             json!({"parent_session_id":s.id,"agent_id":instance.agent_id}),
                         )?;
                     }
+                    let saved_run = self.store.lock().unwrap().agent_run(&s.id, None)?;
+                    if let Some(mut run) = saved_run {
+                        if run.get("result").is_none()
+                            && run["cursors"].get(&instance.session_id).is_none()
+                        {
+                            run["cursors"][&instance.session_id] = json!(0);
+                            self.save_run(&s.id, &run)?;
+                        }
+                    }
                     self.store.lock().unwrap().agent_team(
                         &s.id,
                         "ready",
@@ -772,12 +798,6 @@ impl Host {
                 }
             }
 
-            if let Some(db) = &self.postgres {
-                if let Some(c) = db.next_control(&s.id)? {
-                    rt.apply_control(&s.id, &c.command.request_id).await?;
-                    continue;
-                }
-            }
             if s.closed
                 || s.provider_blocked
                 || rt.is_busy(&s.id)
@@ -1034,8 +1054,15 @@ impl Host {
                 let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
                 let operation = openworker_runtime::runtime::text(&p, "operation", 64)?;
                 ensure!(
-                    matches!(operation, "snapshot" | "command" | "team_read_board"),
+                    matches!(
+                        operation,
+                        "snapshot" | "command" | "team_read_board" | "team_manage"
+                    ),
                     "Unsupported application team command"
+                );
+                ensure!(
+                    operation != "team_manage" || p["arguments"]["action"] == "list",
+                    "Membership mutations require a durable command ID"
                 );
                 let result =
                     self.store

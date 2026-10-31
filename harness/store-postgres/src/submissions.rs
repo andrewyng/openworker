@@ -236,17 +236,7 @@ impl Database {
         if session.closed {
             return Err(SubmissionError::Closed.into());
         }
-        if let Some(member) = &session.agent_team {
-            let stopped: bool = tx
-                .query_one(
-                    "SELECT (data->>'stopped')::boolean FROM agent_teams WHERE id=$1",
-                    &[&member.team_id],
-                )?
-                .get(0);
-            if stopped {
-                return Err(SubmissionError::Closed.into());
-            }
-        }
+        crate::agent_team::ensure_admission(&mut tx, &session)?;
 
         if session.provider_blocked {
             return Err(SubmissionError::ProviderBlocked.into());
@@ -317,6 +307,13 @@ impl Database {
             || session.turn.as_ref().is_some_and(|t| !terminal(&t.status))
         {
             return Ok(None);
+        }
+        if let Err(error) = crate::agent_team::ensure_admission(&mut tx, &session) {
+            if error.downcast_ref::<SubmissionError>() == Some(&SubmissionError::Closed) {
+                tx.commit()?;
+                return Ok(None);
+            }
+            return Err(error);
         }
         let row = tx.query_opt(
             "SELECT id,text,limits FROM submissions WHERE session_id=$1 AND status='queued' ORDER BY sequence LIMIT 1", &[&sid],

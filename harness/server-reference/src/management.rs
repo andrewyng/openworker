@@ -363,6 +363,7 @@ pub async fn controller(
         delete_once(&config, &store, &installed).await?;
         store.provision_agent_team_child()?;
         store.reconcile_stopped_agent_team()?;
+        store.reconcile_unstarted_retirement()?;
         if !control_matching(&config, &store, &installed).await? {
             tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
         }
