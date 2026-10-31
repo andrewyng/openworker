@@ -38,5 +38,33 @@
   },
   "resourcesRemoved": false,
   "dockerSettingsChanged": false,
-  "cloudCalls": false
+  "cloudCalls": false,
+  "incrementalCacheCleanup": {
+    "completedAt": "2026-10-31T22:20:25.571029+00:00",
+    "removedPath": "harness/target/debug/incremental",
+    "reportedCacheGiBApprox": 39,
+    "freeBeforeGiBApprox": 34.7,
+    "freeAfterGiBApprox": 60.4,
+    "observedReclaimedGiBApprox": 25.7,
+    "cargoDebugLockHeld": true,
+    "activeCompilerProcessesFound": false,
+    "otherWorkspaceTargetAliasesFound": false,
+    "perAgentHistoricalAttributionAvailable": false,
+    "preserved": [
+      "debug executables",
+      "debug dependency and test artifacts",
+      "release builds",
+      "source",
+      "other worktrees",
+      "Cargo download cache",
+      "Docker images and volumes"
+    ],
+    "dockerReportedMemoryGiBAtFollowup": 7.7,
+    "dockerSettingsChangedByAgent": false,
+    "currentHostFreeBytes": 64840130560,
+    "notes": [
+      "Directory usage is not a guarantee of physical reclaim; actual free-space increase measured",
+      "Docker memory increase to 16 GiB is user-managed and was not yet reflected in daemon report"
+    ]
+  }
 }
