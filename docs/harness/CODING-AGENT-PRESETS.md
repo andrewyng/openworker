@@ -76,6 +76,43 @@ The lead integrates reviewed changes and handles conflicts; spawning a member
 does not automatically merge its edits. A verifier checks the submitted commit,
 rather than an uncommitted working directory that a builder can keep changing.
 
+### Child working directory and file-tool scope
+
+For the shared-team preset, default each builder's working directory to its own
+worktree, not the parent's directory. Default its read/write/search/patch scope
+to that same worktree. Relative paths and shell commands start there. This is
+the intended preset behavior, not a claim that the distributed service already
+supports nondefault child worktrees.
+
+Keep these concepts distinct in configuration and enforcement:
+
+| Concept | Purpose | Child default |
+| --- | --- | --- |
+| Project root | Identifies the overall repository and its managed worktrees. | Project identity inherited from the lead; not an automatic writable scope. |
+| Working directory | Resolves relative paths and starts processes. | The child's assigned worktree. |
+| File-tool scope | Bounds the paths accepted by read/write/search/patch tools. | The child's assigned worktree. |
+| Git metadata access | Lets Git operate on the registered repository/worktree relationship. | The recorded worktree metadata and common Git metadata, within the shared sandbox. |
+
+The file-tool boundary is useful protection against accidental cross-worker edits.
+File tools continue to reject path traversal and symlink escapes; a metadata
+exception for Git must not expand ordinary file access to the whole project.
+
+Linked worktrees intentionally refer to Git metadata outside their working
+directories. In the shared sandbox, authorized Git CLI commands can use that
+metadata because the sandbox permits access to the shared repository. A working
+directory does not contain a shell command or script: such processes may reach
+other paths permitted by the sandbox. This is intentional shared-repository
+access, not a security guarantee based on whether the harness notices an
+indirect access.
+
+Trusted Git tools can validate the recorded worktree, metadata paths and identities
+before operating. They should admit only that known relationship, rather than
+following arbitrary model-supplied `.git` pointers or allowing the entire parent
+directory. Current Git inspection helpers reject metadata outside their workspace;
+supporting this narrow managed-worktree relationship is implementation work. The
+lead should inspect a submitted commit through explicit Git/handoff operations
+instead of needing general write access to every child's worktree.
+
 ## Isolated sandboxes: explicit checkout and handoff
 
 The trusted application/harness provisions the execution environments. Each
@@ -83,6 +120,14 @@ worker needs its own checkout or staged source snapshot at a recorded base commi
 Creating the sandbox alone neither mounts the application's host repository nor
 clones GitHub. Repository staging and private-repository read access are separate
 configuration from permission to publish changes.
+
+Unlike linked worktrees in a shared sandbox, an isolated child gets an independent
+checkout with its own Git metadata inside that sandbox. Do not mount only a
+linked worktree whose `.git` pointer depends on inaccessible metadata in the
+lead's sandbox, or silently mount the lead's metadata to make it work. Changes
+cross the boundary through artifact or remote-branch handoff. The child still
+uses its checkout as its default working directory and file-tool scope; the
+sandbox separately enforces the stronger access boundary.
 
 ```text
 Builder sandbox                 Verifier / lead environment
