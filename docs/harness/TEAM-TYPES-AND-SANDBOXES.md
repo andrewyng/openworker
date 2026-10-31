@@ -41,6 +41,43 @@ Sources: runtime `agent_team.rs` and `team_coordination.rs`, SQLite
 `sqlite_agent_team.rs`, PostgreSQL `agent_team.rs`, SDK `host.rs`/`host_runs.rs`,
 and service `agent_teams.rs`/`management.rs`.
 
+### SDK scoped-type implementation (31 October)
+
+The feature branch now implements an opt-in custom-type catalog for the Rust
+embedded/managed SDK and TypeScript managed SDK, using either SQLite or PostgreSQL.
+The application supplies a delegation ceiling when creating the team; without it,
+the model does not receive `team_define_type`. Custom types currently share the
+team's existing environment. Other placement requests reject at configuration;
+the distributed service's release-backed adapter and isolated provisioning remain
+in the next milestone. This is not a claim that every provider is qualified.
+
+```typescript
+const team = await harness.newTeam("lead", {
+  workspace: projectDirectory,
+  agentTypes: ["builder", "verifier"],
+  delegation: {
+    tools: ["coding.read_file", "coding.search_files"],
+    // Optional model choices use the same provider/name shape as agents.
+    // models: [{ provider: "OpenAI", name: "your-model-id" }],
+  },
+});
+```
+
+An exact approved definition is reusable by name in this lead session. Editing it
+creates another immutable revision requiring another decision. Existing children
+keep their old revision; new children use the latest approved revision. A denied
+revision does not delete an earlier approved revision. A cancelled pending
+proposal is abandoned before another turn can propose a replacement.
+
+Receipts and type-to-child pins commit in the same database transaction as the
+tool result. Restart reconstructs private bundles before adopting saved sessions;
+they never enter the global app catalog. Whole-tool session grants and SDK
+`interrupt_on` exclusions cannot approve arbitrary new type definitions. Ask uses
+an exact approval, Auto-approve uncertainty pauses for a human, and Bypass still
+enforces the delegated tool/model/policy ceiling. Decisions have tool/policy spans
+and a metadata-only `team_type_decision` event. Ordinary child tool approvals keep
+their normal behavior. This first adapter requires at least one delegated tool.
+
 ## Story 1: trusted harness outside the sandbox — implement now
 
 ```text
@@ -113,6 +150,43 @@ not blanket approval for other definitions or all future tool calls. Auto-approv
 reviews the same concrete definition and asks the human when uncertain. Bypass
 creates it without a human pause after the same hard validation. No child or
 sandbox is created while definition approval is pending.
+
+## Child briefing, context and workspace
+
+Accepted after comparing the current SDK, a partner's session-creation screenshots
+and the collaboration tools available in our development session:
+
+- Keep `agent_type`, stable `agent_id` and per-instance `message`. Add an optional
+  human-readable `title` and `background` briefing. Background contains project
+  facts, not system policy or evidence of human authorization. Type instructions,
+  briefing and the current task remain separate and source-labelled.
+- Default to fresh child history. Explicit `context: { mode: "fresh" }` has the
+  same meaning. A supplied background briefing is the first supported way to pass
+  context; inherited conversation requires an explicit, bounded snapshot with
+  source/provenance and secret filtering. Until that adapter is qualified, reject
+  snapshot/inheritance requests rather than silently forking or dropping context.
+- Workspace selection is independent of sandbox placement. Omission inherits the
+  team workspace. An explicit authorized relative directory or managed Git
+  worktree/branch may be selected. Resolve paths inside the selected environment,
+  reject escapes/symlink escapes, and do not accept arbitrary host roots. A
+  worktree separates checkouts, not permissions, network, processes or ports.
+- Pin the resolved title, briefing/context choice, workspace, branch/worktree
+  receipt, type revision, model, parent and environment identity with the child.
+  All supplied options participate in spawn idempotency; changed retries reject.
+- Optional model overrides must fit the app-owned model delegation ceiling.
+  Credentials and approver selection remain host-owned. Unsupported reasoning
+  options reject; never silently select another model or weaker approval mode.
+- The harness derives initiation/parent identity for audit. Model-supplied
+  `user_asked` or similar assertions never authorize an action.
+
+Lifecycle controls distinguish interrupt/cancel-current-turn, sending follow-up
+work, and retiring a member. Cancellation does not erase the child; retirement
+blocks new work and automatic wakes. Listing/state expose these distinctions.
+Messages still wake idle agents and reach busy agents before the next model call;
+pending human approvals and cancelled turns are not implicitly approved/resumed.
+
+These are target contracts. Current `team_spawn` has only type/ID/message until
+the individual adapter/SDK paths below are implemented and qualified.
 
 ## Sandbox placement and ownership
 

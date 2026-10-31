@@ -184,9 +184,10 @@ impl Host {
             "Host stopped or unavailable; reconcile durable state"
         );
         match method {
-            "agent/list" => Ok(
-                json!({"agents": self.registry.read().unwrap().agents.values().collect::<Vec<_>>()}),
-            ),
+            "agent/list" => Ok({
+                let registry = self.registry.read().unwrap();
+                json!({"agents": registry.agents.values().filter(|a| !registry.private_profiles.contains(&a.id)).collect::<Vec<_>>()})
+            }),
             "agent/session" => self.agent_session(&p).await,
             "agent/close" => {
                 let sid = text(&p, "session_id")?;
@@ -418,7 +419,10 @@ impl Host {
                     i.session_id != sid
                         && i.phase == openworker_runtime::team_coordination::Phase::Ready
                 }) {
-                    members.push((i.session_id.clone(), i.agent_type.clone()));
+                    members.push((
+                        i.session_id.clone(),
+                        openworker_runtime::agent_team::runtime_type(&doc, i)?,
+                    ));
                 }
             }
             return Ok((members, None));

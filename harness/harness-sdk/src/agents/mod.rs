@@ -54,8 +54,8 @@ pub use crate::{
     TelemetrySignal, TokenRefreshReason, ToolRegistry,
 };
 pub use agent_team::{
-    AgentTeam, AgentTeamRef, Communication, HistoryPage, HistoryQuery, Instance, TeamOptions,
-    TeamPolicy,
+    AgentTeam, AgentTeamRef, Communication, HistoryPage, HistoryQuery, Instance, TeamDelegation,
+    TeamOptions, TeamPolicy,
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{
@@ -104,6 +104,11 @@ impl Approvals {
     /// True when the SDK may approve this call without asking. `alias` is the
     /// model-facing name in an interaction (`provider__tool`).
     pub(crate) fn auto_approves(&self, alias: &str) -> bool {
+        // A reusable custom type needs its own exact-definition decision. An
+        // interrupt_on exclusion must not silently approve arbitrary new roles.
+        if alias == openworker_runtime::team_type_catalog::TOOL {
+            return false;
+        }
         match self {
             Self::Only(ask) => !ask
                 .iter()

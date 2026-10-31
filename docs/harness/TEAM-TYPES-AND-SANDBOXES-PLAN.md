@@ -16,15 +16,22 @@ Previous completed work: [named teams ledger](AGENT-TEAMS-IMPLEMENTATION.md).
    pending/approved/denied transitions, safe redefinition/restart and per-lead
    catalog. Wire `team_define_type` through the real approval path in Ask,
    Auto-approve and Bypass. Compile constrained definitions without mutating the
-   global application registry. Add SDK/service API parity and approval-card data.
+   global application registry. Qualify SDK storage/process parity and approval-card
+   data first; the distributed release-backed service adapter follows in M3.
 3. **Sandbox-aware spawning.** Extend idempotent spawn with a pinned type revision
    and team/member/new placement. Persist provisioning intent, reuse the trusted
    gateway adapter, enforce selected grants/resources and attach original provider
    IDs. Provider capabilities must explicitly cover each requested restriction and
    storage mode; unsupported requests reject, never fall back or broaden access.
+   Add title/background, explicit fresh context, authorized per-child directory
+   and managed Git-worktree selection separately from sandbox placement. Pin
+   resolved spawn metadata and permitted model overrides. Reject unsupported
+   inherited snapshots explicitly until their provenance/filtering is qualified.
 4. **Member lifecycle.** `team_manage` list/retire, graceful/cancel modes, admission
    and inbox/wake gates, cancellation reconciliation, capacity and owned-environment
    release. Preserve history, stable identities and unknown-result receipts.
+   Distinguish cancel/interrupt-current-turn, follow-up work and final retirement;
+   list/state and durable wake/admission gates must agree across adapters.
 5. **Parallel and mixed-placement qualification.** Real SQLite/PostgreSQL, SDK
    process/storage matrix, two concurrent teams with multiple builders/verifiers,
    shared/independent/mixed environments, crash/approval/cancel races and telemetry.
@@ -53,6 +60,18 @@ of the current implementation or an automatic alternative provisioning path.
   is advertised as implemented before its real dispatch path is qualified.
 
 ## Progress
+
+### 31 October 2026 — child creation comparison accepted
+
+- Compared screenshot fields and development collaboration tools to the actual
+  type/ID/message spawn contract. Accepted title/background, explicit fresh
+  context, authorized directory/worktree selection, pinned metadata and constrained
+  model overrides. Working directories/worktrees are not security boundaries.
+- Recorded parent/initiator provenance as trusted harness metadata, never a
+  model-supplied authorization assertion. Clarified current-turn cancellation,
+  follow-up and retirement semantics. These additions extend M3/M4 above.
+- Resuming M2 durable definitions/approval wiring. No unqualified new capabilities
+  are advertised as shipped by the documentation changes.
 
 ### 31 October 2026 — decisions and baseline recorded
 
@@ -111,3 +130,60 @@ cargo test --offline --locked --manifest-path harness/Cargo.toml \
 
 Next: durable pending/approved/denied definitions and canonical approval handling,
 then constrained compilation and scoped catalogs across storage/process modes.
+
+### M2a — scoped definitions and SDK runtime wiring
+
+- Added a shared durable catalog inside the existing team transaction document:
+  exact pending/approved/denied/abandoned revision records, bounded history and
+  parent/policy bindings. Both SQLite and PostgreSQL use the same implementation.
+- Added opt-in app-owned `TeamOptions.delegation` (Rust) / `delegation` (TypeScript).
+  The model receives `team_define_type` only after that ceiling is configured.
+  Ask decisions bind one definition; uncertain reviewers pause; Bypass validates
+  the same ceiling. Whole-tool Always grants and `interrupt_on` exclusions cannot
+  approve new definitions. No custom launcher, reviewer or approval mode is accepted.
+- Approved definitions compile into private immutable SDK runtimes. Children pin
+  their revision; later edits cannot replace their instructions. Private types are
+  excluded from the global catalog and cannot start independent app sessions.
+  Startup restores approved private bundles before SQLite coverage/PostgreSQL
+  schema ownership checks. Model connections/reviewers remain in the trusted host.
+- Fixed two integration regressions exposed by the new tests: run aggregation now
+  routes through the child's pinned runtime, and dynamic names are validated at
+  dispatch rather than changing the lead's pinned tool-schema enum after a wait.
+- Verified the four-way real SDK matrix: Rust embedded/managed × SQLite/PostgreSQL,
+  including real file reads, approval and host restart/reuse. TypeScript managed
+  stdio on SQLite/PostgreSQL also passes, including cross-lead isolation. Expanded
+  revision/cancel contracts and uncertain-reviewer/human-denial cases also pass.
+- Final gate: **73 successful checks** (34 runtime contracts, seven real PostgreSQL
+  contracts, 12 Rust SDK integration cases, two TypeScript real-process/database
+  integrations and 18 TypeScript configuration/transport regressions). Strict
+  all-target Clippy passes for runtime, PostgreSQL store, SDK and reference server;
+  formatting, diff checks and documentation links/code fences pass. SDK integration
+  tests run sequentially to avoid saturating the small loopback database/process
+  fixture. The four-way SDK matrix was also verified before the final regression.
+- The temporary PostgreSQL container is owned by this qualification and is removed
+  after verification; unrelated local applications/clusters remain untouched.
+- Adapter limit: only existing team placement is advertised. SDK configuration
+  rejects new/member profiles until provisioning is wired. The distributed service
+  adapter, workspace/worktree fields, lifecycle tools and OpenShell mixed-placement
+  qualification remain required M3–M5 work; no live cloud resources were created.
+
+## Scoped-type test groups
+
+| Group | What we test | Why |
+| --- | --- | --- |
+| Durable authorization | Pending, exact approval, denial, blanket-grant rejection, stale policy/turn, cancellation abandonment and revision reuse on real SQLite/PostgreSQL. | A saved proposal is not permission; retries and restarts cannot approve different content. |
+| Runtime identity | Private compilation, immutable child pins, stable schema across waits, startup reconstruction and global-catalog isolation. | One lead cannot borrow another's types, and an edited role cannot alter existing children. |
+| SDK conformance | Rust embedded/managed and TypeScript managed, each using SQLite/PostgreSQL; child reads a real file and approved roles survive host restart. | Storage/process/language choices use the same runtime and permission behavior. |
+| Existing behavior | Named-team coordination/storage suites and strict all-target Clippy. | The opt-in extension preserves the existing team/inbox contract. |
+
+Sources: `harness/tests/team_type_catalog_contract.rs`,
+`harness/runtime/tests/team_type_catalog.rs`,
+`harness/store-postgres/tests/team_type_catalog.rs`,
+`harness/harness-sdk/tests/team_types.rs` and
+`harness/typescript-sdk/test/team-types.test.mjs`.
+
+Database tests require an isolated `OW_PG_TEST_URL`; they never adopt a production
+schema. TypeScript integration additionally uses `OW_TS_TEST_HOST` pointing at the
+development-only `sdk-test-host` built with `test-support`. No model key is needed
+for these deterministic real runtime/store/process checks. Live-model/OpenShell
+qualification remains a separate gate rather than a claim made by these fixtures.
