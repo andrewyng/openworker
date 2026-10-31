@@ -5,7 +5,8 @@ recommended defaults. Preset names and configuration below describe the intended
 interface; they are not new SDK APIs implemented by this document.
 
 Related: [team types and sandbox design](TEAM-TYPES-AND-SANDBOXES.md),
-[implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md).
+[team implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md),
+[coding implementation sequence and progress](CODING-AGENT-PRESETS-PLAN.md).
 
 ## Three coding presets
 
