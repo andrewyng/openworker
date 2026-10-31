@@ -416,6 +416,9 @@ support on PostgreSQL should not be confused with deployment-adapter qualificati
 
 ## Files, Git and integration — October 31 discussion
 
+The dedicated [coding-agent presets and publishing design](CODING-AGENT-PRESETS.md)
+records the three variants, recommended defaults, handoff and credential choices.
+
 Sandbox placement and Git workspace layout are independent decisions. The current
 default reuses the lead's original sandbox and working directory; builders and
 verifiers immediately see those shared files. Local SDK sessions with sandbox off
