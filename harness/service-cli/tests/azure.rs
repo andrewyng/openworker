@@ -339,3 +339,133 @@ fn exported_script_writes_fixed_scope_receipts_and_never_retries_unknown_mutatio
     );
     assert!(f.path("journal/setup-role.json").exists());
 }
+
+fn infrastructure_config() -> Value {
+    serde_json::json!({
+      "kubernetesVersion":"1.33.4", "nodeVmSize":"Standard_D4s_v5",
+      "sshPublicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "adminGroupObjectIds":["11111111-1111-4111-8111-111111111111"],
+      "controlResourceGroup":"customer-ow-control",
+      "guardImage":format!("ghcr.io/example/ows@sha256:{}", "a".repeat(64)),
+      "postgresPassword":{"keyVaultId":"/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/customer-secrets/providers/Microsoft.KeyVault/vaults/customer-vault","secretName":"postgres-password","secretVersion":"a".repeat(32)}
+    })
+}
+fn infrastructure(f: &Fixture, config: &Value, out: &str) -> Output {
+    fs::write(f.path("inputs.json"), serde_json::to_vec(config).unwrap()).unwrap();
+    f.call(&[
+        "deploy",
+        "azure",
+        "infrastructure",
+        "--plan",
+        f.path("bootstrap").to_str().unwrap(),
+        "--config",
+        f.path("inputs.json").to_str().unwrap(),
+        "--out",
+        f.path(out).to_str().unwrap(),
+    ])
+}
+#[test]
+fn infrastructure_is_offline_private_scoped_and_manifest_checked() {
+    let f = Fixture::ready();
+    let r = infrastructure(&f, &infrastructure_config(), "graph");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(f.log().is_empty());
+    let get = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(f.path("graph").join(name)).unwrap()).unwrap()
+    };
+    let inventory = get("azure-inventory.json");
+    assert_eq!(inventory["resourceGroupOwned"], false);
+    assert_eq!(inventory["resources"].as_array().unwrap().len(), 11);
+    assert_ne!(
+        inventory["controlScope"].as_str().unwrap(),
+        inventory["resources"][0]["id"]
+            .as_str()
+            .unwrap()
+            .split("/providers/")
+            .next()
+            .unwrap()
+    );
+    let foundation = get("azure-foundation.arm.json");
+    assert_eq!(
+        foundation["parameters"]["postgresPassword"]["type"],
+        "secureString"
+    );
+    let storage = foundation["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == "Microsoft.Storage/storageAccounts")
+        .unwrap();
+    assert_eq!(storage["properties"]["allowSharedKeyAccess"], false);
+    assert_eq!(storage["properties"]["publicNetworkAccess"], "Disabled");
+    let cluster = get("azure-cluster.arm.json");
+    let aks = &cluster["resources"][0];
+    assert_eq!(aks["properties"]["agentPoolProfiles"][0]["count"], 2);
+    assert_eq!(
+        aks["properties"]["apiServerAccessProfile"]["enablePrivateCluster"],
+        true
+    );
+    assert_eq!(aks["properties"]["disableLocalAccounts"], true);
+    assert_eq!(
+        aks["properties"]["securityProfile"]["workloadIdentity"]["enabled"],
+        true
+    );
+    let role = get("azure-executor-role.json").to_string();
+    assert!(!role.contains('*'));
+    assert!(!role.contains("roleAssignments/write"));
+    assert!(!role.contains("listKeys"));
+    let fic = get("azure-federation.arm.json");
+    assert_eq!(
+        fic["resources"][0]["properties"]["subject"],
+        "system:serviceaccount:ow-service:ows-artifacts"
+    );
+    assert!(f
+        .call(&[
+            "deploy",
+            "validate",
+            "--plan",
+            f.path("graph").to_str().unwrap()
+        ])
+        .status
+        .success());
+    fs::write(f.path("graph/azure-cluster.arm.json"), b"{}").unwrap();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "validate",
+            "--plan",
+            f.path("graph").to_str().unwrap()
+        ])
+        .status
+        .success());
+}
+#[test]
+fn infrastructure_rejects_unsafe_or_ambiguous_inputs_without_cloud_calls() {
+    let f = Fixture::ready();
+    for (field, value) in [
+        (
+            "controlResourceGroup",
+            serde_json::json!("customer-ow-test"),
+        ),
+        (
+            "guardImage",
+            serde_json::json!("ghcr.io/example/ows:latest"),
+        ),
+        ("nodeVmSize", serde_json::json!("Standard_D96s_v5")),
+        ("kubernetesVersion", serde_json::json!("latest")),
+        ("adminGroupObjectIds", serde_json::json!([])),
+        (
+            "postgresPassword",
+            serde_json::json!({"plaintext":"never-accept-this"}),
+        ),
+    ] {
+        let mut c = infrastructure_config();
+        c[field] = value;
+        assert!(
+            !infrastructure(&f, &c, "rejected").status.success(),
+            "{field}"
+        );
+        assert!(!f.path("rejected").exists());
+    }
+    assert!(f.log().is_empty());
+}

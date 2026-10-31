@@ -1,8 +1,13 @@
-//! Azure identity exports only. Normal deployment authority never includes RBAC
+//! Azure identity, infrastructure and lifecycle contracts. Normal deployment authority never includes RBAC
 //! writes, credential generation, or implicit managed-identity impersonation.
 use super::*;
+#[path = "deployment_azure_infrastructure.rs"]
+mod graph;
 #[path = "deployment_azure_preflight.rs"]
 mod observation;
+pub(super) use graph::{
+    artifacts as infrastructure_artifacts, infrastructure, Infrastructure, Inputs,
+};
 pub(super) use observation::{preflight, Preflight};
 
 #[derive(Args)]

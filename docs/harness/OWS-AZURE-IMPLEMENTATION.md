@@ -144,3 +144,39 @@ installation and cloud teardown remain unqualified. A1 is not deploy-ready acces
 - [Resource-management actions](https://learn.microsoft.com/en-us/azure/role-based-access-control/permissions/management-and-governance#microsoftresources)
 - [AKS Workload ID](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview)
 - [Azure CLI role implementation](https://github.com/Azure/azure-cli/blob/dev/src/azure-cli/azure/cli/command_modules/role/custom.py)
+
+### A2 design and sequence — 31 October 2026
+
+Use pinned native ARM JSON, avoiding an implicit Bicep installer or compiler
+runtime. Export four distinct stages: foundation, administrator-only bindings,
+AKS, and administrator-only OIDC federation. The ordinary executor cannot write
+Azure RBAC. Explicit identity `assign/action` grants and the existing Key Vault's
+`deploy/action` grant are separate prerequisites, not ambient subscription roles.
+
+The workload group and independent control group must already exist and be
+dedicated. Both remain customer owned. Control is outside AKS; its pinned runner
+image must also survive deletion of the workload ACR. The graph fixes two bounded
+AMD64 Ubuntu nodes, private management API/PostgreSQL/Blob, authenticated public
+ACR Basic, and one version-pinned existing Key Vault password reference. Network
+ranges are explicit fixed reference values; live deployment must reject customer
+route overlap. No key, password, SAS or model credential is embedded in bundles.
+
+Resource creation and deletion will use fixed deployment request identities,
+persist intent before effects, and read the original operation after response
+loss. A matching name/tag is insufficient ownership. Resource incarnation fields
+are recorded and checked before cleanup; missing provider receipts fail closed.
+Never delete the customer resource group or guessed AKS `MC_*` groups. AKS's
+provider owns its generated infrastructure lifecycle.
+
+### A2 locally qualified — 31 October 2026
+
+- Added `ows deploy azure infrastructure` offline input validation and deterministic
+  ARM export, including exact resource inventory, private access, narrow executor
+  action list, separate administrator bindings and exact-subject federation.
+- Ten Azure CLI integration tests pass (eight A1 plus graph integrity/safety tests).
+  The tests assert private endpoints, disabled account keys/local AKS accounts,
+  bounded nodes, pinned secret references, no wildcard/RBAC-write executor grants,
+  distinct cleanup scope, malformed-input rejection and zero cloud invocations.
+- ARM JSON shapes use pinned Microsoft schemas. No Azure-side template validation,
+  quota/version availability, price, networking or OpenShell-on-AKS qualification
+  is claimed. The immutable bundle continues reporting `applyReady:false`.

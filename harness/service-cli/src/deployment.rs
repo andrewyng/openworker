@@ -148,6 +148,8 @@ pub enum AzureCommand {
     Bootstrap(azure::Bootstrap),
     /// Read-only verification of the target scope and exported setup grant.
     Preflight(azure::Preflight),
+    /// Export resolved ARM templates and exact-scope grants; no cloud execution.
+    Infrastructure(azure::Infrastructure),
 }
 #[derive(Args)]
 pub struct GcpPlan {
@@ -233,6 +235,8 @@ struct Plan {
     gcp_bootstrap: Option<gcp::Identity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     azure_bootstrap: Option<azure::Identity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    azure_infrastructure: Option<azure::Inputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gcp_infrastructure: Option<gcp::Inputs>,
 }
@@ -370,6 +374,9 @@ impl Plan {
             );
             identity.validate(self)?;
         }
+        if let Some(inputs) = &self.azure_infrastructure {
+            inputs.validate(self)?;
+        }
         if let Some(inputs) = &self.gcp_infrastructure {
             inputs.validate(self)?;
         }
@@ -476,6 +483,9 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         files.extend(azure::artifacts(plan)?);
         let review = files.get_mut("REVIEW.md").unwrap();
         *review = String::from_utf8(review.clone())?.replace("Bootstrap and deployment executors for this provider are not implemented.","Identity-only Azure bootstrap is exported; read AZURE-BOOTSTRAP.md. AKS/resource permissions, cloud execution and independent cleanup are not yet qualified.").into_bytes();
+    }
+    if plan.azure_infrastructure.is_some() {
+        files.extend(azure::infrastructure_artifacts(plan)?);
     }
     if plan.gcp_infrastructure.is_some() {
         files.extend(gcp::infrastructure_artifacts(plan)?);
@@ -624,6 +634,9 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Azure {
+            command: AzureCommand::Infrastructure(options),
+        } => azure::infrastructure(options),
         Command::Azure {
             command: AzureCommand::Bootstrap(options),
         } => azure::bootstrap(options),
@@ -781,6 +794,7 @@ fn create(
         infrastructure,
         gcp_bootstrap: None,
         azure_bootstrap: None,
+        azure_infrastructure: None,
         gcp_infrastructure: None,
         created_at_unix: created,
         expires_at_unix: created
@@ -895,6 +909,7 @@ mod tests {
             infrastructure: None,
             gcp_bootstrap: None,
             azure_bootstrap: None,
+            azure_infrastructure: None,
             gcp_infrastructure: None,
             topology: Topology {
                 cluster_mode: "new".into(),
