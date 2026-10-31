@@ -219,3 +219,21 @@ full isolated/parallel matrix, recommend another 20–30 GiB free and approximat
 physical RAM. Changing Docker allocation/restarting it is not performed by this
 check; existing demos remain running. Recheck actual capacity and CPU/memory
 requests before peak tests. These are working allowances, not measured peak usage.
+
+### Targeted build-cache cleanup — October 31
+
+Removed only this harness worktree's `harness/target/debug/incremental` after
+acquiring the existing Cargo debug lock and confirming no active Cargo/compiler
+processes. Cargo metadata points to this target; no other workspace target aliases
+or configured target-dir overrides were found in the inspected locations. These
+are harness build outputs; individual historical artifacts are not agent-labelled.
+
+The directory reported approximately 39 GiB, and actual host free space increased
+by approximately **25.7 GiB**, from 34.7 to **60.4 GiB**. Preserved debug executables,
+dependency/test artifacts, release builds, source, other worktrees, Cargo downloads
+and Docker/Kubernetes resources. No further cleanup is needed before C1.
+
+The follow-up daemon read still reports approximately 8 GiB RAM; the user's intended
+16 GiB increase is not yet confirmed. Recheck after it applies, before large
+isolated-sandbox batches. Bound test concurrency and monitor incremental-cache
+growth; use `CARGO_INCREMENTAL=0` for sustained qualification where practical.
