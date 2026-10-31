@@ -3,6 +3,12 @@
 Agreed October 30, 2026. This is the contract for the new first-class Teams API;
 the existing SDK team-board API does not yet implement all of it.
 
+This record describes the original named-team contract. The accepted extension for
+session-defined types, sandbox placement and dynamic retirement is documented in
+[Team types and sandboxes](TEAM-TYPES-AND-SANDBOXES.md), with its own implementation
+status and [ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md). Board/inbox semantics below
+remain unchanged; new type/provisioning tools are not implied to be shipped.
+
 **A team registers agent types and creates named instances.** `builder` is a type;
 `builder-ui` and `builder-api` are independent instances, each with its own durable
 session and inbox. Instance IDs are unique within a team and survive restarts.

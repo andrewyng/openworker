@@ -4,6 +4,11 @@ Base: `57c43e92f518`; branch: `feat/agent-teams-inbox-20261030`.
 Target for verified milestones: `openworker-harness-sdk`.
 Contract: [one-page decisions](AGENT-TEAMS-DECISIONS.md).
 
+Follow-up accepted design: [session-defined types, team management and sandbox
+placement](TEAM-TYPES-AND-SANDBOXES.md), tracked in the
+[new implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md). It distinguishes
+today's trusted outside harness from the future RFC 0021 in-sandbox agent loop.
+
 ## Milestones
 
 1. **Shared coordination contract.** Define agent types versus instances, stable
