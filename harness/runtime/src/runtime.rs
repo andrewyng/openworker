@@ -1111,6 +1111,7 @@ impl Runtime {
         let s = Session {
             agent_team: None,
             environment,
+            managed_workspace: None,
             storage_revision: 0,
             approval_grants: vec![],
             id: crate::id("s"),
@@ -1615,6 +1616,23 @@ impl Runtime {
         if s.environment.is_none() {
             self.tool_policy.check_workspace(Path::new(&s.workspace))?;
         }
+        if let Some(receipt) = &s.managed_workspace {
+            if let Some(binding) = &s.environment {
+                receipt.validate_scope(
+                    Path::new(&binding.spec.workspace_root),
+                    Path::new(&s.workspace),
+                )?;
+            } else {
+                receipt.validate_scope(&receipt.project_root, Path::new(&s.workspace))?;
+                receipt.verify()?;
+            }
+        } else if s
+            .environment
+            .as_ref()
+            .is_some_and(|b| b.spec.workspace_root != s.workspace)
+        {
+            bail!("Remote child directory requires its original workspace receipt");
+        }
         if s.bundle_digest != self.execution_digest
             || s.tool_policy.digest != self.tool_policy.digest
             || (s.model_selection.is_none()
@@ -1798,6 +1816,16 @@ impl Runtime {
             && server.args == ["mcp-coding", "--workspace", "$WORKSPACE"]
         {
             argv.push("--environment-processes".into());
+        }
+        if server.program == "$OPENWORKER"
+            && server.args == ["mcp-coding", "--workspace", "$WORKSPACE"]
+        {
+            if let Some(receipt) = &s.managed_workspace {
+                argv.extend([
+                    "--workspace-receipt".into(),
+                    serde_json::to_string(receipt)?,
+                ]);
+            }
         }
         let client = if let Some(binding) = s.environment {
             let provider = self

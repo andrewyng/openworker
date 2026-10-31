@@ -50,6 +50,13 @@ fn plan(tool: &str, args: Value) -> String {
         json!([{"name":tool,"arguments":args}])
     )
 }
+fn tool_data(event: &Value) -> Value {
+    let result = &event["data"]["result"];
+    result["content"][0]["text"]
+        .as_str()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| result.clone())
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL and OW_PROBE_* local OpenShell"]
@@ -75,13 +82,9 @@ async fn qualify() {
         )
         .unwrap();
     }
-    let mut tools: Value =
-        serde_json::from_slice(&std::fs::read(original.join("tools.json")).unwrap()).unwrap();
-    // The cached, digest-pinned qualification runner predates example_echo.
-    tools["bindings"]
-        .as_object_mut()
-        .unwrap()
-        .remove("example_echo");
+    let tools = json!({"version":2,"servers":[{"id":"coding","program":"$OPENWORKER","args":["mcp-coding","--workspace","$WORKSPACE"]}],"bindings":{
+        "read_file":{"server":"coding","tool":"read_file"},"write_file":{"server":"coding","tool":"write_file"},"run_shell":{"server":"coding","tool":"run_shell"},"git_status":{"server":"coding","tool":"git_status"},"git_log":{"server":"coding","tool":"git_log"}
+    }});
     std::fs::write(
         bundle.join("tools.json"),
         serde_json::to_vec(&tools).unwrap(),
@@ -131,8 +134,20 @@ async fn qualify() {
         .await
         .unwrap();
     for (id, tools) in [
-        ("coder@1", vec!["read_file", "write_file", "run_shell"]),
-        ("verifier@1", vec!["read_file", "run_shell"]),
+        (
+            "coder@1",
+            vec![
+                "read_file",
+                "write_file",
+                "run_shell",
+                "git_status",
+                "git_log",
+            ],
+        ),
+        (
+            "verifier@1",
+            vec!["read_file", "run_shell", "git_status", "git_log"],
+        ),
     ] {
         let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":["team@1"],"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
         admin
@@ -295,8 +310,8 @@ async fn qualify() {
         let lead=coder.new_session_with(openworker_sdk::service::SessionOptions {
             environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()
         },Some("private-type-lead")).await.unwrap();
-        let team=lead.create_team(serde_json::from_value(json!({"agentId":"lead","agentTypes":{"verifier":"verifier@1"},"policy":{"communication":{"board":true,"directMessages":false},"max_instances":8},"limits":null,"delegation":{"tools":["example-tools.read_file"],"placements":["team"],"models":[],"profiles":{}}})).unwrap()).await.unwrap();
-        let define=lead.send(&plan("team_define_type",json!({"name":"reader","instructions":"Read the requested file and return evidence. Do not write.","tools":["example-tools.read_file"]})),Some("define-reader")).await.unwrap();
+        let team=lead.create_team(serde_json::from_value(json!({"agentId":"lead","agentTypes":{"verifier":"verifier@1","builder":"coder@1"},"policy":{"communication":{"board":true,"directMessages":false},"max_instances":8},"limits":null,"delegation":{"tools":["coding.read_file"],"placements":["team"],"models":[],"profiles":{}}})).unwrap()).await.unwrap();
+        let define=lead.send(&plan("team_define_type",json!({"name":"reader","instructions":"Read the requested file and return evidence. Do not write.","tools":["coding.read_file"]})),Some("define-reader")).await.unwrap();
         assert_eq!(define.result().await.unwrap().status,"completed");
         let member=team.spawn("spawn-reader-one","reader","reader-one",&plan("read_file",json!({"path":"shared-proof.txt"}))).await.unwrap();
         let child_id=member["instance"]["session_id"].as_str().unwrap();
@@ -318,6 +333,41 @@ async fn qualify() {
         assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("coder output for verifier")),"{evidence}");
         assert_eq!(store.service_team_type_page(&openworker_server_reference::management::installation(&cfg).unwrap(),"",8).unwrap().len(),1);
         eprintln!("PASS approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads");
+        let initialized=lead.send(&plan("run_shell",json!({"command":"mkdir source && cd source && git init -q && printf 'base\\n' > proof.txt && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -q -m base","yield_ms":10000})),Some("initialize-source")).await.unwrap();
+        assert_eq!(initialized.result().await.unwrap().status,"completed");
+        let mut builders=vec![];
+        for id in ["ui","api"] {
+            let task=format!("TEST_RESOURCE_GRANTS {}",json!([
+                {"name":"write_file","arguments":{"path":"proof.txt","content":format!("{id} change")}},
+                {"name":"git_status","arguments":{}},
+                {"name":"run_shell","arguments":{"command":format!("pwd && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -q -m '{id} change' && git rev-parse HEAD > submitted.sha"),"yield_ms":10000}},
+                {"name":"write_file","arguments":{"path":"../sibling-escape.txt","content":"must be rejected"}}
+            ]));
+            let child=team.spawn_with_options(&format!("worktree-{id}"),"builder",id,&task,serde_json::from_value(json!({"workspace":{"mode":"worktree","path":format!("workers/{id}"),"repository":"source","branch":id}})).unwrap()).await.unwrap();
+            builders.push((id,child["instance"]["session_id"].as_str().unwrap().to_owned()));
+        }
+        let waited=lead.send(&format!("TEST_RESOURCE_GRANTS {}",json!([{"name":"team_wait_agent","arguments":{"agent_ids":["ui"],"timeout_ms":120000}},{"name":"team_wait_agent","arguments":{"agent_ids":["api"],"timeout_ms":120000}}])),Some("wait-builders")).await.unwrap();
+        assert_eq!(waited.result().await.unwrap().status,"completed");
+        for (id,sid) in &builders {
+            let child=service.json("GET",&format!("/v1/sessions/{sid}"),None,None).await.unwrap();
+            assert_eq!(child["session"]["workspace"],format!("/sandbox/workers/{id}"));
+            assert_eq!(child["session"]["environment"]["remote_id"],original.remote_id);
+            let evidence=service.json("GET",&format!("/v1/sessions/{sid}/events/page?after=0"),None,None).await.unwrap();
+            let events=evidence["events"].as_array().unwrap();
+            assert!(events.iter().any(|e| e["type"]=="tool_finished" && e["data"]["name"]=="git_status" && e["data"]["result"]["isError"]!=true),"{evidence}");
+            assert!(events.iter().any(|e| e["type"]=="tool_finished" && e["data"]["name"]=="run_shell" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"].as_str().is_some_and(|s|s.contains(&format!("/sandbox/workers/{id}")))),"Builder did not commit successfully: {evidence}");
+            assert!(events.iter().any(|e| e["type"]=="tool_finished" && e["data"]["name"]=="write_file" && e["data"]["result"]["denied"]==true && e["data"]["result"]["executed"]==false),"Traversal was not rejected before dispatch");
+            assert!(evidence.to_string().contains(&format!("/sandbox/workers/{id}")),"{evidence}");
+        }
+        // A verifier intentionally reuses the selected directory, not a linked
+        // worktree in a separate sandbox. Lead integration remains explicit.
+        let verifier=team.spawn_with_options("verify-worktree","verifier","exact-verifier",&plan("run_shell",json!({"command":"test \"$(git rev-parse HEAD)\" = \"$(cat submitted.sha)\" && test \"$(cat proof.txt)\" = 'ui change' && printf 'verified exact submission'","yield_ms":10000})),serde_json::from_value(json!({"workspace":{"mode":"directory","path":"workers/ui"}})).unwrap()).await.unwrap();
+        let waited=lead.send(&plan("team_wait_agent",json!({"agent_ids":["exact-verifier"],"timeout_ms":120000})),Some("wait-exact-verifier")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        let vsid=verifier["instance"]["session_id"].as_str().unwrap();
+        let evidence=service.json("GET",&format!("/v1/sessions/{vsid}/events/page?after=0"),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]=="verified exact submission"),"{evidence}");
+        let inspect=lead.send(&plan("run_shell",json!({"command":"test ! -e workers/sibling-escape.txt && test \"$(cat workers/api/proof.txt)\" = 'api change' && test \"$(cat workers/ui/proof.txt)\" = 'ui change' && git -C source show ui:proof.txt && git -C source show api:proof.txt","yield_ms":10000})),Some("inspect-builder-commits")).await.unwrap();assert_eq!(inspect.result().await.unwrap().status,"completed");
+        let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"].as_str().is_some_and(|s|s.contains("ui change") && s.contains("api change"))));
+        eprintln!("PASS two shared-sandbox worktrees, child cwd/file scope, registered Git metadata, exact-commit verifier and lead inspection");
         let status = Command::new("node")
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))

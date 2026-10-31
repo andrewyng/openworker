@@ -120,6 +120,12 @@ pub struct Receipt {
     pub repository: Option<PathBuf>,
     pub git_dir: Option<PathBuf>,
     pub git_identity: Option<Identity>,
+    #[serde(default)]
+    pub worktree_git_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub worktree_git_identity: Option<Identity>,
+    #[serde(default)]
+    pub pointer_digest: Option<String>,
     pub branch: Option<String>,
     pub initial_commit: Option<String>,
 }
@@ -132,8 +138,36 @@ pub struct Intent {
     pub error: Option<String>,
 }
 impl Receipt {
-    pub fn verify(&self) -> Result<()> {
+    /// Structural validation is safe on the trusted host even when these paths
+    /// live on another machine. Filesystem identity is checked by the ToolRunner.
+    pub fn validate_scope(&self, project: &Path, workspace: &Path) -> Result<()> {
         self.request.validate()?;
+        ensure!(
+            self.project_root == project && self.path == workspace,
+            "Workspace receipt belongs to another project/directory"
+        );
+        for p in [&self.project_root, &self.path] {
+            ensure!(
+                p.is_absolute()
+                    && p.components().all(|c| !matches!(
+                        c,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )),
+                "Noncanonical workspace receipt"
+            );
+        }
+        let expected = match &self.request.selection {
+            Selection::Team {} => project.to_owned(),
+            Selection::Directory { path } | Selection::Worktree { path, .. } => project.join(path),
+        };
+        ensure!(
+            self.path == expected && self.path.starts_with(project),
+            "Workspace selection/receipt mismatch"
+        );
+        Ok(())
+    }
+    pub fn verify(&self) -> Result<()> {
+        self.validate_scope(&self.project_root, &self.path)?;
         ensure!(
             self.path.starts_with(&self.project_root) && self.path.is_dir(),
             "Workspace left its authorized project"
@@ -153,6 +187,27 @@ impl Receipt {
             ensure!(
                 git.starts_with(&self.project_root),
                 "Git metadata is outside the authorized project"
+            );
+            let (private, common) = metadata_paths(&self.path, &self.project_root)?;
+            ensure!(
+                &common == git
+                    && self.worktree_git_dir.as_ref() == Some(&private)
+                    && self.worktree_git_identity.as_ref() == Some(&identity(&private)?)
+                    && self.pointer_digest.as_ref()
+                        == Some(&crate::bundle::digest(&crate::bundle::read_limited(
+                            &self.path.join(".git"),
+                            4096
+                        )?)),
+                "Original worktree metadata pointer/identity changed"
+            );
+            checked_absolute(&private.join("HEAD"))?;
+            ensure!(
+                fs::read_to_string(private.join("HEAD"))?.trim()
+                    == format!(
+                        "ref: refs/heads/{}",
+                        self.branch.as_deref().context("Missing worktree branch")?
+                    ),
+                "Managed worktree branch changed"
             );
         }
         Ok(())
@@ -184,7 +239,7 @@ async fn git(root: &Path, args: &[&str]) -> Result<String> {
 }
 /// Resolve on-disk Git pointers without running Git or following metadata outside
 /// the app-authorized project. Used before reading any repository configuration.
-fn metadata(root: &Path, project: &Path) -> Result<PathBuf> {
+fn metadata_paths(root: &Path, project: &Path) -> Result<(PathBuf, PathBuf)> {
     let dot = root.join(".git");
     checked_absolute(&dot)?;
     let git = if dot.is_dir() {
@@ -211,7 +266,7 @@ fn metadata(root: &Path, project: &Path) -> Result<PathBuf> {
         checked_absolute(&path)?;
         path.canonicalize()?
     } else {
-        git
+        git.clone()
     };
     ensure!(
         common.starts_with(project) && common.is_dir(),
@@ -222,12 +277,12 @@ fn metadata(root: &Path, project: &Path) -> Result<PathBuf> {
         !common.join("objects/info/alternates").exists(),
         "External Git object stores are not supported during preparation"
     );
-    Ok(common)
+    Ok((git, common))
 }
-async fn repository(root: &Path, project: &Path) -> Result<PathBuf> {
+pub(crate) async fn repository(root: &Path, project: &Path) -> Result<PathBuf> {
     // Validate pointers before invoking Git: rev-parse itself reads repository
     // configuration. A linked worktree may reference metadata only in this project.
-    let expected = metadata(root, project)?;
+    let (_, expected) = metadata_paths(root, project)?;
     let config_path = expected.join("config");
     checked_absolute(&config_path)?;
     let config = git(
@@ -291,6 +346,9 @@ pub async fn prepare(root: &Path, request: Request, inspect_only: bool) -> Resul
         repository: None,
         git_dir: None,
         git_identity: None,
+        worktree_git_dir: None,
+        worktree_git_identity: None,
+        pointer_digest: None,
         branch: None,
         initial_commit: None,
     };
@@ -420,6 +478,13 @@ pub async fn prepare(root: &Path, request: Request, inspect_only: bool) -> Resul
             receipt.repository = Some(repo);
             receipt.git_identity = Some(identity(&common)?);
             receipt.git_dir = Some(common);
+            let (private, _) = metadata_paths(&receipt.path, &root)?;
+            receipt.worktree_git_identity = Some(identity(&private)?);
+            receipt.worktree_git_dir = Some(private);
+            receipt.pointer_digest = Some(crate::bundle::digest(&crate::bundle::read_limited(
+                &receipt.path.join(".git"),
+                4096,
+            )?));
             receipt.branch = Some(branch.clone());
             receipt.initial_commit = Some(persisted.commit);
         }
@@ -446,6 +511,15 @@ pub async fn serve(root: &Path) -> Result<()> {
             continue;
         }
         let result = async {
+            if v["method"] == "initialize" {
+                return Ok(json!({"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"openworker-workspaces","version":"1"}}));
+            }
+            if v["method"] == "workspace/verify" {
+                let receipt: Receipt = serde_json::from_value(v["params"].clone())?;
+                receipt.validate_scope(&root, &receipt.path)?;
+                receipt.verify()?;
+                return Ok(serde_json::to_value(receipt)?);
+            }
             let request: Request = serde_json::from_value(v["params"].clone())?;
             ensure!(
                 matches!(
