@@ -169,3 +169,7 @@ assets retain their own notices and licenses.
 
 Repeatable resilience checks: [test cases and run commands](../docs/harness/RESILIENCE-TEST-CASES.md)
 cover fast contracts, real PostgreSQL worker recovery and local Kubernetes/OpenShell.
+
+First-class agent team coordination is being developed separately from the current
+work-item team API. See the [agreed one-page design](../docs/harness/AGENT-TEAMS-DECISIONS.md)
+and [implementation milestones](../docs/harness/AGENT-TEAMS-IMPLEMENTATION.md).

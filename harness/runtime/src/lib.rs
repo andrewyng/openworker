@@ -40,6 +40,7 @@ pub mod sandbox;
 pub mod servers;
 pub mod skills;
 pub mod store;
+pub mod team_coordination;
 pub mod team_service;
 pub mod teams;
 mod tool_images;
