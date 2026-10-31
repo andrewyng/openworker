@@ -167,6 +167,20 @@ then constrained compilation and scoped catalogs across storage/process modes.
   adapter, workspace/worktree fields, lifecycle tools and OpenShell mixed-placement
   qualification remain required M3–M5 work; no live cloud resources were created.
 
+### Reviewer provenance follow-up
+
+- Found and corrected a pre-existing transport/source mismatch while preparing
+  the briefing work: the initial delegated task uses the provider's `user` role
+  but must not be labelled `direct_user` evidence. The reviewer now receives it
+  separately as `collaborator_inputs` with `human_authorization: false`.
+- Expanded the policy regression to include an agent falsely claiming human
+  approval. The delegated content is available as task context but absent from
+  actual human intent; existing human answers, skipped questions and size limits
+  retain their behavior. All 12 policy tests and strict runtime Clippy pass.
+- A child without genuine human intent available to its reviewer must pause on
+  uncertainty. Future bounded parent-intent transfer needs trusted provenance;
+  an inherited briefing or model-written approval claim cannot substitute for it.
+
 ## Scoped-type test groups
 
 | Group | What we test | Why |
