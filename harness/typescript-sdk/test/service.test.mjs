@@ -230,3 +230,26 @@ test("combined submit preserves alias, limits and idempotency without two-step c
   );
   assert.equal(posts, 1);
 });
+
+test("team delegation pins qualified tools and working-model pairs at service creation",async t=>{
+  const bodies=[];
+  const url=await server(t,async(q,r)=>{
+    if(handshake(q,r))return;
+    headers(r);
+    if(q.url.startsWith("/v1/agents/")){r.end('{"id":"lead@1"}');return;}
+    if(q.method==="GET"){r.end(JSON.stringify({service:{releaseId:"lead@1",runtimeProfile:"shared@1"},session:{environment:{environment_id:"env"}}}));return;}
+    if(q.method==="POST"){
+      let body="";for await(const chunk of q)body+=chunk;
+      bodies.push(JSON.parse(body));
+    }
+    r.end('{}');
+  });
+  const service=await Harness.connect(options(url));t.after(()=>service.disconnect());
+  const session=await service.resume({serviceId:"service-one",namespace:"test",sessionId:"lead",agent:"lead@1",runtimeProfile:"shared@1",environmentId:"env",project:"test"});
+  await session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],models:[{provider:"primary",name:"working"}]}});
+  assert.deepEqual(bodies[0].delegation,{tools:["coding.read_file"],models:[{connection:"primary",model:"working"}],placements:["team"],profiles:{}});
+  assert.equal(bodies[0].agentId,"lead");
+  await assert.rejects(session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],placements:["new"]}}), e=>e.code==="unsupported_team_delegation");
+  assert.equal(bodies.length,1);
+  assert(!JSON.stringify(bodies).includes(token));
+});

@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-31",
+  "implementationCommit": "11816007",
+  "base": "4dfe9bb0",
+  "scope": "Service-side approved private types in the original shared OpenShell environment; not new/member placement qualification",
+  "tests": {
+    "runtimeSqliteContracts": 51,
+    "installedToolResolution": 2,
+    "postgresTeamAndCatalogRegressions": 22,
+    "serviceApiAdmissionRestartAndLegacyReceipt": 4,
+    "typescriptServiceTransport": 9,
+    "realOpenShellServiceSuite": 1,
+    "totalSuccessfulChecks": 89
+  },
+  "openshell": {
+    "model": "deterministic scripted fixture; no paid LLM",
+    "gateway": "existing local kind gateway",
+    "runnerImage": "docker.io/library/openworker-runner@sha256:2c1c5a83419afc2bc9e9139a93a6328b11ea4c8fc19dc76a9c12d4f4f91e1aca",
+    "apiProcesses": 2,
+    "controllerProcesses": 2,
+    "replacementWorker": true,
+    "originalSharedEnvironment": true,
+    "twoChildrenReadBuilderFile": true,
+    "approvedTypeIdentityUnchangedAcrossWorkerRestart": true,
+    "modelToolTurnRecordingAssertionPassed": true,
+    "typescriptVerifierPassed": true,
+    "elapsedSeconds": 149.86,
+    "originalEnvironmentDeletionConfirmed": true,
+    "newOrMemberSandboxPlacementTested": false
+  },
+  "gates": {
+    "strictAllTargetClippyRuntimeStoreSdkServer": true,
+    "typescriptBuild": true,
+    "rustfmt": true,
+    "diffCheck": true
+  },
+  "limits": [
+    "No remote child worktree preparation or independent-sandbox handoff claimed",
+    "No automatic Git clone/commit/merge/push/PR creation",
+    "No live model quality or cloud qualification",
+    "An intermediate concurrent local run timed out on the existing ten-second recording-readiness assertion; final isolated full suite passed without removing the assertion"
+  ],
+  "cloudCalls": false,
+  "paidModelCalls": false,
+  "newImagesBuilt": false,
+  "approximateFreeDiskGiB": 36
+}

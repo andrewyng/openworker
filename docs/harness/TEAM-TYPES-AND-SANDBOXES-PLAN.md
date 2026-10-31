@@ -393,3 +393,73 @@ Sources: `team_workspace.rs`, `agent_team_storage.rs`, shared
   self-stop receipts and identity pinned before first cleanup heartbeat, and
   [sanitized evidence](evidence/azure-combined-20261031.json). Azure remains
   explicitly experimental until a separately authorized live trial.
+
+## M3d — service-side scoped types in the original shared environment
+
+Implementation: `11816007`, on `feat/team-service-types-20261031` from canonical
+`4dfe9bb0`. [Sanitized evidence](evidence/team-service-types-20261031.json).
+
+- Service creation now accepts app-owned delegation bounded by the lead's activated
+  release. Tools resolve uniquely against its installed bindings; model pairs must
+  be explicitly allowed by that release. Control authorization precedes preparation.
+  Unsupported placement options reject rather than silently selecting Team.
+- Controllers compile exact approved scoped revisions privately and persist immutable
+  templates. Workers reconstruct the same runtime on another process/node through
+  the existing selector/factory and agent loop. No global activated release or
+  standalone-agent entry is created. Source release/profile/principal, approved
+  revision and lead policy are checked again before child admission.
+- Pinned model references contain no keys. Type defaults, per-child overrides and
+  original reviewer selection remain distinct. Missing configuration fails only
+  that unstarted revision; prebuilt siblings still progress. Unprepared reservations
+  do not block prepared siblings. Installation-specific controllers cannot consume
+  another deployment's reservations. Compilation activity stores metadata only.
+- Compilation happens outside transactions. Publication locks the lead session
+  before the team, matching worker/API lock order; competing controllers absorb
+  identical templates and record one publication. Short row locks do not claim
+  worker leases. Legacy prebuilt-only receipt retries remain readable without a
+  storage rewrite or newly delegated model authority.
+- **89 successful targeted checks:** 51 runtime/SQLite contracts, two installed-tool
+  resolution tests, 22 real PostgreSQL team/catalog regressions, four service API/
+  admission/restart/legacy fixtures, nine TypeScript service checks and one real
+  Kubernetes/OpenShell service suite. Strict all-target runtime/store/SDK/server
+  Clippy, TypeScript build, formatting and diff checks pass.
+- Real OpenShell qualification used two API processes, two controllers, the catalog
+  worker and its replacement. A builder wrote a file; two instances of an approved
+  custom reader read it through sandboxed tools. The second ran after worker death
+  and reconstructed the identical private type. Original environment identity and
+  durable tool-event evidence were checked, as were model/tool/turn recording and
+  the TypeScript verifier. The suite completed in 149.86 seconds and confirmed
+  deletion of its original environment. No gateway/deployment replacement occurred.
+- The first gateway attempt rejected a stale cached client certificate; the test
+  then used the existing gateway's current client certificate, without disabling
+  TLS or rotating credentials. An intermediate run hit the existing ten-second
+  recording-readiness assertion; the final isolated run retained and passed that
+  assertion. Added operation-name diagnostics; performance under concurrent load
+  is not qualified by this slice. Other intermediate failures corrected fixture
+  policy JSON and tool-evidence lookup, not production assertions.
+- Models were scripted. No cloud operations, IAM changes, paid model requests or
+  image builds. Approximately 36 GiB remains free. Temporary certificate/runner
+  and gateway-forward fixtures are cleaned up; the task-owned PostgreSQL container
+  remains available for the remaining placement tests.
+
+### Service test groups and purpose
+
+| Group | What is tested | What it establishes |
+| --- | --- | --- |
+| API and delegation | Observer denial, extra tools/models, unsupported placement, unchanged creation retries and private snapshot filtering. | An API caller cannot turn a reviewed release into broader tool/model authority. |
+| Compilation and admission | Exact approved revisions, private identity, changed policies/model connections, reviewer inheritance, known preparation failure and activated-source checks. | A custom definition cannot replace trusted policy or silently fall back to a different configuration. |
+| Recovery and compatibility | Competing publication, a fresh worker cache, original type/environment identity and old prebuilt-only receipt retries. | Restart reconstructs approved work without allocating a different type or rewriting stored permissions. |
+| Real execution | Builder write, two custom-reader file reads, worker replacement, accounting, TypeScript verifier and original-environment cleanup. | The service path executes real tools through OpenShell rather than stopping at database/template mocks. |
+
+### Remaining work and repository discussion
+
+Remote workspace preparation, delegated Team/Member/New sandbox provisioning,
+actual provider grant enforcement, owned exclusive-environment retirement and
+parallel mixed-placement/live-model qualification remain open. No GCP or Azure
+live qualification is implied.
+
+The [files/Git discussion](TEAM-TYPES-AND-SANDBOXES.md#files-git-and-integration--october-31-discussion)
+distinguishes shared files, worktrees and independent sandboxes. Commit/patch handoff,
+verification of pinned commits and optional lead integration are proposed coding
+workflows, not automatic generic-team behavior. Spawning does not implicitly
+clone, commit, merge, push, create a PR, or grant GitHub credentials.

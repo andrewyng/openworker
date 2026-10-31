@@ -411,6 +411,77 @@ configuration failure: no child task starts and no other model is substituted.
 The host remains usable. Fixing configuration does not replay a failed spawn;
 inspect current status and explicitly use a new instance ID for new work.
 
-The distributed service's release-backed custom-type/placement adapter remains a
-separate M3 item. Its current API rejects undelegated child overrides; SDK support
-on PostgreSQL should not be confused with that deployment adapter's feature gate.
+The distributed service adapter is tracked separately in the M3 ledger; SDK
+support on PostgreSQL should not be confused with deployment-adapter qualification.
+
+## Files, Git and integration — October 31 discussion
+
+Sandbox placement and Git workspace layout are independent decisions. The current
+default reuses the lead's original sandbox and working directory; builders and
+verifiers immediately see those shared files. Local SDK sessions with sandbox off
+also support explicitly selected child directories and Git worktrees with durable
+preparation receipts. Remote workspace preparation and separate child-environment
+provisioning are still implementation work. A worktree is file-edit coordination,
+not a sandbox boundary: processes sharing a sandbox retain its aggregate access.
+
+Spawning a child grants neither shell nor GitHub access automatically. A child
+uses its assigned tools; an authorized shell tool can run Git within its execution
+environment. Credentials and network grants remain application/provider policy.
+Model credentials are not copied into the tool sandbox. No current team operation
+automatically commits, pushes, opens a PR, or merges child changes into a repository.
+
+Git integration is an optional coding-team workflow; research, support and other
+teams do not need a repository. Do not make Git credentials or a checkout an
+implicit requirement of generic team spawning.
+
+Proposed coding workflow, for discussion before automatic Git integration:
+
+1. Builders receive separate branches/worktrees rooted at an explicit base commit.
+2. A verifier checks the exact submitted commit, rather than a moving working tree.
+3. The lead reviews and integrates reviewed commits into its integration branch.
+4. Push/PR publication is a distinct operation with the app's configured authority.
+
+For separate sandboxes, workspace sharing cannot be assumed. Add an explicit
+commit/patch-artifact handoff with base and result identifiers and verification
+evidence. The receiving side must check the base and handle conflicts. This is
+a proposed repository-integration layer; it is not implemented or implied by
+team spawning. Transport uncertainty must preserve the original operation identity
+and tell the model to inspect status before retrying non-idempotent Git/remote
+operations. Never automatically repeat a push or merge after an unknown outcome.
+
+### Service-side scoped types
+
+A service team can opt into private definitions with `delegation` at creation.
+Only tools present in the lead's activated release are eligible. Model choices
+must be the release's default or one of its explicit working-model overrides.
+The source profile must be activated and shared. No API key, server executable
+or endpoint can be supplied by the lead model. Qualified tool selections resolve
+to the original installed schema aliases; ambiguous aliases are rejected.
+
+```typescript
+const team = await session.createTeam({
+  agentTypes: { builder: "builder@1", verifier: "verifier@1" },
+  delegation: {
+    tools: ["coding.read_file", "coding.write_file"],
+    models: [{ provider: "primary", name: "working-model" }],
+  },
+});
+```
+
+This enables `team_define_type` for the lead. Its exact definition approval is
+required before a type becomes usable; Ask, Auto-approve and Bypass retain the
+same established meanings. The controller deterministically compiles the approved
+revision into a private bundle and persists an immutable child template. Workers
+reconstruct that same identity after restart using the original source release
+and profile. The type is never an activated global release or a standalone agent
+that another lead can start. Each spawn pins its approved type revision.
+
+An optional per-child working-model choice resolves from saved deployment-owned
+connection identities. It does not change the auto-approver. Missing configuration,
+revoked source grants or a changed approved scope cannot trigger fallback. Known
+preparation failure closes only the unstarted child and preserves its instance ID.
+
+This slice supports only the original **team environment**. `new`/`member` sandbox
+placement and nondefault remote directories/worktrees still reject explicitly.
+They remain separate milestones, along with commit/patch exchange between isolated
+sandboxes. The harness loop and sandbox provisioning remain outside ToolRunner.

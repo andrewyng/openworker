@@ -663,9 +663,17 @@ export class ServiceSession {
   async createTeam(
     options: ServiceAgentTeamOptions,
   ): Promise<ServiceAgentTeam> {
+    if (options.delegation && Object.keys(options.delegation).some(k => !["tools", "models"].includes(k))) {
+      throw new ServiceError("unsupported_team_delegation", 0);
+    }
     await this.service.json("POST", `/v1/sessions/${segment(this.id)}/team`, {
       agentId: options.agentId ?? "lead",
       agentTypes: options.agentTypes,
+      ...(options.delegation ? {delegation: {
+        tools: options.delegation.tools,
+        models: (options.delegation.models ?? []).map(m => ({connection:m.provider,model:m.name})),
+        placements:["team"],profiles:{},
+      }} : {}),
       policy: {
         communication: options.communication ?? {
           board: true,
@@ -785,6 +793,8 @@ export class ServiceRun {
 }
 
 export interface ServiceAgentTeamOptions {
+  /** Scoped custom types, bounded by the lead's activated release. */
+  delegation?: {tools:string[];models?:{provider:string;name:string}[]};
   agentId?: string;
   /** Type name → activated immutable release ID, e.g. builder → builder@1. */
   agentTypes: Record<string, string>;
