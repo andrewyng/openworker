@@ -463,3 +463,17 @@ distinguishes shared files, worktrees and independent sandboxes. Commit/patch ha
 verification of pinned commits and optional lead integration are proposed coding
 workflows, not automatic generic-team behavior. Spawning does not implicitly
 clone, commit, merge, push, create a PR, or grant GitHub credentials.
+
+## Coding presets and publication — design follow-up
+
+- Added [Coding agent presets, workspaces and GitHub publishing](CODING-AGENT-PRESETS.md)
+  to record the single-agent, shared-worktree team and isolated-sandbox team variants.
+- Recommended entry point is the single coding agent; shared worktrees are the
+  default when a team is requested. Publishing is opt-in, with the harness-managed
+  tool preferred when enabled. CLI credential delivery remains an explicit choice.
+- Recorded artifact versus branch handoff, separate checkout/publish permissions,
+  stored credential references, repository/branch restrictions and unknown-result
+  reconciliation. Presets reuse existing delegation and approval semantics.
+- This is documentation only. Preset/configuration names are illustrative. Remote
+  worktrees, isolated checkout/handoff and trusted publication remain implementation
+  and qualification work; no automatic Git/GitHub behavior was added.
