@@ -21,12 +21,12 @@ pub struct WorkspaceJob {
     pub intent: openworker_runtime::team_workspace::Intent,
     pub dispatch: bool,
 }
-fn workspace_authority(
+pub(crate) fn workspace_authority(
     tx: &mut postgres::Transaction<'_>,
     lead: &Session,
     doc: &Document,
     agent: &str,
-) -> Result<()> {
+) -> Result<crate::auth::Identity> {
     let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete'", &[&lead.id])?.context("Delegation credential expired/revoked")?;
     let spec: crate::auth::Spec = serde_json::from_value(row.get(1))?;
     ensure!(
@@ -74,7 +74,7 @@ fn workspace_authority(
         "Child release unavailable"
     );
     crate::service_catalog::allowed(&identity, &child.allowed_principals)?;
-    Ok(())
+    Ok(identity)
 }
 impl Transaction for Tx<'_, '_> {
     fn load(&mut self, id: &str) -> Result<Document> {

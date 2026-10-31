@@ -37,6 +37,36 @@ fn change(tx: &mut Transaction<'_>, e: &mut Record, kind: &str, data: Value) -> 
     )?;
     Ok(())
 }
+/// Reuse the original binding/revision checks inside an outbox transaction.
+pub(crate) fn complete(
+    tx: &mut Transaction<'_>,
+    id: &str,
+    revision: i64,
+    binding: Option<Binding>,
+) -> Result<Record> {
+    let mut e = lock(tx, id)?;
+    if let Some(b) = &binding {
+        b.validate()?;
+        if b.environment_id != e.id || b.spec != e.spec {
+            bail!("Environment result does not match requested authority");
+        }
+    }
+    if e.phase == Phase::Ready && e.binding == binding {
+        return Ok(e);
+    }
+    if e.revision != revision || !matches!(e.phase, Phase::Provisioning | Phase::Unknown) {
+        bail!("Stale environment operation");
+    }
+    e.phase = if binding.is_some() {
+        Phase::Ready
+    } else {
+        Phase::Unknown
+    };
+    e.binding = binding;
+    let known = e.binding.is_some();
+    change(tx, &mut e, "environment_observed", json!({"known":known}))?;
+    Ok(e)
+}
 fn attachment(row: &Row) -> Result<Attachment> {
     Ok(Attachment {
         id: row.get("id"),
@@ -176,33 +206,7 @@ impl Database {
         binding: Option<Binding>,
     ) -> Result<Record> {
         let mut tx = self.client.transaction()?;
-        let mut e = lock(&mut tx, id)?;
-        if let Some(b) = &binding {
-            b.validate()?;
-            if b.environment_id != e.id || b.spec != e.spec {
-                bail!("Environment result does not match requested authority");
-            }
-        }
-        if e.phase == Phase::Ready && e.binding == binding {
-            tx.commit()?;
-            return Ok(e);
-        }
-        if e.revision != revision || !matches!(e.phase, Phase::Provisioning | Phase::Unknown) {
-            bail!("Stale environment operation");
-        }
-        e.phase = if binding.is_some() {
-            Phase::Ready
-        } else {
-            Phase::Unknown
-        };
-        e.binding = binding;
-        let known = e.binding.is_some();
-        change(
-            &mut tx,
-            &mut e,
-            "environment_observed",
-            json!({"known":known}),
-        )?;
+        let e = complete(&mut tx, id, revision, binding)?;
         tx.commit()?;
         Ok(e)
     }
