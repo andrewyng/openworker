@@ -418,7 +418,8 @@ try {
     .items.filter(
       (p) =>
         p.metadata.namespace !== m.namespace &&
-        p.metadata.name.includes("--owr-"),
+        (p.metadata.name.includes("--owr-") ||
+          p.metadata.name.startsWith("os-supervisor-")),
     )
     .map((p) => p.metadata.uid);
   await save("baseline-environment-pods", baseline);
@@ -503,6 +504,11 @@ try {
           "os-supervisor-" + env.environment.binding.remote_id,
     )
     .map((p) => p.metadata.uid);
+  assert.equal(
+    allEnvironmentPods.length,
+    2,
+    "Observe both the original sandbox and its supervisor before testing deletion",
+  );
   await save("original-environment-pods", allEnvironmentPods);
   // Genuine independent sessions, same environment. Deliberately cooperative
   // directories/ports; sharing is not per-session OS isolation.
