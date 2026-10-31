@@ -1040,6 +1040,7 @@ impl Host {
                         "agent_types",
                         "policy",
                         "limits",
+                        "workspace_defaults",
                         "delegation"
                     ]
                     .contains(&k.as_str()))),

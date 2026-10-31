@@ -77,8 +77,31 @@ paid model calls, cloud resources or GitHub writes are needed for this layer.
 Case: [service/OpenShell qualification](../../harness/server-reference/tests/service_v2.rs),
 with [TypeScript live service checks](../../harness/typescript-sdk/test/service-v2-live.mjs).
 
+## Versioned presets and default worktrees
+
+The Rust preset suite creates a single-agent HTML output, then starts a shared
+team without automatically creating children. Two builder instances receive
+distinct worktrees from one pinned base; writes remain separate, the source
+checkout stays unchanged, incompatible team reconfiguration rejects, and restart
+preserves the roster. Run it with SQLite/PostgreSQL and embedded/managed modes.
+The TypeScript suite exercises dynamic preset registration, real streamed tool
+events, default worktree resolution and restart over private stdio on both stores.
+
+The shared transaction contract checks distinct deterministic paths/branches,
+pinned base, retry identities, explicit verifier directories and rejection of
+changed defaults on both databases. Service qualification deploys actual
+preset-derived releases, checks RuntimeProfile compatibility and runs a default
+builder worktree through OpenShell. Factory tests prevent implicit bypass/model
+selection, mutable shared configuration and silently dropped service policies.
+
+Cases: [Rust preset qualification](../../harness/harness-sdk/tests/coding_presets.rs),
+[TypeScript preset qualification](../../harness/typescript-sdk/test/coding-presets-live.test.mjs),
+[shared database contract](../../harness/tests/agent_team_contract.rs), and the
+service/OpenShell suite above. The TypeScript configuration copy is checked against
+the Rust-owned versioned JSON; no agent loop is duplicated across SDKs.
+
 ## Later milestones
 
-Preset construction, delegated isolated placement, artifact handoff, constrained
+Delegated isolated placement, artifact handoff, constrained
 GitHub publishing, CLI credentials and the combined multi-team recovery matrix
-are tracked separately as C2–C7. Passing C1 does not qualify those features.
+are tracked separately as C3–C7. Passing C1/C2 does not qualify those features.

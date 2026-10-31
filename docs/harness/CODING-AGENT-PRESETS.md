@@ -2,7 +2,9 @@
 
 Decision record: 31 October 2026. Records the agreed product direction and
 recommended defaults. Preset names and configuration below describe the intended
-interface; they are not new SDK APIs implemented by this document.
+interface; implemented entry points and platform qualification are documented in
+[Coding agents](CODING-AGENTS.md). The isolated/publishing variants remain tracked
+in the milestone journal until qualified.
 
 Related: [team types and sandbox design](TEAM-TYPES-AND-SANDBOXES.md),
 [team implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md),

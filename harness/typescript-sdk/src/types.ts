@@ -1,6 +1,12 @@
 export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Provider = "openai" | "anthropic";
+export interface WorkspaceDefaults {
+  repository:string;
+  /** Pinned local commit SHA, not HEAD. */
+  base:string;
+  agentTypes:string[];
+}
 export interface ChildSpawnOptions {
   /** Working model only; must be in the app-delegated model choices. */
   model?: { provider: string; name: string };

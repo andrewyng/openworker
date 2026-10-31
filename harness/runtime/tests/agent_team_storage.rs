@@ -7,6 +7,10 @@ fn sqlite_contract() {
     contract::exercise(&mut Store::memory().unwrap());
 }
 #[test]
+fn sqlite_workspace_defaults_contract() {
+    contract::exercise_workspace_defaults(&mut Store::memory().unwrap());
+}
+#[test]
 fn sqlite_child_briefing_contract() {
     contract::exercise_briefing(&mut Store::memory().unwrap());
 }

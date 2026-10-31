@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Create {
+    workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
     #[serde(default = "lead")]
     agent_id: String,
     agent_types: BTreeMap<String, String>,
@@ -99,7 +100,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         templates.insert(kind.clone(), (release_id.clone(), template));
     }
     let keys: Vec<_> = body.agent_types.keys().cloned().collect();
-    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation}),templates,models)
+    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation,"workspace_defaults":body.workspace_defaults}),templates,models)
 }
 pub(crate) async fn snapshot(
     Extension(app): Extension<App>,
