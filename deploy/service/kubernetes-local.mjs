@@ -4,6 +4,7 @@ import { resolve, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { init, run } from "./stack.mjs";
 import { localValues } from "./local-values.mjs";
+import { waitForEmptyPods } from "./local-drain.mjs";
 const [action, root, configFile] = process.argv.slice(2);
 if (!action || !root)
   throw Error(
@@ -350,16 +351,20 @@ if (action === "init") {
           `deployment/${m.release}-api`,
           "--replicas=0",
         ]);
-        await kube(m, [
-          "-n",
-          m.namespace,
-          "wait",
-          "--for=delete",
-          "pod",
-          "-l",
-          `app=${m.release}-api`,
-          "--timeout=90s",
-        ]);
+        await waitForEmptyPods(async () =>
+          JSON.parse(
+            await kube(m, [
+              "-n",
+              m.namespace,
+              "get",
+              "pods",
+              "-l",
+              `app=${m.release}-api`,
+              "-o",
+              "json",
+            ]),
+          ),
+        );
         if ((await count()).trim() !== "0") {
           await kube(m, [
             "-n",

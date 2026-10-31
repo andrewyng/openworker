@@ -839,8 +839,31 @@ impl Store {
                         "interrupted"
                     }
                     .into();
+                    // Match the PostgreSQL recovery contract. Delivery loss is
+                    // not proof of failure: a started call without a durable
+                    // result becomes model-visible unknown, never replayable.
+                    let mut remaining = vec![];
+                    let mut unknown = 0;
+                    for call in &t.queue {
+                        if s.history.iter().any(|v| {
+                            v["type"] == "function_call_output" && v["call_id"] == call["call_id"]
+                        }) {
+                            continue;
+                        }
+                        let started: bool = self.db.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM events WHERE session_id=?1 AND turn_id=?2 AND kind='tool_started' AND json_extract(data,'$.call_id')=?3)",
+                            params![s.id, t.id, call["call_id"].as_str().context("Invalid saved call ID")?], |r| r.get(0))?;
+                        if started {
+                            let output = json!({"type":"tool_outcome_unknown","tool_call_id":call["call_id"],"tool":call["name"],"source":"harness_recovery","may_still_be_running":true,"message":"No durable result was recorded. The operation may have completed, failed, or still be running. Inspect the original environment before deciding how to continue. This is not permission to retry."});
+                            s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
+                            unknown += 1;
+                        } else {
+                            remaining.push(call.clone());
+                        }
+                    }
+                    t.queue = remaining;
                     let status = t.status.clone();
-                    self.save(&s,"turn_recovered",json!({"status":status,"shell_state":"not guaranteed across runtime restart"}))?;
+                    self.save(&s,"turn_recovered",json!({"status":status,"outcome_unknown_count":unknown,"automatic_replay":false,"shell_state":"not guaranteed across runtime restart"}))?;
                 }
             }
         }

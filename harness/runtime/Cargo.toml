@@ -9,6 +9,10 @@ license.workspace = true
 name = "openworker"
 path = "src/main.rs"
 
+# Fault-injection fixtures are opt-in and excluded from shipped builds.
+[features]
+test-fixtures = []
+
 [dependencies]
 openworker-telemetry = { path = "../telemetry" }
 openworker-tools = { path = "../tools-sdk" }

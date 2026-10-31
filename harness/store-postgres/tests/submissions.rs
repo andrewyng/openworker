@@ -525,3 +525,83 @@ fn turn_limits_survive_queue_and_bind_idempotency() {
     assert!(fresh);
     assert_eq!(next.turn.unwrap().budget.limits, Limits::default());
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn resilience_service_result_preserves_interruption_for_current_and_older_runs() {
+    let (_config, mut owner) = fixture(4);
+    let (mut state, _, _) = owner
+        .accept("s_queue", "crashed", "Streaming task")
+        .unwrap();
+    state.turn.as_mut().unwrap().status = "running".into();
+    owner.save(&state, "model_started", json!({})).unwrap();
+    owner.recover().unwrap();
+    let original = owner.service_run("s_queue", "crashed").unwrap();
+    assert_eq!(original["status"], "interrupted");
+    assert_eq!(original["failure"], "interrupted");
+    assert!(original["finalOutput"].is_null());
+    assert_eq!(original["interruptions"], json!([]));
+    let (_next, _, _) = owner
+        .accept("s_queue", "next", "Explicit continuation")
+        .unwrap();
+    complete(&mut owner);
+    assert_eq!(
+        owner.service_run("s_queue", "next").unwrap()["status"],
+        "completed"
+    );
+    let older = owner.service_run("s_queue", "crashed").unwrap();
+    assert_eq!(older["status"], "interrupted");
+    assert_eq!(older["runId"], original["runId"]);
+    assert!(older["finalOutput"].is_null());
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn resilience_database_actor_recovery_events_keep_the_explicit_turn() {
+    use openworker_runtime::telemetry::{Controller, Operation, Record, Sink, Snapshot, Telemetry};
+    use std::{sync::Mutex, time::Duration};
+    struct Capture(Arc<Mutex<Vec<Record>>>);
+    impl Sink for Capture {
+        fn export(&mut self, records: &[Record], _: Snapshot) -> bool {
+            self.0.lock().unwrap().extend_from_slice(records);
+            true
+        }
+    }
+    let (mut c, mut owner) = fixture(4);
+    let (mut s, _, _) = owner
+        .accept("s_queue", "unknown", "PRIVATE_PROMPT")
+        .unwrap();
+    let call = json!({"type":"function_call","call_id":"unknown-call","name":"write_file","arguments":"{\"private\":\"PRIVATE_ARGUMENT\"}"});
+    let t = s.turn.as_mut().unwrap();
+    t.status = "executing".into();
+    t.queue = vec![call.clone()];
+    let tid = t.id.clone();
+    s.history.push(call);
+    owner
+        .save(&s, "tool_started", json!({"call_id":"unknown-call"}))
+        .unwrap();
+    owner.release("s_queue").unwrap();
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (telemetry, control): (Telemetry, Controller) =
+        Telemetry::start(Capture(rows.clone()), 256).unwrap();
+    c.telemetry = telemetry;
+    let mut replacement = PostgresStore::open(c).unwrap();
+    replacement.claim("s_queue").unwrap();
+    replacement.recover().unwrap();
+    assert!(control.shutdown(Duration::from_secs(3)));
+    let rows = rows.lock().unwrap();
+    for op in [Operation::Recovery, Operation::UnknownOutcome] {
+        let events: Vec<_> = rows.iter().filter(|r| r.operation == op).collect();
+        assert_eq!(events.len(), 1);
+        let hash = events[0]
+            .turn_hash
+            .expect("Database actor may not rely on task-local context");
+        assert_eq!(
+            hash.iter().map(|n| format!("{n:02x}")).collect::<String>(),
+            openworker_runtime::bundle::digest(tid.as_bytes())
+        );
+    }
+    let debug = format!("{rows:?}");
+    assert!(!debug.contains("PRIVATE_PROMPT"));
+    assert!(!debug.contains("PRIVATE_ARGUMENT"));
+}

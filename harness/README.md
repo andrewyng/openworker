@@ -166,3 +166,6 @@ See the [release checklist](../docs/harness/RELEASE-CHECKLIST.md) for this snaps
 
 Licensed under the repository's [MIT license](../LICENSE). Third-party example
 assets retain their own notices and licenses.
+
+Repeatable resilience checks: [test cases and run commands](../docs/harness/RESILIENCE-TEST-CASES.md)
+cover fast contracts, real PostgreSQL worker recovery and local Kubernetes/OpenShell.

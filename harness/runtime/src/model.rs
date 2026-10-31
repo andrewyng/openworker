@@ -720,6 +720,21 @@ impl Model {
             .await?;
             return Ok(());
         }
+        // Opt-in test image only: the runner observes this delta before killing
+        // its owned worker. No tool completion is emitted or accepted, and the
+        // wait is bounded even if a qualification process disappears.
+        #[cfg(any(test, feature = "test-fixtures"))]
+        if history
+            .get(start)
+            .is_some_and(|v| v["content"] == "TEST_RESILIENCE_STREAM")
+        {
+            tx.send(Progress::Delta(
+                "Resilience fixture streaming barrier".into(),
+            ))
+            .await?;
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            anyhow::bail!("Resilience stream barrier expired without injected fault");
+        }
         // Explicit scripted-only resource integration fixture; never a live-model path.
         if let Some(plan) = history
             .get(start)

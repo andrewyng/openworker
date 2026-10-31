@@ -1,0 +1,225 @@
+{
+  "date": "2026-10-30",
+  "scope": "Local macOS ARM64, Linux Docker worker processes and kind Kubernetes with NVIDIA OpenShell; deterministic model fault barriers",
+  "implementationCommit": "c9b8eea5f7ebead771588f52a10a7be3c93087ad",
+  "allThreeLevelsPassed": true,
+  "fast": {
+    "rustTests": 131,
+    "javascriptTests": 9,
+    "checks": [
+      {
+        "name": "runtime-unit",
+        "passed": true,
+        "rustTestsPassed": 72
+      },
+      {
+        "name": "runtime-contracts",
+        "passed": true,
+        "rustTestsPassed": 23
+      },
+      {
+        "name": "recording-and-export",
+        "passed": true,
+        "rustTestsPassed": 36
+      },
+      {
+        "name": "management-and-safety-contracts",
+        "passed": true,
+        "rustTestsPassed": 0
+      }
+    ],
+    "finished": "2026-10-31T05:09:58.369Z"
+  },
+  "postgres": {
+    "isolatedWorkerCases": [
+      {
+        "name": "api_accepts_while_worker_is_dead_and_replacement_consumes_fifo",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "concurrency::eight_sessions_four_slots_database_loss_is_scoped_and_not_replayed",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "concurrency::eight_sessions_four_slots_process_death_preserves_fifo_and_siblings",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "concurrency::parked_approvals_do_not_consume_slots_or_share_session_grants",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "draining::database_loss_during_drain_interrupts_without_waiting_for_drain_deadline",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "draining::drain_deadline_interrupts_without_replaying_an_uncertain_effect",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "draining::drain_finishes_current_turn_renews_lease_and_leaves_followups_for_replacement",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "draining::draining_preserves_approval_and_defers_resume_but_honors_active_cancellation",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "production_worker_loses_database_and_replacement_recovers_unknown_once",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "production_worker_parks_approval_reclaims_for_answer_and_keeps_session_grant",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "production_worker_plans_survive_replacement_and_cross_api_approval",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "production_workers_bound_capacity_renew_and_shutdown_without_replaying_effects",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "real_worker_deaths_preserve_approval_then_deliver_unknown_without_replaying_write",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "remote_controls_survive_crash_grant_session_access_and_cancel_unknown_effect",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      },
+      {
+        "name": "resilience_streaming_worker_death_preserves_budget_and_cursor_without_tool_replay",
+        "passed": true,
+        "cleanup": true,
+        "diagnosticsComplete": true
+      }
+    ],
+    "rustTests": 34,
+    "checks": [
+      {
+        "name": "postgres-submissions",
+        "passed": true,
+        "rustTestsPassed": 17
+      },
+      {
+        "name": "postgres-recording-outage",
+        "passed": true,
+        "rustTestsPassed": 1
+      },
+      {
+        "name": "postgres-authorized-recording",
+        "passed": true,
+        "rustTestsPassed": 1
+      },
+      {
+        "name": "postgres-linux-worker-faults",
+        "passed": true,
+        "rustTestsPassed": 15
+      },
+      {
+        "name": "docker-process-manager",
+        "passed": true,
+        "rustTestsPassed": 0
+      }
+    ],
+    "cleanup": {
+      "linuxFixtureRemoved": true,
+      "ownedPostgresRemoved": true,
+      "generatedSecretsRemoved": true
+    },
+    "finished": "2026-10-31T05:21:49.386Z"
+  },
+  "cluster": {
+    "checks": [
+      {
+        "name": "two sessions share environment with separate files, handles and ports"
+      },
+      {
+        "name": "worker killed during streaming: budgets and cursor survive, no partial tool accepted"
+      },
+      {
+        "name": "worker killed after real tool effect: unknown outcome persisted once, explicit read-back, no replay"
+      },
+      {
+        "name": "cross-API cancellation stops turn and preserves environment-owned servers"
+      },
+      {
+        "name": "deadline kills descendant without status polling; stopping coder leaves verifier healthy"
+      },
+      {
+        "name": "budget exhaustion refuses queued file effect and records the stop"
+      },
+      {
+        "name": "management summaries agree with timeline and actual OTLP collector by span/trace; content redacted"
+      },
+      {
+        "name": "browser finds exact run and renders grouped usage and timeline without page errors"
+      },
+      {
+        "name": "environment deletion removes remaining server and original pod; other sandboxes retained"
+      }
+    ],
+    "cleanup": {
+      "originalEnvironmentDeleted": true,
+      "unrelatedSandboxesUnchanged": true,
+      "serviceNamespaceRetained": false,
+      "ownedServiceNamespaceRemoved": true
+    },
+    "images": {
+      "service": "docker.io/library/openworker-resilience@sha256:e15a789cbf1981b9e2d32d82a2b1b7fe307b9a30535d6be9d24d0f61f243f380",
+      "runner": "docker.io/library/openworker-runner@sha256:2c1c5a83419afc2bc9e9139a93a6328b11ea4c8fc19dc76a9c12d4f4f91e1aca"
+    },
+    "finished": "2026-10-31T05:25:20.539Z"
+  },
+  "additional": {
+    "linuxRuntimeUnitTests": 77,
+    "linuxCoreTests": 18,
+    "nativeStrictClippy": true,
+    "linuxStrictClippy": true,
+    "rustfmt": true,
+    "typescriptSdkBuild": true,
+    "managementBrowserScreenshotsInspected": true
+  },
+  "limits": [
+    "Faults kill an owned worker pod/process; physical node, disk and availability-zone failure are not qualified.",
+    "The controlled model fixture does not qualify model quality or provider availability.",
+    "OTLP correlation uses an actual collector; this suite does not claim a new Langfuse UI qualification.",
+    "Qualification images enable test-fixtures; do not deploy them as production images.",
+    "Raw receipts, generated credentials and screenshots stay in ignored private directories."
+  ],
+  "cloud": {
+    "resourcesProvisioned": 0,
+    "iamChanges": 0,
+    "paidModelCalls": 0
+  },
+  "reportsContainUncommittedCandidateAtStart": false
+}

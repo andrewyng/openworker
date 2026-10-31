@@ -208,7 +208,7 @@ pub async fn serve(root: &Path) -> Result<()> {
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     let generation = uuid::Uuid::new_v4().simple().to_string();
-    let mut processes = Processes::default();
+    let mut processes = Processes::for_manager()?;
     let born = tokio::time::Instant::now();
     let mut last = born;
     let result:Result<()>=async {

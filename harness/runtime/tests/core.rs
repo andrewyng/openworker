@@ -360,3 +360,77 @@ fn cancelled_compaction_answer_cannot_carry_into_a_new_turn() {
     let (next, _, _) = db.accept(&s.id, "next", "new task").unwrap();
     assert!(next.compaction_action.is_none());
 }
+
+#[test]
+fn resilience_recovery_preserves_budget_cursor_and_reports_unknown_exactly_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut db = Store::open(tmp.path()).unwrap();
+    db.save(&session(), "created", json!({})).unwrap();
+    let (mut s, _, _) = db.accept("s_test", "original", "PRIVATE_REQUEST").unwrap();
+    let t = s.turn.as_mut().unwrap();
+    t.budget.limits.max_model_calls = 9;
+    t.budget.model_calls = 3;
+    t.budget.charged_output_tokens = 1234;
+    t.status = "executing".into();
+    let call = json!({"type":"function_call","call_id":"uncertain-write","name":"write_file","arguments":"{\"path\":\"effect\",\"content\":\"PRIVATE_ARGUMENT\"}"});
+    t.queue = vec![call.clone()];
+    s.history.push(call);
+    let before = db
+        .save(&s, "tool_started", json!({"call_id":"uncertain-write"}))
+        .unwrap()
+        .event_id;
+    drop(db);
+    for _ in 0..2 {
+        let mut db = Store::open(tmp.path()).unwrap();
+        db.recover().unwrap();
+        let s = db.get("s_test").unwrap();
+        let t = s.turn.unwrap();
+        assert_eq!(t.status, "interrupted");
+        assert!(t.queue.is_empty());
+        assert_eq!(t.budget.model_calls, 3);
+        assert_eq!(t.budget.limits.max_model_calls, 9);
+        assert_eq!(t.budget.charged_output_tokens, 1234);
+        assert_eq!(
+            s.history
+                .iter()
+                .filter(|v| v["type"] == "function_call_output"
+                    && v.to_string().contains("tool_outcome_unknown"))
+                .count(),
+            1
+        );
+        let tail = db.events("s_test", before).unwrap();
+        assert!(!tail.iter().any(|e| e.kind == "tool_started"));
+        assert!(tail.windows(2).all(|w| w[0].event_id < w[1].event_id));
+    }
+}
+
+#[test]
+fn resilience_recovery_distinguishes_unstarted_and_already_completed_calls() {
+    for completed in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut db = Store::open(tmp.path()).unwrap();
+        db.save(&session(), "created", json!({})).unwrap();
+        let (mut s, _, _) = db.accept("s_test", "original", "Inspect").unwrap();
+        let call = json!({"type":"function_call","call_id":"bounded-call","name":"read_file","arguments":"{}"});
+        s.turn.as_mut().unwrap().status = "executing".into();
+        s.turn.as_mut().unwrap().queue = vec![call.clone()];
+        s.history.push(call);
+        if completed {
+            s.history.push(json!({"type":"function_call_output","call_id":"bounded-call","output":"durable result"}));
+        }
+        // No tool_started event: queued does not imply dispatched. Conversely a
+        // saved result takes precedence and must never be replaced with unknown.
+        db.save(&s, "checkpoint", json!({})).unwrap();
+        db.recover().unwrap();
+        let s = db.get("s_test").unwrap();
+        assert_eq!(s.turn.as_ref().unwrap().status, "interrupted");
+        assert_eq!(
+            s.turn.as_ref().unwrap().queue.len(),
+            usize::from(!completed)
+        );
+        assert!(!s
+            .history
+            .iter()
+            .any(|v| v.to_string().contains("tool_outcome_unknown")));
+    }
+}
