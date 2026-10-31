@@ -34,7 +34,7 @@ Extend the same primitives through the remaining deployment adapters.
 | --- | --- | --- | --- |
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
-| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
+| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | In progress |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Pending |
@@ -330,3 +330,31 @@ and SDK were built from the C2 source. Unsupported service-local policies and
 capabilities reject during conversion. The source coding bundle enables planning;
 verifier shell access is explicitly not read-only enforcement. Remaining isolated
 placement, source staging, publication and credential work stays in C3–C7.
+
+### C3 journal — October 31, contract slice
+
+[Placement implementation flow and initial provider scope](TEAM-PLACEMENT-IMPLEMENTATION.md).
+
+C2 merged/pushed as `08c812bb`. Continuing on
+`feat/team-placement-c3-20261031`. Adding explicit per-instance sandbox selection,
+pinning the resolved choice with the original reservation, and checking custom
+type settings against the approved envelope as well as the app ceiling. A retry
+uses its original type revision/default, not a newly approved revision. Shared
+worktree defaults do not apply to a new independent environment.
+
+A trusted adapter capability gate stays disabled in existing SDK/service adapters
+until provider provisioning, ownership/reference/quota handling and recovery are
+qualified. Adding request fields does not silently enable provisioning. Provider
+resolution must reject unsupported grants and preserve original identities.
+The separate sandbox needs its own source checkout/handoff (C4); no linked Git
+metadata is implicitly mounted across sandboxes. Implementation/tests ongoing.
+
+C3 contract qualification (in progress): shared SQLite/PostgreSQL reservation
+contract passed, including per-instance New/Member choices, excess resource/grant
+rejection and unchanged reservation identities. Unit cases pin the original
+custom revision/default after a newer type revision is approved and reject
+instance settings outside that original envelope. Existing adapters explicitly
+reject unbound non-Team choices at both preparation and admission rather than
+running them in the lead/host environment. The TypeScript serializer rejects
+unknown settings instead of silently dropping them. No New/Member provisioning
+is enabled yet; provider binding/lifecycle remains the next C3 slice.

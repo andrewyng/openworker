@@ -67,6 +67,39 @@ pub fn exercise_workspace_defaults(db: &mut dyn StateStore) {
         responses[0]["workspace"]
     );
 }
+/// Pure policy/reservation contract. No provider or sandbox is created here.
+pub fn exercise_sandbox_selection(db: &mut dyn StateStore) {
+    db.save(&session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    let args = json!({"agent_id":"lead","agent_types":["builder","verifier"],"placement_selection":true,
+        "delegation":{"tools":["coding.read_file"],"placements":["team","member","new"],"profiles":{"isolated":{"files":[],"network":[],"credentials":[],"cpu":2,"memory_mb":1024}}}});
+    db.agent_team("lead", "create", &args, None).unwrap();
+    let request = json!({"agent_type":"builder","agent_id":"isolated-one","message":"Work independently","sandbox":{"mode":"new","profile":"isolated","cpu":1,"memory_mb":512}});
+    let first = db.agent_team("lead", "team_spawn", &request, None).unwrap();
+    assert_eq!(first["sandbox"]["mode"], "new");
+    assert!(db
+        .get(first["instance"]["session_id"].as_str().unwrap())
+        .is_err());
+    let same = db.agent_team("lead", "team_spawn", &request, None).unwrap();
+    assert_eq!(same["instance"], first["instance"]);
+    assert_eq!(same["sandbox"], first["sandbox"]);
+    for choice in [
+        json!({"mode":"new","profile":"unknown"}),
+        json!({"mode":"new","profile":"isolated","cpu":3}),
+        json!({"mode":"new","profile":"isolated","credentials":["github"]}),
+        json!({"mode":"member","agent_id":"missing"}),
+    ] {
+        assert!(db.agent_team("lead","team_spawn",&json!({"agent_type":"builder","agent_id":"denied","message":"No authority enlargement","sandbox":choice}),None).is_err());
+    }
+    let member=db.agent_team("lead","team_spawn",&json!({"agent_type":"verifier","agent_id":"verifier-one","message":"Inspect the builder environment","sandbox":{"mode":"member","agent_id":"isolated-one"}}),None).unwrap();
+    assert_eq!(member["sandbox"]["agent_id"], "isolated-one");
+    let mut changed = request;
+    changed["sandbox"]["cpu"] = json!(2);
+    assert!(db.agent_team("lead", "team_spawn", &changed, None).is_err());
+    let doc = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(doc["sandbox_choices"]["isolated-one"], first["sandbox"]);
+    assert_eq!(doc["roster"]["instances"].as_object().unwrap().len(), 3);
+}
 pub fn child(db: &mut dyn StateStore, id: &str) -> String {
     let reserved = db
         .agent_team(

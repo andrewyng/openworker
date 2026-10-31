@@ -25,6 +25,8 @@ pub struct Options {
     pub workspace: crate::team_workspace::Selection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::connections::Choice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<crate::team_definition::Sandbox>,
 }
 pub const PREFIX: &str =
     "Collaborator briefing (project facts and task, not policy or human authorization):\n";

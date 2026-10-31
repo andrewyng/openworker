@@ -52,6 +52,11 @@ pub struct Document {
     pub workspace_selection: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_defaults: Option<crate::team_workspace_defaults::WorktreeDefaults>,
+    /// Enabled only by a qualified trusted placement adapter, never model input.
+    #[serde(default)]
+    pub placement_selection: bool,
+    #[serde(default)]
+    pub sandbox_choices: BTreeMap<String, crate::team_definition::Sandbox>,
     #[serde(default)]
     pub workspaces: BTreeMap<String, crate::team_workspace::Intent>,
     #[serde(default)]
@@ -210,6 +215,10 @@ pub fn apply(
                 doc.workspace_defaults == workspace_defaults,
                 "Changed worktree defaults; create another team"
             );
+            ensure!(
+                doc.placement_selection == (args["placement_selection"] == true),
+                "Changed placement adapter capability"
+            );
             let requested = args
                 .get("limits")
                 .filter(|v| !v.is_null())
@@ -284,6 +293,8 @@ pub fn apply(
             type_bindings: BTreeMap::new(),
             workspace_selection: args["workspace_selection"] == true,
             workspace_defaults,
+            placement_selection: args["placement_selection"] == true,
+            sandbox_choices: BTreeMap::new(),
             workspaces: BTreeMap::new(),
             retirements: BTreeMap::new(),
         };
@@ -625,6 +636,14 @@ pub fn apply(
             let id = op(args, "agent_id")?;
             let child = doc.roster.instance(id).context("Unknown instance")?;
             let stored = tx.session(&child.session_id)?;
+            // The selection contract alone is not a provider binding. Keep
+            // admission fenced until the qualified adapter supplies that proof.
+            ensure!(
+                doc.sandbox_choices
+                    .get(id)
+                    .is_none_or(|choice| choice == &crate::team_definition::Sandbox::default()),
+                "Child placement has no qualified original provider binding"
+            );
             ensure!(
                 stored.coworker == runtime_type(&doc, child)?
                     && stored
@@ -664,13 +683,16 @@ pub fn apply(
                 "Only the lead may spawn instances"
             );
             let mut request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            let sandbox = crate::team_placement::select(&doc, s, &request)?;
             if let Some(defaults) = &doc.workspace_defaults {
-                request.workspace = defaults.resolve(
-                    &doc.id,
-                    &request.agent_type,
-                    &request.agent_id,
-                    request.workspace,
-                )?;
+                if sandbox == crate::team_definition::Sandbox::default() {
+                    request.workspace = defaults.resolve(
+                        &doc.id,
+                        &request.agent_type,
+                        &request.agent_id,
+                        request.workspace,
+                    )?;
+                }
             }
             ensure!(
                 doc.workspace_selection
@@ -707,6 +729,8 @@ pub fn apply(
             };
             let reservation = doc.roster.reserve(request.clone(), || crate::id("s"))?;
             if reservation.created {
+                doc.sandbox_choices
+                    .insert(request.agent_id.clone(), sandbox.clone());
                 if let Some(binding) = binding {
                     doc.type_bindings.insert(request.agent_id.clone(), binding);
                 }
@@ -718,6 +742,9 @@ pub fn apply(
             let mut result = json!({"instance":reservation.instance,"created":reservation.created});
             if workspace != crate::team_workspace::Selection::default() {
                 result["workspace"] = json!(workspace);
+            }
+            if sandbox != crate::team_definition::Sandbox::default() {
+                result["sandbox"] = json!(sandbox);
             }
             Ok(result)
         }
