@@ -98,7 +98,9 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let mut c = Config::new(std::env::var("OW_PG_TEST_URL")?, args[1].clone());
     c.tls = Tls::LoopbackPlaintext;
-    c.lease_duration = Duration::from_secs(3);
+    // Fault timing is deterministic; do not accidentally inject extra database
+    // faults with subsecond deadlines on a shared local Docker host.
+    c.lease_duration = Duration::from_secs(6);
     if args
         .get(4)
         .is_some_and(|v| v == "service" || v == "drain-service")
@@ -111,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         c.timeout = if load_profile {
             Duration::from_secs(5)
         } else {
-            Duration::from_millis(500)
+            Duration::from_secs(1)
         };
         let api = PostgresStore::open(c.clone())?;
         let sample = api.inspect(&args[3])?;

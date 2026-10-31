@@ -177,3 +177,7 @@ rest of the service. Only content paths accept up to 64 MiB and disable proxy
 request buffering; other requests retain the small JSON limit. Customer ingress
 must preserve those bounds and streaming behavior. Tokens, AWS credentials and
 artifact storage locations are never supplied in model output or coworker bundles.
+
+For repeatable worker faults, shared execution, cleanup and observability checks,
+see the [resilience test catalog](../../docs/harness/RESILIENCE-TEST-CASES.md).
+The fault-injection image is qualification-only and requires a dedicated local namespace.

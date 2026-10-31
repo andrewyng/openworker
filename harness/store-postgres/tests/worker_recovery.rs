@@ -69,6 +69,8 @@ fn service_fixture() -> (tempfile::TempDir, Config, PostgresStore) {
         format!("ow_service_{}", uuid::Uuid::new_v4().simple()),
     );
     config.tls = Tls::LoopbackPlaintext;
+    config.lease_duration = Duration::from_secs(6);
+    config.timeout = Duration::from_secs(1);
     PostgresStore::migrate(&config).unwrap();
     let api = PostgresStore::open(config.clone()).unwrap();
     (root, config, api)
@@ -187,7 +189,7 @@ async fn production_workers_bound_capacity_renew_and_shutdown_without_replaying_
     .await
     .unwrap();
     // More than two lease periods. A nonrenewing worker would be stolen here.
-    tokio::time::sleep(Duration::from_secs(7)).await;
+    tokio::time::sleep(Duration::from_secs(13)).await;
     assert_eq!(
         files(),
         2,
@@ -493,6 +495,8 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
     let schema = format!("ow_remote_{}", uuid::Uuid::new_v4().simple());
     let mut config = Config::new(std::env::var("OW_PG_TEST_URL").unwrap(), schema.clone());
     config.tls = Tls::LoopbackPlaintext;
+    config.lease_duration = Duration::from_secs(6);
+    config.timeout = Duration::from_secs(1);
     PostgresStore::migrate(&config).unwrap();
     let api_a = PostgresStore::open(config.clone()).unwrap();
     let api_b = PostgresStore::open(config).unwrap();
@@ -526,7 +530,7 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
         api_b.submit_control(grant.clone()).unwrap().status,
         ControlStatus::Pending
     );
-    tokio::time::sleep(Duration::from_millis(3200)).await;
+    tokio::time::sleep(Duration::from_millis(6200)).await;
     let mut b = Worker::start_mode(root.path(), &schema, "b", Some(sid), true).await;
     terminal_receipt(&api_b, sid, "one", SubmissionStatus::Completed).await;
     assert_eq!(
@@ -730,27 +734,38 @@ impl Worker {
     async fn rpc(&mut self, method: &str, params: Value) -> Value {
         self.id += 1;
         let id = self.id;
-        self.input
-            .as_mut()
-            .unwrap()
-            .write_all(
-                format!(
-                    "{}\n",
-                    json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
-                )
-                .as_bytes(),
-            )
-            .await
-            .unwrap();
+        let frame = format!(
+            "{}\n",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        );
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let mut line = String::new();
-                assert!(
-                    self.output.read_line(&mut line).await.unwrap() > 0,
-                    "worker exited"
-                );
-                let v: Value = serde_json::from_str(&line).unwrap();
-                if v["id"] == id {
+                self.input
+                    .as_mut()
+                    .unwrap()
+                    .write_all(frame.as_bytes())
+                    .await
+                    .unwrap();
+                loop {
+                    let mut line = String::new();
+                    assert!(
+                        self.output.read_line(&mut line).await.unwrap() > 0,
+                        "worker exited"
+                    );
+                    let v: Value = serde_json::from_str(&line).unwrap();
+                    if v["id"] != id {
+                        continue;
+                    }
+                    // Explicit pre-admission busy rejection of an idempotent
+                    // interaction answer only. Never retry tools, lost replies
+                    // or arbitrary errors. Preserve the exact answer/identity.
+                    if method == "interaction/respond"
+                        && v["error"]["message"]
+                            == "Interaction is checkpointing; retry this same response"
+                    {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        break;
+                    }
                     assert!(v.get("error").is_none(), "{v}");
                     return v["result"].clone();
                 }
@@ -803,6 +818,8 @@ async fn api_accepts_while_worker_is_dead_and_replacement_consumes_fifo() {
     let schema = format!("ow_ingress_{}", uuid::Uuid::new_v4().simple());
     let mut config = Config::new(std::env::var("OW_PG_TEST_URL").unwrap(), schema.clone());
     config.tls = Tls::LoopbackPlaintext;
+    config.lease_duration = Duration::from_secs(6);
+    config.timeout = Duration::from_secs(1);
     PostgresStore::migrate(&config).unwrap();
     let mut original = Worker::start(root.path(), &schema, "original", None).await;
     let created = original
@@ -829,7 +846,7 @@ async fn api_accepts_while_worker_is_dead_and_replacement_consumes_fifo() {
     assert_eq!(api_b.submit_turn(make("one", "write_once")).unwrap(), first);
     assert_eq!(first.status, SubmissionStatus::Queued);
     assert!(api_b.inspect(sid).unwrap().history.is_empty());
-    tokio::time::sleep(Duration::from_millis(3200)).await;
+    tokio::time::sleep(Duration::from_millis(6200)).await;
     let mut replacement =
         Worker::start_mode(root.path(), &schema, "replacement", Some(sid), true).await;
     let pending = replacement.pending(sid).await;
@@ -898,6 +915,8 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
     let schema = format!("ow_worker_{}", uuid::Uuid::new_v4().simple());
     let mut config = Config::new(std::env::var("OW_PG_TEST_URL").unwrap(), schema.clone());
     config.tls = Tls::LoopbackPlaintext;
+    config.lease_duration = Duration::from_secs(6);
+    config.timeout = Duration::from_secs(1);
     PostgresStore::migrate(&config).unwrap();
     let mut a = Worker::start(root.path(), &schema, "worker-a", None).await;
     let created = a
@@ -919,7 +938,7 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
     let first = a.pending(sid).await;
     let iid = first["interactions"][0]["id"].as_str().unwrap();
     a.kill().await;
-    tokio::time::sleep(Duration::from_millis(3200)).await;
+    tokio::time::sleep(Duration::from_millis(6200)).await;
     let mut b = Worker::start(root.path(), &schema, "worker-b", Some(sid)).await;
     let pending = b.pending(sid).await;
     assert_eq!(pending["interactions"][0]["id"], iid);
@@ -936,7 +955,7 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
     .await
     .unwrap();
     b.kill().await;
-    tokio::time::sleep(Duration::from_millis(3200)).await;
+    tokio::time::sleep(Duration::from_millis(6200)).await;
     let mut c = Worker::start(root.path(), &schema, "worker-c", Some(sid)).await;
     let snap = c.rpc("session/attach", json!({"session_id":sid})).await;
     assert_eq!(snap["turn"]["status"], "interrupted");
@@ -957,6 +976,10 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
         std::fs::read_to_string(root.path().join("work/proof.txt")).unwrap(),
         "one real side effect\n"
     );
+    // Budget reservations survive the same hard death as the uncertain write.
+    assert_eq!(saved.turn.as_ref().unwrap().budget.model_calls, 1);
+    assert!(saved.turn.as_ref().unwrap().budget.charged_output_tokens > 0);
+    assert!(saved.turn.as_ref().unwrap().queue.is_empty());
     // Explicit continuation for this S1 test. Automatic scheduling/continuation is S3.
     let inspection = format!(
         "TEST_RESOURCE_GRANTS {}",
@@ -994,4 +1017,73 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
         "one real side effect\n"
     );
     c.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL and native Linux"]
+async fn resilience_streaming_worker_death_preserves_budget_and_cursor_without_tool_replay() {
+    let (root, config, api) = service_fixture();
+    std::fs::create_dir(root.path().join("work")).unwrap();
+    let mut seeder = Worker::start(root.path(), &config.schema, "seed", None).await;
+    let created=seeder.rpc("session/create",json!({"name":"Stream fault","coworker":"pg-test","workspace":root.path().join("work"),"permissions":{"mode":"bypass"}})).await;
+    let sid = created["session"]["id"].as_str().unwrap();
+    api.submit_turn(TurnSubmission {
+        session_id: sid.into(),
+        submission_id: "streaming".into(),
+        text: "TEST_RESILIENCE_STREAM".into(),
+        limits: Some(openworker_runtime::budget::Limits {
+            max_model_calls: 7,
+            ..Default::default()
+        }),
+    })
+    .unwrap();
+    seeder.kill().await;
+    let mut a = service(root.path(), &config.schema, "stream-a", sid);
+    concurrency::wait(|| {
+        api.read_events(sid, 0)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "assistant_delta")
+    })
+    .await;
+    let before = api.read_events(sid, 0).unwrap();
+    let cursor = before.last().unwrap().event_id;
+    let saved = api.inspect(sid).unwrap();
+    let budget = serde_json::to_value(&saved.turn.as_ref().unwrap().budget).unwrap();
+    let turn = saved.turn.as_ref().unwrap().id.clone();
+    a.kill().await.unwrap(); // SIGKILL an owned child, not a graceful drain.
+    a.wait().await.unwrap();
+    let mut b = service(root.path(), &config.schema, "stream-b", sid);
+    terminal_receipt(&api, sid, "streaming", SubmissionStatus::Interrupted).await;
+    let recovered = api.inspect(sid).unwrap();
+    assert_eq!(recovered.turn.as_ref().unwrap().id, turn);
+    assert_eq!(
+        serde_json::to_value(&recovered.turn.as_ref().unwrap().budget).unwrap(),
+        budget
+    );
+    assert_eq!(recovered.turn.as_ref().unwrap().budget.model_calls, 1);
+    assert_eq!(
+        recovered
+            .turn
+            .as_ref()
+            .unwrap()
+            .budget
+            .limits
+            .max_model_calls,
+        7
+    );
+    assert!(recovered.turn.as_ref().unwrap().queue.is_empty());
+    assert!(!recovered
+        .history
+        .iter()
+        .any(|v| v["type"] == "function_call"));
+    let tail = api.read_events(sid, cursor).unwrap();
+    assert!(!tail.iter().any(|e| e.kind == "tool_started"));
+    assert!(tail.iter().all(|e| e.event_id > cursor));
+    assert!(tail.windows(2).all(|w| w[0].event_id < w[1].event_id));
+    let count = api.read_events(sid, 0).unwrap().len();
+    // Reconnect/inspect is read-only: it cannot dispatch a second model request.
+    assert_eq!(api.read_snapshot(sid).unwrap()["turn"]["id"], turn);
+    assert_eq!(api.read_events(sid, 0).unwrap().len(), count);
+    stop_service(&mut b).await;
 }

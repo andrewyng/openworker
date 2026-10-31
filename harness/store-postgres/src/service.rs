@@ -155,6 +155,8 @@ impl Database {
                 "queued" | "started" => "running",
                 "completed" => "completed",
                 "cancelled" => "cancelled",
+                // Keep durable crash recovery distinct from a failed provider/tool.
+                "interrupted" => "interrupted",
                 _ => "failed",
             }
         };
@@ -164,7 +166,7 @@ impl Database {
                 &[&sid, &tid],
             )?
             .get(0);
-        let value = json!({"status":status,"failure":if status=="failed" {Some(&phase)} else {None},"finalOutput":if status=="completed"{final_output}else{None},"interruptions":if waiting {pending}else{vec![]},"sessionId":sid,"runId":tid,"submissionId":submission,"cursor":cursor});
+        let value = json!({"status":status,"failure":if status=="failed" || phase=="interrupted" {Some(&phase)} else {None},"finalOutput":if status=="completed"{final_output}else{None},"interruptions":if waiting {pending}else{vec![]},"sessionId":sid,"runId":tid,"submissionId":submission,"cursor":cursor});
         tx.commit()?;
         Ok(value)
     }

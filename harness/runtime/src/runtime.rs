@@ -3018,6 +3018,9 @@ impl Runtime {
             self.bundle.registry.revoke(&s.id);
             self.images.lock().unwrap().clear(&s.id);
             if s.sandbox.is_some()
+                // Recovery may have no in-memory MCP client, but still owns
+                // stale attachment bookkeeping that must be abandoned as unknown.
+                || s.environment.is_some()
                 || !s.direct_processes.is_empty()
                 || self.clients.lock().await.contains_key(&s.id)
             {

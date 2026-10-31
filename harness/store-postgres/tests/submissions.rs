@@ -525,3 +525,32 @@ fn turn_limits_survive_queue_and_bind_idempotency() {
     assert!(fresh);
     assert_eq!(next.turn.unwrap().budget.limits, Limits::default());
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn resilience_service_result_preserves_interruption_for_current_and_older_runs() {
+    let (_config, mut owner) = fixture(4);
+    let (mut state, _, _) = owner
+        .accept("s_queue", "crashed", "Streaming task")
+        .unwrap();
+    state.turn.as_mut().unwrap().status = "running".into();
+    owner.save(&state, "model_started", json!({})).unwrap();
+    owner.recover().unwrap();
+    let original = owner.service_run("s_queue", "crashed").unwrap();
+    assert_eq!(original["status"], "interrupted");
+    assert_eq!(original["failure"], "interrupted");
+    assert!(original["finalOutput"].is_null());
+    assert_eq!(original["interruptions"], json!([]));
+    let (_next, _, _) = owner
+        .accept("s_queue", "next", "Explicit continuation")
+        .unwrap();
+    complete(&mut owner);
+    assert_eq!(
+        owner.service_run("s_queue", "next").unwrap()["status"],
+        "completed"
+    );
+    let older = owner.service_run("s_queue", "crashed").unwrap();
+    assert_eq!(older["status"], "interrupted");
+    assert_eq!(older["runId"], original["runId"]);
+    assert!(older["finalOutput"].is_null());
+}

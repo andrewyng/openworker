@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [features]
-test-support = ["dep:openworker-tools"]
+test-support = ["dep:openworker-tools", "openworker-runtime/test-fixtures"]
 openshell-test = []
 
 [[bin]]

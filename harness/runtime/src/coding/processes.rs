@@ -291,3 +291,75 @@ impl Drop for Group {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod resilience_tests {
+    use super::*;
+    async fn wait(p: &Processes, id: &str, expected: &str) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if p.snapshot(id, false).unwrap()["status"] == expected {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    #[tokio::test]
+    async fn resilience_stopping_one_workspace_does_not_stop_the_other() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let mut one = Processes::default();
+        let mut two = Processes::default();
+        let args = json!({"command":"echo owned; sleep 30", "timeout_seconds":30});
+        let x = one.call(a.path(), "process_start", &args).await.unwrap();
+        let y = two.call(b.path(), "process_start", &args).await.unwrap();
+        let xi = x["process_id"].as_str().unwrap();
+        let yi = y["process_id"].as_str().unwrap();
+        assert!(two
+            .call(b.path(), "process_stop", &json!({"process_id":xi}))
+            .await
+            .is_err());
+        one.shutdown().await;
+        assert_eq!(one.snapshot(xi, false).unwrap()["status"], "stopped");
+        assert_eq!(two.snapshot(yi, false).unwrap()["status"], "running");
+        two.shutdown().await;
+    }
+    #[tokio::test]
+    async fn resilience_deadline_kills_descendants_without_a_status_request() {
+        let r = tempfile::tempdir().unwrap();
+        let mut p = Processes::default();
+        // The descendant tries to write after the parent timeout. Polling a
+        // result is not what enforces the deadline.
+        let x=p.call(r.path(),"process_start",&json!({"command":"(sleep 2; echo orphan > orphan.txt) & wait","timeout_seconds":1})).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(2400)).await;
+        assert!(!r.path().join("orphan.txt").exists());
+        wait(&p, x["process_id"].as_str().unwrap(), "timed_out").await;
+        p.shutdown().await;
+    }
+    #[tokio::test]
+    async fn resilience_shutdown_stops_group_and_retains_bounded_logs() {
+        let r = tempfile::tempdir().unwrap();
+        let mut p = Processes::default();
+        let x=p.call(r.path(),"process_start",&json!({"command":"printf ready; (sleep 2; echo orphan > orphan.txt) & wait","timeout_seconds":30})).await.unwrap();
+        let id = x["process_id"].as_str().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !p.snapshot(id, true).unwrap()["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("ready")
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        p.shutdown().await;
+        assert_eq!(p.snapshot(id, true).unwrap()["status"], "stopped");
+        assert_eq!(p.snapshot(id, true).unwrap()["stdout"], "ready");
+        tokio::time::sleep(Duration::from_millis(2200)).await;
+        assert!(!r.path().join("orphan.txt").exists());
+    }
+}

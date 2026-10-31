@@ -382,3 +382,64 @@ async fn exhausted_compaction_finishes_instead_of_parking_another_question() {
     assert!(t.budget.summary_started);
     assert!(!s.interactions.iter().any(|i| i.response.is_none()));
 }
+
+// A partial model response is never a committed tool request. An interrupted
+// attempt still consumes its durable reservation; reconnect cannot buy it back.
+#[tokio::test]
+async fn resilience_incomplete_stream_never_commits_tool_and_keeps_budget() {
+    let mut m = Model::new("test".into(), true);
+    m.sample_hook = Some(Arc::new(|_, _, tx| {
+        Box::pin(async move {
+            tx.send(Progress::Delta("PRIVATE_PARTIAL_OUTPUT".into()))
+                .await
+                .unwrap();
+            Err(crate::provider::Error::new(crate::provider::Failure::InvalidResponse).into())
+        })
+    }));
+    let (_tmp, rt, sid) = fixture(
+        m,
+        Some(Limits {
+            max_model_calls: 4,
+            ..Default::default()
+        }),
+    )
+    .await;
+    assert!(rt
+        .drive(&sid, Default::default(), vec![crate::planning::schema()])
+        .await
+        .is_err());
+    let s = rt.store.lock().unwrap().get(&sid).unwrap();
+    assert_eq!(s.turn.as_ref().unwrap().budget.model_calls, 1);
+    assert!(s.turn.as_ref().unwrap().budget.charged_output_tokens > 0);
+    assert!(s.plan.is_none());
+    assert!(!s.history.iter().any(|v| v["type"] == "function_call"));
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    assert!(!events.iter().any(|e| e.kind == "tool_started"));
+}
+
+#[tokio::test]
+async fn resilience_stream_barrier_is_cancellable_before_any_completion() {
+    let m = Model::new("fixture".into(), true);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let task = tokio::spawn(async move {
+        m.next(
+            "",
+            &[json!({"role":"user","content":"TEST_RESILIENCE_STREAM"})],
+            &[],
+            tx,
+        )
+        .await
+    });
+    assert!(matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap(),
+        Some(Progress::Delta(_))
+    ));
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(
+        rx.recv().await.is_none(),
+        "No complete response after interruption"
+    );
+}

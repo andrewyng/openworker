@@ -211,7 +211,7 @@ async fn multi_slot_fault(database_loss: bool) {
     assert_eq!(alive.len(), 2);
     // Saturation holds across >2 lease periods. No fifth effect starts and no
     // duplicate effects are hidden by overwriting a file.
-    tokio::time::sleep(Duration::from_secs(7)).await;
+    tokio::time::sleep(Duration::from_secs(13)).await;
     assert!(a.try_wait().unwrap().is_none() && b.try_wait().unwrap().is_none());
     assert_eq!(
         (0..8).map(|n| effects(root.path(), n).len()).sum::<usize>(),

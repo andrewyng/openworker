@@ -349,3 +349,70 @@ fn delete_racing_session_creation_never_deletes_a_successfully_bound_live_sessio
     gate.wait();
     assert_ne!(create.join().unwrap(), delete.join().unwrap());
 }
+
+#[cfg(not(windows))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn resilience_recovered_runtime_shutdown_retires_old_attachments_without_deleting_shared_environment(
+) {
+    use openworker_runtime::{
+        execution::Backend, model::Model, runtime::Runtime, telemetry::Telemetry,
+    };
+    let c = config();
+    let mut old = PostgresStore::open(c.clone()).unwrap();
+    let binding = ready(&old, Sharing::Shared, Management::Harness);
+    old.save(
+        &session("recovered", binding.clone()),
+        "session_created",
+        json!({}),
+    )
+    .unwrap();
+    let (attachment, _) = old.reserve_attachment("recovered", "files").unwrap();
+    old.settle_attachment("recovered", &attachment.id, false, false)
+        .unwrap();
+    old.release("recovered").unwrap();
+    let mut next = PostgresStore::open(c.clone()).unwrap();
+    next.claim("recovered").unwrap();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("bundle/coworker")).unwrap();
+    std::fs::write(
+        root.path().join("bundle/coworker/manifest.md"),
+        "---\nid: test\n---\nInspect the original environment.",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("bundle/tools.json"),
+        include_str!("../../runtime/examples/assistant/tools.json"),
+    )
+    .unwrap();
+    std::fs::write(root.path().join("runner"), b"\x7fELF-fixture-not-executed").unwrap();
+    let rt = Runtime::open_instrumented(
+        &root.path().join("state"),
+        &root.path().join("bundle"),
+        &root.path().join("runner"),
+        Model::new("fixture".into(), true),
+        Backend::Openshell,
+        None,
+        None,
+        Default::default(),
+        Some(Box::new(next.clone())),
+        Telemetry::default(),
+    )
+    .unwrap();
+    // No prepare_tools or provider attachment occurs. The old channel can have
+    // an uncertain outcome, but may not strand close/delete bookkeeping forever.
+    rt.shutdown().await.unwrap();
+    let row = admin(&c)
+        .query_one(
+            "SELECT state,outcome_unknown FROM attachments WHERE id=$1",
+            &[&attachment.id],
+        )
+        .unwrap();
+    assert_eq!(row.get::<_, String>(0), "released");
+    assert!(row.get::<_, bool>(1));
+    assert_eq!(
+        next.environment(&binding.environment_id).unwrap().phase,
+        Phase::Ready
+    );
+    assert!(!next.get("recovered").unwrap().closed);
+}
