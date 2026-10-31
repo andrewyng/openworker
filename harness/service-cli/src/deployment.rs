@@ -1,5 +1,7 @@
 //! Offline planning/packaging, local kind installation and cloud preflight.
 //! Offline commands do not invoke cloud tools or load service authentication.
+#[path = "deployment_azure.rs"]
+mod azure;
 #[path = "deployment_bootstrap.rs"]
 mod bootstrap;
 #[path = "deployment_cloud.rs"]
@@ -142,6 +144,10 @@ pub enum GcpCommand {
 #[derive(Subcommand)]
 pub enum AzureCommand {
     Plan(AzurePlan),
+    /// Export reviewed identity-only bootstrap; never runs Azure commands.
+    Bootstrap(azure::Bootstrap),
+    /// Read-only verification of the target scope and exported setup grant.
+    Preflight(azure::Preflight),
 }
 #[derive(Args)]
 pub struct GcpPlan {
@@ -225,6 +231,8 @@ struct Plan {
     infrastructure: Option<infrastructure::Inputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gcp_bootstrap: Option<gcp::Identity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    azure_bootstrap: Option<azure::Identity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gcp_infrastructure: Option<gcp::Inputs>,
 }
@@ -343,9 +351,21 @@ impl Plan {
             );
             identity.validate(self)?;
         }
+        if let Some(identity) = &self.azure_bootstrap {
+            ensure!(
+                self.bootstrap.is_none()
+                    && self.infrastructure.is_none()
+                    && self.gcp_bootstrap.is_none()
+                    && self.gcp_infrastructure.is_none(),
+                "Azure identity cannot contain AWS/GCP authority"
+            );
+            identity.validate(self)?;
+        }
         if let Some(identity) = &self.gcp_bootstrap {
             ensure!(
-                self.bootstrap.is_none() && self.infrastructure.is_none(),
+                self.bootstrap.is_none()
+                    && self.infrastructure.is_none()
+                    && self.azure_bootstrap.is_none(),
                 "GCP identity bundle cannot contain AWS authority"
             );
             identity.validate(self)?;
@@ -452,6 +472,11 @@ fn artifacts(plan: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
             "Bootstrap and deployment executors for this provider are not implemented.",
             "Identity-only bootstrap is exported; read GCP-BOOTSTRAP.md. Infrastructure permissions, cloud lifecycle and automatic cleanup are not implemented.").into_bytes();
     }
+    if plan.azure_bootstrap.is_some() {
+        files.extend(azure::artifacts(plan)?);
+        let review = files.get_mut("REVIEW.md").unwrap();
+        *review = String::from_utf8(review.clone())?.replace("Bootstrap and deployment executors for this provider are not implemented.","Identity-only Azure bootstrap is exported; read AZURE-BOOTSTRAP.md. AKS/resource permissions, cloud execution and independent cleanup are not yet qualified.").into_bytes();
+    }
     if plan.gcp_infrastructure.is_some() {
         files.extend(gcp::infrastructure_artifacts(plan)?);
     }
@@ -544,9 +569,15 @@ fn inspect(root: &Path) -> Result<(Plan, Manifest)> {
 }
 fn result(p: &Plan, m: &Manifest) -> Value {
     json!({"deploymentId":p.deployment_id,"target":p.target,"bundleDigest":m.bundle_digest,"state":"planned","cloudObservation":"not_checked","applyReady":false,"expired":now().map(|n|n>=p.expires_at_unix).unwrap_or(true),"budget":p.budget,"expiresAtUnix":p.expires_at_unix,
-        "identityBootstrap": if p.gcp_bootstrap.is_some() { "exported_gcp_identity_only" } else if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
+        "identityBootstrap": if p.azure_bootstrap.is_some() { "exported_azure_identity_only" } else if p.gcp_bootstrap.is_some() { "exported_gcp_identity_only" } else if p.infrastructure.is_some() { "exported_generated_execution_roles" } else if p.bootstrap.is_some() { "exported_existing_execution_role_required" } else { "not_generated" }})
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
+    if let Command::Azure {
+        command: AzureCommand::Preflight(options),
+    } = command
+    {
+        return azure::preflight(options).await;
+    }
     if let Command::Gcp {
         command: GcpCommand::Installation { command },
     } = command
@@ -593,6 +624,12 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Azure {
+            command: AzureCommand::Bootstrap(options),
+        } => azure::bootstrap(options),
+        Command::Azure {
+            command: AzureCommand::Preflight(_),
+        } => bail!("Preflight requires asynchronous dispatch"),
         Command::Gcp {
             command: GcpCommand::Bootstrap(options),
         } => gcp::bootstrap(options),
@@ -743,6 +780,7 @@ fn create(
         bootstrap,
         infrastructure,
         gcp_bootstrap: None,
+        azure_bootstrap: None,
         gcp_infrastructure: None,
         created_at_unix: created,
         expires_at_unix: created
@@ -856,6 +894,7 @@ mod tests {
             bootstrap: None,
             infrastructure: None,
             gcp_bootstrap: None,
+            azure_bootstrap: None,
             gcp_infrastructure: None,
             topology: Topology {
                 cluster_mode: "new".into(),

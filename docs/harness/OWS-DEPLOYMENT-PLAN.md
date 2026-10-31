@@ -282,3 +282,14 @@ remain closed and the lifecycle path requires explicit experimental opt-in.
 No AWS calls, identity changes, image uploads or provisioning occurred in this task.
 D6 remains the separately authorized AWS trial, including actual IAM, network,
 volume, Pod Identity, guard cleanup and billing qualification.
+
+
+### Azure A1 — identity export and bootstrap preflight (31 October)
+
+The [Azure sequence/ledger](OWS-AZURE-IMPLEMENTATION.md) and
+[command guide](OWS-AZURE-BOOTSTRAP.md) define the provider-specific follow-up.
+Azure A1 exports an exact existing-principal, customer-RG-scoped ARM-metadata role
+and assignment, and verifies those grant records read-only. It does not create
+an identity, provide a login/federation flow, or confer resource-creation authority.
+AKS, workload identities, Bicep resources, execution/cleanup and live qualification
+remain later milestones. No real Azure CLI/account/IAM/resource changes were made.
