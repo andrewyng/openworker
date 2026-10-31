@@ -261,3 +261,9 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
 - Final read-only resource audit confirms zero resilience-labelled Docker
   containers, zero resilience service namespaces, and the dedicated Linux VM
   stopped. Existing Kubernetes/OpenShell/Langfuse development services remain.
+
+### Integration
+
+- Verified feature `feat/resilience-suite-20261030` merged without conflicts into
+  `openworker-harness-sdk` as `b24a071c23d7561a59fb04c5c3e2565e2f948a64`.
+  The merge tree matches the qualified feature tree; no main-branch merge or PR.
