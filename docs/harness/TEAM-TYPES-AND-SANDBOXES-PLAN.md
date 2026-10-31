@@ -131,7 +131,7 @@ cargo test --offline --locked --manifest-path harness/Cargo.toml \
 Next: durable pending/approved/denied definitions and canonical approval handling,
 then constrained compilation and scoped catalogs across storage/process modes.
 
-### M2a — scoped definitions and SDK runtime wiring
+## M2a — scoped definitions and SDK runtime wiring
 
 - Added a shared durable catalog inside the existing team transaction document:
   exact pending/approved/denied/abandoned revision records, bounded history and
@@ -201,3 +201,37 @@ schema. TypeScript integration additionally uses `OW_TS_TEST_HOST` pointing at t
 development-only `sdk-test-host` built with `test-support`. No model key is needed
 for these deterministic real runtime/store/process checks. Live-model/OpenShell
 qualification remains a separate gate rather than a claim made by these fixtures.
+
+## M3a — child title, briefing and explicit fresh context
+
+- Added bounded display title, separate project background and typed fresh-context
+  selection to the existing spawn request. Context inheritance/snapshots, raw cwd,
+  initiation assertions and unknown extra fields reject before allocation.
+- The title becomes the child session name; stable instance/type IDs do not change.
+  The briefing/task are separately encoded collaborator data beneath the durable
+  delegation source label, with combined input-size bounds. They do not replace the
+  registered system prompt, grant permissions or copy another conversation.
+- Rust embedded/managed and remote clients expose `spawn_with_options`; TypeScript
+  managed/service clients accept an optional fifth options argument. The common
+  SQLite/PostgreSQL domain persists the same request and checks all fields on retry.
+  The existing PostgreSQL service provisioner also applies the stored display name.
+- Kept optional spawn/type-definition fields explicitly non-strict in provider
+  requests, matching the existing MCP binding strategy. OpenAI Responses requires
+  all properties to be required in strict schemas; local JSON-schema/typed-policy
+  validation remains mandatory. Added a provider-schema regression; reference:
+  [strict function calling](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+- Fast tests pass for default/explicit fresh equivalence, unsupported inheritance,
+  durable identity/retry conflicts, typed briefing separation, size/control bounds
+  and provider schema compatibility. Titles use the existing session-name bound
+  (120 bytes), preventing a valid-looking reservation from failing later in the
+  provisioner. All five SDK cases pass, including the four database/process modes;
+  both TypeScript database/process integrations pass with structured briefings.
+- M3a gate: **69 successful checks** across 28 runtime contract cases, eight real
+  PostgreSQL contracts, five Rust SDK integrations, two TypeScript real-process
+  integrations and 26 TypeScript service/configuration/transport regressions.
+  Strict all-target Clippy, formatting, diff checks and document link/fence checks
+  pass. Owned temporary PostgreSQL fixtures are removed after qualification.
+- Remaining M3 work: workspace/worktree preparation receipts, delegated model and
+  environment selection, distributed release-backed private compilation and real
+  OpenShell provisioning/attachment. Retirement and mixed-placement resilience
+  remain M4/M5. These are not advertised as implemented by the new options.

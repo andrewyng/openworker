@@ -14,6 +14,18 @@ fn postgres_contract() {
 }
 #[test]
 #[ignore = "requires isolated OW_PG_TEST_URL"]
+fn postgres_child_briefing_contract() {
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_brief_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::exercise_briefing(&mut db);
+}
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
 fn concurrent_api_board_writes_are_ordered_and_cannot_bypass_fencing() {
     use openworker_runtime::store::StateStore;
     use serde_json::json;

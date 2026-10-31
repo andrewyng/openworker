@@ -307,7 +307,7 @@ impl crate::PostgresStore {
             let instance=doc.roster.instances().find(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).context("No reservation")?.clone();
             let template:Value=tx.query_one("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&instance.agent_type])?.get(0);
             let mut child:Session=serde_json::from_value(template["session"].clone())?;
-            child.id=instance.session_id.clone();child.name=instance.agent_id.clone();
+            child.id=instance.session_id.clone();child.name=doc.roster.request(&instance.agent_id).and_then(|r| r.title.as_ref()).unwrap_or(&instance.agent_id).clone();
             child.agent_team=Some(agent_team::Membership{team_id:doc.id.clone(),agent_id:instance.agent_id.clone(),inbox_cursor:0,last_output:None,notices:vec![],waiting:None});
             let lead=doc.roster.instance(&doc.lead).context("Lead missing")?;
             // Delegation inherits the submitting principal, never a stronger role.

@@ -5,6 +5,7 @@ import {
   type JournalEvent,
   type RunEvent,
   type TurnLimits,
+  type ChildSpawnOptions,
 } from "./types.js";
 
 export interface ServiceOptions {
@@ -810,11 +811,14 @@ export class ServiceAgentTeam {
     agentType: string,
     agentId: string,
     message: string,
+    options: ChildSpawnOptions = {},
   ): Promise<any> {
     return this.command(key, "team_spawn", {
+      ...options,
       agent_type: agentType,
       agent_id: agentId,
       message,
+      context: options.context ?? {mode:"fresh"},
     });
   }
   post(key: string, message: string): Promise<any> {

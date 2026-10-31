@@ -1,6 +1,7 @@
 //! First-class named team instances. No second scheduler or agent loop.
 use super::{Harness, Session, SessionRef, TurnLimits};
 use crate::{Error, HarnessClient, Result};
+pub use openworker_runtime::team_briefing::{Context as ChildContext, Options as ChildOptions};
 pub use openworker_runtime::team_coordination::{
     Communication, HistoryPage, HistoryQuery, Instance, Policy as TeamPolicy,
 };
@@ -110,12 +111,29 @@ impl AgentTeam {
         agent_id: &str,
         message: &str,
     ) -> Result<Value> {
-        self.command(
+        self.spawn_with_options(
             request_id,
-            "team_spawn",
-            json!({"agent_type":agent_type,"agent_id":agent_id,"message":message}),
+            agent_type,
+            agent_id,
+            message,
+            ChildOptions::default(),
         )
         .await
+    }
+    pub async fn spawn_with_options(
+        &self,
+        request_id: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+        options: ChildOptions,
+    ) -> Result<Value> {
+        let mut args =
+            serde_json::to_value(options).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        args["agent_type"] = json!(agent_type);
+        args["agent_id"] = json!(agent_id);
+        args["message"] = json!(message);
+        self.command(request_id, "team_spawn", args).await
     }
     pub async fn post(&self, request_id: &str, message: &str) -> Result<Value> {
         self.command(request_id, "team_post_board", json!({"message":message}))

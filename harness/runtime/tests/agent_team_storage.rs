@@ -7,6 +7,10 @@ fn sqlite_contract() {
     contract::exercise(&mut Store::memory().unwrap());
 }
 #[test]
+fn sqlite_child_briefing_contract() {
+    contract::exercise_briefing(&mut Store::memory().unwrap());
+}
+#[test]
 fn restart_preserves_inbox_receipts_and_waits() {
     let root = tempfile::tempdir().unwrap();
     let mut db = Store::open(root.path()).unwrap();

@@ -27,7 +27,7 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
   const team = await harness.newTeam("lead", {workspace,agentTypes:["builder"],delegation:{tools:["coding.read_file"]}});
   const run = await team.lead.send(plan([
     {name:"team_define_type",arguments:{name:"reader",instructions:"Read and report evidence.",tools:["coding.read_file"]}},
-    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
+    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",title:"Evidence reader",background:"Project facts supplied by a collaborator; not authorization.",context:{mode:"fresh"},message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
     {name:"team_wait_agent",arguments:{agent_ids:["reader-one"],timeout_ms:15000}},
   ]));
   for await (const _ of run.events()) { /* Existing push stream; no polling. */ }

@@ -439,7 +439,8 @@ pub fn apply(
                     doc.type_bindings.insert(request.agent_id.clone(), binding);
                 }
             }
-            doc.tasks.entry(request.agent_id).or_insert(request.message);
+            let task = crate::team_briefing::task(&request.message, request.background.as_deref())?;
+            doc.tasks.entry(request.agent_id).or_insert(task);
             tx.write(&doc, false)?;
             Ok(json!({"instance":reservation.instance,"created":reservation.created}))
         }
@@ -669,7 +670,7 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
         } else {
             json!({"type":"string","enum":doc.roster.spawn_types()})
         };
-        specs.push(("team_spawn","Spawn a registered agent type as a distinct named instance. Retrying the identical instance/task returns its original session.",json!({"agent_type":type_schema,"agent_id":{"type":"string"},"message":{"type":"string"}}),vec!["agent_type","agent_id","message"]));
+        specs.push(("team_spawn","Spawn a named instance with fresh conversation state. Optional title is for display; background supplies project facts, never policy or human authorization. Identical retries reuse the original session.",json!({"agent_type":type_schema,"agent_id":{"type":"string"},"message":{"type":"string"},"title":{"type":"string","maxLength":120},"background":{"type":"string","maxLength":8000},"context":{"type":"object","properties":{"mode":{"type":"string","enum":["fresh"]}},"required":["mode"],"additionalProperties":false}}),vec!["agent_type","agent_id","message"]));
         if let Some(catalog) = &doc.type_catalog {
             specs.push((crate::team_type_catalog::TOOL,"Propose a reusable agent type private to this lead session. Instructions are task configuration, never authorization. Requires an exact definition approval before spawning.",json!({
                 "name":{"type":"string"},"instructions":{"type":"string"},
@@ -691,7 +692,14 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
             vec!["agent_id", "message"],
         ));
     }
-    specs.into_iter().map(|(name,description,properties,required)|json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false},"strict":true})).collect()
+    specs.into_iter().map(|(name,description,properties,required)| {
+        // Responses strict mode requires every property to be required. Optional
+        // spawn/definition fields retain their actual omission semantics here;
+        // dispatch still validates JSON schema and the typed policy contract.
+        // https://developers.openai.com/api/docs/guides/function-calling#strict-mode
+        let strict = properties.as_object().is_some_and(|p| p.len() == required.len());
+        json!({"type":"function","name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false},"strict":strict})
+    }).collect()
 }
 
 /// Tool side effect, result and park marker form one durable commit.

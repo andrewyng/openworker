@@ -22,6 +22,9 @@ fn request(id: &str, kind: &str) -> SpawnRequest {
         agent_type: kind.into(),
         agent_id: id.into(),
         message: format!("Task for {id}"),
+        title: None,
+        background: None,
+        context: Default::default(),
     }
 }
 fn add(r: &mut Roster, id: &str, kind: &str) {
