@@ -11,9 +11,9 @@ are intentional. Helm remains the application installation layer on every cloud.
 | Capability | AWS | GCP | Azure |
 |---|---|---|---|
 | Offline typed plan, resource graph, inspect/validate/status | Implemented | Implemented | Implemented |
-| Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Identity-only export implemented; [guide](OWS-GCP-BOOTSTRAP.md) | Design below |
+| Generated setup/workload identity policies and bootstrap | Generated-role infrastructure export; imported-role option retained | Identity-only export implemented; [guide](OWS-GCP-BOOTSTRAP.md) | Existing-principal RG metadata grant exported; [guide](OWS-AZURE-BOOTSTRAP.md) |
 | Automatically generated infrastructure execution permissions | Implemented offline; not cloud-qualified | Not yet | Not yet |
-| Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Bootstrap/direct IAM checks qualified; infrastructure checks pending | Not yet |
+| Read-only cloud preflight | Implemented; [guide](OWS-AWS-PREFLIGHT.md) | Bootstrap/direct IAM checks qualified; infrastructure checks pending | Exact bootstrap-grant checks locally qualified; live pending |
 | Provisioning and cleanup | Experimental opt-in; locally tested recovery, AWS trial pending | [Local recovery/cleanup qualified](OWS-GCP-LIFECYCLE.md); production create gated | Disabled |
 
 The original design milestone was offline. Subsequent cloud qualification is
@@ -21,7 +21,9 @@ recorded in the provider ledgers. GCP identity bootstrap and read-only bootstrap
 preflight are now live-qualified in the [GCP ledger](OWS-GCP-TRIAL-PLAN.md), with
 production infrastructure creation still gated. Local lifecycle recovery and
 independent cleanup packaging are qualified in the [lifecycle guide](OWS-GCP-LIFECYCLE.md);
-cloud installation and effective permissions remain unqualified. Azure remains plan-only. Generated artifacts
+cloud installation and effective permissions remain unqualified. Azure adds identity-only
+export and read-only exact-grant checks, qualified with local fake tools; real Azure
+IAM, infrastructure, workload identity and cleanup remain unqualified. Generated artifacts
 or fake-CLI tests alone do not qualify real IAM or infrastructure behavior.
 
 ## Separate the authorities
@@ -210,7 +212,7 @@ independent identity and lifecycle from the GKE cluster being destroyed. Terrafo
 state remains until teardown is verified; a failed operation is reconciled using
 its existing operation ID, not a fresh deployment.
 
-## Azure: plan implemented, identity/installer design
+## Azure: identity-only export; infrastructure design
 
 ```sh
 ows deploy azure plan \
@@ -220,8 +222,10 @@ ows deploy azure plan \
 ```
 
 Use Bicep compiled to ARM at a dedicated resource-group scope. Target AKS, PostgreSQL
-Flexible Server, ACR and Blob Storage. Resource group creation is an explicit
-bootstrap operation; ordinary deployment authority is scoped to that group. Azure
+Flexible Server, ACR and Blob Storage. The first identity-only milestone uses an
+existing dedicated customer-owned resource group. Future group creation must be an
+explicit operation with its own ownership/recovery contract; ordinary deployment
+authority is scoped to that group. See the [Azure guide](OWS-AZURE-BOOTSTRAP.md). Azure
 resource names have different limits (e.g. storage accounts); derive actual names
 from the deployment ID during template generation, not by blindly using the common
 human-readable prefix. Initial AMD64 capacity is a proposal pending qualification.

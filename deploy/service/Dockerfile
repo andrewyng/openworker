@@ -52,3 +52,7 @@ FROM base AS gcp-cleanup
 COPY --from=cleanup-build /out/ows /opt/openworker/ows
 ENTRYPOINT ["/opt/openworker/ows"]
 CMD ["deploy", "gcp", "cleanup", "--help"]
+
+FROM gcp-cleanup AS azure-cleanup
+# Same native binary, Container Apps managed identity; no Azure CLI/Python/keys.
+CMD ["deploy", "azure", "cleanup", "--help"]

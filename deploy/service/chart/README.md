@@ -5,7 +5,7 @@ worker Deployment and a separate Kubernetes capacity controller. PostgreSQL and
 NVIDIA OpenShell are explicit external dependencies. The chart does not create a
 cloud account, cluster, node pool, database, registry or public load balancer.
 
-Use the same chart on a local cluster, EKS or GKE; cloud qualification remains a
+Use the same chart on a local cluster, EKS, GKE or AKS; cloud qualification remains a
 separate step. Infrastructure operators supply DNS/TLS, image distribution,
 PostgreSQL, OpenShell reachability and secrets. No AWS/GCP SDK is required by the
 capacity reconciler. Do not interpret local ARM64 qualification as cloud or x86-64
@@ -73,7 +73,7 @@ not cause the service to create cloud nodes or expand a spending ceiling.
 
 ## Privilege boundary
 
-Only the platform controller gets a projected Kubernetes service-account token.
+Only the platform controller gets a token whose audience authorizes the Kubernetes API.
 Its namespace Role can read its named worker Deployment, read/patch that
 Deployment's `scale` resource and list pods. It cannot create pods, read Secrets,
 change RBAC or submit arbitrary manifests. API/worker/provisioning pods have no
@@ -163,3 +163,25 @@ sidecar do not receive this mount. Nothing is mounted when the value is empty.
 Use verified HTTPS for production exports. See the
 [local Langfuse guide](../../reference/LANGFUSE-LOCAL.md) for a complete telemetry
 configuration example and the explicitly local relay used during qualification.
+
+
+## Azure artifact storage (experimental)
+
+Configure `config.artifacts` with `kind: azure`, exact deployment/account/container,
+`tenant_id`, `client_id` and token file
+`/var/run/secrets/azure/tokens/azure-identity-token`. The native Rust backend pins
+Azure HTTPS endpoints and requires workload identity; endpoint overrides, client
+secrets, storage keys and SAS tokens are rejected.
+
+Only API/worker harness containers receive the dedicated artifacts service account
+and a rotating token with audience `api://AzureADTokenExchange`. This token does
+not authorize Kubernetes API access. The chart owns the explicit projection and
+asks the Azure webhook to skip its harness/TLS containers, avoiding a second
+injected credential path. Controller, platform, bootstrap and TLS sidecars receive
+no Azure artifact token. Role/federation provisioning is outside this chart.
+
+Scope Azure Blob data access to the exact artifact container and bind federation
+to `system:serviceaccount:ow-service:ows-artifacts` plus the original AKS issuer.
+Local Helm/backend tests pass; actual AKS admission, OIDC/RBAC/private Blob DNS and
+OpenShell runtime remain live-trial gates. See
+[Azure service reference](../../../docs/harness/OWS-AZURE-SERVICE.md).

@@ -13,7 +13,7 @@ team-test = ["openworker-store-postgres/test-support", "dep:openworker-tools"]
 [dependencies]
 openworker-observability = { path = "../observability", features = ["postgres"] }
 openworker-tools = { path = "../tools-sdk", optional = true }
-openworker-artifacts = { path = "../artifacts", features = ["s3"] }
+openworker-artifacts = { path = "../artifacts", features = ["s3", "azure"] }
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
 openworker-telemetry = { path = "../telemetry", features = ["otlp"] }

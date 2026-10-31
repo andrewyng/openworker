@@ -170,7 +170,9 @@ pub(super) async fn apply(
     allow_cloud: bool,
 ) -> Result<()> {
     ensure!(
-        p.config.cloud.is_none() || p.config.platform.is_none() || allow_cloud,
+        (p.config.cloud.is_none() && p.config.azure.is_none())
+            || p.config.platform.is_none()
+            || allow_cloud,
         "Cloud platform preparation requires --allow-experimental-cloud"
     );
     namespace(

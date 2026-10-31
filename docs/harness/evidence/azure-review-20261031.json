@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31",
+  "reviewedAzure": "69e805dafafd02a9acece7f03d8fabb2b05bf7c1",
+  "reviewedCanonical": "fd19e1bbd1e8c63dfa8b2ec42b4c4ce18b6c6c7b",
+  "mergeBase": "f13de9b9f2bf44a577c051c0111287fa9ee4cb9f",
+  "changedPaths": {
+    "azure": 30,
+    "canonical": 57,
+    "overlap": []
+  },
+  "combinedTreeCompiled": false,
+  "fixed": [
+    "installer-pinned controller/identity receipt before control publication",
+    "durable and observable self-stop reconciliation without DELETE replay"
+  ],
+  "tests": {
+    "unitAndLoopback": 70,
+    "azureCli": 12,
+    "sharedDeployment": 7,
+    "gcpRegression": 17,
+    "sharedInstaller": 12,
+    "uniquePassed": 118,
+    "focusedCases": 6,
+    "focusedRerunAfterFinalChecks": true
+  },
+  "cliClippy": {
+    "completed": true,
+    "newAzureWarnings": 0,
+    "documentedBaselineWarnings": 6
+  },
+  "build": {
+    "isolatedTaskOwnedTarget": true,
+    "primaryTargetTouched": false,
+    "jobs": 1,
+    "debug": 0,
+    "incremental": false,
+    "capGiB": 6,
+    "finalBytes": 912873340,
+    "removed": true
+  },
+  "iamGrantsChanged": false,
+  "cloudAccountAccess": false,
+  "cloudResourcesMutated": false,
+  "credentialsReadOrPrinted": false,
+  "kubernetesTouched": false,
+  "pushed": false,
+  "canonicalMerged": false,
+  "readiness": "offline_only; separately authorized live Azure trial remains required"
+}

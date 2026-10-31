@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-31",
+  "branch": "feat/azure-service-lifecycle-20261031",
+  "baseBeforeA4": "6ba76e24",
+  "qualification": "offline_only",
+  "tests": {
+    "cliUnitAndLoopback": 64,
+    "azureCli": 12,
+    "sharedDeployment": 7,
+    "gcpRegression": 17,
+    "sharedInstaller": 12,
+    "artifacts": 11,
+    "helmChart": 9,
+    "serverArtifactConfig": 1,
+    "uniquePassed": 133,
+    "preexistingOptInArtifactEntrypoints": 2,
+    "controllerReplacementAssertionRerun": true
+  },
+  "commands": [
+    "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-service-cli --bin ows --test azure --test deployment --test gcp --test local_installer",
+    "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-artifacts --features azure,s3",
+    "cargo test --offline --locked --manifest-path harness/Cargo.toml -p openworker-server-reference --test azure_artifact_config",
+    "node --test deploy/service/chart.test.mjs",
+    "cargo clippy --offline --locked --manifest-path harness/Cargo.toml -p openworker-artifacts --features azure,s3 --lib -- -D warnings"
+  ],
+  "cliClippy": {
+    "completed": true,
+    "newAzureDiagnostics": 0,
+    "documentedBaselineWarnings": 6,
+    "strictAllTargetsPassClaimed": false
+  },
+  "build": {
+    "jobs": 1,
+    "debug": 0,
+    "incremental": false,
+    "temporaryTargetCapGiB": 6,
+    "temporaryTargetFinalBytes": 1726893671,
+    "taskOwnedTemporaryTargetRemoved": true
+  },
+  "cloudAccessPerformed": false,
+  "cloudIamOrResourcesChanged": false,
+  "modelKeysReadOrPrinted": false,
+  "existingKubernetesTouched": false,
+  "azureImageBuiltOrPushed": false,
+  "liveAzureQualified": false,
+  "remainingLiveGates": [
+    "effective IAM/Entra group membership and provider API schemas",
+    "regional versions/SKUs/quotas/prices and budget",
+    "external cleanup scheduling and managed identity endpoint",
+    "private AKS/PostgreSQL/Blob routes and DNS",
+    "OIDC webhook and exact Blob data roles",
+    "Azure Disk CSI and network enforcement",
+    "OpenShell/Agent Sandbox on AKS runtime",
+    "real long-running agent/team sessions and full teardown",
+    "explicit retained control resource removal"
+  ],
+  "retainedControlAfterWorkloadExpiry": [
+    "control Blob/account",
+    "cleanup managed identity",
+    "consumption environment",
+    "reviewed role grants"
+  ],
+  "providerAtomicity": "Dedicated generated IDs require exclusive provisioning/teardown coordination. ARM has no universal create-only or conditional-delete guarantee."
+}

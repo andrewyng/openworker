@@ -282,3 +282,30 @@ remain closed and the lifecycle path requires explicit experimental opt-in.
 No AWS calls, identity changes, image uploads or provisioning occurred in this task.
 D6 remains the separately authorized AWS trial, including actual IAM, network,
 volume, Pod Identity, guard cleanup and billing qualification.
+
+
+### Azure A1 — identity export and bootstrap preflight (31 October)
+
+The [Azure sequence/ledger](OWS-AZURE-IMPLEMENTATION.md) and
+[command guide](OWS-AZURE-BOOTSTRAP.md) define the provider-specific follow-up.
+Azure A1 exports an exact existing-principal, customer-RG-scoped ARM-metadata role
+and assignment, and verifies those grant records read-only. It does not create
+an identity, provide a login/federation flow, or confer resource-creation authority.
+AKS, workload identities, Bicep resources, execution/cleanup and live qualification
+remain later milestones. No real Azure CLI/account/IAM/resource changes were made.
+
+
+### Azure A2–A4 — offline graph, lifecycle and installation
+
+Azure now has staged ARM graph/permission exports, durable ETag-CAS lifecycle
+control, independent Container Apps expiry packaging, exact resource ownership
+receipts, and a binding into the shared Helm/OpenShell installer. A native optional
+Azure Blob artifact backend and role-specific workload identity projections are
+included. Existing kind/EKS/GCP regressions pass; the detailed qualification matrix
+and remaining gates are in the [Azure ledger](OWS-AZURE-IMPLEMENTATION.md).
+
+The [Azure service reference](OWS-AZURE-SERVICE.md) describes customer-reviewed
+bootstrap grants, experimental operations, private AKS access, secret handoff and
+control-resource retention. No real Azure CLI login/account/IAM/resource operation
+has been performed. Live readiness is deliberately not inferred from offline
+exports or fixtures; an authorized, budgeted Azure trial remains A5.
