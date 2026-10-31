@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-10-31T22:16:12.361617+00:00",
+  "scope": "Read-only local capacity check before C1; not a peak-capacity benchmark",
+  "host": {
+    "availableBytes": 37231792128,
+    "physicalMemoryGiB": 96,
+    "dockerSparseDiskAllocatedGiBApprox": 110.1
+  },
+  "rustBuildArtifacts": {
+    "path": "harness/target",
+    "totalGiBApprox": 85,
+    "debugGiBApprox": 84,
+    "releaseMiBApprox": 870,
+    "removed": false,
+    "safeReclaimableSubsetNotYetInventoried": true
+  },
+  "dockerNode": {
+    "context": "kind-ow-server-20261011",
+    "configuredMemoryGiBApprox": 8,
+    "availableMemoryGiBApprox": 2.67,
+    "cpus": 14,
+    "requestedCpuCores": 3.63,
+    "requestedMemoryMiB": 3584,
+    "virtualFilesystemFreeGiBApprox": 849,
+    "ready": true,
+    "diskPressure": false,
+    "memoryPressure": false
+  },
+  "cautions": [
+    "Virtual free disk is not additional physical Mac capacity; sparse-disk growth consumes host free space",
+    "PVC requested size does not establish actual usage or a hard local-path quota",
+    "Shared image layers do not require a full image copy per sandbox; workspaces/dependencies/logs still grow",
+    "docker system df inventory was stopped after not returning; no reclaimable-image/cache total is claimed"
+  ],
+  "assessment": {
+    "initialSharedWorktreeMilestones": "Enough capacity for bounded tests; reuse pinned images and clean task-owned temporary workspaces",
+    "fullParallelIsolatedQualification": "Free another approximately 20\u201330 GiB and plan approximately 16 GiB Docker memory or smaller staged batches; recheck CPU/memory requests before peak tests"
+  },
+  "resourcesRemoved": false,
+  "dockerSettingsChanged": false,
+  "cloudCalls": false
+}
