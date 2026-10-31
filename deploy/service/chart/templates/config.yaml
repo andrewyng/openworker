@@ -4,6 +4,17 @@
 {{- if lt (int .Values.terminationGracePeriodSeconds) (int (add .Values.worker.drainSeconds 60)) -}}{{ fail "termination grace must cover drain + 45s cleanup + 15s margin" }}{{- end -}}
 {{- if not .Values.config.service -}}{{ fail "config.service is required" }}{{- end -}}
 {{- $_ := set .Values.config.service "legacy_compatibility" false -}}
+{{- if and .Values.config.artifacts (eq .Values.config.artifacts.kind "azure") -}}
+{{- $a := .Values.config.artifacts -}}
+{{- range $key := keys $a -}}{{- if not (has $key (list "kind" "deployment" "account" "container" "tenant_id" "client_id" "federated_token_file")) -}}{{ fail "unsupported Azure artifact configuration field" }}{{- end -}}{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9_-]{1,64}$" (default "" $a.deployment)) -}}{{ fail "Azure artifact deployment scope is invalid" }}{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]{3,24}$" (default "" $a.account)) -}}{{ fail "Azure artifact account is invalid" }}{{- end -}}
+{{- if or (not (regexMatch "^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$" (default "" $a.container))) (contains "--" $a.container) -}}{{ fail "Azure artifact container is invalid" }}{{- end -}}
+{{- range $id := list $a.tenant_id $a.client_id -}}
+{{- if or (not (regexMatch "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$" (default "" $id))) (eq $id "00000000-0000-0000-0000-000000000000") -}}{{ fail "Azure workload tenant/client ID must be a nonzero UUID" }}{{- end -}}
+{{- end -}}
+{{- if ne $a.federated_token_file "/var/run/secrets/azure/tokens/azure-identity-token" -}}{{ fail "Azure artifact token file must match the chart-owned projection" }}{{- end -}}
+{{- end -}}
 {{- if hasKey .Values.config "observability" -}}
 {{- $obs := .Values.config.observability -}}
 {{- if not (kindIs "map" $obs) -}}{{ fail "config.observability must be an object" }}{{- end -}}

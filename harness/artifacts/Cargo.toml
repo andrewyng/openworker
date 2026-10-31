@@ -12,7 +12,8 @@ required-features = ["s3"]
 
 [features]
 default = []
-s3 = ["dep:object_store", "dep:url", "dep:reqwest013", "dep:rustls"]
+s3 = ["dep:object_store", "object_store/aws-base", "dep:url", "dep:reqwest013", "dep:rustls"]
+azure = ["dep:object_store", "object_store/azure-base", "dep:reqwest013", "dep:rustls"]
 
 [dependencies]
 anyhow = "1"
@@ -24,10 +25,10 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tokio = { version = "1", features = ["fs","io-util","rt","time"] }
+tokio = { version = "1", features = ["fs","io-util","macros","rt","time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 uuid = { version = "1", features = ["v4"] }
-object_store = { version = "=0.14.2", default-features = false, features = ["aws-base","reqwest","ring"], optional = true }
+object_store = { version = "=0.14.2", default-features = false, features = ["reqwest","ring"], optional = true }
 reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring","std","tls12"], optional = true }
 url = { version = "2", optional = true }

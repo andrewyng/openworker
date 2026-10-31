@@ -81,6 +81,8 @@ struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cloud: Option<cloud::Binding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    azure: Option<azure::InstallationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     platform: Option<platform::Artifact>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -372,8 +374,12 @@ fn pinned(s: &str) -> bool {
 }
 fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
     ensure!(
+        !(c.cloud.is_some() && c.azure.is_some()),
+        "Only one cloud installation binding is allowed"
+    );
+    ensure!(
         c.schema_version == 1
-            && (c.cloud.is_some() || c.context.starts_with("kind-"))
+            && (c.cloud.is_some() || c.azure.is_some() || c.context.starts_with("kind-"))
             && c.kubeconfig.is_absolute(),
         "Explicit reviewed cluster kubeconfig/context required"
     );
@@ -389,7 +395,7 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
     }
     ensure!(
         (c.service.namespace.starts_with("ow-service-m4-")
-            || (c.cloud.is_some() && c.service.namespace == "ow-service"))
+            || ((c.cloud.is_some() || c.azure.is_some()) && c.service.namespace == "ow-service"))
             && c.service.namespace != ns,
         "Dedicated local service namespace required"
     );
@@ -415,7 +421,7 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
         ("service-chart".into(), hash_path(&c.service.chart)?),
         ("service-values".into(), hash_path(&c.service.values_file)?),
     ]);
-    if c.cloud.is_some() {
+    if c.cloud.is_some() || c.azure.is_some() {
         hashes.insert("cluster-kubeconfig".into(), hash_path(&c.kubeconfig)?);
     }
     if let Some(artifact) = &c.platform {
@@ -747,6 +753,10 @@ async fn prerequisites(client: &Client<'_>, eks: bool) -> Result<()> {
                 == "true")),
         "Default storage provisioner required"
     );
+    if client.c.azure.is_some() {
+        azure::installation_storage(&classes)?;
+        return Ok(());
+    }
     if eks {
         let binding = client.c.cloud.as_ref().context("Cloud binding required")?;
         let (deployment, _) = cloud::install_scope(binding)?;
@@ -939,6 +949,14 @@ async fn stage_secrets(
             "Cloud database URL comes from the bound managed secret"
         );
         values["database"]["database-url"] = json!(cloud::database_url(binding).await?);
+    }
+    if let Some(binding) = &p.config.azure {
+        azure::installation_database(
+            binding,
+            values["database"]["database-url"]
+                .as_str()
+                .context("Azure database URL required in private secret input")?,
+        )?;
     }
     for (group, required, allowed) in [
         (
@@ -1300,11 +1318,21 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         }
         let hashes = inputs(&c)?;
         ensure!(
-            !local_only || (c.cloud.is_none() && c.service.fixture_database),
+            !local_only || (c.cloud.is_none() && c.azure.is_none() && c.service.fixture_database),
             "Use deploy cluster for managed-database/cloud installations"
         );
         if let Some(binding) = &c.cloud {
             cloud::verify_installation(
+                binding,
+                &c.kubeconfig,
+                &c.context,
+                &c.service.values_file,
+                true,
+            )
+            .await?;
+        }
+        if let Some(binding) = &c.azure {
+            azure::verify_installation(
                 binding,
                 &c.kubeconfig,
                 &c.context,
@@ -1344,7 +1372,7 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
             },
         )?;
         return crate::output(
-            json!({"deploymentId":p.id,"planDigest":p.digest,"state":"planned","scope":if p.config.cloud.is_some(){"aws-eks"}else{"local-kind"}}),
+            json!({"deploymentId":p.id,"planDigest":p.digest,"state":"planned","scope":if p.config.cloud.is_some(){"aws-eks"}else if p.config.azure.is_some(){"azure-aks"}else{"local-kind"}}),
         );
     }
     let state = match command {
@@ -1358,11 +1386,29 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
     };
     let (p, mut j, _lock) = load(state)?;
     ensure!(
-        !local_only || (p.config.cloud.is_none() && p.config.service.fixture_database),
+        !local_only
+            || (p.config.cloud.is_none()
+                && p.config.azure.is_none()
+                && p.config.service.fixture_database),
         "Use deploy cluster for managed-database/cloud installations"
     );
     if let Some(binding) = &p.config.cloud {
         cloud::verify_installation(
+            binding,
+            &p.config.kubeconfig,
+            &p.config.context,
+            &p.config.service.values_file,
+            !matches!(
+                command,
+                Command::Status { .. }
+                    | Command::Destroy { .. }
+                    | Command::RecordFailedRelease { .. }
+            ),
+        )
+        .await?;
+    }
+    if let Some(binding) = &p.config.azure {
+        azure::verify_installation(
             binding,
             &p.config.kubeconfig,
             &p.config.context,
@@ -1472,6 +1518,9 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         if let Some(binding) = &p.config.cloud {
             cloud::installation_intent(binding)?;
         }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
+        }
         return stage_secrets(&client, &p, state, &mut j, input).await;
     }
     if let Command::Platform {
@@ -1487,6 +1536,9 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         );
         if let Some(binding) = &p.config.cloud {
             cloud::installation_intent(binding)?;
+        }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
         }
         return platform::apply(&client, &p, state, &mut j, *allow_experimental_cloud).await;
     }
@@ -1511,6 +1563,9 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         );
         if let Some(binding) = &p.config.cloud {
             cloud::installation_intent(binding)?;
+        }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
         }
         prerequisites(&client, p.config.cloud.is_some()).await?;
         if let Some(step) = confirm_no_effect {
@@ -1740,4 +1795,36 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         );
     }
     unreachable!()
+}
+
+pub(crate) async fn verify_azure_teardown(
+    root: &Path,
+    binding: &azure::InstallationBinding,
+) -> Result<()> {
+    let (p, j, _lock) = load(root)?;
+    ensure!(
+        j.phase == "destroyed"
+            && p.config.azure.as_ref() == Some(binding)
+            && p.config.cloud.is_none(),
+        "Original Azure shared-installer teardown binding required"
+    );
+    let client = Client { c: &p.config };
+    ensure!(
+        client.cluster().await? == p.cluster_uid,
+        "Installation cluster UID changed"
+    );
+    ensure!(
+        client
+            .get("namespace", &p.config.service.namespace, None)
+            .await?
+            .is_none(),
+        "Service namespace still exists"
+    );
+    if let Shell::Install { namespace, .. } = &p.config.openshell {
+        ensure!(
+            client.get("namespace", namespace, None).await?.is_none(),
+            "Owned OpenShell namespace still exists"
+        );
+    }
+    Ok(())
 }

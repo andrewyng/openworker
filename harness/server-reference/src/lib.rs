@@ -80,6 +80,14 @@ pub enum ArtifactConfig {
         #[serde(default)]
         ca_file: Option<PathBuf>,
     },
+    Azure {
+        deployment: String,
+        account: String,
+        container: String,
+        tenant_id: String,
+        client_id: String,
+        federated_token_file: PathBuf,
+    },
 }
 impl ArtifactConfig {
     pub fn build(&self) -> Result<openworker_artifacts::Store> {
@@ -108,6 +116,22 @@ impl ArtifactConfig {
                 ca_file: ca_file.clone(),
             }
             .build(None),
+            Self::Azure {
+                deployment,
+                account,
+                container,
+                tenant_id,
+                client_id,
+                federated_token_file,
+            } => openworker_artifacts::azure::Config {
+                deployment: deployment.clone(),
+                account: account.clone(),
+                container: container.clone(),
+                tenant_id: tenant_id.clone(),
+                client_id: client_id.clone(),
+                federated_token_file: federated_token_file.clone(),
+            }
+            .build(),
         }
     }
 }

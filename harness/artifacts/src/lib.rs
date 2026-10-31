@@ -9,6 +9,8 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::sync::CancellationToken;
 pub mod filesystem;
+#[cfg(feature = "azure")]
+pub mod azure;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub const MAX_SIZE: u64 = 64 * 1024 * 1024;

@@ -1,7 +1,15 @@
-{{- if and .Values.config.artifacts (eq .Values.config.artifacts.kind "s3") }}
+{{- if and .Values.config.artifacts (has .Values.config.artifacts.kind (list "s3" "azure")) }}
 apiVersion: v1
 kind: ServiceAccount
+{{- if eq .Values.config.artifacts.kind "azure" }}
+metadata:
+  name: {{ .Release.Name }}-artifacts
+  annotations:
+    azure.workload.identity/client-id: {{ .Values.config.artifacts.client_id | quote }}
+    azure.workload.identity/tenant-id: {{ .Values.config.artifacts.tenant_id | quote }}
+{{- else }}
 metadata: {name: {{ .Release.Name }}-artifacts}
+{{- end }}
 automountServiceAccountToken: false
 ---
 {{- end }}
