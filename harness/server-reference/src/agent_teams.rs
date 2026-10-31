@@ -99,7 +99,10 @@ pub(crate) async fn command(
     headers: HeaderMap,
     Json(body): Json<Command>,
 ) -> Result<Json<Value>, ApiError> {
-    let result = if body.operation == "team_read_board" {
+    let result = if body.operation == "team_manage" && body.arguments["action"] == "list" {
+        app.store
+            .agent_team_api(&sid, "team_manage", body.arguments)?
+    } else if body.operation == "team_read_board" {
         app.store
             .agent_team_api(&sid, "team_read_board", body.arguments)?
     } else {

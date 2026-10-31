@@ -43,6 +43,7 @@ pub mod store;
 pub mod team_briefing;
 pub mod team_coordination;
 pub mod team_definition;
+pub mod team_lifecycle;
 pub mod team_service;
 pub mod team_type_catalog;
 pub mod team_workspace;

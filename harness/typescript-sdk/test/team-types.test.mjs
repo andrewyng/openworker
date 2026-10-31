@@ -32,13 +32,25 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
     {name:"team_wait_agent",arguments:{agent_ids:["reader-one"],timeout_ms:15000}},
   ]));
   for await (const _ of run.events()) { /* Existing push stream; no polling. */ }
-  assert.equal((await run.result()).status, "completed");
+  const result=await run.result();
+  assert.equal(result.status, "completed", JSON.stringify({result,events:await harness.request("event/read",{session_id:team.lead.id,after:0})}));
   const snapshot = await team.snapshot();
   assert.equal(snapshot.type_catalog, undefined);
   const child = snapshot.roster.instances["reader-one"].session_id;
   assert.equal((await harness.request("session/attach", {session_id:child})).session.workspace, await realpath(join(workspace,"evidence")));
   const events = await harness.request("event/read", {session_id:child,after:0});
   assert.match(JSON.stringify(events), /TypeScript scoped-role evidence/);
+  const retirement = await team.retire("retire-reader", "reader-one");
+  assert.equal(retirement.instance.phase, "retiring");
+  assert.deepEqual(await team.retire("retire-reader", "reader-one"), retirement);
+  const deadline=Date.now()+20000;
+  for (;;) {
+    const page=await team.members({limit:50});
+    if(page.members.find(m=>m.instance.agent_id==="reader-one").instance.phase==="closed")break;
+    assert.ok(Date.now()<deadline,"TypeScript retirement must reach confirmed closure");
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.equal((await harness.request("session/attach",{session_id:child})).session.closed,true);
   const reference = team.reference(); await harness.shutdown();
   harness = await Harness.start(config);
   const restored = await harness.resumeTeam(reference);

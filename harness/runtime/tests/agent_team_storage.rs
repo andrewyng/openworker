@@ -398,3 +398,7 @@ fn workspace_dispatch_survives_reopen_without_mutation_permission() {
     assert_eq!(recovered["dispatch"], false);
     assert_eq!(first["intent"], recovered["intent"]);
 }
+#[test]
+fn sqlite_retirement_contract() {
+    contract::exercise_retirement(&mut Store::memory().unwrap());
+}

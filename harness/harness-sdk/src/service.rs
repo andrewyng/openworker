@@ -982,6 +982,34 @@ impl AgentTeam {
         args["message"] = json!(message);
         self.command(key, "team_spawn", args).await
     }
+    pub async fn members(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        let mut args = json!({"action":"list","limit":limit});
+        if let Some(after) = after {
+            args["after"] = json!(after);
+        }
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/commands", id(self.lead.id())?),
+                Some(json!({"operation":"team_manage","arguments":args})),
+                None,
+            )
+            .await
+    }
+    pub async fn retire(
+        &self,
+        key: &str,
+        agent_id: &str,
+        mode: crate::agents::RetirementMode,
+    ) -> Result<Value> {
+        self.command(
+            key,
+            "team_manage",
+            json!({"action":"retire","agent_id":agent_id,"mode":mode}),
+        )
+        .await
+    }
     pub async fn post(&self, key: &str, message: &str) -> Result<Value> {
         self.command(key, "team_post_board", json!({"message":message}))
             .await

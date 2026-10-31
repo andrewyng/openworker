@@ -821,6 +821,13 @@ export class ServiceAgentTeam {
       context: options.context ?? {mode:"fresh"},
     });
   }
+  members(options: {after?: string; limit?: number} = {}): Promise<any> {
+    return this.service.json("POST",`/v1/sessions/${segment(this.lead.id)}/team/commands`,
+      {operation:"team_manage",arguments:{...options,action:"list"}});
+  }
+  retire(key:string,agentId:string,mode:"finish_current"|"cancel"="finish_current"):Promise<any>{
+    return this.command(key,"team_manage",{action:"retire",agent_id:agentId,mode});
+  }
   post(key: string, message: string): Promise<any> {
     return this.command(key, "team_post_board", { message });
   }

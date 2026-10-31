@@ -65,12 +65,14 @@ impl Transaction for Tx<'_> {
     fn anchor(&mut self, team: &str, id: &str) -> Result<u64> {
         self.0.query_row("SELECT seq FROM agent_team_messages WHERE team=? AND id=? AND json_extract(data,'$.board')=1",params![team,id],|r|r.get(0)).optional()?.context("Unknown board message ID")
     }
-    fn session(&mut self, id: &str) -> Result<Session> {
-        Ok(serde_json::from_str(&self.0.query_row(
-            "SELECT data FROM sessions WHERE id=?",
-            [id],
-            |r| r.get::<_, String>(0),
-        )?)?)
+    fn optional_session(&mut self, id: &str) -> Result<Option<Session>> {
+        self.0
+            .query_row("SELECT data FROM sessions WHERE id=?", [id], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
+            .map(|raw| Ok(serde_json::from_str(&raw)?))
+            .transpose()
     }
 }
 impl Store {
@@ -135,4 +137,20 @@ impl Store {
 }
 pub(crate) fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Result<()> {
     crate::agent_team::finish(s, tid, call, result)
+}
+
+pub(super) fn ensure_admission(db: &Connection, s: &Session) -> Result<()> {
+    if let Some(member) = &s.agent_team {
+        let raw: String = db.query_row(
+            "SELECT data FROM agent_teams WHERE id=?",
+            [&member.team_id],
+            |r| r.get(0),
+        )?;
+        let doc: Document = serde_json::from_str(&raw)?;
+        anyhow::ensure!(
+            crate::team_lifecycle::admits(&doc, s),
+            "Team member is stopped or retiring"
+        );
+    }
+    Ok(())
 }

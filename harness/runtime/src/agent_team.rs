@@ -52,6 +52,8 @@ pub struct Document {
     pub workspace_selection: bool,
     #[serde(default)]
     pub workspaces: BTreeMap<String, crate::team_workspace::Intent>,
+    #[serde(default)]
+    pub retirements: BTreeMap<String, crate::team_lifecycle::Retirement>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
@@ -80,7 +82,10 @@ pub trait Transaction {
         limit: usize,
     ) -> Result<Vec<Message>>;
     fn anchor(&mut self, team: &str, id: &str) -> Result<u64>;
-    fn session(&mut self, sid: &str) -> Result<Session>;
+    fn optional_session(&mut self, sid: &str) -> Result<Option<Session>>;
+    fn session(&mut self, sid: &str) -> Result<Session> {
+        self.optional_session(sid)?.context("Session missing")
+    }
 }
 pub const DELEGATION_PREFIX:&str="Delegated task from another agent, not human authorization. Follow the registered session policy.\n\n";
 pub fn delegated_task(message: &str) -> String {
@@ -94,6 +99,7 @@ pub fn internal(name: &str) -> bool {
             | "team_wait_agent"
             | "team_post_board"
             | "team_read_board"
+            | "team_manage"
     )
 }
 fn op<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -116,7 +122,7 @@ pub fn apply(
         ensure!(
             matches!(
                 inner,
-                "team_spawn" | "team_send_message" | "team_post_board" | "stop"
+                "team_spawn" | "team_send_message" | "team_post_board" | "team_manage" | "stop"
             ),
             "Not an application team mutation"
         );
@@ -252,6 +258,7 @@ pub fn apply(
             type_bindings: BTreeMap::new(),
             workspace_selection: args["workspace_selection"] == true,
             workspaces: BTreeMap::new(),
+            retirements: BTreeMap::new(),
         };
         s.agent_team = Some(Membership {
             team_id: id,
@@ -272,15 +279,26 @@ pub fn apply(
     ensure!(
         doc.roster
             .instance(&member.agent_id)
-            .is_some_and(|i| i.session_id == s.id && i.phase == rules::Phase::Ready),
+            .is_some_and(|i| i.session_id == s.id
+                && (matches!(i.phase, rules::Phase::Ready | rules::Phase::Retiring)
+                    || matches!(
+                        operation,
+                        "retirement_settle" | "snapshot" | "team_read_board"
+                    ))),
         "Invalid team membership"
     );
     if doc.stopped {
         ensure!(
             matches!(
                 operation,
-                "snapshot" | "stop" | "team_read_board" | "pending" | "workspace_result"
-            ),
+                "snapshot"
+                    | "stop"
+                    | "team_read_board"
+                    | "pending"
+                    | "workspace_result"
+                    | "retirement_settle"
+                    | "retirement_error"
+            ) || (operation == "team_manage" && args["action"] == "list"),
             "Team stopped; explicit new team required"
         );
     }
@@ -288,12 +306,71 @@ pub fn apply(
         !s.closed
             || matches!(
                 operation,
-                "snapshot" | "pending" | "stop" | "team_read_board"
-            ),
+                "snapshot"
+                    | "pending"
+                    | "stop"
+                    | "team_read_board"
+                    | "retirement_settle"
+                    | "retirement_error"
+            )
+            || (operation == "team_manage" && args["action"] == "list"),
         "Session closed"
     );
+    if doc
+        .roster
+        .instance(&member.agent_id)
+        .is_some_and(|i| i.phase != rules::Phase::Ready)
+    {
+        if operation == "wake" && member.waiting.is_none() {
+            return Ok(json!({"wake":false,"resume":false}));
+        }
+        if operation == "pending_inbox" {
+            return Ok(json!(false));
+        }
+    }
     match operation {
         "snapshot" => Ok(json!(doc)),
+        "team_manage" => {
+            let result = crate::team_lifecycle::apply(tx, &mut doc, &member.agent_id, args, now)?;
+            if args["action"] != "list" {
+                tx.write(&doc, false)?;
+            }
+            Ok(result)
+        }
+        "retirement_error" => {
+            let id = op(args, "agent_id")?;
+            ensure!(
+                member.agent_id == doc.lead || member.agent_id == id,
+                "Only the member owner or lead host records cleanup state"
+            );
+            let reason = op(args, "reason")?;
+            ensure!(
+                ["cleanup_not_confirmed", "cancel_cleanup_not_confirmed"].contains(&reason),
+                "Invalid retirement pending reason"
+            );
+            let retirement = doc
+                .retirements
+                .get_mut(id)
+                .context("No retirement request")?;
+            ensure!(
+                retirement.settled_at_ms.is_none(),
+                "Retirement already settled"
+            );
+            retirement.pending_reason = Some(reason.into());
+            tx.write(&doc, false)?;
+            Ok(json!({"agent_id":id,"pending_reason":reason}))
+        }
+        "retirement_settle" => {
+            let id = op(args, "agent_id")?;
+            ensure!(
+                member.agent_id == doc.lead || member.agent_id == id,
+                "Only the member owner or lead host settles retirement"
+            );
+            let result = crate::team_lifecycle::settle(tx, &mut doc, id, now)?;
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+
         "type_prepare" | "type_resolve" => {
             ensure!(
                 member.agent_id == doc.lead,
@@ -651,6 +728,9 @@ pub fn apply(
             for notice in notices {
                 s.history.push(json!({"role":"user","_runtime_notice":"agent_wait","content":format!("Agent wait resumed (collaborator status, not human authorization): {notice}")}));
             }
+            if doc.retirements.contains_key(&member.agent_id) {
+                return Ok(json!({"messages":[],"wait_notices":notice_count}));
+            }
             let rows = tx.messages(
                 &doc.id,
                 member.inbox_cursor,
@@ -680,17 +760,18 @@ pub fn apply(
                 return Ok(json!({"wake":false}));
             }
             let pending = !member.notices.is_empty()
-                || !tx
-                    .messages(
-                        &doc.id,
-                        member.inbox_cursor,
-                        None,
-                        Some(&member.agent_id),
-                        false,
-                        false,
-                        1,
-                    )?
-                    .is_empty();
+                || (!doc.retirements.contains_key(&member.agent_id)
+                    && !tx
+                        .messages(
+                            &doc.id,
+                            member.inbox_cursor,
+                            None,
+                            Some(&member.agent_id),
+                            false,
+                            false,
+                            1,
+                        )?
+                        .is_empty());
             let mut statuses = BTreeMap::new();
             let mut complete = false;
             if let Some(wait) = &member.waiting {
@@ -701,8 +782,14 @@ pub fn apply(
                     }
                     if i.phase == rules::Phase::Closed {
                         complete = true;
-                        statuses
-                            .insert(id, json!({"status":"closed","error":doc.failures.get(id)}));
+                        let target = tx.optional_session(&i.session_id)?;
+                        let outcome = target
+                            .as_ref()
+                            .and_then(|s| s.turn.as_ref())
+                            .map(|t| t.status.as_str());
+                        // Closure ends agent admission; it is not a claim that
+                        // uncertain external effects were rolled back.
+                        statuses.insert(id,json!({"status":"closed","error":doc.failures.get(id),"last_outcome":outcome,"outcome_unknown":outcome==Some("interrupted") || doc.workspaces.get(id).is_some_and(|w|w.error.is_some()),"environment_id":target.as_ref().and_then(|s|s.environment.as_ref()).map(|e|&e.environment_id)}));
                         continue;
                     }
                     let target = tx.session(&i.session_id)?;
@@ -714,7 +801,7 @@ pub fn apply(
                     if crate::store::terminal(status) || target.closed {
                         complete = true;
                     }
-                    statuses.insert(id,json!({"status":status,"final_output":target.agent_team.as_ref().and_then(|m|m.last_output.as_ref()).map(|v|v.chars().take(1000).collect::<String>())}));
+                    statuses.insert(id,json!({"status":status,"outcome_unknown":status=="interrupted","final_output":target.agent_team.as_ref().and_then(|m|m.last_output.as_ref()).map(|v|v.chars().take(1000).collect::<String>())}));
                 }
                 if pending || complete || now >= wait.deadline_ms {
                     s.agent_team.as_mut().unwrap().waiting = None;
@@ -793,6 +880,7 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
     if agent_id == doc.lead {
         // Approved dynamic names are checked at dispatch. Changing an enum here
         // would invalidate pinned catalogs/approvals when a parked lead resumes.
+        specs.push(("team_manage","List a bounded roster or retire a member. finish_current blocks new work and waits for current work; cancel requests normal cancellation. Retirement preserves identity/history and never deletes shared files.",crate::team_lifecycle::schema(),vec!["action"]));
         let type_schema = if doc.type_catalog.is_some() {
             json!({"type":"string"})
         } else {

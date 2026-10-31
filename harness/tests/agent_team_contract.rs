@@ -303,3 +303,205 @@ pub fn exercise_workspace_intent(db: &mut dyn StateStore) {
         .get("workspaces")
         .is_none());
 }
+
+pub fn exercise_retirement(db: &mut dyn StateStore) {
+    create(db);
+    let sid = child(db, "builder-one");
+    db.accept(&sid, "original-task", "Original work").unwrap();
+    db.agent_team(
+        "lead",
+        "team_post_board",
+        &json!({"message":"@builder-one old inbox"}),
+        None,
+    )
+    .unwrap();
+    let retire = json!({"request_id":"retire-one","operation":"team_manage","arguments":{"action":"retire","agent_id":"builder-one","mode":"finish_current"}});
+    let first = db.agent_team("lead", "command", &retire, None).unwrap();
+    assert_eq!(first["instance"]["phase"], "retiring");
+    assert_eq!(
+        first,
+        db.agent_team("lead", "command", &retire, None).unwrap()
+    );
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_send_message",
+            &json!({"agent_id":"builder-one","message":"new task"}),
+            None
+        )
+        .is_err());
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_post_board",
+            &json!({"message":"@builder-one new task"}),
+            None
+        )
+        .is_err());
+    assert_eq!(
+        db.agent_team(
+            "lead",
+            "team_post_board",
+            &json!({"message":"@all later task"}),
+            None
+        )
+        .unwrap()["recipients"],
+        json!([])
+    );
+    assert_eq!(
+        db.agent_team(&sid, "wake", &json!({}), None).unwrap()["wake"],
+        false
+    );
+    assert!(db
+        .agent_team(
+            &sid,
+            "team_manage",
+            &json!({"action":"retire","agent_id":"lead"}),
+            None
+        )
+        .is_err());
+    assert!(db.accept(&sid, "late", "Must not run").is_err());
+    assert!(db
+        .agent_team(
+            "lead",
+            "retirement_settle",
+            &json!({"agent_id":"builder-one"}),
+            None
+        )
+        .is_err());
+    assert!(db
+        .agent_team(
+            "lead",
+            "retirement_error",
+            &json!({"agent_id":"builder-one","reason":"arbitrary"}),
+            None
+        )
+        .is_err());
+    db.agent_team(
+        "lead",
+        "retirement_error",
+        &json!({"agent_id":"builder-one","reason":"cleanup_not_confirmed"}),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_team("lead", "snapshot", &json!({}), None).unwrap()["retirements"]["builder-one"]
+            ["pending_reason"],
+        "cleanup_not_confirmed"
+    );
+    let mut s = db.get(&sid).unwrap();
+    s.turn.as_mut().unwrap().status = "interrupted".into();
+    s.closed = true;
+    db.save(&s, "closed", json!({})).unwrap();
+    db.agent_team(
+        &sid,
+        "retirement_settle",
+        &json!({"agent_id":"builder-one"}),
+        None,
+    )
+    .unwrap();
+    let list = db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"list","limit":1}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(list["members"].as_array().unwrap().len(), 1);
+    let next = list["next"].as_str().unwrap();
+    let rest = db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"list","limit":1,"after":next}),
+            None,
+        )
+        .unwrap();
+    assert_ne!(
+        list["members"][0]["instance"]["agent_id"],
+        rest["members"][0]["instance"]["agent_id"]
+    );
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(
+        snapshot["roster"]["instances"]["builder-one"]["phase"],
+        "closed"
+    );
+    assert!(snapshot["retirements"]["builder-one"]["settled_at_ms"].is_number());
+    assert!(snapshot["retirements"]["builder-one"]["pending_reason"].is_null());
+    db.agent_team(
+        "lead",
+        "team_wait_agent",
+        &json!({"agent_ids":["builder-one"],"timeout_ms":5000}),
+        None,
+    )
+    .unwrap();
+    db.agent_team("lead", "wake", &json!({}), None).unwrap();
+    assert_eq!(
+        db.get("lead")
+            .unwrap()
+            .agent_team
+            .unwrap()
+            .notices
+            .last()
+            .unwrap()["statuses"]["builder-one"]["outcome_unknown"],
+        true
+    );
+    let roster = db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"list","limit":50}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(roster["members"][0]["outcome_unknown"], true);
+
+    assert_eq!(
+        first,
+        db.agent_team("lead", "command", &retire, None).unwrap()
+    );
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"retire","agent_id":"builder-one","mode":"cancel"}),
+            None
+        )
+        .is_err());
+    assert_eq!(
+        db.agent_team(
+            "lead",
+            "team_spawn",
+            &json!({"agent_type":"builder","agent_id":"builder-one","message":"Build one part"}),
+            None
+        )
+        .unwrap()["created"],
+        false
+    );
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"list","limit":0}),
+            None
+        )
+        .is_err());
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"retire","agent_id":"lead"}),
+            None
+        )
+        .is_err());
+    db.agent_team("lead", "stop", &json!({}), None).unwrap();
+    assert!(db
+        .agent_team(
+            "lead",
+            "team_manage",
+            &json!({"action":"list","limit":50}),
+            None
+        )
+        .is_ok());
+}

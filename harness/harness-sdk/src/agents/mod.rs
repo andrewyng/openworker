@@ -55,7 +55,7 @@ pub use crate::{
 };
 pub use agent_team::{
     AgentTeam, AgentTeamRef, ChildContext, ChildOptions, ChildWorkspace, Communication,
-    HistoryPage, HistoryQuery, Instance, TeamDelegation, TeamOptions, TeamPolicy,
+    HistoryPage, HistoryQuery, Instance, RetirementMode, TeamDelegation, TeamOptions, TeamPolicy,
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{

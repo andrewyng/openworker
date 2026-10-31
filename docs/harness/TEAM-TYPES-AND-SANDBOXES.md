@@ -8,7 +8,7 @@ This document separates the team implementation we are extending now from a
 future integration in which the OpenWorker agent loop itself runs inside an
 OpenShell sandbox. The future integration must not block the current work.
 
-## What exists today
+## Baseline before this extension
 
 The first-class team API distinguishes a registered agent **type** (`builder`)
 from named **instances** (`builder-ui`, `builder-api`). A lead can spawn several
@@ -31,7 +31,7 @@ and reviewer calls currently remain under their existing per-turn allowances.
 
 Current service teams share one original OpenShell environment. The trusted
 controller creates it through the gateway, outside the sandbox; ToolRunner runs
-sandboxed coding operations. There are no model-defined session-local types,
+sandboxed coding operations. At that baseline there were no model-defined session-local types,
 per-member sandbox choices or individual retirement tools yet. Application-driven
 `agent/register` is harness-wide and must not be exposed directly as the new
 model-facing definition tool. Legacy `.subagent()`/work-item teams and Python's
@@ -339,3 +339,40 @@ Successful preparation survives SDK restart. Worktree files remain user work and
 are not deleted implicitly. Remote service selection stays rejected until its
 ToolRunner preparation and enforcement path is qualified; the internal framed
 `workspace-stdio` helper alone is not a claim of remote support.
+
+## Qualified member lifecycle API (M4a)
+
+The lead can call `team_manage` to list a page of members or retire one instance.
+Applications use `team.members({ limit, after })` / Rust `members(after, limit)` and
+`team.retire(idempotencyKey, agentId, mode)`. Omitted mode is `finish_current`.
+The API accepts 1–100 entries per page; IDs remain stable even after retirement.
+
+- `finish_current` blocks new turns, mentions and automatic inbox wakes. An existing
+  turn can finish, including resuming a parked team wait or answering a pending
+  approval. Unconsumed collaborator messages do not become another turn.
+- `cancel` requests the existing turn-cancellation path. Tool outcomes already
+  recorded as unknown stay unknown; cancellation does not replay those actions or
+  claim that external effects were rolled back.
+- The member stays `retiring` and counts against active team capacity until its
+  owning runtime has closed the session and settled cleanup. Pending cleanup is
+  visible in the roster. Shared projects/environments are never deleted by this
+  operation. Exclusive environment ownership/release follows the M3 placement work.
+
+Retirement is permanent for an instance ID. A replacement gets a new ID. Active
+capacity is configurable; retained instance history has a separate 4,096-ID bound.
+Command receipts retain the original response across retries and restarts. A
+retirement mode is pinned; to interrupt current work without retiring an agent,
+use the existing child-session turn-cancellation control, then send follow-up work
+explicitly. Cancelling a turn and retiring a member have different admission rules.
+
+The distributed controller cancels unstarted queued follow-ups; owning workers
+perform runtime cleanup. Retiring a reservation that never became a session does
+not create that session just to close it. Read-only API principals can list only
+teams within their authorized scope and cannot turn the list endpoint into a
+retirement mutation.
+
+A retired child remains in the original run's durable event replay set. Slow or
+reconnecting clients receive its final events even after it leaves the live roster.
+Roster pages and wait notices carry the last turn outcome and a conservative
+`outcome_unknown` flag; closing the agent is not evidence that uncertain external
+changes were rolled back. Saved API controls retain priority during retirement.
