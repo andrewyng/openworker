@@ -202,3 +202,20 @@ Cloud deployment trials follow this sequence under their own budget/authorizatio
 For each verified slice, append the source commit, meaningful tests, local fixture
 cleanup, remaining gaps and merge commit. Earlier foundation evidence remains in
 the linked team ledger; this plan does not count those checks as newly rerun.
+
+### Capacity preflight — October 31
+
+[Read-only capacity evidence](evidence/coding-presets-capacity-20261031.json):
+approximately 35 GiB free on the Mac; Docker's sparse disk has virtual headroom
+but remains constrained by that physical free space. The Rust target directory
+occupies approximately 85 GiB (84 GiB debug); a safe reclaimable subset has not
+yet been inventoried. No files, workloads or volumes were removed.
+
+The existing kind node is Ready without disk/memory pressure. Its Docker VM has
+approximately 8 GiB memory, with approximately 2.7 GiB available at inspection.
+Start C1/C2 with bounded shared-sandbox tests and reuse pinned images. Before the
+full isolated/parallel matrix, recommend another 20–30 GiB free and approximately
+16 GiB Docker memory, or appropriately staged smaller batches. The Mac has 96 GiB
+physical RAM. Changing Docker allocation/restarting it is not performed by this
+check; existing demos remain running. Recheck actual capacity and CPU/memory
+requests before peak tests. These are working allowances, not measured peak usage.
