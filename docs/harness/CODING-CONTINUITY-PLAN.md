@@ -186,3 +186,10 @@ Sanitized aggregate evidence: [coding-continuity-20261030.json](evidence/coding-
   saved intent/profile. It had appeared after the connection failure. Its original
   environment was deleted with a saved delete intent and no repeated creation or
   tool launch. Unknown delivery was never treated as proof nothing happened.
+
+## Integration result
+
+Verified implementation `4dc2a97c` merged into `openworker-harness-sdk` as
+`ff874e3d`. The merge tree matches the tested feature tree; no additional runtime
+changes were introduced during integration. Local qualification and retained
+limitations above apply to this merge.
