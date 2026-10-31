@@ -1,7 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: sequence prepared for review; implementation has not started under these
-milestone IDs. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: approved sequence; C1 implementation and qualification in progress. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -33,7 +32,7 @@ Extend the same primitives through the remaining deployment adapters.
 
 | ID | Deliverable | Dependency | Status |
 | --- | --- | --- | --- |
-| C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Pending |
+| C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | In progress |
 | C2 | Single coding-agent and shared-team presets | C1 | Pending |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
@@ -237,3 +236,21 @@ The follow-up daemon read still reports approximately 8 GiB RAM; the user's inte
 16 GiB increase is not yet confirmed. Recheck after it applies, before large
 isolated-sandbox batches. Bound test concurrency and monitor incremental-cache
 growth; use `CARGO_INCREMENTAL=0` for sustained qualification where practical.
+
+### C1 journal — October 31, after Docker restart
+
+Docker now reports 16,745,295,872 bytes (approximately 15.6 GiB, configured as
+16 GiB); host free disk is approximately 60–61 GiB. Kubernetes and both OpenShell
+gateways recovered. One retained observability demo API has an HTTP 401 readiness
+probe; this is separate from the new task-owned fixtures. No demo credential was
+created or changed. The restart removed the previous disposable database; created
+a new loopback-only `ow-coding-presets-pg-20261031` fixture for this sequence.
+
+Feature branch: `feat/coding-shared-workspaces-20261031`. Implementing controller
+preparation intents/leases, original-environment ToolRunner requests, session-bound
+workspace receipts and narrow Git metadata validation. Receipts now pin the
+per-worktree metadata pointer/identity as well as common metadata. Ordinary file
+tools retain the child's cwd scope. Initial coding regressions passed; two new
+fast-test fixture issues were found (macOS process support and `/var` symlink
+canonicalization) and corrected. Full reruns and real OpenShell qualification
+are pending; this is not a completion claim.

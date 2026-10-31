@@ -759,6 +759,19 @@ impl Host {
                             }
                         };
                         child.id = instance.session_id.clone();
+                        // Read back the immutable acknowledgement saved by the
+                        // workspace adapter; model input never supplies this receipt.
+                        let prepared: openworker_runtime::agent_team::Document =
+                            serde_json::from_value(self.store.lock().unwrap().agent_team(
+                                &s.id,
+                                "snapshot",
+                                &json!({}),
+                                None,
+                            )?)?;
+                        child.managed_workspace = prepared
+                            .workspaces
+                            .get(&instance.agent_id)
+                            .and_then(|i| i.receipt.clone());
                         child.agent_team = Some(openworker_runtime::agent_team::Membership {
                             team_id: doc.id.clone(),
                             agent_id: instance.agent_id.clone(),

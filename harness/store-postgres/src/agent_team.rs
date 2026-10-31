@@ -7,10 +7,75 @@ use openworker_runtime::{
 };
 use serde_json::{json, Value};
 pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
+    tx.batch_execute("CREATE TABLE IF NOT EXISTS agent_team_workspace_claims(team TEXT NOT NULL,agent TEXT NOT NULL,token TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL,PRIMARY KEY(team,agent));")?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS agent_teams(id TEXT PRIMARY KEY,data JSONB NOT NULL); CREATE TABLE IF NOT EXISTS agent_team_templates(team TEXT NOT NULL,kind TEXT NOT NULL,data JSONB NOT NULL,PRIMARY KEY(team,kind)); CREATE TABLE IF NOT EXISTS agent_team_messages(team TEXT NOT NULL,seq BIGINT NOT NULL,id TEXT NOT NULL UNIQUE,data JSONB NOT NULL,PRIMARY KEY(team,seq));")?;
     Ok(())
 }
 struct Tx<'a, 'b>(&'a mut postgres::Transaction<'b>);
+#[derive(Clone, Debug)]
+pub struct WorkspaceJob {
+    pub lead: Session,
+    pub team: String,
+    pub agent: String,
+    pub claim: String,
+    pub intent: openworker_runtime::team_workspace::Intent,
+    pub dispatch: bool,
+}
+fn workspace_authority(
+    tx: &mut postgres::Transaction<'_>,
+    lead: &Session,
+    doc: &Document,
+    agent: &str,
+) -> Result<()> {
+    let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete'", &[&lead.id])?.context("Delegation credential expired/revoked")?;
+    let spec: crate::auth::Spec = serde_json::from_value(row.get(1))?;
+    ensure!(
+        spec.principal == row.get::<_, String>(0) && spec.role.permits(crate::auth::Action::Submit),
+        "Workspace delegation credential unavailable"
+    );
+    let identity = crate::auth::Identity {
+        credential_id: String::new(),
+        principal: spec.principal,
+        role: spec.role,
+        scope: spec.scope,
+        environments: spec.environments,
+        expires_at: spec.expires_at,
+    };
+    let release = crate::service_catalog::entry(tx, "release", &row.get::<_, String>(2))?;
+    let profile = crate::service_catalog::entry(tx, "profile", &row.get::<_, String>(3))?;
+    let r: crate::service_catalog::Release = serde_json::from_value(release.definition)?;
+    let p: crate::service_catalog::Profile = serde_json::from_value(profile.definition)?;
+    ensure!(
+        release.activated && profile.activated && r.runtime_profiles.contains(&p.id),
+        "Workspace release/profile unavailable"
+    );
+    crate::service_catalog::allowed(&identity, &r.allowed_principals)?;
+    crate::service_catalog::allowed(&identity, &p.allowed_principals)?;
+    let instance = doc.roster.instance(agent).context("Missing reservation")?;
+    let kind = agent_team::runtime_type(doc, instance)?;
+    let template: Value = tx
+        .query_one(
+            "SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",
+            &[&doc.id, &kind],
+        )?
+        .get(0);
+    ensure!(template.get("error").is_none(), "Child type unavailable");
+    crate::service_team_types::check_template(tx, doc, instance, &template)?;
+    let child_release = crate::service_catalog::entry(
+        tx,
+        "release",
+        template["release"]
+            .as_str()
+            .context("Missing child release")?,
+    )?;
+    let child: crate::service_catalog::Release = serde_json::from_value(child_release.definition)?;
+    ensure!(
+        child_release.activated && child.runtime_profiles.contains(&p.id),
+        "Child release unavailable"
+    );
+    crate::service_catalog::allowed(&identity, &child.allowed_principals)?;
+    Ok(())
+}
 impl Transaction for Tx<'_, '_> {
     fn load(&mut self, id: &str) -> Result<Document> {
         Ok(serde_json::from_value(
@@ -173,6 +238,62 @@ impl Database {
 }
 
 impl crate::PostgresStore {
+    /// A controller leases only preparation, never the agent's worker slot. The
+    /// dispatched intent commits before provider I/O. A replacement controller
+    /// may inspect that operation after lease expiry, but cannot replay creation.
+    pub fn claim_team_workspace(&self, installation: &str) -> Result<Option<WorkspaceJob>> {
+        ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
+        let installation = installation.to_owned();
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let row = tx.query_opt("SELECT s.id,t.id,i.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates p ON p.team=t.id AND p.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') LEFT JOIN agent_team_workspace_claims w ON w.team=t.id AND w.agent=i.key WHERE c.data->>'installation'=$1 AND i.value->>'phase'='reserved' AND coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')<>'team' AND NOT coalesce((t.data->>'stopped')::boolean,false) AND coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)='null'::jsonb AND (w.expires_at IS NULL OR w.expires_at<clock_timestamp()) ORDER BY t.id,i.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
+            let Some(row) = row else { tx.commit()?; return Ok(None) };
+            let sid: String = row.get(0); let team: String = row.get(1); let agent: String = row.get(2);
+            let mut lead = db::locked(&mut tx, &sid, None)?;
+            let doc = Tx(&mut tx).load(&team)?;
+            if doc.stopped || !doc.roster.instance(&agent).is_some_and(|i| i.phase==openworker_runtime::team_coordination::Phase::Reserved) { tx.commit()?; return Ok(None) }
+            if let Err(error)=workspace_authority(&mut tx, &lead, &doc, &agent) {
+                if error.downcast_ref::<postgres::Error>().is_some() {return Err(error)}
+                agent_team::apply(&mut Tx(&mut tx),&mut lead,"provision_failed",&json!({"agent_id":agent,"error":"Workspace preparation denied: original credential, type or activated release/profile unavailable"}),openworker_runtime::store::now_ms())?;
+                tx.commit()?;return Ok(None)
+            }
+            let claim = uuid::Uuid::new_v4().to_string();
+            let n = tx.execute("INSERT INTO agent_team_workspace_claims VALUES($1,$2,$3,clock_timestamp()+interval '30 seconds') ON CONFLICT(team,agent) DO UPDATE SET token=excluded.token,expires_at=excluded.expires_at WHERE agent_team_workspace_claims.expires_at<clock_timestamp()", &[&team,&agent,&claim])?;
+            if n==0 { tx.commit()?; return Ok(None) }
+            let outcome=agent_team::apply(&mut Tx(&mut tx),&mut lead,"workspace_dispatch",&json!({"agent_id":agent}),openworker_runtime::store::now_ms())?;
+            let intent=serde_json::from_value(outcome["intent"].clone())?;
+            crate::team_execution::session_event(&mut tx,&sid,None,"team_workspace",json!({"operation":"prepare_intent","agent_id":agent,"dispatch":outcome["dispatch"]}))?;
+            tx.commit()?;
+            Ok(Some(WorkspaceJob{lead,team,agent,claim,intent,dispatch:outcome["dispatch"]==true}))
+        })
+    }
+    pub fn finish_team_workspace(
+        &self,
+        job: WorkspaceJob,
+        outcome: Result<openworker_runtime::team_workspace::Receipt, String>,
+    ) -> Result<()> {
+        ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
+        self.call(move|db| {
+            let mut tx=db.client.transaction()?;
+            let mut lead=db::locked(&mut tx,&job.lead.id,None)?;
+            let doc=Tx(&mut tx).load(&job.team)?;
+            let token: String=tx.query_one("SELECT token FROM agent_team_workspace_claims WHERE team=$1 AND agent=$2",&[&job.team,&job.agent])?.get(0);
+            ensure!(token==job.claim && lead.workspace==job.lead.workspace && lead.environment==job.lead.environment,"Stale workspace preparation owner/scope");
+            // A retired child is never resurrected by a late provider response.
+            if doc.stopped || !doc.roster.instance(&job.agent).is_some_and(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved) {tx.commit()?;return Ok(())}
+            let mut args=json!({"agent_id":job.agent,"request":job.intent.request});
+            match outcome {
+                Ok(receipt)=>{
+                    receipt.validate_scope(std::path::Path::new(&lead.workspace),&receipt.path)?;
+                    args["receipt"]=json!(receipt);
+                },
+                Err(error)=>args["error"]=json!(error.chars().take(1800).collect::<String>()),
+            }
+            agent_team::apply(&mut Tx(&mut tx),&mut lead,"workspace_result",&args,openworker_runtime::store::now_ms())?;
+            crate::team_execution::session_event(&mut tx,&lead.id,None,"team_workspace",json!({"operation":"prepared","agent_id":job.agent,"operation_id":job.intent.request.operation_id,"outcome":if args.get("receipt").is_some(){"ready"}else{"unknown_or_failed"}}))?;
+            tx.commit()?;Ok(())
+        })
+    }
     /// API ingress never claims a worker lease or rewrites a live transcript.
     pub fn agent_team_api(&self, sid: &str, operation: &str, args: Value) -> Result<Value> {
         let (sid, operation) = (sid.to_owned(), operation.to_owned());
@@ -221,7 +342,7 @@ impl crate::PostgresStore {
     pub fn configure_agent_team_models(
         &self,
         sid: &str,
-        args: Value,
+        mut args: Value,
         templates: std::collections::BTreeMap<String, (String, Session)>,
         models: std::collections::BTreeMap<String, openworker_runtime::connections::Selection>,
     ) -> Result<Value> {
@@ -275,6 +396,8 @@ impl crate::PostgresStore {
                 args["agent_types"] == json!(keys),
                 "Template/type catalog mismatch"
             );
+            // Adapter capability, never a caller-configured permission switch.
+            args["workspace_selection"] = json!(true);
             let result = agent_team::apply(
                 &mut Tx(&mut tx),
                 &mut lead,
@@ -327,12 +450,16 @@ impl crate::PostgresStore {
         let installation = installation.map(str::to_owned);
         self.call(move|db|{
             let mut tx=db.client.transaction()?;
-            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved') AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
+            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved' AND (coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')='team' OR coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)<>'null'::jsonb OR x.data ? 'error')) AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
             let mut doc:Document=serde_json::from_value(row.get(1))?;
             let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).cloned().collect();
             let mut selected=None;
-            for i in candidates {let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}}
-            let instance=selected.context("No prepared reservation")?;
+            for i in candidates {
+                if doc.roster.request(&i.agent_id).is_some_and(|r| r.workspace != Default::default())
+                    && doc.workspaces.get(&i.agent_id).and_then(|i| i.receipt.as_ref()).is_none() { continue; }
+                let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}
+            }
+            let Some(instance)=selected else {tx.commit()?;return Ok(false)};
             let kind=agent_team::runtime_type(&doc,&instance)?;
             let Some(template_row)=tx.query_opt("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])? else {tx.commit()?;return Ok(false)};
             let template:Value=template_row.get(0);
@@ -343,6 +470,11 @@ impl crate::PostgresStore {
             }
 
             let mut child:Session=serde_json::from_value(template["session"].clone())?;
+            if let Some(receipt)=doc.workspaces.get(&instance.agent_id).and_then(|i|i.receipt.as_ref()) {
+                receipt.validate_scope(std::path::Path::new(&child.workspace), &receipt.path)?;
+                child.workspace=receipt.path.to_str().context("Workspace must be UTF-8")?.into();
+                child.managed_workspace=Some(receipt.clone());
+            }
             if let Some(choice)=doc.roster.request(&instance.agent_id).and_then(|r|r.model.as_ref()) {
                 let selected:openworker_runtime::connections::Selection=serde_json::from_value(template["models"][crate::service_team_types::model_key(choice)?].clone()).context("Missing delegated model reference")?;
                 ensure!(selected.connection==choice.connection && selected.model==choice.model,"Changed delegated model");

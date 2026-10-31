@@ -213,6 +213,119 @@ impl Fixture {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires isolated OW_PG_TEST_URL; no gateway or model traffic"]
+async fn shared_workspace_intent_is_leased_once_and_admission_pins_receipt() {
+    let mut f = Fixture::new().await;
+    let doc = f.create();
+    let installed = management::installation(&f.config).unwrap();
+    assert!(f.user.claim_team_workspace(&installed).is_err());
+    let spawned=f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":"workspace-child","operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":"ui","workspace":{"mode":"directory","path":"workers/ui"},"message":"Inspect own directory"}})).unwrap();
+    let sid = spawned["instance"]["session_id"].as_str().unwrap();
+    assert!(!f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    assert!(f
+        .store
+        .claim_team_workspace("wrong-installation")
+        .unwrap()
+        .is_none());
+    let original = f.store.claim_team_workspace(&installed).unwrap().unwrap();
+    assert!(original.dispatch);
+    assert!(f.store.claim_team_workspace(&installed).unwrap().is_none());
+    // Simulate controller loss after committing dispatch, not after a model/tool
+    // turn. Only this fixture's lease expires; the next controller gets inspect.
+    let db = f.db.clone();
+    tokio::task::spawn_blocking(move||{
+        let mut pg=postgres::Client::connect(&db.connection,postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("UPDATE {}.agent_team_workspace_claims SET expires_at=clock_timestamp()-interval '1 second'",db.schema)).unwrap();
+    }).await.unwrap();
+    let reopened = PostgresStore::open(f.db.clone()).unwrap();
+    let recovered = reopened.claim_team_workspace(&installed).unwrap().unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(recovered.intent.request, original.intent.request);
+    let receipt:openworker_runtime::team_workspace::Receipt=serde_json::from_value(json!({"request":original.intent.request,"path":"/sandbox/workers/ui","project_root":"/sandbox","identity":{"volume":1,"file":2},"repository":null,"git_dir":null,"git_identity":null,"branch":null,"initial_commit":null})).unwrap();
+    assert!(f
+        .store
+        .finish_team_workspace(original, Ok(receipt.clone()))
+        .is_err());
+    let mut forged = receipt.clone();
+    forged.path = "/sandbox/other".into();
+    assert!(reopened
+        .finish_team_workspace(recovered.clone(), Ok(forged))
+        .is_err());
+    reopened
+        .finish_team_workspace(recovered.clone(), Ok(receipt.clone()))
+        .unwrap();
+    assert!(reopened.claim_team_workspace(&installed).unwrap().is_none());
+    assert!(reopened
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    reopened.claim(sid).unwrap();
+    let child = reopened.clone().metadata(sid).unwrap();
+    assert_eq!(child.workspace, "/sandbox/workers/ui");
+    assert_eq!(child.environment, f.lead.environment);
+    assert_eq!(child.managed_workspace, Some(receipt));
+    let snapshot = f
+        .user
+        .agent_team_api(&f.lead.id, "snapshot", json!({}))
+        .unwrap();
+    assert_eq!(snapshot["id"], doc.id);
+    assert!(snapshot.get("workspaces").is_none());
+    let mut widened = child.clone();
+    widened.workspace = "/sandbox/other".into();
+    assert!(reopened
+        .clone()
+        .save(&widened, "invalid-test", json!({}))
+        .is_err());
+    assert!(!reopened
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no gateway or model traffic"]
+async fn unknown_workspace_outcome_closes_only_unstarted_child() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let installed = management::installation(&f.config).unwrap();
+    f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":"unknown-child","operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":"unknown","workspace":{"mode":"directory","path":"absent"},"message":"Do not substitute a directory"}})).unwrap();
+    let job = f.store.claim_team_workspace(&installed).unwrap().unwrap();
+    f.store
+        .finish_team_workspace(
+            job,
+            Err("Outcome unknown; inspect original operation".into()),
+        )
+        .unwrap();
+    let snapshot = f
+        .user
+        .agent_team_api(&f.lead.id, "snapshot", json!({}))
+        .unwrap();
+    assert_eq!(
+        snapshot["roster"]["instances"]["unknown"]["phase"],
+        "closed"
+    );
+    assert!(f.store.claim_team_workspace(&installed).unwrap().is_none());
+    // A failed selected workspace must not starve a normal same-directory child.
+    let normal = f.spawn("builder", "normal", None);
+    assert!(f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    f.store
+        .claim(normal["instance"]["session_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        f.store
+            .clone()
+            .metadata(normal["instance"]["session_id"].as_str().unwrap())
+            .unwrap()
+            .workspace,
+        "/sandbox"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no gateway or model traffic"]
 async fn scoped_service_compilation_admission_and_restart() {
     let mut f = Fixture::new().await;
     let doc = f.create();

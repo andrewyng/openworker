@@ -49,11 +49,23 @@ pub fn schemas() -> Vec<Value> {
 #[derive(Default)]
 pub struct CodingTools {
     processes: processes::Processes,
+    managed_workspace: Option<crate::team_workspace::Receipt>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     environment_owned: bool,
 }
 impl CodingTools {
+    pub fn with_workspace(receipt: crate::team_workspace::Receipt) -> Result<Self> {
+        receipt.verify()?;
+        Ok(Self {
+            managed_workspace: Some(receipt),
+            ..Default::default()
+        })
+    }
     pub async fn call(&mut self, root: &Path, name: &str, args: &Value) -> Result<Value> {
+        if let Some(receipt) = &self.managed_workspace {
+            receipt.validate_scope(&receipt.project_root, root)?;
+            receipt.verify()?;
+        }
         let descriptor = schemas()
             .into_iter()
             .find(|s| s["name"] == name)
@@ -61,7 +73,9 @@ impl CodingTools {
         crate::runtime::validate_arguments(&descriptor["inputSchema"], args)?;
         match name {
             "apply_patch" => patch::apply(root, args),
-            "git_status" | "git_diff" | "git_log" => git::call(root, name, args).await,
+            "git_status" | "git_diff" | "git_log" => {
+                git::call(root, name, args, self.managed_workspace.as_ref()).await
+            }
             "web_fetch" => web::fetch(args).await,
             "run_shell" | "process_start" | "process_status" | "process_logs" | "process_stop" => {
                 #[cfg(target_os = "linux")]
@@ -82,10 +96,23 @@ pub async fn serve(root: &Path) -> Result<()> {
     serve_scoped(root, false).await
 }
 pub async fn serve_scoped(root: &Path, environment_owned: bool) -> Result<()> {
+    serve_managed(root, environment_owned, None).await
+}
+pub async fn serve_managed(
+    root: &Path,
+    environment_owned: bool,
+    receipt: Option<crate::team_workspace::Receipt>,
+) -> Result<()> {
     let root = root.canonicalize()?;
     let mut tools = CodingTools {
         environment_owned: environment_owned && cfg!(target_os = "linux"),
-        ..Default::default()
+        ..match receipt {
+            Some(r) => {
+                r.validate_scope(&r.project_root, &root)?;
+                CodingTools::with_workspace(r)?
+            }
+            None => Default::default(),
+        }
     };
     let mut input = BufReader::new(tokio::io::stdin());
     let mut output = tokio::io::stdout();

@@ -70,6 +70,9 @@ pub struct Session {
     pub agent_team: Option<crate::agent_team::Membership>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<crate::environment::Binding>,
+    /// Trusted team adapter receipt; never accepted from session API arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_workspace: Option<crate::team_workspace::Receipt>,
     /// Adapter concurrency token, not a model-visible permission or identity.
     /// SQLite's exclusive local adapter leaves this at zero.
     #[serde(default, skip_serializing_if = "revision_is_zero")]

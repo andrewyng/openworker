@@ -370,6 +370,7 @@ pub async fn controller(
     let mut type_cursor = String::new();
     while !stop.is_cancelled() {
         crate::service_team_types::refresh(&config, &store, &installed, &mut type_cursor).await?;
+        crate::service_team_workspaces::prepare_once(&config, &store, &installed).await?;
         delete_once(&config, &store, &installed).await?;
         store.provision_agent_team_child_for(Some(&installed))?;
         store.reconcile_stopped_agent_team()?;

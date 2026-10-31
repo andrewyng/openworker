@@ -139,6 +139,8 @@ enum Command {
         workspace: PathBuf,
         #[arg(long, hide = true)]
         environment_processes: bool,
+        #[arg(long, hide = true)]
+        workspace_receipt: Option<String>,
     },
     /// Trusted workspace provisioning channel; never a model tool.
     #[command(hide = true)]
@@ -280,7 +282,18 @@ async fn entry(args: Args, registry: openworker_tools::ToolRegistry) -> Result<(
         Command::McpCoding {
             workspace,
             environment_processes,
-        } => crate::coding::serve_scoped(&workspace, environment_processes).await?,
+            workspace_receipt,
+        } => {
+            crate::coding::serve_managed(
+                &workspace,
+                environment_processes,
+                workspace_receipt
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?,
+            )
+            .await?
+        }
         Command::WorkspaceStdio { root } => crate::team_workspace::serve(&root).await?,
         #[cfg(target_os = "linux")]
         Command::CodingProcessManager { workspace } => {
