@@ -206,6 +206,7 @@ fn preset_configuration_is_safe_customizable_and_service_conversion_is_explicit(
     assert!(coding::service_release(&agent.memory(true), "1", &profile).is_err());
     assert!(coding::shared("game", "source", "HEAD").is_err());
     assert!(coding::shared("../game", "source", &"a".repeat(40)).is_err());
+    assert!(coding::shared("1game", "source", &"a".repeat(40)).is_err());
     let mut auto = profile;
     auto.approval_mode = openworker_runtime::permissions::Mode::AutoApprove;
     let separate = coding::single("reviewed")

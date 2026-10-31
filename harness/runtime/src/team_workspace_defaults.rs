@@ -25,10 +25,9 @@ impl WorktreeDefaults {
         ensure!(
             !self.agent_types.is_empty()
                 && self.agent_types.len() <= 32
-                && self
-                    .agent_types
-                    .iter()
-                    .all(|s| crate::bundle::safe_name(s) && s.len() <= 64),
+                && self.agent_types.iter().all(|s| crate::bundle::safe_name(s)
+                    && s.len() <= 64
+                    && s.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)),
             "Invalid default-worktree agent types"
         );
         Ok(())
