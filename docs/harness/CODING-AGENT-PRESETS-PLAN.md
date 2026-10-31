@@ -1,6 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: C1 verified; continuing the approved C2–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1 and C2 verified; continuing the approved C3–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -33,7 +33,7 @@ Extend the same primitives through the remaining deployment adapters.
 | ID | Deliverable | Dependency | Status |
 | --- | --- | --- | --- |
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
-| C2 | Single coding-agent and shared-team presets | C1 | In progress |
+| C2 | Single coding-agent and shared-team presets | C1 | Verified |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
@@ -297,3 +297,36 @@ left to prompt compliance. Verifiers select the submitted builder directory
 explicitly. The lead integrates in the supplied repository's existing main
 worktree; no implicit branch switch, commit, merge, push or credential grant.
 Implementation/qualification remains in progress.
+
+### C2 verified — October 31
+
+Implementation `c00b1f40`; identifier validation follow-up `e701a5b0`.
+[Developer guide](CODING-AGENTS.md), [evidence](evidence/coding-presets-c2-20261031.json)
+and the linked test catalog describe the shipped APIs and limits.
+
+Passed five Rust preset tests, including SQLite/PostgreSQL × embedded/managed
+workflows (260.04 seconds), two actual TypeScript stdio/storage workflows with
+streamed events and restart (117.62 seconds), three TypeScript preset/compatibility
+cases, nine TypeScript HTTP/service cases, 14 SQLite and 13 PostgreSQL team
+contracts, and 40 workspace/briefing/coordination/definition/catalog regressions.
+Final OpenShell service qualification passed in **202.13 seconds**: preset-derived
+releases and automatic scoped builder worktrees, plus a real successful integration
+and conflicting cherry-pick with explicit abort and preserved submitted HEAD.
+Original sandbox deletion and fixture schema cleanup completed. The final
+identifier-only tightening was checked separately by both preset unit suites;
+strict all-target Clippy and formatting/diff checks passed.
+
+Qualification found and fixed a missing SDK-ingress allowlist entry for the new
+trusted option. Kept the existing same-directory spawn response shape; selected
+workspaces add their resolved selection. Public snapshots continue to hide private
+workspace receipts. Additional checks prove working/reviewer model separation
+in service conversion. No key, provider, bypass mode or worker is implied by
+constructing a preset. One canonical JSON definition ships in Rust; TypeScript's
+generated configuration is checked against it.
+
+The service test deliberately reused the C1 runner image: C2 changes trusted
+coordination/defaults, not its workspace/MCP protocol. The current host service
+and SDK were built from the C2 source. Unsupported service-local policies and
+capabilities reject during conversion. The source coding bundle enables planning;
+verifier shell access is explicitly not read-only enforcement. Remaining isolated
+placement, source staging, publication and credential work stays in C3–C7.

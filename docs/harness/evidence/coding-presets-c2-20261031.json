@@ -1,0 +1,77 @@
+{
+  "milestone": "C2",
+  "sourceCommit": "e701a5b0",
+  "workflowQualificationCommit": "c00b1f40",
+  "date": "2026-10-31",
+  "result": "passed",
+  "tests": {
+    "rustPreset": {
+      "passed": 5,
+      "durationSeconds": 260.04,
+      "modes": [
+        "sqlite embedded",
+        "sqlite managed",
+        "postgres embedded",
+        "postgres managed"
+      ]
+    },
+    "typescriptStdioPreset": {
+      "passed": 2,
+      "durationSeconds": 117.624950916,
+      "stores": [
+        "sqlite",
+        "postgres"
+      ],
+      "streamedEvents": true,
+      "restart": true
+    },
+    "typescriptPresetConfiguration": {
+      "passed": 3,
+      "canonicalConfigChecked": true,
+      "separateReviewerModel": true
+    },
+    "typescriptService": {
+      "passed": 9
+    },
+    "sqliteTeamContract": {
+      "passed": 14
+    },
+    "postgresTeamContract": {
+      "passed": 13
+    },
+    "runtimeTeamAndWorkspaceRegressions": {
+      "passed": 40
+    },
+    "localOpenShellService": {
+      "passed": 1,
+      "durationSeconds": 202.13,
+      "presetDerivedReleases": true,
+      "automaticBuilderWorktrees": true,
+      "exactCommitVerification": true,
+      "explicitIntegration": true,
+      "conflictAndAbort": true,
+      "providerResourcesDeleted": true,
+      "testSchemasDropped": true
+    }
+  },
+  "followupVerification": "Identifier-only tightening checked by Rust/TypeScript preset unit cases and all-target Clippy; full workflow run predates this rejection-only constraint.",
+  "runnerCompatibility": "C1 digest-pinned runner protocol unchanged; C2 SDK/controller/service built from current source.",
+  "checks": [
+    "strict all-target Clippy",
+    "cargo fmt",
+    "git diff --check",
+    "documentation links"
+  ],
+  "notPerformed": [
+    "cloud provisioning",
+    "paid model calls",
+    "GitHub writes"
+  ],
+  "remaining": [
+    "C3 delegated placement/lifecycle",
+    "C4 isolated artifact handoff",
+    "C5 trusted GitHub publication",
+    "C6 CLI credentials",
+    "C7 combined qualification"
+  ]
+}
