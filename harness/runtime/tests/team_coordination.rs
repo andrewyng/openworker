@@ -26,6 +26,7 @@ fn request(id: &str, kind: &str) -> SpawnRequest {
         background: None,
         context: Default::default(),
         workspace: Default::default(),
+        model: None,
     }
 }
 fn add(r: &mut Roster, id: &str, kind: &str) {

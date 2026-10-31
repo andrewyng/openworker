@@ -338,3 +338,46 @@ Sources: `team_workspace.rs`, `agent_team_storage.rs`, shared
 | Storage and authorization | Identical SQLite/PostgreSQL rules, admission/promotion fencing, observer lists, denied mutations and unrelated scopes. | Any API node sees the same durable gate without borrowing worker ownership. |
 | Worker control | One slot, parked current turns, graceful completion, cancellation, queued suppression, never-created reservations and cleanup settlement. | Parents cannot starve children, and cleanup cannot restart a retired member. |
 | SDK/restart | Both modes through embedded/managed Rust and both databases; TypeScript subprocess parity and persisted retirement. | Process/storage choices preserve lifecycle semantics and original IDs. |
+
+## M3c — constrained working-model overrides
+
+- Added an optional child working-model choice to typed Rust/TypeScript spawn
+  options and model-facing `team_spawn`. It requires an exact app-delegated pair;
+  unset uses the registered type default. Provider/model union schemas are backed
+  by exact-pair dispatch validation, preventing cross-pair permission confusion.
+- The choice is an immutable spawn/idempotency input and resolves through the
+  existing session preparation path. No second model loop, provider client or
+  credential store. Approver selection remains separate. Credentials/endpoints
+  never become child arguments or bundle content.
+- Child admission errors now close only their unstarted reservation, preserving
+  the original ID and an explicit failure. Missing selected providers cannot cause
+  a fallback or poison unrelated host sessions. Already-created children still
+  require normal cancellation/lifecycle reconciliation.
+- Four real Rust SDK cases cover embedded/managed × SQLite/PostgreSQL: approved
+  type default, delegated override, rejected choice, persisted resolved selection,
+  restart, then removal of the provider before another child. The last child never
+  becomes a session or starts a task; the host still responds. Reviewer state is
+  unchanged. All model responses here are explicitly scripted; no LLM was called.
+- TypeScript integration covers both the model tool's wire choice and friendly
+  application `{ provider, name }` options, alongside real reads and restart on
+  both databases. Shared contracts check exact pairs, immutable retries, no
+  allocation for rejected input, unavailable-admission receipts and no-delegation
+  rejection. The distributed service adapter remains gated, not silently broadened.
+- M3c gate: **96 successful targeted checks**: 51 runtime/SQLite contracts,
+  13 real PostgreSQL contracts, four Rust SDK process/database integrations and
+  28 TypeScript checks (including both real process/database cases). Strict all-target
+  Clippy passes for runtime/store/SDK/server; formatting, diff and documentation
+  checks pass. No cloud operations, new provider dependencies or paid model calls.
+- Remaining M3 work is the
+  release-backed private-type compiler, remote workspace preparation, delegated
+  team/member/new environments, provider enforcement and mixed-placement/OpenShell
+  qualification, followed by owned exclusive-environment retirement/cleanup.
+
+### Model-selection test groups and purpose
+
+| Group | Checks | Why |
+| --- | --- | --- |
+| Delegation | Exact pairs, cross-pair rejection, unknown choices and no-delegation rejection before allocation. | Naming an available connection does not grant permission to use it. |
+| Identity | Choice is part of immutable retries; default and override are saved/resolved and survive restart. | Reconnecting or reusing an instance cannot silently change its model. |
+| Failure | Provider removed before admission closes only that reservation; no session/task/fallback is created. | Missing configuration cannot run a different model or stop unrelated host work. |
+| Runtime/SDK parity | Four Rust process/store modes and both TypeScript databases, real tools, separate reviewer state. | Language and storage choices reuse the same enforcement and execution path. |

@@ -1183,6 +1183,7 @@ export class AgentTeam {
   ): Promise<unknown> {
     return this.command(requestId, "team_spawn", {
       ...options,
+      model: options.model ? {connection:options.model.provider,model:options.model.name} : undefined,
       agent_type: agentType,
       agent_id: agentId,
       message,

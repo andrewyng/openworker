@@ -738,7 +738,11 @@ impl Host {
                             .cloned()
                             .context("Registered team type missing")?;
                         parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
-                        if let Some(model) = definition.model {
+                        let override_model = doc
+                            .roster
+                            .request(&instance.agent_id)
+                            .and_then(|r| r.model.clone());
+                        if let Some(model) = override_model.or(definition.model) {
                             parameters["model"] = json!(model);
                         }
                         if let crate::agents::Approvals::Auto(model) = definition.approvals {
@@ -747,7 +751,13 @@ impl Host {
                         if let Some(binding) = &s.environment {
                             parameters["environment_id"] = json!(binding.environment_id);
                         }
-                        let mut child = child_rt.prepare_session(parameters)?;
+                        let mut child = match child_rt.prepare_session(parameters) {
+                            Ok(child) => child,
+                            Err(_) => {
+                                self.store.lock().unwrap().agent_team(&s.id,"provision_failed",&json!({"agent_id":instance.agent_id,"error":"Child session configuration unavailable; check the selected model, credentials, type and policy. No model substitution or child task was started."}),None)?;
+                                continue;
+                            }
+                        };
                         child.id = instance.session_id.clone();
                         child.agent_team = Some(openworker_runtime::agent_team::Membership {
                             team_id: doc.id.clone(),

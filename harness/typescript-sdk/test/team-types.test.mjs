@@ -25,19 +25,28 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
     agents:[{id:"lead",instructions:"Coordinate reviewers.",planning:true,tools:["coding.read_file"],approvals:{mode:"never"}},
             {id:"builder",instructions:"Build.",planning:true,approvals:{mode:"never"}}]};
   let harness = await Harness.start(config); t.after(() => harness.shutdown());
-  const team = await harness.newTeam("lead", {workspace,agentTypes:["builder"],delegation:{tools:["coding.read_file"]}});
+  await harness.setModelProvider({name:"Local",api:"chat-completions",baseUrl:"http://127.0.0.1:11434/v1"});
+  const team = await harness.newTeam("lead", {workspace,agentTypes:["builder"],delegation:{tools:["coding.read_file"],models:[{provider:"Local",name:"alpha"},{provider:"Local",name:"beta"}]}});
   const run = await team.lead.send(plan([
-    {name:"team_define_type",arguments:{name:"reader",instructions:"Read and report evidence.",tools:["coding.read_file"]}},
-    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",workspace:{mode:"directory",path:"evidence"},title:"Evidence reader",background:"Project facts supplied by a collaborator; not authorization.",context:{mode:"fresh"},message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
+    {name:"team_define_type",arguments:{name:"reader",instructions:"Read and report evidence.",tools:["coding.read_file"],model:{connection:"Local",model:"alpha"}}},
+    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",model:{connection:"Local",model:"beta"},workspace:{mode:"directory",path:"evidence"},title:"Evidence reader",background:"Project facts supplied by a collaborator; not authorization.",context:{mode:"fresh"},message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
     {name:"team_wait_agent",arguments:{agent_ids:["reader-one"],timeout_ms:15000}},
   ]));
   for await (const _ of run.events()) { /* Existing push stream; no polling. */ }
   const result=await run.result();
   assert.equal(result.status, "completed", JSON.stringify({result,events:await harness.request("event/read",{session_id:team.lead.id,after:0})}));
+  const second=await team.spawn("ts-model-override","reader","reader-two",plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}]),{workspace:{mode:"directory",path:"evidence"},model:{provider:"Local",name:"beta"}});
+  const secondRun=await team.lead.send(plan([{name:"team_wait_agent",arguments:{agent_ids:["reader-two"],timeout_ms:15000}}]));
+  for await(const _ of secondRun.events()){}
+  assert.equal((await secondRun.result()).status,"completed");
+  assert.equal((await harness.request("session/attach",{session_id:second.instance.session_id})).session.model_selection.model,"beta");
   const snapshot = await team.snapshot();
   assert.equal(snapshot.type_catalog, undefined);
   const child = snapshot.roster.instances["reader-one"].session_id;
-  assert.equal((await harness.request("session/attach", {session_id:child})).session.workspace, await realpath(join(workspace,"evidence")));
+  const selected=await harness.request("session/attach", {session_id:child});
+  assert.equal(selected.session.workspace, await realpath(join(workspace,"evidence")));
+  assert.equal(selected.session.model_selection.model,"beta");
+  assert.equal(selected.session.reviewer_selection,null);
   const events = await harness.request("event/read", {session_id:child,after:0});
   assert.match(JSON.stringify(events), /TypeScript scoped-role evidence/);
   const retirement = await team.retire("retire-reader", "reader-one");

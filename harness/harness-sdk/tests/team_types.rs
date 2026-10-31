@@ -242,3 +242,153 @@ async fn postgres_managed_custom_types() {
     )
     .await
 }
+async fn model_scenario(managed: bool, storage: Storage) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let work = root.join("work");
+    std::fs::create_dir(&work).unwrap();
+    storage.migrate().unwrap();
+    let h = host(&root, managed, Approvals::Never, storage.clone()).await;
+    h.set_model_provider(
+        ModelProvider::chat_completions("Local").base_url("http://127.0.0.1:11434/v1"),
+    )
+    .await
+    .unwrap();
+    let mut options = TeamOptions::new(["builder"]);
+    options.delegation=Some(serde_json::from_value(json!({"tools":["coding.read_file"],"models":[{"connection":"Local","model":"alpha"},{"connection":"Local","model":"beta"}],"placements":["team"]})).unwrap());
+    let team = h.new_team("lead", &work, options).await.unwrap();
+    let defined=team.lead().run(&plan(json!([{"name":"team_define_type","arguments":{"name":"reader","instructions":"Use the assigned model.","tools":["coding.read_file"],"model":{"connection":"Local","model":"alpha"}}}]))).await.unwrap();
+    assert_eq!(defined.status, RunStatus::Completed);
+    let task = plan(json!([]));
+    let a = team
+        .spawn("default", "reader", "default-reader", &task)
+        .await
+        .unwrap();
+    let b = team
+        .spawn_with_options(
+            "override",
+            "reader",
+            "override-reader",
+            &task,
+            ChildOptions {
+                model: Some(Model::new("Local", "beta")),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(team
+        .spawn_with_options(
+            "reject",
+            "reader",
+            "not-allowed",
+            &task,
+            ChildOptions {
+                model: Some(Model::new("Local", "gamma")),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
+    let run=team.lead().run(&plan(json!([{"name":"team_wait_agent","arguments":{"agent_ids":["default-reader","override-reader"],"timeout_ms":15000}}]))).await.unwrap();
+    assert_eq!(run.status, RunStatus::Completed);
+    for (receipt, model) in [(&a, "alpha"), (&b, "beta")] {
+        let snapshot = h
+            .client()
+            .snapshot(receipt["instance"]["session_id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot["session"]["model_selection"]["connection"],
+            "Local"
+        );
+        assert_eq!(snapshot["session"]["model_selection"]["model"], model);
+        assert!(snapshot["session"]["reviewer_selection"].is_null());
+    }
+    let reference = team.reference();
+    h.shutdown().await.unwrap();
+    let h = host(&root, managed, Approvals::Never, storage).await;
+    let team = h.resume_team(reference).await.unwrap();
+    assert_eq!(
+        h.client()
+            .snapshot(b["instance"]["session_id"].as_str().unwrap())
+            .await
+            .unwrap()["session"]["model_selection"]["model"],
+        "beta"
+    );
+    h.client()
+        .request("provider/remove", json!({"id":"Local"}))
+        .await
+        .unwrap();
+    let failed = team
+        .spawn_with_options(
+            "unavailable",
+            "reader",
+            "unavailable-reader",
+            &task,
+            ChildOptions {
+                model: Some(Model::new("Local", "beta")),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let s = team.snapshot().await.unwrap();
+            if s["roster"]["instances"]["unavailable-reader"]["phase"] == "closed" {
+                assert!(s["failures"]["unavailable-reader"]
+                    .as_str()
+                    .unwrap()
+                    .contains("No model substitution"));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(h
+        .client()
+        .snapshot(failed["instance"]["session_id"].as_str().unwrap())
+        .await
+        .is_err());
+    assert!(h.client().request("provider/list", json!({})).await.is_ok());
+    h.shutdown().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sqlite_embedded_child_model_selection() {
+    model_scenario(false, Storage::Sqlite).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sqlite_managed_child_model_selection() {
+    model_scenario(true, Storage::Sqlite).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn postgres_embedded_child_model_selection() {
+    model_scenario(
+        false,
+        Storage::Postgres {
+            connection_env: "OW_PG_TEST_URL".into(),
+            schema: format!("ow_models_{}", openworker_runtime::id("x")),
+            ca_file: None,
+            loopback_plaintext: true,
+        },
+    )
+    .await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn postgres_managed_child_model_selection() {
+    model_scenario(
+        true,
+        Storage::Postgres {
+            connection_env: "OW_PG_TEST_URL".into(),
+            schema: format!("ow_models_{}", openworker_runtime::id("x")),
+            ca_file: None,
+            loopback_plaintext: true,
+        },
+    )
+    .await;
+}

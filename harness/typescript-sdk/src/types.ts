@@ -2,6 +2,8 @@ export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Provider = "openai" | "anthropic";
 export interface ChildSpawnOptions {
+  /** Working model only; must be in the app-delegated model choices. */
+  model?: { provider: string; name: string };
   /** A directory/worktree is a working location, not a security boundary. */
   workspace?: { mode: "team" } | { mode: "directory"; path: string }
     | { mode: "worktree"; path: string; repository: string; branch: string; base?: string };

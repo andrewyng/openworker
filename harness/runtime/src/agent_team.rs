@@ -298,6 +298,7 @@ pub fn apply(
                     | "workspace_result"
                     | "retirement_settle"
                     | "retirement_error"
+                    | "provision_failed"
             ) || (operation == "team_manage" && args["action"] == "list"),
             "Team stopped; explicit new team required"
         );
@@ -478,6 +479,25 @@ pub fn apply(
             .filter(|i| i.phase == rules::Phase::Reserved)
             .map(|i| json!({"instance":i,"message":doc.tasks.get(&i.agent_id)}))
             .collect::<Vec<_>>())),
+        "provision_failed" => {
+            ensure!(
+                member.agent_id == doc.lead,
+                "Only the lead host records child admission failure"
+            );
+            let id = op(args, "agent_id")?;
+            let child = doc.roster.instance(id).context("Unknown instance")?;
+            ensure!(
+                child.phase == rules::Phase::Reserved
+                    && tx.optional_session(&child.session_id)?.is_none(),
+                "A created child requires normal lifecycle reconciliation"
+            );
+            let error = op(args, "error")?;
+            ensure!(error.len() <= 2000, "Admission error too large");
+            doc.failures.insert(id.into(), error.into());
+            doc.roster.close(id)?;
+            tx.write(&doc, false)?;
+            Ok(json!({"agent_id":id,"failed":true}))
+        }
         "workspace_dispatch" => {
             ensure!(
                 member.agent_id == doc.lead && doc.workspace_selection,
@@ -622,6 +642,18 @@ pub fn apply(
                     || request.workspace == crate::team_workspace::Selection::default(),
                 "This adapter does not support child workspace selection"
             );
+            if let Some(model) = &request.model {
+                model.validate()?;
+                let catalog = doc
+                    .type_catalog
+                    .as_ref()
+                    .context("Child model overrides are not delegated")?;
+                catalog.check_scope(s)?;
+                ensure!(
+                    catalog.ceiling.models.contains(model),
+                    "Child model override is not in the application's delegation ceiling"
+                );
+            }
             let binding = if let Some(catalog) = &doc.type_catalog {
                 catalog.check_scope(s)?;
                 if catalog.prebuilt.contains(&request.agent_type) {
@@ -909,6 +941,13 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
         ));
     }
     specs.into_iter().map(|(name,description,mut properties,required)| {
+        if name=="team_spawn" {
+            if let Some(catalog)=doc.type_catalog.as_ref().filter(|c|!c.ceiling.models.is_empty()) {
+                let connections:std::collections::BTreeSet<_>=catalog.ceiling.models.iter().map(|m|&m.connection).collect();
+                let models:std::collections::BTreeSet<_>=catalog.ceiling.models.iter().map(|m|&m.model).collect();
+                properties["model"]=json!({"type":"object","description":format!("Optional working model override; permitted exact choices: {}. Does not change the approver.",serde_json::to_string(&catalog.ceiling.models).unwrap_or_default()),"properties":{"connection":{"type":"string","enum":connections},"model":{"type":"string","enum":models}},"required":["connection","model"],"additionalProperties":false});
+            }
+        }
         if name == "team_spawn" && doc.workspace_selection {
             properties["workspace"] = crate::team_workspace::schema();
         }

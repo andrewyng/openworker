@@ -505,3 +505,62 @@ pub fn exercise_retirement(db: &mut dyn StateStore) {
         )
         .is_ok());
 }
+
+pub fn exercise_child_model_selection(db: &mut dyn StateStore) {
+    db.save(&session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    db.agent_team("lead","create",&json!({"agent_id":"lead","agent_types":["builder"],"delegation":{"tools":["coding.read_file"],"models":[{"connection":"Local","model":"alpha"},{"connection":"Other","model":"beta"}],"placements":["team"]}}),None).unwrap();
+    let args = json!({"agent_type":"builder","agent_id":"selected","message":"Work","model":{"connection":"Local","model":"alpha"}});
+    let first = db.agent_team("lead", "team_spawn", &args, None).unwrap();
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &args, None).unwrap()["created"],
+        false
+    );
+    let mut changed = args.clone();
+    changed["model"] = json!({"connection":"Other","model":"beta"});
+    assert!(db.agent_team("lead", "team_spawn", &changed, None).is_err());
+    for model in [
+        json!({"connection":"Local","model":"beta"}),
+        json!({"connection":"Missing","model":"alpha"}),
+        json!({"connection":"Local","model":"../invalid"}),
+    ] {
+        let mut bad = args.clone();
+        bad["agent_id"] = json!("not-allocated");
+        bad["model"] = model;
+        assert!(db.agent_team("lead", "team_spawn", &bad, None).is_err());
+    }
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(
+        snapshot["roster"]["requests"]["selected"]["model"],
+        args["model"]
+    );
+    assert!(snapshot["roster"]["instances"]["not-allocated"].is_null());
+    db.agent_team(
+        "lead",
+        "provision_failed",
+        &json!({"agent_id":"selected","error":"Selected model unavailable; no fallback"}),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &args, None).unwrap()["instance"]["session_id"],
+        first["instance"]["session_id"]
+    );
+    assert_eq!(
+        db.agent_team("lead", "snapshot", &json!({}), None).unwrap()["roster"]["instances"]
+            ["selected"]["phase"],
+        "closed"
+    );
+    db.save(&session("without-delegation", "lead"), "created", json!({}))
+        .unwrap();
+    db.agent_team(
+        "without-delegation",
+        "create",
+        &json!({"agent_id":"lead","agent_types":["builder"]}),
+        None,
+    )
+    .unwrap();
+    assert!(db
+        .agent_team("without-delegation", "team_spawn", &args, None)
+        .is_err());
+}
