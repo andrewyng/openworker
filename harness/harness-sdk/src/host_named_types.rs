@@ -205,3 +205,68 @@ impl Host {
         Ok(())
     }
 }
+
+impl Host {
+    /// The transaction wins the right to dispatch before filesystem I/O. Recovery
+    /// inspects the original operation only. Unknown effects are reported, never
+    /// automatically repeated or redirected to a replacement directory.
+    pub(super) async fn prepare_named_workspace(
+        &self,
+        lead: &Session,
+        doc: &Document,
+        instance: &openworker_runtime::team_coordination::Instance,
+    ) -> Result<Option<std::path::PathBuf>> {
+        use openworker_runtime::team_workspace::{self, Intent, Selection};
+        let request = doc
+            .roster
+            .request(&instance.agent_id)
+            .context("Missing spawn request")?;
+        if request.workspace == Selection::default() {
+            return Ok(Some(lead.workspace.clone().into()));
+        }
+        ensure!(
+            lead.environment.is_none()
+                && lead.execution_backend == openworker_runtime::execution::Backend::Off,
+            "Workspace preparation requires the qualified local adapter"
+        );
+        let result = self.store.lock().unwrap().agent_team(
+            &lead.id,
+            "workspace_dispatch",
+            &json!({"agent_id":instance.agent_id}),
+            None,
+        )?;
+        let intent: Intent = serde_json::from_value(result["intent"].clone())?;
+        let outcome = if let Some(receipt) = intent.receipt {
+            receipt.verify().map(|()| receipt)
+        } else {
+            team_workspace::prepare(
+                std::path::Path::new(&lead.workspace),
+                intent.request.clone(),
+                result["dispatch"] != true,
+            )
+            .await
+        };
+        match outcome {
+            Ok(receipt) => {
+                self.store.lock().unwrap().agent_team(
+                    &lead.id,
+                    "workspace_result",
+                    &json!({
+                        "agent_id":instance.agent_id,"request":intent.request,"receipt":receipt
+                    }),
+                    None,
+                )?;
+                Ok(Some(receipt.path))
+            }
+            Err(error) => {
+                // Preserve an acknowledged receipt if later verification detects
+                // replacement. No ready child or task is admitted on this path.
+                self.store.lock().unwrap().agent_team(&lead.id, "workspace_result", &json!({
+                    "agent_id":instance.agent_id,"request":intent.request,
+                    "error":format!("Workspace preparation stopped; outcome may be unknown. Inspect before retrying: {}", error.to_string().chars().take(1500).collect::<String>())
+                }), None)?;
+                Ok(None)
+            }
+        }
+    }
+}

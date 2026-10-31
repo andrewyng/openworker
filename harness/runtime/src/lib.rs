@@ -45,6 +45,7 @@ pub mod team_coordination;
 pub mod team_definition;
 pub mod team_service;
 pub mod team_type_catalog;
+pub mod team_workspace;
 pub mod teams;
 mod tool_images;
 pub mod tool_policy;

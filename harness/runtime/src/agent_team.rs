@@ -47,6 +47,11 @@ pub struct Document {
     pub type_catalog: Option<crate::team_type_catalog::Catalog>,
     #[serde(default)]
     pub type_bindings: BTreeMap<String, String>,
+    /// Trusted adapter capability; never inferred from model-supplied fields.
+    #[serde(default)]
+    pub workspace_selection: bool,
+    #[serde(default)]
+    pub workspaces: BTreeMap<String, crate::team_workspace::Intent>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
@@ -169,6 +174,10 @@ pub fn apply(
                         == &types,
                 "Conflicting team creation retry"
             );
+            ensure!(
+                doc.workspace_selection == (args["workspace_selection"] == true),
+                "Changed workspace adapter capability"
+            );
             let requested = args
                 .get("limits")
                 .filter(|v| !v.is_null())
@@ -241,6 +250,8 @@ pub fn apply(
             failures: BTreeMap::new(),
             type_catalog,
             type_bindings: BTreeMap::new(),
+            workspace_selection: args["workspace_selection"] == true,
+            workspaces: BTreeMap::new(),
         };
         s.agent_team = Some(Membership {
             team_id: id,
@@ -268,7 +279,7 @@ pub fn apply(
         ensure!(
             matches!(
                 operation,
-                "snapshot" | "stop" | "team_read_board" | "pending"
+                "snapshot" | "stop" | "team_read_board" | "pending" | "workspace_result"
             ),
             "Team stopped; explicit new team required"
         );
@@ -390,6 +401,98 @@ pub fn apply(
             .filter(|i| i.phase == rules::Phase::Reserved)
             .map(|i| json!({"instance":i,"message":doc.tasks.get(&i.agent_id)}))
             .collect::<Vec<_>>())),
+        "workspace_dispatch" => {
+            ensure!(
+                member.agent_id == doc.lead && doc.workspace_selection,
+                "Workspace preparation is host-only"
+            );
+            let id = op(args, "agent_id")?;
+            ensure!(
+                doc.roster
+                    .instance(id)
+                    .is_some_and(|i| i.phase == rules::Phase::Reserved),
+                "Instance is not reserved"
+            );
+            let selection = doc
+                .roster
+                .request(id)
+                .context("Missing spawn request")?
+                .workspace
+                .clone();
+            let dispatch = !doc.workspaces.contains_key(id);
+            let intent =
+                doc.workspaces
+                    .entry(id.into())
+                    .or_insert_with(|| crate::team_workspace::Intent {
+                        request: crate::team_workspace::Request {
+                            operation_id: crate::id("ws"),
+                            scope_digest: crate::bundle::digest(
+                                format!("{}/{}/{}", s.id, s.workspace, s.resource_policy.digest)
+                                    .as_bytes(),
+                            ),
+                            selection,
+                        },
+                        receipt: None,
+                        error: None,
+                    });
+            ensure!(
+                intent.request.scope_digest
+                    == crate::bundle::digest(
+                        format!("{}/{}/{}", s.id, s.workspace, s.resource_policy.digest).as_bytes()
+                    ),
+                "Workspace parent scope changed"
+            );
+            let result = json!({"dispatch":dispatch,"intent":intent});
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+        "workspace_result" => {
+            ensure!(
+                member.agent_id == doc.lead,
+                "Only the lead host records workspace outcomes"
+            );
+            let id = op(args, "agent_id")?;
+            let intent = doc
+                .workspaces
+                .get_mut(id)
+                .context("No original workspace intent")?;
+            ensure!(
+                args["request"] == serde_json::to_value(&intent.request)?,
+                "Workspace outcome belongs to another intent"
+            );
+            let receipt = args
+                .get("receipt")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .map(serde_json::from_value::<crate::team_workspace::Receipt>)
+                .transpose()?;
+            if let Some(receipt) = receipt {
+                ensure!(
+                    receipt.request == intent.request,
+                    "Workspace receipt binding mismatch"
+                );
+                ensure!(
+                    intent
+                        .receipt
+                        .as_ref()
+                        .is_none_or(|saved| saved == &receipt),
+                    "Original workspace receipt changed"
+                );
+                ensure!(
+                    intent.error.is_none(),
+                    "Workspace was already stopped for reconciliation"
+                );
+                intent.receipt = Some(receipt);
+            } else {
+                let error = op(args, "error")?;
+                ensure!(error.len() <= 2000, "Workspace error too large");
+                intent.error = Some(error.into());
+                doc.failures.insert(id.into(), error.into());
+                doc.roster.close(id)?;
+            }
+            tx.write(&doc, false)?;
+            Ok(json!({"recorded":true}))
+        }
         "ready" => {
             ensure!(
                 member.agent_id == doc.lead,
@@ -406,6 +509,26 @@ pub fn apply(
                         .is_some_and(|m| m.team_id == doc.id && m.agent_id == id),
                 "Child session binding mismatch"
             );
+            if doc
+                .roster
+                .request(id)
+                .is_some_and(|r| r.workspace != crate::team_workspace::Selection::default())
+            {
+                let receipt = doc
+                    .workspaces
+                    .get(id)
+                    .and_then(|i| i.receipt.as_ref())
+                    .context("Child workspace not acknowledged")?;
+                ensure!(
+                    stored.workspace
+                        == receipt
+                            .path
+                            .to_str()
+                            .context("Invalid workspace encoding")?
+                        && receipt.project_root == std::path::Path::new(&s.workspace),
+                    "Child workspace receipt mismatch"
+                );
+            }
             let sid = child.session_id.clone();
             doc.roster.ready(id, &sid)?;
             tx.write(&doc, false)?;
@@ -417,6 +540,11 @@ pub fn apply(
                 "Only the lead may spawn instances"
             );
             let request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            ensure!(
+                doc.workspace_selection
+                    || request.workspace == crate::team_workspace::Selection::default(),
+                "This adapter does not support child workspace selection"
+            );
             let binding = if let Some(catalog) = &doc.type_catalog {
                 catalog.check_scope(s)?;
                 if catalog.prebuilt.contains(&request.agent_type) {
@@ -692,7 +820,10 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
             vec!["agent_id", "message"],
         ));
     }
-    specs.into_iter().map(|(name,description,properties,required)| {
+    specs.into_iter().map(|(name,description,mut properties,required)| {
+        if name == "team_spawn" && doc.workspace_selection {
+            properties["workspace"] = crate::team_workspace::schema();
+        }
         // Responses strict mode requires every property to be required. Optional
         // spawn/definition fields retain their actual omission semantics here;
         // dispatch still validates JSON schema and the typed policy contract.
@@ -726,7 +857,7 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
 /// Internal scheduling still reads the complete transaction document.
 pub fn public_snapshot(mut value: Value) -> Value {
     if let Some(object) = value.as_object_mut() {
-        for key in ["commands", "tasks", "charges", "type_catalog"] {
+        for key in ["commands", "tasks", "charges", "type_catalog", "workspaces"] {
             object.remove(key);
         }
     }

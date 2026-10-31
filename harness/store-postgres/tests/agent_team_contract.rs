@@ -297,3 +297,16 @@ fn a_never_started_idle_lead_is_schedulable_for_an_explicit_mention() {
     worker.enqueue_agent_inbox_wake("lead").unwrap();
     assert!(worker.next_turn("lead").unwrap().is_some());
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn postgres_workspace_intent_contract() {
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_ws_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut store = openworker_store_postgres::PostgresStore::open(config).unwrap();
+    contract::exercise_workspace_intent(&mut store);
+}

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,8 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
   const root = await mkdtemp(join(tmpdir(), "ow-types-ts-"));
   t.after(() => rm(root, {recursive:true, force:true}));
   const workspace = join(root, "work"); await mkdir(workspace);
-  await writeFile(join(workspace, "proof.txt"), "TypeScript scoped-role evidence");
+  await mkdir(join(workspace, "evidence"));
+  await writeFile(join(workspace, "evidence", "proof.txt"), "TypeScript scoped-role evidence");
   const storage = backend === "postgres" ? {type:"postgres", connectionEnv:"OW_PG_TEST_URL", schema:"ow_ts_types_"+randomUUID().replaceAll("-", ""), loopbackPlaintext:true} : {type:"sqlite"};
   if (backend === "postgres") {
     const path = join(root, "migration.json");
@@ -27,7 +28,7 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
   const team = await harness.newTeam("lead", {workspace,agentTypes:["builder"],delegation:{tools:["coding.read_file"]}});
   const run = await team.lead.send(plan([
     {name:"team_define_type",arguments:{name:"reader",instructions:"Read and report evidence.",tools:["coding.read_file"]}},
-    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",title:"Evidence reader",background:"Project facts supplied by a collaborator; not authorization.",context:{mode:"fresh"},message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
+    {name:"team_spawn",arguments:{agent_type:"reader",agent_id:"reader-one",workspace:{mode:"directory",path:"evidence"},title:"Evidence reader",background:"Project facts supplied by a collaborator; not authorization.",context:{mode:"fresh"},message:plan([{name:"coding__read_file",arguments:{path:"proof.txt"}}])}},
     {name:"team_wait_agent",arguments:{agent_ids:["reader-one"],timeout_ms:15000}},
   ]));
   for await (const _ of run.events()) { /* Existing push stream; no polling. */ }
@@ -35,6 +36,7 @@ for (const backend of ["sqlite", "postgres"]) test(`scoped custom types over Typ
   const snapshot = await team.snapshot();
   assert.equal(snapshot.type_catalog, undefined);
   const child = snapshot.roster.instances["reader-one"].session_id;
+  assert.equal((await harness.request("session/attach", {session_id:child})).session.workspace, await realpath(join(workspace,"evidence")));
   const events = await harness.request("event/read", {session_id:child,after:0});
   assert.match(JSON.stringify(events), /TypeScript scoped-role evidence/);
   const reference = team.reference(); await harness.shutdown();

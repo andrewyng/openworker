@@ -233,3 +233,73 @@ pub fn exercise_briefing(db: &mut dyn StateStore) {
         );
     }
 }
+
+pub fn exercise_workspace_intent(db: &mut dyn StateStore) {
+    db.save(&session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    let config = json!({"agent_id":"lead","agent_types":["builder"],"workspace_selection":true});
+    db.agent_team("lead", "create", &config, None).unwrap();
+    assert!(db
+        .agent_team(
+            "lead",
+            "create",
+            &json!({"agent_id":"lead","agent_types":["builder"]}),
+            None
+        )
+        .is_err());
+    let spawn = json!({"agent_id":"builder-one","agent_type":"builder","message":"Build","workspace":{"mode":"directory","path":"ui"}});
+    let reservation = db.agent_team("lead", "team_spawn", &spawn, None).unwrap();
+    let args = json!({"agent_id":"builder-one"});
+    let first = db
+        .agent_team("lead", "workspace_dispatch", &args, None)
+        .unwrap();
+    assert_eq!(first["dispatch"], true);
+    let second = db
+        .agent_team("lead", "workspace_dispatch", &args, None)
+        .unwrap();
+    assert_eq!(second["dispatch"], false);
+    assert_eq!(first["intent"], second["intent"]);
+    // Even a persisted child session cannot become ready before preparation is acknowledged.
+    let sid = reservation["instance"]["session_id"].as_str().unwrap();
+    let mut child = session(sid, "builder");
+    child.agent_team = Some(Membership {
+        team_id: db.get("lead").unwrap().agent_team.unwrap().team_id,
+        agent_id: "builder-one".into(),
+        inbox_cursor: 0,
+        last_output: None,
+        notices: vec![],
+        waiting: None,
+    });
+    db.save(&child, "created", json!({})).unwrap();
+    assert!(db.agent_team("lead", "ready", &args, None).is_err());
+    assert!(db
+        .agent_team(sid, "workspace_dispatch", &args, None)
+        .is_err());
+    let mut wrong = first["intent"]["request"].clone();
+    wrong["operation_id"] = json!("another");
+    assert!(db
+        .agent_team(
+            "lead",
+            "workspace_result",
+            &json!({"agent_id":"builder-one","request":wrong,"error":"outcome unknown"}),
+            None
+        )
+        .is_err());
+    db.agent_team("lead","workspace_result",&json!({"agent_id":"builder-one","request":first["intent"]["request"],"error":"outcome unknown; inspect before retry"}),None).unwrap();
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(
+        snapshot["roster"]["instances"]["builder-one"]["phase"],
+        "closed"
+    );
+    assert!(snapshot["workspaces"]["builder-one"]["receipt"].is_null());
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &spawn, None).unwrap()["created"],
+        false
+    );
+    assert!(db
+        .agent_team("lead", "workspace_dispatch", &args, None)
+        .is_err());
+    assert!(openworker_runtime::agent_team::public_snapshot(snapshot)
+        .get("workspaces")
+        .is_none());
+}

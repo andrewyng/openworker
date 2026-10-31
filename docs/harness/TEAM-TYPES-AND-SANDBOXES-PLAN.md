@@ -235,3 +235,47 @@ qualification remains a separate gate rather than a claim made by these fixtures
   environment selection, distributed release-backed private compilation and real
   OpenShell provisioning/attachment. Retirement and mixed-placement resilience
   remain M4/M5. These are not advertised as implemented by the new options.
+
+## M3b — durable workspace preparation and SDK child working locations
+
+- Added typed team/directory/worktree selections and Rust/TypeScript child options.
+  Qualified local SDK adapters opt in; unqualified service adapters reject non-team
+  locations before reservation. Directory/worktree selections are working locations,
+  never sandbox boundaries. No new model-accessible filesystem provisioning tool.
+- Persist one original preparation intent in the shared SQLite/PostgreSQL team
+  transaction before filesystem mutation. Recovery can inspect only that operation.
+  Saved receipts pin the actual directory and Git metadata identities. A child cannot
+  become ready without its acknowledged receipt, and changed request retries reject.
+- Added bounded internal `workspace-stdio` framing for future ToolRunner dispatch.
+  Managed worktrees use fixed Git executables, disabled hooks/environment helpers,
+  checked metadata pointers and local commit references; no fetch/install/auto-replay.
+  Repository helper/include config rejects. Missing or replaced workspaces close the
+  reservation with an explicit possibly-unknown outcome, without starting a child task
+  or poisoning the host. Files/worktrees are retained for explicit user reconciliation.
+- Verification: **75 successful checks**: 34 runtime/SQLite contracts, nine real
+  PostgreSQL contracts, four Rust SDK database/process cases, two TypeScript managed
+  process/database cases and 26 TypeScript configuration/service/transport regressions.
+  Real child file reads prove directory/worktree routing; host restart preserves the
+  same child IDs and files. Strict all-target Clippy passes for runtime/store/SDK/server,
+  with test support enabled. Formatting and diff checks pass.
+- Tests initially exposed the tool-process sandbox restriction (rerun with authorized
+  local subprocess/loopback access) and macOS `/var` canonical path assumptions in the
+  fixtures; corrected fixture assertions and verified the actual production paths.
+- Remaining: constrained spawn model selection; service release-backed private types;
+  remote directory/worktree preparation; team/member/new environment enforcement and
+  provisioning; member lifecycle; mixed-placement/OpenShell resilience. Git inspection
+  tools still refuse metadata outside their working directory; a future trusted
+  project-scope selector is required to support their linked-worktree inspection.
+  No new sandbox/provider/cloud qualification is implied by this local SDK milestone.
+
+### Workspace test groups and purpose
+
+| Group | Checks | Why |
+| --- | --- | --- |
+| Filesystem identity | Existing directories, replaced directory/Git identities, symlinks and external Git pointers. | A saved location cannot silently adopt another object or leave its authorized project. |
+| One-shot preparation | Real worktree creation, response-loss inspection, missing evidence, conflicting retries and durable dispatch across database reopen. | Restart and transport uncertainty do not duplicate or relocate filesystem effects. |
+| Admission and failure | Receipt required before ready, non-lead rejection, failed preparation closes only that reservation, unsupported adapters reject selection. | Invalid preparation cannot start a child or stop unrelated host work. |
+| SDK/store conformance | Rust embedded/managed × SQLite/PostgreSQL; TypeScript managed × both databases; actual reads and host restart. | The selected location works through real runtime/store/process paths, not only JSON serialization. |
+
+Sources: `team_workspace.rs`, `agent_team_storage.rs`, shared
+`agent_team_contract.rs`, SDK `team_workspaces.rs` and TypeScript `team-types.test.mjs`.

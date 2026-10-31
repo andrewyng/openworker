@@ -694,6 +694,10 @@ impl Host {
                     let runtime_type =
                         openworker_runtime::agent_team::runtime_type(&doc, &instance)?;
                     let child_rt = self.runtime(&runtime_type)?;
+                    let Some(workspace) = self.prepare_named_workspace(&s, &doc, &instance).await?
+                    else {
+                        continue;
+                    };
                     let exists = self
                         .store
                         .lock()
@@ -707,7 +711,7 @@ impl Host {
                             .request(&instance.agent_id)
                             .and_then(|r| r.title.as_deref())
                             .unwrap_or(&instance.agent_id);
-                        let mut parameters = json!({"workspace":s.workspace,"name":title,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
+                        let mut parameters = json!({"workspace":workspace,"name":title,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
                         let definition = self
                             .registry
                             .read()
@@ -985,7 +989,7 @@ impl Host {
                 );
             }
             "agent-team/create" => {
-                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?;
+                let sid = openworker_runtime::runtime::text(&p, "session_id", 80)?.to_owned();
                 ensure!(
                     p.as_object().is_some_and(|p| p.keys().all(|k| [
                         "session_id",
@@ -998,7 +1002,7 @@ impl Host {
                     .contains(&k.as_str()))),
                     "Unknown team configuration"
                 );
-                let lead = self.store.lock().unwrap().metadata(sid)?;
+                let lead = self.store.lock().unwrap().metadata(&sid)?;
                 ensure!(
                     lead.package.team_role.is_none(),
                     "Use standalone agent definitions for named teams"
@@ -1015,11 +1019,15 @@ impl Host {
                         );
                     }
                 }
+                // Only a qualified local adapter advertises workspace preparation.
+                // Remote ToolRunner preparation is gated until service wiring passes.
+                p["workspace_selection"] =
+                    json!(lead.execution_backend == openworker_runtime::execution::Backend::Off);
                 return self
                     .store
                     .lock()
                     .unwrap()
-                    .agent_team(sid, "create", &p, None)
+                    .agent_team(&sid, "create", &p, None)
                     .map(openworker_runtime::agent_team::public_snapshot);
             }
             "agent-team/command" => {
