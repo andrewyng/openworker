@@ -1,5 +1,6 @@
 //! Optional PostgreSQL StateStore adapter. No automatic claims, heartbeat or replay.
 mod agent_team;
+pub use agent_team::WorkspaceJob;
 mod artifacts;
 mod assistant;
 pub mod auth;

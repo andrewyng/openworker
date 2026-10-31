@@ -1,0 +1,58 @@
+{
+  "sourceCommit": "da719549",
+  "date": "2026-10-31",
+  "milestone": "C1",
+  "result": "passed",
+  "runnerImage": "docker.io/library/openworker-runner@sha256:947b0e2e0d20d9207fb8426ab4840c31a2d2215e05b41efb53a20c83dcb550f6",
+  "tests": {
+    "linuxCodingAndWorkspace": {
+      "passed": 21,
+      "fixtureEntriesIgnored": 1
+    },
+    "macRuntimeCodingAndTeams": {
+      "passed": 81
+    },
+    "postgresService": {
+      "passed": 6
+    },
+    "rustSdkWorkspaceModes": {
+      "passed": 4,
+      "durationSeconds": 178.6
+    },
+    "typescriptService": {
+      "passed": 9
+    },
+    "localKubernetesOpenShell": {
+      "passed": 1,
+      "durationSeconds": 204.63,
+      "controllers": 2,
+      "apiNodes": 2,
+      "sharedWorktreeBuilders": 2,
+      "workerReplacement": true,
+      "exactCommitVerification": true,
+      "commandExitCodesChecked": true,
+      "providerResourcesDeleted": true,
+      "testSchemasDropped": true
+    }
+  },
+  "checks": [
+    "all-target strict Clippy with SDK test-support and OpenShell-test",
+    "cargo fmt",
+    "git diff --check",
+    "test-catalog local links"
+  ],
+  "scope": {
+    "cloudProvisioning": false,
+    "liveModelCalls": false,
+    "githubWrites": false,
+    "newDemoCredentials": false
+  },
+  "remaining": [
+    "C2 configurable coding presets",
+    "C3 delegated placement/lifecycle",
+    "C4 artifact handoff",
+    "C5 trusted GitHub publication",
+    "C6 explicit CLI credential mode",
+    "C7 combined multi-team qualification"
+  ]
+}

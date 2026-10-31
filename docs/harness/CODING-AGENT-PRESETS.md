@@ -82,8 +82,8 @@ rather than an uncommitted working directory that a builder can keep changing.
 For the shared-team preset, default each builder's working directory to its own
 worktree, not the parent's directory. Default its read/write/search/patch scope
 to that same worktree. Relative paths and shell commands start there. This is
-the intended preset behavior, not a claim that the distributed service already
-supports nondefault child worktrees.
+the preset behavior built on the distributed child-workspace path qualified in
+[C1](evidence/coding-presets-c1-20261031.json).
 
 Keep these concepts distinct in configuration and enforcement:
 

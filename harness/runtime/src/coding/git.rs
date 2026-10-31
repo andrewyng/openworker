@@ -90,11 +90,36 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
     }
     result.context("Git inspection timed out")?
 }
-pub async fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
+pub async fn call(
+    root: &Path,
+    name: &str,
+    args: &Value,
+    receipt: Option<&crate::team_workspace::Receipt>,
+) -> Result<Value> {
     let root = root.canonicalize()?;
+    // Check pointers and repository configuration BEFORE rev-parse, which itself
+    // reads configuration. Only an adapter-pinned receipt allows shared metadata.
+    let project = if let Some(r) = receipt {
+        r.validate_scope(&r.project_root, &root)?;
+        r.verify()?;
+        if r.git_dir.is_some() {
+            &r.project_root
+        } else {
+            &root
+        }
+    } else {
+        &root
+    };
+    crate::team_workspace::repository(&root, project).await?;
     for query in ["--show-toplevel", "--absolute-git-dir"] {
         let found = run(&root, &["rev-parse".into(), query.into()]).await?;
-        ensure!(Path::new(found.trim()).canonicalize()?.starts_with(&root),"Git repository and metadata must be inside the workspace; external worktrees are not followed");
+        let found = Path::new(found.trim()).canonicalize()?;
+        ensure!(
+            found.starts_with(&root)
+                || (query == "--absolute-git-dir"
+                    && receipt.is_some_and(|r| r.worktree_git_dir.as_ref() == Some(&found))),
+            "Git repository/metadata differs from the registered workspace"
+        );
     }
     // Status/diff can invoke clean/process filters, even with --no-ext-diff.
     // Do not follow included configuration or accept repository-defined helpers.

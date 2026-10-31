@@ -12,6 +12,7 @@ fn session() -> Session {
     Session {
         agent_team: None,
         environment: None,
+        managed_workspace: None,
         storage_revision: 0,
         approval_grants: vec![],
         id: "s_test".into(),

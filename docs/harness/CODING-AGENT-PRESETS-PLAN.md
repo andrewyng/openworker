@@ -1,7 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: sequence prepared for review; implementation has not started under these
-milestone IDs. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1 verified; continuing the approved C2–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -33,7 +32,7 @@ Extend the same primitives through the remaining deployment adapters.
 
 | ID | Deliverable | Dependency | Status |
 | --- | --- | --- | --- |
-| C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Pending |
+| C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Pending |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
@@ -197,7 +196,7 @@ Cloud deployment trials follow this sequence under their own budget/authorizatio
 
 | Milestone | Implementation/evidence | Result |
 | --- | --- | --- |
-| Planning | Linked design, current team ledger and this sequence; retained existing completed foundation. | Ready for review. No runtime changes. |
+| Planning | Linked design, current team ledger and this sequence; retained existing completed foundation. | Approved; no runtime changes in the planning slice. |
 
 For each verified slice, append the source commit, meaningful tests, local fixture
 cleanup, remaining gaps and merge commit. Earlier foundation evidence remains in
@@ -237,3 +236,51 @@ The follow-up daemon read still reports approximately 8 GiB RAM; the user's inte
 16 GiB increase is not yet confirmed. Recheck after it applies, before large
 isolated-sandbox batches. Bound test concurrency and monitor incremental-cache
 growth; use `CARGO_INCREMENTAL=0` for sustained qualification where practical.
+
+### C1 journal — October 31, after Docker restart
+
+Docker now reports 16,745,295,872 bytes (approximately 15.6 GiB, configured as
+16 GiB); host free disk is approximately 60–61 GiB. Kubernetes and both OpenShell
+gateways recovered. One retained observability demo API has an HTTP 401 readiness
+probe; this is separate from the new task-owned fixtures. No demo credential was
+created or changed. The restart removed the previous disposable database; created
+a new loopback-only `ow-coding-presets-pg-20261031` fixture for this sequence.
+
+Feature branch: `feat/coding-shared-workspaces-20261031`. Implementing controller
+preparation intents/leases, original-environment ToolRunner requests, session-bound
+workspace receipts and narrow Git metadata validation. Receipts now pin the
+per-worktree metadata pointer/identity as well as common metadata. Ordinary file
+tools retain the child's cwd scope. Initial coding regressions passed; two new
+fast-test fixture issues were found (macOS process support and `/var` symlink
+canonicalization) and corrected. Full reruns and real OpenShell qualification
+are pending; this is not a completion claim.
+
+### C1 verified — October 31
+
+Source: `da719549`. [Evidence](evidence/coding-presets-c1-20261031.json) and
+[grouped test catalog](CODING-AGENT-PRESETS-TESTING.md). Final real OpenShell run
+passed in **204.63 seconds**, including assertions on actual tool exit codes and
+stdout: two scoped builder worktrees/commits, harness-level traversal denial,
+exact-submission verifier, lead inspection, competing controllers, worker
+replacement and TypeScript reconnect/shared-verifier/separate-environment checks.
+Provider deletion confirmed removal of the original resources; fixture execution
+and recording schemas were dropped. No live LLM, GitHub write or cloud operation.
+
+Also passed: 21 Linux coding/workspace tests (one separate fixture entry ignored),
+81 macOS runtime/coding/team tests, six PostgreSQL service tests, four SDK
+workspace modes (SQLite/PostgreSQL × embedded/managed, 178.60 seconds), nine
+TypeScript service tests, strict all-target Clippy, formatting and diff checks.
+The first full OpenShell attempt exposed a test assertion expecting a tool error
+where the harness had correctly denied dispatch; corrected it and strengthened
+command-result assertions. The initial TypeScript HTTP run lacked tool-sandbox
+loopback permissions; its permitted rerun passed all nine cases.
+
+Preserved the original shared sandbox identity and enforcement root. First-party
+coding tools validate the pinned per-worktree Git pointer/common metadata while
+ordinary file tools stay in the child's directory. Shell cwd is not containment.
+The previous unpinned worktree receipts cannot silently gain this Git exception;
+newly prepared receipts carry the required identities. C2 presets and isolated
+placement remain separate work. Host free disk after qualification is about
+58 GiB; incremental compilation was disabled. Temporary TLS/runner/forward and
+the disposable PostgreSQL remain available only while the next local milestone
+needs them, then will be removed; retained demos were not changed.

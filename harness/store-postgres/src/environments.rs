@@ -1,5 +1,5 @@
 use crate::db::{event, locked, Database};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use openworker_runtime::{
     environment::{Attachment, AttachmentState, Binding, Management, Phase, Record, Sharing, Spec},
     store::Session,
@@ -56,9 +56,37 @@ pub(crate) fn validate_session(tx: &mut Transaction<'_>, s: &Session) -> Result<
         return Ok(());
     };
     binding.validate()?;
-    if s.workspace != binding.spec.workspace_root
-        || s.resource_policy.digest != binding.fingerprint()?
-    {
+    if let Some(receipt) = &s.managed_workspace {
+        receipt.validate_scope(
+            std::path::Path::new(&binding.spec.workspace_root),
+            std::path::Path::new(&s.workspace),
+        )?;
+        let member = s
+            .agent_team
+            .as_ref()
+            .context("Managed remote workspace requires team membership")?;
+        let doc: openworker_runtime::agent_team::Document = serde_json::from_value(
+            tx.query_one(
+                "SELECT data FROM agent_teams WHERE id=$1",
+                &[&member.team_id],
+            )?
+            .get(0),
+        )?;
+        ensure!(
+            doc.roster
+                .instance(&member.agent_id)
+                .is_some_and(|i| i.session_id == s.id)
+                && doc
+                    .workspaces
+                    .get(&member.agent_id)
+                    .and_then(|i| i.receipt.as_ref())
+                    == Some(receipt),
+            "Workspace receipt is not bound to this team instance"
+        );
+    } else if s.workspace != binding.spec.workspace_root {
+        bail!("Child workspace requires an acknowledged team receipt");
+    }
+    if s.resource_policy.digest != binding.fingerprint()? {
         bail!("Session resource authority must match its remote environment binding");
     }
     if s.sandbox.is_some()
