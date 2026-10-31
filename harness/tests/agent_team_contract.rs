@@ -18,6 +18,55 @@ pub fn create(db: &mut dyn StateStore) -> Value {
     );
     doc
 }
+pub fn exercise_workspace_defaults(db: &mut dyn StateStore) {
+    db.save(&session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    let defaults = json!({"repository":"source","base":"a".repeat(40),"agent_types":["builder"]});
+    let args = json!({"agent_id":"lead","agent_types":["builder","verifier"],"workspace_selection":true,"workspace_defaults":defaults});
+    let doc = db.agent_team("lead", "create", &args, None).unwrap();
+    let mut responses = vec![];
+    for id in ["one", "two"] {
+        let request = json!({"agent_type":"builder","agent_id":id,"message":"Build"});
+        let result = db.agent_team("lead", "team_spawn", &request, None).unwrap();
+        assert_eq!(result["workspace"]["mode"], "worktree");
+        assert_eq!(result["workspace"]["base"], "a".repeat(40));
+        assert!(result["workspace"]["path"]
+            .as_str()
+            .unwrap()
+            .contains(doc["id"].as_str().unwrap()));
+        assert_eq!(
+            result["instance"],
+            db.agent_team("lead", "team_spawn", &request, None).unwrap()["instance"]
+        );
+        responses.push(result);
+    }
+    assert_ne!(
+        responses[0]["workspace"]["path"],
+        responses[1]["workspace"]["path"]
+    );
+    assert_ne!(
+        responses[0]["workspace"]["branch"],
+        responses[1]["workspace"]["branch"]
+    );
+    let explicit = json!({"agent_type":"verifier","agent_id":"verify","message":"Inspect exact submission","workspace":{"mode":"directory","path":responses[0]["workspace"]["path"]}});
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &explicit, None)
+            .unwrap()["workspace"],
+        explicit["workspace"]
+    );
+    let mut changed = args.clone();
+    changed["workspace_defaults"]["base"] = json!("b".repeat(40));
+    assert!(db.agent_team("lead", "create", &changed, None).is_err());
+    let mut invalid = args;
+    invalid["workspace_defaults"]["base"] = json!("HEAD");
+    assert!(db.agent_team("lead", "create", &invalid, None).is_err());
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(snapshot["workspace_defaults"], defaults);
+    assert_eq!(
+        snapshot["roster"]["requests"]["one"]["workspace"],
+        responses[0]["workspace"]
+    );
+}
 pub fn child(db: &mut dyn StateStore, id: &str) -> String {
     let reserved = db
         .agent_team(

@@ -2,6 +2,7 @@
 id: service-coding
 name: Sandboxed coding tools
 requires_folder: true
+planning: true
 ---
 Work only in the assigned project. Inspect available programs before choosing a
 build command. Use the coding tools for bounded file operations and managed

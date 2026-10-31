@@ -50,6 +50,8 @@ pub struct Document {
     /// Trusted adapter capability; never inferred from model-supplied fields.
     #[serde(default)]
     pub workspace_selection: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_defaults: Option<crate::team_workspace_defaults::WorktreeDefaults>,
     #[serde(default)]
     pub workspaces: BTreeMap<String, crate::team_workspace::Intent>,
     #[serde(default)]
@@ -164,7 +166,27 @@ pub fn apply(
             .transpose()?
             .unwrap_or_default();
         let lead_id = op(args, "agent_id")?.to_owned();
-        let types = serde_json::from_value(args["agent_types"].clone())?;
+        let workspace_defaults: Option<crate::team_workspace_defaults::WorktreeDefaults> = args
+            .get("workspace_defaults")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?;
+        if let Some(defaults) = &workspace_defaults {
+            defaults.validate()?;
+            ensure!(
+                args["workspace_selection"] == true,
+                "This adapter cannot prepare default worktrees"
+            );
+        }
+        let types: std::collections::BTreeSet<String> =
+            serde_json::from_value(args["agent_types"].clone())?;
+        if let Some(defaults) = &workspace_defaults {
+            ensure!(
+                defaults.agent_types.is_subset(&types),
+                "Worktree defaults must name registered prebuilt types"
+            );
+        }
         if let Some(member) = &s.agent_team {
             let doc = tx.load(&member.team_id)?;
             ensure!(
@@ -183,6 +205,10 @@ pub fn apply(
             ensure!(
                 doc.workspace_selection == (args["workspace_selection"] == true),
                 "Changed workspace adapter capability"
+            );
+            ensure!(
+                doc.workspace_defaults == workspace_defaults,
+                "Changed worktree defaults; create another team"
             );
             let requested = args
                 .get("limits")
@@ -257,6 +283,7 @@ pub fn apply(
             type_catalog,
             type_bindings: BTreeMap::new(),
             workspace_selection: args["workspace_selection"] == true,
+            workspace_defaults,
             workspaces: BTreeMap::new(),
             retirements: BTreeMap::new(),
         };
@@ -636,7 +663,15 @@ pub fn apply(
                 member.agent_id == doc.lead,
                 "Only the lead may spawn instances"
             );
-            let request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            let mut request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            if let Some(defaults) = &doc.workspace_defaults {
+                request.workspace = defaults.resolve(
+                    &doc.id,
+                    &request.agent_type,
+                    &request.agent_id,
+                    request.workspace,
+                )?;
+            }
             ensure!(
                 doc.workspace_selection
                     || request.workspace == crate::team_workspace::Selection::default(),
@@ -677,9 +712,14 @@ pub fn apply(
                 }
             }
             let task = crate::team_briefing::task(&request.message, request.background.as_deref())?;
+            let workspace = request.workspace.clone();
             doc.tasks.entry(request.agent_id).or_insert(task);
             tx.write(&doc, false)?;
-            Ok(json!({"instance":reservation.instance,"created":reservation.created}))
+            let mut result = json!({"instance":reservation.instance,"created":reservation.created});
+            if workspace != crate::team_workspace::Selection::default() {
+                result["workspace"] = json!(workspace);
+            }
+            Ok(result)
         }
         "team_post_board" | "team_send_message" => {
             let body = op(args, "message")?.to_owned();

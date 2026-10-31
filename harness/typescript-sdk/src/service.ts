@@ -669,6 +669,7 @@ export class ServiceSession {
     await this.service.json("POST", `/v1/sessions/${segment(this.id)}/team`, {
       agentId: options.agentId ?? "lead",
       agentTypes: options.agentTypes,
+      ...(options.workspaceDefaults ? {workspaceDefaults:{repository:options.workspaceDefaults.repository,base:options.workspaceDefaults.base,agent_types:options.workspaceDefaults.agentTypes}} : {}),
       ...(options.delegation ? {delegation: {
         tools: options.delegation.tools,
         models: (options.delegation.models ?? []).map(m => ({connection:m.provider,model:m.name})),
@@ -793,6 +794,7 @@ export class ServiceRun {
 }
 
 export interface ServiceAgentTeamOptions {
+  workspaceDefaults?: import("./types.js").WorkspaceDefaults;
   /** Scoped custom types, bounded by the lead's activated release. */
   delegation?: {tools:string[];models?:{provider:string;name:string}[]};
   agentId?: string;

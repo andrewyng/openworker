@@ -911,6 +911,8 @@ mod tests {
 #[serde(rename_all = "camelCase")]
 pub struct AgentTeamOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<openworker_runtime::team_definition::Delegation>,
     pub agent_id: String,
     pub agent_types: std::collections::BTreeMap<String, String>,
