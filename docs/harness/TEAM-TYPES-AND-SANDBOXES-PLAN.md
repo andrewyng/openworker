@@ -477,3 +477,22 @@ clone, commit, merge, push, create a PR, or grant GitHub credentials.
 - This is documentation only. Preset/configuration names are illustrative. Remote
   worktrees, isolated checkout/handoff and trusted publication remain implementation
   and qualification work; no automatic Git/GitHub behavior was added.
+
+### Child directory and Git metadata clarification
+
+- Accepted default for shared-team builders: their own worktree is both working
+  directory and ordinary file-tool scope. The overall project root identifies
+  the repository; it does not implicitly grant broad file-tool access.
+- Git in a shared sandbox deliberately uses the registered common metadata outside
+  a child worktree. Shell cwd is not containment; file traversal/symlink checks
+  remain enforced, and trusted Git helpers can validate metadata relationships.
+  Existing inspection helpers currently reject external metadata, so the narrow
+  managed-worktree allowance still needs implementation and qualification.
+- Isolated workers use independent checkouts and their own Git metadata, with
+  artifact or branch handoff. Do not mount an otherwise broken linked worktree or
+  silently expose the lead's metadata to fix it.
+- Qualification should check correct child cwd, rejected sibling file-tool writes,
+  valid shared Git operations, rejected changed/arbitrary metadata pointers, and
+  independent-clone operation without access to the lead's repository metadata.
+- [Detailed rules](CODING-AGENT-PRESETS.md#child-working-directory-and-file-tool-scope).
+  Documentation only; these changes do not weaken current runtime path checks.

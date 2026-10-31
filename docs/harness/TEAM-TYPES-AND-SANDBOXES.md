@@ -418,6 +418,10 @@ support on PostgreSQL should not be confused with deployment-adapter qualificati
 
 The dedicated [coding-agent presets and publishing design](CODING-AGENT-PRESETS.md)
 records the three variants, recommended defaults, handoff and credential choices.
+Its [working-directory and tool-scope rules](CODING-AGENT-PRESETS.md#child-working-directory-and-file-tool-scope)
+set the child's worktree as its default directory/file-tool root, with deliberate
+access to registered shared Git metadata only for Git operations. Independent
+sandboxes use independent checkouts and explicit handoff.
 
 Sandbox placement and Git workspace layout are independent decisions. The current
 default reuses the lead's original sandbox and working directory; builders and
