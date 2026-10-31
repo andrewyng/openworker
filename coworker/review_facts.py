@@ -17,6 +17,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import urlsplit
 
 from . import provenance, public_suffix
 from .risk import RiskClass, classify
@@ -72,7 +73,7 @@ _NETWORK_CLIENTS = {
     "netcat", "telnet", "ftp", "sftp", "scp", "ssh", "rsync",
     "invoke-webrequest", "iwr", "invoke-restmethod", "irm", "start-bitstransfer",
 }
-_URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://([^/\s'\"`<>:?#\\]+)", re.IGNORECASE)
+_URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s'\"`<>\\]+", re.IGNORECASE)
 # A bare domain in the user's text, not one inside a path (`docs/intro.md`).
 _DOMAIN = re.compile(
     r"(?<![@\w./\\~-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])", re.IGNORECASE
@@ -128,18 +129,34 @@ def _bare_host(host: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+def _url_hosts(text: str) -> Optional[list[str]]:
+    hosts = []
+    for match in _URL_HOST.finditer(text):
+        try:
+            parsed = urlsplit(match.group(0))
+            host = parsed.hostname
+            _ = parsed.port  # malformed ports must not become reassuring facts
+            if not host:
+                return None
+        except ValueError:
+            return None
+        hosts.append(host)
+    return hosts
+
+
 def _named(user_texts: Iterable[str]) -> tuple[set[str], str]:
     """Hosts/domains the user gave as destinations, and the lowercased text they wrote."""
     text = "\n".join(t for t in user_texts if t).lower()
-    domains = {m.group(1).rsplit("@", 1)[-1] for m in _URL_HOST.finditer(text)}
-    for m in _DOMAIN.finditer(text):
+    domains = set(_url_hosts(text) or [])
+    plain = _URL_HOST.sub(lambda m: " " * len(m.group(0)), text)
+    for m in _DOMAIN.finditer(plain):
         domain = m.group(1)
         if domain.rsplit(".", 1)[-1] in _FILE_LIKE_TLDS:
             after = text[m.end():m.end() + 2]
             if not (domain.startswith("www.") or after[:1] == "/" or re.match(r":\d", after)):
                 continue  # main.py, README.md, run.sh: a file name, not a site
         domains.add(domain)
-    domains |= {e.split("@", 1)[1] for e in _EMAIL.findall(text)}
+    domains |= {e.split("@", 1)[1] for e in _EMAIL.findall(plain)}
     return {_bare_host(d) for d in domains if d.strip(".")}, text
 
 
@@ -236,7 +253,7 @@ def destination_fact(
         command = str((arguments or {}).get("command", ""))
         if not shell_reaches_network(command):
             return ""
-        hosts = [m.group(1) for m in _URL_HOST.finditer(command)]
+        hosts = _url_hosts(command)
         if not hosts:
             return DESTINATION_UNKNOWN
         return DESTINATION_NAMED if all(_host_named(h, domains) for h in hosts) else DESTINATION_NOT_NAMED

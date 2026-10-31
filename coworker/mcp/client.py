@@ -75,10 +75,19 @@ class MCPManager:
             if existing is not None:
                 return existing
             ready: asyncio.Future = asyncio.get_running_loop().create_future()
-            self._tasks[server.name] = asyncio.create_task(
+            task = self._tasks[server.name] = asyncio.create_task(
                 self._serve(server, ready, interactive=interactive)
             )
-            conn = await ready  # propagates connection errors
+            try:
+                conn = await ready  # propagates connection errors
+            except BaseException:
+                # A caller's startup timeout must also close the transport and child.
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=5)
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise
             self._conns[server.name] = conn
             return conn
 

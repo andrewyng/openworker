@@ -7,11 +7,11 @@ Only an exact match counts:
 * ``write``  - a file tool writing exactly that file (every file, for a patch);
 * ``delete`` - a plain delete of exactly that file (``rm``/``del``/``Remove-Item`` with no
   pattern, no recursion, nothing chained), or a patch's ``Delete File`` of it;
-* ``run``    - exactly that command, ignoring spacing;
+* ``run``    - exactly that command, ignoring only unquoted, unescaped spacing;
 * ``send``   - that file going to exactly that host (a network command whose every URL is
   that host, with no user-info in the URL, that reads exactly that file and nothing
-  else, with nothing piped or chained; or a web tool whose URL is that host), or a
-  connector action to exactly that recipient.
+  else, with nothing piped or chained), or an exact message body to that recipient
+  through a supported message tool. A filename mentioned in a web URL is not a send.
 
 Paths in a shell command are judged from the shell's current folder when the engine
 knows it (``shell_base``), and nothing matches when it cannot. A step naming a protected
@@ -27,7 +27,6 @@ vouch for itself.
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
 import sys
@@ -50,7 +49,6 @@ _PATCH_DELETE = re.compile(r"^\*\*\* Delete File: (.+)$", re.MULTILINE)
 _SHELL_META = re.compile(r"[;&|`$<>(){}*?\[\]\n\r]")
 _DELETE_COMMANDS = {"rm", "del", "erase", "remove-item", "ri"}
 _DELETE_FLAGS = {"-f", "--force", "-force", "-path", "-literalpath", "/q", "/f"}
-_LOOKS_LIKE_FILE = re.compile(r"^[\w.-]+\.[A-Za-z0-9]{1,8}$")
 # A send step's target is a file when it has an extension (a message is not a file).
 _FILE_TARGET = re.compile(r"^[^\s<>|&;`$\"']+\.[A-Za-z0-9]{1,8}$")
 # Shown as risky on the card: something besides the named program runs or decides.
@@ -239,7 +237,15 @@ def _host(host: str) -> str:
 
 
 def _norm_command(command: Any) -> str:
-    return " ".join(str(command or "").split())
+    from .readonly import _raw_tokens
+
+    text = str(command or "")
+    # Newlines and PowerShell's backtick escape are significant. For simple single-line
+    # commands normalize only unquoted, unescaped whitespace, retaining quoted bytes.
+    if any(c in text for c in "\r\n`"):
+        return text
+    tokens = _raw_tokens(text)
+    return " ".join(tokens) if tokens is not None else text
 
 
 def _plain_delete_paths(command: str) -> Optional[list[str]]:
@@ -257,11 +263,6 @@ def _plain_delete_paths(command: str) -> Optional[list[str]]:
             return None  # -r, -rf, -Recurse …: not a plain file delete
         paths.append(word)
     return paths or None
-
-
-def _mentions(text: str, name: str) -> bool:
-    base = Path(name.replace("\\", "/")).name or name
-    return re.search(r"(?<![\w.-])" + re.escape(base) + r"(?![\w.-])", text) is not None
 
 
 def _covered(paths: Iterable[str], approved: set[str], resolve: Callable[[str], Path]) -> bool:
@@ -410,20 +411,31 @@ def match_step(
 
         if not sends:
             return False
-        blob = json.dumps(args, ensure_ascii=False, default=str)
-        if args.get("url") and egress_host is not None:
-            # A web tool: its URL's host, exactly.
-            host = _host(egress_host(tool_name, args) or "")
-            return bool(host) and any(_host(s.destination) == host and _mentions(blob, s.target) for s in sends)
+        if args.get("url"):
+            # Mentioning a file in a URL does not establish what data is being sent.
+            return False
 
         from .connectors.tool_defs import standing_target_for
 
         recipient = str(standing_target_for(tool_name, args) or "").strip().lower()
         if not recipient:
             return False  # e.g. a browser upload: where it goes is not in the action
+        # Only message tools whose complete payload we can compare. A prose label like
+        # "weekly summary" is not authority for arbitrary text to the same recipient.
+        message_fields = {
+            "send_message": ("text", {"target", "text"}),
+            "slack_post_message": ("text", {"workspace", "channel", "thread_ts", "text"}),
+            "telegram_send_message": ("text", {"chat_id", "thread_id", "text"}),
+            "discord_send_message": ("content", {"channel_id", "content"}),
+            "whatsapp_send_message": ("text", {"to", "text"}),
+        }
+        spec = message_fields.get(tool_name)
+        if spec is None or set(args) - spec[1]:
+            return False
+        payload = args.get(spec[0])
         return any(
             s.destination.strip().lower() == recipient
-            and (not _LOOKS_LIKE_FILE.match(s.target) or _mentions(blob, s.target))
+            and isinstance(payload, str) and payload == s.target
             for s in sends
         )
     except Exception:  # noqa: BLE001 - a step that cannot be checked does not match

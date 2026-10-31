@@ -246,15 +246,15 @@ def test_a_browser_upload_never_matches_its_destination_is_not_in_the_action(tmp
     assert not _m(tmp_path, steps, "browser_upload_file", {"target": "input[type=file]", "path": "dummy.csv"})
 
 
-def test_a_send_step_covers_a_web_tool_to_that_host_naming_the_file(tmp_path):
+def test_a_file_name_in_a_web_url_does_not_establish_an_exact_send(tmp_path):
     steps = [PlanStep("send", "dummy.csv", "httpbin.org")]
-    assert _m(tmp_path, steps, "web_fetch", {"url": "https://httpbin.org/anything?name=dummy.csv"})
+    assert not _m(tmp_path, steps, "web_fetch", {"url": "https://httpbin.org/anything?name=dummy.csv"})
     assert not _m(tmp_path, steps, "web_fetch", {"url": "https://httpbin.org/anything"})
     assert not _m(tmp_path, steps, "web_fetch", {"url": "https://evil.example/?name=dummy.csv"})
 
 
 def test_a_send_step_covers_a_connector_message_to_that_recipient(tmp_path):
-    steps = [PlanStep("send", "weekly summary", "slack:T1/C9")]
+    steps = [PlanStep("send", "Weekly summary: done", "slack:T1/C9")]
     assert _m(tmp_path, steps, "send_message", {"target": "slack:T1/C9", "text": "Weekly summary: done"})
     assert not _m(tmp_path, steps, "send_message", {"target": "slack:T1/C10", "text": "Weekly summary: done"})
 

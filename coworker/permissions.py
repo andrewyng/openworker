@@ -1135,9 +1135,11 @@ class PermissionEngine:
         file (by name, by folder, or named as a git `revision:path`) and a command that
         prints the environment or git's settings are not covered either. Raises on anything
         unexpected; callers fail closed."""
-        from .readonly import git_revision_paths, is_readonly_command, prints_settings, read_targets
+        from .readonly import git_revision_paths, is_readonly_command, prints_settings, read_targets, readonly_globs_safe
 
         if not is_readonly_command(command, shell=self.shell_kind):
+            return None
+        if not readonly_globs_safe(command, base, shell=self.shell_kind):
             return None
         if secrets and prints_settings(command, shell=self.shell_kind):
             return None
@@ -1165,6 +1167,10 @@ class PermissionEngine:
         from .readonly import git_repo_dirs
 
         for repo in git_repo_dirs(command, shell=self.shell_kind):
+            # The config probe must examine the directory git will actually enter.
+            # A literal `repo*` is not a directory, even when bash expands it to one.
+            if any(c in repo for c in "*?["):
+                return None
             path = Path(os.path.expanduser(repo))
             full = path if path.is_absolute() else base / path
             if not project_git_settings_inert(full, lambda p: self._under_root(str(p))):
