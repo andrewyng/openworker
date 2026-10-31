@@ -4,6 +4,9 @@ Branch: `feat/team-types-sandboxes-20261031`; base: `f13de9b9`.
 Target after qualification: `openworker-harness-sdk`.
 Accepted design: [types, membership and two sandbox stories](TEAM-TYPES-AND-SANDBOXES.md).
 Previous completed work: [named teams ledger](AGENT-TEAMS-IMPLEMENTATION.md).
+Next coding-feature sequence: [coding presets C1–C7](CODING-AGENT-PRESETS-PLAN.md).
+The milestone list below records the original team-foundation plan; C1–C7 is the
+current coding-preset sequence and reuses that foundation.
 
 ## Milestones and implementation order
 

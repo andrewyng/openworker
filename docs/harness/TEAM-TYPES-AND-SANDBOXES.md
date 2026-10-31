@@ -2,6 +2,8 @@
 
 Decision record: 31 October 2026. Accepted in discussion with Rohit.
 Implementation tracking: [plan and ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md).
+Coding follow-up: [presets and publishing](CODING-AGENT-PRESETS.md) and
+[implementation sequence](CODING-AGENT-PRESETS-PLAN.md).
 Baseline: `f13de9b9`, public branch `openworker-harness-sdk`.
 
 This document separates the team implementation we are extending now from a
