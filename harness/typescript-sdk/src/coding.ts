@@ -22,7 +22,7 @@ export interface SharedCodingPreset {
   team:AgentTeamOptions;
 }
 export function sharedCodingTeam(prefix:string,workspace:{repository:string;base:string},options:{lead?:CodingOptions;builder?:CodingOptions;verifier?:CodingOptions}={}):SharedCodingPreset {
-  if(!/^[a-zA-Z0-9_-]{1,48}$/.test(prefix))throw Error("Invalid coding team prefix");
+  if(!/^[a-zA-Z][a-zA-Z0-9_-]{0,47}$/.test(prefix))throw Error("Invalid coding team prefix");
   if(!/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(workspace.base))throw Error("Worktree defaults require a pinned commit SHA");
   const p=workspace.repository;
   if(p!=="." && (!p || p.length>512 || p.includes("\\") || p.split("/").some(c=>!c || c==="." || c===".." || /[\x00-\x1f]/.test(c))))throw Error("Repository must be relative to the project");

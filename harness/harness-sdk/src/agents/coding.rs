@@ -104,7 +104,13 @@ pub fn service_release(
 /// `base` is a pinned commit SHA already present in that repository. The lead
 /// integrates in its existing main worktree; no automatic branch switch occurs.
 pub fn shared(prefix: &str, repository: &str, base: &str) -> Result<SharedPreset> {
-    if !openworker_runtime::bundle::safe_name(prefix) || prefix.len() > 48 {
+    if !openworker_runtime::bundle::safe_name(prefix)
+        || prefix.len() > 48
+        || !prefix
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic)
+    {
         return Err(Error::InvalidInput(
             "Coding team prefix must be 1–48 safe ASCII characters".into(),
         ));
