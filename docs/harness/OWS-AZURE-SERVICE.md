@@ -87,6 +87,10 @@ ows deploy azure cleanup initialize --state ./azure-state \
 ows deploy azure cleanup verify --state ./azure-state
 ```
 
+Explicit initialization first pins the reviewed ARM job creation timestamp and
+assigned identity principal/client IDs, then creates control once. The scheduled
+job cannot learn or replace that receipt. It must execute with the pinned identity.
+
 The five-minute Container Apps job lives outside AKS. Its OAuth-only private Blob
 checkpoint uses create-only initialization and ETag compare-and-swap. TLS is
 verified; there are no account-key/SAS fallbacks. The checkpoint is publicly
@@ -193,7 +197,14 @@ guessed AKS node groups are never deleted; AKS's provider owns its node-group
 lifecycle. ARM does not provide a universal atomic conditional DELETE: do not let
 other privileged administrators replace these dedicated IDs during teardown.
 
-The job records workload completion then deletes its own exact job once. The
-control Blob/account, identity, consumption environment and reviewed grants remain
+The job records workload completion then attempts to delete its own exact job
+once. `controllerStop` reports intent, unknown, accepted or absent;
+`workloadAndControllerComplete` becomes true only after a read proves job absence.
+A lost/rejected stop remains visible with `requiresAttention`; subsequent ticks
+observe it without retrying DELETE or refreshing a healthy heartbeat. Use
+`lifecycle reconcile` with the original state/digest to record observed absence
+if the deleted job cannot checkpoint its own completion.
+
+The control Blob/account, identity, consumption environment and reviewed grants remain
 for audit/recovery and explicit customer removal. This retention can have small
 storage costs; workload expiry is not a claim of zero residual billable resources.

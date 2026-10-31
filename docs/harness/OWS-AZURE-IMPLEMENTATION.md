@@ -330,3 +330,39 @@ and requires separate account/budget authorization.** Read the service reference
 explicit control retention, dedicated/exclusive resource scope and non-transactional
 ARM create/delete caveats before any trial. This branch was committed locally;
 canonical merge/push remains with the parent reviewer.
+
+### Follow-up merge review and cleanup fixes — 31 October 2026
+
+Reviewed A4 `69e805da` against canonical `fd19e1bb` (base `f13de9b9`): 30 Azure
+changed paths and 57 canonical changed paths are disjoint. No merge/push or
+combined-tree build was performed. [Review and limitations](OWS-AZURE-MERGE-REVIEW.md).
+
+The review found two concrete gaps and fixed them on the isolated feature branch:
+
+- Explicit initialization now pins authenticated job creation time and actual
+  managed-identity principal/client IDs **before** create-only control publication.
+  A scheduled execution cannot learn its own receipt. Arguments and executing
+  identity must match the pin; a non-ready controller or replacement before its
+  first heartbeat is refused. No additional IAM grant was introduced.
+- Self-stop has durable intent/unknown/accepted/absent phases. Reconciliation only
+  reads the original job, never repeats DELETE, and confirms absence separately
+  from workload completion. Rejected/lost/crash-intent outcomes remain visible
+  through `controllerStop`, `requiresAttention` and `workloadAndControllerComplete`.
+  Pending stop ticks do not refresh the healthy heartbeat; completed verification
+  returns `heartbeatReady:false` and directs the operator to reconciliation.
+
+**118 checks pass** in the isolated CLI/deployment matrix: 70 unit/loopback,
+12 Azure CLI, seven shared deployment, 17 GCP and 12 shared installer checks.
+The six new focused cases were rerun after the final identity/provisioning checks.
+Scoped CLI Clippy completes with the same six baseline warnings and no new Azure
+warning. Formatting/diff checks pass. Artifact/chart/server sources were unchanged
+by this follow-up; their A4 qualification remains recorded above.
+
+A fresh marked temporary target used debug=0, no incremental compilation and one
+job, with a 6 GiB cap (final ~0.85 GiB), then was removed. The primary worktree's
+Cargo target was untouched. No cloud/API/IAM/resource action, credential read,
+cluster change, push or canonical merge occurred. Exact offline commands and
+remaining IAM/caller identity, exclusive resource scope, provider-receipt, control
+retention and live AKS/OpenShell gates are in the merge review. Previous unreleased
+offline control fixtures must be regenerated for the revised receipt/stop shape;
+no deployed-data migration is claimed.

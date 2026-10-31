@@ -110,6 +110,43 @@ struct Owned {
     delete_accepted: bool,
     operation_url: Option<String>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GuardReceipt {
+    created_at: String,
+    principal_id: String,
+    client_id: String,
+}
+impl GuardReceipt {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            chrono::DateTime::parse_from_rfc3339(&self.created_at).is_ok(),
+            "Invalid controller creation receipt"
+        );
+        for value in [&self.principal_id, &self.client_id] {
+            ensure!(
+                uuid::Uuid::parse_str(value).is_ok_and(|u| !u.is_nil() && u.to_string() == *value),
+                "Invalid controller identity receipt"
+            );
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum StopPhase {
+    Intent,
+    Unknown,
+    Accepted,
+    Absent,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Stop {
+    request_id: String,
+    phase: StopPhase,
+    operation_url: Option<String>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct State {
@@ -121,10 +158,10 @@ pub(super) struct State {
     resources: Vec<Owned>,
     heartbeat_unix: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    guard_created_at: Option<String>,
+    guard: Option<GuardReceipt>,
     destroy_requested: bool,
     completed_unix: Option<u64>,
-    job_stop_request: Option<String>,
+    job_stop: Option<Stop>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     installation_digest: Option<String>,
     #[serde(default)]
@@ -192,12 +229,13 @@ impl State {
                 );
             }
         }
-        if let Some(stamp) = &self.guard_created_at {
-            ensure!(
-                chrono::DateTime::parse_from_rfc3339(stamp).is_ok(),
-                "Invalid independent controller incarnation receipt"
-            );
+        if let Some(receipt) = &self.guard {
+            receipt.validate()?;
         }
+        ensure!(
+            self.heartbeat_unix.is_none() || self.guard.is_some(),
+            "Heartbeat requires an installer-pinned controller receipt"
+        );
         if let Some(digest) = &self.installation_digest {
             ensure!(
                 digest.len() == 64
@@ -211,12 +249,13 @@ impl State {
             !self.installation_closed || self.installation_digest.is_some(),
             "Closed installation lacks original mutation receipt"
         );
-        if let Some(request) = &self.job_stop_request {
+        if let Some(stop) = &self.job_stop {
             ensure!(
                 self.completed_unix.is_some()
-                    && uuid::Uuid::parse_str(request)
-                        .is_ok_and(|u| !u.is_nil() && u.to_string() == *request),
-                "Job stop requires persisted workload completion"
+                    && self.guard.is_some()
+                    && uuid::Uuid::parse_str(&stop.request_id)
+                        .is_ok_and(|u| !u.is_nil() && u.to_string() == stop.request_id),
+                "Controller stop requires original completion/identity/request receipts"
             );
         }
         let inventory = graph::inventory(&self.plan);
@@ -250,7 +289,15 @@ impl State {
         Ok(())
     }
     fn status(&self) -> Value {
-        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"liveQualified":false})
+        let stopped = self
+            .job_stop
+            .as_ref()
+            .is_some_and(|r| r.phase == StopPhase::Absent);
+        let attention = self
+            .job_stop
+            .as_ref()
+            .is_some_and(|r| matches!(r.phase, StopPhase::Intent | StopPhase::Unknown));
+        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"controllerReceipt":self.guard,"controllerStop":self.job_stop,"controllerStopped":stopped,"requiresAttention":attention,"workloadAndControllerComplete":self.completed_unix.is_some()&&stopped,"workloadCompletedUnix":self.completed_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"retainedControlResources":true,"liveQualified":false})
     }
 }
 fn local(path: &Path) -> Result<State> {
@@ -472,7 +519,7 @@ async fn apply(
         "Creation expired or cleanup requested"
     );
     ensure!(
-        s.guard_created_at.is_some() && s.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
+        s.guard.is_some() && s.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
         "Independent cleanup heartbeat is missing/stale"
     );
     let i = if stage == Stage::Foundation { 0 } else { 1 };
@@ -606,7 +653,39 @@ async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64)
     save(c, s, e).await?;
     Ok(())
 }
+/// Read the original controller after a persisted stop attempt. Never retry DELETE.
+async fn reconcile_stop(c: &mut impl Cloud, s: &mut State, e: &mut String) -> Result<()> {
+    let Some(stop) = s.job_stop.as_ref() else {
+        return Ok(());
+    };
+    if stop.phase == StopPhase::Absent {
+        return Ok(());
+    }
+    let r = c
+        .arm(Method::GET, &job_id(&s.plan), "2024-03-01", None, &s.nonce)
+        .await?;
+    if r.status == 404 {
+        s.job_stop.as_mut().unwrap().phase = StopPhase::Absent;
+        save(c, s, e).await?;
+        return Ok(());
+    }
+    ensure!(
+        r.status == 200,
+        "Controller stop observation unavailable; outcome remains pending"
+    );
+    guard_receipt(s, &r.body.context("Controller stop observation missing")?)?;
+    // A surviving controller after an uncertain request remains visibly unknown;
+    // an acknowledged DELETE is still pending until a read proves absence.
+    if stop.phase == StopPhase::Intent {
+        s.job_stop.as_mut().unwrap().phase = StopPhase::Unknown;
+        save(c, s, e).await?;
+    }
+    Ok(())
+}
 async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -> Result<()> {
+    if s.job_stop.is_some() {
+        return reconcile_stop(c, s, e).await;
+    }
     s.heartbeat_unix = Some(at);
     save(c, s, e).await?;
     if s.completed_unix.is_none() {
@@ -616,16 +695,20 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
             observe(c, s, e).await?;
         }
     }
-    if s.completed_unix.is_some() && s.job_stop_request.is_none() {
+    if s.completed_unix.is_some() {
         ensure!(
-            s.guard_created_at.is_some(),
-            "Controller incarnation missing; refuse self-stop"
+            s.guard.is_some(),
+            "Installer controller receipt missing; refuse self-stop"
         );
         verify_job(c, s).await?;
         let request = uuid::Uuid::new_v4().to_string();
-        s.job_stop_request = Some(request.clone());
+        s.job_stop = Some(Stop {
+            request_id: request.clone(),
+            phase: StopPhase::Intent,
+            operation_url: None,
+        });
         save(c, s, e).await?;
-        let r = c
+        let response = c
             .arm(
                 Method::DELETE,
                 &job_id(&s.plan),
@@ -633,12 +716,60 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
                 None,
                 &request,
             )
-            .await?;
-        ensure!(
-            [200, 202, 204, 404].contains(&r.status),
-            "Own-job stop outcome rejected; inspect exact job. No automatic retry."
-        );
+            .await;
+        match response {
+            Ok(r) if [200, 202, 204].contains(&r.status) => {
+                let stop = s.job_stop.as_mut().unwrap();
+                stop.phase = StopPhase::Accepted;
+                stop.operation_url = r.operation;
+                save(c, s, e).await?;
+                reconcile_stop(c, s, e).await?;
+            }
+            Ok(r) if r.status == 404 => {
+                s.job_stop.as_mut().unwrap().phase = StopPhase::Absent;
+                save(c, s, e).await?;
+            }
+            _ => {
+                s.job_stop.as_mut().unwrap().phase = StopPhase::Unknown;
+                save(c, s, e).await?;
+                bail!("Controller stop outcome unknown/rejected; inspect the original request. DELETE will not be replayed.")
+            }
+        }
     }
+    Ok(())
+}
+async fn tick(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -> Result<()> {
+    ensure!(s.guard.is_some(),"Controller receipt must be pinned by explicit initialization; a scheduled job cannot adopt itself");
+    if s.job_stop.is_none() {
+        verify_job(c, s).await?;
+    }
+    heartbeat(c, s, e, at).await
+}
+fn tick_identity(s: &State, client_id: &str) -> Result<()> {
+    let receipt = s
+        .guard
+        .as_ref()
+        .context("Installer-pinned controller identity required")?;
+    ensure!(
+        uuid::Uuid::parse_str(client_id)
+            .is_ok_and(|u| !u.is_nil() && u.to_string() == receipt.client_id),
+        "Scheduled execution identity differs from pinned controller"
+    );
+    Ok(())
+}
+async fn initialize(c: &mut impl Cloud, s: &mut State) -> Result<()> {
+    ensure!(
+        s.guard.is_none() && s.heartbeat_unix.is_none() && s.job_stop.is_none(),
+        "Use the original uninitialized local state"
+    );
+    ensure!(
+        c.read_control(&control_url(&s.plan)).await?.is_none(),
+        "Control already exists; reconcile initialization instead of overwriting"
+    );
+    // The trusted explicit installer, rather than the first scheduled execution,
+    // pins provider metadata before the create-only control write.
+    s.guard = Some(verify_job(c, s).await?);
+    c.save_control(&control_url(&s.plan), None, s).await?;
     Ok(())
 }
 
@@ -668,10 +799,10 @@ pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
                     .collect(),
                 resources: vec![],
                 heartbeat_unix: None,
-                guard_created_at: None,
+                guard: None,
                 destroy_requested: false,
                 completed_unix: None,
-                job_stop_request: None,
+                job_stop: None,
                 installation_digest: None,
                 installation_closed: false,
             };
@@ -720,6 +851,7 @@ async fn run(o: &Remote, stage: Option<Stage>, destroy: bool) -> Result<()> {
         destroy_one(&mut c, &mut s, &mut e, now()?).await?;
     } else {
         observe(&mut c, &mut s, &mut e).await?;
+        reconcile_stop(&mut c, &mut s, &mut e).await?;
     }
     crate::output(s.status())
 }
@@ -746,11 +878,8 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 "Unexpired explicit control initialization confirmation required"
             );
             let mut c = Azure::new(&s.plan, None)?;
-            ensure!(
-                c.read_control(&control_url(&s.plan)).await?.is_none(),
-                "Control already exists; inspect instead of overwriting"
-            );
-            c.save_control(&control_url(&s.plan), None, &s).await?;
+            let mut s = s;
+            initialize(&mut c, &mut s).await?;
             crate::output(s.status())
         }
         Cleanup::Verify { state } => {
@@ -761,6 +890,11 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 .await?
                 .context("Control unavailable")?;
             ensure!(s.nonce == v.nonce, "Control identity mismatch");
+            if v.completed_unix.is_some() || v.job_stop.is_some() {
+                return crate::output(
+                    json!({"heartbeatReady":false,"status":v.status(),"next":"lifecycle_reconcile","liveQualified":false,"workloadApplyReady":false}),
+                );
+            }
             let at = now()?;
             ensure!(
                 v.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
@@ -799,11 +933,8 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 t == tenant && sub == subscription && control_url(p) == *control,
                 "Cleanup target mismatch"
             );
-            let stamp = verify_job(&mut c, &s).await?;
-            if s.guard_created_at.is_none() {
-                s.guard_created_at = Some(stamp);
-            }
-            heartbeat(&mut c, &mut s, &mut e, now()?).await?;
+            tick_identity(&s, client_id)?;
+            tick(&mut c, &mut s, &mut e, now()?).await?;
             crate::output(s.status())
         }
     }
@@ -923,10 +1054,10 @@ mod tests {
                 .collect(),
             resources: vec![],
             heartbeat_unix: Some(150),
-            guard_created_at: Some("2026-10-31T00:00:00Z".into()),
+            guard: Some(fixture_guard()),
             destroy_requested: false,
             completed_unix: None,
-            job_stop_request: None,
+            job_stop: None,
             installation_digest: None,
             installation_closed: false,
         };
@@ -1044,7 +1175,11 @@ mod tests {
                 if id == job_id(&self.control.plan) {
                     assert!(
                         self.control.completed_unix.is_some()
-                            && self.control.job_stop_request.as_deref() == Some(request)
+                            && self
+                                .control
+                                .job_stop
+                                .as_ref()
+                                .is_some_and(|stop| stop.request_id == request)
                     );
                 } else {
                     assert!(
@@ -1158,7 +1293,7 @@ mod tests {
         assert!(s.completed_unix.is_some());
         assert!(s.resources.iter().all(|r| r.deleted));
         assert_eq!(c.deletes(), 11);
-        assert!(s.job_stop_request.is_some());
+        assert!(s.job_stop.is_some());
         heartbeat(&mut c, &mut s, &mut e, 202).await.unwrap();
         assert_eq!(c.deletes(), 11);
         assert!(
@@ -1318,24 +1453,61 @@ pub(super) fn fixture_state_dir(root: &Path) -> Plan {
     s.plan
 }
 
-async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<String> {
+async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<GuardReceipt> {
     let r = c
         .arm(Method::GET, &job_id(&s.plan), "2024-03-01", None, &s.nonce)
         .await?;
     ensure!(r.status == 200, "Independent cleanup job unavailable");
-    let body = r.body.context("Cleanup job body missing")?;
+    guard_body(s, &r.body.context("Cleanup job body missing")?)
+}
+fn guard_receipt(s: &State, body: &Value) -> Result<GuardReceipt> {
     let stamp = body["systemData"]["createdAt"]
         .as_str()
-        .filter(|v| chrono::DateTime::parse_from_rfc3339(v).is_ok())
         .context("Controller immutable creation receipt missing")?
         .to_owned();
+    let mi = format!(
+        "{}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{}-cleanup",
+        graph::control_scope(&s.plan),
+        graph::names(&s.plan).prefix
+    );
+    let identities = body["identity"]["userAssignedIdentities"]
+        .as_object()
+        .context("Controller identity map missing")?;
     ensure!(
-        body["tags"]["ows-deployment"] == s.plan.deployment_id
+        identities.len() == 1,
+        "Exactly one controller managed identity required"
+    );
+    let identity = identities
+        .iter()
+        .find(|(id, _)| id.eq_ignore_ascii_case(&mi))
+        .map(|(_, value)| value)
+        .context("Controller identity scope mismatch")?;
+    let receipt = GuardReceipt {
+        created_at: stamp,
+        principal_id: identity["principalId"]
+            .as_str()
+            .context("Controller principal receipt missing")?
+            .to_owned(),
+        client_id: identity["clientId"]
+            .as_str()
+            .context("Controller client receipt missing")?
+            .to_owned(),
+    };
+    receipt.validate()?;
+    ensure!(
+        body["id"]
+            .as_str()
+            .is_some_and(|id| id.eq_ignore_ascii_case(&job_id(&s.plan)))
+            && body["tags"]["ows-deployment"] == s.plan.deployment_id
             && body["tags"]["ows-nonce"] == s.nonce
             && body["tags"]["ows-bundle"] == s.bundle_digest
-            && s.guard_created_at.as_ref().is_none_or(|old| old == &stamp),
+            && s.guard.as_ref().is_none_or(|old| old == &receipt),
         "Independent cleanup controller replaced/identity changed"
     );
+    Ok(receipt)
+}
+fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
+    let receipt = guard_receipt(s, body)?;
     let resources = &body["properties"]["template"]["containers"];
     let container = resources
         .as_array()
@@ -1360,7 +1532,8 @@ async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<String> {
         graph::names(&s.plan).prefix
     );
     ensure!(
-        container["image"] == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
+        body["properties"]["provisioningState"] == "Succeeded"
+            && container["image"] == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
             && container["command"] == json!(["/opt/openworker/ows"])
             && args.len() == 12
             && args[..4]
@@ -1374,13 +1547,11 @@ async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<String> {
             && args[8] == "--subscription"
             && args[9] == *subscription
             && args[10] == "--client-id"
-            && args[11]
-                .as_str()
-                .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok_and(|u| !u.is_nil()))
+            && args[11] == receipt.client_id
             && body["identity"]["type"] == "UserAssigned"
             && body["identity"]["userAssignedIdentities"]
                 .as_object()
-                .is_some_and(|m| m.len() == 1 && m.contains_key(&mi))
+                .is_some_and(|m| m.len() == 1 && m.keys().any(|id| id.eq_ignore_ascii_case(&mi)))
             && config["triggerType"] == "Schedule"
             && config["replicaRetryLimit"] == 0
             && config["scheduleTriggerConfig"]["cronExpression"] == "*/5 * * * *"
@@ -1388,7 +1559,7 @@ async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<String> {
             && config["scheduleTriggerConfig"]["replicaCompletionCount"] == 1,
         "Independent cleanup job configuration drift"
     );
-    Ok(stamp)
+    Ok(receipt)
 }
 
 #[cfg(test)]
@@ -1471,6 +1642,261 @@ fn fixture_job(s: &State) -> Value {
         .clone();
     body["properties"]["template"]["containers"][0]["args"][11] =
         json!("12345678-1234-4234-8234-123456789abc");
+    body["id"] = json!(job_id(&s.plan));
+    body["properties"]["provisioningState"] = json!("Succeeded");
     body["systemData"] = json!({"createdAt":"2026-10-31T00:00:00Z"});
+    let mi = format!(
+        "{}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{}-cleanup",
+        graph::control_scope(&s.plan),
+        graph::names(&s.plan).prefix
+    );
+    body["identity"]["userAssignedIdentities"][&mi] =
+        json!({"clientId":fixture_guard().client_id,"principalId":fixture_guard().principal_id});
     body
+}
+
+#[cfg(test)]
+fn fixture_guard() -> GuardReceipt {
+    GuardReceipt {
+        created_at: "2026-10-31T00:00:00Z".into(),
+        principal_id: "22345678-1234-4234-8234-123456789abc".into(),
+        client_id: "12345678-1234-4234-8234-123456789abc".into(),
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    #[derive(Clone, Copy)]
+    enum Delete {
+        Success,
+        Rejected,
+        LostBefore,
+        LostAfter,
+        AcceptedPending,
+    }
+    struct Fixture {
+        stored: Option<State>,
+        revision: u64,
+        job: Option<Value>,
+        deletes: usize,
+        reads: usize,
+        saves: usize,
+        behavior: Delete,
+        lose_initial_control: bool,
+    }
+    impl Fixture {
+        fn new(s: &State, initialized: bool) -> Self {
+            Self {
+                stored: initialized.then(|| s.clone()),
+                revision: 1,
+                job: Some(fixture_job(s)),
+                deletes: 0,
+                reads: 0,
+                saves: 0,
+                behavior: Delete::Success,
+                lose_initial_control: false,
+            }
+        }
+        fn etag(&self) -> String {
+            format!("\"{}\"", self.revision)
+        }
+    }
+    impl Cloud for Fixture {
+        async fn read_control(&mut self, _: &str) -> Result<Option<(String, State)>> {
+            Ok(self.stored.as_ref().map(|s| (self.etag(), s.clone())))
+        }
+        async fn save_control(&mut self, _: &str, e: Option<&str>, s: &State) -> Result<String> {
+            s.validate()?;
+            ensure!(
+                match &self.stored {
+                    None => e.is_none(),
+                    Some(_) => e == Some(self.etag().as_str()),
+                },
+                "CAS conflict"
+            );
+            let initial = self.stored.is_none();
+            self.stored = Some(s.clone());
+            self.revision += 1;
+            self.saves += 1;
+            if initial && self.lose_initial_control {
+                bail!("control response lost after effect")
+            };
+            Ok(self.etag())
+        }
+        async fn arm(
+            &mut self,
+            m: Method,
+            id: &str,
+            _: &str,
+            _: Option<&Value>,
+            request: &str,
+        ) -> Result<Reply> {
+            let s = self.stored.as_ref();
+            let expected = s.map(|s| job_id(&s.plan));
+            if let Some(expected) = expected {
+                ensure!(id == expected, "Unexpected resource");
+            }
+            if m == Method::GET {
+                self.reads += 1;
+                return Ok(Reply {
+                    status: if self.job.is_some() { 200 } else { 404 },
+                    body: self.job.clone(),
+                    etag: None,
+                    operation: None,
+                });
+            }
+            ensure!(m == Method::DELETE, "Unexpected mutation");
+            let s = self.stored.as_ref().unwrap();
+            assert!(
+                s.job_stop.as_ref().is_some_and(
+                    |stop| stop.phase == StopPhase::Intent && stop.request_id == request
+                ),
+                "Stop intent must be durable before DELETE"
+            );
+            self.deletes += 1;
+            match self.behavior {
+                Delete::Success=>{self.job=None;Ok(Reply{status:200,body:None,etag:None,operation:None})},
+                Delete::Rejected=>Ok(Reply{status:403,body:None,etag:None,operation:None}),
+                Delete::LostBefore=>bail!("connection lost before observed effect"),
+                Delete::LostAfter=>{self.job=None;bail!("connection lost after committed effect")},
+                Delete::AcceptedPending=>Ok(Reply{status:202,body:None,etag:None,operation:Some("https://management.azure.com/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/providers/Microsoft.App/locations/westus2/operationResults/exact?api-version=2024-03-01".into())}),
+            }
+        }
+    }
+    fn pending_install() -> State {
+        let mut s = tests::state();
+        s.guard = None;
+        s.heartbeat_unix = None;
+        s
+    }
+    fn completed() -> State {
+        let mut s = tests::state();
+        s.destroy_requested = true;
+        s.completed_unix = Some(160);
+        s
+    }
+    #[tokio::test]
+    async fn installer_pins_provider_receipt_before_create_only_control_and_first_tick_rejects_replacement(
+    ) {
+        let mut s = pending_install();
+        let mut f = Fixture::new(&s, false);
+        initialize(&mut f, &mut s).await.unwrap();
+        assert_eq!(s.guard, Some(fixture_guard()));
+        assert_eq!(f.stored.as_ref().unwrap().guard, s.guard);
+        assert_eq!(s.heartbeat_unix, None);
+        assert_eq!(f.saves, 1);
+        assert!(initialize(&mut f, &mut pending_install()).await.is_err());
+        let mut e = f.etag();
+        f.job.as_mut().unwrap()["systemData"]["createdAt"] = json!("2026-10-31T00:00:01Z");
+        assert!(tick(&mut f, &mut s, &mut e, 150).await.is_err());
+        assert_eq!(s.heartbeat_unix, None);
+        assert_eq!(f.saves, 1);
+        assert_eq!(f.deletes, 0);
+    }
+    #[tokio::test]
+    async fn scheduled_job_cannot_bootstrap_its_own_receipt_or_accept_a_wrong_client_argument() {
+        let mut s = pending_install();
+        let mut f = Fixture::new(&s, true);
+        let mut e = f.etag();
+        assert!(tick(&mut f, &mut s, &mut e, 150).await.is_err());
+        assert_eq!(f.reads, 0);
+        assert_eq!(f.saves, 0);
+        let mut f = Fixture::new(&s, false);
+        f.job.as_mut().unwrap()["properties"]["template"]["containers"][0]["args"][11] =
+            json!("33333333-3333-4333-8333-333333333333");
+        assert!(initialize(&mut f, &mut s).await.is_err());
+        assert!(f.stored.is_none());
+        assert_eq!(f.saves, 0);
+        let bound = tests::state();
+        tick_identity(&bound, &fixture_guard().client_id).unwrap();
+        assert!(tick_identity(&bound, "33333333-3333-4333-8333-333333333333").is_err());
+        let mut bad = fixture_job(&bound);
+        bad["properties"]["provisioningState"] = json!("Deleting");
+        assert!(guard_body(&bound, &bad).is_err());
+        assert!(
+            guard_receipt(&bound, &bad).is_ok(),
+            "Deleting owned job remains observable during stop reconciliation"
+        );
+    }
+    #[tokio::test]
+    async fn lost_initialization_reply_keeps_the_original_pinned_receipt_and_never_overwrites() {
+        let mut s = pending_install();
+        let mut f = Fixture::new(&s, false);
+        f.lose_initial_control = true;
+        assert!(initialize(&mut f, &mut s).await.is_err());
+        let receipt = f.stored.as_ref().unwrap().guard.clone();
+        assert_eq!(receipt, Some(fixture_guard()));
+        assert!(initialize(&mut f, &mut pending_install()).await.is_err());
+        assert_eq!(f.saves, 1);
+        assert_eq!(f.stored.as_ref().unwrap().guard, receipt);
+    }
+    #[tokio::test]
+    async fn rejected_or_unknown_stop_remains_visible_after_restart_without_repeating_delete() {
+        for behavior in [Delete::Rejected, Delete::LostBefore] {
+            let mut s = completed();
+            let mut f = Fixture::new(&s, true);
+            f.behavior = behavior;
+            let mut e = f.etag();
+            assert!(heartbeat(&mut f, &mut s, &mut e, 170).await.is_err());
+            assert_eq!(s.job_stop.as_ref().unwrap().phase, StopPhase::Unknown);
+            let saved_heartbeat = s.heartbeat_unix;
+            let (_, saved) = f.read_control("").await.unwrap().unwrap();
+            let mut s: State =
+                serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+            tick(&mut f, &mut s, &mut e, 180).await.unwrap();
+            assert_eq!(f.deletes, 1);
+            assert_eq!(s.heartbeat_unix, saved_heartbeat);
+            assert_eq!(s.status()["requiresAttention"], true);
+            assert_eq!(s.status()["controllerStopped"], false);
+            assert_eq!(s.status()["workloadAndControllerComplete"], false);
+            assert_eq!(s.status()["controllerStop"]["phase"], "unknown");
+        }
+    }
+    #[tokio::test]
+    async fn lost_stop_reply_after_effect_is_confirmed_absent_on_read_without_replay() {
+        let mut s = completed();
+        let mut f = Fixture::new(&s, true);
+        f.behavior = Delete::LostAfter;
+        let mut e = f.etag();
+        assert!(heartbeat(&mut f, &mut s, &mut e, 170).await.is_err());
+        let mut restarted = f.stored.clone().unwrap();
+        tick(&mut f, &mut restarted, &mut e, 180).await.unwrap();
+        assert_eq!(f.deletes, 1);
+        assert_eq!(
+            restarted.job_stop.as_ref().unwrap().phase,
+            StopPhase::Absent
+        );
+        assert_eq!(restarted.status()["controllerStopped"], true);
+        assert_eq!(restarted.status()["requiresAttention"], false);
+    }
+    #[tokio::test]
+    async fn accepted_stop_is_pending_until_absence_and_persisted_intent_never_replays() {
+        let mut s = completed();
+        let mut f = Fixture::new(&s, true);
+        f.behavior = Delete::AcceptedPending;
+        let mut e = f.etag();
+        heartbeat(&mut f, &mut s, &mut e, 170).await.unwrap();
+        assert_eq!(s.job_stop.as_ref().unwrap().phase, StopPhase::Accepted);
+        assert_eq!(s.status()["workloadAndControllerComplete"], false);
+        assert!(s.job_stop.as_ref().unwrap().operation_url.is_some());
+        tick(&mut f, &mut s, &mut e, 180).await.unwrap();
+        assert_eq!(f.deletes, 1);
+        f.job = None;
+        reconcile_stop(&mut f, &mut s, &mut e).await.unwrap();
+        assert_eq!(s.job_stop.as_ref().unwrap().phase, StopPhase::Absent);
+        assert_eq!(s.status()["workloadAndControllerComplete"], true);
+        let mut s = completed();
+        s.job_stop = Some(Stop {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            phase: StopPhase::Intent,
+            operation_url: None,
+        });
+        let mut f = Fixture::new(&s, true);
+        let mut e = f.etag();
+        tick(&mut f, &mut s, &mut e, 180).await.unwrap();
+        assert_eq!(f.deletes, 0);
+        assert_eq!(s.job_stop.as_ref().unwrap().phase, StopPhase::Unknown);
+        assert_eq!(s.status()["requiresAttention"], true);
+    }
 }
