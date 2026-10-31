@@ -98,6 +98,14 @@ const docker = async (...args) =>
   (
     await exec("docker", args, { timeout: 120000, maxBuffer: 4194304 })
   ).stdout.trim();
+async function inspectOptional(name) {
+  try {
+    return JSON.parse(await docker("inspect", name))[0];
+  } catch (e) {
+    if (/No such (object|container):/.test(e.stderr ?? "")) return null;
+    throw e; // Daemon failure is not proof of resource deletion.
+  }
+}
 try {
   if (level === "fast") {
     await cargo("runtime-unit", ["-p", "openworker-runtime", "--lib"]);
@@ -141,8 +149,7 @@ try {
       "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685";
     await docker("image", "inspect", image);
     await writeFile(secret, password, { mode: 0o600, flag: "wx" });
-    let intended = false,
-      linuxName = null;
+    let intended = false;
     try {
       await writeFile(
         join(root, "postgres-intent.json"),
@@ -253,7 +260,10 @@ try {
         ],
         vars,
       );
-      if (process.platform === "linux") {
+      if (
+        process.platform === "linux" &&
+        !process.env.OW_RESILIENCE_LINUX_IMAGE
+      ) {
         await cargo(
           "postgres-worker-faults",
           [
@@ -281,62 +291,30 @@ try {
           "macOS requires current-source OW_RESILIENCE_LINUX_IMAGE; Linux faults may not silently skip",
         );
         await docker("image", "inspect", linux);
-        await writeFile(
-          envFile,
-          `OW_PG_TEST_URL=postgresql://openworker:${password}@127.0.0.1:5432/execution\n`,
-          { mode: 0o600, flag: "wx" },
-        );
-        linuxName = "ow-resilience-worker-" + id;
         await check(
           "postgres-linux-worker-faults",
-          "docker",
-          [
-            "run",
-            "--pull=never",
-            "--rm",
-            "--name",
-            linuxName,
-            "--label",
-            `${label}=${id}`,
-            "--network",
-            `container:${name}`,
-            "--memory",
-            "2g",
-            "--env-file",
-            envFile,
-            "--entrypoint",
-            "/out/worker-recovery",
-            linux,
-            "--ignored",
-            "--test-threads=1",
-            "--skip",
-            "mixed_versions_keep_native_identity_pinned_and_old_pool_can_resume",
-            "--skip",
-            "bounded_load_matrix",
-          ],
+          "node",
+          ["deploy/resilience/postgres-workers.mjs", root, linux, image],
           {},
-          900000,
+          1800000,
         );
+        const isolated = JSON.parse(
+          await readFile(join(root, "worker-cases/report.json")),
+        );
+        assert(
+          isolated.passed &&
+            isolated.cleanup.allOwnedContainersRemoved &&
+            isolated.cleanup.allGeneratedSecretsRemoved,
+        );
+        report.cleanup.linuxFixtureRemoved = true;
       }
       await check("docker-process-manager", "node", [
         "deploy/reference/qualify-process-continuity.mjs",
         runner,
       ]);
     } finally {
-      if (linuxName) {
-        const t = await docker("inspect", linuxName)
-          .then((s) => JSON.parse(s)[0])
-          .catch(() => null);
-        if (t) {
-          assert.equal(t.Config.Labels[label], id);
-          await docker("rm", "-f", t.Id);
-        }
-        report.cleanup.linuxFixtureRemoved = true;
-      }
       if (intended) {
-        const v = await docker("inspect", name)
-          .then((s) => JSON.parse(s)[0])
-          .catch(() => null);
+        const v = await inspectOptional(name);
         if (v) {
           assert.equal(v.Config.Labels[label], id);
           await docker("rm", "-f", v.Id);

@@ -193,3 +193,32 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   its configured 90-second termination grace just after the local helper's equal
   deadline; read-only reconciliation found it gone. Allow a bounded 30-second
   margin (120 seconds total), then finish normal owned-namespace cleanup.
+
+### Database fault-fixture isolation
+
+- A second full database run passes state/recording and the first eleven worker
+  cases, then hits a graceful-stop deadline and later migration/RPC timeouts. It
+  remains a failed attempt, despite the preceding complete pass. Product process
+  cleanup is independently qualified in the fresh OpenShell fixture.
+- Docker worker qualification now runs each exact Rust case in a fresh PostgreSQL
+  container and Linux process tree, with bounded memory/temp storage. A case cannot
+  leave signal/runtime state, connection actors or schema/catalog/WAL accumulation
+  for the next case. Per-case PostgreSQL logs/state are captured before cleanup.
+  This also makes subsequent timing failures diagnosable. All 15 expected cases
+  must run, including the new streaming death case; no failure is retried.
+- Cleanup verifies exact ownership labels and confirmed absence. A Docker daemon
+  error is not treated as deletion. Cancellation stops admission and cleans the
+  current original fixture. Final full isolated run is still pending.
+
+### Collector observation bound
+
+- Fresh OpenShell run passes all six action/fault groups, including the corrected
+  real descendant expiry, sibling survival, stop, cancellation and budget refusal.
+  Export comparison then times out. Read-only inspection of the original run finds
+  all twelve recorded spans present in the actual collector with matching IDs.
+- The test had reused an installer command helper that caps stdout at 2 MB; the
+  collector file grew beyond that and its JSON was truncated during observation.
+  Read the bounded 32 MiB collector volume through an explicit 40 MiB capture, and
+  save the recorded timeline before comparison. This changes the test observer,
+  not the exporter. Preserve the failed attempt and clean only its original
+  resources; prepare a new fixture rather than replay its workload.

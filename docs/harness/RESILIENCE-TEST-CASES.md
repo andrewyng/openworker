@@ -152,11 +152,15 @@ Source: `service-ui/test/observability.test.mjs`, `deploy/resilience/contract.te
 
 From the repository root, with dependencies already fetched:
 
+The Linux signal-denial regression needs procfs and seccomp support. It installs
+the restrictive test filter only inside a disposable test child, leaving the
+test runner and embedding application unchanged.
+
 ```sh
 node deploy/resilience/run.mjs fast .ow-service-resilience-fast
 ```
 
-PostgreSQL worker-death cases require native Linux. On macOS, build the current
+PostgreSQL worker-death cases require native Linux. For the isolated Docker worker runner (required on macOS), build the current
 source's opt-in Linux qualification image (no production or registry deployment):
 
 ```sh
@@ -180,6 +184,11 @@ export OW_PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright
 node deploy/resilience/run.mjs cluster .ow-service-resilience-results \
   .ow-service-resilience-cluster/service EXACT_SERVICE_ID
 ```
+
+Docker worker cases each receive a fresh PostgreSQL instance and Linux process
+tree. Their individual database logs, outcomes and cleanup evidence are retained;
+one failed scenario cannot contaminate the next scenario. No failed action is
+automatically retried.
 
 Every invocation needs a **new output directory**. Destructive cluster qualification
 also requires a fresh prepared service namespace; a durable marker rejects reruns

@@ -1,7 +1,8 @@
 // Real local Kubernetes + OpenShell, deterministic model, production service SDK.
 // No tool requests are retried after uncertain delivery. Originals are inspected.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
@@ -389,15 +390,28 @@ async function recording(s, run, required) {
   );
 }
 async function collectWire() {
-  const raw = await kube([
-    "exec",
-    "deployment/resilience-collector",
-    "-c",
-    "reader",
-    "--",
-    "cat",
-    "/out/traces.jsonl",
-  ]);
+  // The shared installer helper intentionally caps stdout at 2 MB. Collector
+  // output can exceed that during fault/recovery queries, so read the actual
+  // bounded 32 MiB volume explicitly instead of silently parsing a prefix.
+  const { stdout: raw } = await promisify(execFile)(
+    "kubectl",
+    [
+      "--kubeconfig",
+      m.kubeconfig,
+      "--context",
+      m.context,
+      "-n",
+      m.namespace,
+      "exec",
+      "deployment/resilience-collector",
+      "-c",
+      "reader",
+      "--",
+      "cat",
+      "/out/traces.jsonl",
+    ],
+    { timeout: 30000, maxBuffer: 40 * 1024 * 1024 },
+  );
   return collectorRecords(
     raw.trim().split("\n").filter(Boolean).map(JSON.parse),
   );
@@ -769,6 +783,7 @@ try {
     await h.json("GET", base + "/summary?through=" + recorded.page.through)
   ).summary;
   const rows = recorded.page.steps.map((x) => x.step);
+  await save("recording-before-export", { summary, timeline: recorded });
   assert.equal(
     summary.models.reduce((n, g) => n + g.calls, 0),
     rows.filter((r) => r.operation === "model.attempt").length,
