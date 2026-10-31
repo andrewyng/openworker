@@ -11,13 +11,28 @@ Source paths starting with `runtime/`, `store-postgres/`, `telemetry/`,
 The progress ledger records the latest qualification and its limitations:
 [RESILIENCE-SUITE-LEDGER.md](RESILIENCE-SUITE-LEDGER.md).
 
+## Latest local qualification
+
+All three levels passed on October 30, 2026.
+
+| Level | Verified result |
+| --- | --- |
+| Fast | 131 Rust tests and nine JavaScript tests. Additional Linux rerun: 77 unit and 18 core cases. |
+| PostgreSQL | 34 Rust tests, including all 15 worker-fault cases in fresh database/process fixtures; Docker process-manager checks also pass. |
+| Kubernetes / OpenShell | Nine scenario groups, actual OTLP correlation, distinct Usage/Timeline browser checks, and original environment plus owned-namespace cleanup. |
+
+[Exact executed test names](RESILIENCE-TEST-INVENTORY.md) ·
+[Sanitized evidence](evidence/resilience-local-20261030.json).
+Earlier failed attempts and the fixes they exposed remain documented in the ledger;
+they are not relabelled as passes. No paid model or cloud provisioning was used.
+
 ## Test levels
 
 | Level | Prerequisites | What it establishes |
 | --- | --- | --- |
 | Fast | Rust, Node, cached dependencies; loopback sockets | Runtime/storage contracts, model-stream accounting, telemetry/export and UI presentation logic, without Kubernetes. Linux also runs native process-group tests. |
 | PostgreSQL | Docker, pinned PostgreSQL image; Linux test image on macOS | Actual durable state, leases, API authorization, independent recording database and worker replacement, without Kubernetes or OpenShell. |
-| Cluster | Owned local Kubernetes service, OpenShell, fault-fixture image, Playwright | Actual shared execution, Kubernetes worker deaths, cross-node API controls, process lifetime, environment cleanup and management UI/OTLP correlation. |
+| Cluster | Owned local Kubernetes service, OpenShell, fault-fixture image, Playwright | Actual shared execution, Kubernetes worker deaths, cross-API controls, process lifetime, environment cleanup and management UI/OTLP correlation. |
 
 Tests that lack prerequisites must fail or be explicitly reported as unavailable;
 a skipped fixture is not a resilience pass. These checks are not a throughput

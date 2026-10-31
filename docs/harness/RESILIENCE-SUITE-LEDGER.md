@@ -236,3 +236,28 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   screenshot was incorrectly labelled Usage. The test now explicitly clicks Usage,
   waits for its distinct Accumulated work section and asserts each tab's selected
   state. Rerun this stricter browser check in a fresh complete cluster fixture.
+
+### Completed local qualification
+
+- Final fast entry passes **131 Rust and nine JavaScript tests**. Linux adds the
+  separately executed **77 runtime unit and 18 core tests**, including the seccomp
+  denial/subreaper regression. Native and Linux strict Clippy and rustfmt pass.
+- Final PostgreSQL entry passes **34 Rust tests**, with all **15 production-worker
+  fault cases** passing in fresh database/process fixtures. Each case retains
+  database diagnostics and confirms owned-container/credential cleanup. The
+  network-disabled Docker process-manager qualification also passes.
+- Final Kubernetes/OpenShell entry passes **nine scenario groups**, matching
+  recorder summaries/timelines to actual OTLP spans, with no token/prompt/argument
+  leak. Browser explicitly opens Usage and Timeline; both screenshots were
+  visually inspected. Original sandbox/supervisor and owned service namespace/PVC
+  are removed; pre-existing sandbox identities are retained.
+- Added the grouped reviewer guide, exact executed-name inventory and sanitized
+  machine-readable evidence. Private failed receipts/logs remain unchanged. No
+  cloud resources, IAM changes or paid model calls were made. The dedicated Linux
+  build VM is stopped. Physical-node/disk/AZ faults remain outside this suite.
+- Next: commit the documentation/evidence, merge the verified feature into
+  `openworker-harness-sdk` and push the public feature branch.
+
+- Final read-only resource audit confirms zero resilience-labelled Docker
+  containers, zero resilience service namespaces, and the dedicated Linux VM
+  stopped. Existing Kubernetes/OpenShell/Langfuse development services remain.
