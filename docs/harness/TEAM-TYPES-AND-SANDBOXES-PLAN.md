@@ -381,3 +381,15 @@ Sources: `team_workspace.rs`, `agent_team_storage.rs`, shared
 | Identity | Choice is part of immutable retries; default and override are saved/resolved and survive restart. | Reconnecting or reusing an instance cannot silently change its model. |
 | Failure | Provider removed before admission closes only that reservation; no session/task/fallback is created. | Missing configuration cannot run a different model or stop unrelated host work. |
 | Runtime/SDK parity | Four Rust process/store modes and both TypeScript databases, real tools, separate reviewer state. | Language and storage choices reuse the same enforcement and execution path. |
+
+## Parallel Azure integration — offline gate
+
+- Integrated the separately authorized Azure branch with the current canonical
+  workspace/lifecycle/model milestones without conflicts. The isolated combined
+  branch passed 153 local checks; final parent integration reran 33 targeted checks
+  and strict runtime/store/SDK/server Clippy. The model slice's 96-check gate was
+  independently completed before integration. No live cloud claim is made.
+- [Review and exact scope](OWS-AZURE-MERGE-REVIEW.md), including durable unknown
+  self-stop receipts and identity pinned before first cleanup heartbeat, and
+  [sanitized evidence](evidence/azure-combined-20261031.json). Azure remains
+  explicitly experimental until a separately authorized live trial.

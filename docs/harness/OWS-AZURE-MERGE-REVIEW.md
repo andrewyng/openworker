@@ -134,3 +134,22 @@ node --test deploy/service/chart.test.mjs
 
 Rerun the parent's canonical SDK/team matrix after combining the source revisions;
 this feature-branch review does not substitute for that qualification.
+
+## Combined integration qualification — October 31
+
+The isolated combined branch `daa41756` merged canonical `fd19e1bb` without
+conflicts and passed 153 offline/local fixture checks: CLI/shared deployment 118,
+artifacts 11, server configuration one, SQLite SDK teams/types/workspaces 14, and
+chart nine. Nine PostgreSQL-only entries and two artifact entrypoints were
+explicitly ignored. CLI Clippy retains six existing warnings; the artifact library
+passes strict Clippy. Its task-owned target was removed after qualification.
+
+Parent integration `1893ec76` adds the independently qualified child-model milestone
+(`dea8d3dd`, 96 targeted checks) without conflicts. On this final combined tree,
+the parent reran 33 Azure/artifact/server/chart checks successfully and strict
+all-target Clippy for runtime, PostgreSQL store, SDK and server with test support.
+The 153-check matrix was run on `daa41756`, not claimed as repeated on `1893ec76`.
+Sanitized evidence: [combined results](evidence/azure-combined-20261031.json).
+
+No cloud API, IAM change, live Azure installation, paid model call or Kubernetes
+mutation was performed by this integration. All live-trial limitations above apply.

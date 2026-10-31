@@ -1,0 +1,188 @@
+{
+  "commit": "daa417565036bbca6e927563c5df41ba755533fc",
+  "tree": "71cc7857171448942d5944922790a59a864e8c0c",
+  "steps": [
+    {
+      "name": "cli",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-cli.log",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-service-cli",
+        "--bin",
+        "ows",
+        "--test",
+        "azure",
+        "--test",
+        "deployment",
+        "--test",
+        "gcp",
+        "--test",
+        "local_installer"
+      ]
+    },
+    {
+      "name": "artifacts",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-artifacts.log",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-artifacts",
+        "--features",
+        "azure,s3"
+      ]
+    },
+    {
+      "name": "server",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-server.log",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-server-reference",
+        "--test",
+        "azure_artifact_config"
+      ]
+    },
+    {
+      "name": "sdk-teams",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-sdk-teams.log",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-sdk",
+        "--features",
+        "test-support",
+        "--test",
+        "team_types",
+        "--test",
+        "team_workspaces",
+        "--test",
+        "agent_team"
+      ]
+    },
+    {
+      "name": "chart",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-chart.log",
+      "command": [
+        "node",
+        "--test",
+        "deploy/service/chart.test.mjs"
+      ]
+    },
+    {
+      "name": "cli-clippy",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-cli-clippy.log",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-service-cli",
+        "--bin",
+        "ows"
+      ]
+    },
+    {
+      "name": "artifact-clippy",
+      "exitCode": 0,
+      "log": "/private/tmp/azure-combined-artifact-clippy.log",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "-p",
+        "openworker-artifacts",
+        "--features",
+        "azure,s3",
+        "--lib",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    }
+  ],
+  "targetPeakObservedBytes": 2199432724,
+  "branch": "feat/azure-service-combined-20261031",
+  "parents": [
+    "2aed2d8202ddaf79ad93c888541061861e1fee71",
+    "fd19e1bbd1e8c63dfa8b2ec42b4c4ce18b6c6c7b"
+  ],
+  "mergeConflicts": 0,
+  "tests": {
+    "cliUnitAndLoopback": 70,
+    "azureCli": 12,
+    "sharedDeployment": 7,
+    "gcpRegression": 17,
+    "sharedInstaller": 12,
+    "artifacts": 11,
+    "serverConfig": 1,
+    "sdkAgentTeams": 9,
+    "sdkNamedTypes": 3,
+    "sdkWorkspaces": 2,
+    "helmChart": 9,
+    "passed": 153,
+    "ignoredPostgresOnly": 9,
+    "ignoredArtifactEntrypoints": 2
+  },
+  "clippy": {
+    "cliCompleted": true,
+    "baselineCliWarnings": 6,
+    "artifactStrictLibraryPassed": true
+  },
+  "cloudCalls": false,
+  "kubernetesTouched": false,
+  "primaryTargetTouched": false,
+  "pushed": false,
+  "canonicalMerged": false,
+  "targetFinalBytes": 2204604256,
+  "targetCapGiB": 6,
+  "taskOwnedTargetRemoved": true,
+  "parentIntegration": {
+    "commit": "1893ec76",
+    "canonicalBase": "dea8d3dd",
+    "mergeConflicts": 0,
+    "cliAzureTests": 12,
+    "serverConfigurationTests": 1,
+    "artifactTests": 11,
+    "chartTests": 9,
+    "strictClippy": [
+      "runtime",
+      "store-postgres",
+      "sdk",
+      "server-reference"
+    ],
+    "liveAzureQualified": false
+  }
+}
