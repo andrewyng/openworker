@@ -158,3 +158,38 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   because Kubernetes Job templates are immutable. Ownership, completed status and
   zero sessions/environments were checked before replacement. The suite does not
   claim this manual fixture update as Helm upgrade qualification.
+
+- Final complete PostgreSQL level passes: **34 Rust tests** (17 state/environment,
+  one recorder outage, one authorized query and all 15 production-worker faults),
+  plus the network-disabled process-manager checks. This includes the exact-effect
+  barrier fix and the database-actor recovery correlation regression. Owned
+  PostgreSQL/worker containers and generated credentials were removed. Failed
+  earlier attempts remain distinct private receipts.
+
+### OpenShell signal-denial defect
+
+- Third cluster fixture passes shared servers, both real worker crashes, one-time
+  unknown-effect recovery with explicit read-back, correct recovery telemetry and
+  cross-API cancellation. It then fails the actual descendant-expiry assertion:
+  a delayed child writes its marker despite a `timed_out` result.
+- New explicit diagnostics in the original environment show group signals return
+  EPERM; individual-child signals work. Stable pidfd acquisition is unavailable.
+  The previous Group drop silently ignored signal failure. Retain the failure;
+  do not rerun the uncertain workload or weaken OpenShell's policy.
+- Dedicated sandbox process managers now establish Linux subreaper ownership.
+  On denied group signalling, the root is killed by its still-reserved child PID,
+  then only kernel-adopted direct children in that original group are killed and
+  reaped. Unreaped children and root reserve the IDs during cleanup. SDK embedding
+  does not change the application-wide adoption setting. Unconfirmed cleanup is
+  returned as `process_outcome_unknown`, not a false stop/expiry success.
+- Added a disposable Linux test process with a real seccomp filter reproducing
+  negative-PID EPERM. It checks expiry and normal-exit descendants, sibling
+  survival, explicit stop, no zombies and honest unknown cleanup for an embedded
+  caller. The first focused regression passes; full rebuild/reruns follow.
+
+- Full Linux rebuild passes **77 runtime unit tests and 18 core cases**, including
+  real seccomp denial, plus strict runtime/PostgreSQL Clippy. The failed cluster's
+  original sessions and environment were closed/deleted normally. Ingress reached
+  its configured 90-second termination grace just after the local helper's equal
+  deadline; read-only reconciliation found it gone. Allow a bounded 30-second
+  margin (120 seconds total), then finish normal owned-namespace cleanup.

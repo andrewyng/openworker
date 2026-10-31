@@ -2,7 +2,7 @@
 // an unavailable Kubernetes API is not proof that the pods disappeared.
 export async function waitForEmptyPods(
   list,
-  { timeoutMs = 90000, intervalMs = 250 } = {},
+  { timeoutMs = 120000, intervalMs = 250 } = {},
 ) {
   const until = Date.now() + timeoutMs;
   while (true) {

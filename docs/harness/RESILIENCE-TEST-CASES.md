@@ -93,6 +93,8 @@ resources.
 | Cross-API cancellation | PostgreSQL, cluster | Control issued from another API reaches the owning worker; turn becomes cancelled/interrupted as documented and does not resume autonomously. |
 | Cancellation preserves managed server | Cluster | Environment-owned servers keep serving after an unrelated streaming turn is cancelled. |
 | Deadline without polling | Fast on Linux, cluster | Short-lived process expires independently of status reads; a delayed descendant cannot write its marker. |
+| Sandbox denies group signals | Fast on Linux, cluster | A real seccomp regression denies negative-PID signals. The dedicated manager adopts and reaps only its owned descendants; expiry, normal exit and explicit stop work without killing a sibling. No zombie children remain. |
+| Cleanup cannot be confirmed | Fast on Linux | An embedded caller does not change the application's child-adoption setting. Denied group cleanup returns an explicit unknown outcome, rather than claiming a successful stop. |
 | Explicit shutdown | Fast on Linux | Process group stops, delayed child is killed and bounded log snapshot remains readable. |
 | Recovery with no in-memory client | PostgreSQL, cluster | Shutdown retires old-epoch attachment bookkeeping as unknown, allowing normal close/delete without claiming a remote process stopped. |
 | Original environment deletion | Cluster | Closing sessions and deleting their original environment removes the original sandbox pod and its remaining server. |
@@ -101,6 +103,11 @@ resources.
 
 Source: `runtime/src/coding/processes.rs`, `store-postgres/tests/worker_recovery.rs`,
 `deploy/resilience/run.mjs`, `deploy/resilience/cluster.mjs`.
+
+The process-manager adoption setting is confined to its dedicated sandbox process.
+It does not relax OpenShell permissions or change the embedding application's
+process-wide settings. These are cooperative process-group lifetime checks; the
+OpenShell environment remains the isolation boundary for untrusted code.
 
 ## 5. Recording, summaries and export
 
