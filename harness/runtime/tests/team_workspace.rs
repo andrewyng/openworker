@@ -187,4 +187,181 @@ fn workspace_stdio_is_a_bounded_internal_request_channel() {
     receipt.verify().unwrap();
     assert_eq!(receipt.request, req);
     assert_eq!(receipt.path, root.join("child"));
+    let mut verifier = Command::new(env!("CARGO_BIN_EXE_openworker"))
+        .args(["workspace-stdio", "--root"])
+        .arg(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut input = verifier.stdin.take().unwrap();
+        writeln!(
+            input,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})
+        )
+        .unwrap();
+        writeln!(
+            input,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"workspace/verify","params":receipt})
+        )
+        .unwrap();
+    }
+    let output = verifier.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let responses = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        responses[0]["result"]["serverInfo"]["name"],
+        "openworker-workspaces"
+    );
+    assert_eq!(
+        responses[1]["result"],
+        serde_json::to_value(receipt).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn registered_worktrees_keep_file_scope_but_allow_only_original_git_metadata() {
+    use openworker_runtime::coding::CodingTools;
+    use serde_json::json;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let repo = root.join("source");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet"]);
+    std::fs::write(repo.join("proof.txt"), "original").unwrap();
+    git(&repo, &["add", "proof.txt"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=f@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+    );
+    let mut receipts = vec![];
+    for id in ["ui", "api"] {
+        let mut req = request(Selection::Worktree {
+            path: format!("workers/{id}"),
+            repository: "source".into(),
+            branch: id.into(),
+            base: "HEAD".into(),
+        });
+        req.operation_id = format!("ws_{id}");
+        receipts.push(prepare(&root, req, false).await.unwrap());
+    }
+    let r = &receipts[0];
+    let mut unregistered = CodingTools::default();
+    assert!(unregistered
+        .call(&r.path, "git_status", &json!({}))
+        .await
+        .is_err());
+    let mut tools = CodingTools::with_workspace(r.clone()).unwrap();
+    assert!(tools
+        .call(&r.path, "git_log", &json!({}))
+        .await
+        .unwrap()
+        .to_string()
+        .contains("base"));
+    tools
+        .call(
+            &r.path,
+            "write_file",
+            &json!({"path":"proof.txt","content":"ui only"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(receipts[1].path.join("proof.txt")).unwrap(),
+        "original"
+    );
+    for path in ["../api/proof.txt", "../../source/proof.txt"] {
+        assert!(tools
+            .call(
+                &r.path,
+                "write_file",
+                &json!({"path":path,"content":"escape"})
+            )
+            .await
+            .is_err());
+    }
+    std::os::unix::fs::symlink(&receipts[1].path, r.path.join("sibling")).unwrap();
+    assert!(tools
+        .call(&r.path, "read_file", &json!({"path":"sibling/proof.txt"}))
+        .await
+        .is_err());
+    #[cfg(target_os = "linux")]
+    {
+        let cwd = tools
+            .call(&r.path, "run_shell", &json!({"command":"pwd"}))
+            .await
+            .unwrap();
+        assert!(cwd.to_string().contains(r.path.to_str().unwrap()), "{cwd}");
+    }
+    // Acknowledged worktrees may advance, but their branch and metadata cannot
+    // be replaced with another child's pointer, even inside the shared project.
+    git(&r.path, &["add", "proof.txt"]);
+    git(
+        &r.path,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=f@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "ui change",
+        ],
+    );
+    r.verify().unwrap();
+    assert!(tools.call(&r.path, "git_status", &json!({})).await.is_ok());
+    std::fs::copy(receipts[1].path.join(".git"), r.path.join(".git")).unwrap();
+    assert!(r.verify().is_err());
+    assert!(tools
+        .call(&r.path, "read_file", &json!({"path":"proof.txt"}))
+        .await
+        .is_err());
+    tools.shutdown().await;
+}
+
+#[tokio::test]
+async fn git_inspection_refuses_external_metadata_before_loading_config() {
+    use openworker_runtime::coding::CodingTools;
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    git(outside.path(), &["init", "--quiet"]);
+    std::fs::write(
+        tmp.path().join(".git"),
+        format!(
+            "gitdir: {}\n",
+            outside
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join(".git")
+                .display()
+        ),
+    )
+    .unwrap();
+    let error = CodingTools::default()
+        .call(
+            &tmp.path().canonicalize().unwrap(),
+            "git_status",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("metadata outside"), "{error}");
 }
