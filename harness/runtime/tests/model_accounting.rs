@@ -313,7 +313,7 @@ async fn cancellation_keeps_partial_usage_and_interrupted_outcome() {
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut raw = [0; 8192];
-        socket.read(&mut raw).await.unwrap();
+        assert!(socket.read(&mut raw).await.unwrap() > 0);
         let start = sse(vec![
             json!({"type":"message_start","message":{"role":"assistant","content":[],"usage":{"input_tokens":35,"output_tokens":0}}}),
         ]);

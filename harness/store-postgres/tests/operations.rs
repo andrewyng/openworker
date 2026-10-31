@@ -32,6 +32,7 @@ fn operational_counts_are_current_content_free_and_host_only() {
         store.save(&s, "session_created", json!({})).unwrap();
         store
             .submit_turn(TurnSubmission {
+                limits: None,
                 session_id: id.into(),
                 submission_id: "one".into(),
                 text: "SECRET".into(),
@@ -53,6 +54,7 @@ fn operational_counts_are_current_content_free_and_host_only() {
     }
     store
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: "s_waiting".into(),
             submission_id: "two".into(),
             text: "SECRET".into(),

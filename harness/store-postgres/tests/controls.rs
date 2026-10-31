@@ -122,6 +122,7 @@ fn late_control_defers_turn_admission_without_consuming_or_replacing_it() {
         .unwrap();
     let receipt = api
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: "s_ctl".into(),
             submission_id: "next".into(),
             text: "Next".into(),
@@ -287,6 +288,7 @@ fn cancellation_overtakes_response_and_fences_new_tool_intents() {
     let (c, mut owner, response) = fixture();
     let api = PostgresStore::open(c).unwrap();
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: "s_ctl".into(),
         submission_id: "next".into(),
         text: "Next".into(),

@@ -320,6 +320,7 @@ impl Drop for WorkerMetrics {
         }
     }
 }
+#[allow(clippy::too_many_arguments)] // Explicit worker ownership, limits and cancellation handles.
 async fn slot(
     config: Config,
     selector: Selector,

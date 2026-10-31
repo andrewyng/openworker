@@ -659,6 +659,16 @@ impl StateStore for PostgresStore {
         let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
         self.call(move |d| d.accept(&sid, &key, &text))
     }
+    fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
+        self.call(move |d| d.accept_with_limits(&sid, &key, &text, limits))
+    }
     fn cursor(&self, sid: &str) -> Result<i64> {
         let sid = sid.to_owned();
         self.call(move |d| d.cursor(&sid))

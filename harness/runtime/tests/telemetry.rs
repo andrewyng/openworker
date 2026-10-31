@@ -35,10 +35,7 @@ async fn wait(rt: &Arc<Runtime>, sid: &str, state: &str) -> Value {
             if v["turn"]["status"] == state && !rt.is_busy(sid) {
                 return v;
             }
-            assert!(
-                !(v["turn"]["status"] == "failed" && !rt.is_busy(sid)),
-                "{v}"
-            );
+            assert!(v["turn"]["status"] != "failed" || rt.is_busy(sid), "{v}");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })

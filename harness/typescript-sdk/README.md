@@ -401,3 +401,11 @@ database to include that adapter; the fixture creates fresh schemas and migrates
 them explicitly. No provider secrets needed. The unit suite runs process faults
 on macOS/Linux. Platform-native Windows and live-model qualification remain
 separate; cross-platform Node APIs alone are not evidence of Windows acceptance.
+
+### Turn limits
+
+Agent definitions accept `limits: { maxModelCalls, maxOutputTokens, summaryTokens? }`.
+A new message can override them with `session.send(text, { limits })`; the service
+SDK accepts the same limits plus its usual `idempotencyKey`. Resuming keeps the
+original budget. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
+for counting rules, the final-summary reserve and sandbox-owned process tools.

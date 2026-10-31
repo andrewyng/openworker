@@ -155,7 +155,8 @@ fn sqlite_contract_restart_and_retention_isolation() {
 #[test]
 fn validation_rejects_content_overflow_inconsistent_usage_and_unknown_fields() {
     sample(1).validate().unwrap();
-    let invalid: Vec<Box<dyn Fn(&mut Step)>> = vec![
+    type InvalidStep = Box<dyn Fn(&mut Step)>;
+    let invalid: Vec<InvalidStep> = vec![
         Box::new(|s| s.version = 3),
         Box::new(|s| s.ended_ms = 999),
         Box::new(|s| s.span_id = "not-hex".into()),

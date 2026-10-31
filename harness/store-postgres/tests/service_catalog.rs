@@ -277,6 +277,14 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
     let (c, store, a, u) = setup();
     let (r, p) = catalog(&a);
     let mut input = admission();
+    input.limits = Some(openworker_runtime::budget::Limits {
+        max_model_calls: 1,
+        max_output_tokens: 2048,
+        summary_tokens: 512,
+    });
+    assert!(u
+        .service_admit("empty-limits", input.clone(), r.clone(), p.clone(), spec())
+        .is_err());
     input.initial_message = Some("first task".into());
     let o = u
         .service_admit("combined", input.clone(), r.clone(), p.clone(), spec())
@@ -339,9 +347,16 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
     let mut owner = PostgresStore::open(c.clone()).unwrap();
     owner.claim(&o.session_id).unwrap();
     let next = owner.next_turn(&o.session_id).unwrap().unwrap();
+    assert_eq!(next.limits, input.limits);
     let (mut state, _, _) = owner
-        .accept(&o.session_id, &next.submission_id, &next.text)
+        .accept_with_limits(&o.session_id, &next.submission_id, &next.text, next.limits)
         .unwrap();
+    assert_eq!(
+        state.turn.as_ref().unwrap().budget.limits,
+        input.limits.clone().unwrap()
+    );
+    // A submission override belongs to this turn, never the session's package.
+    assert!(state.package.limits.is_none());
     assert_eq!(state.turn.as_ref().unwrap().id, o.run_id.clone().unwrap());
     state.turn.as_mut().unwrap().status = "completed".into();
     owner

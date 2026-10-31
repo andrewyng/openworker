@@ -60,6 +60,7 @@ pub(crate) fn manifest(agent: &Agent, role: Option<Role>) -> Result<String> {
         scheduling: agent.scheduling,
         team_role: role,
         default_model: agent.model.clone(),
+        limits: agent.limits.clone(),
     };
     // JSON is a YAML subset, so the engine's frontmatter parser accepts it and
     // no prompt text can be misread as manifest keys.

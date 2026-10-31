@@ -60,6 +60,7 @@ pub use session::{
 pub use team::{ItemSpec, ItemStatus, Team};
 
 use crate::{Error, Result};
+pub use openworker_runtime::budget::Limits as TurnLimits;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::PathBuf};
 
@@ -120,6 +121,8 @@ pub struct Agent {
     #[serde(default)]
     pub(crate) description: String,
     pub(crate) instructions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) limits: Option<TurnLimits>,
     #[serde(default)]
     pub(crate) tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -162,6 +165,7 @@ impl Agent {
             name: None,
             description: String::new(),
             instructions: String::new(),
+            limits: None,
             tools: vec![],
             model: None,
             provider: ProviderKind::Openai,
@@ -177,6 +181,10 @@ impl Agent {
             tool_policy: None,
             runtime_policy: None,
         }
+    }
+    pub fn limits(mut self, limits: TurnLimits) -> Self {
+        self.limits = Some(limits);
+        self
     }
     pub fn id(&self) -> &str {
         &self.id

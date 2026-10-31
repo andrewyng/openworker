@@ -14,7 +14,7 @@ mod driver;
 pub mod host;
 mod providers;
 pub use agents::{Agent, AgentHandle, Harness, HarnessBuilder};
-pub use agents::{Run, Session, SessionInput};
+pub use agents::{Run, Session, SessionInput, TurnLimits};
 pub use desktop::{DesktopOptions, SessionOptions};
 mod transport;
 pub use host::{CoworkerConfig, HostConfig, HostProcessConfig, Storage};

@@ -23,6 +23,9 @@ use tokio_util::sync::CancellationToken;
 #[path = "runtime_accounting.rs"]
 mod accounting;
 #[cfg(test)]
+#[path = "runtime_budget_tests.rs"]
+mod budget_tests;
+#[cfg(test)]
 #[path = "runtime_m2_tests.rs"]
 mod m2_tests;
 #[cfg(test)]
@@ -352,30 +355,158 @@ impl Runtime {
         self.publish(e);
         Ok(())
     }
+    fn reject_unexecuted(
+        &self,
+        sid: &str,
+        call: &Value,
+        code: &str,
+        message: &str,
+        validation: bool,
+    ) -> Result<()> {
+        let output = json!({"isError":true,"executed":false,"code":code,"message":message});
+        self.update(sid,"tool_finished",json!({"name":call["name"],"call_id":call["call_id"],"result":output,"executed":false}),|s|{
+            let t=s.turn.as_mut().context("No turn")?;
+            anyhow::ensure!(t.queue.first()==Some(call),"Tool rejection became stale");
+            if validation {t.budget.validation_errors+=1;t.budget.consecutive_validation_errors+=1;if t.budget.consecutive_validation_errors>=5 {t.budget.stop_reason=Some("argument_correction_limit".into());}}
+            t.queue.remove(0);s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));Ok(())
+        })?;
+        if validation {
+            self.telemetry.event(
+                crate::telemetry::Operation::ToolValidationFailed,
+                crate::telemetry::Outcome::Error,
+                Some(sid),
+                call["call_id"].as_str(),
+            );
+            self.progress(
+                sid,
+                "tool_validation_failed",
+                json!({"name":call["name"],"call_id":call["call_id"],"code":code,"executed":false}),
+            )?;
+        }
+        Ok(())
+    }
+    async fn finish_budget(&self, sid: &str, reason: &str, _tools: &[Value]) -> Result<()> {
+        let s = self.store.lock().unwrap().get(sid)?;
+        let turn = s.turn.as_ref().context("No turn")?;
+        for call in &turn.queue {
+            if reason == "argument_correction_limit" {
+                self.reject_unexecuted(sid,call,"tool_argument_limit_exceeded","Repeated invalid tool arguments exhausted the correction allowance. No action executed. Summarize completed and incomplete work.",false)?;
+                continue;
+            }
+            self.reject_unexecuted(sid,call,"turn_limit_exceeded","The configured turn token/step limit was reached. No action executed. Give a short summary of completed and incomplete work; do not call more tools.",false)?;
+        }
+        let stopped=self.update(sid,"turn_budget_exceeded",json!({"reason":reason,"limits":turn.budget.limits,"model_calls":turn.budget.model_calls,"charged_output_tokens":turn.budget.charged_output_tokens}),|s|{s.turn.as_mut().unwrap().budget.stop_reason=Some(reason.into());
+            let turn=s.turn.as_ref().unwrap().id.clone();
+            for interaction in &mut s.interactions {if interaction.turn_id==turn&&interaction.response.is_none(){interaction.response=Some("deny".into());interaction.origin=Some("turn_budget".into());interaction.resolved_at_ms=Some(crate::store::now_ms());}}
+            Ok(())})?;
+        for i in stopped
+            .interactions
+            .iter()
+            .filter(|i| i.origin.as_deref() == Some("turn_budget") && i.turn_id == turn.id)
+        {
+            self.record_wait(sid, i, Outcome::Cancelled);
+            self.telemetry.event(
+                if i.kind == "approval" {
+                    Op::ApprovalResolved
+                } else {
+                    Op::QuestionResolved
+                },
+                Outcome::Cancelled,
+                Some(sid),
+                Some(&i.id),
+            );
+        }
+        self.telemetry.event(
+            crate::telemetry::Operation::BudgetExceeded,
+            crate::telemetry::Outcome::Denied,
+            Some(sid),
+            Some(&turn.id),
+        );
+        let s = self.store.lock().unwrap().get(sid)?;
+        let mut history = crate::compaction::outbound(&s.history, s.compaction.as_ref());
+        history.push(json!({"role":"user","content":format!("Harness notice: execution stopped ({reason}). Summarize completed and unfinished work briefly. No further tools are available.")}));
+        let completion = Box::pin(self.sample_mode(sid, &history, &[], true)).await;
+        let (output, usage) = match completion {
+            Ok(c) => {
+                let messages = c
+                    .output
+                    .into_iter()
+                    .filter(|v| v["type"] == "message")
+                    .collect::<Vec<_>>();
+                (messages, c.usage)
+            }
+            Err(_) => (Vec::new(), None),
+        };
+        let output = if output.is_empty() {
+            vec![
+                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("Stopped because the configured turn limit was reached ({reason}). Saved workspace changes remain available. The final summary could not be generated; inspect the recorded tool results for completed and incomplete work.")} ]}),
+            ]
+        } else {
+            output
+        };
+        self.update(
+            sid,
+            "assistant_message",
+            json!({"messages":output,"budget_summary":true}),
+            |s| {
+                s.history.extend(output);
+                if usage.is_some() {
+                    s.last_usage = usage;
+                }
+                Ok(())
+            },
+        )?;
+        if self.bounded_lifecycle(sid) {
+            self.cleanup_execution(sid, true).await?;
+        }
+        self.update(
+            sid,
+            "turn_completed",
+            json!({"status":"completed","stop_reason":reason,"limited":true}),
+            |s| {
+                s.turn.as_mut().unwrap().status = "completed".into();
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
     async fn sample(
         &self,
         sid: &str,
         history: &[Value],
         tools: &[Value],
     ) -> Result<crate::provider::Completion> {
+        Box::pin(self.sample_mode(sid, history, tools, false)).await
+    }
+    async fn sample_mode(
+        &self,
+        sid: &str,
+        history: &[Value],
+        tools: &[Value],
+        summary: bool,
+    ) -> Result<crate::provider::Completion> {
         let started = tokio::time::Instant::now();
-        for number in 1..=3 {
+        for number in 1..=if summary { 1 } else { 3 } {
             if started.elapsed().as_secs() >= 240 {
                 return Err(
                     crate::provider::Error::new(crate::provider::Failure::Transport).into(),
                 );
             }
-            self.update(sid, "model_request", json!({"attempt":number}), |s| {
-                if s.provider_blocked {
-                    bail!("Provider safety block requires operator review");
-                }
-                let t = s.turn.as_mut().context("No current turn")?;
-                if t.provider_attempts >= 60 {
-                    bail!("Turn provider-attempt budget exhausted");
-                }
-                t.provider_attempts += 1;
-                Ok(())
-            })?;
+            let mut output_limit = 0;
+            self.update(
+                sid,
+                "model_request",
+                json!({"attempt":number,"budget_summary":summary}),
+                |s| {
+                    if s.provider_blocked {
+                        bail!("Provider safety block requires operator review");
+                    }
+                    let t = s.turn.as_mut().context("No current turn")?;
+                    output_limit = t.budget.reserve(summary)?;
+                    t.provider_attempts += 1;
+                    Ok(())
+                },
+            )?;
             let id = crate::id("attempt");
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
             self.publish(event);
@@ -417,6 +548,15 @@ impl Runtime {
                     s.resource_policy.context()
                 ));
             }
+            if summary
+                && s.turn.as_ref().is_some_and(|t| {
+                    t.budget.stop_reason.as_deref() == Some("argument_correction_limit")
+                })
+            {
+                instructions.push_str("\nTool argument correction limit reached after repeated invalid requests. No tools may execute. Briefly explain the problem, completed work and unfinished work. Do not claim the token budget was exhausted.");
+            } else if summary {
+                instructions.push_str("\nThe configured turn budget is exhausted. No tools may execute. Return a short plain-language response (at most 120 words) telling the user the configured limit was reached, what was actually completed, and what is incomplete. Do not claim failed/unknown tools succeeded. Do not request tools or continue the task.");
+            }
             let request = async {
                 let history = {
                     let mut images = self.images.lock().unwrap();
@@ -432,7 +572,7 @@ impl Runtime {
                 };
                 tokio::time::timeout(
                     std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
-                    model.next(&instructions, &history, tools, tx),
+                    model.next_limited(&instructions, &history, tools, output_limit, tx),
                 )
                 .await
                 .unwrap_or_else(|_| {
@@ -443,6 +583,7 @@ impl Runtime {
             let mut completed = None;
             let mut result = None;
             let mut closed = false;
+            let mut reported_output = None;
             while result.is_none() || !closed {
                 tokio::select! {
                     r=&mut request,if result.is_none()=>{result=Some(r);},
@@ -450,12 +591,31 @@ impl Runtime {
                         Some(Progress::Delta(text))=>{
                             let e=self.store.lock().unwrap().attempt_delta(sid,&id,&text)?;self.publish(e);
                         },
-                        Some(Progress::Usage(_)|Progress::OutputStarted)=>{},
+                        Some(Progress::Usage(u))=>{reported_output=u.output;},
+                        Some(Progress::OutputStarted)=>{},
                         Some(Progress::Complete(r))=>{if completed.is_some(){bail!("Duplicate provider completion");}completed=Some(r);},
                         None=>closed=true
                     }
                 }
             }
+            if let Some(u) = completed
+                .as_ref()
+                .and_then(|c: &crate::provider::Completion| c.usage.as_ref())
+            {
+                reported_output = Some(u.output_tokens);
+            }
+            // Progress usage can be only a lower bound. Never refund a reserved
+            // allowance after an incomplete/failed stream; only completed usage
+            // from a successful response is authoritative for budget settlement.
+            let final_output = if result.as_ref().is_some_and(|r| r.is_ok()) {
+                completed
+                    .as_ref()
+                    .and_then(|c| c.usage.as_ref())
+                    .map(|u| u.output_tokens)
+            } else {
+                None
+            };
+            self.update(sid,"turn_budget_usage",json!({"reserved_output_tokens":output_limit,"reported_output_tokens":reported_output,"summary":summary}),|s|{s.turn.as_mut().context("No turn")?.budget.settle(output_limit,final_output);Ok(())})?;
             match result.unwrap() {
                 Ok(()) => {
                     let response = completed.context("Missing completed provider output")?;
@@ -514,6 +674,32 @@ impl Runtime {
         }
         unreachable!()
     }
+    fn budget_exhausted(&self, sid: &str) -> Result<bool> {
+        let s = self.store.lock().unwrap().metadata(sid)?;
+        Ok(s.turn.as_ref().is_some_and(|t| t.budget.reason().is_some()))
+    }
+    fn reserve_aux(&self, sid: &str, cap: u32) -> Result<u32> {
+        let mut reserved = 0;
+        self.update(
+            sid,
+            "turn_budget_reserved",
+            json!({"purpose":"auxiliary"}),
+            |s| {
+                reserved = s
+                    .turn
+                    .as_mut()
+                    .context("No turn")?
+                    .budget
+                    .reserve_up_to(false, cap)?;
+                Ok(())
+            },
+        )?;
+        Ok(reserved)
+    }
+    fn settle_aux(&self, sid: &str, reserved: u32, usage: Option<u64>) -> Result<()> {
+        self.update(sid,"turn_budget_usage",json!({"reserved_output_tokens":reserved,"reported_output_tokens":usage,"purpose":"auxiliary"}),|s|{s.turn.as_mut().context("No turn")?.budget.settle(reserved,usage);Ok(())})?;
+        Ok(())
+    }
     async fn compact(&self, sid: &str, force: bool) -> Result<CompactResult> {
         use crate::compaction as c;
         let s = self.store.lock().unwrap().get(sid)?;
@@ -558,7 +744,14 @@ impl Runtime {
                 summarizer.name = model.clone();
             }
             for attempt in 1..=2 {
-                let result = summarizer
+                let reserved = match self
+                    .reserve_aux(sid, cfg.summary_max_tokens.min(u32::MAX as usize) as u32)
+                {
+                    Ok(n) => n,
+                    Err(_) if self.budget_exhausted(sid)? => return Ok(CompactResult::Skipped),
+                    Err(e) => return Err(e),
+                };
+                let measured = summarizer
                     .clone()
                     .accounted(crate::model::CallContext {
                         telemetry: self.telemetry.clone(),
@@ -568,12 +761,14 @@ impl Runtime {
                         purpose: crate::telemetry::ModelPurpose::Compaction,
                         attempt,
                     })
-                    .summarize(
+                    .summarize_with_usage(
                         c::REFERENCE["prompts"]["system"].as_str().unwrap(),
                         &candidate.prompt,
-                        cfg.summary_max_tokens,
+                        reserved as usize,
                     )
                     .await;
+                self.settle_aux(sid, reserved, measured.as_ref().ok().and_then(|r| r.1))?;
+                let result = measured.map(|r| r.0);
                 match result {
                     Ok(text) if c::quality(&text) && text.len() <= 128_000 => {
                         summary = Some(text);
@@ -612,6 +807,10 @@ impl Runtime {
             if let Some(summary) = summary {
                 candidate.state.summary = summary;
                 candidate.state.model = summarizer.name.clone();
+            } else if self.budget_exhausted(sid)? {
+                // Exhaustion takes precedence over asking for another compaction
+                // attempt. The drive loop will produce the bounded final summary.
+                return Ok(CompactResult::Skipped);
             } else if !cfg.auto_trim_on_failure {
                 let i = Interaction {
                     requested_at_ms: Some(crate::store::now_ms()),
@@ -874,7 +1073,10 @@ impl Runtime {
             p["session_id"].as_str(),
             p["submission_id"].as_str(),
         );
-        let result = crate::telemetry::scope(span.context(), self.dispatch_inner(method, p)).await;
+        // Keep nested model/policy futures off the caller's small Tokio stack.
+        // This boundary is also used by in-process desktop SDK applications.
+        let result =
+            crate::telemetry::scope(span.context(), Box::pin(self.dispatch_inner(method, p))).await;
         span.finish(if result.is_ok() {
             Outcome::Ok
         } else {
@@ -942,7 +1144,7 @@ impl Runtime {
                 if p["protocol_version"] != crate::PROTOCOL_VERSION {
                     bail!("Unsupported protocol version");
                 }
-                let mut info = json!({"protocol_version":crate::PROTOCOL_VERSION,"implementation":"native-rust","model":self.model.name,"mode":if self.model.scripted{"scripted-test"}else{"live"},"execution":{"sandbox":self.backend,"enforcement":self.backend.enforcement(),"network":self.backend.network()},"capabilities":{"push":true,"event_replay":true,"history_read":true,"compaction":true,"provider_retries":true,"attempt_snapshots":true,"durable_interactions":true,"sandbox_backends":["openshell","off"],"machine_join":false,"approval_modes":["ask","auto-approve","bypass"],"auto_skip_questions":true,"multi_mcp_servers":true,"host_tool_classification":true,"coworker_schema_versions":[1],"bundled_skills":true,"skill_resources":true,"resource_policy":true,"policy_resolve":true,"mixed_mcp_placement":true,"credential_delivery":["sandbox_file"]},"defaults":{"sandbox":"openshell","context_window":128000,"context_window_source":"conservative_default","permissions":permissions::Config::default()}});
+                let mut info = json!({"protocol_version":crate::PROTOCOL_VERSION,"implementation":"native-rust","model":self.model.name,"mode":if self.model.scripted{"scripted-test"}else{"live"},"execution":{"sandbox":self.backend,"enforcement":self.backend.enforcement(),"network":self.backend.network()},"capabilities":{"turn_limits":true,"tool_argument_recovery":true,"coding_process_manager":cfg!(target_os="linux"),"push":true,"event_replay":true,"history_read":true,"compaction":true,"provider_retries":true,"attempt_snapshots":true,"durable_interactions":true,"sandbox_backends":["openshell","off"],"machine_join":false,"approval_modes":["ask","auto-approve","bypass"],"auto_skip_questions":true,"multi_mcp_servers":true,"host_tool_classification":true,"coworker_schema_versions":[1],"bundled_skills":true,"skill_resources":true,"resource_policy":true,"policy_resolve":true,"mixed_mcp_placement":true,"credential_delivery":["sandbox_file"]},"defaults":{"sandbox":"openshell","context_window":128000,"context_window_source":"conservative_default","permissions":permissions::Config::default()}});
                 info["capabilities"]["native_tools_sdk"] = json!(true);
                 info["capabilities"]["durable_plans"] = json!(true);
                 info["capabilities"]["durable_teams"] =
@@ -1065,10 +1267,16 @@ impl Runtime {
                 if at_capacity && !self.store.lock().unwrap().has_submission(&sid, key)? {
                     bail!("Runtime concurrency limit reached; submission not accepted");
                 }
-                let (s, fresh, e) = self.store.lock().unwrap().accept(
+                let limits = p
+                    .get("limits")
+                    .filter(|v| !v.is_null())
+                    .map(|v| serde_json::from_value::<crate::budget::Limits>(v.clone()))
+                    .transpose()?;
+                let (s, fresh, e) = self.store.lock().unwrap().accept_with_limits(
                     &sid,
                     text(&p, "submission_id", 100)?,
                     text(&p, "text", 32000)?,
+                    limits,
                 )?;
                 if let Some(e) = e {
                     self.publish(e);
@@ -1176,7 +1384,7 @@ impl Runtime {
                     match prepared {
                         Ok((client, tools)) => tokio::select! {biased;
                             _=token.cancelled()=>{rt.cancel_finish(&sid).await},
-                            r=rt.drive(&sid,client,tools)=>r
+                            r=Box::pin(rt.drive(&sid,client,tools))=>r
                         },
                         Err(e) => match rt.remove_sandbox(&sid).await {
                             Ok(()) => Err(e),
@@ -1449,6 +1657,16 @@ impl Runtime {
                 arg.clone()
             }
         }));
+        // Only a declared environment owns resources across worker attachments.
+        // Explicit credential/file/network grants remain turn-bounded; never
+        // keep a detached manager alive under such a temporary grant.
+        if s.environment.is_some()
+            && !s.resource_policy.bounded_lifecycle()
+            && server.program == "$OPENWORKER"
+            && server.args == ["mcp-coding", "--workspace", "$WORKSPACE"]
+        {
+            argv.push("--environment-processes".into());
+        }
         let client = if let Some(binding) = s.environment {
             let provider = self
                 .environments
@@ -1685,8 +1903,11 @@ impl Runtime {
         let span = self
             .telemetry
             .span(Op::Policy, Some(sid), call["call_id"].as_str());
-        let result =
-            crate::telemetry::scope(span.context(), self.authorize_call_inner(sid, call)).await;
+        let result = crate::telemetry::scope(
+            span.context(),
+            Box::pin(self.authorize_call_inner(sid, call)),
+        )
+        .await;
         let outcome = match &result {
             Ok(i) if i.response.as_deref() == Some("deny") => Outcome::Denied,
             Ok(i) if i.response.is_none() => Outcome::Waiting,
@@ -1765,7 +1986,8 @@ impl Runtime {
                         match permissions::review_context(&s, &self.bundle, call) {
                             Ok(input) => match reviewer {
                                 Some(model) => {
-                                    model
+                                    let reserved = self.reserve_aux(sid, 4000)?;
+                                    let (verdict, usage) = model
                                         .accounted(crate::model::CallContext {
                                             telemetry: self.telemetry.clone(),
                                             session: sid.into(),
@@ -1774,8 +1996,10 @@ impl Runtime {
                                             purpose: crate::telemetry::ModelPurpose::AutoApprover,
                                             attempt: 1,
                                         })
-                                        .review(&input)
-                                        .await
+                                        .review_with_usage(&input, reserved as usize)
+                                        .await;
+                                    self.settle_aux(sid, reserved, usage)?;
+                                    verdict
                                 }
                                 None => Verdict::unsure(
                                     "Configure a separate reviewer model or ask a human.",
@@ -1858,15 +2082,67 @@ impl Runtime {
         loop {
             let s = self.store.lock().unwrap().get(sid)?;
             let t = s.turn.as_ref().context("Missing turn")?;
+            if let Some(reason) = t
+                .budget
+                .stop_reason
+                .clone()
+                .or_else(|| t.budget.reason().map(str::to_owned))
+            {
+                return self.finish_budget(sid, &reason, &tools).await;
+            }
             if let Some(call) = t.queue.first() {
                 let alias = call["name"].as_str().context("Missing tool name")?;
                 let schema = tools
                     .iter()
                     .find(|v| v["name"] == alias)
                     .context("Model requested an unbound tool")?;
-                let args: Value =
-                    serde_json::from_str(call["arguments"].as_str().context("Missing arguments")?)?;
-                validate_arguments(&schema["parameters"], &args)?;
+                let parsed = call["arguments"]
+                    .as_str()
+                    .and_then(|v| serde_json::from_str::<Value>(v).ok());
+                if parsed
+                    .as_ref()
+                    .is_none_or(|args| validate_arguments(&schema["parameters"], args).is_err())
+                {
+                    let required = schema["parameters"]["required"].clone();
+                    self.reject_unexecuted(sid,call,"invalid_tool_arguments",&format!("Arguments must match the bound JSON schema. Required properties: {required}. Correct the arguments before trying a new call."),true)?;
+                    continue;
+                }
+                let args = parsed.unwrap();
+                if permissions::native_tool(&self.bundle, alias).is_some_and(|name| {
+                    matches!(
+                        name,
+                        "read_file"
+                            | "write_file"
+                            | "edit_file"
+                            | "list_files"
+                            | "search_files"
+                            | "git_status"
+                            | "git_diff"
+                            | "git_log"
+                    )
+                }) && args
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|p| std::path::Path::new(p).is_absolute())
+                {
+                    self.reject_unexecuted(sid,call,"invalid_tool_path","File paths must be workspace-relative. No action executed. Correct the path within the granted workspace; access restrictions still apply.",true)?;
+                    continue;
+                }
+                if t.budget.consecutive_validation_errors > 0 {
+                    self.update(
+                        sid,
+                        "tool_validation_recovered",
+                        json!({"call_id":call["call_id"]}),
+                        |s| {
+                            s.turn
+                                .as_mut()
+                                .unwrap()
+                                .budget
+                                .consecutive_validation_errors = 0;
+                            Ok(())
+                        },
+                    )?;
+                }
                 if alias == crate::planning::TOOL {
                     self.update_plan(sid, &t.id, call, &args)?;
                     continue;
@@ -1896,7 +2172,7 @@ impl Runtime {
                     .find(|i| i.turn_id == t.id && i.call["call_id"] == call["call_id"]);
                 let Some(interaction) = interaction else {
                     let i = self.authorize_call(sid, call).await?;
-                    if i.response.is_none() {
+                    if i.response.is_none() && !self.budget_exhausted(sid)? {
                         return Ok(());
                     }
                     continue;
@@ -2043,24 +2319,63 @@ impl Runtime {
                     // relabel every configuration/storage failure or replay it.
                     result?
                 };
+                if let Some(name) = permissions::native_tool(&self.bundle, alias) {
+                    if matches!(
+                        name,
+                        "process_start" | "process_stop" | "process_status" | "process_logs"
+                    ) {
+                        let data = output["content"]
+                            .as_array()
+                            .and_then(|c| c.first())
+                            .and_then(|c| c["text"].as_str())
+                            .and_then(|v| serde_json::from_str::<Value>(v).ok())
+                            .unwrap_or_else(|| output.clone());
+                        let op = if data["code"] == "process_outcome_unknown" {
+                            Some(Op::UnknownOutcome)
+                        } else if data["code"] == "stale_process_handle"
+                            || data["code"] == "process_manager_unavailable"
+                        {
+                            Some(crate::telemetry::Operation::ProcessStale)
+                        } else if data["isError"] != true && name == "process_start" {
+                            Some(crate::telemetry::Operation::ProcessStarted)
+                        } else if data["isError"] != true && name == "process_stop" {
+                            Some(crate::telemetry::Operation::ProcessStopped)
+                        } else {
+                            None
+                        };
+                        if let Some(op) = op {
+                            self.telemetry.event(
+                                op,
+                                if data["isError"] == true {
+                                    crate::telemetry::Outcome::Unknown
+                                } else {
+                                    crate::telemetry::Outcome::Ok
+                                },
+                                Some(sid),
+                                call["call_id"].as_str(),
+                            );
+                        }
+                    }
+                }
                 self.update(sid,"tool_finished",json!({"name":alias,"call_id":call["call_id"],"result":output,"interaction_id":interaction.id}),|s|{if alias=="load_skill"&&output.get("skill_digest").is_some(){s.loaded_skills.insert(args["name"].as_str().context("Missing skill name")?.into());}s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));let t=s.turn.as_mut().unwrap();t.queue.remove(0);t.status="running".into();Ok(())})?;
                 continue;
             }
-            if t.iterations >= 20 {
-                bail!("Turn reached the 20-step iteration limit");
-            }
-            if matches!(self.compact(sid, false).await?, CompactResult::Waiting) {
+            if matches!(
+                Box::pin(self.compact(sid, false)).await?,
+                CompactResult::Waiting
+            ) {
                 return Ok(());
             }
             let latest = self.store.lock().unwrap().get(sid)?;
             let history = crate::compaction::outbound(&latest.history, latest.compaction.as_ref());
             let completion = match self.sample(sid, &history, &tools).await {
                 Ok(c) => c,
+                Err(_) if self.budget_exhausted(sid)? => continue,
                 Err(e)
                     if e.downcast_ref::<crate::provider::Error>()
                         .is_some_and(|e| e.kind == crate::provider::Failure::ContextOverflow) =>
                 {
-                    match self.compact(sid, true).await? {
+                    match Box::pin(self.compact(sid, true)).await? {
                         CompactResult::Applied => continue,
                         CompactResult::Waiting => return Ok(()),
                         CompactResult::Skipped => return Err(e),

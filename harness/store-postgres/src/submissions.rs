@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Result};
 use openworker_runtime::store::{terminal, Session};
 use postgres::{Row, Transaction};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,11 +13,16 @@ pub struct TurnSubmission {
     pub session_id: String,
     pub submission_id: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<openworker_runtime::budget::Limits>,
 }
 impl TurnSubmission {
     pub(crate) fn validate(&self) -> Result<()> {
         validate_id(&self.session_id, 80)?;
         validate_id(&self.submission_id, 100)?;
+        if let Some(l) = &self.limits {
+            l.validate().map_err(|_| SubmissionError::InvalidRequest)?;
+        }
         validate_id(&self.text, 32_000)
     }
 }
@@ -136,8 +141,8 @@ pub(crate) fn insert_reserved(
         &[&request.session_id],
     )?.get(0);
     let row = tx.query_one(
-        "INSERT INTO submissions(session_id,id,text,turn_id,sequence,status,owner_epoch) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
-        &[&request.session_id, &request.submission_id, &request.text, &turn_id, &sequence, &status, &epoch],
+        "INSERT INTO submissions(session_id,id,text,turn_id,sequence,status,owner_epoch,limits) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+        &[&request.session_id, &request.submission_id, &request.text, &turn_id, &sequence, &status, &epoch, &request.limits.as_ref().map(serde_json::to_value).transpose()?],
     )?;
     receipt(&row)
 }
@@ -214,7 +219,14 @@ impl Database {
             "SELECT * FROM submissions WHERE session_id=$1 AND id=$2",
             &[&request.session_id, &request.submission_id],
         )? {
-            if row.get::<_, String>("text") != request.text {
+            if row.get::<_, String>("text") != request.text
+                || row.get::<_, Option<Value>>("limits")
+                    != request
+                        .limits
+                        .as_ref()
+                        .map(serde_json::to_value)
+                        .transpose()?
+            {
                 return Err(SubmissionError::Conflict.into());
             }
             let result = receipt(&row)?;
@@ -295,12 +307,17 @@ impl Database {
             return Ok(None);
         }
         let row = tx.query_opt(
-            "SELECT id,text FROM submissions WHERE session_id=$1 AND status='queued' ORDER BY sequence LIMIT 1", &[&sid],
+            "SELECT id,text,limits FROM submissions WHERE session_id=$1 AND status='queued' ORDER BY sequence LIMIT 1", &[&sid],
         )?;
         let result = row.map(|r| TurnSubmission {
             session_id: sid.into(),
             submission_id: r.get(0),
             text: r.get(1),
+            limits: r
+                .get::<_, Option<Value>>(2)
+                .map(serde_json::from_value)
+                .transpose()
+                .expect("Validated stored turn limits"),
         });
         tx.commit()?;
         Ok(result)

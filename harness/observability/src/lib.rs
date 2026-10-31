@@ -218,6 +218,11 @@ impl Step {
                     | "question.resolved"
                     | "turn.cancellation"
                     | "tool.unknown_outcome"
+                    | "turn.budget_exceeded"
+                    | "tool.validation_failed"
+                    | "process.started"
+                    | "process.stopped"
+                    | "process.stale"
             ),
             "Invalid observation operation"
         );

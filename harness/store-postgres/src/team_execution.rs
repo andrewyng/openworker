@@ -148,6 +148,7 @@ pub(crate) fn deliver(
     let receipt = crate::submissions::insert(
         tx,
         &crate::TurnSubmission {
+            limits: None,
             session_id: sid.into(),
             submission_id: key.clone(),
             text: text.into(),

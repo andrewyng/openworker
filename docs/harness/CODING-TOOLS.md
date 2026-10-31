@@ -220,3 +220,14 @@ cargo test --locked -p openworker-sdk --features test-support --lib --test codin
 npm --prefix typescript-sdk test
 OW_TS_TEST_HOST="$PWD/target/debug/sdk-test-host" node --test typescript-sdk/test/coding.test.mjs
 ```
+
+## Environment-backed service continuity (October 30 update)
+
+The attachment-owned cleanup behavior above still applies to local runners and
+profiles with temporary resource grants. Environment-backed OpenShell service
+sessions can instead use a sandbox-local process manager across turn/worker
+attachments. Tool names are unchanged. Agent defaults/per-turn overrides also
+configure model-call and total output-token limits, with a bounded final summary.
+See [turn limits and process ownership](TURN-LIMITS-AND-PROCESSES.md) for the exact
+budget, recovery, telemetry and migration contract, and the
+[qualification ledger](CODING-CONTINUITY-PLAN.md) for actual test status.

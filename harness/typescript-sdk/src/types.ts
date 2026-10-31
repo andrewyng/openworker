@@ -71,7 +71,14 @@ export type Approvals =
   | { mode: "only"; tools: string[] };
 
 /** Definitions are fixed at host startup. Tools are qualified registered names. */
+export interface TurnLimits {
+  maxModelCalls: number;
+  maxOutputTokens: number;
+  /** Reserved inside maxOutputTokens for one additional tool-free summary. Default 512. */
+  summaryTokens?: number;
+}
 export interface Agent {
+  limits?: TurnLimits;
   id: string;
   name?: string;
   description?: string;
@@ -201,6 +208,7 @@ export interface RunResult {
 }
 export type Cursors = Record<string, number>;
 export interface RunOptions {
+  limits?: TurnLimits;
   /** Persist before sending if the application must survive a crash. */
   submissionId?: string;
   /** Stops waiting only. Call session.cancel() to cancel agent execution. */

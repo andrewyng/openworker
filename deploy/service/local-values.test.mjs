@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { localValues } from "./local-values.mjs";
-import { run } from "./stack.mjs";
+import { run, serviceConfig } from "./stack.mjs";
 const runtime = {
   imageRef: "example/service@sha256:" + "a".repeat(64),
   runnerImage: "example/runner@sha256:" + "b".repeat(64),
@@ -83,4 +83,14 @@ test("rendered live local profile mounts model data only into the worker", async
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("local initialization retains explicit recording configuration without enabling it by default", () => {
+  const base = {scripted:true,openshell:{endpoint:"https://gateway.example:8080",image:"runner@sha256:"+"c".repeat(64)}};
+  assert.equal(serviceConfig(base,"ows-test").observability,undefined);
+  const observability = {schema:"ow_observability",queue_capacity:1024,retention_days:7};
+  const c=serviceConfig({...base,observability},"ows-test");
+  assert.deepEqual(c.observability,observability);
+  c.observability.retention_days=30;
+  assert.equal(observability.retention_days,7);
 });

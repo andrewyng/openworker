@@ -687,6 +687,7 @@ impl Host {
                 .get_mut("capabilities")
                 .and_then(Value::as_object_mut)
             {
+                c.insert("turn_limits".into(), json!(true));
                 c.insert("agent_runs".into(), json!(true));
                 c.insert("dynamic_agents".into(), json!(true));
                 c.insert("session_model_override".into(), json!(true));

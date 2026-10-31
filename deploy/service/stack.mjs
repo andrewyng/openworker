@@ -139,6 +139,9 @@ export function serviceConfig(c, id) {
               provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY",
           },
         ],
+    // Optional content-free recording uses its own connection/pool, even when
+    // it shares the execution PostgreSQL database. Rust validates this config.
+    ...(c.observability ? { observability: structuredClone(c.observability) } : {}),
     api_token_file: "/bootstrap/admin-token",
     actor: "local-admin",
     openshell: {

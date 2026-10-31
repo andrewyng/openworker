@@ -94,6 +94,7 @@ async fn production_worker_plans_survive_replacement_and_cross_api_approval() {
         .await;
     let sid = created["session"]["id"].as_str().unwrap();
     api.submit_turn(TurnSubmission {
+            limits: None,
         session_id: sid.into(), submission_id: "planned-task".into(),
         text: format!("TEST_RESOURCE_GRANTS {}", json!([
             {"name":"update_plan","arguments":{"expected_revision":0,"explanation":"Inspect first","steps":[{"id":"inspect","description":"Write one test marker","status":"in_progress"}]}},
@@ -160,6 +161,7 @@ async fn production_workers_bound_capacity_renew_and_shutdown_without_replaying_
         let created=seeder.rpc("session/create",json!({"name":format!("session{i}"),"coworker":"pg-test","workspace":workspace,"permissions":{"mode":"bypass"}})).await;
         let sid = created["session"]["id"].as_str().unwrap().to_owned();
         api.submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid.clone(),
             submission_id: "effect".into(),
             text: plan("write_wait"),
@@ -224,6 +226,7 @@ async fn production_workers_bound_capacity_renew_and_shutdown_without_replaying_
             1
         );
         api.submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid.clone(),
             submission_id: "inspect".into(),
             text: plan("inspect"),
@@ -254,6 +257,7 @@ async fn production_worker_loses_database_and_replacement_recovers_unknown_once(
     let created=seeder.rpc("session/create",json!({"name":"one","coworker":"pg-test","workspace":root.path().join("work"),"permissions":{"mode":"bypass"}})).await;
     let sid = created["session"]["id"].as_str().unwrap();
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: "effect".into(),
         text: plan("write_wait"),
@@ -304,6 +308,7 @@ async fn production_worker_loses_database_and_replacement_recovers_unknown_once(
         1
     );
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: "inspect".into(),
         text: plan("inspect"),
@@ -352,6 +357,7 @@ async fn production_worker_parks_approval_reclaims_for_answer_and_keeps_session_
         .await;
     let sid = created["session"]["id"].as_str().unwrap();
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: "one".into(),
         text: plan("write_once"),
@@ -408,6 +414,7 @@ async fn production_worker_parks_approval_reclaims_for_answer_and_keeps_session_
         ControlStatus::Applied
     );
     api.submit_turn(TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: "two".into(),
         text: plan("write_once"),
@@ -534,6 +541,7 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
     // Same tool/action group reuses the persisted session grant, without a second prompt.
     let run = api_a
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid.into(),
             submission_id: "effect".into(),
             text: plan("write_wait"),
@@ -591,7 +599,8 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
         2
     );
     // A free-standing question is not a reusable tool approval.
-    api_a.submit_turn(TurnSubmission{session_id:sid.into(),submission_id:"question".into(),text:format!("TEST_RESOURCE_GRANTS {}",json!([{"name":"ask_user","arguments":{"question":"Continue?","options":["Yes","No"]}}]))}).unwrap();
+    api_a.submit_turn(TurnSubmission{
+            limits: None,session_id:sid.into(),submission_id:"question".into(),text:format!("TEST_RESOURCE_GRANTS {}",json!([{"name":"ask_user","arguments":{"question":"Continue?","options":["Yes","No"]}}]))}).unwrap();
     let pending = b.pending(sid).await;
     assert!(api_b
         .submit_control(decision(sid, &pending, "answer", "Maybe"))
@@ -611,6 +620,7 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
     let sid2 = second["session"]["id"].as_str().unwrap();
     api_a
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid2.into(),
             submission_id: "once".into(),
             text: plan("write_once"),
@@ -624,6 +634,7 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
     assert!(api_a.inspect(sid2).unwrap().approval_grants.is_empty());
     api_a
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid2.into(),
             submission_id: "denied".into(),
             text: plan("write_once"),
@@ -637,6 +648,7 @@ async fn remote_controls_survive_crash_grant_session_access_and_cancel_unknown_e
     // Cancellation while still awaiting approval has a known no-dispatch result.
     let queued = api_a
         .submit_turn(TurnSubmission {
+            limits: None,
             session_id: sid2.into(),
             submission_id: "before-dispatch".into(),
             text: plan("write_once"),
@@ -804,6 +816,7 @@ async fn api_accepts_while_worker_is_dead_and_replacement_consumes_fifo() {
     let api_a = PostgresStore::open(config.clone()).unwrap();
     let api_b = PostgresStore::open(config.clone()).unwrap();
     let make = |id: &str, action: &str| TurnSubmission {
+        limits: None,
         session_id: sid.into(),
         submission_id: id.into(),
         text: format!(

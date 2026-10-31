@@ -32,6 +32,8 @@ pub struct Interaction {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
+    #[serde(default)]
+    pub budget: crate::budget::State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation: Option<TurnObservation>,
     pub id: String,
@@ -284,6 +286,19 @@ pub trait StateStore: Send {
         key: &str,
         text: &str,
     ) -> Result<(Session, bool, Option<Event>)>;
+    fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        anyhow::ensure!(
+            limits.is_none(),
+            "Storage adapter does not support turn limits"
+        );
+        self.accept(sid, key, text)
+    }
     fn cursor(&self, sid: &str) -> Result<i64>;
     fn has_submission(&self, sid: &str, key: &str) -> Result<bool>;
     fn events(&self, sid: &str, after: i64) -> Result<Vec<Event>>;
@@ -642,6 +657,18 @@ impl Store {
         key: &str,
         text: &str,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_limits(sid, key, text, None)
+    }
+    pub fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        if let Some(l) = &limits {
+            l.validate()?;
+        }
         let mut s = self.get(sid)?;
         let existing = self.db.query_row(
             "SELECT text,turn_id FROM submissions WHERE session_id=? AND submission_id=?",
@@ -649,7 +676,8 @@ impl Store {
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         );
         if let Ok((old, tid)) = existing {
-            if old != text {
+            let requested:Option<crate::budget::Limits>=self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",[&tid],|r|r.get::<_,String>(0)).optional()?.map(|raw|->Result<_>{Ok(serde_json::from_str::<Value>(&raw)?["limits"].clone())}).transpose()?.map(serde_json::from_value).transpose()?.flatten();
+            if old != text || requested != limits {
                 bail!("Submission ID reused with different text");
             }
             if s.turn.as_ref().is_some_and(|t| t.id == tid) {
@@ -659,6 +687,7 @@ impl Store {
             let event: Value = serde_json::from_str(&raw)?;
             // Return the original durable identity without altering current session state.
             s.turn = Some(Turn {
+                budget: crate::budget::State::new(s.package.limits.as_ref(), limits.clone())?,
                 observation: None,
                 id: tid,
                 submission_id: key.into(),
@@ -709,6 +738,7 @@ impl Store {
         // A bookkeeping decision belongs to the old turn, not the next task.
         s.compaction_action = None;
         s.turn = Some(Turn {
+            budget: crate::budget::State::new(s.package.limits.as_ref(), limits.clone())?,
             observation: None,
             id: crate::id("t"),
             submission_id: key.into(),
@@ -735,14 +765,19 @@ impl Store {
         let tid = s.turn.as_ref().unwrap().id.clone();
         tx.execute(
             "INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",
-            params![sid, tid, "turn_accepted", "{}"],
+            params![
+                sid,
+                tid,
+                "turn_accepted",
+                json!({"limits":limits}).to_string()
+            ],
         )?;
         let e = Event {
             event_id: tx.last_insert_rowid(),
             session_id: sid.into(),
             turn_id: Some(tid),
             kind: "turn_accepted".into(),
-            data: json!({}),
+            data: json!({"limits":limits}),
         };
         tx.commit()?;
         Ok((s, true, Some(e)))
@@ -920,6 +955,15 @@ impl StateStore for Store {
         text: &str,
     ) -> Result<(Session, bool, Option<Event>)> {
         Store::accept(self, sid, key, text)
+    }
+    fn accept_with_limits(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        Store::accept_with_limits(self, sid, key, text, limits)
     }
     fn cursor(&self, sid: &str) -> Result<i64> {
         Store::cursor(self, sid)

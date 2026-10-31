@@ -47,9 +47,22 @@ impl Drop for Processes {
     }
 }
 impl Processes {
+    #[cfg(target_os = "linux")]
+    pub fn active(&self) -> bool {
+        self.entries.values().any(|p| !p.task.is_finished())
+    }
     pub async fn call(&mut self, root: &Path, name: &str, args: &Value) -> Result<Value> {
+        self.call_as(root, name, args, None).await
+    }
+    pub async fn call_as(
+        &mut self,
+        root: &Path,
+        name: &str,
+        args: &Value,
+        launch_id: Option<&str>,
+    ) -> Result<Value> {
         if matches!(name, "run_shell" | "process_start") {
-            let id = self.start(root, args, name == "run_shell")?;
+            let id = self.start(root, args, name == "run_shell", launch_id)?;
             if name == "run_shell" {
                 let wait = args["yield_ms"].as_u64().unwrap_or(1000);
                 let p = self.entries.get_mut(&id).unwrap();
@@ -99,11 +112,17 @@ impl Processes {
         }
     }
     #[cfg(not(target_os = "linux"))]
-    fn start(&mut self, _: &Path, _: &Value, _: bool) -> Result<String> {
+    fn start(&mut self, _: &Path, _: &Value, _: bool, _: Option<&str>) -> Result<String> {
         anyhow::bail!("Managed coding processes currently require Linux; native macOS/Windows lifecycle support is not enabled")
     }
     #[cfg(target_os = "linux")]
-    fn start(&mut self, root: &Path, args: &Value, foreground: bool) -> Result<String> {
+    fn start(
+        &mut self,
+        root: &Path,
+        args: &Value,
+        foreground: bool,
+        launch_id: Option<&str>,
+    ) -> Result<String> {
         use std::process::Stdio;
         use tokio::io::AsyncReadExt;
         let command = crate::runner::bounded_text(args, "command", 16000)?;
@@ -133,6 +152,13 @@ impl Processes {
         ensure!(
             (1..=86400).contains(&timeout),
             "timeout_seconds must be 1..86400"
+        );
+        let id = launch_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| crate::id("process"));
+        ensure!(
+            !self.entries.contains_key(&id),
+            "Launch identity already used; inspect its status, do not replay"
         );
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.args(["-c", command])
@@ -221,7 +247,6 @@ impl Processes {
                 exit_code: exit,
             };
         });
-        let id = crate::id("process");
         self.entries.insert(
             id.clone(),
             Process {

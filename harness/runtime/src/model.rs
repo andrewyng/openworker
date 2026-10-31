@@ -100,6 +100,24 @@ impl Model {
             review_hook: None,
         }
     }
+    pub async fn next_limited(
+        &self,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        limit: u32,
+        tx: mpsc::Sender<Progress>,
+    ) -> Result<()> {
+        if self.scripted {
+            return self.next(instructions, history, tools, tx).await;
+        }
+        #[cfg(test)]
+        if self.sample_hook.is_some() {
+            return self.next(instructions, history, tools, tx).await;
+        }
+        self.request(instructions, history, tools, limit as usize, None, tx)
+            .await
+    }
     pub async fn next(
         &self,
         instructions: &str,
@@ -410,6 +428,60 @@ impl Model {
         self.text_response(instructions, input, max_tokens, None)
             .await
     }
+    pub async fn summarize_with_usage(
+        &self,
+        instructions: &str,
+        input: &str,
+        max_tokens: usize,
+    ) -> Result<(String, Option<u64>)> {
+        #[cfg(test)]
+        if self.summary_hook.is_some() {
+            return Ok((
+                self.summarize(instructions, input, max_tokens).await?,
+                Some(0),
+            ));
+        }
+        if self.scripted {
+            return Ok((
+                self.summarize(instructions, input, max_tokens).await?,
+                Some(0),
+            ));
+        }
+        self.text_response_usage(instructions, input, max_tokens, None)
+            .await
+    }
+    pub async fn review_with_usage(
+        &self,
+        input: &str,
+        max_tokens: usize,
+    ) -> (crate::permissions::Verdict, Option<u64>) {
+        #[cfg(test)]
+        if self.review_hook.is_some() {
+            return (self.review(input).await, Some(0));
+        }
+        if self.scripted {
+            return (self.review(input).await, Some(0));
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(90),
+            self.text_response_usage(
+                crate::permissions::REVIEW_INSTRUCTIONS,
+                input,
+                max_tokens,
+                Some(crate::permissions::review_format()),
+            ),
+        )
+        .await
+        {
+            Ok(Ok((text, usage))) => (crate::permissions::Verdict::parse(&text), usage),
+            _ => (
+                crate::permissions::Verdict::unsure(
+                    "Reviewer unavailable or timed out; human approval required.",
+                ),
+                None,
+            ),
+        }
+    }
     async fn text_response(
         &self,
         instructions: &str,
@@ -417,6 +489,18 @@ impl Model {
         max_tokens: usize,
         format: Option<Value>,
     ) -> Result<String> {
+        Ok(self
+            .text_response_usage(instructions, input, max_tokens, format)
+            .await?
+            .0)
+    }
+    async fn text_response_usage(
+        &self,
+        instructions: &str,
+        input: &str,
+        max_tokens: usize,
+        format: Option<Value>,
+    ) -> Result<(String, Option<u64>)> {
         let history = vec![json!({"role":"user","content":input})];
         let (tx, mut rx) = mpsc::channel(32);
         let request = self.request(instructions, &history, &[], max_tokens, format, tx);
@@ -449,7 +533,7 @@ impl Model {
                 }
             }
         }
-        Ok(text)
+        Ok((text, r.usage.as_ref().map(|u| u.output_tokens)))
     }
     pub async fn review(&self, input: &str) -> crate::permissions::Verdict {
         use crate::permissions::{Verdict, REVIEW_INSTRUCTIONS};

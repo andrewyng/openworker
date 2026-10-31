@@ -137,6 +137,15 @@ enum Command {
     McpCoding {
         #[arg(long)]
         workspace: PathBuf,
+        #[arg(long, hide = true)]
+        environment_processes: bool,
+    },
+    /// Internal sandbox-local process manager; never a model tool.
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    CodingProcessManager {
+        #[arg(long)]
+        workspace: PathBuf,
     },
     /// Internal direct-tool lifecycle supervisor; never exposed as a model tool.
     #[command(hide = true)]
@@ -262,7 +271,14 @@ async fn entry(args: Args, registry: openworker_tools::ToolRegistry) -> Result<(
                 )?
             );
         }
-        Command::McpCoding { workspace } => crate::coding::serve(&workspace).await?,
+        Command::McpCoding {
+            workspace,
+            environment_processes,
+        } => crate::coding::serve_scoped(&workspace, environment_processes).await?,
+        #[cfg(target_os = "linux")]
+        Command::CodingProcessManager { workspace } => {
+            crate::coding::manager::serve(&workspace).await?
+        }
         Command::McpExample { workspace, label } => {
             crate::runner::serve_labeled(&workspace, &label).await?
         }
