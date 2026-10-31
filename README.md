@@ -87,7 +87,7 @@ Unattended runs never self-approve: their asks park in an inbox until a human an
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm.
+**OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, multi-model routing through **[TrustedRouter](https://trustedrouter.com)**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 

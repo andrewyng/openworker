@@ -13,7 +13,8 @@ key-authenticated; model ids are deployment names), `anthropic` (native Messages
 `AnthropicProvider`), `gemini` (native Google GenAI API via `GeminiProvider`), `bedrock`
 (models in the user's own AWS account — Claude natively, everything else via Converse),
 `vertex` (the user's own GCP project — Gemini and Claude natively, open-weight via the
-MaaS endpoint), `novita` (OpenAI-compatible Novita Cloud), and `ollama` (local,
+MaaS endpoint), `novita` (OpenAI-compatible Novita Cloud), `trustedrouter` (OpenAI-compatible
+multi-model routing), and `ollama` (local,
 OpenAI-compatible `/v1`).
 """
 
@@ -861,6 +862,17 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="solar-pro4",
         env_key="UPSTAGE_API_KEY",
     ),
+    _compat(
+        "trustedrouter",
+        "TrustedRouter",
+        base_url="https://api.trustedrouter.com/v1",
+        recommended_model="trustedrouter/auto",
+        env_key="TRUSTEDROUTER_API_KEY",
+        endpoint_help=(
+            "TrustedRouter's attested OpenAI-compatible API. Create a key at "
+            "https://trustedrouter.com/console/api-keys."
+        ),
+    ),
     # Resellers: many labs' models behind one key, using THEIR model namespaces (the curated
     # ids + display labels live in providers/matrix.py). Groq was deferred on 2026-07-04 to
     # bound how much needed verifying at once; it landed 2026-10-25 with verified rows.
@@ -1264,6 +1276,8 @@ def detect_provider(api_key: str) -> Optional[str]:
         return "gemini"
     if key.startswith("nvapi-"):
         return "nvidia"
+    if key.startswith("sk-tr-"):
+        return "trustedrouter"
     if key.startswith(("sk-", "sk_")):
         return "openai"
     return None
