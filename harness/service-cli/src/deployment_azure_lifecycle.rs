@@ -120,9 +120,15 @@ pub(super) struct State {
     operations: Vec<Operation>,
     resources: Vec<Owned>,
     heartbeat_unix: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    guard_created_at: Option<String>,
     destroy_requested: bool,
     completed_unix: Option<u64>,
     job_stop_request: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installation_digest: Option<String>,
+    #[serde(default)]
+    installation_closed: bool,
 }
 fn digest(p: &Plan) -> Result<String> {
     let files = super::super::artifacts(p)?;
@@ -186,6 +192,33 @@ impl State {
                 );
             }
         }
+        if let Some(stamp) = &self.guard_created_at {
+            ensure!(
+                chrono::DateTime::parse_from_rfc3339(stamp).is_ok(),
+                "Invalid independent controller incarnation receipt"
+            );
+        }
+        if let Some(digest) = &self.installation_digest {
+            ensure!(
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+                "Invalid installation receipt digest"
+            );
+        }
+        ensure!(
+            !self.installation_closed || self.installation_digest.is_some(),
+            "Closed installation lacks original mutation receipt"
+        );
+        if let Some(request) = &self.job_stop_request {
+            ensure!(
+                self.completed_unix.is_some()
+                    && uuid::Uuid::parse_str(request)
+                        .is_ok_and(|u| !u.is_nil() && u.to_string() == *request),
+                "Job stop requires persisted workload completion"
+            );
+        }
         let inventory = graph::inventory(&self.plan);
         let mut ids = std::collections::BTreeSet::new();
         for r in &self.resources {
@@ -196,6 +229,13 @@ impl State {
                     && r.incarnation.len() <= 128,
                 "Unexpected or duplicate ownership receipt"
             );
+            if let Some(request) = &r.delete_request {
+                ensure!(
+                    uuid::Uuid::parse_str(request)
+                        .is_ok_and(|u| !u.is_nil() && u.to_string() == *request),
+                    "Invalid deletion request UUID"
+                );
+            }
             if r.deleted {
                 ensure!(
                     r.delete_request.is_some(),
@@ -432,7 +472,7 @@ async fn apply(
         "Creation expired or cleanup requested"
     );
     ensure!(
-        s.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
+        s.guard_created_at.is_some() && s.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
         "Independent cleanup heartbeat is missing/stale"
     );
     let i = if stage == Stage::Foundation { 0 } else { 1 };
@@ -577,6 +617,11 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
         }
     }
     if s.completed_unix.is_some() && s.job_stop_request.is_none() {
+        ensure!(
+            s.guard_created_at.is_some(),
+            "Controller incarnation missing; refuse self-stop"
+        );
+        verify_job(c, s).await?;
         let request = uuid::Uuid::new_v4().to_string();
         s.job_stop_request = Some(request.clone());
         save(c, s, e).await?;
@@ -600,6 +645,7 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
 pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
     match command {
         Lifecycle::Prepare { plan, out } => {
+            outside(out, plan)?;
             let (p, m) = inspect(plan)?;
             ensure!(
                 p.azure_infrastructure.is_some() && now()? < p.expires_at_unix,
@@ -622,9 +668,12 @@ pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
                     .collect(),
                 resources: vec![],
                 heartbeat_unix: None,
+                guard_created_at: None,
                 destroy_requested: false,
                 completed_unix: None,
                 job_stop_request: None,
+                installation_digest: None,
+                installation_closed: false,
             };
             s.validate()?;
             private_dir(out)?;
@@ -661,8 +710,13 @@ async fn run(o: &Remote, stage: Option<Stage>, destroy: bool) -> Result<()> {
         "Local/shared control identity mismatch"
     );
     if let Some(stage) = stage {
+        verify_job(&mut c, &s).await?;
         apply(&mut c, &mut s, &mut e, stage, now()?).await?;
     } else if destroy {
+        ensure!(
+            s.installation_digest.is_none() || s.installation_closed,
+            "Close verified Kubernetes installation before manual infrastructure destruction"
+        );
         destroy_one(&mut c, &mut s, &mut e, now()?).await?;
     } else {
         observe(&mut c, &mut s, &mut e).await?;
@@ -672,6 +726,7 @@ async fn run(o: &Remote, stage: Option<Stage>, destroy: bool) -> Result<()> {
 pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
     match command {
         Cleanup::Package { state, out } => {
+            outside(out, state)?;
             let s = local(state)?;
             let files = control_artifacts(&s)?;
             private_dir(out)?;
@@ -711,17 +766,7 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 v.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
                 "Independent cleanup heartbeat stale/missing"
             );
-            let r = c
-                .arm(Method::GET, &job_id(&s.plan), "2024-03-01", None, &s.nonce)
-                .await?;
-            ensure!(r.status == 200, "Cleanup job unavailable");
-            let body = r.body.context("Cleanup job body missing")?;
-            ensure!(
-                body["properties"]["template"]["containers"][0]["image"]
-                    == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
-                    && body["properties"]["configuration"]["triggerType"] == "Schedule",
-                "Cleanup configuration drift"
-            );
+            verify_job(&mut c, &v).await?;
             crate::output(
                 json!({"heartbeatReady":true,"independentOfAks":true,"liveQualified":false,"workloadApplyReady":false}),
             )
@@ -754,6 +799,10 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 t == tenant && sub == subscription && control_url(p) == *control,
                 "Cleanup target mismatch"
             );
+            let stamp = verify_job(&mut c, &s).await?;
+            if s.guard_created_at.is_none() {
+                s.guard_created_at = Some(stamp);
+            }
             heartbeat(&mut c, &mut s, &mut e, now()?).await?;
             crate::output(s.status())
         }
@@ -812,7 +861,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
         json!({"type":"Microsoft.Storage/storageAccounts","apiVersion":"2023-05-01","name":control_account,"location":location,"sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{"allowSharedKeyAccess":false,"allowBlobPublicAccess":false,"minimumTlsVersion":"TLS1_2","supportsHttpsTrafficOnly":true,"publicNetworkAccess":"Enabled"}}),
         json!({"type":"Microsoft.Storage/storageAccounts/blobServices/containers","apiVersion":"2023-05-01","name":format!("{control_account}/default/control"),"dependsOn":[account_id],"properties":{"publicAccess":"None"}}),
         json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":"none"}}}),
-        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
+        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
     ];
     let template = json!({"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":control_resources});
     let blob_binding = json!({"schemaVersion":1,"scope":blob_scope,"roleDefinitionId":builtin,"assignments":[{"guid":guid(p,"cleanup-control"),"principalId":recipient,"principalType":"ServicePrincipal"},{"guid":guid(p,"setup-control"),"principalId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"principalType":p.azure_bootstrap.as_ref().unwrap().setup_principal_type.azure()}],"resolveIdentityAfterControlDeployment":true});
@@ -846,7 +895,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn state() -> State {
+    pub(super) fn state() -> State {
         let mut p = super::super::super::tests::plan();
         p.schema_version = 2;
         p.topology.architecture = "amd64".into();
@@ -874,9 +923,12 @@ mod tests {
                 .collect(),
             resources: vec![],
             heartbeat_unix: Some(150),
+            guard_created_at: Some("2026-10-31T00:00:00Z".into()),
             destroy_requested: false,
             completed_unix: None,
             job_stop_request: None,
+            installation_digest: None,
+            installation_closed: false,
         };
         s.validate().unwrap();
         s
@@ -900,10 +952,12 @@ mod tests {
     }
     impl Fake {
         fn new(s: State) -> Self {
+            let mut objects = BTreeMap::new();
+            objects.insert(job_id(&s.plan), fixture_job(&s));
             Self {
                 control: s,
                 revision: 1,
-                objects: BTreeMap::new(),
+                objects,
                 writes: vec![],
                 lose_put: false,
                 lose_delete: false,
@@ -1156,4 +1210,267 @@ mod tests {
         altered.nonce = "".into();
         assert!(altered.validate().is_err());
     }
+}
+
+pub(super) fn local_plan(root: &Path) -> Result<Plan> {
+    Ok(local(root)?.plan)
+}
+pub(super) async fn installation_snapshot(
+    root: &Path,
+    provisioning: bool,
+) -> Result<(Plan, Azure, Value)> {
+    let expected = local(root)?;
+    let mut c = Azure::new(&expected.plan, None)?;
+    let (_, s) = c
+        .read_control(&control_url(&expected.plan))
+        .await?
+        .context("Shared Azure control missing")?;
+    ensure!(
+        s.nonce == expected.nonce
+            && s.bundle_digest == expected.bundle_digest
+            && s.operations.iter().all(|o| o.phase == Phase::Active),
+        "Original infrastructure stages are not active"
+    );
+    if provisioning {
+        let at = now()?;
+        ensure!(
+            at < s.plan.expires_at_unix
+                && !s.destroy_requested
+                && s.completed_unix.is_none()
+                && s.heartbeat_unix.is_some_and(|t| t <= at && at - t <= 600),
+            "Expired/closing infrastructure or stale independent cleanup"
+        );
+    }
+    let entry = graph::inventory(&s.plan)
+        .into_iter()
+        .find(|v| v["stage"] == "cluster")
+        .unwrap();
+    let id = entry["id"].as_str().unwrap();
+    let r = c
+        .arm(
+            Method::GET,
+            id,
+            entry["apiVersion"].as_str().unwrap(),
+            None,
+            &s.nonce,
+        )
+        .await?;
+    ensure!(r.status == 200, "Original AKS cluster missing");
+    let cluster = r.body.context("AKS response missing")?;
+    let incarnation = owned_body(&s, &cluster, &entry)?;
+    ensure!(
+        s.resources
+            .iter()
+            .any(|r| r.id == id && r.incarnation == incarnation && !r.deleted),
+        "AKS ownership receipt missing/changed"
+    );
+    Ok((s.plan, c, cluster))
+}
+pub(super) async fn installation_mark(root: &Path, digest: &str, closed: bool) -> Result<()> {
+    ensure!(
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+        "Invalid installation binding digest"
+    );
+    let expected = local(root)?;
+    let mut c = Azure::new(&expected.plan, None)?;
+    let (mut e, mut s) = c
+        .read_control(&control_url(&expected.plan))
+        .await?
+        .context("Shared control missing")?;
+    ensure!(
+        s.nonce == expected.nonce && s.bundle_digest == expected.bundle_digest,
+        "Azure installation identity mismatch"
+    );
+    if closed {
+        ensure!(
+            s.installation_digest.as_deref() == Some(digest),
+            "Original installation mutation receipt missing"
+        );
+        s.installation_closed = true;
+    } else {
+        ensure!(
+            now()? < s.plan.expires_at_unix && !s.destroy_requested && !s.installation_closed,
+            "Infrastructure is closing/expired"
+        );
+        if let Some(old) = &s.installation_digest {
+            ensure!(
+                old == digest,
+                "Another installation binding already has mutation intent"
+            );
+        }
+        s.installation_digest = Some(digest.to_owned());
+    }
+    save(&mut c, &s, &mut e).await
+}
+
+#[cfg(test)]
+pub(super) fn fixture_plan() -> Plan {
+    tests::state().plan
+}
+#[cfg(test)]
+pub(super) fn fixture_state_dir(root: &Path) -> Plan {
+    let s = tests::state();
+    private_dir(root).unwrap();
+    put(root, "azure-state.json", &json_bytes(&s).unwrap()).unwrap();
+    s.plan
+}
+
+async fn verify_job(c: &mut impl Cloud, s: &State) -> Result<String> {
+    let r = c
+        .arm(Method::GET, &job_id(&s.plan), "2024-03-01", None, &s.nonce)
+        .await?;
+    ensure!(r.status == 200, "Independent cleanup job unavailable");
+    let body = r.body.context("Cleanup job body missing")?;
+    let stamp = body["systemData"]["createdAt"]
+        .as_str()
+        .filter(|v| chrono::DateTime::parse_from_rfc3339(v).is_ok())
+        .context("Controller immutable creation receipt missing")?
+        .to_owned();
+    ensure!(
+        body["tags"]["ows-deployment"] == s.plan.deployment_id
+            && body["tags"]["ows-nonce"] == s.nonce
+            && body["tags"]["ows-bundle"] == s.bundle_digest
+            && s.guard_created_at.as_ref().is_none_or(|old| old == &stamp),
+        "Independent cleanup controller replaced/identity changed"
+    );
+    let resources = &body["properties"]["template"]["containers"];
+    let container = resources
+        .as_array()
+        .filter(|v| v.len() == 1)
+        .map(|v| &v[0])
+        .context("Exactly one cleanup container required")?;
+    let config = &body["properties"]["configuration"];
+    let args = container["args"]
+        .as_array()
+        .context("Cleanup arguments missing")?;
+    let Target::Azure {
+        tenant,
+        subscription,
+        ..
+    } = &s.plan.target
+    else {
+        unreachable!()
+    };
+    let mi = format!(
+        "{}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{}-cleanup",
+        graph::control_scope(&s.plan),
+        graph::names(&s.plan).prefix
+    );
+    ensure!(
+        container["image"] == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
+            && container["command"] == json!(["/opt/openworker/ows"])
+            && args.len() == 12
+            && args[..4]
+                == json!(["deploy", "azure", "cleanup", "tick"])
+                    .as_array()
+                    .unwrap()[..]
+            && args[4] == "--control"
+            && args[5] == control_url(&s.plan)
+            && args[6] == "--tenant"
+            && args[7] == *tenant
+            && args[8] == "--subscription"
+            && args[9] == *subscription
+            && args[10] == "--client-id"
+            && args[11]
+                .as_str()
+                .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok_and(|u| !u.is_nil()))
+            && body["identity"]["type"] == "UserAssigned"
+            && body["identity"]["userAssignedIdentities"]
+                .as_object()
+                .is_some_and(|m| m.len() == 1 && m.contains_key(&mi))
+            && config["triggerType"] == "Schedule"
+            && config["replicaRetryLimit"] == 0
+            && config["scheduleTriggerConfig"]["cronExpression"] == "*/5 * * * *"
+            && config["scheduleTriggerConfig"]["parallelism"] == 1
+            && config["scheduleTriggerConfig"]["replicaCompletionCount"] == 1,
+        "Independent cleanup job configuration drift"
+    );
+    Ok(stamp)
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cleanup_configuration_drift_blocks_workload_submission() {
+        struct ReadOnly {
+            body: Value,
+        }
+        impl Cloud for ReadOnly {
+            async fn read_control(&mut self, _: &str) -> Result<Option<(String, State)>> {
+                bail!("unexpected control read")
+            }
+            async fn save_control(
+                &mut self,
+                _: &str,
+                _: Option<&str>,
+                _: &State,
+            ) -> Result<String> {
+                bail!("unexpected mutation")
+            }
+            async fn arm(
+                &mut self,
+                m: Method,
+                _: &str,
+                _: &str,
+                _: Option<&Value>,
+                _: &str,
+            ) -> Result<Reply> {
+                ensure!(m == Method::GET, "Guard verification must only read");
+                Ok(Reply {
+                    status: 200,
+                    etag: None,
+                    operation: None,
+                    body: Some(self.body.clone()),
+                })
+            }
+        }
+        let s = tests::state();
+        let body = fixture_job(&s);
+        verify_job(&mut ReadOnly { body: body.clone() }, &s)
+            .await
+            .unwrap();
+        for pointer in [
+            "/properties/template/containers/0/image",
+            "/properties/template/containers/0/args/5",
+            "/properties/configuration/scheduleTriggerConfig/cronExpression",
+        ] {
+            let mut changed = body.clone();
+            *changed.pointer_mut(pointer).unwrap() = json!("drift");
+            assert!(verify_job(&mut ReadOnly { body: changed }, &s)
+                .await
+                .is_err());
+        }
+        let mut replaced = body;
+        replaced["systemData"]["createdAt"] = json!("2026-10-31T00:00:01Z");
+        assert!(
+            verify_job(&mut ReadOnly { body: replaced }, &s)
+                .await
+                .is_err(),
+            "Same-name controller replacement must never be deleted"
+        );
+        let mut invalid = s;
+        invalid.installation_closed = true;
+        assert!(invalid.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+fn fixture_job(s: &State) -> Value {
+    let files = control_artifacts(s).unwrap();
+    let graph: Value = serde_json::from_slice(&files["azure-control.arm.json"]).unwrap();
+    let mut body = graph["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == "Microsoft.App/jobs")
+        .unwrap()
+        .clone();
+    body["properties"]["template"]["containers"][0]["args"][11] =
+        json!("12345678-1234-4234-8234-123456789abc");
+    body["systemData"] = json!({"createdAt":"2026-10-31T00:00:00Z"});
+    body
 }

@@ -123,6 +123,39 @@ test("artifact content streams with its own bounded limit while JSON stays small
   assert.match(content, /proxy_request_buffering off/);
   assert.match(content, /client_body_timeout 120s/);
 });
+test("Azure artifact identity has one explicit projection confined to API and worker", async () => {
+  const artifacts = {
+    kind: "azure", deployment: "ows-test", account: "owteststorage", container: "artifacts",
+    tenant_id: "11111111-1111-4111-8111-111111111111",
+    client_id: "22222222-2222-4222-8222-222222222222",
+    federated_token_file: "/var/run/secrets/azure/tokens/azure-identity-token",
+  };
+  const out = await render({config: {...base.config, artifacts}});
+  const sa = out.split("\n---").find(s => s.includes("kind: ServiceAccount") && s.includes("name: test-artifacts"));
+  assert.match(sa, /azure.workload.identity\/client-id: "22222222-2222-4222-8222-222222222222"/);
+  assert.match(sa, /azure.workload.identity\/tenant-id: "11111111-1111-4111-8111-111111111111"/);
+  assert.match(sa, /automountServiceAccountToken: false/);
+  for (const role of ["api", "worker"]) {
+    const d = deployment(out, role);
+    assert.match(d, /serviceAccountName: test-artifacts/);
+    assert.match(d, /automountServiceAccountToken: false/);
+    assert.match(d, /azure.workload.identity\/use: "true"/);
+    assert.match(d, /azure.workload.identity\/skip-containers: "harness(?:;tls)?"/);
+    assert.match(d, /name: AZURE_FEDERATED_TOKEN_FILE/);
+    assert.match(d, /mountPath: \/var\/run\/secrets\/azure\/tokens, readOnly: true/);
+    assert.match(d, /audience: api:\/\/AzureADTokenExchange/);
+    assert.match(d, /expirationSeconds: 3600/);
+    assert.equal((d.match(/name: azure-artifact-token\n/g) || []).length, 1);
+    if (role === "api") assert.doesNotMatch(d.split("- name: tls\n")[1].split("      volumes:")[0], /azure|AZURE/);
+  }
+  for (const role of ["controller", "platform"]) assert.doesNotMatch(deployment(out, role), /azure-artifact-token|AZURE_|azure.workload.identity|serviceAccountName: test-artifacts/);
+  const bootstrap = out.split("\n---").find(s => s.includes("kind: Job") && s.includes("name: test-bootstrap"));
+  assert.doesNotMatch(bootstrap, /azure-artifact-token|AZURE_|azure.workload.identity|serviceAccountName: test-artifacts/);
+  assert.doesNotMatch(out, /subjects:.*test-artifacts|roleRef:.*test-artifacts/);
+  for (const change of [{deployment:"wrong/scope"},{account:"wrong.account"},{container:"bad--container"},{client_id:"not-a-uuid"},{tenant_id:"not-a-uuid"},{client_id:"00000000-0000-0000-0000-000000000000"},{federated_token_file:"/tmp/other-token"},{endpoint:"https://untrusted.example"},{client_secret:"unsupported"}]) {
+    await assert.rejects(() => render({config:{...base.config, artifacts:{...artifacts,...change}}}));
+  }
+});
 test("invalid ownership, mutable image and inadequate drain grace fail rendering", async () => {
   await assert.rejects(render({ worker: { ownership: "mixed" } }));
   await assert.rejects(render({ image: "example:latest" }));

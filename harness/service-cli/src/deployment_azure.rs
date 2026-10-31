@@ -5,8 +5,15 @@ use super::*;
 mod api;
 #[path = "deployment_azure_infrastructure.rs"]
 mod graph;
+#[path = "deployment_azure_installation.rs"]
+mod installation;
 #[path = "deployment_azure_lifecycle.rs"]
 mod recovery;
+pub(crate) use installation::{
+    database as installation_database, intent as installation_intent,
+    storage as installation_storage, verify as verify_installation, Binding as InstallationBinding,
+};
+pub(super) use installation::{install, Installation};
 pub(super) use recovery::{cleanup, lifecycle, Cleanup, Lifecycle};
 #[path = "deployment_azure_preflight.rs"]
 mod observation;
@@ -131,6 +138,7 @@ impl Identity {
     }
 }
 pub(super) fn bootstrap(o: &Bootstrap) -> Result<()> {
+    outside(&o.out, &o.plan)?;
     let (mut p, _) = inspect(&o.plan)?;
     let at = now()?;
     ensure!(
@@ -220,4 +228,18 @@ echo 'Identity-only grant submitted. Run ows deploy azure preflight. No AKS/reso
             )?,
         ),
     ]))
+}
+
+/// Review bundles/state remain immutable inputs to later exports.
+pub(super) fn outside(out: &Path, input: &Path) -> Result<()> {
+    let parent = out
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?;
+    ensure!(
+        !parent.starts_with(input.canonicalize()?),
+        "Output must be outside immutable input/state"
+    );
+    Ok(())
 }

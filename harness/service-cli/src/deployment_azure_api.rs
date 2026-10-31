@@ -215,7 +215,13 @@ impl Azure {
                 u.scheme() == "https"
                     && u.host_str() == Some("management.azure.com")
                     && u.username().is_empty()
-                    && u.password().is_none(),
+                    && u.password().is_none()
+                    && u.port().is_none()
+                    && u.fragment().is_none()
+                    && u.path()
+                        .starts_with(&format!("/subscriptions/{}/", self.subscription))
+                    && u.query_pairs().all(|(key, value)| key == "api-version"
+                        && value.bytes().all(|b| b.is_ascii_digit() || b == b'-')),
                 "Unexpected operation endpoint; reconcile resource instead"
             );
         }

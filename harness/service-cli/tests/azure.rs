@@ -564,3 +564,72 @@ fn lifecycle_and_independent_cleanup_prepare_offline_and_require_explicit_remote
         .success());
     assert!(f.log().is_empty());
 }
+
+#[test]
+fn azure_followup_outputs_cannot_mutate_immutable_inputs_and_bad_install_config_is_offline() {
+    let f = Fixture::ready();
+    assert!(infrastructure(&f, &infrastructure_config(), "graph")
+        .status
+        .success());
+    let nested = f.path("graph/nested");
+    assert!(!f
+        .call(&[
+            "deploy",
+            "azure",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            f.path("graph").to_str().unwrap(),
+            "--out",
+            nested.to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!nested.exists());
+    assert!(f
+        .call(&[
+            "deploy",
+            "azure",
+            "lifecycle",
+            "prepare",
+            "--plan",
+            f.path("graph").to_str().unwrap(),
+            "--out",
+            f.path("state").to_str().unwrap()
+        ])
+        .status
+        .success());
+    let nested = f.path("state/nested");
+    assert!(!f
+        .call(&[
+            "deploy",
+            "azure",
+            "cleanup",
+            "package",
+            "--state",
+            f.path("state").to_str().unwrap(),
+            "--out",
+            nested.to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!nested.exists());
+    fs::write(f.path("invalid-install.json"), b"{}").unwrap();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "azure",
+            "installation",
+            "prepare",
+            "--state",
+            f.path("state").to_str().unwrap(),
+            "--config",
+            f.path("invalid-install.json").to_str().unwrap(),
+            "--out",
+            f.path("install").to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(!f.path("install").exists());
+    assert!(f.log().is_empty());
+}

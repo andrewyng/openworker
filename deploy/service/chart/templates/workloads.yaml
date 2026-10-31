@@ -1,6 +1,7 @@
 {{- $roles := list "api" "worker" "controller" -}}
 {{- if .Values.platformControllerEnabled }}{{ $roles = append $roles "platform" }}{{ end -}}
 {{- range $role := $roles }}
+{{ $azure := and $.Values.config.artifacts (eq $.Values.config.artifacts.kind "azure") (has $role (list "api" "worker")) -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,16 +26,24 @@ spec:
       labels:
         app: {{ $.Release.Name }}-{{ $role }}
         openworker.io/service-id: {{ $.Values.config.service.id | quote }}
+        {{- if $azure }}
+        azure.workload.identity/use: "true"
+        {{- end }}
         {{- if eq $role "worker" }}
         openworker.io/pool-id: default
         {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+        {{- if $azure }}
+        # This chart owns its explicit projection; prevent webhook injection of
+        # another token path or credentials into the TLS sidecar.
+        azure.workload.identity/skip-containers: {{ if eq $role "api" }}"harness;tls"{{ else }}"harness"{{ end }}
+        {{- end }}
     spec:
       automountServiceAccountToken: {{ eq $role "platform" }}
       {{- if eq $role "platform" }}
       serviceAccountName: {{ $.Release.Name }}-platform
-      {{- else if and $.Values.config.artifacts (eq $.Values.config.artifacts.kind "s3") (has $role (list "api" "worker")) }}
+      {{- else if and $.Values.config.artifacts (has $.Values.config.artifacts.kind (list "s3" "azure")) (has $role (list "api" "worker")) }}
       serviceAccountName: {{ $.Release.Name }}-artifacts
       {{- end }}
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
@@ -62,6 +71,12 @@ spec:
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            {{- if $azure }}
+            - {name: AZURE_CLIENT_ID, value: {{ $.Values.config.artifacts.client_id | quote }}}
+            - {name: AZURE_TENANT_ID, value: {{ $.Values.config.artifacts.tenant_id | quote }}}
+            - {name: AZURE_FEDERATED_TOKEN_FILE, value: {{ $.Values.config.artifacts.federated_token_file | quote }}}
+            - {name: AZURE_AUTHORITY_HOST, value: "https://login.microsoftonline.com/"}
+            {{- end }}
           securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
           resources: {{ $.Values.resources | toYaml | nindent 12 }}
           volumeMounts:
@@ -70,6 +85,9 @@ spec:
             - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
             - {name: state, mountPath: /state}
             - {name: tmp, mountPath: /tmp}
+            {{- if $azure }}
+            - {name: azure-artifact-token, mountPath: /var/run/secrets/azure/tokens, readOnly: true}
+            {{- end }}
             {{- if $.Values.secrets.telemetry }}
             - {name: telemetry, mountPath: /run/telemetry, readOnly: true}
             {{- end }}
@@ -106,6 +124,16 @@ spec:
               - secret: {name: {{ $.Values.secrets.database }}, items: [{key: database-url, path: database-url}, {key: pg-ca.crt, path: pg-ca.crt}]}
         - {name: state, emptyDir: {}}
         - {name: tmp, emptyDir: {}}
+        {{- if $azure }}
+        - name: azure-artifact-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: api://AzureADTokenExchange
+                  expirationSeconds: 3600
+                  path: azure-identity-token
+        {{- end }}
         {{- if $.Values.secrets.telemetry }}
         - name: telemetry
           secret: {secretName: {{ $.Values.secrets.telemetry }}, defaultMode: 0440}

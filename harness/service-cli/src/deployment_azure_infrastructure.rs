@@ -169,14 +169,20 @@ pub(crate) fn control_scope(p: &Plan) -> String {
     )
 }
 pub(crate) fn infrastructure(o: &Infrastructure) -> Result<()> {
+    outside(&o.out, &o.plan)?;
     let (mut p, _) = inspect(&o.plan)?;
     ensure!(
         p.azure_infrastructure.is_none() && now()? < p.expires_at_unix,
         "Use an unexpired bootstrap bundle without infrastructure"
     );
-    p.azure_infrastructure = Some(serde_json::from_slice(
-        &fs::read(&o.config).context("Read infrastructure config")?,
-    )?);
+    p.azure_infrastructure = Some(serde_json::from_slice(&super::super::read_file(
+        o.config.parent().unwrap(),
+        o.config
+            .file_name()
+            .unwrap()
+            .to_str()
+            .context("Invalid config filename")?,
+    )?)?);
     p.validate()?;
     let m = write_bundle(&o.out, &p)?;
     crate::output(result(&p, &m))
@@ -463,9 +469,21 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
             json_bytes(&executor_role)?,
         ),
         (
+            "azure-executor-identity.json".into(),
+            json_bytes(
+                &json!({"roleDefinitionId":format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/{}",guid(p,"executor-role")),"roleUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleDefinitions/{}?api-version=2022-04-01",scope(p),guid(p,"executor-role")),"assignmentUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleAssignments/{}?api-version=2022-04-01",scope(p),guid(p,"executor-assignment")),"assignment":{"properties":{"principalId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"principalType":p.azure_bootstrap.as_ref().unwrap().setup_principal_type.azure(),"roleDefinitionId":format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/{}",guid(p,"executor-role"))}},"bootstrapAdminOnly":true,"refuseExistingIds":true,"automaticApply":false}),
+            )?,
+        ),
+        (
             "azure-executor-prerequisites.json".into(),
             json_bytes(
                 &json!({"principalObjectId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"identityAssignments":assignment_actions,"keyVaultDeploy":{"scope":c.postgres_password.key_vault_id,"actions":["Microsoft.KeyVault/vaults/deploy/action"]},"bindingsRequireBootstrapAdmin":true,"automaticGrant":false}),
+            )?,
+        ),
+        (
+            "azure-installer-permissions.json".into(),
+            json_bytes(
+                &json!({"principalObjectId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"resourceActions":[{"scope":aks_id,"actions":["Microsoft.ContainerService/managedClusters/read","Microsoft.ContainerService/managedClusters/listClusterUserCredential/action"]},{"scope":format!("{}/providers/Microsoft.App/jobs/{}-expiry",control_scope(p),n.prefix),"actions":["Microsoft.App/jobs/read"]}],"kubernetes":{"adminGroupObjectIds":c.admin_group_object_ids,"requiresReviewedClusterScopedInstallerRights":true,"namespaceRightsSufficient":false},"imageUpload":{"scope":registry,"role":"AcrPush","bootstrapAdminOnly":true},"automaticGrant":false}),
             )?,
         ),
         (

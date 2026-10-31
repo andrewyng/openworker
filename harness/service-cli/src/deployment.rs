@@ -160,6 +160,11 @@ pub enum AzureCommand {
         #[command(subcommand)]
         command: azure::Cleanup,
     },
+    /// Bind owned AKS to the shared journaled OpenShell/Helm installer.
+    Installation {
+        #[command(subcommand)]
+        command: azure::Installation,
+    },
 }
 #[derive(Args)]
 pub struct GcpPlan {
@@ -593,6 +598,12 @@ fn result(p: &Plan, m: &Manifest) -> Value {
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
     if let Command::Azure {
+        command: AzureCommand::Installation { command },
+    } = command
+    {
+        return azure::install(command).await;
+    }
+    if let Command::Azure {
         command: AzureCommand::Lifecycle { command },
     } = command
     {
@@ -657,7 +668,10 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 pub fn run(command: &Command) -> Result<()> {
     match command {
         Command::Azure {
-            command: AzureCommand::Lifecycle { .. } | AzureCommand::Cleanup { .. },
+            command:
+                AzureCommand::Lifecycle { .. }
+                | AzureCommand::Cleanup { .. }
+                | AzureCommand::Installation { .. },
         } => bail!("Azure lifecycle/cleanup requires asynchronous dispatch"),
         Command::Azure {
             command: AzureCommand::Infrastructure(options),

@@ -117,3 +117,12 @@ no script retry after a failed mutation. No real Azure CLI/account/network is us
 - [Custom roles and assignable scopes](https://learn.microsoft.com/en-us/azure/role-based-access-control/custom-roles)
 - [Assign roles with object IDs](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-cli)
 - [AKS workload identity](https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview)
+
+## Next stages
+
+The identity-only guarantee above is unchanged. Resolved graph, lifecycle,
+independent cleanup and AKS/shared-installer commands now exist behind explicit
+experimental confirmation. See [Azure service reference](OWS-AZURE-SERVICE.md)
+and [implementation ledger](OWS-AZURE-IMPLEMENTATION.md) for exact locally tested
+behavior and the remaining live Azure qualification gates. Bootstrap preflight
+still never means effective-IAM, infrastructure or production readiness.

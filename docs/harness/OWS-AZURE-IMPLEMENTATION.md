@@ -233,3 +233,100 @@ not an effective-permissions or production-readiness certificate.
   tamper detection and refused unconfirmed remote actions without invoking `az`.
 - Local qualification proves protocol/state-machine behavior; it does not establish
   actual Azure IAM/API/provider success or automatic cleanup under real outages.
+
+### A4 implementation — shared installer and native artifacts
+
+- Added the optional native Rust Azure Blob artifact backend and server config.
+  It uses explicit AKS workload identity, fixed HTTPS Azure authority/storage
+  endpoints and no ambient shared-key/SAS/metadata fallback. Immutable object
+  writes preserve hash/size/cancellation/scope rules and refuse automatic replay.
+- Chart projects a rotating exact-audience token only into API/worker harness
+  containers and attaches only their dedicated service account. TLS sidecars,
+  controller, platform and bootstrap receive no artifact token. Filesystem/S3
+  behavior remains unchanged. Azure is optional in the artifacts crate; an
+  isolated no-default-features build passes. Added the crate's explicit Tokio
+  macros feature, fixing a pre-existing reliance on unified dependencies for
+  `select!` in isolated builds.
+- Added Azure installation prepare/verify/close and a binding in the existing
+  shared Helm/OpenShell installer. Private kubeconfig is rebuilt from original
+  ARM endpoint/CA using Entra Azure CLI login, without copying credentials.
+  Values bind original ACR, deployment, container and artifact identity. Provisioning
+  checks expiry, external cleanup and original immutable cluster ownership.
+- Database keys/TLS/model secrets remain private-file/stdin inputs. The URL must
+  use original PostgreSQL host/database/user and verify-full TLS. This milestone
+  deliberately leaves fetching the version-pinned Key Vault password to the
+  customer's approved installer, avoiding a general secret-read grant.
+- Installation mutation intent is persisted in independent control. Manual cloud
+  deletion requires original shared-installer teardown plus live matching cluster
+  UID and owned namespace absence. Expiry remains the explicitly agreed hard
+  workload lifetime. All existing Helm unknown-operation/UID/chart hash safeguards
+  and pinned OpenShell 0.1.3 authenticated gateway checks are reused.
+- The actual live gates remain: effective IAM/Entra membership, regional version/
+  SKU/quota/cost, control scheduling and retention removal, AKS private routes/CA,
+  CSI, OIDC webhook admission, Blob data permissions/DNS, image pushes, Agent Sandbox,
+  network enforcement, OpenShell kernel/runtime compatibility and real agent runs.
+  None is inferred from a fixture, role file or successful Helm render.
+
+## Qualification map
+
+| Group | What the fixtures check | What this establishes |
+|---|---|---|
+| Immutable export | Scope/recipient IDs, pins, bounded topology, private settings, manifest hashes, malformed input and no CLI invocation | Review artifacts are deterministic and fail closed locally |
+| Identity observation | Exact role/assignment, wrong cloud/tenant/principal/scope, deadlines/output and redaction | Read-only bootstrap checks do not overstate readiness or mutate IAM |
+| Durable effects | Intent before HTTP, ETag contention, committed-effect/lost-response, restart, 404 uncertainty and correlation/nonce receipts | Connection failures do not replay an unknown infrastructure action |
+| Independent expiry | Controller/control outside AKS, fixed schedule/image/identity, stale heartbeat, exact resource incarnations, one-shot deletion and self-stop | Cleanup logic remains independent and refuses replacement/ambiguous ownership in fixtures |
+| Installation | Original private endpoint/CA, Entra plugin, exact registry/artifact identity, database TLS, CSI checks and shared installer regressions | Azure follows the existing installer boundary without weakening kind/EKS behavior |
+| Blob data plane | Immutable chunks/manifests, hashes/scopes/limits/cancellation, redirects, committed-effect/503 and token rotation | Native Azure adapter preserves the artifact-store contract |
+| Chart roles | Real Helm rendering of projections, service accounts, rejected overrides, token-free sidecar/controller/platform/bootstrap, unchanged S3/filesystem | Rendered configuration keeps workload credentials in the intended containers |
+
+Tests use in-memory provider models, isolated fake executables and loopback HTTP.
+They intentionally do not demonstrate real Azure control/data planes or kernel
+sandboxing. The live trial must separately validate provisioning/teardown, the
+original and replacement cases against actual APIs, private network enforcement,
+external expiry during AKS/laptop loss, and real long-running agent/team behavior.
+
+### Additional primary references
+
+- [Pinned AKS ARM schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.containerservice/2024-10-01/managedclusters)
+- [Pinned PostgreSQL ARM schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.dbforpostgresql/2024-08-01/flexibleservers)
+- [Pinned Container Apps job schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.app/2024-03-01/jobs)
+- [Container Apps managed identity endpoint](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity)
+- [ARM deployment correlation/history](https://learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-history)
+- [Blob conditional writes](https://learn.microsoft.com/en-us/rest/api/storageservices/put-blob)
+- [Entra kubelogin](https://learn.microsoft.com/en-us/azure/aks/kubelogin-authentication)
+- [AKS application IDs](https://azure.github.io/kubelogin/concepts/aks.html)
+- [Azure Disk CSI](https://learn.microsoft.com/en-us/azure/aks/create-volume-azure-disk)
+- [Workload identity service-account annotations](https://azure.github.io/azure-workload-identity/docs/topics/service-account-labels-and-annotations.html)
+
+### A4 locally qualified — 31 October 2026
+
+- **133 unique automated checks pass:** 64 CLI unit/loopback checks, 12 Azure CLI
+  fixtures, seven shared deployment checks, 17 GCP regressions, 12 shared installer
+  regressions, 11 artifact checks, nine real Helm-render checks and one server
+  Azure configuration check. Two pre-existing artifact entrypoints remain opt-in:
+  the child probe (invoked by its synthetic-endpoint parent) and isolated live S3.
+- The external job now captures its own immutable provider creation timestamp on
+  its first authenticated heartbeat and refuses same-name replacements/config
+  drift before provisioning or self-stop. That replacement assertion was rerun
+  after the full matrix. Job command uses the image's actual absolute binary path.
+- Offline negative tests also reject nested output mutation and bad installation
+  configuration before obtaining credentials. Shared cloud platform opt-in covers
+  Azure, while ordinary kind/EKS serialized inputs and safeguards remain intact.
+- Azure artifact **strict library Clippy passes**. CLI Clippy completes with only
+  the six documented baseline warnings on existing expressions; no new Azure
+  diagnostic or suppression. Formatting and diff checks pass. No all-target strict
+  CLI success is claimed because the earlier baseline lints remain.
+- Used one temporary task-owned debug=0/incremental-off target while the parent's
+  primary build cache was busy. One build job, 6 GiB enforced cap, final size ~1.6 GiB;
+  removed that exact marked target after verification. No global cache prune or
+  cluster/container change. The Docker `azure-cleanup` target is exported and
+  statically reviewed; no Azure image build/push is claimed.
+- No real Azure/GCP/AWS account, token, IAM or resource operation occurred in this
+  batch; no model keys were read/printed. No cloud credential or generated private
+  control/journal is committed. [Sanitized evidence](evidence/azure-offline-20261031.json).
+
+A1–A4 are implemented with offline qualification. **A5 live Azure remains unqualified
+and requires separate account/budget authorization.** Read the service reference's
+explicit control retention, dedicated/exclusive resource scope and non-transactional
+ARM create/delete caveats before any trial. This branch was committed locally;
+canonical merge/push remains with the parent reviewer.
