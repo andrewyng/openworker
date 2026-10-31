@@ -469,3 +469,98 @@ fn infrastructure_rejects_unsafe_or_ambiguous_inputs_without_cloud_calls() {
     }
     assert!(f.log().is_empty());
 }
+
+#[test]
+fn lifecycle_and_independent_cleanup_prepare_offline_and_require_explicit_remote_confirmation() {
+    let f = Fixture::ready();
+    assert!(infrastructure(&f, &infrastructure_config(), "graph")
+        .status
+        .success());
+    let r = f.call(&[
+        "deploy",
+        "azure",
+        "lifecycle",
+        "prepare",
+        "--plan",
+        f.path("graph").to_str().unwrap(),
+        "--out",
+        f.path("state").to_str().unwrap(),
+    ]);
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let state: Value =
+        serde_json::from_slice(&fs::read(f.path("state/azure-state.json")).unwrap()).unwrap();
+    assert_eq!(state["operations"][0]["phase"], "prepared");
+    assert!(state["nonce"].as_str().unwrap().len() == 36);
+    assert!(f
+        .call(&[
+            "deploy",
+            "azure",
+            "cleanup",
+            "package",
+            "--state",
+            f.path("state").to_str().unwrap(),
+            "--out",
+            f.path("control").to_str().unwrap()
+        ])
+        .status
+        .success());
+    let graph: Value =
+        serde_json::from_slice(&fs::read(f.path("control/azure-control.arm.json")).unwrap())
+            .unwrap();
+    let job = graph["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == "Microsoft.App/jobs")
+        .unwrap();
+    assert_eq!(
+        job["properties"]["configuration"]["triggerType"],
+        "Schedule"
+    );
+    assert_eq!(job["properties"]["configuration"]["replicaRetryLimit"], 0);
+    assert!(job["properties"]["template"]["containers"][0]["image"]
+        .as_str()
+        .unwrap()
+        .contains("@sha256:"));
+    let state_path = f.path("state");
+    for command in [
+        vec!["lifecycle", "apply", "--stage", "foundation"],
+        vec!["lifecycle", "destroy"],
+        vec!["cleanup", "initialize"],
+    ] {
+        let mut args = vec!["deploy", "azure"];
+        args.extend(command);
+        args.extend([
+            "--state",
+            state_path.to_str().unwrap(),
+            "--accept",
+            "wrong-digest",
+        ]);
+        assert!(!f.call(&args).status.success());
+    }
+    assert!(
+        f.log().is_empty(),
+        "Offline preparation/refused remote calls must not obtain tokens"
+    );
+    let mut tampered = state;
+    tampered["plan"]["azureInfrastructure"]["nodeVmSize"] = serde_json::json!("Standard_D96s_v5");
+    fs::write(
+        f.path("state/azure-state.json"),
+        serde_json::to_vec(&tampered).unwrap(),
+    )
+    .unwrap();
+    assert!(!f
+        .call(&[
+            "deploy",
+            "azure",
+            "cleanup",
+            "package",
+            "--state",
+            f.path("state").to_str().unwrap(),
+            "--out",
+            f.path("tampered").to_str().unwrap()
+        ])
+        .status
+        .success());
+    assert!(f.log().is_empty());
+}

@@ -150,6 +150,16 @@ pub enum AzureCommand {
     Preflight(azure::Preflight),
     /// Export resolved ARM templates and exact-scope grants; no cloud execution.
     Infrastructure(azure::Infrastructure),
+    /// Durable Azure operation state and exact-resource lifecycle.
+    Lifecycle {
+        #[command(subcommand)]
+        command: azure::Lifecycle,
+    },
+    /// Independent expiry controller outside AKS.
+    Cleanup {
+        #[command(subcommand)]
+        command: azure::Cleanup,
+    },
 }
 #[derive(Args)]
 pub struct GcpPlan {
@@ -583,6 +593,18 @@ fn result(p: &Plan, m: &Manifest) -> Value {
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
     if let Command::Azure {
+        command: AzureCommand::Lifecycle { command },
+    } = command
+    {
+        return azure::lifecycle(command).await;
+    }
+    if let Command::Azure {
+        command: AzureCommand::Cleanup { command },
+    } = command
+    {
+        return azure::cleanup(command).await;
+    }
+    if let Command::Azure {
         command: AzureCommand::Preflight(options),
     } = command
     {
@@ -634,6 +656,9 @@ pub async fn dispatch(command: &Command) -> Result<()> {
 }
 pub fn run(command: &Command) -> Result<()> {
     match command {
+        Command::Azure {
+            command: AzureCommand::Lifecycle { .. } | AzureCommand::Cleanup { .. },
+        } => bail!("Azure lifecycle/cleanup requires asynchronous dispatch"),
         Command::Azure {
             command: AzureCommand::Infrastructure(options),
         } => azure::infrastructure(options),
@@ -889,7 +914,7 @@ fn other_cloud_artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn plan() -> Plan {
+    pub(super) fn plan() -> Plan {
         Plan {
             schema_version: 1,
             deployment_id: "ows-0123456789abcdef0123456789abcdef".into(),

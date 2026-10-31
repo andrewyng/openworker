@@ -1,8 +1,13 @@
 //! Azure identity, infrastructure and lifecycle contracts. Normal deployment authority never includes RBAC
 //! writes, credential generation, or implicit managed-identity impersonation.
 use super::*;
+#[path = "deployment_azure_api.rs"]
+mod api;
 #[path = "deployment_azure_infrastructure.rs"]
 mod graph;
+#[path = "deployment_azure_lifecycle.rs"]
+mod recovery;
+pub(super) use recovery::{cleanup, lifecycle, Cleanup, Lifecycle};
 #[path = "deployment_azure_preflight.rs"]
 mod observation;
 pub(super) use graph::{

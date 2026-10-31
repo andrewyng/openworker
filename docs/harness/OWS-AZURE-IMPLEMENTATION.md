@@ -180,3 +180,56 @@ provider owns its generated infrastructure lifecycle.
 - ARM JSON shapes use pinned Microsoft schemas. No Azure-side template validation,
   quota/version availability, price, networking or OpenShell-on-AKS qualification
   is claimed. The immutable bundle continues reporting `applyReady:false`.
+
+### A3 implementation — durable control and independent expiry
+
+Native bounded ARM/Blob HTTP uses trusted Azure CLI short-lived access tokens in
+memory, or the Container Apps managed-identity endpoint for its exact client ID.
+TLS/endpoints are pinned, redirects/environment proxies/retries are disabled,
+responses are bounded, token-command output is bounded/timed and raw credential
+or Azure error bodies never enter reports. Fixed request UUIDs and exact ARM
+operation URLs/correlation receipts are journaled. A Blob ETag CAS persists intent
+before each effect; a competing writer cannot pass an old checkpoint.
+
+`lifecycle prepare` and `cleanup package` run offline. A separately reviewed
+bootstrap administrator creates control resources/grants from the exports.
+`cleanup initialize` is create-only, then the independent scheduled job provides
+a heartbeat. `lifecycle apply`, `reconcile`, `status` and `destroy` use the shared
+control Blob. Creation requires an exact bundle-digest acknowledgement, an
+explicit experimental flag, unexpired plan and recent independent heartbeat.
+The two ARM stages keep administrator-only RBAC/federation outside the executor.
+
+An uncertain PUT stays unknown even when its deployment is absent. Reconciliation
+binds the original nonce/digest/correlation and records immutable resource creation
+receipts. Cleanup compares those receipts before each exact-ID deletion. A lost
+DELETE is observed after restart; it is never automatically reissued. Unknown
+creates, incomplete ownership and replacements pause teardown for human review.
+
+The external scheduled job advances at most one workload delete each tick, after
+creation becomes terminal. It then records completion and deletes its own exact
+job once. The control account/blob, identity, consumption environment and reviewed
+roles remain for customer audit/removal; this retention is explicit and may have
+small storage costs. No customer RG or guessed AKS node RG is ever deleted. Azure
+lacks a universal conditional DELETE across resource providers: a concurrently
+privileged administrator can race read/delete, so dedicated IDs must not be
+modified externally during teardown. No atomic replacement immunity is claimed.
+
+The live path remains experimental and unqualified: exact IAM/deny policies,
+provider API validation, scheduling, managed-identity endpoints, private routes,
+quota/cost, AKS/OpenShell and whole-subscription cleanup need the authorized live
+trial. The immutable plan reports `applyReady:false`; heartbeat verification is
+not an effective-permissions or production-readiness certificate.
+
+### A3 locally qualified — 31 October 2026
+
+- Ten new native unit/loopback tests pass: lost create/delete after provider effect,
+  restart reconciliation, CAS conflict preventing mutation, ownership replacement,
+  expired/missing-guard creation refusal, unknown-create 404 remaining parked,
+  independent expiry plus self-stop, control graph permissions, native HTTP
+  create-only/ETag headers, response loss with exactly one transport attempt and
+  hostile redirect refusal. Initial loopback bind was sandbox-blocked; rerun with
+  local listener permission passed, with no cloud access.
+- Eleven Azure CLI tests pass, including private offline state/control packaging,
+  tamper detection and refused unconfirmed remote actions without invoking `az`.
+- Local qualification proves protocol/state-machine behavior; it does not establish
+  actual Azure IAM/API/provider success or automatic cleanup under real outages.
