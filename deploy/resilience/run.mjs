@@ -1,3 +1,4 @@
+import { dockerObjectAbsent } from "./contract.mjs";
 // Repeatable local qualification. No cloud provisioning or model keys.
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
@@ -102,7 +103,7 @@ async function inspectOptional(name) {
   try {
     return JSON.parse(await docker("inspect", name))[0];
   } catch (e) {
-    if (/No such (object|container):/.test(e.stderr ?? "")) return null;
+    if (dockerObjectAbsent(e)) return null;
     throw e; // Daemon failure is not proof of resource deletion.
   }
 }

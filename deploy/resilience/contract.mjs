@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+export function dockerObjectAbsent(error) {
+  return /no such (object|container):/i.test(error.stderr ?? "");
+}
 // Destructive qualification accepts only an explicitly named, owned local fixture.
 export function ownedLocalFixture(m, ns, confirmation) {
   assert.match(m.context, /^kind-[a-z0-9-]+$/);

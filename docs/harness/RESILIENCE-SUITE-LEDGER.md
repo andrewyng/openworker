@@ -222,3 +222,10 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   save the recorded timeline before comparison. This changes the test observer,
   not the exporter. Preserve the failed attempt and clean only its original
   resources; prepare a new fixture rather than replay its workload.
+
+- First isolated case passes, but cleanup rejects Docker's lowercase `no such
+  object` response for its already-auto-removed worker. Added a shared,
+  case-insensitive absence classifier with a regression proving daemon/permission
+  errors still fail closed. Reconciled only the saved original container IDs and
+  credentials; the failed report remains unchanged. All nine JavaScript checks
+  pass before the next full attempt.

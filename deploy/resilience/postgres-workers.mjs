@@ -1,3 +1,4 @@
+import { dockerObjectAbsent } from "./contract.mjs";
 // Each fault case owns a fresh database and Linux process tree. A failed case
 // cannot leave actors, catalog state or signal handlers in the next case.
 import assert from "node:assert/strict";
@@ -31,7 +32,7 @@ const inspect = async (name) => {
   try {
     return JSON.parse((await docker(["inspect", name])).stdout)[0];
   } catch (e) {
-    if (/No such (object|container):/.test(e.stderr ?? "")) return null;
+    if (dockerObjectAbsent(e)) return null;
     throw e; // An unavailable daemon is not evidence of deletion.
   }
 };

@@ -1,6 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ownedLocalFixture, cursorTail, noReplay } from "./contract.mjs";
+import {
+  ownedLocalFixture,
+  cursorTail,
+  noReplay,
+  dockerObjectAbsent,
+} from "./contract.mjs";
+test("Docker absence accepts CLI casing, but daemon/permission failures are not deletion", () => {
+  for (const stderr of [
+    "Error: No such object: owned",
+    "error: no such object: owned",
+    "Error: No such container: owned",
+  ])
+    assert(dockerObjectAbsent({ stderr }));
+  for (const stderr of [
+    "Cannot connect to the Docker daemon",
+    "permission denied",
+    "context deadline exceeded",
+    "no such network: owned",
+  ])
+    assert(!dockerObjectAbsent({ stderr }));
+});
 const m = {
   id: "ows-test",
   namespace: "ow-service-m4-resilience123",
