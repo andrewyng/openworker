@@ -193,7 +193,9 @@ test("partial member errors and invalid approval/question responses are not hidd
       { id: "i", session_id: "other", kind: "approval" },
       { decision: "once" },
     ),
-    { code: "InvalidInput" },
+    // The authoritative live roster rejects this, rather than a stale client
+    // SessionRef rejecting every newly spawned member.
+    { code: "Remote" },
   );
 });
 test("AbortSignal stops waiting, never implicitly cancels an agent", async (t) => {

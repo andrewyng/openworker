@@ -360,7 +360,7 @@ impl Host {
                 .as_str()
                 .filter(|s| !terminal(s) && *s != "waiting")
             {
-                active.push(json!({"session_id":id,"agent":agent,"turn_id":snapshot["turn"]["id"],"phase":match status {"executing"=>"tool","running"=>"model","cancelling"=>"cancelling","recoverable"=>"recovering",_=>"queued"},"call_id":if status=="executing"{snapshot["turn"]["queue"][0]["call_id"].clone()}else{Value::Null}}));
+                active.push(json!({"session_id":id,"agent":agent,"turn_id":snapshot["turn"]["id"],"phase":match status {"executing"=>"tool","running"=>"model","cancelling"=>"cancelling","recoverable"=>"recovering","waiting_agents"=>"waiting_agents",_=>"queued"},"call_id":if status=="executing"{snapshot["turn"]["queue"][0]["call_id"].clone()}else{Value::Null}}));
             }
         }
         let board = team
@@ -403,9 +403,26 @@ impl Host {
     /// Lead first, then workers, as (session_id, agent_id); plus the team ID
     /// when `sid` leads a team. Workers are not runs of their own.
     fn members(&self, sid: &str) -> Result<Members> {
-        let db = self.store.lock().unwrap();
+        let mut db = self.store.lock().unwrap();
         let lead = db.metadata(sid)?;
         let mut members = vec![(sid.to_owned(), lead.coworker)];
+        if lead.agent_team.is_some() {
+            let doc: openworker_runtime::agent_team::Document =
+                serde_json::from_value(db.agent_team(sid, "snapshot", &json!({}), None)?)?;
+            if lead
+                .agent_team
+                .as_ref()
+                .is_some_and(|m| m.agent_id == doc.lead)
+            {
+                for i in doc.roster.instances().filter(|i| {
+                    i.session_id != sid
+                        && i.phase == openworker_runtime::team_coordination::Phase::Ready
+                }) {
+                    members.push((i.session_id.clone(), i.agent_type.clone()));
+                }
+            }
+            return Ok((members, None));
+        }
         let Some(ctx) = db.team_context(sid)? else {
             return Ok((members, None));
         };
@@ -709,8 +726,8 @@ impl Host {
         let mut cursors = p.get("cursors").and_then(Value::as_object).cloned();
         let deadline = Instant::now() + wait;
         let mut rx = self.events.subscribe();
-        let (members, team) = self.members(&sid)?;
         loop {
+            let (members, team) = self.members(&sid)?;
             // Prevent a scheduler/app admission between the idle snapshot and
             // queue/outbox check. Model completion may still advance the journal.
             let admission = self.admission.lock().await;
@@ -760,7 +777,7 @@ impl Host {
                     } else {
                         snap["cursor"].as_i64().unwrap_or(0)
                     };
-                    let from = cursors.get(s).and_then(Value::as_i64).unwrap_or(until);
+                    let from = cursors.get(s).and_then(Value::as_i64).unwrap_or(0);
                     ensure!(
                         from >= 0 && from <= snap["cursor"].as_i64().unwrap_or(0),
                         "Invalid run cursor"
@@ -770,7 +787,9 @@ impl Host {
                         continue;
                     }
                     let mut last = from;
-                    for e in self.store.lock().unwrap().events(s, from)? {
+                    let journal = self.store.lock().unwrap().events(s, from)?;
+                    let membership = self.store.lock().unwrap().metadata(s)?.agent_team;
+                    for e in journal {
                         if e.event_id > until {
                             break;
                         }
@@ -779,7 +798,12 @@ impl Host {
                             break;
                         }
                         last = e.event_id;
-                        events.push(stream_item(agent, e));
+                        let mut item = stream_item(agent, e);
+                        if let Some(member) = &membership {
+                            item["agent_id"] = json!(member.agent_id);
+                            item["team_id"] = json!(member.team_id);
+                        }
+                        events.push(item);
                     }
                     // The adapter also pages by count AND bytes. Exhausting
                     // its page is not evidence that we reached the snapshot.
@@ -806,6 +830,47 @@ impl Host {
 
             let lead = &snaps[0];
             let lead_turn = &lead["turn"];
+            let pending_instances = if self
+                .store
+                .lock()
+                .unwrap()
+                .metadata(&sid)?
+                .agent_team
+                .is_some()
+            {
+                let mut db = self.store.lock().unwrap();
+                let doc: openworker_runtime::agent_team::Document =
+                    serde_json::from_value(db.agent_team(&sid, "snapshot", &json!({}), None)?)?;
+                let mut pending = false;
+                if !doc.stopped {
+                    for i in doc.roster.instances() {
+                        if i.phase == openworker_runtime::team_coordination::Phase::Reserved {
+                            pending = true;
+                            continue;
+                        }
+                        if i.phase != openworker_runtime::team_coordination::Phase::Ready {
+                            continue;
+                        }
+                        let session = db.metadata(&i.session_id)?;
+                        if i.agent_id != doc.lead && session.turn.is_none() {
+                            pending = true;
+                        }
+                        if !session.closed
+                            && session
+                                .turn
+                                .as_ref()
+                                .is_some_and(|t| t.status == "completed")
+                            && db.agent_team(&i.session_id, "pending_inbox", &json!({}), None)?
+                                == true
+                        {
+                            pending = true;
+                        }
+                    }
+                }
+                pending
+            } else {
+                false
+            };
             let all_idle = snaps
                 .iter()
                 .all(|s| s["turn"]["status"].as_str().is_none_or(terminal));
@@ -815,7 +880,10 @@ impl Host {
                     .context("Invalid saved run status")?
             } else if !interruptions.is_empty() {
                 "interrupted"
-            } else if !all_idle || board.as_ref().is_some_and(|b| b["pending_work"] != false) {
+            } else if pending_instances
+                || !all_idle
+                || board.as_ref().is_some_and(|b| b["pending_work"] != false)
+            {
                 "running"
             } else {
                 terminal_status(lead_turn)

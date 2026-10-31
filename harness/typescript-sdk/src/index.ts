@@ -92,7 +92,9 @@ function interruptionOf(value: unknown): Interruption {
 
 /** Node.js host owner. Agent logic, storage and permission enforcement remain in Rust. */
 export class Harness {
-  static connect(options: ServiceOptions): Promise<Service> { return Service.connect(options); }
+  static connect(options: ServiceOptions): Promise<Service> {
+    return Service.connect(options);
+  }
   private readonly callbackOwner = randomUUID();
   private readonly callbacks = new Map<string, ApplicationTool>();
   private readonly callbackRuns = new Map<string, AbortController>();
@@ -457,9 +459,50 @@ export class Harness {
       throw new HarnessError("Protocol", "Invalid agent list");
     return result.agents.map((a) => String(record(a).id));
   }
+  async newTeam(
+    lead: string,
+    options: SessionOptions & AgentTeamOptions,
+  ): Promise<AgentTeam> {
+    const session = await this.session(lead, options);
+    return this.attachTeam(session, options);
+  }
+  async attachTeam(
+    lead: Session,
+    options: AgentTeamOptions,
+  ): Promise<AgentTeam> {
+    const doc = record(
+      await this.request("agent-team/create", {
+        session_id: lead.id,
+        agent_id: options.agentId ?? "lead",
+        agent_types: options.agentTypes,
+        policy: {
+          communication: options.communication ?? {
+            board: true,
+            directMessages: false,
+          },
+          max_instances: options.maxInstances ?? 32,
+        },
+        ...(options.limits ? { limits: options.limits } : {}),
+      }),
+    );
+    return new AgentTeam(this, lead, String(doc.id));
+  }
+  async resumeTeam(reference: AgentTeamRef): Promise<AgentTeam> {
+    const lead = await this.resume(reference.lead);
+    const team = new AgentTeam(this, lead, reference.teamId);
+    if ((await team.snapshot()).id !== reference.teamId)
+      throw new HarnessError("InvalidInput", "Team identity mismatch");
+    return team;
+  }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
-    if (options.autoSkipQuestions !== undefined && this.capabilities.sdk_question_policy !== true)
-      throw new HarnessError("Setup", "Update the host to configure SDK question policy");
+    if (
+      options.autoSkipQuestions !== undefined &&
+      this.capabilities.sdk_question_policy !== true
+    )
+      throw new HarnessError(
+        "Setup",
+        "Update the host to configure SDK question policy",
+      );
     if (options.workspace !== undefined && !isAbsolute(options.workspace))
       throw new HarnessError(
         "InvalidInput",
@@ -633,10 +676,20 @@ export class Session {
       runId: value.run_id as string | null,
       active: value.active as Json[],
       pending: (value.pending as unknown[]).map(interruptionOf),
-      timers: Array.isArray(value.timers) ? value.timers.map((v) => {
-        const t=record(v); return {id:String(t.id),nextRunAt:Number(t.next_run_at),remainingRuns:Number(t.remaining_runs)};
-      }) : null,
-      capabilities: { steering: false, timers: record(value.capabilities ?? {}).timers === true },
+      timers: Array.isArray(value.timers)
+        ? value.timers.map((v) => {
+            const t = record(v);
+            return {
+              id: String(t.id),
+              nextRunAt: Number(t.next_run_at),
+              remainingRuns: Number(t.remaining_runs),
+            };
+          })
+        : null,
+      capabilities: {
+        steering: false,
+        timers: record(value.capabilities ?? {}).timers === true,
+      },
       canAcceptMessage: value.can_accept_message === true,
       lastOutcome: value.last_outcome as string | null,
       cursor: Number(value.cursor),
@@ -658,7 +711,10 @@ export class Session {
     const value = typeof input === "string" ? { text: input } : input;
     const control = value.type === "approval" || value.type === "answer";
     if (control && options.limits !== undefined) {
-      throw new HarnessError("InvalidInput", "Limits apply only to new message turns");
+      throw new HarnessError(
+        "InvalidInput",
+        "Limits apply only to new message turns",
+      );
     }
     const allowed = control
       ? value.type === "approval"
@@ -805,11 +861,6 @@ export class Session {
     }
   }
   async respond(interruption: Interruption, response: Response): Promise<void> {
-    if (!this.memberIds().includes(interruption.session_id))
-      throw new HarnessError(
-        "InvalidInput",
-        "Interruption does not belong to this session/team",
-      );
     if ("defer" in response) return;
     if (
       (interruption.kind === "approval" && !("decision" in response)) ||
@@ -820,10 +871,19 @@ export class Session {
         "Approve/deny approvals; answer questions",
       );
     }
-    await this.harness.request("run/respond", {
-      session_id: interruption.session_id,
-      interaction_id: interruption.id,
-      ...response,
+    // Membership can grow while the run streams. The host validates the live
+    // roster; a stale local SessionRef must not reject a newly spawned child.
+    await this.harness.request("session/send", {
+      session_id: this.id,
+      submission_id: randomUUID(),
+      input: {
+        type: interruption.kind === "approval" ? "approval" : "answer",
+        target_session_id: interruption.session_id,
+        interaction_id: interruption.id,
+        ...("decision" in response
+          ? { decision: response.decision }
+          : { text: response.answer }),
+      },
     });
   }
   async cancel(options: { endTeam?: boolean } = {}): Promise<void> {
@@ -915,6 +975,10 @@ export class RunStream implements AsyncIterable<RunEvent> {
         this.saved[sid] = Number(event.event_id);
         yield {
           agent: String(item.agent),
+          ...(typeof item.agent_id === "string"
+            ? { agentId: item.agent_id }
+            : {}),
+          ...(typeof item.team_id === "string" ? { teamId: item.team_id } : {}),
           sessionId: sid,
           event: event as unknown as RunEvent["event"],
           summary: (item.summary ?? null) as RunEvent["summary"],
@@ -1057,5 +1121,90 @@ export class Team {
     if (typeof item.id !== "string" || typeof item.revision !== "number")
       throw new HarnessError("Protocol", "Missing team item");
     return item as unknown as TeamItem;
+  }
+}
+
+/** Named multi-instance teams; the Rust host owns all coordination decisions. */
+export interface AgentTeamOptions {
+  agentTypes: string[];
+  agentId?: string;
+  communication?: { board: boolean; directMessages: boolean };
+  maxInstances?: number;
+  limits?: {
+    maxModelCalls: number;
+    maxOutputTokens: number;
+    summaryTokens?: number;
+  };
+}
+export interface AgentTeamRef {
+  lead: SessionRef;
+  teamId: string;
+}
+export class AgentTeam {
+  constructor(
+    private harness: Harness,
+    readonly lead: Session,
+    readonly id: string,
+  ) {}
+  reference(): AgentTeamRef {
+    return { lead: this.lead.reference(), teamId: this.id };
+  }
+  async snapshot(): Promise<Record<string, unknown>> {
+    return record(await this.query("snapshot", {}));
+  }
+  history(
+    options: {
+      messageId?: string;
+      direction?: "before" | "after";
+      limit?: number;
+    } = {},
+  ): Promise<unknown> {
+    return this.query("team_read_board", {
+      message_id: options.messageId ?? null,
+      direction: options.direction ?? "before",
+      limit: options.limit ?? 20,
+    });
+  }
+  spawn(
+    requestId: string,
+    agentType: string,
+    agentId: string,
+    message: string,
+  ): Promise<unknown> {
+    return this.command(requestId, "team_spawn", {
+      agent_type: agentType,
+      agent_id: agentId,
+      message,
+    });
+  }
+  post(requestId: string, message: string): Promise<unknown> {
+    return this.command(requestId, "team_post_board", { message });
+  }
+  sendMessage(
+    requestId: string,
+    agentId: string,
+    message: string,
+  ): Promise<unknown> {
+    return this.command(requestId, "team_send_message", {
+      agent_id: agentId,
+      message,
+    });
+  }
+  async stop(requestId: string): Promise<unknown> {
+    return this.command(requestId, "stop", {});
+  }
+  private command(
+    request_id: string,
+    operation: string,
+    args: unknown,
+  ): Promise<unknown> {
+    return this.query("command", { request_id, operation, arguments: args });
+  }
+  private query(operation: string, args: unknown): Promise<unknown> {
+    return this.harness.request("agent-team/command", {
+      session_id: this.lead.id,
+      operation,
+      arguments: args,
+    });
   }
 }

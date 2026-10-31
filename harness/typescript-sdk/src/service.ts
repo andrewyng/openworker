@@ -1,6 +1,11 @@
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
-import { type Json, type JournalEvent, type RunEvent, type TurnLimits } from "./types.js";
+import {
+  type Json,
+  type JournalEvent,
+  type RunEvent,
+  type TurnLimits,
+} from "./types.js";
 
 export interface ServiceOptions {
   url: string;
@@ -654,6 +659,29 @@ export class ServiceSession {
   get environmentId() {
     return this.ref.environmentId;
   }
+  async createTeam(
+    options: ServiceAgentTeamOptions,
+  ): Promise<ServiceAgentTeam> {
+    await this.service.json("POST", `/v1/sessions/${segment(this.id)}/team`, {
+      agentId: options.agentId ?? "lead",
+      agentTypes: options.agentTypes,
+      policy: {
+        communication: options.communication ?? {
+          board: true,
+          directMessages: false,
+        },
+        max_instances: options.maxInstances ?? 32,
+      },
+      limits: options.limits,
+    });
+    return new ServiceAgentTeam(this.service, this);
+  }
+  async resumeTeam(): Promise<ServiceAgentTeam> {
+    const team = new ServiceAgentTeam(this.service, this);
+    await team.snapshot();
+    return team;
+  }
+
   reference(): ServiceSessionRef {
     return structuredClone(this.ref);
   }
@@ -752,5 +780,64 @@ export class ServiceRun {
     for await (const _ of this.events({ after: initial.cursor })) {
     }
     return this.snapshot();
+  }
+}
+
+export interface ServiceAgentTeamOptions {
+  agentId?: string;
+  /** Type name → activated immutable release ID, e.g. builder → builder@1. */
+  agentTypes: Record<string, string>;
+  communication?: { board: boolean; directMessages: boolean };
+  maxInstances?: number;
+  limits?: TurnLimits;
+}
+export class ServiceAgentTeam {
+  constructor(
+    private service: Service,
+    readonly lead: ServiceSession,
+  ) {}
+  snapshot(): Promise<any> {
+    return this.service.json(
+      "GET",
+      `/v1/sessions/${segment(this.lead.id)}/team`,
+    );
+  }
+  stop(key: string): Promise<any> {
+    return this.command(key, "stop", {});
+  }
+  spawn(
+    key: string,
+    agentType: string,
+    agentId: string,
+    message: string,
+  ): Promise<any> {
+    return this.command(key, "team_spawn", {
+      agent_type: agentType,
+      agent_id: agentId,
+      message,
+    });
+  }
+  post(key: string, message: string): Promise<any> {
+    return this.command(key, "team_post_board", { message });
+  }
+  sendMessage(key: string, agentId: string, message: string): Promise<any> {
+    return this.command(key, "team_send_message", {
+      agent_id: agentId,
+      message,
+    });
+  }
+  history(options:{messageId?:string;direction?:"before"|"after";limit?:number}={}):Promise<any>{
+    const query=new URLSearchParams({direction:options.direction??"before",limit:String(options.limit??20)});
+    if(options.messageId!==undefined)query.set("message_id",options.messageId);
+    return this.service.json("GET",`/v1/sessions/${segment(this.lead.id)}/team/messages?${query}`);
+  }
+
+  private command(key: string, operation: string, args: unknown): Promise<any> {
+    return this.service.json(
+      "POST",
+      `/v1/sessions/${segment(this.lead.id)}/team/commands`,
+      { operation, arguments: args },
+      key,
+    );
   }
 }

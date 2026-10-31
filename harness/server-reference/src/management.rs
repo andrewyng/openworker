@@ -361,6 +361,8 @@ pub async fn controller(
     let installed = installation(&config)?;
     while !stop.is_cancelled() {
         delete_once(&config, &store, &installed).await?;
+        store.provision_agent_team_child()?;
+        store.reconcile_stopped_agent_team()?;
         if !control_matching(&config, &store, &installed).await? {
             tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
         }

@@ -236,6 +236,18 @@ impl Database {
         if session.closed {
             return Err(SubmissionError::Closed.into());
         }
+        if let Some(member) = &session.agent_team {
+            let stopped: bool = tx
+                .query_one(
+                    "SELECT (data->>'stopped')::boolean FROM agent_teams WHERE id=$1",
+                    &[&member.team_id],
+                )?
+                .get(0);
+            if stopped {
+                return Err(SubmissionError::Closed.into());
+            }
+        }
+
         if session.provider_blocked {
             return Err(SubmissionError::ProviderBlocked.into());
         }

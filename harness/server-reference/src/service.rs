@@ -66,6 +66,10 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         | ("POST", ["", "v1", "sessions", _, "artifacts", _, "reconcile"])
         | ("PUT", ["", "v1", "sessions", _, "artifacts", _, "content"]) => Some(Action::Artifact),
         ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
+        ("GET", ["", "v1", "sessions", _, "team"])
+        | ("GET", ["", "v1", "sessions", _, "team", "messages"]) => Some(Action::Read),
+        ("POST", ["", "v1", "sessions", _, "team"])
+        | ("POST", ["", "v1", "sessions", _, "team", "commands"]) => Some(Action::Control),
         ("POST", ["", "v1", "sessions", _, "controls" | "close"]) => Some(Action::Control),
         ("GET", ["", "v1", "worker-pools"]) => Some(Action::Read),
         ("POST", ["", "v1", "worker-pools", _, "scale"]) => Some(Action::Admin),
@@ -139,6 +143,18 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/sessions/:sid/events/page", get(event_page))
         .route("/v1/submissions", post(submit))
         .route("/v1/sessions/:sid/close", post(close))
+        .route(
+            "/v1/sessions/:sid/team",
+            post(crate::agent_teams::create).get(crate::agent_teams::snapshot),
+        )
+        .route(
+            "/v1/sessions/:sid/team/messages",
+            get(crate::agent_teams::history),
+        )
+        .route(
+            "/v1/sessions/:sid/team/commands",
+            post(crate::agent_teams::command),
+        )
         .route("/v1/environments", get(environment_list))
         .route(
             "/v1/environments/:id/delete",
@@ -177,7 +193,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":false,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -418,6 +434,18 @@ async fn scale_pool(
 #[cfg(test)]
 mod boundary_tests {
     use super::*;
+    #[test]
+    fn named_team_reads_and_commands_have_distinct_authority() {
+        for path in ["/v1/sessions/s/team", "/v1/sessions/s/team/messages"] {
+            assert!(authority("GET", path) == Some(Action::Read));
+        }
+        for path in ["/v1/sessions/s/team", "/v1/sessions/s/team/commands"] {
+            assert!(authority("POST", path) == Some(Action::Control));
+        }
+        assert!(authority("POST", "/v1/sessions/s/team/messages").is_none());
+        assert!(authority("GET", "/v1/sessions/s/team/commands").is_none());
+        assert!(authority("DELETE", "/v1/sessions/s/team").is_none());
+    }
     #[test]
     fn artifact_routes_use_explicit_read_and_write_authority() {
         for path in [

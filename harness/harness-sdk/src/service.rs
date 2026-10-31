@@ -904,3 +904,124 @@ mod tests {
         assert!(Sse::default().push(&vec![b'x'; 1048577]).is_err());
     }
 }
+
+/// Approved release IDs are deployment configuration; the model sees only the
+/// named agent types, never arbitrary release or environment credentials.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamOptions {
+    pub agent_id: String,
+    pub agent_types: std::collections::BTreeMap<String, String>,
+    pub policy: openworker_runtime::team_coordination::Policy,
+    pub limits: Option<openworker_runtime::budget::Limits>,
+}
+#[derive(Clone)]
+pub struct AgentTeam {
+    pub lead: Session,
+}
+impl Session {
+    pub async fn create_team(&self, options: AgentTeamOptions) -> Result<AgentTeam> {
+        self.service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team", id(self.id())?),
+                Some(serde_json::to_value(options).map_err(|_| error("invalid_team"))?),
+                None,
+            )
+            .await?;
+        Ok(AgentTeam { lead: self.clone() })
+    }
+    pub async fn resume_team(&self) -> Result<AgentTeam> {
+        let team = AgentTeam { lead: self.clone() };
+        team.snapshot().await?;
+        Ok(team)
+    }
+}
+impl AgentTeam {
+    pub async fn stop(&self, key: &str) -> Result<Value> {
+        self.command(key, "stop", json!({})).await
+    }
+    pub async fn snapshot(&self) -> Result<Value> {
+        self.lead
+            .service
+            .json(
+                "GET",
+                &format!("/v1/sessions/{}/team", id(self.lead.id())?),
+                None,
+                None,
+            )
+            .await
+    }
+    pub async fn spawn(
+        &self,
+        key: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+    ) -> Result<Value> {
+        self.command(
+            key,
+            "team_spawn",
+            json!({"agent_type":agent_type,"agent_id":agent_id,"message":message}),
+        )
+        .await
+    }
+    pub async fn post(&self, key: &str, message: &str) -> Result<Value> {
+        self.command(key, "team_post_board", json!({"message":message}))
+            .await
+    }
+    pub async fn send_message(&self, key: &str, agent_id: &str, message: &str) -> Result<Value> {
+        self.command(
+            key,
+            "team_send_message",
+            json!({"agent_id":agent_id,"message":message}),
+        )
+        .await
+    }
+    pub async fn history(
+        &self,
+        query: openworker_runtime::team_coordination::HistoryQuery,
+    ) -> Result<Value> {
+        query
+            .validate()
+            .map_err(|_| error("invalid_team_history"))?;
+        let direction =
+            if query.direction == openworker_runtime::team_coordination::Direction::After {
+                "after"
+            } else {
+                "before"
+            };
+        let anchor = query
+            .message_id
+            .as_deref()
+            .map(id)
+            .transpose()?
+            .map(|v| format!("&message_id={v}"))
+            .unwrap_or_default();
+        self.lead
+            .service
+            .json(
+                "GET",
+                &format!(
+                    "/v1/sessions/{}/team/messages?direction={direction}&limit={}{anchor}",
+                    id(self.lead.id())?,
+                    query.limit
+                ),
+                None,
+                None,
+            )
+            .await
+    }
+
+    async fn command(&self, key: &str, operation: &str, arguments: Value) -> Result<Value> {
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/commands", id(self.lead.id())?),
+                Some(json!({"operation":operation,"arguments":arguments})),
+                Some(key),
+            )
+            .await
+    }
+}

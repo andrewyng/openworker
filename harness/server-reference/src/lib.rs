@@ -5,6 +5,7 @@ use openworker_runtime::{execution::Backend, model::Model, runtime::Runtime};
 use openworker_store_postgres::{Config as DbConfig, PostgresStore, Tls};
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
+mod agent_teams;
 mod artifacts;
 mod authorization;
 pub mod http;

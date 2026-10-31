@@ -96,7 +96,7 @@ pub(crate) fn current_assignment(tx: &mut Transaction<'_>, sid: &str, item: &Ite
     );
     Ok(())
 }
-fn session_event(
+pub(crate) fn session_event(
     tx: &mut Transaction<'_>,
     sid: &str,
     tid: Option<&str>,

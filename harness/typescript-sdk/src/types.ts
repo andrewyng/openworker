@@ -1,10 +1,5 @@
 export type Json =
-  | null
-  | boolean
-  | number
-  | string
-  | Json[]
-  | { [key: string]: Json };
+  null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Provider = "openai" | "anthropic";
 export interface AccessToken {
   accessToken: string;
@@ -131,8 +126,7 @@ export interface Telemetry {
   endpoint: string;
   deployment?: string;
   headers?: (
-    | { name: string; value: string }
-    | { name: string; value_env: string }
+    { name: string; value: string } | { name: string; value_env: string }
   )[];
   signals?: ("traces" | "metrics" | "logs")[];
   content?: {
@@ -251,6 +245,8 @@ export interface JournalEvent {
   data: Json;
 }
 export interface RunEvent {
+  agentId?: string;
+  teamId?: string;
   agent: string;
   sessionId: string;
   event: JournalEvent;
@@ -274,12 +270,7 @@ export interface Connection {
   persistence?: "memory" | "secure";
 }
 export type ItemStatus =
-  | "open"
-  | "in_progress"
-  | "review"
-  | "done"
-  | "blocked"
-  | "cancelled";
+  "open" | "in_progress" | "review" | "done" | "blocked" | "cancelled";
 export interface ItemSpec {
   title: string;
   criteria: string;

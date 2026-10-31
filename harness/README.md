@@ -169,3 +169,12 @@ assets retain their own notices and licenses.
 
 Repeatable resilience checks: [test cases and run commands](../docs/harness/RESILIENCE-TEST-CASES.md)
 cover fast contracts, real PostgreSQL worker recovery and local Kubernetes/OpenShell.
+
+Named agent teams provide multiple instances per type, durable inboxes, mention-only
+boards and waits that release server capacity. Both SDKs use the same Rust domain
+on SQLite/PostgreSQL; shared OpenShell teams run through the service. The earlier
+work-item team API keeps its assignment/review contract.
+See the [team QuickStart](../docs/harness/AGENT-TEAMS-QUICKSTART.md),
+[decisions](../docs/harness/AGENT-TEAMS-DECISIONS.md),
+[test cases](../docs/harness/AGENT-TEAMS-TEST-CASES.md), and
+[qualification ledger](../docs/harness/AGENT-TEAMS-IMPLEMENTATION.md).

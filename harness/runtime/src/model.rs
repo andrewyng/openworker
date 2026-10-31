@@ -567,7 +567,13 @@ impl Model {
     async fn fixture(&self, history: &[Value], tx: mpsc::Sender<Progress>) -> Result<()> {
         let start = history
             .iter()
-            .rposition(|v| v["role"] == "user")
+            .rposition(|v| {
+                v["role"] == "user"
+                    && !matches!(
+                        v["_runtime_notice"].as_str(),
+                        Some("agent_inbox" | "agent_wait")
+                    )
+            })
             .unwrap_or(0);
         let calls: Vec<_> = history[start..]
             .iter()
@@ -740,6 +746,9 @@ impl Model {
             .get(start)
             .and_then(|v| {
                 let content = v["content"].as_str()?;
+                let content = content
+                    .strip_prefix(crate::agent_team::DELEGATION_PREFIX)
+                    .unwrap_or(content);
                 if v["_runtime_notice"] == "scheduled_task" {
                     content.strip_prefix(crate::assistant_tools::SCHEDULE_PREFIX)
                 } else {

@@ -41,6 +41,7 @@
 //! # Ok(())
 //! # }
 //! ```
+mod agent_team;
 mod bundle;
 pub(crate) mod compile;
 mod harness;
@@ -51,6 +52,10 @@ pub use crate::{
     AccessToken, ApprovalDecision, Capture, ContentPolicy, Credentials, Model, ModelChoice,
     ModelProvider, ProviderKind, Sandbox, Storage, TelemetryConfig, TelemetryHeader,
     TelemetrySignal, TokenRefreshReason, ToolRegistry,
+};
+pub use agent_team::{
+    AgentTeam, AgentTeamRef, Communication, HistoryPage, HistoryQuery, Instance, TeamOptions,
+    TeamPolicy,
 };
 pub use harness::{AgentHandle, Harness, HarnessBuilder};
 pub use session::{

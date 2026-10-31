@@ -66,6 +66,8 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub agent_team: Option<crate::agent_team::Membership>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<crate::environment::Binding>,
     /// Adapter concurrency token, not a model-visible permission or identity.
@@ -170,6 +172,18 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    fn supports_agent_teams(&self) -> bool {
+        false
+    }
+    fn agent_team(
+        &mut self,
+        _sid: &str,
+        _operation: &str,
+        _args: &Value,
+        _call: Option<(&str, &Value)>,
+    ) -> Result<Value> {
+        bail!("Agent team storage unavailable")
+    }
     fn assistant_call(
         &mut self,
         _sid: &str,
@@ -314,6 +328,8 @@ pub struct Store {
     db: Connection,
     _lock: Option<std::fs::File>,
 }
+#[path = "sqlite_agent_team.rs"]
+mod sqlite_agent_team;
 #[path = "sqlite_assistant.rs"]
 mod sqlite_assistant;
 #[path = "sqlite_teams.rs"]
@@ -370,6 +386,7 @@ impl Store {
             COMMIT;")?;
         sqlite_teams::migrate(&db)?;
         sqlite_assistant::migrate(&db)?;
+        sqlite_agent_team::migrate(&db)?;
         Ok(Self { db, _lock: lock })
     }
     pub fn get(&self, id: &str) -> Result<Session> {
@@ -737,6 +754,9 @@ impl Store {
         s.history.push(input);
         // A bookkeeping decision belongs to the old turn, not the next task.
         s.compaction_action = None;
+        if let Some(member) = &mut s.agent_team {
+            member.waiting = None;
+        }
         s.turn = Some(Turn {
             budget: crate::budget::State::new(s.package.limits.as_ref(), limits.clone())?,
             observation: None,
@@ -827,7 +847,9 @@ impl Store {
         for mut s in self.list()? {
             self.interrupt_attempts(&s.id)?;
             if let Some(t) = &mut s.turn {
-                if !terminal(&t.status) {
+                if !terminal(&t.status)
+                    && !matches!(t.status.as_str(), "waiting_agents" | "resuming_agents")
+                {
                     let pending = s
                         .interactions
                         .iter()
@@ -872,6 +894,19 @@ impl Store {
 }
 
 impl StateStore for Store {
+    fn supports_agent_teams(&self) -> bool {
+        true
+    }
+    fn agent_team(
+        &mut self,
+        sid: &str,
+        operation: &str,
+        args: &Value,
+        call: Option<(&str, &Value)>,
+    ) -> Result<Value> {
+        Store::agent_team(self, sid, operation, args, call)
+    }
+
     fn assistant_call(
         &mut self,
         sid: &str,

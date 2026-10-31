@@ -145,6 +145,14 @@ impl RunResult {
 /// Progress while a run is streaming.
 #[derive(Clone, Debug)]
 pub enum RunEvent {
+    /// Named-team events retain both instance and definition identities.
+    TeamActivity {
+        agent_id: String,
+        agent_type: String,
+        team_id: String,
+        event: Event,
+        summary: Value,
+    },
     Message {
         agent: String,
         text: String,
@@ -172,6 +180,17 @@ pub enum RunEvent {
 }
 impl RunEvent {
     fn from_wire(item: &Value) -> Option<Self> {
+        if let (Some(agent_id), Some(team_id)) =
+            (item["agent_id"].as_str(), item["team_id"].as_str())
+        {
+            return Some(Self::TeamActivity {
+                agent_id: agent_id.into(),
+                agent_type: item["agent"].as_str()?.into(),
+                team_id: team_id.into(),
+                event: serde_json::from_value(item["event"].clone()).ok()?,
+                summary: item["summary"].clone(),
+            });
+        }
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
         let summary = &item["summary"];
         let tool = || summary["tool"].as_str().unwrap_or_default().to_owned();
@@ -569,7 +588,13 @@ impl Session {
                 ))
             }
         }
-        self.client.request("run/respond", p).await.map(drop)
+        let mut input = json!({"type":if p.get("decision").is_some(){"approval"}else{"answer"},"interaction_id":interruption.id,"target_session_id":interruption.session_id});
+        if let Some(d) = p.get("decision") {
+            input["decision"] = d.clone();
+        } else {
+            input["text"] = p["answer"].clone();
+        }
+        self.client.request("session/send",json!({"session_id":self.id(),"submission_id":openworker_runtime::id("response"),"input":input})).await.map(drop)
     }
 
     /// Cancel every active turn in this session and its workers. The team
