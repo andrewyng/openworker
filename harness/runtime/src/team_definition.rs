@@ -181,7 +181,8 @@ impl Sandbox {
 
 /// Host-owned policy input, never accepted from the model. The digest binds the
 /// resolved authority (including grant identities/versions), not just grant names.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ceiling {
     pub lead_session_id: String,
     pub policy_digest: String,
@@ -191,7 +192,7 @@ pub struct Ceiling {
     pub profiles: BTreeMap<String, Grants>,
 }
 impl Ceiling {
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         reference(&self.lead_session_id, 200)?;
         digest(&self.policy_digest)?;
         references(&self.tools, 128)?;
@@ -207,6 +208,41 @@ impl Ceiling {
             model.validate()?;
         }
         Ok(())
+    }
+}
+
+/// Application-owned delegation configuration. The session identity and policy
+/// digest are derived by the host; neither is a model-controlled argument.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Delegation {
+    pub tools: BTreeSet<String>,
+    #[serde(default)]
+    pub models: Vec<Choice>,
+    pub placements: BTreeSet<Placement>,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, Grants>,
+}
+impl Delegation {
+    pub fn bind(&self, lead: &crate::store::Session) -> Result<Ceiling> {
+        let policy_digest = crate::bundle::digest(&serde_json::to_vec(&(
+            "team-delegation-v1",
+            self,
+            &lead.bundle_digest,
+            &lead.resource_policy.digest,
+            &lead.tool_policy.digest,
+            &lead.permissions,
+        ))?);
+        let ceiling = Ceiling {
+            lead_session_id: lead.id.clone(),
+            policy_digest,
+            tools: self.tools.clone(),
+            models: self.models.clone(),
+            placements: self.placements.clone(),
+            profiles: self.profiles.clone(),
+        };
+        ceiling.validate()?;
+        Ok(ceiling)
     }
 }
 

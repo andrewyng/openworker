@@ -43,6 +43,10 @@ pub struct Document {
     pub stopped: bool,
     #[serde(default)]
     pub failures: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_catalog: Option<crate::team_type_catalog::Catalog>,
+    #[serde(default)]
+    pub type_bindings: BTreeMap<String, String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
@@ -158,7 +162,11 @@ pub fn apply(
             );
             ensure!(
                 serde_json::to_value(doc.roster.policy())? == serde_json::to_value(&policy)?
-                    && doc.roster.spawn_types() == &types,
+                    && doc
+                        .type_catalog
+                        .as_ref()
+                        .map_or_else(|| doc.roster.spawn_types(), |c| &c.prebuilt)
+                        == &types,
                 "Conflicting team creation retry"
             );
             let requested = args
@@ -171,6 +179,18 @@ pub fn apply(
             ensure!(
                 requested == doc.budget.limits,
                 "Changed team limits on retry"
+            );
+            let delegation = args
+                .get("delegation")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .map(serde_json::from_value::<crate::team_definition::Delegation>)
+                .transpose()?;
+            let expected = delegation.as_ref().map(|d| d.bind(s)).transpose()?;
+            ensure!(
+                serde_json::to_value(expected)?
+                    == serde_json::to_value(doc.type_catalog.as_ref().map(|c| &c.ceiling))?,
+                "Changed delegation on retry"
             );
             return Ok(json!(doc));
         }
@@ -189,6 +209,17 @@ pub fn apply(
             types,
             policy,
         )?;
+        let delegation = args
+            .get("delegation")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .map(serde_json::from_value::<crate::team_definition::Delegation>)
+            .transpose()?;
+        let type_catalog = delegation
+            .map(|d| {
+                crate::team_type_catalog::Catalog::new(d.bind(s)?, roster.spawn_types().clone())
+            })
+            .transpose()?;
         let doc = Document {
             id: id.clone(),
             lead: lead_id.clone(),
@@ -208,6 +239,8 @@ pub fn apply(
             charges: BTreeMap::new(),
             stopped: false,
             failures: BTreeMap::new(),
+            type_catalog,
+            type_bindings: BTreeMap::new(),
         };
         s.agent_team = Some(Membership {
             team_id: id,
@@ -250,6 +283,36 @@ pub fn apply(
     );
     match operation {
         "snapshot" => Ok(json!(doc)),
+        "type_prepare" | "type_resolve" => {
+            ensure!(
+                member.agent_id == doc.lead,
+                "Only the lead may define agent types"
+            );
+            let catalog = doc
+                .type_catalog
+                .as_mut()
+                .context("Custom types are not delegated")?;
+            let result = if operation == "type_prepare" {
+                let definition: crate::team_definition::Definition =
+                    serde_json::from_value(args.clone())?;
+                ensure!(
+                    !definition.tools.is_empty(),
+                    "This adapter requires at least one delegated tool in a custom type"
+                );
+                catalog.propose(s, definition, now)?
+            } else {
+                let definition: crate::team_definition::Definition =
+                    serde_json::from_value(args.clone())?;
+                let record = catalog.resolve(s, &definition.name, now)?;
+                if record.status == crate::team_type_catalog::Status::Approved {
+                    doc.roster.register_type(&definition.name)?;
+                }
+                record
+            };
+            let output = json!({"name":result.binding.definition().name,"revision":result.binding.revision(),"digest":result.binding.digest(),"status":result.status});
+            tx.write(&doc, false)?;
+            Ok(output)
+        }
         "pending_inbox" => Ok(json!(
             !member.notices.is_empty()
                 || !tx
@@ -336,7 +399,7 @@ pub fn apply(
             let child = doc.roster.instance(id).context("Unknown instance")?;
             let stored = tx.session(&child.session_id)?;
             ensure!(
-                stored.coworker == child.agent_type
+                stored.coworker == runtime_type(&doc, child)?
                     && stored
                         .agent_team
                         .as_ref()
@@ -354,7 +417,28 @@ pub fn apply(
                 "Only the lead may spawn instances"
             );
             let request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            let binding = if let Some(catalog) = &doc.type_catalog {
+                catalog.check_scope(s)?;
+                if catalog.prebuilt.contains(&request.agent_type) {
+                    None
+                } else {
+                    Some(
+                        catalog
+                            .approved(&request.agent_type)?
+                            .binding
+                            .digest()
+                            .to_owned(),
+                    )
+                }
+            } else {
+                None
+            };
             let reservation = doc.roster.reserve(request.clone(), || crate::id("s"))?;
+            if reservation.created {
+                if let Some(binding) = binding {
+                    doc.type_bindings.insert(request.agent_id.clone(), binding);
+                }
+            }
             doc.tasks.entry(request.agent_id).or_insert(request.message);
             tx.write(&doc, false)?;
             Ok(json!({"instance":reservation.instance,"created":reservation.created}))
@@ -549,10 +633,51 @@ pub fn apply(
         _ => anyhow::bail!("Unsupported team operation"),
     }
 }
+/// Resolve the immutable type revision pinned when this instance was reserved.
+/// A later approved revision cannot silently change an existing child's prompt.
+pub fn runtime_type(doc: &Document, instance: &rules::Instance) -> Result<String> {
+    if let Some(digest) = doc.type_bindings.get(&instance.agent_id) {
+        let catalog = doc
+            .type_catalog
+            .as_ref()
+            .context("Missing scoped type catalog")?;
+        let record = catalog
+            .records
+            .get(&instance.agent_type)
+            .and_then(|r| {
+                r.iter().find(|r| {
+                    r.binding.digest() == digest
+                        && r.status == crate::team_type_catalog::Status::Approved
+                })
+            })
+            .context("Missing pinned approved type revision")?;
+        record
+            .binding
+            .revalidate(&catalog.ceiling, &catalog.prebuilt)?;
+        Ok(record.runtime_id())
+    } else {
+        Ok(instance.agent_type.clone())
+    }
+}
 pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
     let mut specs=vec![("team_wait_agent","Wait for a named instance to finish, receive a message or reach timeout. Releases execution capacity.",json!({"agent_ids":{"type":"array","items":{"type":"string"}},"timeout_ms":{"type":"integer"}}),vec!["agent_ids","timeout_ms"])];
     if agent_id == doc.lead {
-        specs.push(("team_spawn","Spawn a registered agent type as a distinct named instance. Retrying the identical instance/task returns its original session.",json!({"agent_type":{"type":"string","enum":doc.roster.spawn_types()},"agent_id":{"type":"string"},"message":{"type":"string"}}),vec!["agent_type","agent_id","message"]));
+        // Approved dynamic names are checked at dispatch. Changing an enum here
+        // would invalidate pinned catalogs/approvals when a parked lead resumes.
+        let type_schema = if doc.type_catalog.is_some() {
+            json!({"type":"string"})
+        } else {
+            json!({"type":"string","enum":doc.roster.spawn_types()})
+        };
+        specs.push(("team_spawn","Spawn a registered agent type as a distinct named instance. Retrying the identical instance/task returns its original session.",json!({"agent_type":type_schema,"agent_id":{"type":"string"},"message":{"type":"string"}}),vec!["agent_type","agent_id","message"]));
+        if let Some(catalog) = &doc.type_catalog {
+            specs.push((crate::team_type_catalog::TOOL,"Propose a reusable agent type private to this lead session. Instructions are task configuration, never authorization. Requires an exact definition approval before spawning.",json!({
+                "name":{"type":"string"},"instructions":{"type":"string"},
+                "tools":{"type":"array","items":{"type":"string","enum":catalog.ceiling.tools}},
+                "sandbox":{"type":"object","properties":{"mode":{"type":"string","enum":["team"]}},"required":["mode"],"additionalProperties":false},
+                "model":{"anyOf":[{"type":"null"},{"type":"object","properties":{"connection":{"type":"string"},"model":{"type":"string"}},"required":["connection","model"],"additionalProperties":false}]}
+            }),vec!["name","instructions","tools"]));
+        }
     }
     if doc.roster.policy().communication.board {
         specs.push(("team_post_board","Post shared history; only explicit @instance or @all mentions notify. No automatic assignments.",json!({"message":{"type":"string"}}),vec!["message"]));
@@ -577,7 +702,8 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
         "Stale team call"
     );
     ensure!(
-        internal(call["name"].as_str().unwrap_or_default()),
+        internal(call["name"].as_str().unwrap_or_default())
+            || call["name"] == crate::team_type_catalog::TOOL,
         "Not a coordination tool"
     );
     s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":result.to_string()}));
@@ -592,7 +718,7 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
 /// Internal scheduling still reads the complete transaction document.
 pub fn public_snapshot(mut value: Value) -> Value {
     if let Some(object) = value.as_object_mut() {
-        for key in ["commands", "tasks", "charges"] {
+        for key in ["commands", "tasks", "charges", "type_catalog"] {
             object.remove(key);
         }
     }

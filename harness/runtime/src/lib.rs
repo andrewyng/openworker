@@ -43,6 +43,7 @@ pub mod store;
 pub mod team_coordination;
 pub mod team_definition;
 pub mod team_service;
+pub mod team_type_catalog;
 pub mod teams;
 mod tool_images;
 pub mod tool_policy;

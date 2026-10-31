@@ -365,8 +365,17 @@ multi-node worker pool; use the distributed server deployment for that role.
 
 ## Tools, credentials and process boundaries
 
-- TypeScript tools use MCP, configured by an app-owned `servers.json` path on the
-  agent. Rust-native tools are compiled into the selected partner executable.
+Named multi-instance teams use `harness.newTeam(...)` and optional
+`delegation: { tools: ["coding.read_file"] }`. This exposes `team_define_type`
+under the app's ceiling. Exact approvals and private role revisions survive
+restart on either database; they are not global agent registrations. See
+[scoped types and current adapter limits](../../docs/harness/TEAM-TYPES-AND-SANDBOXES.md#sdk-scoped-type-implementation-31-october).
+Run `npm run test:team-types` with `OW_TS_TEST_HOST` and, for PostgreSQL,
+an isolated `OW_PG_TEST_URL` to exercise both real managed-process adapters.
+
+- TypeScript app tools use callbacks over private stdio. External tools can use
+  app-configured MCP servers. Rust-native tools are compiled into the selected
+  partner executable.
 - Agent definitions are serialized data; JS callbacks cannot cross stdio.
 - Agents are fixed at startup. Changing prompt/tools changes the pinned identity;
   create new sessions for changed definitions.

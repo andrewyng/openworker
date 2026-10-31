@@ -4,6 +4,7 @@ use crate::{Error, HarnessClient, Result};
 pub use openworker_runtime::team_coordination::{
     Communication, HistoryPage, HistoryQuery, Instance, Policy as TeamPolicy,
 };
+pub use openworker_runtime::team_definition::Delegation as TeamDelegation;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -15,6 +16,9 @@ pub struct TeamOptions {
     pub policy: TeamPolicy,
     #[serde(default)]
     pub limits: Option<TurnLimits>,
+    /// App-owned ceiling for custom roles. Omit to disable custom definitions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<TeamDelegation>,
 }
 impl TeamOptions {
     pub fn new(types: impl IntoIterator<Item = impl Into<String>>) -> Self {
@@ -23,6 +27,7 @@ impl TeamOptions {
             agent_types: types.into_iter().map(Into::into).collect(),
             policy: TeamPolicy::default(),
             limits: None,
+            delegation: None,
         }
     }
 }

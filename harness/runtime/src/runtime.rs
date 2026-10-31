@@ -7,7 +7,7 @@ use crate::{
     sandbox::{Mcp, Sandbox},
     store::{terminal, Event, Interaction, Session, StateStore, Store},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -2098,11 +2098,11 @@ impl Runtime {
             hard_denial = Some(e.to_string());
             i.response = Some("deny".into());
             i.origin = Some("hard_policy".into());
-        } else if let Some(grant) = s
-            .approval_grants
-            .iter()
-            .find(|g| s.permissions.mode != Mode::Bypass && g.matches(&s, alias, &self.bundle))
-        {
+        } else if let Some(grant) = s.approval_grants.iter().find(|g| {
+            alias != crate::team_type_catalog::TOOL
+                && s.permissions.mode != Mode::Bypass
+                && g.matches(&s, alias, &self.bundle)
+        }) {
             i.response = Some("once".into());
             i.origin = Some("session_grant".into());
             i.grant_id = Some(grant.id.clone());
@@ -2285,6 +2285,69 @@ impl Runtime {
                 }
                 if alias == crate::planning::TOOL {
                     self.update_plan(sid, &t.id, call, &args)?;
+                    continue;
+                }
+                if alias == crate::team_type_catalog::TOOL {
+                    self.check_backend(sid)?;
+                    let prepared =
+                        self.store
+                            .lock()
+                            .unwrap()
+                            .agent_team(sid, "type_prepare", &args, None);
+                    if let Err(error) = prepared {
+                        self.reject_unexecuted(
+                            sid,
+                            call,
+                            "team_definition_rejected",
+                            &error.to_string(),
+                            false,
+                        )?;
+                        continue;
+                    }
+                    let interaction = s
+                        .interactions
+                        .iter()
+                        .rev()
+                        .find(|i| i.turn_id == t.id && i.call == *call);
+                    if interaction.is_none() {
+                        let i = self.authorize_call(sid, call).await?;
+                        if i.response.is_none() {
+                            return Ok(());
+                        }
+                        continue;
+                    }
+                    if interaction.unwrap().response.is_none() {
+                        return Ok(());
+                    }
+                    let mut observation =
+                        self.internal_observation(sid, &t.id, alias, call["call_id"].as_str());
+                    let outcome = self.store.lock().unwrap().agent_team(
+                        sid,
+                        "type_resolve",
+                        &args,
+                        Some((&t.id, call)),
+                    );
+                    match outcome {
+                        Ok(result) => {
+                            observation.output_bytes(result.to_string().len() as u64);
+                            observation.finish(if result["status"] == "approved" {
+                                Outcome::Ok
+                            } else {
+                                Outcome::Denied
+                            });
+                            self.progress(sid, "team_type_decision", result)?;
+                        }
+                        Err(error) => {
+                            observation.finish(Outcome::Denied);
+                            self.reject_unexecuted(
+                                sid,
+                                call,
+                                "team_definition_rejected",
+                                &error.to_string(),
+                                false,
+                            )?;
+                        }
+                    }
                     continue;
                 }
                 if crate::agent_team::internal(alias) {
@@ -2915,6 +2978,7 @@ impl Runtime {
             if !["once", "session", "deny"].contains(&d) {
                 bail!("Only once, session or deny is supported");
             }
+            ensure!(i.call["name"] != crate::team_type_catalog::TOOL || d != "session", "Approve this exact type definition once; whole-tool session grants cannot approve definitions");
             d
         } else {
             let answer = text(p, "answer", 4000)?;

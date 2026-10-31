@@ -483,6 +483,11 @@ export class Harness {
           max_instances: options.maxInstances ?? 32,
         },
         ...(options.limits ? { limits: options.limits } : {}),
+        ...(options.delegation ? { delegation: {
+          tools: options.delegation.tools,
+          models: (options.delegation.models ?? []).map(model => ({connection: model.provider, model: model.name})),
+          placements: ["team"], profiles: {},
+        }} : {}),
       }),
     );
     return new AgentTeam(this, lead, String(doc.id));
@@ -1130,6 +1135,9 @@ export interface AgentTeamOptions {
   agentId?: string;
   communication?: { board: boolean; directMessages: boolean };
   maxInstances?: number;
+  /** App-owned custom-role ceiling; omission disables team_define_type.
+   * Custom roles currently share the team's authorized execution environment. */
+  delegation?: { tools: string[]; models?: { provider: string; name: string }[] };
   limits?: {
     maxModelCalls: number;
     maxOutputTokens: number;

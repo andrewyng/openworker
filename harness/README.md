@@ -179,7 +179,8 @@ See the [team QuickStart](../docs/harness/AGENT-TEAMS-QUICKSTART.md),
 [test cases](../docs/harness/AGENT-TEAMS-TEST-CASES.md), and
 [qualification ledger](../docs/harness/AGENT-TEAMS-IMPLEMENTATION.md).
 
-The accepted follow-up for session-defined types, per-member sandbox placement and
-dynamic retirement is recorded in [Team types and sandboxes](../docs/harness/TEAM-TYPES-AND-SANDBOXES.md).
+Opt-in session-defined types now use exact durable approvals and private runtime
+revisions in both SDKs on SQLite/PostgreSQL. Per-member placement, workspace
+selection and dynamic retirement continue in [Team types and sandboxes](../docs/harness/TEAM-TYPES-AND-SANDBOXES.md).
 Its [implementation ledger](../docs/harness/TEAM-TYPES-AND-SANDBOXES-PLAN.md) distinguishes
 the current trusted outside harness from the future sandbox-contained MCP integration.

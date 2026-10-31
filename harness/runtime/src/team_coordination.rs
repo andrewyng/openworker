@@ -101,6 +101,17 @@ impl Roster {
     pub fn spawn_types(&self) -> &BTreeSet<String> {
         &self.spawn_types
     }
+    /// Trusted catalog resolution calls this only after persisting an exact
+    /// approved definition in the same transaction. It grants no host authority.
+    pub fn register_type(&mut self, name: &str) -> Result<()> {
+        identifier(name)?;
+        ensure!(
+            self.spawn_types.contains(name) || self.spawn_types.len() < 96,
+            "Team type capacity reached"
+        );
+        self.spawn_types.insert(name.into());
+        Ok(())
+    }
     pub fn new(lead: Instance, spawn_types: BTreeSet<String>, policy: Policy) -> Result<Self> {
         ensure!(
             (1..=1024).contains(&policy.max_instances),
