@@ -857,12 +857,26 @@ try {
     .first()
     .click();
   await page.locator(".obs-stats").waitFor();
+  // Selecting a run can open Timeline. Explicitly exercise each distinct view,
+  // rather than labelling two screenshots of the default tab as separate checks.
+  await page.getByRole("tab", { name: "Usage", exact: true }).click();
+  await page
+    .getByRole("heading", { name: "Accumulated work", exact: true })
+    .waitFor();
+  assert.equal(
+    await page.locator("#obs-usage-tab").getAttribute("aria-selected"),
+    "true",
+  );
   await page.screenshot({
     path: join(root, "management-usage.png"),
     fullPage: true,
   });
   await page.getByRole("tab", { name: "Timeline", exact: true }).click();
   await page.locator(".obs-lanes").waitFor();
+  assert.equal(
+    await page.locator("#obs-timeline-tab").getAttribute("aria-selected"),
+    "true",
+  );
   await page.screenshot({
     path: join(root, "management-timeline.png"),
     fullPage: true,

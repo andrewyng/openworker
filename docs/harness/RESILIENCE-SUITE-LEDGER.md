@@ -229,3 +229,10 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   errors still fail closed. Reconciled only the saved original container IDs and
   credentials; the failed report remains unchanged. All nine JavaScript checks
   pass before the next full attempt.
+
+- Corrected collector capture passes all trace/summary checks. Cluster actions and
+  original-environment cleanup pass, with both UI screenshots captured. Visual
+  inspection catches that selecting a run defaults to Timeline, so the first
+  screenshot was incorrectly labelled Usage. The test now explicitly clicks Usage,
+  waits for its distinct Accumulated work section and asserts each tab's selected
+  state. Rerun this stricter browser check in a fresh complete cluster fixture.
