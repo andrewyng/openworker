@@ -6,6 +6,7 @@ pub use openworker_runtime::team_coordination::{
     Communication, HistoryPage, HistoryQuery, Instance, Policy as TeamPolicy,
 };
 pub use openworker_runtime::team_definition::Delegation as TeamDelegation;
+pub use openworker_runtime::team_workspace::Selection as ChildWorkspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;

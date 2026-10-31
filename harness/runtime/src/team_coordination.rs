@@ -45,6 +45,8 @@ pub struct SpawnRequest {
     pub background: Option<String>,
     #[serde(default)]
     pub context: crate::team_briefing::Context,
+    #[serde(default)]
+    pub workspace: crate::team_workspace::Selection,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -158,6 +160,7 @@ impl Roster {
         request: SpawnRequest,
         allocate_session: impl FnOnce() -> String,
     ) -> Result<Reservation> {
+        request.workspace.validate()?;
         identifier(&request.agent_id)?;
         identifier(&request.agent_type)?;
         text(&request.message, 16000)?;

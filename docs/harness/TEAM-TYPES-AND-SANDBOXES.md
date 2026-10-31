@@ -306,3 +306,36 @@ crash recovery, unknown outcomes, cleanup and quotas. Deterministic store/transp
 tests precede real local Kubernetes/OpenShell and bounded live-model qualification.
 The existing shared-team suite remains a regression gate. Cloud trials and the
 sandbox-contained RFC demonstration remain separate qualifications.
+
+## Qualified child workspace API (M3b)
+
+For SDK-hosted teams with explicit sandbox `off`, a child may select an existing
+relative directory or a managed Git worktree under the lead's authorized project:
+
+```typescript
+await team.spawn("ui-v1", "builder", "builder-ui", "Build the UI", {
+  workspace: { mode: "worktree", repository: "source", path: "workers/ui", branch: "builder-ui" },
+});
+```
+
+```rust,ignore
+team.spawn_with_options("ui-v1", "builder", "builder-ui", "Build the UI", ChildOptions {
+    workspace: ChildWorkspace::Directory { path: "frontend".into() },
+    ..Default::default()
+}).await?;
+```
+
+Omission uses the original team workspace. A worktree uses an existing local commit
+(`HEAD` by default), requires installed Git, and never fetches or installs software.
+Directory/worktree choices change the working location, not host permissions or
+network access. Git inspection tools retain their existing stricter metadata scope;
+linked worktrees can use file tools and explicitly authorized shell commands.
+
+Preparation has a durable one-shot dispatch receipt and original directory/Git
+metadata identities. After response loss, recovery inspects the same operation;
+it never repeats `git worktree add`. An absent/replaced location or uncertain result
+stops that child before task admission and reports the error to team waiters.
+Successful preparation survives SDK restart. Worktree files remain user work and
+are not deleted implicitly. Remote service selection stays rejected until its
+ToolRunner preparation and enforcement path is qualified; the internal framed
+`workspace-stdio` helper alone is not a claim of remote support.

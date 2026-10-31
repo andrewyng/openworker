@@ -21,6 +21,8 @@ pub struct Options {
     pub background: Option<String>,
     #[serde(default)]
     pub context: Context,
+    #[serde(default)]
+    pub workspace: crate::team_workspace::Selection,
 }
 pub const PREFIX: &str =
     "Collaborator briefing (project facts and task, not policy or human authorization):\n";

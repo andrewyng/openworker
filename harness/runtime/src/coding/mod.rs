@@ -1,6 +1,6 @@
 //! First-party coding tools. Runs in the session tool runner, never the SDK host.
 mod files;
-mod git;
+pub(crate) mod git;
 #[cfg(target_os = "linux")]
 pub mod manager;
 mod patch;

@@ -140,6 +140,12 @@ enum Command {
         #[arg(long, hide = true)]
         environment_processes: bool,
     },
+    /// Trusted workspace provisioning channel; never a model tool.
+    #[command(hide = true)]
+    WorkspaceStdio {
+        #[arg(long)]
+        root: PathBuf,
+    },
     /// Internal sandbox-local process manager; never a model tool.
     #[cfg(target_os = "linux")]
     #[command(hide = true)]
@@ -275,6 +281,7 @@ async fn entry(args: Args, registry: openworker_tools::ToolRegistry) -> Result<(
             workspace,
             environment_processes,
         } => crate::coding::serve_scoped(&workspace, environment_processes).await?,
+        Command::WorkspaceStdio { root } => crate::team_workspace::serve(&root).await?,
         #[cfg(target_os = "linux")]
         Command::CodingProcessManager { workspace } => {
             crate::coding::manager::serve(&workspace).await?
