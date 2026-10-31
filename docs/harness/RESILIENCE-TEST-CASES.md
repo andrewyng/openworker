@@ -5,6 +5,9 @@ workers and processes stop. It combines deterministic model fixtures with real
 storage, worker processes and OpenShell execution. A live LLM is not required:
 the fixture controls the exact fault boundary, making failures reproducible.
 
+Source paths starting with `runtime/`, `store-postgres/`, `telemetry/`,
+`observability/` or `service-ui/` are relative to `harness/`.
+
 The progress ledger records the latest qualification and its limitations:
 [RESILIENCE-SUITE-LEDGER.md](RESILIENCE-SUITE-LEDGER.md).
 

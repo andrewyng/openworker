@@ -131,3 +131,30 @@ October 30, 2026. Base `c3222d27`; target `openworker-harness-sdk`.
   fixes, rerun state/environment and worker checks against the new image.
 - Fast and database checks are complete before actual cluster provisioning/faults
   to reduce incidental load on the local Kubernetes/OpenShell fixture.
+
+- Static review of the run-scoped telemetry assertion found PostgreSQL recovery
+  events relied on a Tokio task-local turn context while running on the separate
+  database actor thread. Explicitly bind their turn IDs; a real database test checks
+  exactly one recovery/unknown event, correct turn hash and no prompt/argument leak.
+- The local teardown helper now observes a bounded read-only pod list, accepting
+  an already-empty API selector and failing on API errors. Three unit tests cover
+  that race. Normal cleanup of the previous failed namespace now completes.
+
+- A repeated worker-death case caught a fixture race: it killed the process when
+  the marker file existed, before the first write necessarily completed. The
+  barrier now waits for the complete expected marker contents before injecting
+  the fault. The product correctly reported unknown; this corrects the test's
+  claim that a known side effect had already happened. Full worker qualification
+  has a bounded 15-minute allowance on constrained local hosts.
+
+### Final qualification candidate
+
+- Final fast run passes **131 Rust and eight JavaScript tests**. The first attempt
+  was sandbox-denied on five loopback HTTP fixtures; the permitted rerun passes.
+  Strict native runtime/PostgreSQL all-target Clippy also passes after the recovery
+  correlation change. No dependencies or cloud resources were added.
+- Fresh cluster fixture remains empty while the complete PostgreSQL level runs.
+  Its image update required replacing only its already-completed bootstrap Job
+  because Kubernetes Job templates are immutable. Ownership, completed status and
+  zero sessions/environments were checked before replacement. The suite does not
+  claim this manual fixture update as Helm upgrade qualification.

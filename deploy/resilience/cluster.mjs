@@ -27,6 +27,23 @@ ownedLocalFixture(
   JSON.parse(await kub(["get", "namespace", m.namespace, "-o", "json"])),
   confirmation,
 );
+const installedConfig = JSON.parse(
+  (await json(["get", "configmap", m.release + "-config"])).data["config.json"],
+);
+assert.equal(
+  installedConfig.scripted,
+  true,
+  "Actual installed service must use the deterministic model",
+);
+assert.equal(installedConfig.service.id, m.id);
+for (const role of ["api", "worker"]) {
+  const d = await json(["get", "deployment", m.release + "-" + role]);
+  assert.equal(
+    d.spec.template.spec.containers.find((c) => c.name === "harness").image,
+    m.imageRef,
+    "Qualify the exact declared service image",
+  );
+}
 const save = (name, v) =>
   writeFile(join(root, name + ".json"), JSON.stringify(v, null, 2) + "\n", {
     mode: 0o600,
@@ -37,7 +54,13 @@ const report = {
   passed: false,
   checks: [],
   cleanup: {},
-  fixture: { serviceId: m.id, context: m.context, namespace: m.namespace },
+  fixture: {
+    serviceId: m.id,
+    context: m.context,
+    namespace: m.namespace,
+    serviceImage: m.imageRef,
+    runnerImage: m.runnerImage,
+  },
 };
 await writeFile(
   join(state, "resilience-qualification.json"),
@@ -470,6 +493,17 @@ try {
   ).items.filter((p) => p.metadata.name.endsWith("--" + remote));
   assert.equal(outside.length, 1);
   const sandboxPod = outside[0];
+  const allEnvironmentPods = JSON.parse(
+    await kub(["get", "pods", "-A", "-o", "json"]),
+  )
+    .items.filter(
+      (p) =>
+        p.metadata.uid === sandboxPod.metadata.uid ||
+        p.metadata.name ===
+          "os-supervisor-" + env.environment.binding.remote_id,
+    )
+    .map((p) => p.metadata.uid);
+  await save("original-environment-pods", allEnvironmentPods);
   // Genuine independent sessions, same environment. Deliberately cooperative
   // directories/ports; sharing is not per-session OS isolation.
   const start = async (s, label, port) =>
@@ -837,9 +871,9 @@ try {
   await eventually(
     async () =>
       !JSON.parse(await kub(["get", "pods", "-A", "-o", "json"])).items.some(
-        (p) => p.metadata.uid === sandboxPod.metadata.uid,
+        (p) => allEnvironmentPods.includes(p.metadata.uid),
       ),
-    "original sandbox pod disappearance",
+    "original sandbox and supervisor pod disappearance",
   );
   const after = JSON.parse(
     await kub(["get", "pods", "-A", "-o", "json"]),

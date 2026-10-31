@@ -371,7 +371,7 @@ async fn resilience_recovered_runtime_shutdown_retires_old_attachments_without_d
     old.settle_attachment("recovered", &attachment.id, false, false)
         .unwrap();
     old.release("recovered").unwrap();
-    let mut next = PostgresStore::open(c.clone()).unwrap();
+    let next = PostgresStore::open(c.clone()).unwrap();
     next.claim("recovered").unwrap();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("bundle/coworker")).unwrap();
@@ -382,7 +382,7 @@ async fn resilience_recovered_runtime_shutdown_retires_old_attachments_without_d
     .unwrap();
     std::fs::write(
         root.path().join("bundle/tools.json"),
-        include_str!("../../runtime/examples/assistant/tools.json"),
+        include_str!("../../examples/assistant/tools.json"),
     )
     .unwrap();
     std::fs::write(root.path().join("runner"), b"\x7fELF-fixture-not-executed").unwrap();
@@ -402,12 +402,14 @@ async fn resilience_recovered_runtime_shutdown_retires_old_attachments_without_d
     // No prepare_tools or provider attachment occurs. The old channel can have
     // an uncertain outcome, but may not strand close/delete bookkeeping forever.
     rt.shutdown().await.unwrap();
-    let row = admin(&c)
-        .query_one(
-            "SELECT state,outcome_unknown FROM attachments WHERE id=$1",
-            &[&attachment.id],
-        )
-        .unwrap();
+    let row = tokio::task::block_in_place(|| {
+        admin(&c)
+            .query_one(
+                "SELECT state,outcome_unknown FROM attachments WHERE id=$1",
+                &[&attachment.id],
+            )
+            .unwrap()
+    });
     assert_eq!(row.get::<_, String>(0), "released");
     assert!(row.get::<_, bool>(1));
     assert_eq!(

@@ -121,6 +121,7 @@ try {
     await check("management-and-safety-contracts", "node", [
       "--test",
       "deploy/resilience/contract.test.mjs",
+      "deploy/service/local-drain.test.mjs",
       "harness/service-ui/test/observability.test.mjs",
     ]);
   } else if (level === "postgres") {
@@ -286,30 +287,36 @@ try {
           { mode: 0o600, flag: "wx" },
         );
         linuxName = "ow-resilience-worker-" + id;
-        await check("postgres-linux-worker-faults", "docker", [
-          "run",
-          "--pull=never",
-          "--rm",
-          "--name",
-          linuxName,
-          "--label",
-          `${label}=${id}`,
-          "--network",
-          `container:${name}`,
-          "--memory",
-          "2g",
-          "--env-file",
-          envFile,
-          "--entrypoint",
-          "/out/worker-recovery",
-          linux,
-          "--ignored",
-          "--test-threads=1",
-          "--skip",
-          "mixed_versions_keep_native_identity_pinned_and_old_pool_can_resume",
-          "--skip",
-          "bounded_load_matrix",
-        ]);
+        await check(
+          "postgres-linux-worker-faults",
+          "docker",
+          [
+            "run",
+            "--pull=never",
+            "--rm",
+            "--name",
+            linuxName,
+            "--label",
+            `${label}=${id}`,
+            "--network",
+            `container:${name}`,
+            "--memory",
+            "2g",
+            "--env-file",
+            envFile,
+            "--entrypoint",
+            "/out/worker-recovery",
+            linux,
+            "--ignored",
+            "--test-threads=1",
+            "--skip",
+            "mixed_versions_keep_native_identity_pinned_and_old_pool_can_resume",
+            "--skip",
+            "bounded_load_matrix",
+          ],
+          {},
+          900000,
+        );
       }
       await check("docker-process-manager", "node", [
         "deploy/reference/qualify-process-continuity.mjs",

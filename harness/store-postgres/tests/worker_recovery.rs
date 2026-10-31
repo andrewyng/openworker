@@ -268,7 +268,11 @@ async fn production_worker_loses_database_and_replacement_recovers_unknown_once(
     seeder.kill().await;
     let mut a = service(root.path(), &config.schema, "a", sid);
     tokio::time::timeout(Duration::from_secs(20), async {
-        while !root.path().join("work/proof.txt").exists() {
+        while std::fs::read_to_string(root.path().join("work/proof.txt"))
+            .ok()
+            .as_deref()
+            != Some("one real side effect\n")
+        {
             assert!(a.try_wait().unwrap().is_none());
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -948,7 +952,11 @@ async fn real_worker_deaths_preserve_approval_then_deliver_unknown_without_repla
     )
     .await;
     tokio::time::timeout(Duration::from_secs(10), async {
-        while !root.path().join("work/proof.txt").exists() {
+        while std::fs::read_to_string(root.path().join("work/proof.txt"))
+            .ok()
+            .as_deref()
+            != Some("one real side effect\n")
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })

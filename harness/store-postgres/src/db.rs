@@ -902,19 +902,25 @@ impl Database {
             }
             tx.commit()?;
             if changed || unknown > 0 || interrupted > 0 {
-                self.telemetry.event(
+                let mut operations = vec![(
                     openworker_runtime::telemetry::Operation::Recovery,
                     openworker_runtime::telemetry::Outcome::Interrupted,
-                    Some(&sid),
-                    s.turn.as_ref().map(|t| t.id.as_str()),
-                );
+                )];
                 if unknown > 0 {
-                    self.telemetry.event(
+                    operations.push((
                         openworker_runtime::telemetry::Operation::UnknownOutcome,
                         openworker_runtime::telemetry::Outcome::Unknown,
-                        Some(&sid),
-                        s.turn.as_ref().map(|t| t.id.as_str()),
-                    );
+                    ));
+                }
+                for (operation, outcome) in operations {
+                    let turn = s.turn.as_ref().map(|t| t.id.as_str());
+                    let mut span = self.telemetry.span(operation, Some(&sid), turn);
+                    // This runs on the database actor thread, outside Tokio's
+                    // task-local turn context. Pin correlation explicitly.
+                    if let Some(turn) = turn {
+                        span.turn(turn);
+                    }
+                    span.finish(outcome);
                 }
             }
         }
