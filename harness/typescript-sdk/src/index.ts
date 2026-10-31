@@ -1,5 +1,6 @@
 import { Service, type ServiceOptions } from "./service.js";
 export * from "./service.js";
+export * from "./coding.js";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { Transport } from "./transport.js";
@@ -476,6 +477,7 @@ export class Harness {
         session_id: lead.id,
         agent_id: options.agentId ?? "lead",
         agent_types: options.agentTypes,
+        ...(options.workspaceDefaults ? {workspace_defaults:{repository:options.workspaceDefaults.repository,base:options.workspaceDefaults.base,agent_types:options.workspaceDefaults.agentTypes}} : {}),
         policy: {
           communication: options.communication ?? {
             board: true,
@@ -1132,6 +1134,7 @@ export class Team {
 
 /** Named multi-instance teams; the Rust host owns all coordination decisions. */
 export interface AgentTeamOptions {
+  workspaceDefaults?: import("./types.js").WorkspaceDefaults;
   agentTypes: string[];
   agentId?: string;
   communication?: { board: boolean; directMessages: boolean };

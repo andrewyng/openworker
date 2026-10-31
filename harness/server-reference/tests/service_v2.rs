@@ -82,9 +82,23 @@ async fn qualify() {
         )
         .unwrap();
     }
-    let tools = json!({"version":2,"servers":[{"id":"coding","program":"$OPENWORKER","args":["mcp-coding","--workspace","$WORKSPACE"]}],"bindings":{
-        "read_file":{"server":"coding","tool":"read_file"},"write_file":{"server":"coding","tool":"write_file"},"run_shell":{"server":"coding","tool":"run_shell"},"git_status":{"server":"coding","tool":"git_status"},"git_log":{"server":"coding","tool":"git_log"}
-    }});
+    let bindings: serde_json::Map<String, Value> = openworker_runtime::coding::schemas()
+        .into_iter()
+        .map(|s| {
+            let name = s["name"].as_str().unwrap().to_owned();
+            (name.clone(), json!({"server":"coding","tool":name}))
+        })
+        .collect();
+    let tools = json!({"version":2,"servers":[{"id":"coding","program":"$OPENWORKER","args":["mcp-coding","--workspace","$WORKSPACE"]}],"bindings":bindings});
+    let manifest = bundle.join("coworker/manifest.md");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest).unwrap().replace(
+            "requires_folder: true",
+            "requires_folder: true\nplanning: true",
+        ),
+    )
+    .unwrap();
     std::fs::write(
         bundle.join("tools.json"),
         serde_json::to_vec(&tools).unwrap(),
@@ -333,7 +347,7 @@ async fn qualify() {
         assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("coder output for verifier")),"{evidence}");
         assert_eq!(store.service_team_type_page(&openworker_server_reference::management::installation(&cfg).unwrap(),"",8).unwrap().len(),1);
         eprintln!("PASS approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads");
-        let initialized=lead.send(&plan("run_shell",json!({"command":"mkdir source && cd source && git init -q && printf 'base\\n' > proof.txt && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -q -m base","yield_ms":10000})),Some("initialize-source")).await.unwrap();
+        let initialized=lead.send(&plan("run_shell",json!({"command":"mkdir source && cd source && git init -q && printf 'base\\n' > proof.txt && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -q -m base && git rev-parse HEAD","yield_ms":10000})),Some("initialize-source")).await.unwrap();
         assert_eq!(initialized.result().await.unwrap().status,"completed");
         let mut builders=vec![];
         for id in ["ui","api"] {
@@ -368,6 +382,32 @@ async fn qualify() {
         let inspect=lead.send(&plan("run_shell",json!({"command":"test ! -e workers/sibling-escape.txt && test \"$(cat workers/api/proof.txt)\" = 'api change' && test \"$(cat workers/ui/proof.txt)\" = 'ui change' && git -C source show ui:proof.txt && git -C source show api:proof.txt","yield_ms":10000})),Some("inspect-builder-commits")).await.unwrap();assert_eq!(inspect.result().await.unwrap().status,"completed");
         let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"].as_str().is_some_and(|s|s.contains("ui change") && s.contains("api change"))));
         eprintln!("PASS two shared-sandbox worktrees, child cwd/file scope, registered Git metadata, exact-commit verifier and lead inspection");
+        let integrate=lead.send(&plan("run_shell",json!({"command":"git -C source merge --ff-only ui && if git -C source -c user.name=Fixture -c user.email=f@example.invalid cherry-pick api; then exit 19; else git -C source rev-parse --verify CHERRY_PICK_HEAD >/dev/null && test \"$(git -C source diff --name-only --diff-filter=U)\" = proof.txt && git -C source cherry-pick --abort; fi && test \"$(git -C source rev-parse HEAD)\" = \"$(cat workers/ui/submitted.sha)\" && test \"$(cat source/proof.txt)\" = 'ui change' && printf 'verified integration and explicit conflict'","yield_ms":10000})),Some("explicit-integration-conflict")).await.unwrap();assert_eq!(integrate.result().await.unwrap().status,"completed");
+        let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["turn_id"]==integrate.id && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"].as_str().is_some_and(|s|s.contains("verified integration and explicit conflict"))));
+        let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();
+        let base=evidence["events"].as_array().unwrap().iter().find(|e|e["type"]=="tool_finished" && e["turn_id"]==initialized.id && tool_data(e)["exit_code"]==0).map(|e|tool_data(e)["stdout"].as_str().unwrap().trim().to_owned()).unwrap();
+        use openworker_sdk::agents::{coding,Approvals};
+        let mut preset=coding::shared("preset","source",&base).unwrap();
+        preset.lead=preset.lead.approvals(Approvals::Never).auto_skip_questions(true);
+        preset.builder=preset.builder.approvals(Approvals::Never).auto_skip_questions(true);
+        preset.verifier=preset.verifier.approvals(Approvals::Never).auto_skip_questions(true);
+        let profile:openworker_sdk::service::RuntimeProfile=serde_json::from_value(json!({"id":"team@1","provider":"openshell","cpu":1,"memoryMB":768,"sharing":"shared","approvalMode":"bypass","autoSkipQuestions":true,"allowedPrincipals":["alice"]})).unwrap();
+        for agent in preset.agents(){
+            let release=coding::service_release(&agent,"1",&profile).unwrap();
+            admin.deploy_agent(&release,&format!("preset-deploy-{}",agent.id())).await.unwrap();
+            admin.activate_agent(&release.id,None,&format!("preset-activate-{}",agent.id())).await.unwrap();
+        }
+        let preset_agent=service.agent("preset-lead@1").await.unwrap();
+        let preset_lead=preset_agent.new_session_with(openworker_sdk::service::SessionOptions{environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()},Some("preset-lead-session")).await.unwrap();
+        let preset_team=preset_lead.create_team(preset.service_team("1")).await.unwrap();
+        let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
+        assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);
+        let waited=preset_lead.send(&plan("team_wait_agent",json!({"agent_ids":["ui"],"timeout_ms":120000})),Some("wait-preset-builder")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        let sid=child["instance"]["session_id"].as_str().unwrap();
+        let selected=service.json("GET",&format!("/v1/sessions/{sid}"),None,None).await.unwrap();assert_eq!(selected["session"]["workspace"],format!("/sandbox/{}",child["workspace"]["path"].as_str().unwrap()));
+        let read=preset_lead.send(&plan("read_file",json!({"path":format!("{}/proof.txt",child["workspace"]["path"].as_str().unwrap())})),Some("read-preset-proof")).await.unwrap();assert_eq!(read.result().await.unwrap().status,"completed");
+        let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",preset_lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("preset-scoped change")));
+        eprintln!("PASS versioned coding preset releases, RuntimeProfile compatibility and automatically scoped service builder worktree");
         let status = Command::new("node")
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
