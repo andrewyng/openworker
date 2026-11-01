@@ -720,6 +720,27 @@ async fn private_stdio_transfers_chunks_across_processes_without_discovering_mod
     assert_eq!(r["result"]["commit"], t.manifest.submitted_commit, "{r}");
     let recovered = private_rpc(target.path(), "handoff/inspect_checkout", json!(t.handle())).await;
     assert_eq!(recovered["result"], r["result"]);
+    let workspace_request = openworker_runtime::team_workspace::Request {
+        operation_id: t.request.operation_id.clone(),
+        scope_digest: t.request.scope_digest.clone(),
+        selection: openworker_runtime::team_workspace::Selection::Directory {
+            path: t.request.directory.clone(),
+        },
+    };
+    let ready = private_rpc(
+        target.path(),
+        "handoff/workspace",
+        json!({"handle":t.handle(),"request":workspace_request}),
+    )
+    .await;
+    let receipt: openworker_runtime::team_workspace::Receipt =
+        serde_json::from_value(ready["result"].clone()).unwrap();
+    receipt.verify().unwrap();
+    assert!(receipt.independent_git.is_some());
+    assert_eq!(
+        private_rpc(target.path(), "workspace/verify", json!(receipt)).await["result"],
+        ready["result"]
+    );
     assert!(private_rpc(target.path(), "tools/list", json!({}))
         .await
         .get("error")
@@ -735,4 +756,100 @@ async fn private_stdio_transfers_chunks_across_processes_without_discovering_mod
         std::fs::read(target.path().join("project/binary.bin")).unwrap(),
         [0, 255, 1, 0, 200]
     );
+}
+
+#[tokio::test]
+async fn imported_workspace_pins_own_git_metadata_across_child_commits_and_launch_checks() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .unwrap();
+    let request = openworker_runtime::team_workspace::Request {
+        operation_id: t.request.operation_id.clone(),
+        scope_digest: t.request.scope_digest.clone(),
+        selection: openworker_runtime::team_workspace::Selection::Directory {
+            path: t.request.directory.clone(),
+        },
+    };
+    let receipt = transfer::workspace_receipt(target.path(), &t.handle(), request.clone())
+        .await
+        .unwrap();
+    assert!(receipt.independent_git.is_some());
+    assert!(receipt.git_dir.is_none());
+    receipt.verify().unwrap();
+    let mut tools =
+        openworker_runtime::coding::CodingTools::with_workspace(receipt.clone()).unwrap();
+    tools
+        .call(&receipt.path, "git_status", &serde_json::json!({}))
+        .await
+        .unwrap();
+    // Builder changes to its own HEAD are normal after the import was admitted.
+    std::fs::write(receipt.path.join("builder.txt"), "builder work").unwrap();
+    git(&receipt.path, &["add", "builder.txt"]);
+    git(&receipt.path, &["commit", "-qm", "builder work"]);
+    receipt.verify().unwrap();
+    tools
+        .call(&receipt.path, "git_log", &serde_json::json!({"limit":1}))
+        .await
+        .unwrap();
+    let mut changed = request;
+    changed.scope_digest = "c".repeat(64);
+    assert!(
+        transfer::workspace_receipt(target.path(), &t.handle(), changed)
+            .await
+            .is_err()
+    );
+    let dot = receipt.path.join(".git");
+    std::fs::rename(&dot, receipt.path.join("old-git")).unwrap();
+    git(&receipt.path, &["init", "-q"]);
+    assert!(receipt.verify().is_err());
+    assert!(tools
+        .call(
+            &receipt.path,
+            "read_file",
+            &serde_json::json!({"path":"builder.txt"})
+        )
+        .await
+        .is_err());
+    tools.shutdown().await;
+}
+#[tokio::test]
+async fn independent_workspace_cannot_acquire_external_git_objects_or_linked_metadata() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .unwrap();
+    let request = openworker_runtime::team_workspace::Request {
+        operation_id: t.request.operation_id.clone(),
+        scope_digest: t.request.scope_digest.clone(),
+        selection: openworker_runtime::team_workspace::Selection::Directory {
+            path: "project".into(),
+        },
+    };
+    let receipt = transfer::workspace_receipt(target.path(), &t.handle(), request)
+        .await
+        .unwrap();
+    let dot = receipt.path.join(".git");
+    std::fs::write(dot.join("commondir"), f.repo.join(".git").to_str().unwrap()).unwrap();
+    assert!(receipt.verify().is_err());
+    std::fs::remove_file(dot.join("commondir")).unwrap();
+    std::fs::write(
+        dot.join("objects/info/alternates"),
+        f.repo.join(".git/objects").to_str().unwrap(),
+    )
+    .unwrap();
+    assert!(receipt.verify().is_err());
+    std::fs::remove_file(dot.join("objects/info/alternates")).unwrap();
+    std::fs::rename(dot.join("objects"), dot.join("saved-objects")).unwrap();
+    std::os::unix::fs::symlink(f.repo.join(".git/objects"), dot.join("objects")).unwrap();
+    assert!(receipt.verify().is_err());
+    let mut mixed = receipt.clone();
+    mixed.git_dir = Some(f.repo.join(".git"));
+    assert!(mixed.verify().is_err());
 }

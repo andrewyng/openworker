@@ -696,3 +696,28 @@ child-import intent and Git metadata identity through admission, then expose
 submission/report/reception and isolated SDK helpers. Canonical remains verified
 C3 until the complete C4 workflow passes. Local disposable fixtures can be reused;
 free host disk is about 55 GiB. No paid model/cloud/GitHub action was used.
+
+### C4 journal — imported Git identity through coding-tool launch
+
+The private receiver now converts only its original acknowledged import into a
+managed-workspace receipt with an independent Git-directory identity. Coding tools
+verify it before each call. A child may advance its own commits, while replacement
+Git directories, external common/object stores, symlinked Git storage and mixed
+linked-worktree exceptions reject. Existing C1 receipts omit the optional field,
+preserving their serialized identity. The private conversion pins the original
+operation, scope and destination rather than adopting an existing directory.
+
+Added two real filesystem cases and extended the subprocess protocol roundtrip
+through `handoff/workspace` and `workspace/verify`. The first extended roundtrip
+found inconsistent `/var` versus `/private/var` roots on macOS; the private server
+now canonicalizes its root once for all methods. All 15 Git/transfer tests, eight
+workspace cases, five coding/search/patch cases and three default-resolution cases
+pass on macOS. Strict all-target runtime/artifacts/PostgreSQL/service Clippy passes.
+The newer offline Linux runner also passes **43 executed tests** across six suites
+(one fixture-only test ignored), including real shell/process cleanup.
+
+This newer private conversion/receipt is locally qualified, not included in the
+preceding physical source/receiver image. A matching new runner is available at
+`/private/tmp/ow-coding-admission-runner-20261031/openworker` for the next import/
+admission cluster slice. Preserve the earlier source evidence and image identity;
+do not claim the complete isolated preset or child-import controller is finished.

@@ -163,3 +163,19 @@ is insufficient evidence that it contains the selected source or Git metadata.
 The import receipt must remain bound at launch; replacing `.git` cannot be
 accepted as a newly discovered repository. Model submissions/reports and explicit
 lead reception/integration use the same durable handoff/artifact records.
+
+## Independent Git metadata at launch
+
+An acknowledged import can produce the ordinary managed-workspace receipt used by
+coding tools, bound to the same import operation/scope/destination. Its optional
+independent-Git identity pins the checkout's own `.git` directory and grants no
+external common-metadata exception. Later child commits are allowed; replacing
+Git metadata, introducing `commondir`/alternates, or symlinking the object store
+invalidates the receipt before coding tools run. Existing workspace receipts omit
+the optional field and retain their prior serialized representation.
+
+The private `handoff/workspace` conversion requires the original acknowledged
+import, then `workspace/verify` checks its filesystem identities at launch. The
+service import outbox must pin and acknowledge this receipt before child admission.
+The newer method/receipt requires a matching ToolRunner image; the preceding
+source/receiver physical evidence alone does not qualify this new admission path.
