@@ -243,15 +243,13 @@ operation ID and report an unknown outcome. Read the original remote branch/comm
 before deciding whether another mutation is needed. Integration and publishing
 remain separate from the worker's task-completion status.
 
-Qualified C1–C3: shared builder worktrees, versioned single/shared coding presets,
-delegated independent child placement, member reuse, original provider recovery,
-and Rust/TypeScript service regressions. C4's initial-source export/import and
-receipt-gated admission are also physically verified in two independent OpenShell
-sandboxes. That source transfer uses Git bundles with no GitHub access in the child.
+Locally qualified C1–C7: versioned single/shared/isolated presets, scoped shared
+worktrees, independent child environments, artifact-first exact-revision handoffs,
+trusted repository staging/publication and OpenShell placeholder-backed Git CLI
+access. Two concurrent teams with mixed placements and a bounded live-model
+builder/verifier workflow have passed. GitHub transport uses controlled Git/TLS
+fixtures; no unapproved write was made to a real repository.
 
-Remaining C4: model-requested submission/report/reception, submitted-revision
-verifier import, isolated SDK helpers and the complete isolated builder → verifier
-→ lead workflow. C5 trusted GitHub access and C6 OpenShell placeholder-backed Git
-CLI access remain upcoming. The [journal](CODING-AGENT-PRESETS-PLAN.md) and
-[test catalog](CODING-AGENT-PRESETS-TESTING.md) distinguish contract tests, physical
-qualification and public API availability. Generic teams remain useful without Git.
+The [journal](CODING-AGENT-PRESETS-PLAN.md) and [test catalog](CODING-AGENT-PRESETS-TESTING.md)
+record actual source/image identities, storage/process/platform coverage and
+retained original cleanup evidence. Generic teams remain useful without Git.

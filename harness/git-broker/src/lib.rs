@@ -226,7 +226,7 @@ fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     )?)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

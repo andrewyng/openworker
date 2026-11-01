@@ -21,7 +21,7 @@ Related: [SDK coding guide](CODING-AGENTS.md),
 | One coding agent | Application supplies an existing workspace | Local files/commits | Only if separately configured | C2 verified on Linux/OpenShell |
 | Team sharing one sandbox | Separate linked worktrees of an existing repository | Lead inspects local commits | Not needed for sharing work | C1–C3 verified |
 | Team with independent sandboxes | Harness transfers a pinned Git bundle; ToolRunner creates each checkout | Submitted bundle → verifier → lead | Not needed for source transfer or artifact handoff | Initial transfer/admission verified; full submission workflow is C4 in progress |
-| Trusted GitHub checkout/publication | Trusted broker fetches source or publishes a submitted artifact | Scoped branch publication with an exact commit | Not needed in the child | C5 upcoming |
+| Trusted GitHub checkout/publication | Trusted broker fetches source or publishes a submitted artifact | Scoped branch publication with an exact commit | Not needed in the child | Optional trusted-git service |
 | Git CLI inside a sandbox | Git uses HTTPS through OpenShell with an attached credential provider | Explicitly permitted fetch/push | Required for these direct GitHub requests | C6 native + RuntimeProfile/Rust/TypeScript service path qualified locally |
 
 The recommended team default is one shared sandbox with separate builder
@@ -139,7 +139,7 @@ A. Application stages source                         Current contract
                  |
                  +----> Authorized source environment at pinned commit A
 
-B. Trusted GitHub broker                              C5 upcoming
+B. Trusted GitHub broker                              Optional trusted-git service
    GitHub <---- scoped credential ---- Trusted broker
                                          |
                                          +----> Pinned source bundle
@@ -194,7 +194,8 @@ The application can keep GitHub publication disabled throughout this workflow.
 ## 5. Harness-managed GitHub access
 
 Preferred opt-in mode when code should reach GitHub while credentials stay outside
-worker sandboxes. This is C5 upcoming, not a currently exposed publishing API.
+worker sandboxes. The optional [trusted Git service adapter](TRUSTED-GIT-BROKER.md)
+provides private-source staging and the registered `github_broker.publish_code` tool.
 
 ```text
 Child sandbox                Trusted harness / publishing broker          GitHub
@@ -207,8 +208,7 @@ Child sandbox                Trusted harness / publishing broker          GitHub
                 <------------ durable branch + exact commit result
 ```
 
-The model requests publication through an authorized tool using a handoff and
-registered connection reference. It does not supply a host path, token or arbitrary
+The model requests publication through an authorized tool using a same-team submission ID, branch and expected tip. It does not supply a host path, token or arbitrary
 remote URL. Checkout/read and publication/write grants are separate. Publishing
 does not implicitly permit force-push, merge, PR creation or repository admin.
 

@@ -1,6 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: C1–C3 and C6 verified; continuing the approved C4/C5/C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1–C7 locally verified; see platform and retained-cleanup scope below. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -39,7 +39,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Verified: complete local OpenShell/PG17 run, November 1 |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Verified locally: controlled Git and authenticated TLS; no live GitHub write |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Verified: named grants, SDKs and local OpenShell |
-| C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | In progress |
+| C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Verified locally: parallel teams, live model, full regression and ownership cleanup |
 
 Execute in this numbered order. C3 builds on generic team placement rather than
 adding a coding-only sandbox provisioner. Each milestone includes tests and ledger
@@ -1399,3 +1399,67 @@ is an opt-in target and is being built/smoke-checked. Source setup and controlle
 events, approval/grant fences, uncertainty inbox notices and ordinary tool
 classification remain independent checks. C7 parallel and bounded live-model
 qualification follows; do not count its definitions as completed evidence.
+
+C5 canonical public checkpoint pushed: **`5d3534a4`**. C7's real mixed-placement test
+passed **167.33s**: two teams, four builders, four member-sandbox verifiers, shared
+and independent sandboxes, worker replacement before execution, and retirement
+admission. Database audit intervals prove all four initial tool calls overlapped;
+concurrent API submissions alone were not used as proof. Both five-instance rosters
+and exact per-builder verifier reads passed; owned sandboxes/schema were removed.
+
+The production `trusted-git` feature also passed strict library Clippy with the
+fixture feature disabled (**2.50s**). Optional service-image build continues.
+A bounded live-model test now uses an available `claude-sonnet-4-6` ID confirmed
+through the provider model-list endpoint and the previously authorized key file.
+The key is passed only to the already-built test/runtime processes, never compiler
+scripts, source configuration, ToolRunner or logs. It is not yet a passing result.
+
+C7 live-model qualification passed **195.16s** with `claude-sonnet-4-6`: the lead
+spawned an independent builder and an exact-submission verifier. Real generated
+counter HTML, artifact checksum, self-contained Git integrity and recorded verifier
+HTML reads were checked independently of the agents' claims. No branch publication,
+integration, PR, cloud provisioning or credential exposure was allowed in this case.
+The successful fixture deleted its original sandbox identities and dropped its schema.
+
+The opt-in trusted-Git Linux service image built successfully (release build **226.7s**)
+and passed a non-root UID 1000, read-only, network-disabled smoke: server CLI loads,
+Git is installed and Python is absent. The image is `openworker-service:trusted-git-c5-20261101`
+with digest `sha256:ff598854018fdd0de4377cd722d198bcbdfe9c2b0320ff7a88806bc636960a44`.
+The default/core packaging remains unchanged. Final combined legacy/v3 regression
+is running on the rebuilt runner before C7 is marked complete/merged.
+
+
+### C7 — local sequence complete, November 1
+
+Final full service regression passed **308.46s** with the rebuilt Linux runner:
+legacy and registered bundles, immutable releases, two controllers, worker restart,
+shared worktrees, independent sources, exact artifact submissions, Rust/TypeScript
+verifiers, stale-head rejection, explicit integration and original owned cleanup.
+The isolated gateway contains only its ready gateway pod after successful cases.
+No successful-case service/recording schema remains.
+
+The six Rust preset cases passed on both storage/process choices. Found that the
+older SDK PG fixture kept its generated schemas; added caught-failure cleanup and
+a test-only PostgreSQL dependency, then reran both PG modes (**69.94s**, pass) and
+verified those schemas were removed. Removed only the two earlier known generated
+SDK schemas. This adds no production SDK dependency. Final strict all-target
+Clippy for runtime-dependent broker/service/SDK passed (**10.66s**); formatting,
+diff and acceptance-driver shell syntax checks passed.
+
+[Sanitized C7 evidence](evidence/coding-parallel-live-c7-20261101.json) links source,
+images, actual physical/live results and log hashes. The grouped
+[test catalog](CODING-AGENT-PRESETS-TESTING.md) explains what/why for each layer.
+The reusable `harness/tests/coding-qualification.sh` driver separates fast, storage,
+cluster, authenticated HTTPS and explicitly enabled live-model checks. The Linux
+coding-tests image target includes the new Git/contract/registry cases. Current
+guides now link the available trusted source/publication path instead of calling
+C4–C6 upcoming.
+
+Retained exception: three original sandbox identities and the original failed C5
+schema remain on `ow-helm-shell`, whose caller hit the upstream durable admission
+quota. The evidence records exact identities. They are not represented as deleted;
+no gateway ledger, user work or unrelated demo was cleared. Reconcile these exact
+objects after that gateway's admission capacity recovers. The fresh qualification
+gateway/PG fixture are bounded and retained for local follow-up; about **52 GiB**
+free. Cloud trials, actual GitHub writes and Windows trusted-Git execution remain
+outside these local qualification claims. No public-main merge or PR was created.

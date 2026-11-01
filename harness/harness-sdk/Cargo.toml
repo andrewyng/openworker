@@ -32,6 +32,7 @@ async-stream = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
+postgres = "0.19"
 
 [[bin]]
 name = "sdk-test-host"

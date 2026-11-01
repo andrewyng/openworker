@@ -154,8 +154,9 @@ profile, explicitly set each role's approvals and question setting to match it.
 Shared worktrees require a qualified adapter (local sandbox-off SDK or the
 OpenShell service). Unsupported adapters reject; they do not quietly use the
 lead's directory. Separate child placement is described below. Independent source
-staging, the isolated coding preset, artifact handoff and constrained GitHub
-publication are tracked separately in C4–C7.
+staging, exact-submission verifiers and explicit integration are available through
+[isolated coding teams](ISOLATED-CODING-TEAMS.md). Optional private-source and branch
+publication use the [trusted Git adapter](TRUSTED-GIT-BROKER.md).
 
 
 ## Choose a child's sandbox in the OpenShell service
@@ -164,8 +165,9 @@ The application's activated releases and RuntimeProfiles define the available
 provider settings. Profiles have immutable IDs such as `small@1`. Source and child
 releases must permit the target profile, its resources must fit the lead's
 profile, and approval/question behavior must match. The current adapter supports
-CPU/memory profiles with the existing deny-network policy; nonempty named file,
-network or credential grants reject until that provider support is qualified.
+CPU/memory profiles with deny-network defaults. Named [OpenShell Git access](OPENSHELL-GIT-ACCESS.md)
+is an explicit qualified exception; arbitrary named file/network/credential grants
+are not silently enabled. Trusted-host repository access is a separate profile field.
 
 ```typescript
 const team = await lead.createTeam({
