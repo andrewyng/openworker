@@ -36,7 +36,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
-| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | In progress |
+| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Verified: complete local OpenShell/PG17 run, November 1 |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Verified: named grants, SDKs and local OpenShell |
 | C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
@@ -1161,3 +1161,20 @@ regressions pass (6 tests, 81.80s), with only the two newly identified disposabl
 PostgreSQL schemas removed afterward. Historical fixture schemas were retained.
 Strict all-target Clippy passes (32.70s). The SDK now reexports source-choice and
 Git object-format types so applications need no direct runtime import for them.
+
+
+### C4 — complete post-restart qualification, November 1
+
+Clean candidate `702c46a2` (implementation `9ed64532`) passed the entire default
+`service_v2` local PostgreSQL 17 + Kubernetes/OpenShell qualification in **550.56s**.
+This includes two controllers, worker restart, shared worktrees, independently
+provisioned source checkouts, artifact publication, builder submission deduplication,
+exact-revision Rust and TypeScript verifiers, independent lead reception, stale-head
+rejection and explicit expected-head integration with actual source-file read-back.
+The fixture deleted/confirmed its original sandbox identities and dropped both
+owned schemas. Existing demo namespaces and Langfuse were left untouched.
+
+[Sanitized C4 evidence](evidence/coding-artifact-handoff-c4-20261101.json) records
+source/image/binary/log hashes. This uses deterministic model calls and real tool
+execution; live-model combined qualification belongs to C7. C5 remains separate
+unverified work. No cloud resources or public-main changes were made.
