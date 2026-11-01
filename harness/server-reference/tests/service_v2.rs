@@ -546,7 +546,7 @@ async fn qualify() {
         // Use the public SDK configuration and real import outbox/controller.
         // C1 advanced source's branch deliberately. Give C4 its own independent
         // source checkout so an unrelated earlier scenario cannot stale its HEAD.
-        let seed=lead.send(&plan("run_shell",json!({"command":format!("git -c core.hooksPath=/dev/null clone --no-hardlinks -q source isolated-source && git -C isolated-source -c core.hooksPath=/dev/null checkout -q '{base}' && printf independent-source-ready"),"yield_ms":10000})),Some("seed-independent-handoff-source")).await.unwrap();
+        let seed=lead.send(&plan("run_shell",json!({"command":format!("git -c core.hooksPath=/dev/null clone --no-hardlinks -q source isolated-source && git -C isolated-source -c core.hooksPath=/dev/null checkout -qb handoff-main '{base}' && printf independent-source-ready"),"yield_ms":10000})),Some("seed-independent-handoff-source")).await.unwrap();
         assert_eq!(seed.result().await.unwrap().status,"completed");
         let seeded=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();
         assert!(seeded["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]=="independent-source-ready"),"Independent handoff source not prepared");
