@@ -795,3 +795,14 @@ All-target strict Clippy passes (runtime/PostgreSQL/SDK/service plus OpenShell
 feature). Preparing a physical controller qualification with two independent child
 sandboxes. This entry does not claim that physical run has passed. Docker memory
 is 16 GiB and host disk remains about 54 GiB free; no cloud resources provisioned.
+
+Additional import validation: **37 complete service-library cases pass** (5.15s).
+The new private-protocol fault injection loses a reply after chunk storage and
+after checkout, then checks one preparation/write/checkout dispatch, recovery by
+inspection, and admission only after the receipt commits. Pre-dispatch revocation
+closes only the unstarted reservation. Strict all-target Clippy passes again.
+
+The active OpenShell run has passed automatic imports into two separately
+provisioned child sandboxes, independent Git metadata and subsequent child commits,
+plus shared-worktree/preset and Rust/TypeScript regressions. Waiting for the complete
+run and cleanup before recording it as a passing physical qualification.

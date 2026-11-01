@@ -294,3 +294,10 @@ Physical source/import tests use the real controller, artifact store and ToolRun
 with independently provisioned OpenShell sandboxes in
 [service qualification](../../harness/server-reference/tests/service_v2.rs). Their
 actual run identity/result is recorded separately in the milestone journal.
+
+The private-controller fault-injection peer loses replies after storing a chunk
+or creating the checkout. Recovery uses the original intent and inspection call;
+counts prove `prepare`, chunk write and checkout each happened once. Child admission
+remains blocked until the recovered receipt commits. Real artifact bytes travel
+through the filesystem store; the peer's Git identity is synthetic, so this test
+does not stand in for the separate Git/OpenShell qualification.

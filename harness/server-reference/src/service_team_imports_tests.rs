@@ -255,3 +255,152 @@ async fn source_admission_denial_before_import_dispatch_closes_only_the_unstarte
     });
     assert!(f.store.claim_team_import(&installed).unwrap().is_none());
 }
+
+/// A fault-injected private protocol peer. This is deliberately NOT a Git or
+/// sandbox fixture: the separate runtime/physical tests check those boundaries.
+struct Receiver {
+    job: Job,
+    calls: Vec<String>,
+    marker: bool,
+    received: u64,
+    checkout: bool,
+    lose: Option<&'static str>,
+}
+impl Receiver {
+    fn checkout(&self) -> openworker_runtime::coding_handoff::transfer::Receipt {
+        let workspace = receipt(&self.job);
+        serde_json::from_value(json!({"transfer_digest":openworker_runtime::bundle::digest(&serde_json::to_vec(&("coding-transfer-v1",&self.job.intent.transfer)).unwrap()),"path":workspace.path,"identity":workspace.identity,"git_identity":workspace.independent_git,"commit":workspace.initial_commit})).unwrap()
+    }
+    fn status(&self) -> Value {
+        json!({"handle":self.job.intent.transfer.handle(),"received":self.received,"size":self.job.intent.transfer.bundle.size,"checkout_dispatched":self.checkout,"receipt":self.checkout.then(||self.checkout())})
+    }
+}
+impl openworker_runtime::environment::Connection for Receiver {
+    fn request<'a>(
+        &'a mut self,
+        method: &'a str,
+        params: Value,
+    ) -> openworker_runtime::environment::ProviderFuture<'a, Value> {
+        Box::pin(async move {
+            self.calls.push(method.into());
+            let result = match method {
+                "handoff/prepare" => {
+                    assert_eq!(params, json!(self.job.intent.transfer));
+                    self.marker = true;
+                    self.status()
+                }
+                "handoff/inspect" => {
+                    anyhow::ensure!(self.marker, "Original marker absent");
+                    self.status()
+                }
+                "handoff/write" => {
+                    use base64::Engine;
+                    assert_eq!(params["offset"].as_u64(), Some(self.received));
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(params["data"].as_str().unwrap())?;
+                    self.received += bytes.len() as u64;
+                    self.status()
+                }
+                "handoff/finish" => {
+                    assert_eq!(self.received, self.job.intent.transfer.bundle.size);
+                    assert!(!self.checkout);
+                    self.checkout = true;
+                    json!(self.checkout())
+                }
+                "handoff/inspect_checkout" => {
+                    anyhow::ensure!(self.checkout, "Original checkout absent");
+                    json!(self.checkout())
+                }
+                "handoff/workspace" => {
+                    assert!(self.checkout);
+                    assert_eq!(params["request"], json!(self.job.intent.workspace));
+                    json!(receipt(&self.job))
+                }
+                "workspace/verify" => {
+                    assert_eq!(params, json!(receipt(&self.job)));
+                    params
+                }
+                _ => anyhow::bail!("Unexpected private method"),
+            };
+            if self.lose == Some(method) {
+                self.lose = None;
+                anyhow::bail!("Injected delivery loss after original effect")
+            }
+            Ok(result)
+        })
+    }
+    fn close(
+        self: Box<Self>,
+    ) -> openworker_runtime::environment::ProviderFuture<
+        'static,
+        openworker_runtime::environment::CloseOutcome,
+    > {
+        Box::pin(async { Ok(openworker_runtime::environment::CloseOutcome::Exited) })
+    }
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn controller_recovers_lost_chunk_and_checkout_replies_without_replaying_mutations() {
+    for lost in ["handoff/write", "handoff/finish"] {
+        let (f, backend) = staged().await;
+        let installed = management::installation(&f.config).unwrap();
+        let mut job = f.store.claim_team_import(&installed).unwrap().unwrap();
+        let mut peer = Receiver {
+            job: job.clone(),
+            calls: vec![],
+            marker: false,
+            received: 0,
+            checkout: false,
+            lose: Some(lost),
+        };
+        let stop = tokio_util::sync::CancellationToken::new();
+        assert!(crate::service_team_imports::import(
+            &f.store, &mut job, &backend, &mut peer, &stop
+        )
+        .await
+        .is_err());
+        assert!(!f
+            .store
+            .provision_agent_team_child_for(Some(&installed))
+            .unwrap());
+        f.store.defer_team_import(&job).unwrap();
+        expire(&f);
+        let replacement = PostgresStore::open(f.db.clone()).unwrap();
+        let mut resumed = replacement.claim_team_import(&installed).unwrap().unwrap();
+        assert!(!resumed.prepare);
+        assert_eq!(resumed.checkout_dispatched, lost == "handoff/finish");
+        let outcome = crate::service_team_imports::import(
+            &replacement,
+            &mut resumed,
+            &backend,
+            &mut peer,
+            &stop,
+        )
+        .await
+        .unwrap();
+        replacement.complete_team_import(&resumed, outcome).unwrap();
+        for method in ["handoff/prepare", "handoff/write", "handoff/finish"] {
+            assert_eq!(
+                peer.calls.iter().filter(|m| m.as_str() == method).count(),
+                1,
+                "{lost}: {method} replayed: {:?}",
+                peer.calls
+            );
+        }
+        assert_eq!(
+            peer.calls
+                .iter()
+                .filter(|m| m.as_str()
+                    == if lost == "handoff/finish" {
+                        "handoff/inspect_checkout"
+                    } else {
+                        "handoff/inspect"
+                    })
+                .count(),
+            1
+        );
+        assert!(replacement
+            .provision_agent_team_child_for(Some(&installed))
+            .unwrap());
+    }
+}
