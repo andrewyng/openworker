@@ -19,6 +19,7 @@ fn roster(communication: Communication) -> Roster {
 }
 fn request(id: &str, kind: &str) -> SpawnRequest {
     SpawnRequest {
+        sandbox: None,
         agent_type: kind.into(),
         agent_id: id.into(),
         message: format!("Task for {id}"),

@@ -221,6 +221,7 @@ impl Host {
             .roster
             .request(&instance.agent_id)
             .context("Missing spawn request")?;
+        ensure!(doc.sandbox_choices.get(&instance.agent_id).is_none_or(|s|s==&openworker_runtime::team_definition::Sandbox::default()),"This SDK adapter has no qualified child sandbox binding; refusing a shared/host fallback");
         if request.workspace == Selection::default() {
             return Ok(Some(lead.workspace.clone().into()));
         }

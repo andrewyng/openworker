@@ -454,7 +454,7 @@ impl PostgresStore {
         ensure!(self.auth.is_none(), "Controller requires private store");
         let installed = installed.to_owned();
         self.call(move|db|{let mut tx=db.client.transaction()?;
-            let row=tx.query_opt("SELECT d.environment_id,d.request_key,d.dispatched,o.profile_id,e.data FROM service_deletions d JOIN environments e ON e.id=d.environment_id JOIN service_environment_owners o ON o.environment_id=d.environment_id WHERE e.data->>'phase'='deleting' AND d.next_check<=clock_timestamp() AND EXISTS(SELECT 1 FROM service_operations a JOIN service_catalog c ON c.kind='release' AND c.id=a.release_id WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1) ORDER BY d.next_check,d.environment_id LIMIT 1 FOR UPDATE OF d SKIP LOCKED",&[&installed])?;
+            let row=tx.query_opt("SELECT d.environment_id,d.request_key,d.dispatched,o.profile_id,e.data FROM service_deletions d JOIN environments e ON e.id=d.environment_id JOIN service_environment_owners o ON o.environment_id=d.environment_id WHERE e.data->>'phase'='deleting' AND d.next_check<=clock_timestamp() AND (EXISTS(SELECT 1 FROM service_operations a JOIN service_catalog c ON c.kind='release' AND c.id=a.release_id WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1) OR EXISTS(SELECT 1 FROM service_team_environments a JOIN service_catalog c ON c.kind='release' AND c.id=a.data->>'source_release' WHERE a.environment_id=d.environment_id AND c.data->>'installation'=$1)) ORDER BY d.next_check,d.environment_id LIMIT 1 FOR UPDATE OF d SKIP LOCKED",&[&installed])?;
             let Some(row)=row else {return Ok(None)};
             let id:String=row.get(0);let key:String=row.get(1);let dispatched:bool=row.get(2);let profile:String=row.get(3);let record=serde_json::from_value(row.get(4))?;
             tx.execute("UPDATE service_deletions SET dispatched=TRUE,next_check=clock_timestamp()+interval '180 seconds' WHERE environment_id=$1",&[&id])?;
@@ -713,7 +713,7 @@ impl crate::db::Database {
         tx.query_one("SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('service-environment-quota'))",&[])?;
         let pending: i64 = tx
             .query_one(
-                "SELECT count(*) FROM service_operations WHERE status NOT IN ('complete','failed')",
+                "SELECT (SELECT count(*) FROM service_operations WHERE status NOT IN ('complete','failed'))+(SELECT count(*) FROM service_team_environments WHERE status NOT IN ('ready','failed'))",
                 &[],
             )?
             .get(0);

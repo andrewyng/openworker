@@ -301,7 +301,10 @@ fn record(
 ) -> Result<()> {
     // Sequence allocation alone is not commit ordering: a later commit could
     // advance a reader's cursor past an earlier, still-uncommitted record.
-    // Hold this small audit append lock through transaction commit.
+    // Hold this small audit append lock through transaction commit. Append only
+    // AFTER acquiring all session/team/environment/catalog locks. An API that
+    // holds this lock while waiting for a session can deadlock with trusted child
+    // admission, which already owns the lead and appends its creation audit.
     tx.query_one(
         "SELECT pg_advisory_xact_lock(hashtext(current_schema()),hashtext('security-audit-append-v1'))",
         &[],

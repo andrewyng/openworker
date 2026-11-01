@@ -11,6 +11,10 @@ fn sqlite_workspace_defaults_contract() {
     contract::exercise_workspace_defaults(&mut Store::memory().unwrap());
 }
 #[test]
+fn sqlite_sandbox_selection_contract() {
+    contract::exercise_sandbox_selection(&mut Store::memory().unwrap());
+}
+#[test]
 fn sqlite_child_briefing_contract() {
     contract::exercise_briefing(&mut Store::memory().unwrap());
 }

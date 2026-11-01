@@ -111,8 +111,8 @@ indirect access.
 Trusted Git tools can validate the recorded worktree, metadata paths and identities
 before operating. They should admit only that known relationship, rather than
 following arbitrary model-supplied `.git` pointers or allowing the entire parent
-directory. Current Git inspection helpers reject metadata outside their workspace;
-supporting this narrow managed-worktree relationship is implementation work. The
+directory. The managed-worktree helpers qualified in C1 admit only this recorded metadata
+relationship; other external metadata remains rejected. The
 lead should inspect a submitted commit through explicit Git/handoff operations
 instead of needing general write access to every child's worktree.
 

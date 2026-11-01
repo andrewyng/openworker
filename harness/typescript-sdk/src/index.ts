@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { Transport } from "./transport.js";
 import { agentWire } from "./config.js";
+import {sandboxWire} from "./team-placement.js";
 import {
   ToolImageResult,
   checkMemberErrors,
@@ -1187,6 +1188,7 @@ export class AgentTeam {
     return this.command(requestId, "team_spawn", {
       ...options,
       model: options.model ? {connection:options.model.provider,model:options.model.name} : undefined,
+      sandbox:sandboxWire(options.sandbox),
       agent_type: agentType,
       agent_id: agentId,
       message,

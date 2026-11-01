@@ -58,10 +58,40 @@ fn tool_data(event: &Value) -> Value {
         .unwrap_or_else(|| result.clone())
 }
 
+/// wait_agent may wake on any inbox message. Qualification waits on durable
+/// child outcome too, rather than treating a completed lead turn as child proof.
+async fn completed_member(team: &openworker_sdk::service::AgentTeam, agent: &str) {
+    tokio::time::timeout(Duration::from_secs(180), async {
+        loop {
+            let roster = team.members(None, 32).await.unwrap();
+            let row = roster["members"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["instance"]["agent_id"] == agent)
+                .unwrap();
+            assert!(row["error"].is_null(), "Child failed admission: {row}");
+            if row["last_outcome"] == "completed" {
+                break;
+            }
+            assert!(
+                !matches!(
+                    row["last_outcome"].as_str(),
+                    Some("failed" | "interrupted" | "cancelled")
+                ),
+                "Child failed: {row}"
+            );
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL and OW_PROBE_* local OpenShell"]
 async fn releases_profiles_provisioning_and_shared_verifier() {
-    tokio::time::timeout(Duration::from_secs(360), qualify())
+    tokio::time::timeout(Duration::from_secs(720), qualify())
         .await
         .unwrap();
 }
@@ -147,6 +177,15 @@ async fn qualify() {
         .activate_runtime_profile(&profile.id, Some("default"), "profile-activate")
         .await
         .unwrap();
+    let small:openworker_sdk::service::RuntimeProfile=serde_json::from_value(json!({"id":"small@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","approvalMode":"bypass","autoSkipQuestions":true,"allowedPrincipals":["alice"]})).unwrap();
+    admin
+        .register_runtime_profile(&small, "small-create")
+        .await
+        .unwrap();
+    admin
+        .activate_runtime_profile(&small.id, None, "small-activate")
+        .await
+        .unwrap();
     for (id, tools) in [
         (
             "coder@1",
@@ -163,7 +202,7 @@ async fn qualify() {
             vec!["read_file", "run_shell", "git_status", "git_log"],
         ),
     ] {
-        let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":["team@1"],"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
+        let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":["team@1","small@1"],"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
         admin
             .deploy_agent(&release, &format!("deploy-{id}"))
             .await
@@ -324,7 +363,7 @@ async fn qualify() {
         let lead=coder.new_session_with(openworker_sdk::service::SessionOptions {
             environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()
         },Some("private-type-lead")).await.unwrap();
-        let team=lead.create_team(serde_json::from_value(json!({"agentId":"lead","agentTypes":{"verifier":"verifier@1","builder":"coder@1"},"policy":{"communication":{"board":true,"directMessages":false},"max_instances":8},"limits":null,"delegation":{"tools":["coding.read_file"],"placements":["team"],"models":[],"profiles":{}}})).unwrap()).await.unwrap();
+        let team=lead.create_team(serde_json::from_value(json!({"agentId":"lead","agentTypes":{"verifier":"verifier@1","builder":"coder@1"},"policy":{"communication":{"board":true,"directMessages":false},"max_instances":16},"limits":{"maxModelCalls":256,"maxOutputTokens":2000000,"summaryTokens":512},"delegation":{"tools":["coding.read_file"],"placements":["team","member","new"],"models":[],"profiles":{"small@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}}})).unwrap()).await.unwrap();
         let define=lead.send(&plan("team_define_type",json!({"name":"reader","instructions":"Read the requested file and return evidence. Do not write.","tools":["coding.read_file"]})),Some("define-reader")).await.unwrap();
         assert_eq!(define.result().await.unwrap().status,"completed");
         let member=team.spawn("spawn-reader-one","reader","reader-one",&plan("read_file",json!({"path":"shared-proof.txt"}))).await.unwrap();
@@ -347,6 +386,50 @@ async fn qualify() {
         assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("coder output for verifier")),"{evidence}");
         assert_eq!(store.service_team_type_page(&openworker_server_reference::management::installation(&cfg).unwrap(),"",8).unwrap().len(),1);
         eprintln!("PASS approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads");
+        // Two instances of one prebuilt type receive independent sandboxes.
+        // A private verifier then reuses the first builder's original sandbox.
+        controller.kill().await.unwrap();let _=controller.wait().await;
+        other_controller.kill().await.unwrap();let _=other_controller.wait().await;
+        let isolated=team.spawn_with_options("isolated-a","builder","isolated-a",&plan("write_file",json!({"path":"build/proof.txt","content":"isolated builder evidence"})),serde_json::from_value(json!({"sandbox":{"mode":"new","profile":"small@1"}})).unwrap()).await.unwrap();
+        // Commit the create marker and let the real provider create the child,
+        // then deliberately lose its reply before saving a binding. Restarted
+        // controllers must inspect this exact original object, never create again.
+        let target=store.catalog_get("profile","small@1").unwrap();
+        let child_provider=openworker_server_reference::management::provider(&cfg,&target).unwrap();
+        store.reserve_team_environment(lead.id(),"isolated-a",target,child_provider.spec(openworker_runtime::environment::Sharing::Shared,openworker_runtime::environment::Management::Harness)).unwrap();
+        let installed=openworker_server_reference::management::installation(&cfg).unwrap();
+        let lost=store.claim_team_environment(&installed).unwrap().unwrap();assert!(lost.dispatch);
+        let original_child=child_provider.create(lost.environment.clone()).await.unwrap();
+        let dbcopy=db.clone();let lost_env=lost.environment.id.clone();
+        tokio::task::spawn_blocking(move||{
+            let mut pg=postgres::Client::connect(&dbcopy.connection,postgres::NoTls).unwrap();
+            pg.execute(&format!("UPDATE {}.service_team_environments SET next_check=clock_timestamp()-interval '1 second' WHERE environment_id=$1",dbcopy.schema),&[&lost_env]).unwrap();
+        }).await.unwrap();
+        controller=role("service-controller");other_controller=role("service-controller");
+        let independent=team.spawn_with_options("isolated-b","builder","isolated-b",&plan("run_shell",json!({"command":"test ! -e build/proof.txt && pwd && printf 'independent sandbox'","yield_ms":10000})),serde_json::from_value(json!({"sandbox":{"mode":"new","profile":"small@1"}})).unwrap()).await.unwrap();
+        let waited=lead.send(&format!("TEST_RESOURCE_GRANTS {}",json!([{"name":"team_wait_agent","arguments":{"agent_ids":["isolated-a"],"timeout_ms":120000}},{"name":"team_wait_agent","arguments":{"agent_ids":["isolated-b"],"timeout_ms":120000}}])),Some("wait-isolated-builders")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        completed_member(&team,"isolated-a").await;completed_member(&team,"isolated-b").await;
+        let asid=isolated["instance"]["session_id"].as_str().unwrap();let bsid=independent["instance"]["session_id"].as_str().unwrap();
+        let astate=service.json("GET",&format!("/v1/sessions/{asid}"),None,None).await.unwrap();
+        let bstate=service.json("GET",&format!("/v1/sessions/{bsid}"),None,None).await.unwrap();
+        let aenv=&astate["session"]["environment"];let benv=&bstate["session"]["environment"];
+        assert!(aenv["environment_id"].is_string() && benv["environment_id"].is_string());
+        assert_ne!(aenv["environment_id"],benv["environment_id"]);assert_ne!(aenv["environment_id"],environment_id);assert_ne!(aenv["remote_id"],benv["remote_id"]);
+        assert_eq!(aenv["remote_id"],original_child.remote_id);
+        assert_eq!(astate["session"]["workspace"],"/sandbox");
+        let ap=store.catalog_get("profile","small@1").unwrap();let ap=openworker_server_reference::management::provider(&cfg,&ap).unwrap();
+        assert_eq!(serde_json::from_value::<openworker_runtime::environment::Binding>(aenv.clone()).unwrap().spec.profile_digest,ap.spec(openworker_runtime::environment::Sharing::Shared,openworker_runtime::environment::Management::Harness).profile_digest);
+        let evidence=service.json("GET",&format!("/v1/sessions/{bsid}/events/page?after=0"),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"].as_str().is_some_and(|s|s.contains("independent sandbox"))),"{evidence}");
+        let define=lead.send(&plan("team_define_type",json!({"name":"isolated-reader","instructions":"Read original builder evidence. No writes.","tools":["coding.read_file"],"sandbox":{"mode":"member","agent_id":"isolated-a"}})),Some("define-isolated-reader")).await.unwrap();assert_eq!(define.result().await.unwrap().status,"completed");
+        let verifier=team.spawn_with_options("isolated-reader","isolated-reader","isolated-verifier",&plan("read_file",json!({"path":"proof.txt"})),serde_json::from_value(json!({"workspace":{"mode":"directory","path":"build"}})).unwrap()).await.unwrap();
+        let waited=lead.send(&plan("team_wait_agent",json!({"agent_ids":["isolated-verifier"],"timeout_ms":120000})),Some("wait-isolated-verifier")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        completed_member(&team,"isolated-verifier").await;
+        let vsid=verifier["instance"]["session_id"].as_str().unwrap();
+        let vstate=service.json("GET",&format!("/v1/sessions/{vsid}"),None,None).await.unwrap();assert_eq!(vstate["session"]["environment"],*aenv);assert_eq!(vstate["session"]["workspace"],"/sandbox/build");
+        let evidence=service.json("GET",&format!("/v1/sessions/{vsid}/events/page?after=0"),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("isolated builder evidence")),"{evidence}");
+        let checked=lead.send(&plan("run_shell",json!({"command":"test ! -e build/proof.txt && printf 'lead sandbox unchanged'","yield_ms":10000})),Some("check-lead-isolation")).await.unwrap();assert_eq!(checked.result().await.unwrap().status,"completed");
+        let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["turn_id"]==checked.id && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]=="lead sandbox unchanged"));
+        eprintln!("PASS independent child sandboxes, bounded smaller profile, selected child cwd, private member verifier and preserved lead filesystem");
         let initialized=lead.send(&plan("run_shell",json!({"command":"mkdir source && cd source && git init -q && printf 'base\\n' > proof.txt && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -q -m base && git rev-parse HEAD","yield_ms":10000})),Some("initialize-source")).await.unwrap();
         assert_eq!(initialized.result().await.unwrap().status,"completed");
         let mut builders=vec![];
@@ -363,6 +446,7 @@ async fn qualify() {
         let waited=lead.send(&format!("TEST_RESOURCE_GRANTS {}",json!([{"name":"team_wait_agent","arguments":{"agent_ids":["ui"],"timeout_ms":120000}},{"name":"team_wait_agent","arguments":{"agent_ids":["api"],"timeout_ms":120000}}])),Some("wait-builders")).await.unwrap();
         assert_eq!(waited.result().await.unwrap().status,"completed");
         for (id,sid) in &builders {
+            completed_member(&team,id).await;
             let child=service.json("GET",&format!("/v1/sessions/{sid}"),None,None).await.unwrap();
             assert_eq!(child["session"]["workspace"],format!("/sandbox/workers/{id}"));
             assert_eq!(child["session"]["environment"]["remote_id"],original.remote_id);
@@ -377,6 +461,7 @@ async fn qualify() {
         // worktree in a separate sandbox. Lead integration remains explicit.
         let verifier=team.spawn_with_options("verify-worktree","verifier","exact-verifier",&plan("run_shell",json!({"command":"test \"$(git rev-parse HEAD)\" = \"$(cat submitted.sha)\" && test \"$(cat proof.txt)\" = 'ui change' && printf 'verified exact submission'","yield_ms":10000})),serde_json::from_value(json!({"workspace":{"mode":"directory","path":"workers/ui"}})).unwrap()).await.unwrap();
         let waited=lead.send(&plan("team_wait_agent",json!({"agent_ids":["exact-verifier"],"timeout_ms":120000})),Some("wait-exact-verifier")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        completed_member(&team,"exact-verifier").await;
         let vsid=verifier["instance"]["session_id"].as_str().unwrap();
         let evidence=service.json("GET",&format!("/v1/sessions/{vsid}/events/page?after=0"),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]=="verified exact submission"),"{evidence}");
         let inspect=lead.send(&plan("run_shell",json!({"command":"test ! -e workers/sibling-escape.txt && test \"$(cat workers/api/proof.txt)\" = 'api change' && test \"$(cat workers/ui/proof.txt)\" = 'ui change' && git -C source show ui:proof.txt && git -C source show api:proof.txt","yield_ms":10000})),Some("inspect-builder-commits")).await.unwrap();assert_eq!(inspect.result().await.unwrap().status,"completed");
@@ -403,6 +488,7 @@ async fn qualify() {
         let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
         assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);
         let waited=preset_lead.send(&plan("team_wait_agent",json!({"agent_ids":["ui"],"timeout_ms":120000})),Some("wait-preset-builder")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");
+        completed_member(&preset_team,"ui").await;
         let sid=child["instance"]["session_id"].as_str().unwrap();
         let selected=service.json("GET",&format!("/v1/sessions/{sid}"),None,None).await.unwrap();assert_eq!(selected["session"]["workspace"],format!("/sandbox/{}",child["workspace"]["path"].as_str().unwrap()));
         let read=preset_lead.send(&plan("read_file",json!({"path":format!("{}/proof.txt",child["workspace"]["path"].as_str().unwrap())})),Some("read-preset-proof")).await.unwrap();assert_eq!(read.result().await.unwrap().status,"completed");
@@ -448,33 +534,46 @@ async fn qualify() {
     ] {
         let _ = child.kill().await;
     }
-    let p = store.catalog_get("profile", "team@1").unwrap();
-    let provider = openworker_server_reference::management::provider(&cfg, &p).unwrap();
     let connection = db.connection.clone();
     let schema = db.schema.clone();
-    let environment_ids: Vec<String> = tokio::task::spawn_blocking(move || {
+    let environment_ids: Vec<(String, String)> = tokio::task::spawn_blocking(move || {
         let mut pg = postgres::Client::connect(&connection, postgres::NoTls).unwrap();
         pg.query(
             &format!(
-                "SELECT environment_id FROM {}.service_environment_owners",
+                "SELECT environment_id,profile_id FROM {}.service_environment_owners",
                 schema
             ),
             &[],
         )
         .unwrap()
         .iter()
-        .map(|r| r.get(0))
+        .map(|r| (r.get(0), r.get(1)))
         .collect()
     })
     .await
     .unwrap();
-    for id in environment_ids {
+    for (id, profile) in environment_ids {
+        let p = store.catalog_get("profile", &profile).unwrap();
+        let provider = openworker_server_reference::management::provider(&cfg, &p).unwrap();
         let env = store.clone().environment(&id).unwrap();
-        if let Some(binding) = env.binding {
+        // Cleanup includes a create whose acknowledgement was deliberately lost.
+        // Reconstruct only its original identity; cleanup never creates/rebinds.
+        let binding = if let Some(b) = env.binding.clone() {
+            Some(b)
+        } else {
+            let raw = env.id.strip_prefix("env_").unwrap();
             provider
-                .delete(binding, uuid::Uuid::new_v4().to_string())
+                .bind_existing(&env, &format!("owr-{}", &raw[..15]))
                 .await
-                .unwrap();
+                .ok()
+        };
+        if let Some(binding) = binding {
+            let key = uuid::Uuid::new_v4().to_string();
+            provider.delete(binding.clone(), key).await.unwrap();
+            assert!(
+                provider.confirm_deleted(binding).await.unwrap(),
+                "Original fixture sandbox still exists"
+            );
         }
     }
     tokio::task::spawn_blocking(move || {

@@ -22,6 +22,7 @@
   ],
   "scripts": {
     "test:coding-presets": "npm run build && node scripts/sync-coding-presets.mjs --check && node --test test/coding-presets.test.mjs",
+    "test:team-placement": "npm run build && node --test test/team-placement.test.mjs",
     "test:coding-presets:integration": "npm run build && node --test --test-concurrency=1 test/coding-presets-live.test.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/config.test.mjs test/transport.test.mjs",

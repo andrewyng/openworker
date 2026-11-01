@@ -17,6 +17,7 @@ mod service;
 pub mod service_admin;
 pub mod service_catalog;
 pub mod service_pools;
+pub mod service_team_placements;
 pub mod service_team_types;
 mod submissions;
 mod team_execution;
@@ -40,6 +41,17 @@ use std::{
 };
 pub use submissions::{SubmissionError, SubmissionReceipt, SubmissionStatus, TurnSubmission};
 use zeroize::Zeroizing;
+
+/// Sanitized infrastructure failure. Callers must not mistake an uncertain
+/// storage operation for a permanent authorization/placement denial.
+#[derive(Debug)]
+pub struct StorageUnavailable(&'static str);
+impl std::fmt::Display for StorageUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for StorageUnavailable {}
 
 #[derive(Clone)]
 pub enum Tls {
@@ -420,7 +432,10 @@ impl PostgresStore {
         let span = inner.telemetry.span(Op::Storage, None, None);
         let result = blocking(move || {
             if inner.poisoned.load(Ordering::SeqCst) {
-                bail!("PostgreSQL connection unusable; reconnect and reconcile durable state");
+                return Err(StorageUnavailable(
+                    "PostgreSQL connection unusable; reconnect and reconcile durable state",
+                )
+                .into());
             }
             let (tx, rx) = mpsc::sync_channel(1);
             let poison = inner.poisoned.clone();
@@ -441,13 +456,13 @@ impl PostgresStore {
                     }),
                 })
                 .map_err(|_| {
-                    anyhow::anyhow!("PostgreSQL queue unavailable; request not admitted")
+                    StorageUnavailable("PostgreSQL queue unavailable; request not admitted")
                 })?;
             match rx.recv_timeout(inner.timeout) {
                 Ok(v) => v,
                 Err(_) => {
                     inner.poisoned.store(true, Ordering::SeqCst);
-                    bail!("PostgreSQL operation outcome unknown; reconnect and reconcile durable IDs before retrying")
+                    Err(StorageUnavailable("PostgreSQL operation outcome unknown; reconnect and reconcile durable IDs before retrying").into())
                 }
             }
         });
@@ -503,7 +518,7 @@ impl PostgresStore {
 }
 fn sanitize(e: anyhow::Error) -> anyhow::Error {
     if e.downcast_ref::<postgres::Error>().is_some() {
-        anyhow::anyhow!("PostgreSQL operation failed; outcome may be unknown. Reconnect and reconcile durable IDs.")
+        StorageUnavailable("PostgreSQL operation failed; outcome may be unknown. Reconnect and reconcile durable IDs.").into()
     } else {
         e
     }

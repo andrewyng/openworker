@@ -5,18 +5,13 @@ use anyhow::{ensure, Result};
 use openworker_runtime::{
     bundle::{digest, Bundle},
     connections::Choice,
-    team_definition::{Delegation, Placement},
+    team_definition::Delegation,
     team_type_catalog::{Record, Status},
 };
 use openworker_store_postgres::{service_team_types::Team, PostgresStore};
 use serde_json::json;
 
 pub(crate) fn validate_delegation(d: &Delegation, source: &Bundle) -> Result<()> {
-    ensure!(
-        d.placements == std::collections::BTreeSet::from([Placement::Team])
-            && d.profiles.is_empty(),
-        "This service adapter currently supports the team's original environment only"
-    );
     source.tools.select(&d.tools)?;
     Ok(())
 }
@@ -60,10 +55,7 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
     )?;
     let def = stored.binding.definition();
     ensure!(
-        matches!(
-            def.sandbox,
-            openworker_runtime::team_definition::Sandbox::Team {}
-        ),
+        team.document.placement_selection || def.sandbox == Default::default(),
         "Unsupported placement"
     );
     let tools = source.tools.select(&def.tools)?;
@@ -110,6 +102,50 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
         &text,
         &serde_json::to_string(&tools)?,
     )?;
+    Ok(c)
+}
+/// Keep bundle/model identity unchanged; only select a delegated provider profile.
+pub(crate) fn placed_config(
+    config: &Config,
+    team: &Team,
+    record: &Record,
+    profile: &openworker_store_postgres::service_catalog::Entry,
+) -> Result<Config> {
+    let mut c = self::config(config, team, record)?;
+    let source: openworker_store_postgres::service_catalog::Release =
+        serde_json::from_value(team.release.definition.clone())?;
+    let original: openworker_store_postgres::service_catalog::Profile =
+        serde_json::from_value(team.profile.definition.clone())?;
+    let target: openworker_store_postgres::service_catalog::Profile =
+        serde_json::from_value(profile.definition.clone())?;
+    ensure!(
+        profile.activated
+            && profile.installation == team.release.installation
+            && source.runtime_profiles.contains(&profile.id)
+            && target.cpu <= original.cpu
+            && target.memory_mb <= original.memory_mb
+            && target.approval_mode == original.approval_mode
+            && target.auto_skip_questions == original.auto_skip_questions,
+        "Target profile is unavailable or exceeds the lead"
+    );
+    if profile.id != team.profile.id {
+        let g = team
+            .document
+            .type_catalog
+            .as_ref()
+            .and_then(|c| c.ceiling.profiles.get(&profile.id))
+            .ok_or_else(|| anyhow::anyhow!("Target profile not delegated"))?;
+        ensure!(
+            g.files.is_empty()
+                && g.network.is_empty()
+                && g.credentials.is_empty()
+                && g.cpu == target.cpu
+                && g.memory_mb == target.memory_mb,
+            "Unsupported target grants/resources"
+        );
+    }
+    c.openshell.cpu = Some(target.cpu);
+    c.openshell.memory_mb = Some(target.memory_mb);
     Ok(c)
 }
 /// Bounded pages allow other service teams to progress. Restart repeats only

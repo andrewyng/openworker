@@ -149,5 +149,60 @@ profile, explicitly set each role's approvals and question setting to match it.
 
 Shared worktrees require a qualified adapter (local sandbox-off SDK or the
 OpenShell service). Unsupported adapters reject; they do not quietly use the
-lead's directory. Isolated coding presets, artifact handoff and constrained GitHub
-publication are tracked separately in C3–C7.
+lead's directory. Separate child placement is described below. Independent source
+staging, the isolated coding preset, artifact handoff and constrained GitHub
+publication are tracked separately in C4–C7.
+
+
+## Choose a child's sandbox in the OpenShell service
+
+The application's activated releases and RuntimeProfiles define the available
+provider settings. Profiles have immutable IDs such as `small@1`. Source and child
+releases must permit the target profile, its resources must fit the lead's
+profile, and approval/question behavior must match. The current adapter supports
+CPU/memory profiles with the existing deny-network policy; nonempty named file,
+network or credential grants reject until that provider support is qualified.
+
+```typescript
+const team = await lead.createTeam({
+  agentTypes: { builder: "builder@1", verifier: "verifier@1" },
+  delegation: {
+    tools: ["coding.read_file"], // permitted tools for private custom types
+    placements: ["team", "member", "new"],
+    profiles: { "small@1": { cpu: 1, memoryMB: 512 } },
+  },
+});
+await team.spawn("build-ui", "builder", "ui", "Build your assigned part.", {
+  sandbox: { mode: "new", profile: "small@1", cpu: 1, memoryMB: 512 },
+});
+// After ui is admitted in a shareable sandbox:
+await team.spawn("verify-ui", "verifier", "check-ui", "Verify ui's exact submission.", {
+  sandbox: { mode: "member", agentId: "ui" },
+});
+// Omitting sandbox retains the team's original environment.
+```
+
+Rust uses the same `AgentTeamOptions.delegation` and
+`ChildOptions.sandbox` contracts. The lead can request these choices through
+`team_spawn`; an approved private type may also set its default sandbox. A custom
+instance cannot enlarge or switch that exact type's approved envelope.
+
+A new sandbox starts at its own `/sandbox`. It does not mount the lead's files or
+Git metadata. Directory selection uses an **existing** directory in the selected
+sandbox; it does not create or import source. Member selection can wait for an
+existing reservation's provisioning, and only binds an available shareable
+original environment. It cannot name a future, retired or unrelated instance.
+Use C4's source/artifact workflow once qualified for isolated coding checkouts.
+
+The trusted harness/controller calls the gateway outside the sandbox. Allocation
+and quota ownership commit before create. Recovery inspects the same original
+resource; it never recreates after a lost response. Unknown outcomes remain
+visible in events and the lead inbox without authorizing a retry. Child
+admission rechecks current credentials, profiles and original binding.
+
+Retirement closes the child's admission and preserves its work. Other members'
+active/reserved references prevent deletion. Owned resources remain visible and
+consume quota until explicit confirmed cleanup. Provider-local files last for
+that sandbox's lifetime; an independently persistent volume is not implied.
+Local sandbox-off SDK adapters reject New/Member placement because they have no
+qualified remote provisioner; they do not execute the request on the host.

@@ -37,6 +37,36 @@ fn change(tx: &mut Transaction<'_>, e: &mut Record, kind: &str, data: Value) -> 
     )?;
     Ok(())
 }
+/// Reuse the original binding/revision checks inside an outbox transaction.
+pub(crate) fn complete(
+    tx: &mut Transaction<'_>,
+    id: &str,
+    revision: i64,
+    binding: Option<Binding>,
+) -> Result<Record> {
+    let mut e = lock(tx, id)?;
+    if let Some(b) = &binding {
+        b.validate()?;
+        if b.environment_id != e.id || b.spec != e.spec {
+            bail!("Environment result does not match requested authority");
+        }
+    }
+    if e.phase == Phase::Ready && e.binding == binding {
+        return Ok(e);
+    }
+    if e.revision != revision || !matches!(e.phase, Phase::Provisioning | Phase::Unknown) {
+        bail!("Stale environment operation");
+    }
+    e.phase = if binding.is_some() {
+        Phase::Ready
+    } else {
+        Phase::Unknown
+    };
+    e.binding = binding;
+    let known = e.binding.is_some();
+    change(tx, &mut e, "environment_observed", json!({"known":known}))?;
+    Ok(e)
+}
 fn attachment(row: &Row) -> Result<Attachment> {
     Ok(Attachment {
         id: row.get("id"),
@@ -104,6 +134,39 @@ pub(crate) fn validate_session(tx: &mut Transaction<'_>, s: &Session) -> Result<
             .any(|p| *p == openworker_runtime::resource_policy::Placement::Host)
     {
         bail!("Initial remote workspace profile cannot carry host/credential/network grants");
+    }
+    if let Some(member) = &s.agent_team {
+        let doc: openworker_runtime::agent_team::Document = serde_json::from_value(
+            tx.query_one(
+                "SELECT data FROM agent_teams WHERE id=$1",
+                &[&member.team_id],
+            )?
+            .get(0),
+        )?;
+        if member.agent_id != doc.lead {
+            ensure!(
+                doc.roster
+                    .instance(&member.agent_id)
+                    .is_some_and(|i| i.session_id == s.id),
+                "Child is not the original team instance"
+            );
+            if doc
+                .sandbox_choices
+                .get(&member.agent_id)
+                .is_some_and(|c| c != &Default::default())
+            {
+                let placement = doc
+                    .placement_bindings
+                    .get(&member.agent_id)
+                    .context("Child placement has no original binding")?;
+                ensure!(
+                    doc.placement_selection
+                        && Some(&placement.choice) == doc.sandbox_choices.get(&member.agent_id)
+                        && &placement.environment == binding,
+                    "Child placement authority changed"
+                );
+            }
+        }
     }
     let e = lock(tx, &binding.environment_id)?;
     if e.binding.as_ref() != Some(binding) || (!s.closed && e.phase != Phase::Ready) {
@@ -176,33 +239,7 @@ impl Database {
         binding: Option<Binding>,
     ) -> Result<Record> {
         let mut tx = self.client.transaction()?;
-        let mut e = lock(&mut tx, id)?;
-        if let Some(b) = &binding {
-            b.validate()?;
-            if b.environment_id != e.id || b.spec != e.spec {
-                bail!("Environment result does not match requested authority");
-            }
-        }
-        if e.phase == Phase::Ready && e.binding == binding {
-            tx.commit()?;
-            return Ok(e);
-        }
-        if e.revision != revision || !matches!(e.phase, Phase::Provisioning | Phase::Unknown) {
-            bail!("Stale environment operation");
-        }
-        e.phase = if binding.is_some() {
-            Phase::Ready
-        } else {
-            Phase::Unknown
-        };
-        e.binding = binding;
-        let known = e.binding.is_some();
-        change(
-            &mut tx,
-            &mut e,
-            "environment_observed",
-            json!({"known":known}),
-        )?;
+        let e = complete(&mut tx, id, revision, binding)?;
         tx.commit()?;
         Ok(e)
     }
@@ -233,7 +270,7 @@ impl Database {
         if e.phase != Phase::Ready {
             bail!("Reconcile environment before deletion");
         }
-        let attached:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND NOT (data->>'closed')::boolean) OR EXISTS(SELECT 1 FROM attachments WHERE environment_id=$1 AND state<>'released')",&[&id])?.get(0);
+        let attached:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND NOT (data->>'closed')::boolean) OR EXISTS(SELECT 1 FROM attachments WHERE environment_id=$1 AND state<>'released') OR EXISTS(SELECT 1 FROM agent_teams t CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase' IN ('reserved','ready','retiring') AND (t.data->'placement_bindings'->i.key->'environment'->>'environment_id'=$1 OR (t.data->'sandbox_choices'->i.key->>'mode'='member' AND t.data->'placement_bindings'->(t.data->'sandbox_choices'->i.key->>'agent_id')->'environment'->>'environment_id'=$1))) OR EXISTS(SELECT 1 FROM service_team_environments o JOIN agent_teams t ON t.id=o.team WHERE o.environment_id=$1 AND t.data->'roster'->'instances'->o.agent->>'phase' IN ('reserved','ready','retiring'))",&[&id])?.get(0);
         if attached {
             bail!("Environment still has sessions or reserved/active attachments");
         }

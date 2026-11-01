@@ -52,6 +52,14 @@ pub struct Document {
     pub workspace_selection: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_defaults: Option<crate::team_workspace_defaults::WorktreeDefaults>,
+    /// Enabled only by a qualified trusted placement adapter, never model input.
+    #[serde(default)]
+    pub placement_selection: bool,
+    #[serde(default)]
+    pub sandbox_choices: BTreeMap<String, crate::team_definition::Sandbox>,
+    /// Original provider evidence written only by the trusted placement adapter.
+    #[serde(default)]
+    pub placement_bindings: BTreeMap<String, crate::team_placement::Binding>,
     #[serde(default)]
     pub workspaces: BTreeMap<String, crate::team_workspace::Intent>,
     #[serde(default)]
@@ -210,6 +218,10 @@ pub fn apply(
                 doc.workspace_defaults == workspace_defaults,
                 "Changed worktree defaults; create another team"
             );
+            ensure!(
+                doc.placement_selection == (args["placement_selection"] == true),
+                "Changed placement adapter capability"
+            );
             let requested = args
                 .get("limits")
                 .filter(|v| !v.is_null())
@@ -284,6 +296,9 @@ pub fn apply(
             type_bindings: BTreeMap::new(),
             workspace_selection: args["workspace_selection"] == true,
             workspace_defaults,
+            placement_selection: args["placement_selection"] == true,
+            sandbox_choices: BTreeMap::new(),
+            placement_bindings: BTreeMap::new(),
             workspaces: BTreeMap::new(),
             retirements: BTreeMap::new(),
         };
@@ -543,6 +558,7 @@ pub fn apply(
                 .context("Missing spawn request")?
                 .workspace
                 .clone();
+            let (root, policy) = crate::team_placement::workspace_scope(&doc, s, id)?;
             let dispatch = !doc.workspaces.contains_key(id);
             let intent =
                 doc.workspaces
@@ -551,8 +567,7 @@ pub fn apply(
                         request: crate::team_workspace::Request {
                             operation_id: crate::id("ws"),
                             scope_digest: crate::bundle::digest(
-                                format!("{}/{}/{}", s.id, s.workspace, s.resource_policy.digest)
-                                    .as_bytes(),
+                                format!("{}/{}/{}", s.id, root, policy).as_bytes(),
                             ),
                             selection,
                         },
@@ -561,9 +576,7 @@ pub fn apply(
                     });
             ensure!(
                 intent.request.scope_digest
-                    == crate::bundle::digest(
-                        format!("{}/{}/{}", s.id, s.workspace, s.resource_policy.digest).as_bytes()
-                    ),
+                    == crate::bundle::digest(format!("{}/{}/{}", s.id, root, policy).as_bytes()),
                 "Workspace parent scope changed"
             );
             let result = json!({"dispatch":dispatch,"intent":intent});
@@ -576,6 +589,7 @@ pub fn apply(
                 "Only the lead host records workspace outcomes"
             );
             let id = op(args, "agent_id")?;
+            let (root, _) = crate::team_placement::workspace_scope(&doc, s, id)?;
             let intent = doc
                 .workspaces
                 .get_mut(id)
@@ -591,6 +605,7 @@ pub fn apply(
                 .map(serde_json::from_value::<crate::team_workspace::Receipt>)
                 .transpose()?;
             if let Some(receipt) = receipt {
+                receipt.validate_scope(std::path::Path::new(&root), &receipt.path)?;
                 ensure!(
                     receipt.request == intent.request,
                     "Workspace receipt binding mismatch"
@@ -625,6 +640,20 @@ pub fn apply(
             let id = op(args, "agent_id")?;
             let child = doc.roster.instance(id).context("Unknown instance")?;
             let stored = tx.session(&child.session_id)?;
+            // The selection contract alone is not a provider binding. Keep
+            // admission fenced until the qualified adapter supplies that proof.
+            ensure!(
+                doc.sandbox_choices
+                    .get(id)
+                    .is_none_or(|choice| choice == &crate::team_definition::Sandbox::default())
+                    || doc
+                        .placement_bindings
+                        .get(id)
+                        .is_some_and(|b| doc.placement_selection
+                            && b.choice == doc.sandbox_choices[id]
+                            && stored.environment.as_ref() == Some(&b.environment)),
+                "Child placement has no qualified original provider binding"
+            );
             ensure!(
                 stored.coworker == runtime_type(&doc, child)?
                     && stored
@@ -649,7 +678,10 @@ pub fn apply(
                             .path
                             .to_str()
                             .context("Invalid workspace encoding")?
-                        && receipt.project_root == std::path::Path::new(&s.workspace),
+                        && receipt.project_root
+                            == std::path::Path::new(
+                                &crate::team_placement::workspace_scope(&doc, s, id)?.0
+                            ),
                     "Child workspace receipt mismatch"
                 );
             }
@@ -664,13 +696,16 @@ pub fn apply(
                 "Only the lead may spawn instances"
             );
             let mut request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            let sandbox = crate::team_placement::select(&doc, s, &request)?;
             if let Some(defaults) = &doc.workspace_defaults {
-                request.workspace = defaults.resolve(
-                    &doc.id,
-                    &request.agent_type,
-                    &request.agent_id,
-                    request.workspace,
-                )?;
+                if sandbox == crate::team_definition::Sandbox::default() {
+                    request.workspace = defaults.resolve(
+                        &doc.id,
+                        &request.agent_type,
+                        &request.agent_id,
+                        request.workspace,
+                    )?;
+                }
             }
             ensure!(
                 doc.workspace_selection
@@ -707,6 +742,8 @@ pub fn apply(
             };
             let reservation = doc.roster.reserve(request.clone(), || crate::id("s"))?;
             if reservation.created {
+                doc.sandbox_choices
+                    .insert(request.agent_id.clone(), sandbox.clone());
                 if let Some(binding) = binding {
                     doc.type_bindings.insert(request.agent_id.clone(), binding);
                 }
@@ -718,6 +755,9 @@ pub fn apply(
             let mut result = json!({"instance":reservation.instance,"created":reservation.created});
             if workspace != crate::team_workspace::Selection::default() {
                 result["workspace"] = json!(workspace);
+            }
+            if sandbox != crate::team_definition::Sandbox::default() {
+                result["sandbox"] = json!(sandbox);
             }
             Ok(result)
         }
@@ -988,6 +1028,12 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
                 properties["model"]=json!({"type":"object","description":format!("Optional working model override; permitted exact choices: {}. Does not change the approver.",serde_json::to_string(&catalog.ceiling.models).unwrap_or_default()),"properties":{"connection":{"type":"string","enum":connections},"model":{"type":"string","enum":models}},"required":["connection","model"],"additionalProperties":false});
             }
         }
+        if name == "team_spawn" && doc.placement_selection {
+            properties["sandbox"] = crate::team_placement::schema(doc);
+        }
+        if name == crate::team_type_catalog::TOOL && doc.placement_selection {
+            properties["sandbox"] = crate::team_placement::schema(doc);
+        }
         if name == "team_spawn" && doc.workspace_selection {
             properties["workspace"] = crate::team_workspace::schema();
         }
@@ -1024,7 +1070,14 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
 /// Internal scheduling still reads the complete transaction document.
 pub fn public_snapshot(mut value: Value) -> Value {
     if let Some(object) = value.as_object_mut() {
-        for key in ["commands", "tasks", "charges", "type_catalog", "workspaces"] {
+        for key in [
+            "commands",
+            "tasks",
+            "charges",
+            "type_catalog",
+            "workspaces",
+            "placement_bindings",
+        ] {
             object.remove(key);
         }
     }
