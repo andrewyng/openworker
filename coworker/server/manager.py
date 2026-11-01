@@ -1006,6 +1006,8 @@ class SessionManager:
             auto_approve_shadow=self.auto_approve_shadow(),
             auto_approve_reviewer=self.auto_approve_reviewer(),
         )
+        # Observability (E1): this engine's turns and steps go to the server's recorder.
+        engine.recorder = self.recorder
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
         engine.reviewer_owner_history = lambda: self.approval_owner_history(session_id, engine)
@@ -2004,7 +2006,7 @@ class SessionManager:
             return
         self.mark_running(item.session_id)
         try:
-            async for _event in engine.resume():
+            async for _event in engine.resume(trigger="user"):
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -6960,6 +6962,8 @@ class SessionManager:
                 [d] if (d := self.persona_skill_scope(task.agent)[0]) is not None else None
             ),
         )
+        # Observability (E1): this engine's turns and steps go to the server's recorder.
+        engine.recorder = self.recorder
         self._seed_task_permissions(engine, task)
         return engine
 
@@ -7231,7 +7235,15 @@ class SessionManager:
                     # semantics intact while grouping check-ins in the transcript.
                     source = self._board_source(team, message, rows=activity["board_rows"])
                     source["board"]["check_in"] = True
-            async for event in engine.run(message, source=source, activity=activity):
+            # Who started the turn (observability §4): board activity and team timers wake a
+            # team; a session's own timer is a schedule; anything else came from a channel.
+            if board_delivery:
+                trigger = "team_wake"
+            elif wake is not None:
+                trigger = "team_wake" if self.teams.for_lead_session(session_id) is not None else "schedule"
+            else:
+                trigger = "channel"
+            async for event in engine.run(message, source=source, activity=activity, trigger=trigger):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -7806,7 +7818,7 @@ class SessionManager:
                 "scheduled tasks.\n\n"
                 f"{task.instructions}"
             )
-            async for _event in engine.run(opening):
+            async for _event in engine.run(opening, trigger="schedule"):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)

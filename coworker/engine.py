@@ -33,6 +33,7 @@ from . import toolchain as _toolchain
 from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
+from .observability.engine_hooks import TurnRecording
 from .observability.ids import new_ulid
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
@@ -189,6 +190,51 @@ def _summarizes_turn(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..
             await inner.aclose()
 
     return wrapper
+
+
+# The engine's reviewer choice -> the recorded reviewer kind (recording format 1.0).
+_REVIEWER_KINDS = {"session": "session_model", "openai-decisions": "openai_decisions", "jev": "typesafe_jev"}
+
+
+def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], Callable[..., AsyncIterator[Event]]]:
+    """Record a turn entry point (run / retry / resume) for observability (E1).
+
+    `turn_started` goes out when the entry point emits TURN_START, `turn_ended` at its
+    TURN_END, INTERRUPTED or ERROR, and, for the paths that end with none of these (a
+    resume stopped mid-tools, a generator the surface abandoned), in the `finally`: then the
+    status is `interrupted` if Stop was pressed, else `unknown`. The caller says who started
+    the turn with `trigger=` (user, channel, schedule, team_wake; `unknown` if it does not
+    say). While recording, UI events also carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
+
+    def deco(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
+        @functools.wraps(gen_fn)
+        async def wrapper(self: "TurnEngine", *args: Any, trigger: str = "unknown", **kwargs: Any) -> AsyncIterator[Event]:
+            inner = gen_fn(self, *args, **kwargs)
+            obs = getattr(self, "_obs", None)
+            if obs is None or not obs.enabled:
+                try:
+                    async for event in inner:
+                        yield event
+                finally:
+                    await inner.aclose()
+                return
+            started = False
+            try:
+                async for event in inner:
+                    if event.type is EventType.TURN_START and not started:
+                        started = True
+                        self._begin_recorded_turn(kind, trigger)
+                    if started and obs.in_turn:
+                        self._observe_event(event)
+                    yield event
+            finally:
+                await inner.aclose()
+                if started:
+                    obs.end_turn("interrupted" if self._cancel.is_set() else "unknown")
+
+        return wrapper
+
+    return deco
 
 
 def _action_failed(action: dict[str, Any]) -> bool:
@@ -435,6 +481,10 @@ class TurnEngine:
         self._step = 0
         self._last_context_tokens: Optional[int] = None
         self.audit_context: dict[str, Any] = {}
+        # Observability (E1): the turn and step events this engine sends to its recorder.
+        # Off until a recorder is set (`engine.recorder = ...`), like the other surface hooks.
+        self._obs = TurnRecording(None, lambda: str(self.audit_context.get("session_id") or ""))
+        self._call_index: dict[str, int] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
@@ -491,6 +541,90 @@ class TurnEngine:
         finally:
             self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
 
+    @property
+    def recorder(self) -> Any:
+        return self._obs.recorder
+
+    @recorder.setter
+    def recorder(self, value: Any) -> None:
+        self._obs.recorder = value
+
+    def _begin_recorded_turn(self, kind: str, trigger: str) -> None:
+        """`turn_started` (E1, technical design §4). For `run` the turn opens with your
+        message; for `resume`, with the assistant message whose calls are resumed; a `retry`
+        opens with the first message it adds, so its start waits for that."""
+        first: Optional[str] = None
+        if kind == "run":
+            first = next((m.get("mid") for m in reversed(self.messages) if m.get("role") == "user"), None)
+        elif kind == "resume":
+            first = next(
+                (m.get("mid") for m in reversed(self.messages)
+                 if m.get("role") == "assistant" and m.get("tool_calls")),
+                None,
+            )
+        reviewer_kind = (
+            _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
+            if self.reviewer is not None else None
+        )
+        try:
+            attended = bool(self.is_attended and self.is_attended())
+        except Exception:  # noqa: BLE001 - a broken getter must not break the turn
+            attended = False
+        self._obs.begin_turn(
+            kind=kind,
+            trigger=trigger,
+            attrs={
+                "approval_mode": self.permissions.mode.value,
+                "attended": attended,
+                "reviewer": {
+                    "active": self._reviewer_active() if self.reviewer is not None else False,
+                    "shadow": bool(self.reviewer_shadow),
+                    "kind": reviewer_kind,
+                    "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
+                },
+            },
+            stamp={},
+            first_message_id=first,
+            wait_for_first_message=kind == "retry",
+        )
+
+    def _observe_event(self, event: Event) -> None:
+        """Ids on a UI event, a call that never ran as a zero-length tool step, and the turn's
+        end (E1). The app ignores fields it does not know, so older screens keep working."""
+        obs = self._obs
+        event.data.setdefault("turn_id", obs.turn_id)
+        event.data.setdefault("ts_ms", time.time_ns() // 1_000_000)
+        if event.type in (EventType.TOOL_STARTED, EventType.TOOL_FINISHED):
+            call_id = str(event.data.get("tool_call_id") or "")
+            if event.type is EventType.TOOL_FINISHED and call_id:
+                mid = next(
+                    (m.get("mid") for m in reversed(self.messages)
+                     if m.get("role") == "tool" and m.get("tool_call_id") == call_id),
+                    None,
+                )
+                obs.tool_finished(
+                    event.data, message_id=mid, call_index=self._call_index.get(call_id),
+                    attrs={"risk_class": self._risk_class(str(event.data.get("name") or ""))},
+                )
+            step_id = obs.step_for_call(call_id)
+            if step_id:
+                event.data.setdefault("step_id", step_id)
+        if event.type is EventType.TURN_END:
+            obs.end_turn(str(event.data.get("status") or "completed"))
+        elif event.type is EventType.INTERRUPTED:
+            obs.end_turn("interrupted")
+        elif event.type is EventType.ERROR:
+            obs.end_turn("error")
+
+    def _risk_class(self, tool_name: str) -> Optional[str]:
+        try:
+            spec = self.registry.get(tool_name)
+            return _classify_risk(
+                tool_name, spec.metadata if spec else None, self.permissions.risk_overrides
+            ).value
+        except Exception:  # noqa: BLE001 - a fact, never a reason to fail a call
+            return None
+
     def _add_message(self, message: dict[str, Any], *, at: Optional[int] = None) -> None:
         """Append (or, with `at`, insert) one message into the history, stamping its `mid`.
 
@@ -503,6 +637,9 @@ class TurnEngine:
             self.messages.append(message)
         else:
             self.messages.insert(at, message)
+        obs = getattr(self, "_obs", None)
+        if obs is not None:
+            obs.note_message(message)
 
     def _timed_result(self, tool_call, result):
         message = _tool_result_message(tool_call, result)
@@ -517,6 +654,7 @@ class TurnEngine:
         self._steering.append((text, source, activity))
 
     # -- main loop --------------------------------------------------------------
+    @_records_turn("run")
     @_summarizes_turn
     async def run(
         self,
@@ -654,6 +792,7 @@ class TurnEngine:
         notice.update({k: v for k, v in fields.items() if v is not None})
         self._add_message(notice)
 
+    @_records_turn("retry")
     @_summarizes_turn
     async def retry(self) -> AsyncIterator[Event]:
         """Re-run the model loop after a provider error — no new user message; the failed
@@ -693,6 +832,7 @@ class TurnEngine:
         info = workspace.describe()
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
 
+    @_records_turn("resume")
     @_summarizes_turn
     async def resume(self) -> AsyncIterator[Event]:
         """Continue a turn that was suspended at a prompt and persisted — durable resume after a
@@ -1269,6 +1409,16 @@ class TurnEngine:
         # sequential because approval cards are interactive and must reach the human one
         # at a time, in call order.
         self._shell_cleared_in_batch = False
+        # Each call's position in the model's list for this reply (canonical step order).
+        ids = {tc.id for tc in tool_calls}
+        listed = next(
+            (m["tool_calls"] for m in reversed(self.messages)
+             if m.get("role") == "assistant" and m.get("tool_calls")
+             and ids & {tc.get("id") for tc in m["tool_calls"]}),
+            [],
+        )
+        order = [tc.get("id") for tc in listed] or [tc.id for tc in tool_calls]
+        self._call_index = {cid: i for i, cid in enumerate(order) if cid}
         await self._preconsult_reviewer(tool_calls)
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
@@ -1342,7 +1492,7 @@ class TurnEngine:
 
         if concurrent:
             for tool_call in concurrent:
-                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name, "tool_call_id": tool_call.id})
                 self._audit(tool_call, stage="started")
             outcomes = await asyncio.gather(
                 *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
@@ -1354,7 +1504,7 @@ class TurnEngine:
             if self._cancel.is_set():
                 yield self._interrupted_tool(tool_call)
                 continue
-            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name, "tool_call_id": tool_call.id})
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
@@ -1387,7 +1537,7 @@ class TurnEngine:
         self._audit(tool_call, stage="finished", status="error", reason=reason)
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "error", "reason": reason},
+            {"name": tool_call.name, "tool_call_id": tool_call.id, "status": "error", "reason": reason},
         )
 
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
@@ -2296,7 +2446,34 @@ class TurnEngine:
         return "read"
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
-        """Execute one authorized call (runs in a worker thread)."""
+        """Execute one authorized call (runs in a worker thread). Recorded as a tool step
+        from here to the RAW result, before `_record_result` shortens it (E1)."""
+        step_id = self._obs.start_step(
+            kind="tool", name=tool_call.name, call_id=tool_call.id,
+            call_index=self._call_index.get(tool_call.id),
+        )
+        result, status = self._execute_call(tool_call)
+        if step_id is not None:
+            self._obs.end_step(
+                step_id, status=status, attrs=self._tool_step_attrs(tool_call, result),
+                wait_for_tool_message=True,
+            )
+        return result, status
+
+    def _tool_step_attrs(self, tool_call: ToolCall, result: Any) -> dict[str, Any]:
+        attrs: dict[str, Any] = {"risk_class": self._risk_class(tool_call.name)}
+        try:
+            attrs["result_bytes"] = len(
+                result.encode("utf-8") if isinstance(result, str)
+                else json.dumps(result, default=str, ensure_ascii=False).encode("utf-8")
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if isinstance(result, dict) and isinstance(result.get("exit_code"), int):
+            attrs["exit_code"] = result["exit_code"]
+        return attrs
+
+    def _execute_call(self, tool_call: ToolCall) -> tuple[Any, str]:
         started, clock = time.time(), time.monotonic()
         try:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
@@ -2584,7 +2761,7 @@ class TurnEngine:
         self._audit(tool_call, stage="finished", status=status, result=result, result_preview=_preview(result))
         yield Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": status, "result_preview": _preview(result)},
+            {"name": tool_call.name, "tool_call_id": tool_call.id, "status": status, "result_preview": _preview(result)},
         )
 
     async def _handle_team_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
@@ -2721,6 +2898,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -2915,6 +3093,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -3010,6 +3189,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -3091,6 +3271,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },

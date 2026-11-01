@@ -3228,10 +3228,11 @@ def create_app(manager: SessionManager) -> FastAPI:
                         )
                         return
                 events = (
-                    engine.retry()
+                    engine.retry(trigger="user")
                     if retry
                     else engine.run(content, display=display,
-                                    activity=manager.prepare_activity(session_id, "user activity"))
+                                    activity=manager.prepare_activity(session_id, "user activity"),
+                                    trigger="user")
                 )
                 async for event in events:
                     data = event.data
