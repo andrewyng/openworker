@@ -216,3 +216,33 @@ fn preset_configuration_is_safe_customizable_and_service_conversion_is_explicit(
     assert_eq!(release.default_model.unwrap().connection, "Work");
     assert_eq!(release.reviewer_model.unwrap().connection, "Review");
 }
+
+#[test]
+fn isolated_service_preset_uses_artifact_defaults_and_no_linked_worktree() {
+    let source:openworker_sdk::service::CodingSource=serde_json::from_value(json!({"repository":"org/game","directory":"source","object_format":"sha1","commit":"a".repeat(40)})).unwrap();
+    let sandbox =
+        serde_json::from_value(json!({"mode":"new","profile":"small@1","cpu":1,"memory_mb":512}))
+            .unwrap();
+    let delegation=serde_json::from_value(json!({"tools":["coding.read_file"],"placements":["team","new"],"profiles":{"small@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}})).unwrap();
+    let p = coding::isolated_service("game", source, sandbox, delegation, "1").unwrap();
+    assert!(p.team.workspace_defaults.is_none());
+    let defaults = p.team.coding.as_ref().unwrap();
+    assert_eq!(
+        defaults.agent_types["game-verifier"].source,
+        openworker_runtime::coding_handoff::config::DefaultSource::RequireSubmission
+    );
+    assert_eq!(
+        defaults.agent_types["game-builder"].source,
+        openworker_runtime::coding_handoff::config::DefaultSource::Initial
+    );
+    assert!(serde_json::to_value(p.lead).unwrap()["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("team_receive_submission"));
+    let options: ChildOptions =
+        serde_json::from_value(json!({"source":{"kind":"submission","id":"hs_original"}})).unwrap();
+    assert_eq!(
+        serde_json::to_value(options).unwrap()["source"]["id"],
+        "hs_original"
+    );
+}

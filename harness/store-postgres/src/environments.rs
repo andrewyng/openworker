@@ -274,6 +274,17 @@ impl Database {
         if attached {
             bail!("Environment still has sessions or reserved/active attachments");
         }
+        // An unknown handoff is not a failed export. Retiring its producer must
+        // not erase the original checkout needed for inspection. A tool intent
+        // already commits in the team document before its controller outbox exists.
+        let handoff:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM agent_teams t CROSS JOIN LATERAL jsonb_each(coalesce(t.data->'submissions','{}'::jsonb)) sub WHERE sub.value->'manifest'='null'::jsonb AND (t.data->'placement_bindings'->(sub.value->'request'->'producer'->>'agent_id')->'environment'->>'environment_id'=$1 OR EXISTS(SELECT 1 FROM sessions lead WHERE lead.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND lead.environment_id=$1))) OR EXISTS(SELECT 1 FROM service_team_sources WHERE data->'environment'->>'environment_id'=$1 AND status<>'ready' AND dispatched) OR EXISTS(SELECT 1 FROM service_team_imports WHERE data->'environment'->>'environment_id'=$1 AND status<>'ready' AND (prepare_dispatched OR checkout_dispatched))",&[&id])?.get(0);
+        ensure!(
+            !handoff,
+            "Environment has an unresolved original coding handoff; inspect before deletion"
+        );
+        let coordination:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM agent_teams t JOIN sessions lead ON lead.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' WHERE lead.environment_id=$1 AND (EXISTS(SELECT 1 FROM jsonb_each(coalesce(t.data->'receptions','{}'::jsonb)) r WHERE r.value->'receipt'='null'::jsonb) OR EXISTS(SELECT 1 FROM jsonb_each(coalesce(t.data->'integrations','{}'::jsonb)) i WHERE i.value->'outcome'='null'::jsonb)))",&[&id])?.get(0);
+        ensure!(!coordination,"Environment has unresolved original reception/integration work; inspect before deletion");
+
         e.phase = Phase::Deleting;
         tx.execute(
             "UPDATE environments SET delete_request_id=$2,delete_actor=$3 WHERE id=$1",

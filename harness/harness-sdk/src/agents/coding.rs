@@ -17,6 +17,9 @@ struct Presets {
     lead: Role,
     builder: Role,
     verifier: Role,
+    isolated_lead: Role,
+    isolated_builder: Role,
+    isolated_verifier: Role,
 }
 fn presets() -> Presets {
     let data: Presets = serde_json::from_str(include_str!("presets/coding-v1.json"))
@@ -51,6 +54,7 @@ impl SharedPreset {
     }
     pub fn service_team(&self, version: &str) -> crate::service::AgentTeamOptions {
         crate::service::AgentTeamOptions {
+            coding: None,
             agent_id: self.team.agent_id.clone(),
             agent_types: [self.builder.id(), self.verifier.id()]
                 .into_iter()
@@ -130,6 +134,80 @@ pub fn shared(prefix: &str, repository: &str, base: &str) -> Result<SharedPreset
     let mut team = TeamOptions::new([builder.id(), verifier.id()]);
     team.workspace_defaults = Some(defaults);
     Ok(SharedPreset {
+        lead,
+        builder,
+        verifier,
+        team,
+    })
+}
+
+/// Artifact-first service preset. Profiles, artifact storage and OpenShell are
+/// installed by the operator. Definitions alone never allocate a sandbox.
+pub struct IsolatedServicePreset {
+    pub lead: Agent,
+    pub builder: Agent,
+    pub verifier: Agent,
+    pub team: crate::service::AgentTeamOptions,
+}
+impl IsolatedServicePreset {
+    pub fn agents(&self) -> [Agent; 3] {
+        [
+            self.lead.clone(),
+            self.builder.clone(),
+            self.verifier.clone(),
+        ]
+    }
+}
+pub fn isolated_service(
+    prefix: &str,
+    source: openworker_runtime::coding_handoff::config::Source,
+    sandbox: openworker_runtime::team_definition::Sandbox,
+    delegation: openworker_runtime::team_definition::Delegation,
+    version: &str,
+) -> Result<IsolatedServicePreset> {
+    source
+        .validate()
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+    let baseline = shared(prefix, &source.directory, &source.commit)?;
+    let openworker_runtime::team_definition::Sandbox::New { profile, .. } = &sandbox else {
+        return Err(Error::InvalidInput(
+            "Isolated preset needs an explicit New sandbox profile".into(),
+        ));
+    };
+    if !delegation.profiles.contains_key(profile) {
+        return Err(Error::InvalidInput(
+            "Register the selected profile in the delegation ceiling".into(),
+        ));
+    }
+    let p = presets();
+    let lead = role(baseline.lead.id(), p.isolated_lead);
+    let builder = role(baseline.builder.id(), p.isolated_builder);
+    let verifier = role(baseline.verifier.id(), p.isolated_verifier);
+    let mut team = baseline.service_team(version);
+    team.workspace_defaults = None;
+    team.delegation = Some(delegation);
+    use openworker_runtime::coding_handoff::config::{DefaultSource, TeamConfig, TypeDefault};
+    team.coding = Some(TeamConfig {
+        source,
+        agent_types: [
+            (
+                builder.id().into(),
+                TypeDefault {
+                    sandbox: sandbox.clone(),
+                    source: DefaultSource::Initial,
+                },
+            ),
+            (
+                verifier.id().into(),
+                TypeDefault {
+                    sandbox,
+                    source: DefaultSource::RequireSubmission,
+                },
+            ),
+        ]
+        .into(),
+    });
+    Ok(IsolatedServicePreset {
         lead,
         builder,
         verifier,

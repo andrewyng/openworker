@@ -73,6 +73,14 @@ pub fn native_tool<'a>(bundle: &'a Bundle, alias: &str) -> Option<&'a str> {
 }
 
 pub fn classify(bundle: &Bundle, alias: &str) -> Category {
+    match alias {
+        "team_submit_code" => return Category::Egress,
+        "team_receive_submission" => return Category::WriteLocal,
+        "team_integrate_submission" => return Category::Execute,
+        "team_list_submissions" => return Category::Read,
+        "team_report_verification" => return Category::WriteLocal,
+        _ => {}
+    }
     if crate::assistant_tools::internal(alias) {
         return if crate::assistant_tools::read_only(alias) {
             Category::Read

@@ -41,6 +41,41 @@ fn directory(root: &Path) -> Result<PathBuf> {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(dir)
 }
+/// Keep existing short filesystem endpoints compatible. Linux supports an
+/// abstract Unix address when a valid workspace exceeds sun_path's byte limit.
+/// Scope includes the original private directory identity, never a public port.
+fn endpoint(dir: &Path) -> Result<PathBuf> {
+    let path = dir.join("manager.sock");
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::{
+            ffi::{OsStrExt, OsStringExt},
+            fs::MetadataExt,
+        };
+        if path.as_os_str().as_bytes().len() >= 107 {
+            let m = std::fs::symlink_metadata(dir)?;
+            ensure!(
+                m.is_dir() && !m.file_type().is_symlink(),
+                "Original manager directory changed"
+            );
+            let mut scope = dir.as_os_str().as_bytes().to_vec();
+            scope.extend_from_slice(&m.dev().to_le_bytes());
+            scope.extend_from_slice(&m.ino().to_le_bytes());
+            scope.extend_from_slice(&unsafe { libc::geteuid() }.to_le_bytes());
+            let mut address = vec![0];
+            address.extend_from_slice(
+                format!("ow-manager-v1-{}", crate::bundle::digest(&scope)).as_bytes(),
+            );
+            return Ok(PathBuf::from(std::ffi::OsString::from_vec(address)));
+        }
+    }
+    Ok(path)
+}
+fn filesystem_endpoint(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().first() != Some(&0)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -84,7 +119,7 @@ pub(crate) async fn call_with_git(
     }
     let root = root.canonicalize()?;
     let dir = directory(&root)?;
-    let path = dir.join("manager.sock");
+    let path = endpoint(&dir)?;
     let launch = matches!(name, "run_shell" | "process_start");
     let mut stream = match UnixStream::connect(&path).await {
         Ok(s) => s,
@@ -211,7 +246,7 @@ pub async fn serve(root: &Path) -> Result<()> {
     if lock.try_lock_exclusive().is_err() {
         return Ok(());
     }
-    let socket = dir.join("manager.sock");
+    let socket = endpoint(&dir)?;
     if let Ok(meta) = std::fs::symlink_metadata(&socket) {
         ensure!(
             meta.file_type().is_socket(),
@@ -220,7 +255,9 @@ pub async fn serve(root: &Path) -> Result<()> {
         std::fs::remove_file(&socket)?;
     }
     let listener = UnixListener::bind(&socket)?;
-    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+    if filesystem_endpoint(&socket) {
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+    }
     let generation = uuid::Uuid::new_v4().simple().to_string();
     let mut processes = Processes::for_manager()?;
     let born = tokio::time::Instant::now();
@@ -249,7 +286,45 @@ pub async fn serve(root: &Path) -> Result<()> {
         Ok(())
     }.await;
     processes.shutdown().await;
-    let _ = std::fs::remove_file(&socket);
+    if filesystem_endpoint(&socket) {
+        let _ = std::fs::remove_file(&socket);
+    }
     drop(lock);
     result
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn long_workspace_endpoint_is_bounded_scoped_and_reconnectable() {
+        use std::os::unix::ffi::OsStrExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("x".repeat(160));
+        std::fs::create_dir(&root).unwrap();
+        let dir = directory(&root).unwrap();
+        let a = endpoint(&dir).unwrap();
+        assert!(!filesystem_endpoint(&a));
+        assert!(a.as_os_str().as_bytes().len() < 107);
+        assert_eq!(endpoint(&dir).unwrap(), a);
+        let listener = UnixListener::bind(&a).unwrap();
+        let client = UnixStream::connect(&a).await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            client.peer_cred().unwrap().uid(),
+            peer.peer_cred().unwrap().uid()
+        );
+        drop(client);
+        drop(peer);
+        drop(listener);
+        let other = root.join("other");
+        std::fs::create_dir(&other).unwrap();
+        assert_ne!(endpoint(&directory(&other).unwrap()).unwrap(), a);
+        let moved = root.join("old-manager");
+        std::fs::rename(&dir, &moved).unwrap();
+        let replaced = directory(&root).unwrap();
+        assert_ne!(endpoint(&replaced).unwrap(), a);
+        let short = directory(temp.path()).unwrap();
+        assert!(filesystem_endpoint(&endpoint(&short).unwrap()));
+    }
 }

@@ -11,7 +11,7 @@ export interface CodingOptions {
   autoSkipQuestions?:boolean;
   limits?:TurnLimits;
 }
-function role(name:string,kind:"single"|"lead"|"builder"|"verifier",options:CodingOptions={}):AgentDefinition {
+function role(name:string,kind:"single"|"lead"|"builder"|"verifier"|"isolated_lead"|"isolated_builder"|"isolated_verifier",options:CodingOptions={}):AgentDefinition {
   if(!/^[a-zA-Z0-9_-]{1,64}$/.test(name))throw Error("Invalid coding agent name");
   return {name,instructions:codingPresets[kind].instructions,tools:[...codingPresets[kind].tools],planning:true,...structuredClone(options)};
 }
@@ -42,4 +42,23 @@ export function codingRelease(agent:AgentDefinition,version:string,profile:Runti
 }
 export function codingServiceTeam(preset:SharedCodingPreset,version:string):ServiceAgentTeamOptions {
   return {...structuredClone(preset.team),agentTypes:{[preset.builder.name]:`${preset.builder.name}@${version}`,[preset.verifier.name]:`${preset.verifier.name}@${version}`}};
+}
+
+/** Service artifact-first preset. Definitions allocate nothing and carry no key. */
+export function isolatedCodingServiceTeam(
+  prefix:string,
+  source:import("./service.js").CodingSource,
+  sandbox:Extract<NonNullable<import("./types.js").ChildSpawnOptions["sandbox"]>,{mode:"new"}>,
+  delegation:import("./service.js").ServiceTeamDelegation,
+  version:string,
+  options:{lead?:CodingOptions;builder?:CodingOptions;verifier?:CodingOptions}={},
+):{lead:AgentDefinition;builder:AgentDefinition;verifier:AgentDefinition;team:ServiceAgentTeamOptions} {
+  const baseline=sharedCodingTeam(prefix,{repository:source.directory,base:source.commit});
+  if(sandbox.mode!=="new" || !delegation.profiles?.[sandbox.profile])throw Error("Register the selected New profile in the delegation ceiling");
+  const lead=role(baseline.lead.name,"isolated_lead",options.lead),builder=role(baseline.builder.name,"isolated_builder",options.builder),verifier=role(baseline.verifier.name,"isolated_verifier",options.verifier);
+  const team=codingServiceTeam({...baseline,lead,builder,verifier},version);
+  delete team.workspaceDefaults;
+  team.delegation=structuredClone(delegation);
+  team.coding={source:structuredClone(source),agentTypes:{[builder.name]:{sandbox:structuredClone(sandbox),source:"initial"},[verifier.name]:{sandbox:structuredClone(sandbox),source:"require_submission"}}};
+  return {lead,builder,verifier,team};
 }

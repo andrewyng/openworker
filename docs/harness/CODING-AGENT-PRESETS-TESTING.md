@@ -353,3 +353,81 @@ counts prove `prepare`, chunk write and checkout each happened once. Child admis
 remains blocked until the recovered receipt commits. Real artifact bytes travel
 through the filesystem store; the peer's Git identity is synthetic, so this test
 does not stand in for the separate Git/OpenShell qualification.
+
+
+## Submitted revisions and verification evidence (C4)
+
+Portable tests bind each submission to its original team, producer, acknowledged
+source, repository, object format and exact commit. A different call ID or summary
+cannot create another export of that revision. Verifier reports require an
+acknowledged import of that exact manifest; they remain attributed claims. Foreign
+team IDs and unimported revisions reject before reserving a child.
+
+Real PostgreSQL tests cover dispatch leases, stale owners, inspect-only recovery,
+artifact registration/publication gates, identity substitution, revocation,
+reception and integration outboxes, and retention of unresolved original work.
+Private setup/submission artifact origins cannot be forged through public APIs.
+Rust and TypeScript transport tests cover coding defaults, selected-submission
+spawn, catalog pagination and delegated-session resume identity.
+
+These checks prevent a report, unverified upload or changed identity from being
+mistaken for verified source. They do not establish that model-written reports
+are truthful; physical tests separately assert actual exit codes and file output.
+
+Cases: [portable handoff contract](../../harness/runtime/tests/coding_handoff.rs),
+[PostgreSQL handoff cases](../../harness/server-reference/src/service_team_imports_tests.rs),
+[TypeScript service contract](../../harness/typescript-sdk/test/service.test.mjs).
+
+## Explicit integration and interruption (C4)
+
+Real temporary Git repositories cover SHA-1 and SHA-256, binary files, deletion,
+rename, stale expected HEAD, dirty files, divergent history and URL rewrite
+rejection. Integration fast-forwards only an explicit expected branch head.
+Known rejections are durable. Lost receipts can be recovered by inspecting the
+original branch/tree. A simulated partial index/files change with the old branch
+head stays unknown; inspection must not repeat read-tree, reset files or merge.
+
+Approval tests check Ask and uncertain AutoApprove before any handoff effect, and
+revoke an Allow Always grant between initial authorization and intent commit.
+The latter must reopen approval without inserting an export/integration intent.
+Bypass still uses the original source, placement and artifact restrictions.
+
+These checks protect current work and prevent a network failure from becoming a
+blindly repeated mutation. The branch CAS and index/files update are separate Git
+operations; the tests deliberately do not claim atomicity across them.
+
+Cases: [native Git handoff tests](../../harness/runtime/tests/coding_handoff_git.rs),
+[approval transaction tests](../../harness/runtime/src/runtime_policy_tests.rs).
+
+## Complete artifact-first service workflow (C4)
+
+The local OpenShell fixture submits an actual builder commit, exports/uploads the
+bundle, deduplicates a new-call retry, provisions a distinct verifier sandbox,
+and checks actual Git HEAD and file bytes before recording its report. The lead
+receives the same artifact into a separate directory. A stale expected-head
+integration is rejected without changing the source; a correctly pinned request
+integrates and is checked through actual source reads. TypeScript resumes the
+lead and starts a second exact-submission verifier in another OpenShell sandbox.
+
+The focused mode is `OW_HANDOFF_ONLY=true`; the default runs this alongside the
+existing worktree, type, placement, recovery and SDK checks. Both use real service
+processes, PostgreSQL, controllers, worker and digest-pinned Linux ToolRunner.
+They require no cloud resource, GitHub credential or live model. Sandboxes and
+owned schemas are cleaned even when a test assertion fails.
+
+Cases: [physical workflow](../../harness/server-reference/tests/support/service_handoff.rs),
+[combined entry point](../../harness/server-reference/tests/service_v2.rs),
+[TypeScript continuation](../../harness/typescript-sdk/test/service-v2-live.mjs).
+
+## Process-manager addressing in long workspaces
+
+Linux unit tests check bounded abstract Unix addresses, original-directory and
+UID scoping, and changed endpoint identity after directory replacement. A real
+MCP test starts, reconnects to and stops a process under a deliberately long
+workspace path. The private directory lock and peer-UID checks remain enforced.
+Short filesystem socket paths retain their existing behavior.
+
+This guards against valid nested checkout names silently disabling process tools.
+The regression was found by the physical verifier test; shortening its name would
+have hidden a production defect. Run the real manager test only in the disposable
+Linux fixture, which owns its processes.

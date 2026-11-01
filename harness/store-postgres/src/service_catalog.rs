@@ -858,7 +858,15 @@ impl crate::db::Database {
     fn service_session_identity(&mut self, sid: String) -> Result<Option<Value>> {
         let mut tx = self.client.transaction()?;
         auth::guard(&mut tx, self.auth.as_ref(), Action::Read, Some(&sid), None)?;
-        let result=tx.query_opt("SELECT release_id,profile_id,project,id,configuration FROM service_operations WHERE session_id=$1 AND status='complete'",&[&sid])?.map(|r|json!({"releaseId":r.get::<_,String>(0),"runtimeProfile":r.get::<_,String>(1),"project":r.get::<_,String>(2),"operationId":r.get::<_,String>(3),"configuration":r.get::<_,Value>(4)}));
+        let mut result=tx.query_opt("SELECT release_id,profile_id,project,id,configuration FROM service_operations WHERE session_id=$1 AND status='complete'",&[&sid])?.map(|r|json!({"releaseId":r.get::<_,String>(0),"runtimeProfile":r.get::<_,String>(1),"project":r.get::<_,String>(2),"operationId":r.get::<_,String>(3),"configuration":r.get::<_,Value>(4)}));
+        if result.is_none() {
+            // Delegated sessions have a durable creation receipt rather than a
+            // top-level admission operation. Use its ORIGINAL source release,
+            // exact roster membership and environment owner, never the legacy
+            // service agent or a newly resolved mutable type name.
+            result=tx.query_opt("SELECT cr.parameters->>'release',env.profile_id,o.project,o.id,t.id,cr.parameters->>'instance' FROM creations cr JOIN sessions s ON s.id=cr.session_id JOIN agent_teams t ON t.id=cr.parameters->>'team' JOIN service_operations o ON o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND o.status='complete' JOIN service_environment_owners env ON env.environment_id=s.environment_id WHERE s.id=$1 AND cr.parameters->>'release' IS NOT NULL AND t.data->'roster'->'instances'->(cr.parameters->>'instance')->>'session_id'=s.id AND s.data->'agent_team'->>'team_id'=t.id AND s.data->'agent_team'->>'agent_id'=cr.parameters->>'instance'",&[&sid])?.map(|r|json!({"releaseId":r.get::<_,String>(0),"runtimeProfile":r.get::<_,String>(1),"project":r.get::<_,String>(2),"operationId":r.get::<_,String>(3),"teamId":r.get::<_,String>(4),"agentId":r.get::<_,String>(5),"configuration":Value::Null}));
+        }
+
         tx.commit()?;
         Ok(result)
     }

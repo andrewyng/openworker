@@ -100,7 +100,26 @@ async fn upload(
         .as_ref()
         .context("Missing original export receipt")?;
     let a = store.register_team_source_artifact(job)?;
-    let proof = match backend.verify(&a, stop).await {
+    let proof = upload_bundle(backend, connection, bundle, &a, stop, || {
+        store.check_team_source(job)
+    })
+    .await?;
+    // Recheck original credential, source/profile, claim and artifact bytes
+    // before the catalog can acknowledge publication. No fake tool turn.
+    let a = store.publish_team_source_artifact(job, &a.id, proof)?;
+    store.complete_team_source(job, &a.id)
+}
+
+/// Shared immutable byte transfer; authority is checked for every original chunk.
+pub(crate) async fn upload_bundle(
+    backend: &openworker_artifacts::Store,
+    connection: &mut dyn Connection,
+    bundle: &Bundle,
+    a: &openworker_artifacts::Artifact,
+    stop: &CancellationToken,
+    check: impl Fn() -> Result<()>,
+) -> Result<openworker_artifacts::Proof> {
+    let proof = match backend.verify(a, stop).await {
         Ok(proof) => proof,
         Err(e)
             if e.downcast_ref::<openworker_artifacts::Error>()
@@ -111,7 +130,7 @@ async fn upload(
                 let mut offset = 0;
                 while offset < bundle.size {
                     ensure!(!stop.is_cancelled(), "Source transfer cancelled");
-                    store.check_team_source(job)?;
+                    check()?;
                     let reply = connection
                         .request("handoff/read", json!({"bundle":bundle,"offset":offset}))
                         .await?;
@@ -135,13 +154,10 @@ async fn upload(
                 output.shutdown().await?;
                 Ok::<_, anyhow::Error>(())
             };
-            let (_, proof) = tokio::try_join!(copy, backend.put(&a, input, stop))?;
+            let (_, proof) = tokio::try_join!(copy, backend.put(a, input, stop))?;
             proof
         }
         Err(e) => return Err(e),
     };
-    // Recheck original credential, source/profile, claim and artifact bytes
-    // before the catalog can acknowledge publication. No fake tool turn.
-    let a = store.publish_team_source_artifact(job, &a.id, proof)?;
-    store.complete_team_source(job, &a.id)
+    Ok(proof)
 }

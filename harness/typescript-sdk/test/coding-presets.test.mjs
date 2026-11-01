@@ -27,3 +27,19 @@ test("service releases preserve models and require explicit profile compatibilit
   const separated=codingRelease({...a,approvals:{mode:"auto",reviewerModel:{provider:"Reviewer",name:"review-model"}}},"1",{...profile,approvalMode:"auto-approve"});
   assert.deepEqual(separated.defaultModel,{connection:"Local",model:"chosen"});assert.deepEqual(separated.reviewerModel,{connection:"Reviewer",model:"review-model"});
 });
+
+test("isolated service preset requires named New profile and exact submission for verifier",async()=>{
+  const {isolatedCodingServiceTeam}=await import("../dist/index.js");
+  const source={repository:"org/game",directory:"source",objectFormat:"sha1",commit:"a".repeat(40)};
+  const sandbox={mode:"new",profile:"small@1",cpu:1,memoryMB:512};
+  const delegation={tools:["coding.read_file"],placements:["team","new"],profiles:{"small@1":{cpu:1,memoryMB:512}}};
+  const p=isolatedCodingServiceTeam("game",source,sandbox,delegation,"1");
+  assert.equal(p.team.workspaceDefaults,undefined);
+  assert.equal(p.team.coding.agentTypes["game-builder"].source,"initial");
+  assert.equal(p.team.coding.agentTypes["game-verifier"].source,"require_submission");
+  assert.match(p.lead.instructions,/team_receive_submission/);assert.match(p.builder.instructions,/team_submit_code/);
+  assert.match(p.verifier.instructions,/team_report_verification/);
+  p.team.coding.source.commit="b".repeat(40);assert.equal(source.commit,"a".repeat(40));
+  assert.throws(()=>isolatedCodingServiceTeam("game",source,{mode:"team"},delegation,"1"));
+  assert.throws(()=>isolatedCodingServiceTeam("game",source,{...sandbox,profile:"unregistered"},delegation,"1"));
+});

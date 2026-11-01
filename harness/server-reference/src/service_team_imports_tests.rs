@@ -404,3 +404,315 @@ async fn controller_recovers_lost_chunk_and_checkout_replies_without_replaying_m
             .unwrap());
     }
 }
+
+fn submission_tool(f: &Fixture, sid: &str, name: &str, arguments: Value, key: &str) -> Value {
+    let mut store = f.store.clone();
+    let mut s = store.get(sid).unwrap();
+    if s.turn.is_none() {
+        let d = document(f);
+        s = store
+            .accept(
+                sid,
+                "initial-one",
+                &openworker_runtime::agent_team::delegated_task(&d.tasks["one"]),
+            )
+            .unwrap()
+            .0;
+    }
+    let call =
+        json!({"type":"function_call","name":name,"call_id":key,"arguments":arguments.to_string()});
+    let turn = s.turn.as_mut().unwrap();
+    turn.status = "running".into();
+    turn.queue = vec![call.clone()];
+    let tid = turn.id.clone();
+    s.schema_digest = Some("synthetic-handoff-schema".into());
+    s.interactions.push(openworker_runtime::store::Interaction {
+        id: format!("approval-{key}"),
+        turn_id: tid.clone(),
+        kind: "approval".into(),
+        call: call.clone(),
+        bundle_digest: s.bundle_digest.clone(),
+        schema_digest: s.schema_digest.clone().unwrap(),
+        response: Some("once".into()),
+        origin: Some("human".into()),
+        server: None,
+        remote_tool: None,
+        policy_digest: s.tool_policy.digest.clone(),
+        resource_policy_digest: s.resource_policy.digest.clone(),
+        grant_id: None,
+        requested_at_ms: None,
+        resolved_at_ms: None,
+    });
+    s.history.push(call.clone());
+    store.save(&s, "assistant_message", json!({})).unwrap();
+    store
+        .agent_team(sid, name, &arguments, Some((&tid, &call)))
+        .unwrap()
+}
+async fn submission_producer() -> (Fixture, openworker_artifacts::Store, String) {
+    let (f, backend) = staged().await;
+    let installed = management::installation(&f.config).unwrap();
+    let j = f.store.claim_team_import(&installed).unwrap().unwrap();
+    let j = f.store.dispatch_team_import_checkout(&j).unwrap();
+    f.store.complete_team_import(&j, receipt(&j)).unwrap();
+    assert!(f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    let d = document(&f);
+    let sid = d.roster.instance("one").unwrap().session_id.clone();
+    f.store.claim(&sid).unwrap();
+    let identity = f.user.service_session_identity(&sid).unwrap().unwrap();
+    assert_eq!(identity["releaseId"], "lead@1");
+    assert_eq!(identity["runtimeProfile"], "team@1");
+    assert_eq!(identity["agentId"], "one");
+    (f, backend, sid)
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn submitted_revision_is_durable_deduplicated_and_imported_only_after_artifact_publication() {
+    let (f, backend, sid) = submission_producer().await;
+    let installed = management::installation(&f.config).unwrap();
+    let args = json!({"commit":"b".repeat(40),"summary":"Built requested change"});
+    let result = submission_tool(&f, &sid, "team_submit_code", args.clone(), "submit-first");
+    assert_eq!(result["status"], "pending");
+    let id = result["id"].as_str().unwrap();
+    let first_origin = document(&f).submissions[id].request.origin.clone();
+    let mut retry = args;
+    retry["summary"] = json!("Changed wording after an uncertain result");
+    assert_eq!(
+        submission_tool(&f, &sid, "team_submit_code", retry, "submit-again")["id"],
+        id
+    );
+    assert_eq!(document(&f).submissions.len(), 1);
+    assert_eq!(document(&f).submissions[id].request.origin, first_origin);
+    assert!(f.user.claim_team_submission(&installed).is_err());
+    let first = f.store.claim_team_submission(&installed).unwrap().unwrap();
+    assert!(first.dispatch);
+    assert_eq!(first.intent.request.producer.session_id, sid);
+    assert!(f.store.claim_team_submission(&installed).unwrap().is_none());
+    f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":"verify","operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":"verify","message":"Inspect exact submission","source":{"kind":"submission","id":id}}})).unwrap();
+    assert!(f.store.claim_team_import(&installed).unwrap().is_none()); // Pending is not published.
+    f.store.defer_team_submission(&first).unwrap();
+    sql(
+        &f,
+        "UPDATE service_team_submissions SET next_check=clock_timestamp()-interval '1 second'",
+    );
+    let replacement = PostgresStore::open(f.db.clone()).unwrap();
+    let recovered = replacement
+        .claim_team_submission(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(recovered.intent, first.intent);
+    assert!(f.store.check_team_submission(&first).is_err());
+    let mut wrong = recovered.clone();
+    wrong.intent.environment.remote_id = "replacement".into();
+    assert!(replacement.check_team_submission(&wrong).is_err());
+    let bytes = b"synthetic submitted bundle; storage test only";
+    let b = openworker_runtime::coding_handoff::git::Bundle {
+        request: recovered.intent.export.clone(),
+        path: format!(".openworker/handoffs/{id}/source.bundle"),
+        size: bytes.len() as u64,
+        sha256: openworker_runtime::bundle::digest(bytes),
+        advertised_ref: format!("refs/openworker/handoffs/{id}"),
+    };
+    replacement.observe_team_submission(&recovered, b).unwrap();
+    let upload = replacement
+        .claim_team_submission(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!upload.dispatch);
+    let a = replacement
+        .register_team_submission_artifact(&upload)
+        .unwrap();
+    assert!(
+        matches!(&a.registration.origin,openworker_artifacts::Origin::TeamSubmission{submission_id,..} if submission_id==id)
+    );
+    assert!(a.registration.turn_id.is_empty());
+    assert!(f
+        .user
+        .register_artifact(a.registration.clone(), a.binding.clone(), "alice")
+        .is_err());
+    assert!(replacement
+        .complete_team_submission(&upload, &a.id)
+        .is_err());
+    let proof = backend
+        .put(&a, &bytes[..], &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    replacement
+        .publish_team_submission_artifact(&upload, &a.id, proof)
+        .unwrap();
+    replacement
+        .complete_team_submission(&upload, &a.id)
+        .unwrap();
+    assert!(replacement
+        .claim_team_submission(&installed)
+        .unwrap()
+        .is_none());
+    let state = document(&f).submissions[id].clone();
+    assert_eq!(
+        state.manifest.as_ref().unwrap().submitted_commit,
+        "b".repeat(40)
+    );
+    let verifier = replacement.claim_team_import(&installed).unwrap().unwrap();
+    assert_eq!(verifier.intent.transfer.manifest, state.manifest.unwrap());
+    assert_eq!(
+        verifier.intent.choice,
+        openworker_runtime::coding_handoff::config::Choice::Submission { id: id.into() }
+    );
+    assert_eq!(verifier.intent.artifact.id, a.id);
+    // A separate lead reception cannot change its source workspace. This is a
+    // storage/authority test with synthetic bytes; real Git is tested separately.
+    let received = submission_tool(
+        &f,
+        &f.lead.id,
+        "team_receive_submission",
+        json!({"submission_id":id}),
+        "receive",
+    );
+    assert_eq!(received["status"], "pending");
+    let r = replacement
+        .claim_team_reception(&installed)
+        .unwrap()
+        .unwrap();
+    assert_eq!(r.intent.reception.as_deref(), Some(id));
+    assert!(r.prepare);
+    let r = replacement.dispatch_team_import_checkout(&r).unwrap();
+    replacement.complete_team_import(&r, receipt(&r)).unwrap();
+    assert_eq!(child(&f, &f.lead.id).workspace, "/sandbox");
+    let catalog = f
+        .user
+        .agent_team_api(
+            &f.lead.id,
+            "team_list_submissions",
+            json!({"after":null,"limit":20}),
+        )
+        .unwrap();
+    assert_eq!(catalog[0]["reception"]["status"], "ready");
+    let integrated = submission_tool(
+        &f,
+        &f.lead.id,
+        "team_integrate_submission",
+        json!({"submission_id":id,"expected_head":coding_source().commit}),
+        "integrate",
+    );
+    assert_eq!(integrated["status"], "pending");
+    let initial = replacement
+        .claim_team_integration(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(initial.dispatch);
+    replacement.defer_team_integration(&initial).unwrap();
+    sql(
+        &f,
+        "UPDATE service_team_integrations SET next_check=clock_timestamp()-interval '1 second'",
+    );
+    let recovered = replacement
+        .claim_team_integration(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(recovered.intent, initial.intent);
+    assert!(replacement.check_team_integration(&initial).is_err());
+    let mut wrong = recovered.intent.request.clone();
+    wrong.expected_head = "f".repeat(40);
+    assert!(replacement
+        .complete_team_integration(
+            &recovered,
+            openworker_runtime::coding_handoff::integrate::Observation::Rejected {
+                request: wrong,
+                reason: "Wrong original request".into()
+            }
+        )
+        .is_err());
+    replacement
+        .complete_team_integration(
+            &recovered,
+            openworker_runtime::coding_handoff::integrate::Observation::Applied {
+                receipt: openworker_runtime::coding_handoff::integrate::Receipt {
+                    request: recovered.intent.request.clone(),
+                    branch: "refs/heads/main".into(),
+                    commit: "b".repeat(40),
+                    tree: "d".repeat(40),
+                },
+            },
+        )
+        .unwrap();
+    assert!(replacement
+        .claim_team_integration(&installed)
+        .unwrap()
+        .is_none());
+    let catalog = f
+        .user
+        .agent_team_api(
+            &f.lead.id,
+            "team_list_submissions",
+            json!({"after":null,"limit":20}),
+        )
+        .unwrap();
+    assert_eq!(catalog[0]["integrations"][0]["status"], "applied");
+
+    let mut forged = verifier.clone();
+    forged.intent.transfer.manifest.submitted_commit = "c".repeat(40);
+    assert!(replacement.check_team_import(&forged).is_err());
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn submission_revocation_blocks_without_replay_and_foreign_ids_reject_before_reservation() {
+    let (f, _, sid) = submission_producer().await;
+    let installed = management::installation(&f.config).unwrap();
+    let result = submission_tool(
+        &f,
+        &sid,
+        "team_submit_code",
+        json!({"commit":"b".repeat(40),"summary":"A change"}),
+        "submit",
+    );
+    let id = result["id"].as_str().unwrap();
+    let first = f.store.claim_team_submission(&installed).unwrap().unwrap();
+    sql(&f,"UPDATE api_credentials SET revoked=TRUE WHERE id=(SELECT credential_id FROM service_operations LIMIT 1)");
+    assert!(f.store.check_team_submission(&first).is_err());
+    f.store.defer_team_submission(&first).unwrap();
+    assert!(document(&f).submissions[id].error.is_some());
+    sql(&f,"UPDATE api_credentials SET revoked=FALSE; UPDATE service_team_submissions SET next_check=clock_timestamp()-interval '1 second'");
+    assert!(f.store.claim_team_submission(&installed).unwrap().is_none()); // No automatic resurrection.
+    let before = document(&f).roster.instances().count();
+    assert!(f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":"foreign","operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":"foreign","message":"No","source":{"kind":"submission","id":"foreign_team_submission"}}})).is_err());
+    assert_eq!(document(&f).roster.instances().count(), before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn undispatched_submission_revocation_is_bounded_and_pending_work_prevents_environment_deletion(
+) {
+    let (f, _, sid) = submission_producer().await;
+    let installed = management::installation(&f.config).unwrap();
+    let result = submission_tool(
+        &f,
+        &sid,
+        "team_submit_code",
+        json!({"commit":"b".repeat(40),"summary":"Preserve original checkout"}),
+        "submit",
+    );
+    let id = result["id"].as_str().unwrap();
+    sql(&f,"UPDATE api_credentials SET revoked=TRUE WHERE id=(SELECT credential_id FROM service_operations LIMIT 1)");
+    assert!(f.store.claim_team_submission(&installed).unwrap().is_none());
+    assert!(document(&f).submissions[id].error.is_some());
+    assert!(f.store.claim_team_submission(&installed).unwrap().is_none()); // No poisoned queue loop.
+                                                                           // Simulate retirement without erasing the pending request. Even after all
+                                                                           // ordinary attachments are closed, its original environment must remain.
+    sql(&f,"UPDATE sessions SET data=jsonb_set(data,'{closed}','true'); UPDATE agent_teams SET data=jsonb_set(jsonb_set(data,'{roster,instances,one,phase}','\"closed\"'),'{roster,instances,lead,phase}','\"closed\"')");
+    let env = f.lead.environment.as_ref().unwrap();
+    let error = f
+        .store
+        .begin_environment_delete(&env.environment_id, "delete-with-pending-handoff", "alice")
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unresolved original coding handoff"),
+        "{error}"
+    );
+}

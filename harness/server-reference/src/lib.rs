@@ -18,8 +18,10 @@ pub mod recording;
 mod recording_query;
 pub mod service;
 mod service_team_imports;
+mod service_team_integrations;
 mod service_team_placements;
 mod service_team_sources;
+mod service_team_submissions;
 mod service_team_types;
 mod service_team_workspaces;
 #[derive(Clone, Deserialize)]

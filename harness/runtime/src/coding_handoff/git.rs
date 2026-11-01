@@ -46,13 +46,13 @@ impl Export {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Pin {
-    root: PathBuf,
-    root_identity: Identity,
-    repository: PathBuf,
-    repository_identity: Identity,
-    common: PathBuf,
-    common_identity: Identity,
+pub(super) struct Pin {
+    pub(super) root: PathBuf,
+    pub(super) root_identity: Identity,
+    pub(super) repository: PathBuf,
+    pub(super) repository_identity: Identity,
+    pub(super) common: PathBuf,
+    pub(super) common_identity: Identity,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -180,7 +180,11 @@ pub(super) fn checked(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-async fn pin(root: &Path, request: &Export, workspace: Option<&Workspace>) -> Result<Pin> {
+pub(super) async fn pin(
+    root: &Path,
+    request: &Export,
+    workspace: Option<&Workspace>,
+) -> Result<Pin> {
     let root = root.canonicalize()?;
     checked(&root)?;
     let repository = if request.directory == "." {

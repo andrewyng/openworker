@@ -59,6 +59,12 @@ pub struct Document {
     pub coding_selection: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub source_imports: BTreeMap<String, crate::coding_handoff::config::ImportedSource>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub submissions: BTreeMap<String, crate::coding_handoff::workflow::State>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub receptions: BTreeMap<String, crate::coding_handoff::workflow::Reception>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub integrations: BTreeMap<String, crate::coding_handoff::workflow::IntegrationState>,
     /// Enabled only by a qualified trusted placement adapter, never model input.
     #[serde(default)]
     pub placement_selection: bool,
@@ -112,6 +118,11 @@ pub fn internal(name: &str) -> bool {
     matches!(
         name,
         "team_spawn"
+            | "team_submit_code"
+            | "team_receive_submission"
+            | "team_integrate_submission"
+            | "team_report_verification"
+            | "team_list_submissions"
             | "team_send_message"
             | "team_wait_agent"
             | "team_post_board"
@@ -342,6 +353,9 @@ pub fn apply(
             coding,
             coding_selection: args["coding_selection"] == true,
             source_imports: BTreeMap::new(),
+            submissions: BTreeMap::new(),
+            receptions: BTreeMap::new(),
+            integrations: BTreeMap::new(),
             placement_selection: args["placement_selection"] == true,
             sandbox_choices: BTreeMap::new(),
             placement_bindings: BTreeMap::new(),
@@ -419,6 +433,70 @@ pub fn apply(
     }
     match operation {
         "snapshot" => Ok(json!(doc)),
+        "team_integrate_submission" => {
+            let result = crate::coding_handoff::workflow::request_integration(
+                &mut doc,
+                s,
+                op(args, "submission_id")?,
+                op(args, "expected_head")?.into(),
+            )?;
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+        "team_receive_submission" => {
+            let result =
+                crate::coding_handoff::workflow::receive(&mut doc, s, op(args, "submission_id")?)?;
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+        "team_submit_code" => {
+            let result = crate::coding_handoff::workflow::submit(
+                &mut doc,
+                s,
+                op(args, "commit")?.into(),
+                op(args, "summary")?.into(),
+            )?;
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+        "team_report_verification" => {
+            let result = crate::coding_handoff::workflow::report(
+                &mut doc,
+                s,
+                op(args, "submission_id")?,
+                op(args, "report")?.into(),
+            )?;
+            tx.write(&doc, false)?;
+            Ok(result)
+        }
+        "team_list_submissions" => {
+            let limit = args["limit"]
+                .as_u64()
+                .filter(|n| (1..=50).contains(n))
+                .context("Submission page limit must be 1..50")? as usize;
+            let after = args["after"].as_str();
+            Ok(json!(doc
+                .submissions
+                .iter()
+                .filter(|(id, _)| after.is_none_or(|a| id.as_str() > a))
+                .take(limit)
+                .map(|(id, s)| {
+                    let mut v = crate::coding_handoff::workflow::view(s);
+                    v["integrations"] = json!(doc
+                        .integrations
+                        .values()
+                        .filter(|i| i.request.submission_id == *id)
+                        .map(crate::coding_handoff::workflow::integration_view)
+                        .collect::<Vec<_>>());
+                    v["reception"] = doc
+                        .receptions
+                        .get(id)
+                        .map(crate::coding_handoff::workflow::reception_view)
+                        .unwrap_or(Value::Null);
+                    v
+                })
+                .collect::<Vec<_>>()))
+        }
         "team_manage" => {
             let result = crate::team_lifecycle::apply(tx, &mut doc, &member.agent_id, args, now)?;
             if args["action"] != "list" {
@@ -903,6 +981,13 @@ pub fn apply(
             }
             let task = crate::team_briefing::task(&request.message, request.background.as_deref())?;
             let workspace = request.workspace.clone();
+            if let Some(crate::coding_handoff::config::Choice::Submission { id }) = &request.source
+            {
+                ensure!(
+                    doc.submissions.contains_key(id),
+                    "Unknown same-team submission"
+                );
+            }
             let source = request.source.clone();
             doc.tasks.entry(request.agent_id).or_insert(task);
             tx.write(&doc, false)?;
@@ -1165,6 +1250,15 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
             }),vec!["name","instructions","tools"]));
         }
     }
+    if doc.coding_selection && doc.coding.is_some() {
+        if agent_id == doc.lead {
+            specs.push(("team_integrate_submission","Explicitly fast-forward a received submission into the application's source repository at an exact expected HEAD. Dirty, stale or divergent state rejects; unknown outcomes are inspected without replay, reset, force merge or push.",json!({"submission_id":{"type":"string"},"expected_head":{"type":"string"}}),vec!["submission_id","expected_head"]));
+            specs.push(("team_receive_submission","Receive a published same-team submission into a new independent inspection checkout in the lead sandbox. Does not change your source repository or merge code. Lost delivery inspects the original operation.",json!({"submission_id":{"type":"string"}}),vec!["submission_id"]));
+        }
+        specs.push(("team_submit_code","Submit an exact committed revision from your acknowledged checkout. Returns pending identity; publication completes separately. Repeated requests for the same revision reuse the original export. No GitHub push.",json!({"commit":{"type":"string"},"summary":{"type":"string","maxLength":2000}}),vec!["commit","summary"]));
+        specs.push(("team_list_submissions","Read bounded same-team submission status and attributed reports. Reports are claims, not permission or proof tests passed.",json!({"after":{"type":["string","null"]},"limit":{"type":"integer","minimum":1,"maximum":50}}),vec!["after","limit"]));
+        specs.push(("team_report_verification","Attach an attributed report to the exact submission imported into your checkout. Does not attest current HEAD or authorize integration.",json!({"submission_id":{"type":"string"},"report":{"type":"string","maxLength":8000}}),vec!["submission_id","report"]));
+    }
     if doc.roster.policy().communication.board {
         specs.push(("team_post_board","Post shared history; only explicit @instance or @all mentions notify. No automatic assignments.",json!({"message":{"type":"string"}}),vec!["message"]));
         specs.push(("team_read_board","Read chronological board history before/after an exclusive message ID; null anchor reads latest.",json!({"message_id":{"type":["string","null"]},"direction":{"type":"string","enum":["before","after"]},"limit":{"type":"integer","minimum":1,"maximum":50}}),vec!["message_id","direction","limit"]));
@@ -1240,6 +1334,9 @@ pub fn public_snapshot(mut value: Value) -> Value {
             "coding",
             "coding_selection",
             "source_imports",
+            "submissions",
+            "receptions",
+            "integrations",
         ] {
             object.remove(key);
         }

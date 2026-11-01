@@ -682,6 +682,7 @@ export class ServiceSession {
       agentTypes: options.agentTypes,
       ...(options.workspaceDefaults ? {workspaceDefaults:{repository:options.workspaceDefaults.repository,base:options.workspaceDefaults.base,agent_types:options.workspaceDefaults.agentTypes}} : {}),
       ...(options.delegation ? {delegation: serviceDelegationWire(options.delegation)} : {}),
+      ...(options.coding ? {coding:{source:{repository:options.coding.source.repository,directory:options.coding.source.directory,commit:options.coding.source.commit,object_format:options.coding.source.objectFormat},agent_types:Object.fromEntries(Object.entries(options.coding.agentTypes).map(([name,value])=>[name,{source:value.source,sandbox:sandboxWire(value.sandbox)}]))}} : {}),
       policy: {
         communication: options.communication ?? {
           board: true,
@@ -800,7 +801,19 @@ export class ServiceRun {
   }
 }
 
+export interface CodingSource {
+  repository: string;
+  directory: string;
+  objectFormat: "sha1" | "sha256";
+  commit: string;
+}
+export interface CodingTeamDefaults {
+  source: CodingSource;
+  agentTypes: Record<string, {sandbox: NonNullable<ChildSpawnOptions["sandbox"]>; source: "initial" | "require_submission"}>;
+}
 export interface ServiceAgentTeamOptions {
+  /** Artifact-first independent coding checkouts; service artifact store required. */
+  coding?: CodingTeamDefaults;
   workspaceDefaults?: import("./types.js").WorkspaceDefaults;
   /** Scoped custom types, bounded by the lead's activated release. */
   delegation?: ServiceTeamDelegation;
@@ -845,6 +858,11 @@ export class ServiceAgentTeam {
   members(options: {after?: string; limit?: number} = {}): Promise<any> {
     return this.service.json("POST",`/v1/sessions/${segment(this.lead.id)}/team/commands`,
       {operation:"team_manage",arguments:{...options,action:"list"}});
+  }
+  /** Bounded same-team handoffs; reports remain attributed claims. */
+  submissions(options: {after?: string; limit?: number} = {}): Promise<any> {
+    return this.service.json("POST",`/v1/sessions/${segment(this.lead.id)}/team/commands`,
+      {operation:"team_list_submissions",arguments:{after:options.after??null,limit:options.limit??20}});
   }
   retire(key:string,agentId:string,mode:"finish_current"|"cancel"="finish_current"):Promise<any>{
     return this.command(key,"team_manage",{action:"retire",agent_id:agentId,mode});

@@ -123,14 +123,7 @@ impl Database {
         );
         let s = locked(&mut tx, &request.session_id, None)?;
         if !request.origin.is_turn() {
-            crate::service_team_sources::authorize_artifact(
-                &mut tx,
-                &s,
-                &request,
-                &binding,
-                actor,
-                source_claim,
-            )?;
+            authorize_team_artifact(&mut tx, &s, &request, &binding, actor, source_claim)?;
         }
         verify(&mut tx, &s.id)?;
         if let Some(row)=tx.query_opt("SELECT artifact_id,actor,request,binding FROM artifact_requests WHERE session_id=$1 AND request_id=$2",&[&s.id,&request.request_id])? {
@@ -272,7 +265,7 @@ impl Database {
                 self.auth.is_none() && source_claim.is_some(),
                 Error::Invalid
             );
-            crate::service_team_sources::authorize_artifact(
+            authorize_team_artifact(
                 &mut tx,
                 &s,
                 &a.registration,
@@ -311,5 +304,24 @@ impl Database {
         )?;
         tx.commit()?;
         Ok(a)
+    }
+}
+
+fn authorize_team_artifact(
+    tx: &mut postgres::Transaction<'_>,
+    s: &openworker_runtime::store::Session,
+    r: &Registration,
+    binding: &Binding,
+    actor: &str,
+    claim: Option<&str>,
+) -> Result<()> {
+    match &r.origin {
+        openworker_artifacts::Origin::TeamSetup { .. } => {
+            crate::service_team_sources::authorize_artifact(tx, s, r, binding, actor, claim)
+        }
+        openworker_artifacts::Origin::TeamSubmission { .. } => {
+            crate::service_team_submissions::authorize_artifact(tx, s, r, binding, actor, claim)
+        }
+        openworker_artifacts::Origin::Turn => anyhow::bail!("Expected private team provenance"),
     }
 }

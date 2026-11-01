@@ -532,6 +532,14 @@ pub async fn dispatch(
         request: crate::team_workspace::Request,
     }
     Ok(match method {
+        "handoff/integrate" | "handoff/inspect_integration" => to_value(
+            super::integrate::rpc(
+                root,
+                from_value(params)?,
+                method == "handoff/inspect_integration",
+            )
+            .await?,
+        )?,
         "handoff/export" | "handoff/inspect_export" => {
             let p: Export = from_value(params)?;
             to_value(

@@ -271,3 +271,21 @@ test("team delegation pins qualified tools and working-model pairs at service cr
   assert.equal(bodies.length,2);
   assert(!JSON.stringify(bodies).includes(token));
 });
+
+test("coding defaults and submitted-source selection preserve independent checkout semantics on the wire",async(t)=>{
+  const {ServiceSession}=await import("../dist/service.js");
+  const requests=[];
+  const url=await server(t,(q,r)=>{
+    if(handshake(q,r))return;
+    let text="";q.on("data",c=>text+=c);q.on("end",()=>{requests.push(JSON.parse(text));headers(r);r.end("{}");});
+  });
+  const service=await Harness.connect(options(url));
+  try{
+    const lead=new ServiceSession(service,{serviceId:"service-one",namespace:"test",sessionId:"lead",agent:"coder@1",environmentId:"env"});
+    const team=await lead.createTeam({agentTypes:{builder:"coder@1"},coding:{source:{repository:"org/game",directory:"source",objectFormat:"sha1",commit:"a".repeat(40)},agentTypes:{builder:{source:"initial",sandbox:{mode:"new",profile:"small@1",memoryMB:512,cpu:1}}}}});
+    assert.equal(requests[0].coding.source.object_format,"sha1");assert.equal(requests[0].coding.agent_types.builder.sandbox.memory_mb,512);assert.equal(requests[0].coding.agent_types.builder.sandbox.mode,"new");
+    await team.spawn("verifier-one","builder","verify","Check exact commit",{source:{kind:"submission",id:"hs_original"}});
+    assert.deepEqual(requests[1].arguments.source,{kind:"submission",id:"hs_original"});
+    await team.submissions({after:"hs_original",limit:5});assert.deepEqual(requests[2],{operation:"team_list_submissions",arguments:{after:"hs_original",limit:5}});
+  }finally{service.disconnect();}
+});

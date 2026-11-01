@@ -11,6 +11,9 @@ dependency. Python/Desktop remains separate.
 For service deployments, [Git access through OpenShell](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
 covers `RuntimeProfile.gitAccess` and `runtimeProfileGrants(profile)`. These select
 operator-installed grants without passing Git credentials through the SDK.
+For artifact-first builders and verifiers, see [isolated coding teams](../../docs/harness/ISOLATED-CODING-TEAMS.md)
+and `isolatedCodingServiceTeam`; exact submitted revisions cross independent
+sandboxes without sharing a filesystem or GitHub credential.
 
 For server/container coding agents, see [coding tools and unattended sessions](../../docs/harness/CODING-TOOLS.md).
 `autoSkipQuestions` is independent of `approvals`; select `coding.*` tools explicitly.

@@ -91,6 +91,9 @@ impl Store {
         let tx = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some((_, call)) = call {
+            crate::coding_handoff::workflow::require_approval(&s, call)?;
+        }
         let before = serde_json::to_value(&s)?;
         let result = agent_team::apply(&mut Tx(&tx), &mut s, operation, args, now_ms())?;
         if call.is_none()

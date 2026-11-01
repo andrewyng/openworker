@@ -8,6 +8,8 @@ export interface WorkspaceDefaults {
   agentTypes:string[];
 }
 export interface ChildSpawnOptions {
+  /** Select the pinned initial source or an exact same-team published submission. */
+  source?: {kind:"initial"} | {kind:"submission";id:string};
   /** Selection is bounded by the type/app envelope. Unqualified adapters reject. */
   sandbox?: SandboxChoice;
   /** Working model only; must be in the app-delegated model choices. */
