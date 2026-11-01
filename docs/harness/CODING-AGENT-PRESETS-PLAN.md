@@ -916,8 +916,12 @@ Validation: **55 disposable-Linux tests pass** (44 existing coding/workspace/
 handoff, 3 Git-scope, 6 provider/wire/cleanup and 2 real helper/process tests),
 **37 complete service-library/PostgreSQL cases pass** (3.54s), two fixture control
 contracts pass, and strict runtime/PostgreSQL/SDK/service all-target Clippy passes.
-The complete physical C1–C4 service regression is running on the original gateway
-with a fresh digest-pinned runner; its result is not claimed yet.
+The complete physical C1–C4 service regression **passed in 369.94 seconds** on the
+original gateway with a fresh digest-pinned runner. It reran Rust/TypeScript SDKs,
+private types, two controllers, worker restart, shared worktrees, independent
+placements, two automatic initial-source imports, exact Git receipts and preset
+admission. Cleanup confirmed only the original gateway remains and zero temporary
+service/recording database schemas remain.
 
 The test provider instances/profiles and Helm release were removed after confirming
 no retained sandbox. Its named namespace was deleted after UID/label checks, which
@@ -932,3 +936,11 @@ The [scenario guide](CODING-WORKSPACE-SCENARIOS.md) now distinguishes this
 qualified native path from the still-pending public RuntimeProfile/SDK grant
 wiring. C4 submissions, C5 trusted publishing, remaining C6 wiring and C7 remain
 in progress/pending; this is not a claim that the complete sequence is finished.
+
+Strengthened the real Linux process test with TWO sequential MCP connections to
+the same workspace/manager, each carrying a different synthetic reference. Both
+the process environment and real `git credential fill` must use the second
+connection's exact current reference, with neither reference in the result. This
+catches stale manager caching even if an upstream temporarily accepts an older
+credential. The full **55-case disposable Linux set passed again** after this
+test change; no runtime behavior was changed by that test refinement.

@@ -10,9 +10,9 @@
     "harness/runtime/src/coding/manager.rs": "43a0a9763b915394641c8311e2e13004824f05b4dc8579cd5de1965449dd2819",
     "harness/runtime/src/coding/processes.rs": "843867497139c2a8cb1af2128722530603a1e9537597bbd3ed2951de3ebda54d",
     "harness/runtime/src/coding/mod.rs": "4c0e9ca0375bb8cd85c4dd7af1b879ff9122315e45506071750387f0638b8614",
-    "harness/runtime/src/environment_openshell.rs": "327652c042d443a46623947f8a528aa866dd31b284b5f4b02f59e11b0a87f16d",
+    "harness/runtime/src/environment_openshell.rs": "8e50c80cc7893091428a164492fe83a18794041a20b32e0eb06e107731b76c34",
     "harness/runtime/examples/openshell_git_probe.rs": "1bd325082a9a885830e12c087174a09de7ee7501e559fe6a7f31f5eced81df31",
-    "harness/runtime/tests/openshell_git.rs": "8fb6c6144113f740c29fd777ebbf0dcc3e73a5f77fcc2aa72c1a612ac696c151",
+    "harness/runtime/tests/openshell_git.rs": "496799b300b720cb89b314db6172c3ed8900a4c172f6cc879137e48ea5c810b2",
     "harness/runtime/tests/fixtures/openshell-git/control.py": "c185cdd508a4928622a126090ba599eccef8ae475d5362fbfdca5136b3598703",
     "harness/runtime/tests/fixtures/openshell-git/server.py": "f436ab0469a11c29d47c332b7c5ce72f24c3f0e20f96a08dfe06d1a75482b73a",
     "harness/runtime/tests/fixtures/openshell-git/test_control.py": "63e664eacfbaaacf104adc10350c065e6504ea353727b719ff5ca857f179c59c"
@@ -68,7 +68,20 @@
       "publication_allowed": true,
       "unconfigured_repo_denied": true
     },
-    "expired_revision_acknowledged": true
+    "expired_revision_acknowledged": true,
+    "physical_service_regression": {
+      "passed": true,
+      "seconds": 369.94,
+      "runner_image": "sha256:cdfbab9d845bacfb763ef937e913678c6604632b66a0376feda2231a62ec96cc",
+      "scope": "Full service_v2: Rust/TypeScript, two controllers, worker restart, private types, shared worktrees, independent children, two initial-source imports, immutable admission receipts and presets",
+      "server_binary_sha256": "2b6dec6a712ca4ca403425248a17ed8426cb92c2d9cc0af5856bf681abc7d7d2"
+    },
+    "explicit_reconnected_manager_reference": "Passed in both direct and retained-manager modes: same workspace, two MCP connections, different references; exact process environment and git credential fill result match current connection; no reference in tool result.",
+    "linux_rerun_after_stronger_reference_test": {
+      "passed": 55,
+      "docker_build_test_seconds": 57.9,
+      "binary_sha256": "543e1e11d224ec45551b409cb5e78ef43e832824c9759805ef3870a4497797f2"
+    }
   },
   "upstream": {
     "base": "a97cbe4672b671ca5482ab029c1a080b018a33db",
@@ -87,7 +100,11 @@
       "git-remote",
       "owgit-gateway-0"
     ],
-    "fixture_namespace_teardown": "Confirmed namespace absent; own provider/profile instances removed; Helm release removed; own port-forward stopped"
+    "fixture_namespace_teardown": "Confirmed namespace absent; own provider/profile instances removed; Helm release removed; own port-forward stopped",
+    "original_gateway_remaining_pods": [
+      "ow-helm-gateway-0"
+    ],
+    "temporary_service_recording_schemas_remaining": 0
   },
   "observations": [
     "Provider queries require WorkspaceSelector message in pinned 0.1.3, protected by golden-wire test.",
@@ -101,5 +118,6 @@
     "No live GitHub repository or real credential used.",
     "No paid model or cloud resource used.",
     "Public service/SDK grant wiring, trusted GitHub publisher and full C4/C6 remain incomplete."
-  ]
+  ],
+  "implementation_commit": "032bd65d"
 }
