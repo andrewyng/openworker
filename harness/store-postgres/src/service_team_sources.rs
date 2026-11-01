@@ -254,7 +254,7 @@ impl PostgresStore {
             }
             if crate::service_admin::current(&mut tx)?.configuration.admissions_paused {tx.commit()?;return Ok(None)}
             let dispatch=!owner.get::<_,bool>(0);
-            let claim=openworker_runtime::id("claim");
+            let claim=uuid::Uuid::new_v4().to_string();
             let phase=if i.bundle.is_some(){"uploading"}else{"exporting"};
             tx.execute("UPDATE service_team_sources SET dispatched=TRUE,claim=$2,next_check=clock_timestamp()+interval '180 seconds',status=$3 WHERE team=$1",&[&i.team,&claim,&phase])?;
             tx.commit()?;Ok(Some(Job {intent:i,dispatch,claim}))
