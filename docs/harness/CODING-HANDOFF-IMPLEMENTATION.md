@@ -124,3 +124,19 @@ expanded file content to 128 MiB and the tree to 10,000 entries (with a bounded
 1 MiB tree listing). Submodule contents require a separately complete source;
 checkout never initializes or downloads them. These v1 bounds reject explicitly
 rather than dropping files or executing a repository-provided helper.
+
+## Source setup outbox
+
+The current application adapter records one immutable source configuration per
+team: repository identity, relative source directory, Git object format and exact
+commit. The configured server supplies the artifact-store binding. PostgreSQL pins
+these to the original lead/environment/release/profile before dispatch. Setup IDs
+are separate from LLM turns. A live controller claim and original credential are
+required for reads and publication; setting an origin label is insufficient.
+
+Source transfer runs in a bounded controller task, separate from normal control
+reconciliation. Restart inspects the original export and resumes only immutable
+same-ID artifact publication. Revocation blocks staging; an explicit application
+retry after restoring authority retains the dispatch bit and original identities.
+The public isolated-preset/default and child-import admission integration is still
+a separate gate; this adapter does not itself expose new agent tools.
