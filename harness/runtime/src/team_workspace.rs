@@ -286,6 +286,50 @@ fn checked_absolute(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Bounded local metadata bookkeeping, after the operation's durable marker.
+/// Do not edit the project's tracked .gitignore or overwrite user patterns.
+pub(crate) fn exclude_bookkeeping(common: &Path) -> Result<()> {
+    use std::io::Write;
+    const RULE: &[u8] = b"\n# OpenWorker private workspace bookkeeping\n/.openworker/\n";
+    let info = common.join("info");
+    checked_absolute(&info)?;
+    fs::create_dir_all(&info)?;
+    let path = info.join("exclude");
+    checked_absolute(&path)?;
+    let old = match fs::symlink_metadata(&path) {
+        Ok(m) => {
+            ensure!(
+                m.is_file() && !crate::platform::linked(&m),
+                "Git exclusions must be a regular local metadata file"
+            );
+            crate::bundle::read_limited(&path, 65536)?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(e) => return Err(e.into()),
+    };
+    if old.ends_with(RULE) {
+        return Ok(());
+    }
+    ensure!(
+        old.len() + RULE.len() <= 65536,
+        "Git exclusions exceed the managed bookkeeping limit"
+    );
+    let mut options = fs::OpenOptions::new();
+    options.append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "Git exclusions must remain a regular file"
+    );
+    file.write_all(RULE)?;
+    file.sync_all()?;
+    Ok(())
+}
 fn select_path(root: &Path, path: &str) -> Result<PathBuf> {
     if path == "." {
         Ok(root.into())
@@ -497,6 +541,9 @@ pub async fn prepare(root: &Path, request: Request, inspect_only: bool) -> Resul
                     !path.exists(),
                     "Existing worktree requires read-only reconciliation"
                 );
+                if repo == root {
+                    exclude_bookkeeping(&common)?;
+                }
                 let parent = path.parent().context("Worktree parent missing")?;
                 checked_absolute(parent)?;
                 fs::create_dir_all(parent)?;

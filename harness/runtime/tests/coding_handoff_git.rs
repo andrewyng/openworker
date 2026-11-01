@@ -853,3 +853,39 @@ async fn independent_workspace_cannot_acquire_external_git_objects_or_linked_met
     mixed.git_dir = Some(f.repo.join(".git"));
     assert!(mixed.verify().is_err());
 }
+
+#[tokio::test]
+async fn root_repository_bookkeeping_is_excluded_from_normal_git_staging_without_changing_tracked_ignore_rules(
+) {
+    let f = fixture(ObjectFormat::Sha1);
+    let exclude = f.repo.join(".git/info/exclude");
+    std::fs::write(&exclude, b"user-pattern\n!/.openworker/\n").unwrap();
+    std::fs::write(f.repo.join(".gitignore"), "user-build/\n").unwrap();
+    git(&f.repo, &["add", ".gitignore"]);
+    git(&f.repo, &["commit", "-qm", "user ignore"]);
+    let before = std::fs::read(f.repo.join(".gitignore")).unwrap();
+    let exported = export(&f.repo, f.request.clone(), false, None)
+        .await
+        .unwrap();
+    assert!(!git(&f.repo, &["status", "--porcelain"]).contains(".openworker"));
+    git(&f.repo, &["add", "-A"]);
+    assert!(git(&f.repo, &["diff", "--cached", "--name-only"]).is_empty());
+    assert_eq!(std::fs::read(f.repo.join(".gitignore")).unwrap(), before);
+    let rules = std::fs::read(&exclude).unwrap();
+    assert!(rules.starts_with(b"user-pattern\n!/.openworker/\n"));
+    export(&f.repo, f.request.clone(), true, None)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&exclude).unwrap(), rules); // Inspection cannot append.
+    assert!(f.repo.join(&exported.path).exists());
+    let g = fixture(ObjectFormat::Sha1);
+    let foreign = g.root.path().join("foreign-exclude");
+    std::fs::write(&foreign, b"keep me").unwrap();
+    let target = g.repo.join(".git/info/exclude");
+    std::fs::remove_file(&target).unwrap();
+    std::os::unix::fs::symlink(&foreign, &target).unwrap();
+    assert!(export(&g.repo, g.request.clone(), false, None)
+        .await
+        .is_err());
+    assert_eq!(std::fs::read(&foreign).unwrap(), b"keep me");
+}
