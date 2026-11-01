@@ -8,7 +8,8 @@ in the milestone journal until qualified.
 
 Related: [team types and sandbox design](TEAM-TYPES-AND-SANDBOXES.md),
 [team implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md),
-[coding implementation sequence and progress](CODING-AGENT-PRESETS-PLAN.md).
+[coding implementation sequence and progress](CODING-AGENT-PRESETS-PLAN.md),
+[illustrated workspace/GitHub scenario guide](CODING-WORKSPACE-SCENARIOS.md).
 
 ## Three coding presets
 
@@ -157,7 +158,7 @@ result rather than assuming the earlier verification still covers that result.
 | --- | --- | --- |
 | **Disabled** | Return local commits or handoff artifacts. | No publishing credential is needed. |
 | **Harness-managed tool** | Child requests publication through a narrowly scoped trusted tool/service. | Credential stays in the trusted publishing domain, outside the child sandbox. |
-| **Sandbox CLI** | Child runs `git push` using explicitly granted CLI access. | A scoped credential is available to processes in that sandbox. |
+| **Sandbox CLI** | Child runs Git using explicitly granted access. | Prefer OpenShell's endpoint-bound placeholder; real token stays in its trusted credential path. Raw-secret delivery is a separate provider-specific choice, not a fallback. |
 
 ### Harness-managed tool: preferred publishing mode
 
@@ -190,11 +191,19 @@ wraps that command.
 
 ### Sandbox CLI: explicit credential access
 
-Use controlled credential-helper or sandbox-secret delivery, with scoped and
-short-lived credentials where the provider supports them. Do not embed tokens in
-remote URLs or persistent Git configuration. Once exposed inside a shared sandbox,
-a credential is potentially usable by other processes in that sandbox; it is not
-private to a named agent instance.
+For OpenShell, prefer its credential-provider/placeholder mechanism: give the real
+scoped token to OpenShell, attach the provider to the authorized sandbox, and
+configure Git HTTPS to use the opaque reference. Its proxy resolves the credential
+only for permitted requests/endpoints. Our adapter wiring and lifecycle tests remain
+C6 work; the existing offline Git-bundle import does not require this mechanism.
+See the [illustrated flow and configuration distinctions](CODING-WORKSPACE-SCENARIOS.md).
+
+Keep scoped and short-lived grants where the provider supports them. Do not embed
+real tokens in remote URLs or persistent Git configuration. A placeholder protects
+the secret value but still conveys an authorized capability within its sandbox;
+do not claim agent-private access in a shared sandbox. A raw credential-helper or
+sandbox-secret mode for another provider would need its own explicit configuration
+and qualification. Never silently fall back to raw-secret delivery.
 
 Private-repository checkout and publishing are separate permissions. An application
 can stage the source or grant read-only Git access while keeping all publishing
@@ -234,14 +243,15 @@ operation ID and report an unknown outcome. Read the original remote branch/comm
 before deciding whether another mutation is needed. Integration and publishing
 remain separate from the worker's task-completion status.
 
-Already qualified: session-private approved types, multiple named instances,
-durable coordination and service-worker restart with real tools in the original
-shared OpenShell sandbox. Local SDK child-directory/worktree preparation is also
-tested. The recent service qualification shared one working directory; it did
-not qualify remote builder worktrees or independent child sandboxes.
+Qualified C1–C3: shared builder worktrees, versioned single/shared coding presets,
+delegated independent child placement, member reuse, original provider recovery,
+and Rust/TypeScript service regressions. C4's initial-source export/import and
+receipt-gated admission are also physically verified in two independent OpenShell
+sandboxes. That source transfer uses Git bundles with no GitHub access in the child.
 
-Still to implement/qualify: the packaged coding presets themselves, remote
-worktree setup, isolated child checkout/provisioning, the handoff contract and
-publisher, and full builder → verifier → lead integration scenarios. Generic
-teams remain useful without Git; no clone, commit, merge, push or credential
-grant becomes an implicit side effect of spawning a child.
+Remaining C4: model-requested submission/report/reception, submitted-revision
+verifier import, isolated SDK helpers and the complete isolated builder → verifier
+→ lead workflow. C5 trusted GitHub access and C6 OpenShell placeholder-backed Git
+CLI access remain upcoming. The [journal](CODING-AGENT-PRESETS-PLAN.md) and
+[test catalog](CODING-AGENT-PRESETS-TESTING.md) distinguish contract tests, physical
+qualification and public API availability. Generic teams remain useful without Git.
