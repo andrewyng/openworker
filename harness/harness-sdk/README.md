@@ -232,6 +232,11 @@ not weaken saved approval identities to make upgrades appear seamless.
 
 ## Example and verification
 
+For service deployments, [Git access through OpenShell](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+explains `RuntimeProfile.git_access`, operator-owned provider pins and
+`RuntimeProfile::delegated_grants()` for bounded child placement. Git credentials
+remain in OpenShell; the SDK selects a versioned grant name.
+
 `cargo run -p openworker-sdk --example connect -- <embedded|stdio> <absolute-state>
 <absolute-bundle> <absolute-runner> <absolute-workspace> [--sandbox-off]`
 

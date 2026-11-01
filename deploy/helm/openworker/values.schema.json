@@ -209,6 +209,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "git_grants": { "$ref": "#/definitions/gitGrants" },
             "identity": {
               "type": "string",
               "minLength": 1
@@ -351,5 +352,37 @@
       "required": []
     }
   },
-  "required": ["image", "config"]
+  "required": ["image", "config"],
+  "definitions": {
+    "gitGrants": {
+      "type": "object", "maxProperties": 16,
+      "propertyNames": { "pattern": "^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$" },
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["provider", "scope"],
+        "properties": {
+          "provider": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "provider_id", "profile_id", "profile_workspace", "profile_digest"],
+            "properties": {
+              "name": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "provider_id": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "profile_id": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "profile_workspace": {"type":"string", "maxLength":128, "pattern":"^[a-zA-Z0-9_-]*$"},
+              "profile_digest": {"type":"string", "pattern":"^[a-f0-9]{64}$"},
+              "configuration_digest": {"type":"string", "pattern":"^[a-f0-9]{64}$"}
+            }
+          },
+          "scope": {
+            "type":"object", "additionalProperties":false,
+            "required":["host","repositories"],
+            "properties": {
+              "host":{"type":"string", "minLength":1, "maxLength":255, "pattern":"^[a-zA-Z0-9.:-]+$"},
+              "repositories":{"type":"array", "minItems":1, "maxItems":16, "uniqueItems":true, "items":{"type":"string", "minLength":3, "maxLength":200}}
+            }
+          }
+        }
+      }
+    }
+  }
 }

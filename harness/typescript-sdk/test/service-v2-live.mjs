@@ -7,6 +7,21 @@ const service = await Harness.connect({
 });
 try {
   const reference = JSON.parse(process.env.OW_SERVICE_REFERENCE);
+  const gitReference=JSON.parse(process.env.OW_GIT_SERVICE_REFERENCE??"null");
+  if(gitReference){
+    const admin=await Harness.connect({url:process.env.OW_SERVICE_URL,namespace:"test",credentials:{tokenEnv:"OW_GIT_ADMIN_TOKEN"}});
+    try{
+      const profile=JSON.parse(process.env.OW_GIT_PROFILE);
+      const registered=await admin.registerRuntimeProfile(profile,{idempotencyKey:"ts-git-register"});
+      assert.equal(registered.definition.gitAccess,"fixture-git@1");
+    }finally{admin.disconnect();}
+    const git=await service.resume(gitReference);
+    const run=await git.send('TEST_RESOURCE_GRANTS [{"name":"run_shell","arguments":{"command":"git -C sdk-checkout fetch -q origin && printf typescript-git-ok","yield_ms":10000}}]',{idempotencyKey:"typescript-git"});
+    assert.equal((await run.result()).status,"completed");
+    const events=await service.json("GET",`/v1/sessions/${git.id}/events/page?after=0`);
+    assert.ok(events.events.some(e=>e.type==="tool_finished" && e.data.result.content?.some(c=>{try{const v=JSON.parse(c.text);return v.exit_code===0 && v.stdout==="typescript-git-ok";}catch{return false;}})));
+    console.log("PASS TypeScript Git RuntimeProfile registration, original-session resume and real OpenShell fetch");
+  }
   const coder = await service.resume(reference);
   await assert.rejects(service.resume({...reference,agent:'verifier@1'}),/release_identity_mismatch/);
   const verifier = await service.agent("verifier");

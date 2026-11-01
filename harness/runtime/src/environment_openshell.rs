@@ -20,49 +20,9 @@ pub struct OpenShell {
     cpu: u16,
     memory_mb: u32,
     credential_provider: Option<CredentialProvider>,
+    git_scope: Option<crate::coding::openshell_git::Settings>,
 }
-/// Trusted application configuration. No credential value is stored here.
-/// Pinning is explicit setup, never inferred from a model-supplied server name.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CredentialProvider {
-    pub name: String,
-    pub provider_id: String,
-    pub profile_id: String,
-    pub profile_workspace: String,
-    pub profile_digest: String,
-}
-impl CredentialProvider {
-    fn validate(&self) -> Result<()> {
-        for id in [&self.name, &self.provider_id, &self.profile_id] {
-            anyhow::ensure!(
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
-                "Invalid pinned credential provider identity"
-            );
-        }
-        anyhow::ensure!(
-            self.profile_workspace.len() <= 128
-                && self
-                    .profile_workspace
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
-            "Invalid provider profile workspace"
-        );
-        anyhow::ensure!(
-            self.profile_digest.len() == 64
-                && self
-                    .profile_digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "Credential provider profile digest required"
-        );
-        Ok(())
-    }
-}
+pub use crate::coding::openshell_git::ProviderPin as CredentialProvider;
 impl OpenShell {
     pub fn new(
         key: String,
@@ -78,6 +38,7 @@ impl OpenShell {
             cpu: 1,
             memory_mb: 512,
             credential_provider: None,
+            git_scope: None,
         };
         this.spec(Sharing::Exclusive, Management::Harness)
             .validate()?;
@@ -102,6 +63,20 @@ impl OpenShell {
             "Credential provider profile belongs to another workspace"
         );
         self.credential_provider = Some(pin);
+        Ok(self)
+    }
+    /// Bind trusted helper scope to the environment identity. This does not
+    /// replace OpenShell endpoint/binary policy or authorize another provider.
+    pub fn with_git_scope(
+        mut self,
+        settings: crate::coding::openshell_git::Settings,
+    ) -> Result<Self> {
+        settings.validate()?;
+        anyhow::ensure!(
+            self.credential_provider.is_some(),
+            "Git scope requires an explicit credential provider"
+        );
+        self.git_scope = Some(settings);
         Ok(self)
     }
     /// Explicit operator-owned setup. Persist the returned non-secret pin with
@@ -157,6 +132,7 @@ impl OpenShell {
             profile_id: p.kind,
             profile_workspace: p.profile_workspace,
             profile_digest: crate::bundle::digest(&response.profile),
+            configuration_digest: config_digest(&p.config)?,
         };
         pin.validate()?;
         Ok(pin)
@@ -188,10 +164,15 @@ impl OpenShell {
                     self.configured_template().encode_to_vec(),
                 ))
                 .expect("profile serialization");
-                crate::bundle::digest(&match &self.credential_provider {
+                let bytes = match &self.credential_provider {
                     None => bytes,
                     Some(pin) => serde_json::to_vec(&("credential-provider-v1", bytes, pin))
                         .expect("provider serialization"),
+                };
+                crate::bundle::digest(&match &self.git_scope {
+                    None => bytes,
+                    Some(scope) => serde_json::to_vec(&("git-scope-v1", bytes, scope))
+                        .expect("scope serialization"),
                 })
             },
             image: self.image.clone(),
@@ -663,10 +644,18 @@ struct ProviderMetadata {
     metadata: Option<Meta>,
     #[prost(string, tag = "2")]
     kind: String,
-    // Credential/config fields deliberately omitted. Do not decode/export their
-    // values into the sandbox or persist them in the execution identity.
+    // Secret fields deliberately omitted. Hash non-secret configuration without
+    // exporting its values; endpoint substitutions must not silently change.
+    #[prost(btree_map = "string, string", tag = "4")]
+    config: BTreeMap<String, String>,
     #[prost(string, tag = "6")]
     profile_workspace: String,
+}
+fn config_digest(config: &BTreeMap<String, String>) -> Result<Option<String>> {
+    Ok((!config.is_empty())
+        .then(|| serde_json::to_vec(config))
+        .transpose()?
+        .map(|bytes| crate::bundle::digest(&bytes)))
 }
 #[derive(Clone, PartialEq, Message)]
 struct ProfileBytesResponse {
@@ -880,6 +869,7 @@ mod tests {
             profile_id: "github-read".into(),
             profile_workspace: "default".into(),
             profile_digest: "a".repeat(64),
+            configuration_digest: None,
         }
     }
     #[test]
@@ -901,6 +891,36 @@ mod tests {
             scope: None,
         };
         assert_eq!(platform.encode_to_vec(), [10, 3, b'g', b'i', b't']);
+    }
+    #[test]
+    fn provider_nonsecret_configuration_is_pinned_but_secret_fields_are_not_decoded() {
+        // Provider field 3 is the secret map; field 4 is non-secret config in
+        // pinned v0.1.3/proto/datamodel.proto. Never hash a raw credential.
+        let secret = [26, 6, 10, 1, b'k', 18, 1, b's'];
+        let config = [34, 6, 10, 1, b'k', 18, 1, b'v'];
+        let metadata =
+            ProviderMetadata::decode([secret.as_slice(), config.as_slice()].concat().as_slice())
+                .unwrap();
+        assert_eq!(metadata.config, BTreeMap::from([("k".into(), "v".into())]));
+        let mut changed = metadata.config.clone();
+        changed.insert("endpoint".into(), "another".into());
+        assert_ne!(
+            config_digest(&metadata.config).unwrap(),
+            config_digest(&changed).unwrap()
+        );
+        assert!(config_digest(&BTreeMap::new()).unwrap().is_none());
+        let mut pin = credential();
+        pin.configuration_digest = config_digest(&changed).unwrap();
+        assert_ne!(
+            provider()
+                .with_credential_provider(pin)
+                .unwrap()
+                .spec(Sharing::Shared, Management::Harness),
+            provider()
+                .with_credential_provider(credential())
+                .unwrap()
+                .spec(Sharing::Shared, Management::Harness)
+        );
     }
     #[test]
     fn provider_revocation_fences_execution_but_original_cleanup_keeps_identity_guards() {

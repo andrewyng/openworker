@@ -1,0 +1,107 @@
+{
+  "qualification": "coding-c6-service-sdk-openshell-git",
+  "date": "2026-10-31",
+  "branch": "feat/coding-handoff-c4-20261031",
+  "base_commit": "c22c1f1a14e5d80847d48e3cc0d98576434b3c51",
+  "scope": "Named operator grants, immutable RuntimeProfiles, exact delegation, Rust/TypeScript SDKs and actual Linux Git through OpenShell 0.1.3",
+  "source_sha256": {
+    "deploy/helm/chart.test.mjs": "8c3895a2e63d102a1f385588825a31aa1bf3ce20c4a2ca2ee4c457d5d2891a0d",
+    "deploy/helm/openworker/values.schema.json": "9f522547c8524cfc8df659c4b7cf1dabef14d8722888e9ec67ab2b8191c214ef",
+    "deploy/service/local-values.test.mjs": "07ac723dd2d5a3a9ed9fcb791330e8c19cc9d43fdc1556538a3cea236c7d9bbf",
+    "deploy/service/stack.mjs": "b35d23b6b748a6f665acd0d99e84899d210ef5bb05637586c646e841055b08aa",
+    "docs/harness/CODING-AGENT-PRESETS-PLAN.md": "b6256e9ec97d71197f621043eed32eb6890cb61052bc0e145b00ef245756132a",
+    "docs/harness/CODING-AGENT-PRESETS-TESTING.md": "7544719564cb7910baf0f9cc194e2a879f3203057de6c6cac4e3c1eb7c989839",
+    "docs/harness/CODING-WORKSPACE-SCENARIOS.md": "4a1ed04cfd1e821d144875f7630090f2ad821355147c47fb81252204851d26e7",
+    "harness/harness-sdk/README.md": "55e72488d02b13227f47f9803870627e26066cfe4c59df416036c5cfe6d39451",
+    "harness/runtime/src/coding/files.rs": "ddccc16d41c92c45ecfe43ece82f131ed719c9fc30ca59dd90bb95a3857f9feb",
+    "harness/runtime/src/coding/openshell_git.rs": "c3d805c7b073127c4aeb10c34ae5f0d2d30d3506bb53f6ec551e4f9bb0e7a6f2",
+    "harness/runtime/src/environment_openshell.rs": "f0894eb48ee77f1598294a74cd76af77a53275382c2826ac26cbbaa936ae9f1c",
+    "harness/runtime/src/runtime.rs": "1e3677179e6f4a3379f0aedf941c434db4ba41173051591efa2e13dc03449c3c",
+    "harness/runtime/tests/fixtures/openshell-git/README.md": "7ce2c4273b754ac988d5855e72dddefb03e1745e48462ab944095493c8f187b4",
+    "harness/server-reference/src/http.rs": "1881c53b623f68955f9bed6170bafcb5126ec452d21a16b19f6479e5e3854c65",
+    "harness/server-reference/src/lib.rs": "0d62f60bc8df4967c2de5ec494d4d2b970443323f1c291c66803daec8af36403",
+    "harness/server-reference/src/management.rs": "5054ed89518f86f6cf7b63dc54fb37d6639f583b414b24e9070bbb04a00b40df",
+    "harness/server-reference/src/service_team_placements_tests.rs": "3d1c87f45ab514d65dd3e64937d5a471f7671910e3a9ff0da84044dce9092193",
+    "harness/server-reference/src/service_team_types.rs": "5d64d3778fc8bcb075d57eaf8658eb050262f7904dcd2fe4e6e4568be8675083",
+    "harness/server-reference/src/service_team_types_tests.rs": "7349babfd276967304c7ad3bd34004eba2f72b7f7f6b3dcd96bf1e132f774144",
+    "harness/server-reference/tests/service_v2.rs": "293f2b1c6d3fe2452612eb3934044f72d414a02c009868051c7b729063ecc9e5",
+    "harness/store-postgres/src/service_catalog.rs": "bafdffe81239dc6bc80851c0de5a9b3ad158a5f2e3e2b74618bb118133099a54",
+    "harness/store-postgres/src/service_team_placements.rs": "acb96c7fe3c9d4161f77c39852350a561cbcc2a26d2c2c2e20389769c6bcbcdd",
+    "harness/store-postgres/src/service_team_types.rs": "933193d804f6bf79d92b7fb03ce742e8f9ccce1234e9bf7f8e021e0a59e9005f",
+    "harness/typescript-sdk/README.md": "766bcd24e21a1289c239e7ba2fbafcf5f231b1117c27edce551606ac5ffbdce0",
+    "harness/typescript-sdk/src/service.ts": "4313fbdc564621e09813725ca934644d39ca4f8ae8d7144d96d7bef70a5e37ef",
+    "harness/typescript-sdk/test/service-v2-live.mjs": "e2514f05e590ceac9f072068fe6e38401ddd4b0a5e5a353531d3974d82f22d10",
+    "harness/typescript-sdk/test/service.test.mjs": "80a5bdad49c2873c0ed25d55c7a50b24674bef74bcf7b1e40279dc5d3efe0933",
+    "harness/typescript-sdk/test/team-placement.test.mjs": "00f084b1ad80ecd0675c7c8dc09d11078c6e1e541071f67f8f4d6e0567d64d03",
+    "docs/harness/OPENSHELL-GIT-ACCESS.md": "bc9a1066f7ac2dcb22f44e815f3e4e3887e877b4a102e7cdea766cb960a752e0",
+    "harness/server-reference/src/git_access.rs": "e9ed121525274a29e1dd5b8f6a80d8e305f1bba0a7d193da458cde9b2c19c69c",
+    "harness/server-reference/tests/support/service_git.rs": "5e81d8ee23eacb2cc6eaac9b0dcf49298228e4d438e5bc82d10843cf1d8a36ff"
+  },
+  "runner_image": "sha256:adc893f86434b5a1102a325a95e6ffab2df4d7b333d7b3664b73787b0829fd44",
+  "binary_sha256": {
+    "harness/target/debug/openworker-server-reference": "0988cf1f2f48da7e6e497dfae3d48a99cf6bce8921487abdb7c19e09d3bc1bf6",
+    "openworker": "3b113245d140b272514a90bf1de29496bd5b4b9a52f401fb59f57bc69e851eb4"
+  },
+  "tests": {
+    "runtime_library": 81,
+    "service_library_postgres": 42,
+    "linux": 57,
+    "typescript_service": 10,
+    "typescript_placement": 3,
+    "helm": 10,
+    "local_config": 4,
+    "strict_all_target_clippy": "passed",
+    "combined_service_openshell": {
+      "passed": true,
+      "seconds": 551.66,
+      "note": "Default combined suite, before additional shared-member test assertion; product code unchanged."
+    },
+    "focused_service_openshell": {
+      "passed": true,
+      "seconds": 296.55,
+      "note": "Current source includes added shared-member fetch assertion."
+    }
+  },
+  "coverage": [
+    "SDK clone/fetch through inspected TLS and placeholder-only helper",
+    "read-only push denied",
+    "explicit write-profile publication to synthetic Git remote",
+    "different-grant child rejected with 403 before team creation",
+    "shared environment credential capability",
+    "independent same-grant child",
+    "private dynamic credential-free child",
+    "worker restart and original-session fetch",
+    "TypeScript profile registration and session resume",
+    "original provider, profile and nonsecret configuration pin",
+    "unknown external action never automatically replayed"
+  ],
+  "upstream": {
+    "base": "b98210eb0b357c808690e7976b54de99ee966037",
+    "master_unchanged": true,
+    "receive_pack": 3,
+    "published_branches": [
+      "agents/sdk-env_0f87e2c390904e2bbf9e763c4b3095e2",
+      "agents/sdk-env_d40c14d923174c559a2b7d257fb43993",
+      "agents/sdk-env_f165dbe8aa4f4b5ebb005cc451bf050f"
+    ]
+  },
+  "cleanup": {
+    "all_owned_sandboxes_deleted": true,
+    "synthetic_providers_profiles_removed": true,
+    "isolated_helm_release_namespace_removed": true,
+    "own_port_forward_stopped": true,
+    "existing_shared_gateway_preserved": true,
+    "historical_unrelated_schema_retained": true
+  },
+  "observations": [
+    "Two early physical attempts failed test setup (missing policy, then team created after lead first turn); corrected without weakening product checks.",
+    "Linux qualification exposed inherited-FD edit-lock race; explicit unlock-on-drop and deterministic duplicate-FD regression added.",
+    "Provider policy/config changes invalidate pins; secret rotation does not change the policy pin.",
+    "Shared sandbox credential capability is not private to an individual agent."
+  ],
+  "limits": [
+    "Local synthetic Git remote only; no live GitHub write or cloud resources.",
+    "No external OAuth refresh tested; native expiry/restored-validity qualification is recorded separately.",
+    "Trusted publisher and remaining C4/C7 work remain separate milestones."
+  ]
+}

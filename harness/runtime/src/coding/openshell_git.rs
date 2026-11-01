@@ -5,6 +5,60 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Trusted application configuration. No credential value is stored here.
+/// Pinning is explicit setup, never inferred from a model-supplied server name.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderPin {
+    pub name: String,
+    pub provider_id: String,
+    pub profile_id: String,
+    pub profile_workspace: String,
+    pub profile_digest: String,
+    /// None means the original provider has empty non-secret configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_digest: Option<String>,
+}
+impl ProviderPin {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.configuration_digest
+                .as_ref()
+                .is_none_or(|d| d.len() == 64
+                    && d.bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))),
+            "Invalid provider configuration digest"
+        );
+        for id in [&self.name, &self.provider_id, &self.profile_id] {
+            anyhow::ensure!(
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+                "Invalid pinned credential provider identity"
+            );
+        }
+        anyhow::ensure!(
+            self.profile_workspace.len() <= 128
+                && self
+                    .profile_workspace
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+            "Invalid provider profile workspace"
+        );
+        anyhow::ensure!(
+            self.profile_digest.len() == 64
+                && self
+                    .profile_digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "Credential provider profile digest required"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {

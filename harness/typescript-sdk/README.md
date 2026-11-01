@@ -8,6 +8,10 @@ dependency. Python/Desktop remains separate.
 
 ## Desktop QuickStart
 
+For service deployments, [Git access through OpenShell](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+covers `RuntimeProfile.gitAccess` and `runtimeProfileGrants(profile)`. These select
+operator-installed grants without passing Git credentials through the SDK.
+
 For server/container coding agents, see [coding tools and unattended sessions](../../docs/harness/CODING-TOOLS.md).
 `autoSkipQuestions` is independent of `approvals`; select `coding.*` tools explicitly.
 

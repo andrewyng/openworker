@@ -151,6 +151,9 @@ export function serviceConfig(c, id) {
       tls_server_name: c.openshell.tls_server_name,
       workspace: c.openshell.workspace ?? "default",
       image: c.openshell.image,
+      ...(c.openshell.git_grants === undefined ? {} : {
+        git_grants: structuredClone(c.openshell.git_grants),
+      }),
     },
   };
 }

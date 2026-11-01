@@ -14,6 +14,8 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
 };
+#[path = "support/service_git.rs"]
+mod git;
 const BIN: &str = env!("CARGO_BIN_EXE_openworker-server-reference");
 async fn api(config: &Path, node: &str) -> (Child, String) {
     let mut child = Command::new(BIN)
@@ -136,6 +138,11 @@ async fn qualify() {
     .unwrap();
 
     let mut value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    let git_config = git::configure(&mut value).await;
+    assert!(
+        !std::env::var("OW_GIT_ONLY").is_ok_and(|v| v == "true") || git_config.is_some(),
+        "Git-only qualification requires the local fixture provider"
+    );
     let artifact_root = root.path().join("artifacts");
     std::fs::create_dir(&artifact_root).unwrap();
     value["artifacts"] = json!({"kind":"filesystem","root":artifact_root,"deployment":"coding-handoff-test","shared_durable":true});
@@ -189,6 +196,12 @@ async fn qualify() {
         .activate_runtime_profile(&small.id, None, "small-activate")
         .await
         .unwrap();
+    if let Some(g) = &git_config {
+        git::register(&admin, &g.profile).await;
+        if let Some(p) = &g.write_profile {
+            git::register(&admin, p).await;
+        }
+    }
     for (id, tools) in [
         (
             "coder@1",
@@ -205,7 +218,7 @@ async fn qualify() {
             vec!["read_file", "run_shell", "git_status", "git_log"],
         ),
     ] {
-        let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":["team@1","small@1"],"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
+        let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":if git_config.as_ref().is_some_and(|g|g.write_profile.is_some()){vec!["team@1","small@1","git@1","git-write@1"]}else if git_config.is_some(){vec!["team@1","small@1","git@1"]}else{vec!["team@1","small@1"]},"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
         admin
             .deploy_agent(&release, &format!("deploy-{id}"))
             .await
@@ -360,6 +373,7 @@ async fn qualify() {
         let env = service.environment(&environment_id).await.unwrap();
         assert_eq!(env["runtimeProfile"], "team@1");
         assert_eq!(env["principal"], "alice");
+        if !std::env::var("OW_GIT_ONLY").is_ok_and(|v|v=="true") {
         // Private dynamic types reuse this original sandbox. Two independent
         // controllers race deterministic compilation; a replacement worker must
         // reconstruct the same approved runtime before the next child can run.
@@ -573,6 +587,10 @@ async fn qualify() {
         let read=preset_lead.send(&plan("read_file",json!({"path":format!("{}/proof.txt",child["workspace"]["path"].as_str().unwrap())})),Some("read-preset-proof")).await.unwrap();assert_eq!(read.result().await.unwrap().status,"completed");
         let evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",preset_lead.id()),None,None).await.unwrap();assert!(evidence["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="read_file" && e.to_string().contains("preset-scoped change")));
         eprintln!("PASS versioned coding preset releases, RuntimeProfile compatibility and automatically scoped service builder worktree");
+        }
+        let git_reference = if let Some(g) = &git_config {
+            Some(git::qualify(&service, &coder, g, &path, &mut worker).await)
+        } else { None };
         let status = Command::new("node")
             .arg(
                 Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -580,6 +598,10 @@ async fn qualify() {
             )
             .env("OW_SERVICE_URL", &url_a)
             .env("OW_SERVICE_TOKEN", &user_token)
+            .env("OW_GIT_SERVICE_REFERENCE", serde_json::to_string(&git_reference).unwrap())
+            .env("OW_GIT_HOST", git_config.as_ref().map(|g|g.host.as_str()).unwrap_or(""))
+            .env("OW_GIT_PROFILE", serde_json::to_string(&git_config.as_ref().map(|g| &g.profile)).unwrap())
+            .env("OW_GIT_ADMIN_TOKEN", if git_config.is_some() {token.as_str()} else {""})
             .env(
                 "OW_SERVICE_REFERENCE",
                 serde_json::to_string(&reference).unwrap(),

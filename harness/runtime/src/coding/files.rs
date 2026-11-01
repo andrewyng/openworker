@@ -6,7 +6,16 @@ use std::{
 };
 const MAX_FILE: u64 = 1024 * 1024;
 const LOCK: &str = ".openworker-coding.lock";
-pub(super) fn edit_lock(root: &Path) -> Result<std::fs::File> {
+pub(super) struct EditLock(std::fs::File);
+impl Drop for EditLock {
+    fn drop(&mut self) {
+        // Closing this descriptor alone can leave an OFD lock held by an
+        // unrelated concurrently forked child until its CLOEXEC/exit. Release
+        // explicitly so the next edit does not spuriously see a busy lock.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+pub(super) fn edit_lock(root: &Path) -> Result<EditLock> {
     let path = crate::runner::path(root, LOCK)?;
     if let Ok(meta) = path.symlink_metadata() {
         ensure!(
@@ -36,7 +45,26 @@ pub(super) fn edit_lock(root: &Path) -> Result<std::fs::File> {
     );
     fs2::FileExt::try_lock_exclusive(&file)
         .context("Another coding edit is in progress; retry after reading the file")?;
-    Ok(file)
+    Ok(EditLock(file))
+}
+#[cfg(all(test, unix))]
+mod lock_tests {
+    use super::*;
+    #[test]
+    fn completed_edit_unlocks_while_a_fork_inherited_descriptor_still_exists() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = edit_lock(root.path()).unwrap();
+        assert!(edit_lock(root.path()).is_err());
+        // dup shares the open file description exactly as fork does. No sleeps,
+        // actual fork, child cleanup or scheduler luck is needed for this case.
+        let inherited = owner.0.try_clone().unwrap();
+        drop(owner);
+        let next = edit_lock(root.path()).unwrap();
+        drop(inherited);
+        assert!(edit_lock(root.path()).is_err());
+        drop(next);
+        assert!(edit_lock(root.path()).is_ok());
+    }
 }
 pub(super) fn text(path: &Path) -> Result<String> {
     String::from_utf8(crate::bundle::read_limited(path, MAX_FILE as usize)?)

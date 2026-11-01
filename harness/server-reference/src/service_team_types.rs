@@ -121,13 +121,10 @@ pub(crate) fn placed_config(
     ensure!(
         profile.activated
             && profile.installation == team.release.installation
-            && source.runtime_profiles.contains(&profile.id)
-            && target.cpu <= original.cpu
-            && target.memory_mb <= original.memory_mb
-            && target.approval_mode == original.approval_mode
-            && target.auto_skip_questions == original.auto_skip_questions,
+            && source.runtime_profiles.contains(&profile.id),
         "Target profile is unavailable or exceeds the lead"
     );
+    target.require_delegatable_from(&original)?;
     if profile.id != team.profile.id {
         let g = team
             .document
@@ -136,16 +133,11 @@ pub(crate) fn placed_config(
             .and_then(|c| c.ceiling.profiles.get(&profile.id))
             .ok_or_else(|| anyhow::anyhow!("Target profile not delegated"))?;
         ensure!(
-            g.files.is_empty()
-                && g.network.is_empty()
-                && g.credentials.is_empty()
-                && g.cpu == target.cpu
-                && g.memory_mb == target.memory_mb,
+            g == &target.delegated_grants(),
             "Unsupported target grants/resources"
         );
     }
-    c.openshell.cpu = Some(target.cpu);
-    c.openshell.memory_mb = Some(target.memory_mb);
+    c = c.profile_config(&target)?;
     Ok(c)
 }
 /// Bounded pages allow other service teams to progress. Restart repeats only

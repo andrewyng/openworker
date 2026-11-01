@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {sandboxWire,serviceDelegationWire} from "../dist/team-placement.js";
+import {runtimeProfileGrants} from "../dist/service.js";
+test("Git runtime profile helper preserves exact named grant and never invents authority",()=>{
+  const profile={id:"git@1",provider:"openshell",cpu:1,memoryMB:512,sharing:"shared",gitAccess:"github-read@1"};
+  const grants=runtimeProfileGrants(profile);
+  assert.deepEqual(grants,{files:[],network:["git:github-read@1"],credentials:["git:github-read@1"],cpu:1,memoryMB:512});
+  assert.deepEqual(sandboxWire({mode:"new",profile:profile.id,...grants}),{mode:"new",profile:"git@1",files:[],network:["git:github-read@1"],credentials:["git:github-read@1"],cpu:1,memory_mb:512});
+  grants.network.push("changed");assert.deepEqual(runtimeProfileGrants(profile).network,["git:github-read@1"]);
+  assert.deepEqual(runtimeProfileGrants({...profile,gitAccess:undefined}).credentials,[]);
+  assert.throws(()=>runtimeProfileGrants({...profile,gitAccess:"raw-key"}),/versioned/);
+  assert.throws(()=>runtimeProfileGrants({...profile,gitAccess:null}),/versioned/);
+});
 test("sandbox selection serializes requested scope without inventing credentials or endpoints",()=>{
   assert.equal(sandboxWire(undefined),undefined);
   assert.deepEqual(sandboxWire({mode:"team"}),{mode:"team"});

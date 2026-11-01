@@ -43,6 +43,7 @@ pub struct Runtime {
     pub telemetry: Telemetry,
     pub store: crate::store::SharedStore,
     environments: Option<Arc<crate::environment::Registry>>,
+    coding_git: Option<(String, crate::coding::openshell_git::Settings)>,
     pub bundle: Bundle,
     pub model: Model,
     pub connections: Arc<crate::connections::Manager>,
@@ -259,6 +260,7 @@ impl Runtime {
             telemetry,
             store: Arc::new(Mutex::new(store)),
             environments: None,
+            coding_git: None,
             bundle,
             model,
             connections,
@@ -328,6 +330,28 @@ impl Runtime {
             bail!("Remote providers require an unused OpenShell runtime");
         }
         rt.environments = Some(registry);
+        Ok(())
+    }
+    /// Trusted bootstrap only. The provider must include this scope in its
+    /// immutable profile identity. Bundle identity stays unchanged so one
+    /// approved type can run in credential-free or explicitly granted profiles.
+    pub fn configure_coding_git(
+        runtime: &mut Arc<Self>,
+        spec: &crate::environment::Spec,
+        settings: crate::coding::openshell_git::Settings,
+    ) -> Result<()> {
+        settings.validate()?;
+        spec.validate()?;
+        let rt = Arc::get_mut(runtime).context("Configure Git before sharing the runtime")?;
+        anyhow::ensure!(
+            rt.coding_git.is_none() && rt.backend == Backend::Openshell,
+            "Git requires an unused OpenShell runtime"
+        );
+        rt.environments
+            .as_ref()
+            .context("Git requires a registered remote environment")?
+            .provider(spec)?;
+        rt.coding_git = Some((spec.profile_digest.clone(), settings));
         Ok(())
     }
     fn session_model(&self, s: &Session) -> Model {
@@ -1820,6 +1844,23 @@ impl Runtime {
         if server.program == "$OPENWORKER"
             && server.args == ["mcp-coding", "--workspace", "$WORKSPACE"]
         {
+            if let Some((profile, settings)) = &self.coding_git {
+                anyhow::ensure!(
+                    backend == Backend::Openshell
+                        && s.environment
+                            .as_ref()
+                            .is_some_and(|b| &b.spec.profile_digest == profile),
+                    "Git launcher does not match the original environment profile"
+                );
+                argv.extend([
+                    "--openshell-git".into(),
+                    "--openshell-git-host".into(),
+                    settings.host.clone(),
+                ]);
+                for repository in &settings.repositories {
+                    argv.extend(["--openshell-git-repository".into(), repository.clone()]);
+                }
+            }
             if let Some(receipt) = &s.managed_workspace {
                 argv.extend([
                     "--workspace-receipt".into(),
