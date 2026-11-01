@@ -513,7 +513,7 @@ async fn qualify() {
         for (id,env) in [("builder",aenv),("verifier",benv)] {
             let receiver=openworker_runtime::coding_handoff::transfer::Transfer {request:openworker_runtime::coding_handoff::Import {operation_id:format!("source-import-{id}"),scope_digest:openworker_runtime::bundle::digest(format!("{}:{id}",source.id).as_bytes()),manifest_digest:source_manifest.digest().unwrap(),directory:"artifact-source".into()},manifest:source_manifest.clone(),bundle:exported.clone()};
             let binding=serde_json::from_value(env.clone()).unwrap();
-            let mut channel=ap.attach(binding,format!("handoff-{id}"),vec!["/opt/openworker/openworker".into(),"workspace-stdio".into(),"--root".into(),"/sandbox".into()]).await.unwrap();
+            let mut channel=ap.attach(binding,uuid::Uuid::new_v4().to_string(),vec!["/opt/openworker/openworker".into(),"workspace-stdio".into(),"--root".into(),"/sandbox".into()]).await.unwrap();
             channel.request("handoff/prepare",json!(receiver)).await.unwrap();
             for (index,chunk) in bytes.chunks(openworker_runtime::coding_handoff::transfer::CHUNK).enumerate() {
                 channel.request("handoff/write",json!({"handle":receiver.handle(),"offset":index*openworker_runtime::coding_handoff::transfer::CHUNK,"data":STANDARD.encode(chunk)})).await.unwrap();

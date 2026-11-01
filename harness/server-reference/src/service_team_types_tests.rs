@@ -690,6 +690,7 @@ async fn source_setup_outbox_fences_export_and_artifact_provenance_without_fake_
     assert!(f.user.claim_team_source(&installed).is_err());
     let first = f.store.claim_team_source(&installed).unwrap().unwrap();
     assert!(first.dispatch);
+    assert!(!uuid::Uuid::parse_str(&first.claim).unwrap().is_nil());
     assert_eq!(first.intent, intent);
     assert!(f.store.claim_team_source(&installed).unwrap().is_none());
     let bytes = b"synthetic bytes: catalog authority, not Git integrity fixture";

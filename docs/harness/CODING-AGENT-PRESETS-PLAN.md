@@ -623,3 +623,22 @@ isolated preset/default configuration, durable child import admission and
 model-requested submission/integration APIs remain C4 work; source staging alone
 is not the complete isolated coding-team feature. Canonical stays at verified C3
 until the full C4 milestone is qualified.
+
+### C4 journal — first physical source-staging attempt
+
+The expanded OpenShell run passed existing private-type, restart, isolated-placement
+and shared-worktree checks, then timed out waiting for the new source artifact
+(310.09 seconds total). Source setup retained its original export intent and did
+not create a replacement. Investigation found that the new controller used a
+prefixed claim ID as an attachment launch ID; the pinned OpenShell transport
+requires a non-nil UUID before opening the connection. Source claims and explicit
+receiver-test attachments now use UUIDs, with a storage regression assertion.
+The four source tests pass again (0.79 seconds).
+
+Cleanup confirmed only the retained gateway remains and no service/recording test
+schemas remain. This was a failed qualification, not C4 completion. The matching
+Linux runner already passed 38 tests and is available under the verified local
+OCI index `sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e`;
+its runtime code is unchanged by this trusted-controller-only UUID correction.
+Rerun the fresh physical workflow before recording successful source/receiver
+qualification or merging any C4 milestone.
