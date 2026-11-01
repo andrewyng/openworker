@@ -26,9 +26,12 @@ use std::sync::Arc;
 
 pub fn installation(config: &Config) -> Result<String> {
     let base = Bundle::load(&config.bundle)?;
-    Ok(digest(&serde_json::to_vec(
-        &json!({"bundle":base.digest,"runner":digest(&std::fs::read(&config.runner)?),"gateway":config.openshell.endpoint,"gatewayIdentity":config.openshell.identity,"workspace":config.openshell.workspace,"image":config.openshell.image}),
-    )?))
+    config.validate_git_grants()?;
+    let mut identity = json!({"bundle":base.digest,"runner":digest(&std::fs::read(&config.runner)?),"gateway":config.openshell.endpoint,"gatewayIdentity":config.openshell.identity,"workspace":config.openshell.workspace,"image":config.openshell.image});
+    if !config.openshell.git_grants.is_empty() {
+        identity["gitGrants"] = json!(config.openshell.git_grants);
+    }
+    Ok(digest(&serde_json::to_vec(&identity)?))
 }
 pub fn provider(
     config: &Config,
@@ -41,9 +44,7 @@ pub fn provider(
     let p: Profile =
         serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
     p.validate()?;
-    let mut c = config.clone();
-    c.openshell.cpu = Some(p.cpu);
-    c.openshell.memory_mb = Some(p.memory_mb);
+    let c = config.profile_config(&p)?;
     c.provider()
 }
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
@@ -93,7 +94,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     );
     let tools_text = serde_json::to_string(&tools)?;
     let dir = publish_bundle(config, &release.digest, &base, &manifest_text, &tools_text)?;
-    let mut c = config.clone();
+    let mut c = config.profile_config(&p)?;
     c.bundle = dir;
     c.openshell.cpu = Some(p.cpu);
     c.openshell.memory_mb = Some(p.memory_mb);
@@ -148,6 +149,7 @@ pub(crate) async fn put_profile(
     Json(p): Json<Profile>,
 ) -> Result<Json<Value>, ApiError> {
     p.validate()?;
+    app.config.profile_config(&p)?;
     Ok(Json(json!(app.store.catalog_put(
         &crate::service::key(&app, &headers, "profile")?,
         "profile",

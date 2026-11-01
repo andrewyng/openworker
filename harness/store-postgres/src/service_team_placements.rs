@@ -59,7 +59,6 @@ impl PostgresStore {
             ensure!(doc.roster.instance(&agent).is_some_and(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved),crate::SubmissionError::Conflict);
             let choice=doc.sandbox_choices.get(&agent).context("Missing original sandbox choice")?;
             let Sandbox::New{profile,files,network,credentials,cpu,memory_mb}=choice else{anyhow::bail!("A new environment requires a New choice")};
-            ensure!(files.is_empty() && network.is_empty() && credentials.is_empty(),"Provider cannot enforce requested file/network/credential grants");
             let catalog=doc.type_catalog.as_ref().context("Placement is not delegated")?;catalog.check_scope(&lead)?;choice.validate(&catalog.ceiling)?;
             let identity=crate::agent_team::workspace_authority(&mut tx,&lead,&doc,&agent)?;
             let origin=tx.query_one("SELECT principal,project,release_id,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'",&[&lead.id])?;
@@ -70,6 +69,7 @@ impl PostgresStore {
             let release:Release=serde_json::from_value(source.definition)?;
             let saved=crate::service_catalog::entry(&mut tx,"profile",profile)?;
             let p:Profile=serde_json::from_value(saved.definition.clone())?;p.validate()?;
+            ensure!(openworker_runtime::team_definition::Grants{files:files.clone(),network:network.clone(),credentials:credentials.clone(),cpu:*cpu,memory_mb:*memory_mb} == p.delegated_grants(),"Requested grants must match the selected profile exactly");
             ensure!(saved.id==*profile && saved.id==target.id && saved.digest==target.digest && saved.activated && saved.installation==source.installation && release.runtime_profiles.contains(profile),"Target profile unavailable, changed, aliased or not delegated by the release");
             crate::service_catalog::allowed(&identity,&p.allowed_principals)?;
             ensure!(*cpu==p.cpu && *memory_mb==p.memory_mb && p.cpu<=source_p.cpu && p.memory_mb<=source_p.memory_mb,"Requested resources must match a bounded activated RuntimeProfile");
@@ -215,13 +215,7 @@ pub(crate) fn target_authority(
         "Target profile is not available to source release"
     );
     crate::service_catalog::allowed(&identity, &p.allowed_principals)?;
-    ensure!(
-        p.cpu <= original.cpu
-            && p.memory_mb <= original.memory_mb
-            && p.approval_mode == original.approval_mode
-            && p.auto_skip_questions == original.auto_skip_questions,
-        "Target profile exceeds lead policy"
-    );
+    p.require_delegatable_from(&original)?;
     if p.id != original.id {
         let grants = doc
             .type_catalog
@@ -229,12 +223,8 @@ pub(crate) fn target_authority(
             .and_then(|c| c.ceiling.profiles.get(&p.id))
             .context("Target profile is not delegated")?;
         ensure!(
-            grants.files.is_empty()
-                && grants.network.is_empty()
-                && grants.credentials.is_empty()
-                && grants.cpu == p.cpu
-                && grants.memory_mb == p.memory_mb,
-            "Target profile does not match delegated resources"
+            grants == &p.delegated_grants(),
+            "Target profile does not match delegated grants/resources"
         );
     }
     let kind = openworker_runtime::agent_team::runtime_type(

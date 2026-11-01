@@ -8,6 +8,7 @@ use std::{path::PathBuf, sync::Arc};
 mod agent_teams;
 mod artifacts;
 mod authorization;
+pub mod git_access;
 pub mod http;
 pub mod kubernetes;
 pub mod management;
@@ -143,6 +144,11 @@ impl ArtifactConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenShellConfig {
+    /// Operator-owned pins/scopes. Definitions can select names only.
+    #[serde(default)]
+    pub git_grants: std::collections::BTreeMap<String, git_access::Grant>,
+    #[serde(skip)]
+    pub selected_git_grant: Option<String>,
     pub cpu: Option<u16>,
     pub memory_mb: Option<u32>,
     pub identity: String,
@@ -172,20 +178,24 @@ impl Config {
     pub fn provider(&self) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
         self.require_execution()?;
         let c = &self.openshell;
-        Ok(Arc::new(
-            openworker_runtime::environment_openshell::OpenShell::new(
-                "openshell-k8s".into(),
-                c.identity.clone(),
-                openworker_runtime::sandbox::ExecConnectionConfig {
-                    endpoint: c.endpoint.clone(),
-                    certificates: c.certificates.clone(),
-                    tls_server_name: c.tls_server_name.clone(),
-                    workspace: c.workspace.clone(),
-                },
-                c.image.clone(),
-            )?
-            .with_resources(c.cpu.unwrap_or(1), c.memory_mb.unwrap_or(512))?,
-        ))
+        let mut provider = openworker_runtime::environment_openshell::OpenShell::new(
+            "openshell-k8s".into(),
+            c.identity.clone(),
+            openworker_runtime::sandbox::ExecConnectionConfig {
+                endpoint: c.endpoint.clone(),
+                certificates: c.certificates.clone(),
+                tls_server_name: c.tls_server_name.clone(),
+                workspace: c.workspace.clone(),
+            },
+            c.image.clone(),
+        )?
+        .with_resources(c.cpu.unwrap_or(1), c.memory_mb.unwrap_or(512))?;
+        if let Some(grant) = self.git_grant()? {
+            provider = provider
+                .with_credential_provider(grant.provider.clone())?
+                .with_git_scope(grant.scope.clone())?;
+        }
+        Ok(Arc::new(provider))
     }
     #[cfg(not(windows))]
     pub fn runtime(&self, node: &str, store: PostgresStore) -> Result<Arc<Runtime>> {
@@ -253,8 +263,16 @@ impl Config {
                 }
             }
             let mut registry = openworker_runtime::environment::Registry::default();
-            registry.register(self.provider()?)?;
+            let provider = self.provider()?;
+            let spec = provider.spec(
+                openworker_runtime::environment::Sharing::Exclusive,
+                openworker_runtime::environment::Management::Harness,
+            );
+            registry.register(provider)?;
             Runtime::configure_environments(&mut rt, Arc::new(registry))?;
+            if let Some(grant) = self.git_grant()? {
+                Runtime::configure_coding_git(&mut rt, &spec, grant.scope.clone())?;
+            }
         }
         Ok(rt)
     }

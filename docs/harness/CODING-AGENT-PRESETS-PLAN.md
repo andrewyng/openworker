@@ -1,6 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: C1–C3 verified; continuing the approved C4–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1–C3 and C6 verified; continuing the approved C4/C5/C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -38,7 +38,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | In progress |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
-| C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Native plumbing qualified; service/SDK wiring pending |
+| C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Verified: named grants, SDKs and local OpenShell |
 | C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
 
 Execute in this numbered order. C3 builds on generic team placement rather than
@@ -944,3 +944,113 @@ connection's exact current reference, with neither reference in the result. This
 catches stale manager caching even if an upstream temporarily accepts an older
 credential. The full **55-case disposable Linux set passed again** after this
 test change; no runtime behavior was changed by that test refinement.
+
+### C6 service/SDK wiring — 2026-10-31
+
+Continue the user-approved sequence with a named, operator-installed Git grant.
+The service configuration owns the original provider/profile pin and exact Git
+helper scope; a RuntimeProfile carries only its versioned grant name. Registration,
+admission, worker launch and original-resource reconciliation select the same
+immutable grant. Include the installed grant registry in installation identity;
+changing it invalidates existing definitions rather than silently changing access.
+
+Keep bundle/tool definitions unchanged. Trusted launch configuration adds Git
+helper flags only to the installed coding runner, with settings bound to the
+selected environment profile identity. This preserves team-private type identity
+across placements and avoids accidentally inheriting a lead's launcher flags when
+a child selects a credential-free profile.
+
+Initial delegation allows the exact same named grant or no Git access. Different
+credential-provider grants reject; no policy-subset inference from descriptive
+labels. Existing file grants remain unsupported. New sandbox requests must match
+the selected profile's exact network/credential grant sets and resource limits.
+Rust and TypeScript expose the optional profile grant and a helper for deriving
+those delegation sets. No raw secret or model-controlled OpenShell provider name.
+
+Qualification will include fast registry/authority checks, real PostgreSQL ceiling
+and admission cases, SDK serialization, and a local service + worker + OpenShell
+Git run (including a credential-free child), followed by the existing regression.
+C4/C5/C7 remain in the approved sequence after C6 wiring is verified.
+
+C6 wiring checkpoint: named operator registry, optional RuntimeProfile `gitAccess`,
+Rust `delegated_grants()` / TypeScript `runtimeProfileGrants()`, exact placement
+sets and same-grant-or-none ceiling checks are implemented. Scope contributes to
+environment identity; installed registry contributes to deployment identity.
+Trusted runtime launch supplies Git flags without changing bundle/type identity.
+Local container config and Helm schema now preserve non-secret registry entries
+and reject inline credentials or a file-supplied selected-grant override.
+
+Validation so far: 41 complete service/PostgreSQL cases pass (4.09s), 3 TypeScript
+placement cases and 10 reference Helm cases pass, 4 local deployment-config cases
+pass, and strict all-target runtime/PostgreSQL/SDK/service Clippy passes. The Linux
+55-case fixture set passed after the first wiring changes. No cloud resources.
+
+The first extended physical run passed the existing C1–C4 scenarios and actual
+SDK-enabled Git clone/fetch plus read-only push denial, then failed because the
+new test omitted a required team `policy` field. Cleanup completed. Corrected the
+test, retaining the default full suite and adding an explicit `OW_GIT_ONLY=true`
+focused rerun mode that requires the local Git fixture. Do not count that failed
+run as a full C6 pass. A new physical run is active.
+
+Additional review found that non-secret OpenShell provider configuration can
+parameterize policy. The provider pin now includes an optional configuration
+hash (None requires empty configuration); credential maps remain undecoded and
+rotation is not part of the policy pin. Confirmed the map's wire field against
+upstream pinned v0.1.3 `datamodel.proto`, added a real protobuf decode/digest case,
+and all 7 native provider tests pass. This closes a config-change gap rather than
+silently accepting an altered original provider.
+
+The focused SDK/OpenShell run passed in 198.16s after moving team creation before
+its lead's first turn (the second failed attempt had violated that existing team
+lifecycle rule). Added a real PostgreSQL/API preparation case, which passes. A
+stronger focused run then passed in **228.39s**: read-only clone/fetch and push
+denial, explicit write-profile publication to the synthetic remote, forbidden
+cross-grant delegation with inspection before corrected setup, same-grant child,
+credential-free private child, worker restart, and TypeScript profile registration/
+resume/fetch. All owned sandboxes were deleted by the test. The remote recorded
+one successful receive-pack and only the new `agents/sdk-*` branch; base unchanged.
+
+Additional validation: 42 service/PostgreSQL cases pass (3.44s), 10 TypeScript
+service transport cases, 3 placement helpers, 10 Helm rendering/security cases and
+4 local configuration cases pass. Host runtime library passed all 80 cases before
+the lock guard refinement and all **81** afterward. All-target strict Clippy passes.
+Loopback TypeScript fixtures require the sandbox's normal network permission;
+they passed when rerun with it rather than changing test behavior.
+
+The final Linux run initially exposed an existing editing-lock race: closing the
+parent FD can leave its flock held by an unrelated concurrently forked child until
+exec/exit. Added an explicit unlock-on-drop guard and deterministic duplicated-FD
+regression (also checks the next owner remains protected). No timing sleeps or
+serial-test workaround. The complete Linux selection now passes **57 cases**,
+including the new lock test and provider configuration pin test (70.6s build/test
+step). Rebuilt the Git-enabled runner overlay from the descriptor-verified local
+base; no remote private-image pull or credential was required.
+
+Running the default **combined** C1–C4 plus C6 suite with read/write profiles and
+that latest digest-pinned Linux runner before closing the C6 checkpoint. The
+focused flag is unset in this run; do not confuse the focused pass with a combined
+pass. No cloud resources or paid models were used; host disk remains ~52 GiB free.
+A pre-existing unit-test schema dated 00:16 UTC was identified and retained; fresh
+service/recording schemas and test sandboxes were cleaned between attempts.
+
+
+C6 final qualification: the default combined C1–C4/C6 service suite passed in
+**551.66s** with the latest digest-pinned Linux ToolRunner. A further **296.55s**
+focused run passed after adding shared-member credential capability checks. It
+also covered independent same-grant and credential-free children, actual read-only
+Git denial, explicit write-profile publication, rejected cross-grant delegation,
+worker restart and Rust/TypeScript resume. A shared sandbox shares its credential
+capability; agent cwd isolation does not make that capability private.
+
+The synthetic remote recorded three authorized publications to distinct
+`agents/sdk-*` branches across successful read/write runs. Its original master
+commit was unchanged. No real GitHub token, paid model or cloud resource was used.
+The final Helm schema rerun passed all 10 cases. Sanitized evidence:
+[C6 service/SDK qualification](evidence/coding-openshell-git-service-c6-20261031.json).
+
+All test sandboxes were removed. Both synthetic provider/profile pairs, the
+isolated Helm release, namespace and own port-forward were removed. The existing
+shared gateway remains running. Historical pre-existing PostgreSQL unit schema
+was retained; this qualification's service/recording schemas were cleaned.
+C6 is verified on the feature branch; continue C4 submission workflow, C5 trusted
+publication and C7 combined qualification before merging the stacked feature.

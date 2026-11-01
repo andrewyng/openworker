@@ -72,18 +72,10 @@ pub(crate) fn validate_models(
             "Profile is not an immutable activated delegated profile"
         );
         ensure!(
-            grants.files.is_empty() && grants.network.is_empty() && grants.credentials.is_empty(),
-            "OpenShell placement does not implement named file/network/credential grants"
+            grants == &p.delegated_grants(),
+            "Delegated profile grants must match the activated profile"
         );
-        ensure!(
-            grants.cpu == p.cpu
-                && grants.memory_mb == p.memory_mb
-                && p.cpu <= original.cpu
-                && p.memory_mb <= original.memory_mb
-                && p.approval_mode == original.approval_mode
-                && p.auto_skip_questions == original.auto_skip_questions,
-            "Delegated profile exceeds the lead or changes approval/question behavior"
-        );
+        p.require_delegatable_from(&original)?;
     }
     ensure!(
         models.len() == d.models.len(),

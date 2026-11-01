@@ -25,12 +25,18 @@ pub struct Profile {
     pub approval_mode: openworker_runtime::permissions::Mode,
     #[serde(default)]
     pub auto_skip_questions: bool,
+    /// Versioned operator-installed grant, never a credential or model input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_access: Option<String>,
     #[serde(default)]
     pub allowed_principals: Vec<String>,
 }
 impl Profile {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        if let Some(grant) = &self.git_access {
+            revision(grant)?;
+        }
         ensure!(
             self.provider == "openshell",
             SubmissionError::InvalidRequest
@@ -40,6 +46,35 @@ impl Profile {
             SubmissionError::InvalidRequest
         );
         principals(&self.allowed_principals)
+    }
+    pub fn delegated_grants(&self) -> openworker_runtime::team_definition::Grants {
+        let named = self
+            .git_access
+            .iter()
+            .map(|id| format!("git:{id}"))
+            .collect::<std::collections::BTreeSet<_>>();
+        openworker_runtime::team_definition::Grants {
+            files: Default::default(),
+            network: named.clone(),
+            credentials: named,
+            cpu: self.cpu,
+            memory_mb: self.memory_mb,
+        }
+    }
+    /// Different credential grants cannot be assumed to be permission subsets.
+    /// A child may retain this exact grant or choose a credential-free profile.
+    pub fn require_delegatable_from(&self, lead: &Self) -> Result<()> {
+        self.validate()?;
+        lead.validate()?;
+        ensure!(
+            self.cpu <= lead.cpu
+                && self.memory_mb <= lead.memory_mb
+                && self.approval_mode == lead.approval_mode
+                && self.auto_skip_questions == lead.auto_skip_questions
+                && (self.git_access.is_none() || self.git_access == lead.git_access),
+            crate::auth::Error::Forbidden
+        );
+        Ok(())
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

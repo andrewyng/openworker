@@ -269,6 +269,17 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if self
+            .0
+            .downcast_ref::<crate::git_access::Unavailable>()
+            .is_some()
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"git_grant_unavailable"})),
+            )
+                .into_response();
+        }
         if let Some(error) = self.0.downcast_ref::<crate::recording_query::Error>() {
             use crate::recording_query::Error as E;
             let (status, code) = match error {
@@ -567,6 +578,12 @@ mod tests {
     use super::*;
     #[test]
     fn permanent_control_errors_are_not_service_outages() {
+        assert_eq!(
+            ApiError(crate::git_access::Unavailable.into())
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
         for (error, status) in [
             (SubmissionError::InvalidRequest, StatusCode::BAD_REQUEST),
             (SubmissionError::NotFound, StatusCode::NOT_FOUND),

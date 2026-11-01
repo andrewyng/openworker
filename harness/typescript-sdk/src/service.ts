@@ -31,6 +31,19 @@ export interface RuntimeProfile {
   allowedPrincipals?: string[];
   approvalMode?: "ask" | "auto-approve" | "bypass";
   autoSkipQuestions?: boolean;
+  /** Versioned operator-installed OpenShell Git grant; never a token. */
+  gitAccess?: string;
+}
+/** Exact named sets for a New sandbox or delegation ceiling. Rust validates
+ * availability, approval and the lead's actual authority on every admission. */
+export function runtimeProfileGrants(profile: RuntimeProfile): {
+  files: string[]; network: string[]; credentials: string[]; cpu: number; memoryMB: number;
+} {
+  if (profile.gitAccess !== undefined &&
+      (typeof profile.gitAccess !== "string" || !/^[\w.-]+@[\w.-]+$/.test(profile.gitAccess)))
+    throw new Error("Git access requires a versioned operator grant name");
+  const named = profile.gitAccess === undefined ? [] : [`git:${profile.gitAccess}`];
+  return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
 export interface AgentRelease {
   limits?: TurnLimits;

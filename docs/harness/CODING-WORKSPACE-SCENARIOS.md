@@ -22,7 +22,7 @@ Related: [SDK coding guide](CODING-AGENTS.md),
 | Team sharing one sandbox | Separate linked worktrees of an existing repository | Lead inspects local commits | Not needed for sharing work | C1–C3 verified |
 | Team with independent sandboxes | Harness transfers a pinned Git bundle; ToolRunner creates each checkout | Submitted bundle → verifier → lead | Not needed for source transfer or artifact handoff | Initial transfer/admission verified; full submission workflow is C4 in progress |
 | Trusted GitHub checkout/publication | Trusted broker fetches source or publishes a submitted artifact | Scoped branch publication with an exact commit | Not needed in the child | C5 upcoming |
-| Git CLI inside a sandbox | Git uses HTTPS through OpenShell with an attached credential provider | Explicitly permitted fetch/push | Required for these direct GitHub requests | Native adapter/ToolRunner qualified locally; public service/SDK wiring remains C6 work |
+| Git CLI inside a sandbox | Git uses HTTPS through OpenShell with an attached credential provider | Explicitly permitted fetch/push | Required for these direct GitHub requests | C6 native + RuntimeProfile/Rust/TypeScript service path qualified locally |
 
 The recommended team default is one shared sandbox with separate builder
 worktrees. Choose independent sandboxes when workers need separate execution
@@ -144,7 +144,7 @@ B. Trusted GitHub broker                              C5 upcoming
                                          |
                                          +----> Pinned source bundle
 
-C. Direct Git HTTPS in source sandbox                 Native path qualified; public wiring C6
+C. Direct Git HTTPS in source sandbox                 C6 native + service SDK qualified
    GitHub <---- OpenShell proxy <---- Git + placeholder
                  real token                  |
                                              +----> Local repo at commit A
@@ -218,12 +218,15 @@ workflow into sandbox-CLI mode or inject a token as a fallback.
 
 ## 6. Direct Git CLI through OpenShell placeholders
 
+Configuration and SDK examples: [Git RuntimeProfiles](OPENSHELL-GIT-ACCESS.md).
+
 Useful when the application deliberately permits Git to contact GitHub from
 inside a sandbox. For the OpenShell adapter, prefer its endpoint-bound credential
 placeholders instead of handing the real token to ToolRunner. This mechanism is
 documented by OpenShell. Our native adapter and ToolRunner have been qualified
-through a local HTTPS Git remote; the public RuntimeProfile/SDK configuration and
-delegation wiring remain C6 work. `gh` and Git-over-SSH are not qualified here.
+through a local HTTPS Git remote. RuntimeProfiles select named operator grants;
+Rust/TypeScript service SDKs and bounded child delegation are qualified as well.
+`gh` and Git-over-SSH are not qualified here.
 
 ```text
 Trusted setup / credential owner

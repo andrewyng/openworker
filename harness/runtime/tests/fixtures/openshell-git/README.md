@@ -7,7 +7,9 @@ orchestrator. The shipped harness and credential helper remain native Rust.
 
 The [test catalog](../../../../../docs/harness/CODING-AGENT-PRESETS-TESTING.md)
 explains the layers. The [journal](../../../../../docs/harness/CODING-AGENT-PRESETS-PLAN.md)
-records actual runs and the outstanding public service/SDK integration work.
+records actual native and public service/SDK runs.
+The [service guide](../../../../../docs/harness/OPENSHELL-GIT-ACCESS.md) explains
+operator grants, RuntimeProfiles and SDK setup.
 
 ## What is exercised
 
@@ -192,3 +194,27 @@ On disposable Linux, also run `--test openshell_git -- --include-ignored` with
 `OW_TEST_DISPOSABLE_LINUX=true`. It launches real Git/helper processes in direct
 and sandbox-owned-manager modes, checks default secret stripping and explicit
 placeholder-only opt-in. Never run that retained-manager test on a shared host.
+
+
+## Run the service/SDK qualification
+
+The ignored `openworker-server-reference` integration test `service_v2` uses the
+same isolated fixture and real Linux runner. Supply the existing `OW_PG_TEST_URL`
+and `OW_PROBE_{ENDPOINT,TLS_NAME,CERTS,RUNNER,IMAGE}` inputs, plus
+`OW_GIT_PROVIDER`, `OW_GIT_WRITE_PROVIDER` and `OW_GIT_HOST`. The two provider
+names must refer to the reviewed read and write profiles above. The test pins
+the original non-secret provider/profile identity and installs named service grants.
+
+```sh
+CARGO_INCREMENTAL=0 cargo test --locked --manifest-path harness/Cargo.toml \
+  -p openworker-server-reference --features openshell-test \
+  --test service_v2 -- --ignored --nocapture
+```
+
+Leave `OW_GIT_ONLY` unset for the combined regression. `OW_GIT_ONLY=true` selects
+focused Git/SDK and existing TypeScript service checks, and requires the Git
+fixture inputs. Neither result should be described as the other. This exercises
+same-sandbox credential sharing, independent same-grant/credential-free children,
+read-only push denial, separate authorized publication, cross-grant rejection,
+worker restart and TypeScript resume. The remote hook restricts test branches;
+this does not imply OpenShell parses branch names.

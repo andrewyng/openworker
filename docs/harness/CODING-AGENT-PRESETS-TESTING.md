@@ -132,8 +132,31 @@ Cases: [scope and credential helper](../../harness/runtime/src/coding/openshell_
 [Linux process tests](../../harness/runtime/tests/openshell_git.rs),
 [native live probe](../../harness/runtime/examples/openshell_git_probe.rs), and
 [fixture procedure and expiry-contract tests](../../harness/runtime/tests/fixtures/openshell-git/README.md).
-The journal/evidence distinguish this native C6 foundation from the still-pending
-public RuntimeProfile/SDK credential-grant wiring and C5 trusted publisher.
+The service/SDK layer additionally checks named operator registry selection,
+scope-bound environment identity, exact grant sets, same-grant-or-none delegation,
+rejection of raw secret/config-selection fields and immutable installation pins.
+The real PostgreSQL/API case prepares a team in its original granted environment.
+Rust and TypeScript register profiles and execute real Git through service workers.
+A shared member inherits its sandbox's credential capability, a separate
+credential-free private type cannot fetch, an independently authorized write
+profile can publish, and cross-grant child delegation is forbidden. Restart keeps
+the original session/environment. The default combined suite also reruns C1–C4.
+
+Cases: [operator registry](../../harness/server-reference/src/git_access.rs),
+[PostgreSQL placement/API cases](../../harness/server-reference/src/service_team_placements_tests.rs),
+[service Git layer](../../harness/server-reference/tests/support/service_git.rs),
+[TypeScript transport](../../harness/typescript-sdk/test/service.test.mjs),
+[placement helper](../../harness/typescript-sdk/test/team-placement.test.mjs),
+[Helm schema](../../deploy/helm/chart.test.mjs) and
+[local container configuration](../../deploy/service/local-values.test.mjs).
+[Configuration guide](OPENSHELL-GIT-ACCESS.md).
+The C5 trusted publisher is a different, still-pending transport.
+
+The Linux run also protects an editing-lock regression unrelated to credentials:
+an inherited/duplicated FD must not retain a completed edit's flock, and closing
+that old FD must not release the next owner's lock. This deterministic test uses
+no sleeps or process timing; see the lock tests in
+[coding files](../../harness/runtime/src/coding/files.rs).
 
 ## Child environment allocation and recovery
 

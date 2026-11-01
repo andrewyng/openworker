@@ -25,6 +25,77 @@ async fn fixture() -> (Fixture, Entry, Spec) {
         .spec(Sharing::Shared, Management::Harness);
     (f, target, spec)
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no gateway/model traffic"]
+async fn git_grants_match_profiles_on_delegation_allocation_and_original_recovery() {
+    let mut f = Fixture::new_with_git(true).await;
+    let named = json!(["git:github@1"]);
+    let mut d = json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team","member","new"],"profiles":{"team@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}});
+    assert!(f.try_create_with_configuration(d.clone(), None).is_err());
+    d["profiles"]["team@1"]["network"] = named.clone();
+    assert!(f.try_create_with_configuration(d.clone(), None).is_err());
+    d["profiles"]["team@1"]["credentials"] = named.clone();
+    d["profiles"]["plain@1"] =
+        json!({"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512});
+    f.create_with_delegation(d);
+    for (id, pid, sets) in [
+        ("git-child", "team@1", named),
+        ("plain-child", "plain@1", json!([])),
+    ] {
+        f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":format!("spawn-{id}"),"operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":id,"message":"Read source","sandbox":{"mode":"new","profile":pid,"network":sets,"credentials":sets}}})).unwrap();
+        let target = f.store.catalog_get("profile", pid).unwrap();
+        let provider = management::provider(&f.config, &target).unwrap();
+        let profile: openworker_store_postgres::service_catalog::Profile =
+            serde_json::from_value(target.definition.clone()).unwrap();
+        f.store
+            .reserve_team_environment(
+                &f.lead.id,
+                id,
+                target,
+                provider.spec(profile.sharing, Management::Harness),
+            )
+            .unwrap();
+    }
+    // The model can ask for less than a type envelope, but the actual provider
+    // must not attach credentials that were omitted from that exact request.
+    spawn(&f, "omitted-grants");
+    let target = f.store.catalog_get("profile", "team@1").unwrap();
+    let spec = management::provider(&f.config, &target)
+        .unwrap()
+        .spec(Sharing::Shared, Management::Harness);
+    assert!(f
+        .store
+        .reserve_team_environment(&f.lead.id, "omitted-grants", target.clone(), spec.clone())
+        .is_err());
+    let first = f
+        .store
+        .claim_team_environment(&installation(&f))
+        .unwrap()
+        .unwrap();
+    let changed = {
+        let mut c = f.config.clone();
+        c.openshell
+            .git_grants
+            .get_mut("github@1")
+            .unwrap()
+            .scope
+            .repositories = vec!["org/replacement".into()];
+        c
+    };
+    assert!(management::provider(&changed, &target).is_err());
+    expire(&f).await;
+    let again = f
+        .store
+        .claim_team_environment(&installation(&f))
+        .unwrap()
+        .unwrap();
+    // A competing controller may select the other pending child first. Every
+    // claimed allocation still pins its original exact choice and profile.
+    if again.intent.agent == first.intent.agent {
+        assert!(!again.dispatch);
+        assert_eq!(again.intent.spec, first.intent.spec);
+    }
+}
 fn spawn(f: &Fixture, id: &str) -> Value {
     f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":format!("spawn-{id}"),"operation":"team_spawn","arguments":{"agent_type":"builder","agent_id":id,"message":"Inspect isolated workspace","sandbox":{"mode":"new","profile":"team@1"}}})).unwrap()
 }

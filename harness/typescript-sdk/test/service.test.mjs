@@ -36,6 +36,21 @@ const options = (url) => ({
   namespace: "test",
   credentials: { getToken: async () => token },
 });
+test("profile registration carries a named Git grant and original idempotency key",async(t)=>{
+  const profile={id:"git@1",provider:"openshell",cpu:1,memoryMB:512,sharing:"shared",gitAccess:"github-read@1"};
+  const url=await server(t,(q,r)=>{
+    if(handshake(q,r))return;
+    assert.equal(q.url,"/v1/profiles");assert.equal(q.method,"POST");
+    assert.equal(q.headers["idempotency-key"],"git-profile-original");
+    let text="";q.on("data",c=>text+=c);q.on("end",()=>{
+      const body=JSON.parse(text);assert.deepEqual(body,profile);headers(r);
+      r.end(JSON.stringify({id:body.id,kind:"profile",digest:"digest",definition:body,installation:"fixture",activated:false}));
+    });
+  });
+  const s=await Harness.connect(options(url));
+  try{assert.equal((await s.registerRuntimeProfile(profile,{idempotencyKey:"git-profile-original"})).definition.gitAccess,"github-read@1");}
+  finally{s.disconnect();}
+});
 test("URL validation rejects insecure remote endpoints and embedded secrets", () => {
   for (const u of [
     "http://example.org",

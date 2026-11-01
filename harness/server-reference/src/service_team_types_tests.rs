@@ -35,6 +35,9 @@ impl Drop for Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::new_with_git(false).await
+    }
+    async fn new_with_git(git: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("installed");
         std::fs::create_dir_all(bundle.join("coworker")).unwrap();
@@ -48,6 +51,9 @@ impl Fixture {
         v["state_root"] = json!(root.path().join("state"));
         v["openshell"]["image"] = json!(format!("runner@sha256:{}", "a".repeat(64)));
         v["model_connections"] = json!([{"id":"primary","provider":"openai","identity":"stable-primary","key_env":"UNUSED_TEST_KEY"},{"id":"other","provider":"anthropic","identity":"stable-other","key_env":"UNUSED_TEST_KEY"}]);
+        if git {
+            v["openshell"]["git_grants"] = json!({"github@1":{"provider":{"name":"github","provider_id":"original-provider","profile_id":"github","profile_workspace":"","profile_digest":"a".repeat(64)},"scope":{"host":"github.com","repositories":["org/project"]}}});
+        }
         let cfg: Config = serde_json::from_value(v).unwrap();
         let installed = management::installation(&cfg).unwrap();
         let mut db = DbConfig::new(
@@ -72,11 +78,27 @@ impl Fixture {
             )
             .unwrap();
         let user = store.authorized(&token).unwrap();
-        let profile=admin.catalog_put("profile","profile",json!({"id":"team@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["alice"]}),&installed).unwrap();
+        let mut profile = json!({"id":"team@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["alice"]});
+        if git {
+            profile["gitAccess"] = json!("github@1");
+            let plain=admin.catalog_put("plain","profile",json!({"id":"plain@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"exclusive","allowedPrincipals":["alice"]}),&installed).unwrap();
+            admin
+                .catalog_activate("activate-plain", "profile", &plain.id, None)
+                .unwrap();
+        }
+        let profile = admin
+            .catalog_put("profile", "profile", profile, &installed)
+            .unwrap();
         admin
             .catalog_activate("activate-profile", "profile", &profile.id, None)
             .unwrap();
-        let release=admin.catalog_put("release","release",json!({"id":"lead@1","instructions":"Trusted application lead.","tools":["read_file","write_file"],"runtimeProfiles":["team@1"],"defaultRuntimeProfile":"team@1","allowedPrincipals":["alice"],"defaultModel":{"connection":"primary","model":"working"},"reviewerModel":{"connection":"other","model":"reviewer"},"modelOverrides":[{"connection":"other","model":"delegated"}]}),&installed).unwrap();
+        let mut definition = json!({"id":"lead@1","instructions":"Trusted application lead.","tools":["read_file","write_file"],"runtimeProfiles":["team@1"],"defaultRuntimeProfile":"team@1","allowedPrincipals":["alice"],"defaultModel":{"connection":"primary","model":"working"},"reviewerModel":{"connection":"other","model":"reviewer"},"modelOverrides":[{"connection":"other","model":"delegated"}]});
+        if git {
+            definition["runtimeProfiles"] = json!(["team@1", "plain@1"]);
+        }
+        let release = admin
+            .catalog_put("release", "release", definition, &installed)
+            .unwrap();
         admin
             .catalog_activate("activate-release", "release", &release.id, None)
             .unwrap();
@@ -636,6 +658,26 @@ async fn service_team_http_authorizes_and_bounds_delegation_before_creation() {
     assert!(repeated.status().is_success());
     stop.cancel();
     server.await.unwrap();
+    rt.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no provider/model I/O"]
+async fn git_team_http_preparation_uses_original_granted_environment() {
+    let f = Fixture::new_with_git(true).await;
+    let rt = f.config.api_runtime("git-api", f.store.clone()).unwrap();
+    let stop = tokio_util::sync::CancellationToken::new();
+    let app = crate::http::App::new(&f.config, rt.clone(), f.user.clone(), stop).unwrap();
+    let args = json!({"agentId":"lead","agentTypes":{"builder":"lead@1"},"policy":{"communication":{"board":true,"directMessages":true},"max_instances":16},"delegation":{"tools":["coding.read_file"],"models":[],"placements":["team","member","new"],"profiles":{"team@1":{"files":[],"network":["git:github@1"],"credentials":["git:github@1"],"cpu":1,"memory_mb":512},"plain@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}}});
+    let result = crate::agent_teams::create(
+        axum::Extension(app),
+        axum::extract::Path(f.lead.id.clone()),
+        axum::Json(serde_json::from_value(args).unwrap()),
+    )
+    .await;
+    if let Err(e) = result {
+        panic!("Synthetic fixture team preparation failed: {:?}", e.0)
+    }
     rt.shutdown().await.unwrap();
 }
 

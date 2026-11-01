@@ -94,3 +94,13 @@ test("local initialization retains explicit recording configuration without enab
   c.observability.retention_days=30;
   assert.equal(observability.retention_days,7);
 });
+test("local initialization preserves operator Git grants without implicitly selecting one",()=>{
+  const base={scripted:true,openshell:{endpoint:"https://gateway.example:8080",image:"runner@sha256:"+"c".repeat(64)}};
+  assert.equal(serviceConfig(base,"ows-test").openshell.git_grants,undefined);
+  const grant={provider:{name:"github",provider_id:"original",profile_id:"github",profile_workspace:"",profile_digest:"a".repeat(64)},scope:{host:"github.com",repositories:["org/repo"]}};
+  const c=serviceConfig({...base,openshell:{...base.openshell,git_grants:{"github@1":grant}}},"ows-test");
+  assert.deepEqual(c.openshell.git_grants,{"github@1":grant});
+  assert.equal(c.openshell.selected_git_grant,undefined);
+  c.openshell.git_grants["github@1"].scope.repositories.push("changed/repo");
+  assert.deepEqual(grant.scope.repositories,["org/repo"]);
+});

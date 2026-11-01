@@ -51,6 +51,18 @@ async function render(v) {
     await rm(root, { recursive: true });
   }
 }
+test("operator Git grants render only non-secret pins and reject credential/selection fields", async()=>{
+  const v=structuredClone(values);
+  const grant={provider:{name:"github",provider_id:"original",profile_id:"github",profile_workspace:"",profile_digest:"a".repeat(64)},scope:{host:"github.com",repositories:["org/repo"]}};
+  v.config.openshell.git_grants={"github@1":grant};
+  const out=await render(v);
+  assert.match(out,/git_grants/);assert.match(out,/github@1/);
+  for(const mutate of [
+    g=>g.config.openshell.git_grants["github@1"].apiKey="forbidden",
+    g=>g.config.openshell.selected_git_grant="github@1",
+    g=>g.config.openshell.git_grants["github@1"].provider.token="forbidden",
+  ]){const bad=structuredClone(v);mutate(bad);await assert.rejects(render(bad));}
+});
 test("separate hardened roles and TLS-only service; chart embeds no credentials or databases", async () => {
   const out = await render(values);
   assert.equal((out.match(/kind: Deployment/g) || []).length, 2);
