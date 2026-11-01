@@ -20,6 +20,9 @@ pub struct WorkspaceJob {
     pub claim: String,
     pub intent: openworker_runtime::team_workspace::Intent,
     pub dispatch: bool,
+    pub environment: openworker_runtime::environment::Binding,
+    pub root: String,
+    pub profile: String,
 }
 pub(crate) fn workspace_authority(
     tx: &mut postgres::Transaction<'_>,
@@ -27,7 +30,14 @@ pub(crate) fn workspace_authority(
     doc: &Document,
     agent: &str,
 ) -> Result<crate::auth::Identity> {
-    let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete'", &[&lead.id])?.context("Delegation credential expired/revoked")?;
+    ensure!(!lead.closed, "Lead session is closed");
+    if let Some(catalog) = &doc.type_catalog {
+        catalog.check_scope(lead)?;
+        if let Some(choice) = doc.sandbox_choices.get(agent) {
+            choice.validate(&catalog.ceiling)?;
+        }
+    }
+    let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete' FOR SHARE OF k", &[&lead.id])?.context("Delegation credential expired/revoked")?;
     let spec: crate::auth::Spec = serde_json::from_value(row.get(1))?;
     ensure!(
         spec.principal == row.get::<_, String>(0) && spec.role.permits(crate::auth::Action::Submit),
@@ -246,7 +256,7 @@ impl crate::PostgresStore {
         let installation = installation.to_owned();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let row = tx.query_opt("SELECT s.id,t.id,i.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates p ON p.team=t.id AND p.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') LEFT JOIN agent_team_workspace_claims w ON w.team=t.id AND w.agent=i.key WHERE c.data->>'installation'=$1 AND i.value->>'phase'='reserved' AND coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')<>'team' AND NOT coalesce((t.data->>'stopped')::boolean,false) AND coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)='null'::jsonb AND (w.expires_at IS NULL OR w.expires_at<clock_timestamp()) ORDER BY t.id,i.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
+            let row = tx.query_opt("SELECT s.id,t.id,i.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates p ON p.team=t.id AND p.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') LEFT JOIN agent_team_workspace_claims w ON w.team=t.id AND w.agent=i.key WHERE c.data->>'installation'=$1 AND i.value->>'phase'='reserved' AND coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')<>'team' AND NOT coalesce((t.data->>'stopped')::boolean,false) AND coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)='null'::jsonb AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key) AND (w.expires_at IS NULL OR w.expires_at<clock_timestamp()) ORDER BY t.id,i.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
             let Some(row) = row else { tx.commit()?; return Ok(None) };
             let sid: String = row.get(0); let team: String = row.get(1); let agent: String = row.get(2);
             let mut lead = db::locked(&mut tx, &sid, None)?;
@@ -257,6 +267,13 @@ impl crate::PostgresStore {
                 agent_team::apply(&mut Tx(&mut tx),&mut lead,"provision_failed",&json!({"agent_id":agent,"error":"Workspace preparation denied: original credential, type or activated release/profile unavailable"}),openworker_runtime::store::now_ms())?;
                 tx.commit()?;return Ok(None)
             }
+            let (root,_)=openworker_runtime::team_placement::workspace_scope(&doc,&lead,&agent)?;
+            let (environment,profile)=if let Some(b)=doc.placement_bindings.get(&agent) {
+                crate::service_team_placements::target_authority(&mut tx,&lead,&doc,&agent,&b.profile_id)?;
+                (b.environment.clone(),b.profile_id.clone())
+            } else {
+                (lead.environment.clone().context("Lead has no environment")?,tx.query_one("SELECT profile_id FROM service_operations WHERE session_id=$1",&[&sid])?.get::<_,String>(0))
+            };
             let claim = uuid::Uuid::new_v4().to_string();
             let n = tx.execute("INSERT INTO agent_team_workspace_claims VALUES($1,$2,$3,clock_timestamp()+interval '30 seconds') ON CONFLICT(team,agent) DO UPDATE SET token=excluded.token,expires_at=excluded.expires_at WHERE agent_team_workspace_claims.expires_at<clock_timestamp()", &[&team,&agent,&claim])?;
             if n==0 { tx.commit()?; return Ok(None) }
@@ -264,7 +281,7 @@ impl crate::PostgresStore {
             let intent=serde_json::from_value(outcome["intent"].clone())?;
             crate::team_execution::session_event(&mut tx,&sid,None,"team_workspace",json!({"operation":"prepare_intent","agent_id":agent,"dispatch":outcome["dispatch"]}))?;
             tx.commit()?;
-            Ok(Some(WorkspaceJob{lead,team,agent,claim,intent,dispatch:outcome["dispatch"]==true}))
+            Ok(Some(WorkspaceJob{lead,team,agent,claim,intent,dispatch:outcome["dispatch"]==true,environment,root,profile}))
         })
     }
     pub fn finish_team_workspace(
@@ -281,10 +298,13 @@ impl crate::PostgresStore {
             ensure!(token==job.claim && lead.workspace==job.lead.workspace && lead.environment==job.lead.environment,"Stale workspace preparation owner/scope");
             // A retired child is never resurrected by a late provider response.
             if doc.stopped || !doc.roster.instance(&job.agent).is_some_and(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved) {tx.commit()?;return Ok(())}
+            let (root,_)=openworker_runtime::team_placement::workspace_scope(&doc,&lead,&job.agent)?;
+            let binding=doc.placement_bindings.get(&job.agent).map(|b|&b.environment).or(lead.environment.as_ref());
+            ensure!(root==job.root && binding==Some(&job.environment),"Workspace placement binding changed");
             let mut args=json!({"agent_id":job.agent,"request":job.intent.request});
             match outcome {
                 Ok(receipt)=>{
-                    receipt.validate_scope(std::path::Path::new(&lead.workspace),&receipt.path)?;
+                    receipt.validate_scope(std::path::Path::new(&job.root),&receipt.path)?;
                     args["receipt"]=json!(receipt);
                 },
                 Err(error)=>args["error"]=json!(error.chars().take(1800).collect::<String>()),
@@ -398,7 +418,12 @@ impl crate::PostgresStore {
             );
             // Adapter capability, never a caller-configured permission switch.
             args["workspace_selection"] = json!(true);
-            args["placement_selection"] = json!(false);
+            args["placement_selection"] = json!(args
+                .get("delegation")
+                .filter(|v| !v.is_null())
+                .is_some_and(|d| d["placements"]
+                    .as_array()
+                    .is_some_and(|p| p.iter().any(|v| v != "team"))));
             let result = agent_team::apply(
                 &mut Tx(&mut tx),
                 &mut lead,
@@ -451,17 +476,18 @@ impl crate::PostgresStore {
         let installation = installation.map(str::to_owned);
         self.call(move|db|{
             let mut tx=db.client.transaction()?;
-            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved' AND (coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')='team' OR coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)<>'null'::jsonb OR x.data ? 'error')) AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
-            let mut doc:Document=serde_json::from_value(row.get(1))?;
+            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t JOIN sessions l ON l.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved' AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key OR x.data ? 'error') AND (coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')='team' OR coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)<>'null'::jsonb OR x.data ? 'error')) AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE OF l SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
+            let team_id:String=row.get(0);
+            let mut doc:Document=serde_json::from_value(tx.query_one("SELECT data FROM agent_teams WHERE id=$1 FOR UPDATE",&[&team_id])?.get(0))?;
             let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).cloned().collect();
             let mut selected=None;
             for i in candidates {
+                if doc.sandbox_choices.get(&i.agent_id).is_some_and(|c|c!=&Default::default()) && !doc.placement_bindings.contains_key(&i.agent_id) {continue}
                 if doc.roster.request(&i.agent_id).is_some_and(|r| r.workspace != Default::default())
                     && doc.workspaces.get(&i.agent_id).and_then(|i| i.receipt.as_ref()).is_none() { continue; }
                 let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}
             }
             let Some(instance)=selected else {tx.commit()?;return Ok(false)};
-            ensure!(doc.sandbox_choices.get(&instance.agent_id).is_none_or(|s|s==&openworker_runtime::team_definition::Sandbox::default()),"Child placement has no qualified provider binding; refusing shared-environment fallback");
             let kind=agent_team::runtime_type(&doc,&instance)?;
             let Some(template_row)=tx.query_opt("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])? else {tx.commit()?;return Ok(false)};
             let template:Value=template_row.get(0);
@@ -472,6 +498,12 @@ impl crate::PostgresStore {
             }
 
             let mut child:Session=serde_json::from_value(template["session"].clone())?;
+            if let Some(placement)=doc.placement_bindings.get(&instance.agent_id) {
+                ensure!(doc.placement_selection && doc.sandbox_choices.get(&instance.agent_id)==Some(&placement.choice),"Placement receipt differs from choice");
+                child.environment=Some(placement.environment.clone());
+                child.workspace=placement.environment.spec.workspace_root.clone();
+                child.resource_policy.digest=placement.environment.fingerprint()?;
+            }
             if let Some(receipt)=doc.workspaces.get(&instance.agent_id).and_then(|i|i.receipt.as_ref()) {
                 receipt.validate_scope(std::path::Path::new(&child.workspace), &receipt.path)?;
                 child.workspace=receipt.path.to_str().context("Workspace must be UTF-8")?.into();
@@ -490,14 +522,21 @@ impl crate::PostgresStore {
             let principal:String=origin.get(0);let credential:String=origin.get(1);
             let release_id=template["release"].as_str().context("Release missing")?;
             let authorization=(||->Result<crate::auth::Identity>{
+            let lead_session=db::locked(&mut tx,&lead.session_id,None)?;
+            workspace_authority(&mut tx,&lead_session,&doc,&instance.agent_id)?;
             crate::service_team_types::check_template(&mut tx, &doc, &instance, &template)?;
-            let spec:crate::auth::Spec=serde_json::from_value(tx.query_opt("SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp()))",&[&credential])?.context("Submitting credential expired or revoked")?.get(0))?;
+            let spec:crate::auth::Spec=serde_json::from_value(tx.query_opt("SELECT spec FROM api_credentials WHERE id=$1 AND NOT revoked AND ((spec->>'expires_at') IS NULL OR (spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) FOR SHARE",&[&credential])?.context("Submitting credential expired or revoked")?.get(0))?;
             ensure!(spec.principal==principal && spec.role.permits(crate::auth::Action::Submit),crate::auth::Error::Forbidden);
             let identity=crate::auth::Identity{credential_id:credential,principal:principal.clone(),role:spec.role,scope:spec.scope,environments:spec.environments,expires_at:spec.expires_at};
             let release_entry=crate::service_catalog::entry(&mut tx,"release",release_id)?;
             let release:crate::service_catalog::Release=serde_json::from_value(release_entry.definition)?;
             ensure!(release_entry.activated,"Delegated release deactivated");crate::service_catalog::allowed(&identity,&release.allowed_principals)?;
-            let profile_id:String=origin.get(3);
+            let profile_id:String=doc.placement_bindings.get(&instance.agent_id).map(|b|b.profile_id.clone()).unwrap_or_else(||origin.get(3));
+            if let Some(placement)=doc.placement_bindings.get(&instance.agent_id) {
+                let lead_session=db::locked(&mut tx,&lead.session_id,None)?;
+                let checked=crate::service_team_placements::target_authority(&mut tx,&lead_session,&doc,&instance.agent_id,&profile_id)?;
+                ensure!(checked.digest==placement.profile_digest,"Bound profile changed");
+            }
             let profile_entry=crate::service_catalog::entry(&mut tx,"profile",&profile_id)?;
             let profile:crate::service_catalog::Profile=serde_json::from_value(profile_entry.definition)?;
             ensure!(profile_entry.activated && release.runtime_profiles.contains(&profile_id),"Delegated RuntimeProfile unavailable");
@@ -607,18 +646,21 @@ pub(crate) fn ensure_admission(tx: &mut postgres::Transaction<'_>, s: &Session) 
 }
 
 impl crate::PostgresStore {
-    /// Controller reconciliation for a retired reservation that never acquired a
-    /// session. Team-row serialization excludes concurrent child provisioning.
+    /// Reconcile an unstarted reservation or a child whose session closure
+    /// committed before the controller/runtime could settle retirement. Never
+    /// infer cleanup from transport loss: an existing session must be closed
+    /// with a terminal turn. The name is retained for host compatibility.
     pub fn reconcile_unstarted_retirement(&self) -> Result<bool> {
         ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
         self.call(|db|{
             let mut tx=db.client.transaction()?;
-            let row=tx.query_opt("SELECT t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='retiring' AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id')) ORDER BY t.id LIMIT 1 FOR UPDATE SKIP LOCKED",&[])?;
+            let row=tx.query_opt("SELECT t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='retiring' AND (NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id') OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id' AND (s.data->>'closed')::boolean AND (s.data->'turn' IS NULL OR s.data->'turn'='null'::jsonb OR s.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated'))))) ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED",&[])?;
             let Some(row)=row else {tx.commit()?;return Ok(false)};
             let mut doc:Document=serde_json::from_value(row.get(0))?;
             let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Retiring).cloned().collect();
             for i in candidates {
-                if Tx(&mut tx).optional_session(&i.session_id)?.is_none(){
+                let session=Tx(&mut tx).optional_session(&i.session_id)?;
+                if session.as_ref().is_none_or(|s|s.closed && s.turn.as_ref().is_none_or(|t|openworker_runtime::store::terminal(&t.status))){
                     openworker_runtime::team_lifecycle::settle(&mut Tx(&mut tx),&mut doc,&i.agent_id,openworker_runtime::store::now_ms())?;
                     Tx(&mut tx).write(&doc,false)?;tx.commit()?;return Ok(true);
                 }

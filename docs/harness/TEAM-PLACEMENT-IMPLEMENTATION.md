@@ -85,6 +85,36 @@ quota serialization, crash after dispatch, original binding, reference counts,
 retirement and deletion. Real OpenShell tests: shared/reused/new environments,
 distinct filesystems, actual resource enforcement and original-resource cleanup.
 
-Only then enable the placement capability in the service adapter. SDK request
-fields alone do not enable provisioning. Existing local sandbox-off adapters
+Enable the service placement capability only with validated application delegation
+and verified provider/admission behavior; the journal records qualification status.
+SDK request fields alone do not enable provisioning. Existing local sandbox-off adapters
 continue rejecting New/Member requests until they have a real qualified provider.
+
+
+## Implementation and operational events
+
+`service_team_environments` is the provider outbox. It pins the original environment,
+source release, target profile/spec, actor/project, dispatch marker and current
+claim. Reclaimed jobs have inspection authority only. Claim tokens, the environment
+revision and binding update commit in one transaction. Lead/team/outbox lock order
+matches admission. Allocation and ordinary service admission share the quota lock;
+unknown resources keep ownership and count against quota.
+
+The controller resolves New and Member bindings before workspace preparation.
+`placement_bindings` is private team metadata, hidden from public snapshots.
+Session validation refuses a different provider object even when its profile is
+the same. Workspace scope digests and receipts follow the selected sandbox.
+Private runtime worker factories retain the approved bundle/model identity while
+selecting that sandbox's exact configured CPU/memory profile.
+
+`team_environment` events report pending, unknown, bound and denied admission.
+The first unknown create observation also writes a durable lead inbox notice.
+Readiness does not introduce an extra wake. Retirement preserves resources;
+delete guards include pending/active member references and team-created allocations.
+The existing original-identity deletion queue also handles team-owned environments.
+
+The expanded qualification caught a real audit/session deadlock. Security-audit
+appends now happen after session/team/environment locks, while remaining in the
+same transaction as receipts and events. A deterministic barrier test protects
+that ordering; infrastructure errors retain a sanitized type so they cannot be
+misclassified as a permanent authorization denial.

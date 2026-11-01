@@ -77,6 +77,22 @@ try {
       (await service.operation(operationId)).receipt.sessionId,
       isolated.id,
     );
+  const teamLead=await (await service.agent("coder@1")).newSession({environmentId:coder.environmentId,project:"game",idempotencyKey:"typescript-team-lead"});
+  const team=await teamLead.createTeam({agentTypes:{builder:"coder@1"},delegation:{tools:["coding.read_file"],placements:["team","member","new"],profiles:{"small@1":{cpu:1,memoryMB:512}}}});
+  const member=await team.spawn("typescript-member","builder","checker",'TEST_RESOURCE_GRANTS [{"name":"read_file","arguments":{"path":"shared-proof.txt"}}]',{sandbox:{mode:"member",agentId:"lead"}});
+  const deadline=Date.now()+120000;
+  while(true){
+    const roster=await team.members();const row=roster.members.find(r=>r.instance.agent_id==="checker");
+    assert.equal(row.error,null,JSON.stringify(row));
+    if(row.last_outcome==="completed")break;
+    assert.ok(Date.now()<deadline,JSON.stringify(row));
+    await new Promise(resolve=>setTimeout(resolve,150));
+  }
+  const child=await service.json("GET",`/v1/sessions/${member.instance.session_id}`);
+  assert.equal(child.session.environment.environment_id,coder.environmentId);
+  const evidence=await service.json("GET",`/v1/sessions/${member.instance.session_id}/events/page?after=0`);
+  assert.ok(evidence.events.some(e=>e.type==="tool_finished" && JSON.stringify(e).includes("coder output for verifier")));
+  console.log("PASS TypeScript delegated placement configuration, member serialization and original shared sandbox tool execution");
   console.log(
     "PASS TypeScript shared verifier, independent histories, profile permissions, owner/project gates and idempotency",
   );

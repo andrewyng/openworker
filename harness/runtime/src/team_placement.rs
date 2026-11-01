@@ -84,3 +84,48 @@ pub fn select(doc: &Document, lead: &Session, request: &SpawnRequest) -> Result<
     }
     Ok(selected)
 }
+
+/// A selection alone grants nothing; this private receipt pins the provider
+/// object and activated profile before workspace preparation/child admission.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Binding {
+    pub choice: Sandbox,
+    pub environment: crate::environment::Binding,
+    pub profile_id: String,
+    pub profile_digest: String,
+}
+pub fn workspace_scope(doc: &Document, lead: &Session, agent: &str) -> Result<(String, String)> {
+    if doc
+        .sandbox_choices
+        .get(agent)
+        .is_none_or(|s| s == &Sandbox::default())
+    {
+        return Ok((lead.workspace.clone(), lead.resource_policy.digest.clone()));
+    }
+    let binding = doc
+        .placement_bindings
+        .get(agent)
+        .context("Selected sandbox is not acknowledged")?;
+    ensure!(
+        doc.placement_selection && doc.sandbox_choices.get(agent) == Some(&binding.choice),
+        "Placement receipt differs from selection"
+    );
+    Ok((
+        binding.environment.spec.workspace_root.clone(),
+        binding.environment.fingerprint()?,
+    ))
+}
+pub fn schema(doc: &Document) -> serde_json::Value {
+    use serde_json::json;
+    let Some(c) = &doc.type_catalog else {
+        return json!({"type":"object","properties":{"mode":{"type":"string","enum":["team"]}},"required":["mode"],"additionalProperties":false});
+    };
+    let modes = c
+        .ceiling
+        .placements
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap())
+        .collect::<Vec<_>>();
+    json!({"type":"object","description":"Select original team sandbox, an existing same-team member's shareable sandbox, or a new sandbox within the delegated immutable profile. Never supplies gateway credentials.","properties":{"mode":{"type":"string","enum":modes},"agent_id":{"type":"string"},"profile":{"type":"string","enum":c.ceiling.profiles.keys().collect::<Vec<_>>(),"description":format!("Delegated profile resources/grants: {}. The current service adapter requires requested CPU/memory to match a registered profile exactly.",serde_json::to_string(&c.ceiling.profiles).unwrap_or_default())},"files":{"type":"array","items":{"type":"string"}},"network":{"type":"array","items":{"type":"string"}},"credentials":{"type":"array","items":{"type":"string"}},"cpu":{"type":"integer","minimum":1},"memory_mb":{"type":"integer","minimum":256}},"required":["mode"],"additionalProperties":false})
+}

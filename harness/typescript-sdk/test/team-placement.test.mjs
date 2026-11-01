@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {sandboxWire} from "../dist/team-placement.js";
+import {sandboxWire,serviceDelegationWire} from "../dist/team-placement.js";
 test("sandbox selection serializes requested scope without inventing credentials or endpoints",()=>{
   assert.equal(sandboxWire(undefined),undefined);
   assert.deepEqual(sandboxWire({mode:"team"}),{mode:"team"});
@@ -11,4 +11,12 @@ test("sandbox selection serializes requested scope without inventing credentials
   // Explicit malformed values reach the Rust validator; they never turn into
   // default resources or grants through JavaScript null-coalescing.
   assert.equal(sandboxWire({mode:"new",profile:"small",memoryMB:null}).memory_mb,null);
+});
+
+test("service delegation preserves exact placement/profile requests and rejects unknown grants",()=>{
+  assert.deepEqual(serviceDelegationWire({tools:[],placements:["new"],profiles:{"small@1":{cpu:1,memoryMB:512}}}),{tools:[],models:[],placements:["new"],profiles:{"small@1":{files:[],network:[],credentials:[],cpu:1,memory_mb:512}}});
+  assert.throws(()=>serviceDelegationWire({tools:[],profiles:{p:{cpu:1,memoryMB:512,endpoint:"elsewhere"}}}),/Unsupported/);
+  assert.throws(()=>serviceDelegationWire({tools:[],allowAll:true}),/Unsupported/);
+  assert.throws(()=>serviceDelegationWire({tools:[],placements:null}),/Invalid/);
+  assert.throws(()=>serviceDelegationWire({tools:[],profiles:null}),/Invalid/);
 });

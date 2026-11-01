@@ -204,13 +204,6 @@ impl Database {
             Some(&request.session_id),
             None,
         )?;
-        crate::auth::audit(
-            &mut tx,
-            p.as_ref(),
-            crate::auth::Action::Submit,
-            Some(&request.session_id),
-            Some(&request.submission_id),
-        )?;
         let session = locked(&mut tx, &request.session_id, None)?;
         verify(&mut tx, &request.session_id)?;
         // Deduplicate before lifecycle/capacity checks: lost receipts remain
@@ -230,6 +223,13 @@ impl Database {
                 return Err(SubmissionError::Conflict.into());
             }
             let result = receipt(&row)?;
+            crate::auth::audit(
+                &mut tx,
+                p.as_ref(),
+                crate::auth::Action::Submit,
+                Some(&request.session_id),
+                Some(&request.submission_id),
+            )?;
             tx.commit()?;
             return Ok(result);
         }
@@ -270,6 +270,13 @@ impl Database {
         );
         let result = insert(&mut tx, &request, "queued", None)?;
         journal_acceptance(&mut tx, &result, p.as_ref().map(|p| p.principal.as_str()))?;
+        crate::auth::audit(
+            &mut tx,
+            p.as_ref(),
+            crate::auth::Action::Submit,
+            Some(&request.session_id),
+            Some(&request.submission_id),
+        )?;
         tx.commit()?;
         Ok(result)
     }

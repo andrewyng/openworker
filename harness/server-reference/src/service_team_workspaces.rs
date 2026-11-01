@@ -16,20 +16,8 @@ pub(crate) async fn prepare_once(
         return Ok(false);
     };
     let outcome: Result<Receipt> = async {
-        let binding = job
-            .lead
-            .environment
-            .clone()
-            .context("Workspace has no original environment")?;
-        let identity = store
-            .service_session_identity(&job.lead.id)?
-            .context("Missing admitted lead")?;
-        let profile = store.catalog_get(
-            "profile",
-            identity["runtimeProfile"]
-                .as_str()
-                .context("Missing profile")?,
-        )?;
+        let binding = job.environment.clone();
+        let profile = store.catalog_get("profile", &job.profile)?;
         let provider = management::provider(config, &profile)?;
         let mut connection = provider
             .attach(
@@ -39,7 +27,7 @@ pub(crate) async fn prepare_once(
                     "/opt/openworker/openworker".into(),
                     "workspace-stdio".into(),
                     "--root".into(),
-                    job.lead.workspace.clone(),
+                    job.root.clone(),
                 ],
             )
             .await?;
@@ -70,7 +58,7 @@ pub(crate) async fn prepare_once(
             receipt.request == job.intent.request,
             "Workspace response belongs to another operation"
         );
-        receipt.validate_scope(std::path::Path::new(&job.lead.workspace), &receipt.path)?;
+        receipt.validate_scope(std::path::Path::new(&job.root), &receipt.path)?;
         Ok(receipt)
     }
     .await;
