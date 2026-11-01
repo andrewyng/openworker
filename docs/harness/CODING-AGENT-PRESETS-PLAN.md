@@ -1394,8 +1394,9 @@ passed. All six Rust coding preset cases passed: two contract cases, SQLite
 embedded/managed (**64.02s**) and PostgreSQL embedded/managed (**93.67s**).
 Strict all-target broker/service Clippy passed after a test-only formatting fix.
 
-The ordinary runtime has no Git execution dependency; trusted service packaging
-is an opt-in target and is being built/smoke-checked. Source setup and controller
+The broker execution crate and trusted-host Git executable are opt-in; existing
+selected coding/Git tools still require Git in their execution environment. Trusted
+service packaging is a separate target and is being built/smoke-checked. Source setup and controller
 events, approval/grant fences, uncertainty inbox notices and ordinary tool
 classification remain independent checks. C7 parallel and bounded live-model
 qualification follows; do not count its definitions as completed evidence.
@@ -1463,3 +1464,9 @@ objects after that gateway's admission capacity recovers. The fresh qualificatio
 gateway/PG fixture are bounded and retained for local follow-up; about **52 GiB**
 free. Cloud trials, actual GitHub writes and Windows trusted-Git execution remain
 outside these local qualification claims. No public-main merge or PR was created.
+
+
+Public merge checkpoint: **`24e094cb`** contains the verified C7 implementation,
+qualification evidence, grouped test catalog and repeatable acceptance driver.
+It was fast-forwarded to `origin/openworker-harness-sdk` after verifying remote
+ancestry. Working tree clean at that checkpoint; no public-main merge or PR.
