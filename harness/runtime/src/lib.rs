@@ -5,6 +5,7 @@ pub mod bundle;
 pub mod chat_completions;
 pub mod cli;
 pub mod coding;
+pub mod coding_handoff;
 pub mod compaction;
 pub mod connections;
 pub mod control;

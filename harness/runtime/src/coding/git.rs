@@ -2,7 +2,7 @@ use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
-pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
+pub(crate) fn command(root: &Path, args: &[String]) -> Result<tokio::process::Command> {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let hooks = format!("core.hooksPath={null}");
     // Never resolve a repository-provided git/helper through the app's PATH.
@@ -24,7 +24,7 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
     .find(|p| p.is_file() && !p.starts_with(root))
     .context("Install Git for Windows outside the project")?;
     let mut command = tokio::process::Command::new(executable);
-    let mut child = command
+    command
         .args([
             "--no-pager",
             "--no-optional-locks",
@@ -56,13 +56,63 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
             std::env::var_os("SystemRoot").map(|v| ("SystemRoot", v))
         } else {
             None
-        })
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("Git must be installed in the tool environment")?;
+        });
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_NO_LAZY_FETCH", "1");
+    #[cfg(unix)]
+    command.process_group(0);
+    Ok(command)
+}
+/// Owns the process group across future cancellation as well as explicit errors.
+/// A live/unreaped child PID cannot yet have been reused by another process.
+pub(crate) struct GitChild(pub tokio::process::Child);
+impl std::ops::Deref for GitChild {
+    type Target = tokio::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for GitChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Drop for GitChild {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0.id().filter(|p| *p > 0 && *p <= i32::MAX as u32) {
+            // SAFETY: command() creates this child's private process group.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    }
+}
+/// Git helpers are spawned in their own process group on Unix. Reap the parent
+/// and its pack/index children on cancellation, timeout or output-limit failure.
+pub(crate) async fn stop(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id().filter(|p| *p > 0 && *p <= i32::MAX as u32) {
+        // SAFETY: command() configured process_group(0), so this positive child
+        // PID names our spawned group's leader, never an arbitrary caller PID.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
+    let mut child = GitChild(
+        command(root, args)?
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Git must be installed in the tool environment")?,
+    );
     let mut stdout = child.stdout.take().unwrap().take(48001);
     let mut stderr = child.stderr.take().unwrap().take(4001);
     let mut out = vec![];
@@ -86,7 +136,7 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
     })
     .await;
     if !matches!(result, Ok(Ok(_))) {
-        let _ = child.kill().await;
+        stop(&mut child).await;
     }
     result.context("Git inspection timed out")?
 }
