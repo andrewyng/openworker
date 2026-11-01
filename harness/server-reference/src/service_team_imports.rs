@@ -13,7 +13,7 @@ use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
-async fn import(
+pub(super) async fn import(
     store: &PostgresStore,
     job: &mut Job,
     backend: &openworker_artifacts::Store,
