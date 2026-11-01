@@ -1,0 +1,109 @@
+{
+  "milestone": "C4 source staging and private receiver slice; full isolated preset/admission still pending",
+  "date": "2026-10-31",
+  "branch": "feat/coding-handoff-c4-20261031",
+  "physical_source_commit": "3564b027",
+  "additional_contract_commit": "8c33cf25",
+  "host_binary_sha256": "73746af211f40d8eb7c5bf2ed0bad178bc16155274f04d712e2a1909e1501430",
+  "linux_runner_sha256": "7606a9645ce6b1ca50a94dac5f91339bbcb898f7469ec6b6edf5687e2df22498",
+  "runner_image": "docker.io/library/openworker-runner@sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e",
+  "tests": {
+    "service_library": 30,
+    "postgres_regressions": 63,
+    "linux_runner_executed": 38,
+    "linux_fixture_only_ignored": 1,
+    "isolated_config_contracts": 3,
+    "physical_openshell_service_seconds": 357.3,
+    "strict_all_target_clippy": true
+  },
+  "physical_checks": [
+    "Two API processes, competing controllers and the catalog worker",
+    "Original private type and shared workspace after worker replacement",
+    "Separate child sandboxes with the delegated smaller profile",
+    "Two shared Git worktrees, exact revision checks and explicit conflict abort",
+    "Application-authorized pinned source exported by the trusted source controller",
+    "Artifact publication and HTTP download with original identity/namespace and no fabricated model turn",
+    "Private bounded source import into independent Git checkouts in two separate OpenShell sandboxes",
+    "Inspection recovers original checkout receipts without another checkout",
+    "Rust and TypeScript service integration regressions"
+  ],
+  "remaining_C4": [
+    "Atomic coding-default configuration and source selection in team reservation",
+    "Durable child import admission and metadata identity binding at launch",
+    "Model-requested submission/report/reception through the same handoff catalog",
+    "Isolated SDK preset helpers and complete builder-verifier-lead qualification"
+  ],
+  "failed_attempts": [
+    {
+      "seconds": 310.09,
+      "reason": "Prefixed source claim ID rejected by UUID-only gateway attachment preflight; fixed and regression-tested"
+    },
+    {
+      "seconds": 255.03,
+      "reason": "Source publication succeeded; raw HTTP test omitted namespace header and correctly received 403; fixture fixed"
+    }
+  ],
+  "physical_pod_limits": [
+    {
+      "pod": "default--owr-49e5681696314fe",
+      "uid": "720f8572-215f-4313-90f5-14333e4b3259",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "agent",
+          "image": "docker.io/library/openworker-runner@sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e",
+          "limits": {
+            "cpu": "1",
+            "memory": "512Mi"
+          }
+        }
+      ]
+    },
+    {
+      "pod": "default--owr-6105b3a5f3464cd",
+      "uid": "a50d096a-5997-4197-84e4-f8ebb489545b",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "agent",
+          "image": "docker.io/library/openworker-runner@sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e",
+          "limits": {
+            "cpu": "1",
+            "memory": "768Mi"
+          }
+        }
+      ]
+    },
+    {
+      "pod": "default--owr-e73a157b3e324d6",
+      "uid": "ababce36-dfd3-4ff9-b4cc-277ee6bf857d",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "agent",
+          "image": "docker.io/library/openworker-runner@sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e",
+          "limits": {
+            "cpu": "1",
+            "memory": "512Mi"
+          }
+        }
+      ]
+    },
+    {
+      "pod": "default--owr-f7eed7ae675e45d",
+      "uid": "70e46a59-9d0a-40ae-b7fe-6fe7b748250d",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "agent",
+          "image": "docker.io/library/openworker-runner@sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef2e",
+          "limits": {
+            "cpu": "1",
+            "memory": "768Mi"
+          }
+        }
+      ]
+    }
+  ],
+  "scope": "Local Docker/kind/OpenShell/PostgreSQL only; scripted model; no cloud provisioning, live model calls or GitHub writes"
+}

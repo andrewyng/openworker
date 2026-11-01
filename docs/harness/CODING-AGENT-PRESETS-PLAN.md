@@ -671,3 +671,28 @@ configuration and durable child-import admission remain the next C4 integration
 step. The SDK isolated preset is not yet exposed. The full physical source/receiver
 run uses the prior committed service/runner behavior; record its exact source
 identity separately from this additional contract slice.
+
+### C4 journal — source and separate receiver physical qualification passed
+
+The complete local service/OpenShell suite passed in **357.30 seconds** against
+service-test source `3564b027` and the digest-pinned C4 Linux runner. It proved
+trusted source export, authorized immutable artifact publication/download, and
+independent Git checkouts in two distinct OpenShell sandboxes. Original checkout
+receipts were inspected without repeating checkout. Existing two-API/controller,
+worker-restart, separate-profile placement, shared-worktree/conflict and Rust/
+TypeScript service cases also passed. The raw HTTP namespace rejection remained
+enforced; only the test request was corrected.
+
+[Slice evidence](evidence/coding-handoff-source-c4-20261031.json) records hashes,
+OCI identity, pod resource metadata, test counts and both preceding failures.
+The separate source/default contract checkpoint is `8c33cf25`; its unchanged
+source DTO and three new resolution cases are distinguished from the physical
+service commit. The seven-suite PostgreSQL regression totals **63 passes**.
+Six linked implementation/reviewer documents have no missing local links.
+
+This qualifies source staging and private receiver mechanics, not the whole C4
+preset. Next: bind source selection/defaults atomically at reservation, persist
+child-import intent and Git metadata identity through admission, then expose
+submission/report/reception and isolated SDK helpers. Canonical remains verified
+C3 until the complete C4 workflow passes. Local disposable fixtures can be reused;
+free host disk is about 55 GiB. No paid model/cloud/GitHub action was used.
