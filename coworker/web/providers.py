@@ -2,9 +2,9 @@
 
 `duckduckgo` works with no API key (our "starting version of our own"). `you` is also usable
 keyless and takes an optional key to lift the free-tier limits. `tavily`, `brave`, `serper`,
-`exa` and `firecrawl` give better results but need a key (configured via the SecretStore /
-env). All providers return a uniform `list[SearchResult]`; the heavy client libs are
-lazy-imported.
+`exa`, `firecrawl` and `outcrawl` give better results but need a key (configured via the
+SecretStore / env). All providers return a uniform `list[SearchResult]`; the heavy client
+libs are lazy-imported.
 """
 
 from __future__ import annotations
@@ -379,6 +379,62 @@ class FirecrawlProvider(WebSearchProvider):
         return str(text)
 
 
+class OutcrawlProvider(WebSearchProvider):
+    """Outcrawl web search and page scraping (https://outcrawl.ai) via its v1 REST API."""
+
+    name = "outcrawl"
+    display_name = "Outcrawl"
+    key_url = "https://outcrawl.ai"
+    key_mode = "required"
+    requires_key = True
+    supports_fetch = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        # POST /v1/search {query, limit}, bearer auth; the results are hits[] with
+        # title, url and snippet.
+        import httpx
+
+        resp = httpx.post(
+            "https://api.outcrawl.ai/v1/search",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={"query": query, "limit": max_results},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("title") or "",
+                url=r.get("url") or "",
+                snippet=r.get("snippet") or "",
+            )
+            for r in (data.get("hits") or [] if isinstance(data, dict) else [])
+        ]
+
+    def fetch_page(self, url: str) -> str:
+        # POST /v1/scrape {url, formats: ["markdown"]}, bearer auth; the text is markdown.
+        import httpx
+
+        resp = httpx.post(
+            "https://api.outcrawl.ai/v1/scrape",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={"url": url, "formats": ["markdown"]},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("markdown") if isinstance(data, dict) else None
+        if not text:
+            detail = data.get("error") if isinstance(data, dict) else None
+            raise RuntimeError(
+                f"Outcrawl could not scrape the page: {detail or 'no content returned'}"
+            )
+        return str(text)
+
+
 _PROVIDERS = {
     "duckduckgo": DuckDuckGoProvider,
     "you": YouProvider,
@@ -387,6 +443,7 @@ _PROVIDERS = {
     "serper": SerperProvider,
     "exa": ExaProvider,
     "firecrawl": FirecrawlProvider,
+    "outcrawl": OutcrawlProvider,
 }
 
 
