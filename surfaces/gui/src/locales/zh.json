@@ -57,6 +57,11 @@
     "stop": "停止"
   },
   "sidebar": {
+    "refresh_remote": "正在刷新远程会话…",
+    "refresh_remote_error": "远程会话刷新失败，已保留可用的上次结果。",
+    "refresh_local_error": "本地会话刷新失败，已保留可用的上次结果。",
+    "refresh_retry": "重试",
+    "restoring_session": "正在恢复会话，你也可以从侧栏选择一个会话。",
     "new_session": "新建会话",
     "new_project": "新建项目",
     "collapse": "收起侧栏",
