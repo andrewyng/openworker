@@ -525,6 +525,45 @@ async fn qualify() {
         }
         eprintln!("PASS C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes (controller/default admission still pending)");
 
+        // Private qualification adapter only: production HTTP/SDK isolated
+        // configuration remains gated until submission/reception is complete.
+        // Unlike the explicit receiver calls above, these children use the real
+        // import outbox/controller and cannot start until receipt acknowledgement.
+        let import_lead=coder.new_session_with(openworker_sdk::service::SessionOptions{environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()},Some("import-controller-lead")).await.unwrap();
+        let mut templates=std::collections::BTreeMap::new();
+        let profile=store.catalog_get("profile","team@1").unwrap();
+        let release=store.catalog_get("release","coder@1").unwrap();
+        let template_config=openworker_server_reference::management::release_config(&cfg,&release,&profile).unwrap();
+        let rt=template_config.api_runtime("private-import-template",store.clone()).unwrap();
+        let template=rt.prepare_session(json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":environment_id,"name":"builder","permissions":{"mode":"bypass","auto_skip_questions":true}})).unwrap();
+        rt.shutdown().await.unwrap();
+        templates.insert("builder".to_owned(),("coder@1".to_owned(),template));
+        store.authorized(&user_token).unwrap().configure_agent_team_models(import_lead.id(),json!({"agent_id":"lead","agent_types":["builder"],"limits":{"maxModelCalls":256,"maxOutputTokens":2000000,"summaryTokens":512},"delegation":{"tools":["coding.read_file"],"models":[],"placements":["team","member","new"],"profiles":{"small@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}},"coding":{"source":{"repository":"org/game","directory":"source","object_format":"sha1","commit":base},"agent_types":{"builder":{"sandbox":{"mode":"new","profile":"small@1","files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512},"source":"initial"}}},"source_store_binding":backend.binding()}),templates,Default::default()).unwrap();
+        let import_team=import_lead.resume_team().await.unwrap();
+        let mut imports=vec![];
+        for id in ["checkout-a","checkout-b"] {
+            let task=plan("run_shell",json!({"command":format!("test \"$(git rev-parse HEAD)\" = '{base}' && test \"$(cat proof.txt)\" = base && test \"$(git rev-parse --absolute-git-dir)\" = \"$PWD/.git\" && printf '{id}\\n' > proof.txt && git add proof.txt && git -c user.name=Fixture -c user.email=f@example.invalid commit -qm '{id}' && printf 'independent admitted {id}'"),"yield_ms":10000}));
+            let child=import_team.spawn(&format!("spawn-{id}"),"builder",id,&task).await.unwrap();
+            assert_eq!(child["source"],json!({"kind":"initial"}));
+            imports.push((id,child));
+        }
+        let mut imported_environments=std::collections::BTreeSet::new();
+        for (id,child) in &imports {
+            completed_member(&import_team,id).await;
+            let sid=child["instance"]["session_id"].as_str().unwrap();
+            let selected=service.json("GET",&format!("/v1/sessions/{sid}"),None,None).await.unwrap();
+            assert_eq!(selected["session"]["workspace"],format!("/sandbox/{}",child["workspace"]["path"].as_str().unwrap()));
+            let remote=selected["session"]["environment"]["remote_id"].as_str().unwrap();
+            assert_ne!(remote,original.remote_id);assert!(imported_environments.insert(remote.to_owned()));
+            let events=service.json("GET",&format!("/v1/sessions/{sid}/events/page?after=0"),None,None).await.unwrap();
+            assert!(events["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && e["data"]["name"]=="run_shell" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]==format!("independent admitted {id}")),"{events}");
+        }
+        let imports_evidence=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",import_lead.id()),None,None).await.unwrap();
+        let import_events=imports_evidence["events"].as_array().unwrap();
+        assert_eq!(import_events.iter().filter(|e|e["type"]=="team_source_import" && e["data"]["phase"]=="ready").count(),2);
+        assert!(import_events.iter().filter(|e|e["type"]=="team_source_import").all(|e|e["turn_id"].is_null()));
+        eprintln!("PASS two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission (submission tools still pending)");
+
         let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
         assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);
         let waited=preset_lead.send(&plan("team_wait_agent",json!({"agent_ids":["ui"],"timeout_ms":120000})),Some("wait-preset-builder")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");

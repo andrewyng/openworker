@@ -145,6 +145,18 @@ impl Fixture {
         delegation: Value,
         coding: Option<Value>,
     ) -> anyhow::Result<Document> {
+        self.try_create_with_source_binding(
+            delegation,
+            coding,
+            json!({"deployment":"fixture-artifacts","identity":"a".repeat(64)}),
+        )
+    }
+    fn try_create_with_source_binding(
+        &mut self,
+        delegation: Value,
+        coding: Option<Value>,
+        binding: Value,
+    ) -> anyhow::Result<Document> {
         let rt = self
             .config
             .api_runtime("models", self.store.clone())
@@ -157,8 +169,7 @@ impl Fixture {
         let mut args = json!({"agent_id":"lead","agent_types":["builder"],"delegation":delegation});
         if let Some(coding) = coding {
             args["coding"] = coding;
-            args["source_store_binding"] =
-                json!({"deployment":"fixture-artifacts","identity":"a".repeat(64)});
+            args["source_store_binding"] = binding;
         }
         let templates = BTreeMap::from([(
             "builder".into(),
@@ -662,6 +673,8 @@ async fn unchanged_prebuilt_team_retry_does_not_require_rewriting_old_receipts()
     assert_eq!(again["id"], created["id"]);
 }
 
+#[path = "service_team_imports_tests.rs"]
+mod imports;
 #[path = "service_team_placements_tests.rs"]
 mod placements;
 

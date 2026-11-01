@@ -153,6 +153,79 @@ fn row(tx: &mut postgres::Transaction<'_>, team: &str) -> Result<Intent> {
         .get(0),
     )?)
 }
+/// The trusted receiver resolves a named original setup, never a model-supplied
+/// URL, storage key or artifact label. Caller holds lead then team locks.
+pub(crate) fn ready_snapshot(
+    tx: &mut postgres::Transaction<'_>,
+    lead: &Session,
+    d: &Document,
+) -> Result<(
+    openworker_runtime::coding_handoff::Manifest,
+    Bundle,
+    Artifact,
+)> {
+    let i = row(tx, &d.id)?;
+    authority(tx, lead, d, &i)?;
+    let status: String = tx
+        .query_one(
+            "SELECT status FROM service_team_sources WHERE team=$1",
+            &[&d.id],
+        )?
+        .get(0);
+    ensure!(status == "ready", "Original source has not been published");
+    let b = i.bundle.context("Missing original source export")?;
+    b.validate()?;
+    ensure!(b.request == i.export, "Source export binding changed");
+    let id: String = tx
+        .query_one(
+            "SELECT artifact_id FROM artifact_requests WHERE session_id=$1 AND request_id=$2",
+            &[&lead.id, &i.id],
+        )?
+        .get(0);
+    let a = crate::artifacts::load(tx, &lead.id, &id)?;
+    ensure!(
+        a.status == openworker_artifacts::Status::Ready
+            && a.proof.is_some()
+            && a.registration.origin
+                == (Origin::TeamSetup {
+                    team_id: d.id.clone(),
+                    setup_id: i.id.clone()
+                })
+            && a.registration.request_id == i.id
+            && a.registration.turn_id.is_empty()
+            && a.registration.name == "source.bundle"
+            && a.registration.content_type == "application/x-git-bundle"
+            && a.registration.expected
+                == (Expected {
+                    size: b.size,
+                    sha256: b.sha256.clone()
+                })
+            && a.binding == i.artifact_binding,
+        "Original source artifact changed"
+    );
+    let m = openworker_runtime::coding_handoff::Manifest {
+        version: 1,
+        kind: openworker_runtime::coding_handoff::Kind::Source,
+        repository: i.source.repository,
+        producer: openworker_runtime::coding_handoff::Producer {
+            team_id: d.id.clone(),
+            agent_id: d.lead.clone(),
+            session_id: lead.id.clone(),
+        },
+        object_format: i.source.object_format,
+        base_commit: i.source.commit.clone(),
+        submitted_commit: i.source.commit,
+        artifact: openworker_runtime::coding_handoff::ArtifactRef {
+            session_id: lead.id.clone(),
+            artifact_id: a.id.clone(),
+            size: b.size,
+            sha256: b.sha256.clone(),
+        },
+        reports: vec![],
+    };
+    m.validate()?;
+    Ok((m, b, a))
+}
 fn fenced(tx: &mut postgres::Transaction<'_>, job: &Job, i: &Intent) -> Result<()> {
     let row = tx.query_one(
         "SELECT claim,next_check>clock_timestamp(),status FROM service_team_sources WHERE team=$1",

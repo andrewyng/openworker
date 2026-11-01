@@ -188,3 +188,27 @@ original operation. Existing patterns and tracked `.gitignore` remain unchanged.
 The metadata file is bounded to 64 KiB and symlinks are rejected. Inspection does
 not modify it. This keeps private transfer/worktree markers out of ordinary
 `git add -A`; it is local bookkeeping, not a stronger sandbox boundary.
+
+## Durable child-import outbox
+
+A source-selected reservation is excluded from generic directory preparation. The
+private import controller resolves the original published setup artifact and pins
+the child's selected environment, activated profile digest, workspace request and
+immutable transfer together before provider I/O. It commits separate first-dispatch
+bits for import preparation and checkout. New controllers inspect original markers;
+immutable chunks can resume, while checkout itself is never automatically repeated.
+Artifact streaming consumes and checks the complete digest before checkout dispatch,
+including bytes already present after a lost chunk acknowledgement.
+
+Every frame and completion rechecks original credential, source/catalog ownership,
+profile, environment binding and reservation. Completion writes the independent Git
+receipt, source acknowledgement and outbox-ready state in one transaction. A child
+cannot run before that commit. Retirement or revocation rejects late completion and
+retains work. Unknown outcomes yield deduplicated lead-inbox notices. No downloaded
+URL, object key or storage credential enters ToolRunner. Bounded import I/O runs in
+a separate controller task so it cannot stall cancellation or cleanup.
+
+This slice resolves initial source only. Submitted-revision catalog lookup and
+model-facing submission/reception tools are still required before public isolated
+preset APIs are enabled. Synthetic storage tests are distinct from real Git and
+physical provider qualification.
