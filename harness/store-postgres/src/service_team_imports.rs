@@ -18,6 +18,8 @@ use serde_json::json;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Intent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reception: Option<String>,
     pub team: String,
     pub agent: String,
     pub lead: String,
@@ -41,7 +43,7 @@ pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
     tx.batch_execute("CREATE TABLE IF NOT EXISTS service_team_imports(team TEXT NOT NULL REFERENCES agent_teams(id),agent TEXT NOT NULL,data JSONB NOT NULL,status TEXT NOT NULL DEFAULT 'pending',prepare_dispatched BOOLEAN NOT NULL DEFAULT FALSE,checkout_dispatched BOOLEAN NOT NULL DEFAULT FALSE,claim TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),last_notice TEXT,PRIMARY KEY(team,agent));")?;
     Ok(())
 }
-fn placement(
+pub(crate) fn placement(
     tx: &mut postgres::Transaction<'_>,
     lead: &Session,
     d: &Document,
@@ -87,6 +89,9 @@ fn authority(
     d: &Document,
     i: &Intent,
 ) -> Result<()> {
+    if i.reception.is_some() {
+        return crate::service_team_receptions::authority(tx, lead, d, i);
+    }
     ensure!(
         !d.stopped
             && d.coding_selection
@@ -111,7 +116,9 @@ fn authority(
     );
     let (manifest, bundle, artifact) = match i.choice {
         Choice::Initial => crate::service_team_sources::ready_snapshot(tx, lead, d)?,
-        Choice::Submission { .. } => anyhow::bail!("Submission catalog is not qualified yet"),
+        Choice::Submission { ref id } => {
+            crate::service_team_submissions::ready_snapshot(tx, lead, d, id)?
+        }
     };
     ensure!(
         manifest == i.transfer.manifest
@@ -185,7 +192,7 @@ impl PostgresStore {
         let installation = installation.to_owned();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let row = tx.query_opt("SELECT s.id,t.id,a.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id JOIN service_team_sources src ON src.team=t.id AND src.status='ready' CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') a LEFT JOIN service_team_imports i ON i.team=t.id AND i.agent=a.key WHERE c.data->>'installation'=$1 AND (t.data->>'coding_selection')::boolean AND NOT coalesce((t.data->>'stopped')::boolean,false) AND a.value->>'phase'='reserved' AND t.data->'roster'->'requests'->a.key->'source'->>'kind'='initial' AND (coalesce(t.data->'sandbox_choices'->a.key->>'mode','team')='team' OR t.data->'placement_bindings' ? a.key) AND (i.team IS NULL OR (i.status='pending' AND i.next_check<=clock_timestamp())) ORDER BY t.id,a.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
+            let row = tx.query_opt("SELECT s.id,t.id,a.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id JOIN service_team_sources src ON src.team=t.id AND src.status='ready' CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') a LEFT JOIN service_team_imports i ON i.team=t.id AND i.agent=a.key WHERE c.data->>'installation'=$1 AND (t.data->>'coding_selection')::boolean AND NOT coalesce((t.data->>'stopped')::boolean,false) AND a.value->>'phase'='reserved' AND (t.data->'roster'->'requests'->a.key->'source'->>'kind'='initial' OR EXISTS(SELECT 1 FROM service_team_submissions sub WHERE sub.team=t.id AND sub.id=t.data->'roster'->'requests'->a.key->'source'->>'id' AND sub.status='ready')) AND (coalesce(t.data->'sandbox_choices'->a.key->>'mode','team')='team' OR t.data->'placement_bindings' ? a.key) AND (i.team IS NULL OR (i.status='pending' AND i.next_check<=clock_timestamp())) ORDER BY t.id,a.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
             let Some(row) = row else {tx.commit()?;return Ok(None)};
             let mut lead = db::locked(&mut tx,&row.get::<_,String>(0),None)?;
             let team: String = row.get(1);
@@ -202,7 +209,8 @@ impl PostgresStore {
             } else {
                 let preflight = (|| {
                     let selected = placement(&mut tx,&lead,&d,&agent)?;
-                    let source = crate::service_team_sources::ready_snapshot(&mut tx,&lead,&d)?;
+                    let choice=d.roster.request(&agent).and_then(|r|r.source.as_ref()).context("Missing selected source")?;
+                    let source = match choice {Choice::Initial=>crate::service_team_sources::ready_snapshot(&mut tx,&lead,&d)?,Choice::Submission{id}=>crate::service_team_submissions::ready_snapshot(&mut tx,&lead,&d,id)?};
                     Ok::<_,anyhow::Error>((selected,source))
                 })();
                 let ((environment,root,profile_id,profile_digest),(manifest,bundle,artifact)) = match preflight {
@@ -224,7 +232,7 @@ impl PostgresStore {
                 let Selection::Directory{path} = &workspace.request.selection else {anyhow::bail!("Source import requires an independent directory")};
                 let transfer = Transfer {request:Import {operation_id:workspace.request.operation_id.clone(), scope_digest:workspace.request.scope_digest.clone(), manifest_digest:manifest.digest()?, directory:path.clone()},manifest,bundle};
                 transfer.validate()?;
-                let i = Intent {team:team.clone(),agent:agent.clone(),lead:lead.id.clone(),choice:Choice::Initial,environment,root,profile_id,profile_digest,workspace:workspace.request,transfer,artifact};
+                let i = Intent {reception:None,team:team.clone(),agent:agent.clone(),lead:lead.id.clone(),choice:d.roster.request(&agent).and_then(|r|r.source.clone()).context("Missing original source choice")?,environment,root,profile_id,profile_digest,workspace:workspace.request,transfer,artifact};
                 tx.execute("INSERT INTO service_team_imports(team,agent,data) VALUES($1,$2,$3)", &[&team,&agent,&json!(i)])?;
                 d = Tx(&mut tx).load(&team)?;
                 i
@@ -275,7 +283,12 @@ impl PostgresStore {
             let (mut lead,d) = original(&mut tx,&job)?;
             authority(&mut tx,&lead,&d,&job.intent)?;
             ensure!(job.checkout_dispatched && receipt.request == job.intent.workspace,"Original checkout was not dispatched");
+            if job.intent.reception.is_some() {
+                crate::service_team_receptions::complete(&mut tx,&lead,&d,&job.intent,&receipt)?;
+            } else {
             agent_team::apply(&mut Tx(&mut tx),&mut lead,"source_result",&json!({"agent_id":job.intent.agent,"receipt":receipt,"source":{"choice":job.intent.choice,"manifest":job.intent.transfer.manifest}}),openworker_runtime::store::now_ms())?;
+            }
+
             tx.execute("UPDATE service_team_imports SET status='ready',claim=NULL WHERE team=$1 AND agent=$2", &[&job.intent.team,&job.intent.agent])?;
             crate::team_execution::session_event(&mut tx,&lead.id,None,"team_source_import",json!({"agent_id":job.intent.agent,"operation_id":job.intent.workspace.operation_id,"phase":"ready","commit":job.intent.transfer.manifest.submitted_commit}))?;
             tx.commit()?;Ok(())
@@ -286,7 +299,7 @@ impl PostgresStore {
         let job = job.clone();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let (lead,d) = original(&mut tx,&job)?;
+            let (lead,mut d) = original(&mut tx,&job)?;
             let blocked = match authority(&mut tx,&lead,&d,&job.intent) {
                 Ok(()) => false,
                 Err(e) if e.downcast_ref::<postgres::Error>().is_some() => return Err(e),
@@ -294,6 +307,12 @@ impl PostgresStore {
             };
             let phase = if blocked {"blocked"} else {"pending"};
             tx.execute("UPDATE service_team_imports SET status=$3,claim=NULL,next_check=clock_timestamp()+interval '30 seconds' WHERE team=$1 AND agent=$2", &[&job.intent.team,&job.intent.agent,&phase])?;
+            if let Some(id)=&job.intent.reception {
+                let reception=d.receptions.get_mut(id).context("Missing original reception")?;
+                reception.uncertain=true;
+                if blocked {reception.error=Some("Original receiving authority unavailable; work retained".into());}
+                Tx(&mut tx).write(&d,false)?;
+            }
             notice(&mut tx,&d,&job.intent,if blocked {"blocked"} else {"unknown"})?;
             crate::team_execution::session_event(&mut tx,&lead.id,None,"team_source_import",json!({"agent_id":job.intent.agent,"operation_id":job.intent.workspace.operation_id,"phase":if blocked {"blocked"} else {"outcome_unknown"},"inspection_only":true}))?;
             tx.commit()?;Ok(())

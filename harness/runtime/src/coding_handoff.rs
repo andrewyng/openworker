@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 pub mod config;
 pub mod git;
+pub mod integrate;
 pub mod transfer;
+pub mod workflow;
 
 pub const VERSION: u8 = 1;
 pub const MAX_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;

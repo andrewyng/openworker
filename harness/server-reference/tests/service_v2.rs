@@ -16,6 +16,8 @@ use tokio::{
 };
 #[path = "support/service_git.rs"]
 mod git;
+#[path = "support/service_handoff.rs"]
+mod handoff;
 const BIN: &str = env!("CARGO_BIN_EXE_openworker-server-reference");
 async fn api(config: &Path, node: &str) -> (Child, String) {
     let mut child = Command::new(BIN)
@@ -373,7 +375,10 @@ async fn qualify() {
         let env = service.environment(&environment_id).await.unwrap();
         assert_eq!(env["runtimeProfile"], "team@1");
         assert_eq!(env["principal"], "alice");
-        if !std::env::var("OW_GIT_ONLY").is_ok_and(|v|v=="true") {
+        let mut handoff_reference=None;
+        if std::env::var("OW_HANDOFF_ONLY").is_ok_and(|v|v=="true") {
+            handoff_reference=Some(handoff::prepare(&service,&coder,&environment_id).await);
+        } else if !std::env::var("OW_GIT_ONLY").is_ok_and(|v|v=="true") {
         // Private dynamic types reuse this original sandbox. Two independent
         // controllers race deterministic compilation; a replacement worker must
         // reconstruct the same approved runtime before the next child can run.
@@ -520,9 +525,8 @@ async fn qualify() {
         assert_eq!(openworker_runtime::bundle::digest(&bytes),artifact.registration.expected.sha256);
         let source_manifest:openworker_runtime::coding_handoff::Manifest=serde_json::from_value(json!({"version":1,"kind":"source","repository":"org/game","producer":{"team_id":source.team,"agent_id":"lead","session_id":preset_lead.id()},"object_format":"sha1","base_commit":base,"submitted_commit":base,"artifact":{"session_id":preset_lead.id(),"artifact_id":artifact.id,"size":bytes.len(),"sha256":artifact.registration.expected.sha256},"reports":[]})).unwrap();
         let exported=openworker_runtime::coding_handoff::git::Bundle {request:source.export.clone(),path:format!(".openworker/handoffs/{}/source.bundle",source.id),size:bytes.len() as u64,sha256:artifact.registration.expected.sha256.clone(),advertised_ref:format!("refs/openworker/handoffs/{}",source.id)};
-        // These explicit private calls qualify receiver mechanics in physically
-        // distinct filesystems. Durable child-source/default admission and model
-        // submission tools remain the next C4 slice, not implied by this test.
+        // These private calls qualify receiver mechanics in distinct filesystems.
+        // Public submitted-revision workflow is qualified below.
         use base64::{engine::general_purpose::STANDARD,Engine};
         for (id,env) in [("builder",aenv),("verifier",benv)] {
             let receiver=openworker_runtime::coding_handoff::transfer::Transfer {request:openworker_runtime::coding_handoff::Import {operation_id:format!("source-import-{id}"),scope_digest:openworker_runtime::bundle::digest(format!("{}:{id}",source.id).as_bytes()),manifest_digest:source_manifest.digest().unwrap(),directory:"artifact-source".into()},manifest:source_manifest.clone(),bundle:exported.clone()};
@@ -537,22 +541,19 @@ async fn qualify() {
             assert_eq!(channel.request("handoff/inspect_checkout",json!(receiver.handle())).await.unwrap(),imported);
             let _=channel.close().await;
         }
-        eprintln!("PASS C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes (controller/default admission still pending)");
+        eprintln!("PASS C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes");
 
-        // Private qualification adapter only: production HTTP/SDK isolated
-        // configuration remains gated until submission/reception is complete.
-        // Unlike the explicit receiver calls above, these children use the real
-        // import outbox/controller and cannot start until receipt acknowledgement.
+        // Use the public SDK configuration and real import outbox/controller.
+        // C1 advanced source's branch deliberately. Give C4 its own independent
+        // source checkout so an unrelated earlier scenario cannot stale its HEAD.
+        let seed=lead.send(&plan("run_shell",json!({"command":format!("git -c core.hooksPath=/dev/null clone --no-hardlinks -q source isolated-source && git -C isolated-source -c core.hooksPath=/dev/null checkout -q '{base}' && printf independent-source-ready"),"yield_ms":10000})),Some("seed-independent-handoff-source")).await.unwrap();
+        assert_eq!(seed.result().await.unwrap().status,"completed");
+        let seeded=service.json("GET",&format!("/v1/sessions/{}/events/page?after=0",lead.id()),None,None).await.unwrap();
+        assert!(seeded["events"].as_array().unwrap().iter().any(|e|e["type"]=="tool_finished" && tool_data(e)["exit_code"]==0 && tool_data(e)["stdout"]=="independent-source-ready"),"Independent handoff source not prepared");
         let import_lead=coder.new_session_with(openworker_sdk::service::SessionOptions{environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()},Some("import-controller-lead")).await.unwrap();
-        let mut templates=std::collections::BTreeMap::new();
-        let profile=store.catalog_get("profile","team@1").unwrap();
-        let release=store.catalog_get("release","coder@1").unwrap();
-        let template_config=openworker_server_reference::management::release_config(&cfg,&release,&profile).unwrap();
-        let rt=template_config.api_runtime("private-import-template",store.clone()).unwrap();
-        let template=rt.prepare_session(json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":environment_id,"name":"builder","permissions":{"mode":"bypass","auto_skip_questions":true}})).unwrap();
-        rt.shutdown().await.unwrap();
-        templates.insert("builder".to_owned(),("coder@1".to_owned(),template));
-        store.authorized(&user_token).unwrap().configure_agent_team_models(import_lead.id(),json!({"agent_id":"lead","agent_types":["builder"],"limits":{"maxModelCalls":256,"maxOutputTokens":2000000,"summaryTokens":512},"delegation":{"tools":["coding.read_file"],"models":[],"placements":["team","member","new"],"profiles":{"small@1":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}},"coding":{"source":{"repository":"org/game","directory":"source","object_format":"sha1","commit":base},"agent_types":{"builder":{"sandbox":{"mode":"new","profile":"small@1","files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512},"source":"initial"}}},"source_store_binding":backend.binding()}),templates,Default::default()).unwrap();
+        let mut import_options=handoff::options(&base);
+        import_options.coding.as_mut().unwrap().source.directory="isolated-source".into();
+        import_lead.create_team(import_options).await.unwrap();
         let import_team=import_lead.resume_team().await.unwrap();
         let mut imports=vec![];
         for id in ["checkout-a","checkout-b"] {
@@ -576,7 +577,8 @@ async fn qualify() {
         let import_events=imports_evidence["events"].as_array().unwrap();
         assert_eq!(import_events.iter().filter(|e|e["type"]=="team_source_import" && e["data"]["phase"]=="ready").count(),2);
         assert!(import_events.iter().filter(|e|e["type"]=="team_source_import").all(|e|e["turn_id"].is_null()));
-        eprintln!("PASS two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission (submission tools still pending)");
+        eprintln!("PASS two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission");
+        handoff_reference=Some(handoff::qualify(&service,&import_lead,&import_team,&imports[0].1,&base,"isolated-source").await);
 
         let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
         assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);
@@ -598,6 +600,7 @@ async fn qualify() {
             )
             .env("OW_SERVICE_URL", &url_a)
             .env("OW_SERVICE_TOKEN", &user_token)
+            .env("OW_HANDOFF_REFERENCE",serde_json::to_string(&handoff_reference).unwrap())
             .env("OW_GIT_SERVICE_REFERENCE", serde_json::to_string(&git_reference).unwrap())
             .env("OW_GIT_HOST", git_config.as_ref().map(|g|g.host.as_str()).unwrap_or(""))
             .env("OW_GIT_PROFILE", serde_json::to_string(&git_config.as_ref().map(|g| &g.profile)).unwrap())

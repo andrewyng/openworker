@@ -577,3 +577,100 @@ async fn reviewer_context_excludes_agent_history_and_skipped_answers() {
         .push(json!({"role":"user","content":"x".repeat(65000)}));
     assert!(permissions::review_context(&s, &rt.bundle, &call).is_err());
 }
+
+#[tokio::test]
+async fn mutating_handoff_calls_use_ask_or_unsure_reviewer_before_any_team_effect() {
+    for alias in [
+        "team_submit_code",
+        "team_receive_submission",
+        "team_integrate_submission",
+    ] {
+        for mode in [Mode::Ask, Mode::AutoApprove] {
+            let seen = Arc::new(AtomicUsize::new(0));
+            let (_tmp, rt, sid, call) = fixture(
+                mode,
+                false,
+                reviewed(
+                    r#"{"verdict":"unsure","reason":"Need human judgment"}"#,
+                    seen.clone(),
+                ),
+                alias,
+                json!({}),
+            )
+            .await;
+            let schema = json!({"type":"function","name":alias,"parameters":{"type":"object","properties":{},"additionalProperties":false}});
+            rt.drive(&sid, BTreeMap::new(), vec![schema]).await.unwrap();
+            let snapshot = rt.snapshot(&sid).unwrap();
+            assert_eq!(snapshot["turn"]["status"], "waiting");
+            let interaction = &snapshot["interactions"][0];
+            assert_eq!(interaction["call"], call);
+            assert_eq!(interaction["kind"], "approval");
+            assert!(interaction["response"].is_null());
+            assert_eq!(
+                seen.load(Ordering::SeqCst),
+                usize::from(mode == Mode::AutoApprove)
+            );
+            assert!(!rt
+                .store
+                .lock()
+                .unwrap()
+                .events(&sid, 0)
+                .unwrap()
+                .iter()
+                .any(|e| e.kind == "agent_team"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn revoked_handoff_session_grant_is_fenced_in_transaction_and_reopens_approval() {
+    let (_tmp, rt, sid, call) = fixture(
+        Mode::Ask,
+        false,
+        Model::new("fixture".into(), true),
+        "team_integrate_submission",
+        json!({}),
+    )
+    .await;
+    rt.update(&sid, "seed_internal_grant", json!({}), |s| {
+        s.approval_grants.push(permissions::SessionGrant {
+            id: "grant_handoff".into(),
+            tool: "team_integrate_submission".into(),
+            server: None,
+            remote_tool: None,
+            bundle_digest: s.bundle_digest.clone(),
+            schema_digest: s.schema_digest.clone().unwrap(),
+            policy_digest: s.tool_policy.digest.clone(),
+            resource_policy_digest: s.resource_policy.digest.clone(),
+            created_by_interaction: "human_seed".into(),
+        });
+        Ok(())
+    })
+    .unwrap();
+    let original = rt.authorize_call(&sid, &call).await.unwrap();
+    assert_eq!(original.origin.as_deref(), Some("session_grant"));
+    rt.update(&sid, "revoked_before_intent_commit", json!({}), |s| {
+        s.approval_grants.clear();
+        Ok(())
+    })
+    .unwrap();
+    let schema = json!({"type":"function","name":"team_integrate_submission","parameters":{"type":"object","properties":{},"additionalProperties":false}});
+    rt.drive(&sid, BTreeMap::new(), vec![schema]).await.unwrap();
+    let s = rt.store.lock().unwrap().get(&sid).unwrap();
+    assert_eq!(s.turn.as_ref().unwrap().status, "waiting");
+    assert_eq!(s.turn.as_ref().unwrap().queue, vec![call]);
+    assert_eq!(s.interactions.len(), 2);
+    assert!(s.interactions.last().unwrap().response.is_none());
+    assert!(!s
+        .history
+        .iter()
+        .any(|h| h["type"] == "function_call_output"));
+    assert!(!rt
+        .store
+        .lock()
+        .unwrap()
+        .events(&sid, 0)
+        .unwrap()
+        .iter()
+        .any(|e| e.kind == "agent_team"));
+}

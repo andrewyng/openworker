@@ -290,7 +290,8 @@ fn checked_absolute(path: &Path) -> Result<()> {
 /// Do not edit the project's tracked .gitignore or overwrite user patterns.
 pub(crate) fn exclude_bookkeeping(common: &Path) -> Result<()> {
     use std::io::Write;
-    const RULE: &[u8] = b"\n# OpenWorker private workspace bookkeeping\n/.openworker/\n";
+    const RULE: &[u8] =
+        b"\n# OpenWorker private workspace bookkeeping\n/.openworker/\n/.openworker-received/\n/.openworker-processes/\n";
     let info = common.join("info");
     checked_absolute(&info)?;
     fs::create_dir_all(&info)?;

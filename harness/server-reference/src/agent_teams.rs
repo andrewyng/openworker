@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Create {
+    coding: Option<openworker_runtime::coding_handoff::config::TeamConfig>,
     workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
     #[serde(default = "lead")]
     agent_id: String,
@@ -57,6 +58,19 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         profile.activated && p.sharing == openworker_runtime::environment::Sharing::Shared,
         "Teams require an activated shared RuntimeProfile"
     );
+    let source_store_binding = if body.coding.is_some() {
+        Some(
+            app.config
+                .artifacts
+                .as_ref()
+                .context("Isolated coding requires configured artifacts")?
+                .build()?
+                .binding()
+                .clone(),
+        )
+    } else {
+        None
+    };
     let mut models = BTreeMap::new();
     if let Some(d) = &body.delegation {
         let release = app.store.catalog_get(
@@ -100,7 +114,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         templates.insert(kind.clone(), (release_id.clone(), template));
     }
     let keys: Vec<_> = body.agent_types.keys().cloned().collect();
-    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation,"workspace_defaults":body.workspace_defaults}),templates,models)
+    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation,"workspace_defaults":body.workspace_defaults,"coding":body.coding,"source_store_binding":source_store_binding}),templates,models)
 }
 pub(crate) async fn snapshot(
     Extension(app): Extension<App>,
@@ -127,9 +141,12 @@ pub(crate) async fn command(
     let result = if body.operation == "team_manage" && body.arguments["action"] == "list" {
         app.store
             .agent_team_api(&sid, "team_manage", body.arguments)?
-    } else if body.operation == "team_read_board" {
+    } else if matches!(
+        body.operation.as_str(),
+        "team_read_board" | "team_list_submissions"
+    ) {
         app.store
-            .agent_team_api(&sid, "team_read_board", body.arguments)?
+            .agent_team_api(&sid, &body.operation, body.arguments)?
     } else {
         let key = service::key(&app, &headers, &format!("team-{sid}"))?;
         app.store.agent_team_api(

@@ -889,3 +889,176 @@ async fn root_repository_bookkeeping_is_excluded_from_normal_git_staging_without
         .is_err());
     assert_eq!(std::fs::read(&foreign).unwrap(), b"keep me");
 }
+
+async fn integration_fixture(
+    root_repository: bool,
+    format: ObjectFormat,
+) -> (
+    Fixture,
+    PathBuf,
+    openworker_runtime::coding_handoff::integrate::Request,
+) {
+    let f = fixture(format);
+    let root = if root_repository {
+        f.repo.clone()
+    } else {
+        f.root.path().canonicalize().unwrap()
+    };
+    let t = exported(&f, ".openworker-received/team/submission").await;
+    stage(&f, &root, &t).await;
+    transfer::finish(&root, &t.handle(), false).await.unwrap();
+    let workspace = transfer::workspace_receipt(
+        &root,
+        &t.handle(),
+        openworker_runtime::team_workspace::Request {
+            operation_id: t.request.operation_id.clone(),
+            scope_digest: t.request.scope_digest.clone(),
+            selection: openworker_runtime::team_workspace::Selection::Directory {
+                path: t.request.directory.clone(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+    git(
+        &f.repo,
+        &["checkout", "-qb", "integrate-main", &f.request.base_commit],
+    );
+    let request = openworker_runtime::coding_handoff::integrate::Request {
+        export: Export {
+            operation_id: "integrate_one".into(),
+            scope_digest: "d".repeat(64),
+            directory: if root_repository {
+                ".".into()
+            } else {
+                "source".into()
+            },
+            ..f.request.clone()
+        },
+        expected_head: f.request.base_commit.clone(),
+        received: workspace,
+    };
+    (f, root, request)
+}
+#[tokio::test]
+async fn explicit_integration_cas_preserves_exact_tree_and_lost_receipt_never_replays() {
+    use openworker_runtime::coding_handoff::integrate::integrate;
+    for (root_repo, format) in [(false, ObjectFormat::Sha1), (true, ObjectFormat::Sha256)] {
+        let (f, root, request) = integration_fixture(root_repo, format).await;
+        let result = integrate(&root, request.clone(), false).await.unwrap();
+        assert_eq!(result.commit, f.request.submitted_commit);
+        assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), result.commit);
+        assert_eq!(
+            std::fs::read(f.repo.join("binary.bin")).unwrap(),
+            [0, 255, 1, 0, 200]
+        );
+        assert!(!f.repo.join("old.txt").exists() && !f.repo.join("gone.txt").exists());
+        assert_eq!(git(&f.repo, &["status", "--porcelain"]), "");
+        let original_log = git(
+            &f.repo,
+            &["reflog", "--format=%H", "refs/heads/integrate-main"],
+        );
+        let marker = root.join(".openworker/integrations/integrate_one/receipt.json");
+        std::fs::remove_file(&marker).unwrap();
+        assert_eq!(
+            integrate(&root, request.clone(), true).await.unwrap(),
+            result
+        );
+        assert!(!marker.exists()); // Inspection observes; it does not write a new acknowledgement.
+        assert_eq!(
+            git(
+                &f.repo,
+                &["reflog", "--format=%H", "refs/heads/integrate-main"]
+            ),
+            original_log
+        );
+        let mut changed = request;
+        changed.expected_head = f.request.submitted_commit.clone();
+        assert!(integrate(&root, changed, true).await.is_err());
+    }
+}
+#[tokio::test]
+async fn integration_refuses_dirty_stale_divergent_and_rewritten_sources_without_reset() {
+    use openworker_runtime::coding_handoff::integrate::integrate;
+    for mode in ["dirty", "stale", "divergent", "rewrite"] {
+        let (f, root, mut request) = integration_fixture(false, ObjectFormat::Sha1).await;
+        match mode {
+            "dirty" => std::fs::write(f.repo.join("old.txt"), "preserve my work").unwrap(),
+            "stale" => request.expected_head = f.request.submitted_commit.clone(),
+            "divergent" => {
+                std::fs::write(f.repo.join("divergent"), "mine").unwrap();
+                git(&f.repo, &["add", "divergent"]);
+                git(&f.repo, &["commit", "-qm", "other line"]);
+                request.expected_head = git(&f.repo, &["rev-parse", "HEAD"]);
+            }
+            "rewrite" => {
+                git(
+                    &f.repo,
+                    &["config", "url.https://example.invalid/.insteadOf", "/"],
+                );
+            }
+            _ => unreachable!(),
+        }
+        let before = git(&f.repo, &["rev-parse", "HEAD"]);
+        assert!(
+            integrate(&root, request.clone(), false).await.is_err(),
+            "{mode}"
+        );
+        assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), before);
+        assert!(integrate(&root, request, true).await.is_err(), "{mode}");
+        assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), before);
+        if mode == "dirty" {
+            assert_eq!(
+                std::fs::read_to_string(f.repo.join("old.txt")).unwrap(),
+                "preserve my work"
+            )
+        }
+    }
+}
+
+#[tokio::test]
+async fn integration_inspection_preserves_partial_index_files_when_branch_cas_was_not_acknowledged()
+{
+    use openworker_runtime::coding_handoff::integrate::{integrate, rpc};
+    let (f, root, request) = integration_fixture(false, ObjectFormat::Sha1).await;
+    integrate(&root, request.clone(), false).await.unwrap();
+    // Recreate the observable crash boundary: index/files at submitted tree,
+    // original branch ref at expected HEAD, no final acknowledgement receipt.
+    git(
+        &f.repo,
+        &[
+            "update-ref",
+            "refs/heads/integrate-main",
+            &request.expected_head,
+            &request.export.submitted_commit,
+        ],
+    );
+    let receipt = root.join(".openworker/integrations/integrate_one/receipt.json");
+    std::fs::remove_file(&receipt).unwrap();
+    let status = git(&f.repo, &["status", "--porcelain"]);
+    assert!(!status.is_empty());
+    assert!(rpc(&root, request.clone(), true).await.is_err());
+    assert_eq!(git(&f.repo, &["rev-parse", "HEAD"]), request.expected_head);
+    assert_eq!(git(&f.repo, &["status", "--porcelain"]), status);
+    assert_eq!(
+        std::fs::read(f.repo.join("binary.bin")).unwrap(),
+        [0, 255, 1, 0, 200]
+    );
+    assert!(!receipt.exists());
+}
+#[tokio::test]
+async fn known_integration_rejection_survives_lost_reply_and_is_not_retried_after_source_changes() {
+    use openworker_runtime::coding_handoff::integrate::{rpc, Observation};
+    let (f, root, mut request) = integration_fixture(false, ObjectFormat::Sha1).await;
+    request.expected_head = "f".repeat(40);
+    let rejected = rpc(&root, request.clone(), false).await.unwrap();
+    assert!(matches!(&rejected,Observation::Rejected{reason,..} if reason.contains("stale")));
+    std::fs::write(f.repo.join("old.txt"), "work after rejection").unwrap();
+    let before = git(&f.repo, &["status", "--porcelain"]);
+    assert_eq!(rpc(&root, request, true).await.unwrap(), rejected);
+    assert_eq!(git(&f.repo, &["status", "--porcelain"]), before);
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("old.txt")).unwrap(),
+        "work after rejection"
+    );
+}

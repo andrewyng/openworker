@@ -4,6 +4,11 @@ One Rust client, two deployment backends, the same native engine. This workspace
 crate is not yet published or a stable SDK compatibility promise. It is distinct
 from `openworker-tools`, which defines partner-owned tools.
 
+For service coding teams, see [isolated coding teams](../../docs/harness/ISOLATED-CODING-TEAMS.md)
+for independent OpenShell checkouts, exact-submission verification and explicit
+integration. [OpenShell Git access](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+documents optional named RuntimeProfile grants; artifacts need no child Git key.
+
 **Storage-selectable host:** use `HostConfig` with either `Storage::Sqlite` or
 `Storage::Postgres`, and register one or more trusted coworkers. Both
 `HarnessClient::embedded` and `HarnessClient::managed_stdio` support this host,

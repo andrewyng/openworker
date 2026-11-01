@@ -94,3 +94,75 @@ fn import_identity_refuses_path_escape_and_changed_manifest_without_authorizing_
     v["download_url"] = json!("https://example.invalid/source");
     assert!(serde_json::from_value::<Import>(v).is_err());
 }
+
+fn submission() -> (
+    openworker_runtime::coding_handoff::workflow::Submission,
+    Manifest,
+) {
+    use openworker_runtime::coding_handoff::workflow::{Call, Submission};
+    let mut source = fixture();
+    source["kind"] = json!("source");
+    source["submitted_commit"] = source["base_commit"].clone();
+    let source = manifest(source);
+    let request = Submission::new(
+        source.producer.clone(),
+        Call {
+            turn_id: "turn_one".into(),
+            call_id: "call-one".into(),
+        },
+        &source,
+        "b".repeat(40),
+        "Built changes".into(),
+    )
+    .unwrap();
+    let mut published = manifest(fixture());
+    published.producer = request.producer.clone();
+    (request, published)
+}
+#[test]
+fn model_submission_deduplicates_revision_across_new_call_ids_and_summary_changes() {
+    let (request, m) = submission();
+    request.require_manifest(&m).unwrap();
+    let mut repeat = request.clone();
+    repeat.origin.call_id = "new-call-after-loss".into();
+    repeat.summary = "Changed wording".into();
+    assert!(request.same_revision(&repeat).unwrap());
+    repeat.submitted_commit = "d".repeat(40);
+    assert!(repeat.validate().is_err()); // ID cannot be relabeled to another commit.
+    let mut forged = request.clone();
+    forged.producer.team_id = "other_team".into();
+    assert!(forged.validate().is_err());
+    let mut moving = request;
+    moving.submitted_commit = "HEAD".into();
+    assert!(moving.validate().is_err());
+}
+#[test]
+fn later_verification_is_bound_to_exact_manifest_and_never_mutates_publication() {
+    use openworker_runtime::coding_handoff::workflow::{Call, Verification};
+    let (request, m) = submission();
+    let before = m.digest().unwrap();
+    let mut report=Verification{id:"report_one".into(),submission_id:request.id.clone(),manifest_digest:before.clone(),submitted_commit:m.submitted_commit.clone(),reporter:serde_json::from_value(json!({"team_id":m.producer.team_id,"agent_id":"verifier","session_id":"verify_session"})).unwrap(),origin:Call{turn_id:"verify_turn".into(),call_id:"verify-call".into()},text:"Agent claims tests passed".into()};
+    report.require_submission(&request, &m).unwrap();
+    assert_eq!(m.digest().unwrap(), before);
+    report.reporter.team_id = "another_team".into();
+    assert!(report.require_submission(&request, &m).is_err());
+    report.reporter.team_id = m.producer.team_id.clone();
+    report.manifest_digest = "f".repeat(64);
+    assert!(report.require_submission(&request, &m).is_err());
+}
+#[test]
+fn integration_request_requires_exact_submission_and_pinned_expected_head() {
+    use openworker_runtime::coding_handoff::workflow::Integration;
+    let (request, m) = submission();
+    let mut i = Integration {
+        submission_id: request.id.clone(),
+        manifest_digest: m.digest().unwrap(),
+        expected_head: m.base_commit.clone(),
+    };
+    i.require_submission(&request, &m).unwrap();
+    i.expected_head = "main".into();
+    assert!(i.require_submission(&request, &m).is_err());
+    i.expected_head = m.base_commit.clone();
+    i.submission_id = "other_submission".into();
+    assert!(i.require_submission(&request, &m).is_err());
+}

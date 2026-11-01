@@ -1054,3 +1054,110 @@ shared gateway remains running. Historical pre-existing PostgreSQL unit schema
 was retained; this qualification's service/recording schemas were cleaned.
 C6 is verified on the feature branch; continue C4 submission workflow, C5 trusted
 publication and C7 combined qualification before merging the stacked feature.
+
+### C4 submitted-revision workflow — 2026-10-31
+
+C6 checkpoint `5f3dc53f` is pushed. Continuing C4 on the same stacked branch.
+Model submission, bounded catalog reads and attributed verification reports now
+have portable domain operations. Submission identity binds producer/source/commit
+and deduplicates across different model call IDs; changing summary text cannot
+create another export after an uncertain response. Reports are separate from the
+frozen manifest and require the caller's acknowledged exact-submission import.
+
+Implementing a separate PostgreSQL submission outbox, private artifact origin,
+controller export/upload and selected-submission import. The controller follows
+lead → team → outbox lock order and never locks a producer after taking the team
+lock. Private artifact registration locks its producer before lead/team. Artifact
+store credentials never enter the sandbox. Pending/unknown handoffs retain their
+original environment after member retirement. New contract and real PostgreSQL
+cases are being run; this is not yet a C4 completion claim.
+
+C4 continued: the expanded real-PostgreSQL suite passes **45 cases (3.71s)**,
+including immutable submission publication, exact verifier selection, independent
+lead reception, integration dispatch/recovery fencing, revocation and retaining
+pending work after ordinary session closure. The disposable Linux selection passes
+**62 cases (58.5s build/test step)**, including SHA-1/SHA-256 integration, stale/
+dirty/divergent rejection and inspection of a lost receipt without another mutation.
+
+Two physical attempts exposed SDK wiring omissions before the full new workflow
+could pass: delegated sessions lacked their original release/profile identity in
+snapshots, and the shared Rust ChildOptions type lacked the source selection
+field. Added receipt-derived child service identity without relaxing SDK identity
+checks, and source selection to Rust/TypeScript child options. The second run was
+compiled before that source-field correction and is allowed to finish its own
+cleanup. These failed attempts do not count as C4 qualification.
+
+Public team creation now accepts application-owned coding defaults and obtains
+artifact binding from server configuration, never request JSON. Added isolated
+service preset factories and role prompts in the shared Rust/TypeScript preset
+catalog. Mutating handoff tools use the existing Ask/AutoApprove/Bypass gate;
+reception never switches the lead's source workspace. Integration uses an explicit
+expected-head CAS, with terminal known rejections and inspection-only unknown
+partial outcomes. Git index/files and branch-ref writes are separate operations;
+this is not a cross-filesystem transaction and recovery never repeats read-tree.
+
+Next physical run must use the new source-selection SDK field and latest server;
+current Linux integration runner is pinned at
+`sha256:37bdb22f469c756aeb67dd488fa2b8c2a4f9f3dde4f04d9b2b88a974339e40ab`.
+
+The corrected third physical attempt reached actual submission export/publication
+and verifier import, then failed its real-output assertion: the verifier's normal
+long checkout path made the retained process manager's filesystem Unix socket
+108 bytes, beyond Linux's pathname capacity. Its scripted report still claimed
+verification; the test correctly rejected that claim using actual tool output.
+No source integration was attempted in that failed run; owned sandbox cleanup ran.
+
+Fix the manager endpoint rather than shortening instance names. Existing short
+filesystem endpoints retain compatibility. For long Linux paths, use a bounded
+abstract Unix address derived from the original private directory path, device,
+inode and effective UID; retain the ownership lock and peer-UID checks. Add both
+address/replacement-identity tests and a real long-workspace reconnect/stop case in
+the disposable Linux fixture. Also exclude private process-state bookkeeping from
+root-repository staging. Rebuild/qualify the runner before another physical attempt.
+The prior 62-case Linux pass predates this manager fix. One rerun invocation used
+an incorrect Docker build context; no image was produced. Use an absolute context
+path for the corrected build. No runtime safety behavior was relaxed.
+
+Build-environment correction: the context was filtered by the repository's
+Python-image `.dockerignore`. The new private Dockerfile also needs the existing
+Rust qualification Dockerfile-specific ignore list. Copied that curated list to
+the new private build definition; continue excluding target directories, Node
+modules, environment files and databases. The two filtered-context attempts
+produced no image. Also corrected excess quoting in the new focused fixture's
+shell strings before running that fixture.
+
+
+C4 focused qualification passed in **264.14s** using runner
+`sha256:fe3cecc90c5d984fbc38d1dc13e879f131fa5734604aec3f77fc9f661829d287`.
+Actual source output proves builder export/publication, exact-revision independent
+Rust and TypeScript verifiers, attributed reports, lead reception, terminal stale
+HEAD rejection, expected-head integration and source read-back. Owned sandboxes
+and database schemas were cleaned. This focused pass is not the default combined
+regression, which is running separately.
+
+The rebuilt disposable Linux selection passes **68 cases**, including the long
+workspace process-manager endpoint/reconnect/stop regression. All **11 TypeScript
+service transport cases** pass. Existing four-mode Rust preset regressions are
+running against SQLite/PostgreSQL and embedded/managed hosts. Retirement/cancel
+races and combined mixed-team recovery remain part of C7; no claim that C7 or C5
+has been completed. Disk remains approximately 50 GiB free; no cloud resources or
+paid models were used.
+
+
+The first default combined C4 run failed after **557.38s**: the earlier C1
+scenario intentionally advanced the shared lead repository to its UI branch,
+but the later C4 integration still supplied the original base as expected HEAD.
+The runtime correctly persisted a stale-head rejection. The fixture then waited
+for an impossible success and its separate read-back failed without asserting
+stdout. No branch protection was relaxed. Give C4 its own independent source
+checkout at the original base, assert actual pre-integration output, and fail
+immediately if the intended expected-head operation is rejected. All owned
+sandboxes/schemas were removed after the failed run. The focused C4 pass remains
+valid, but does not substitute for rerunning this corrected combined test.
+
+Final fast rerun: **83 runtime library + 7 portable + 20 real Git handoff cases**
+pass; all **45 service/PostgreSQL cases** pass (5.32s). Four-mode Rust preset
+regressions pass (6 tests, 81.80s), with only the two newly identified disposable
+PostgreSQL schemas removed afterward. Historical fixture schemas were retained.
+Strict all-target Clippy passes (32.70s). The SDK now reexports source-choice and
+Git object-format types so applications need no direct runtime import for them.

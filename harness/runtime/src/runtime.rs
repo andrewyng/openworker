@@ -2420,6 +2420,34 @@ impl Runtime {
                     continue;
                 }
                 if crate::agent_team::internal(alias) {
+                    // Byte export, workspace reception and integration have real
+                    // effects. Team membership alone does not bypass Ask/AutoApprove.
+                    if crate::coding_handoff::workflow::approval_required(alias) {
+                        let interaction = s
+                            .interactions
+                            .iter()
+                            .rev()
+                            .find(|i| i.turn_id == t.id && i.call == *call);
+                        let Some(interaction) = interaction else {
+                            let _ = self.authorize_call(sid, call).await?;
+                            continue;
+                        };
+                        let Some(response) = &interaction.response else {
+                            return Ok(());
+                        };
+                        if response == "deny" {
+                            self.reject_unexecuted(sid,call,"team_handoff_denied","Action denied. Do not retry or vary this action to evade the decision.",false)?;
+                            continue;
+                        }
+                        ensure!(
+                            interaction.bundle_digest == self.execution_digest
+                                && Some(&interaction.schema_digest) == s.schema_digest.as_ref()
+                                && interaction.policy_digest == s.tool_policy.digest
+                                && interaction.resource_policy_digest == s.resource_policy.digest,
+                            "Handoff approval binding changed"
+                        );
+                        permissions::hard_check_session(&self.bundle, &s, alias, &args)?;
+                    }
                     self.check_backend(sid)?;
                     let mut observation =
                         self.internal_observation(sid, &t.id, alias, call["call_id"].as_str());
@@ -2441,6 +2469,11 @@ impl Runtime {
                         }
                         Err(error) => {
                             observation.finish(Outcome::Denied);
+                            if error.downcast_ref::<crate::coding_handoff::workflow::ApprovalInvalidated>().is_some() {
+                                let interaction=self.authorize_call(sid,call).await?;
+                                if interaction.response.is_none(){return Ok(())}
+                                continue;
+                            }
                             self.reject_unexecuted(
                                 sid,
                                 call,

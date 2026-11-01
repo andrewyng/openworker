@@ -204,6 +204,9 @@ impl Database {
                 &[],
             )?
             .get::<_, i64>(0) as u64;
+        if let Some((_, call)) = call {
+            openworker_runtime::coding_handoff::workflow::require_approval(&s, call)?;
+        }
         let before = serde_json::to_value(&s)?;
         let result = agent_team::apply(&mut Tx(&mut tx), &mut s, operation, args, now)?;
         if call.is_none()
@@ -327,7 +330,7 @@ impl crate::PostgresStore {
         let (sid, operation) = (sid.to_owned(), operation.to_owned());
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let action = if matches!(operation.as_str(), "snapshot" | "team_read_board") || (operation=="team_manage" && args["action"]=="list") {
+            let action = if matches!(operation.as_str(), "snapshot" | "team_read_board" | "team_list_submissions") || (operation=="team_manage" && args["action"]=="list") {
                 crate::auth::Action::Read
             } else {
                 crate::auth::Action::Control
@@ -336,7 +339,7 @@ impl crate::PostgresStore {
             ensure!(
                 matches!(
                     operation.as_str(),
-                    "snapshot" | "team_read_board" | "command" | "team_manage"
+                    "snapshot" | "team_read_board" | "team_list_submissions" | "command" | "team_manage"
                 ),
                 "Unsupported API coordination command"
             );

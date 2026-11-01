@@ -91,6 +91,10 @@ pub struct Proof {
 pub enum Origin {
     #[default]
     Turn,
+    TeamSubmission {
+        team_id: String,
+        submission_id: String,
+    },
     TeamSetup {
         team_id: String,
         setup_id: String,
@@ -119,7 +123,11 @@ impl Registration {
         component(&self.session_id, 80)?;
         match &self.origin {
             Origin::Turn => component(&self.turn_id, 80)?,
-            Origin::TeamSetup { team_id, setup_id } => {
+            Origin::TeamSubmission {
+                team_id,
+                submission_id: setup_id,
+            }
+            | Origin::TeamSetup { team_id, setup_id } => {
                 ensure!(self.turn_id.is_empty(), Error::Invalid);
                 component(team_id, 80)?;
                 component(setup_id, 80)?;

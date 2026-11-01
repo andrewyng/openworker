@@ -13,6 +13,12 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+pub use openworker_runtime::coding_handoff::config::{
+    Choice as CodingSourceChoice, Source as CodingSource, TeamConfig as CodingTeamDefaults,
+};
+pub use openworker_runtime::coding_handoff::ObjectFormat as GitObjectFormat;
+pub use openworker_runtime::team_definition::Sandbox as TeamSandbox;
+
 pub fn new_idempotency_key() -> String {
     openworker_runtime::id("idem")
 }
@@ -911,6 +917,8 @@ mod tests {
 #[serde(rename_all = "camelCase")]
 pub struct AgentTeamOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coding: Option<openworker_runtime::coding_handoff::config::TeamConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<openworker_runtime::team_definition::Delegation>,
@@ -1000,6 +1008,10 @@ impl AgentTeam {
                 None,
             )
             .await
+    }
+    /// Bounded same-team handoff catalog. Reports remain attributed claims.
+    pub async fn submissions(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        self.lead.service.json("POST",&format!("/v1/sessions/{}/team/commands",id(self.lead.id())?),Some(json!({"operation":"team_list_submissions","arguments":{"after":after,"limit":limit}})),None).await
     }
     pub async fn retire(
         &self,

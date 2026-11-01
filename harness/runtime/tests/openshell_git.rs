@@ -170,3 +170,55 @@ async fn default_shell_has_no_git_key_and_opt_in_manager_carries_only_current_re
         }
     }
 }
+
+#[tokio::test]
+#[ignore = "requires OW_TEST_DISPOSABLE_LINUX in a disposable Linux container"]
+async fn long_workspace_process_manager_reuses_original_owner_across_tool_connections() {
+    assert_eq!(
+        std::env::var("OW_TEST_DISPOSABLE_LINUX").as_deref(),
+        Ok("true")
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("project".repeat(30));
+    std::fs::create_dir(&root).unwrap();
+    let mut handle = String::new();
+    for connection in 0..2 {
+        let mut child = Command::new(BIN)
+            .args(["mcp-coding", "--environment-processes", "--workspace"])
+            .arg(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        rpc(&mut child,&mut reader,1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}})).await;
+        let args = if connection == 0 {
+            json!({"name":"process_start","arguments":{"command":"sleep 30"}})
+        } else {
+            json!({"name":"process_status","arguments":{"process_id":handle}})
+        };
+        let reply = rpc(&mut child, &mut reader, 2, "tools/call", args).await;
+        let data: Value =
+            serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_ne!(reply["result"]["isError"], true, "{reply}");
+        if connection == 0 {
+            handle = data["process_id"].as_str().unwrap().into();
+        } else {
+            assert_eq!(data["process_id"], handle);
+            assert_eq!(data["status"], "running");
+            let stopped = rpc(
+                &mut child,
+                &mut reader,
+                3,
+                "tools/call",
+                json!({"name":"process_stop","arguments":{"process_id":handle}}),
+            )
+            .await;
+            assert_ne!(stopped["result"]["isError"], true, "{stopped}");
+        }
+        child.stdin.take();
+        child.wait().await.unwrap();
+    }
+}

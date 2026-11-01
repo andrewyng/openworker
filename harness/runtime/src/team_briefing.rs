@@ -16,6 +16,8 @@ impl Default for Context {
 #[serde(deny_unknown_fields)]
 pub struct Options {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::coding_handoff::config::Choice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<String>,

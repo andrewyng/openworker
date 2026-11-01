@@ -22,6 +22,22 @@ try {
     assert.ok(events.events.some(e=>e.type==="tool_finished" && e.data.result.content?.some(c=>{try{const v=JSON.parse(c.text);return v.exit_code===0 && v.stdout==="typescript-git-ok";}catch{return false;}})));
     console.log("PASS TypeScript Git RuntimeProfile registration, original-session resume and real OpenShell fetch");
   }
+  const handoff=JSON.parse(process.env.OW_HANDOFF_REFERENCE??"null");
+  if(handoff){
+    const lead=await service.resume(handoff.reference);const team=await lead.resumeTeam();
+    const before=await team.submissions({limit:20});assert.equal(before[0].id,handoff.submissionId);assert.equal(before[0].status,"ready");assert.ok(before[0].integrations.some(i=>i.status==="applied"));
+    const task=`TEST_RESOURCE_GRANTS ${JSON.stringify([
+      {name:"run_shell",arguments:{command:`test "$(git rev-parse HEAD)" = '${handoff.commit}' && test "$(cat proof.txt)" = checkout-a && printf typescript-submission-ok`,yield_ms:10000}},
+      {name:"team_report_verification",arguments:{submission_id:handoff.submissionId,report:"TypeScript-created verifier checked the original submitted commit and file."}}
+    ])}`;
+    const verifier=await team.spawn("typescript-submission-verifier","builder","typescript-submission",task,{source:{kind:"submission",id:handoff.submissionId}});
+    const deadline=Date.now()+180000;
+    while(true){const members=await team.members();const row=members.members.find(r=>r.instance.agent_id==="typescript-submission");assert.equal(row.error,null,JSON.stringify(row));if(row.last_outcome==="completed")break;assert.ok(Date.now()<deadline,JSON.stringify(row));await new Promise(r=>setTimeout(r,150));}
+    const events=await service.json("GET",`/v1/sessions/${verifier.instance.session_id}/events/page?after=0`);
+    assert.ok(events.events.some(e=>e.type==="tool_finished" && e.data.result.content?.some(c=>{try{const v=JSON.parse(c.text);return v.exit_code===0 && v.stdout==="typescript-submission-ok";}catch{return false;}})));
+    const after=await team.submissions({limit:20});assert.equal(after[0].id,handoff.submissionId);assert.equal(after[0].reports.length,2);assert.ok(after[0].reports.some(r=>r.reporter.agent_id==="typescript-submission"));
+    console.log("PASS TypeScript exact-submission spawn, distinct OpenShell checkout, real Git/file verification and attributed report");
+  }
   const coder = await service.resume(reference);
   await assert.rejects(service.resume({...reference,agent:'verifier@1'}),/release_identity_mismatch/);
   const verifier = await service.agent("verifier");

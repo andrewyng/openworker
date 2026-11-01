@@ -389,6 +389,41 @@ pub async fn controller(
             stop.clone(),
             artifacts.clone(),
         );
+        let (
+            submission_config,
+            submission_store,
+            submission_installed,
+            submission_stop,
+            submission_artifacts,
+        ) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+            artifacts.clone(),
+        );
+        let (integration_config, integration_store, integration_installed, integration_stop) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+        );
+        source_tasks.spawn(async move {
+            while !integration_stop.is_cancelled() {
+                if !crate::service_team_integrations::prepare_once(&integration_config,&integration_store,&integration_installed).await? {
+                    tokio::select!{_=integration_stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+        source_tasks.spawn(async move {
+            while !submission_stop.is_cancelled() {
+                if !crate::service_team_submissions::prepare_once(&submission_config,&submission_store,&submission_installed,Some(&submission_artifacts),&submission_stop).await? {
+                    tokio::select! {_=submission_stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
         source_tasks.spawn(async move {
             while !stop.is_cancelled() {
                 if !crate::service_team_sources::prepare_once(&config, &store, &installed, Some(&artifacts), &stop).await? {

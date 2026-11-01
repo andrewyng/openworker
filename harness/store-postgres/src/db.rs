@@ -119,6 +119,8 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::service_team_placements::migrate(&mut tx)?;
     crate::service_team_sources::migrate(&mut tx)?;
     crate::service_team_imports::migrate(&mut tx)?;
+    crate::service_team_integrations::migrate(&mut tx)?;
+    crate::service_team_submissions::migrate(&mut tx)?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS sdk_host_mode(singleton BOOLEAN PRIMARY KEY CHECK(singleton), mode TEXT NOT NULL CHECK(mode='sdk'))")?;
     tx.commit()?;
     Ok(())

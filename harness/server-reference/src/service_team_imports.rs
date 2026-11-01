@@ -128,7 +128,10 @@ pub(crate) async fn prepare_once(
     backend: &openworker_artifacts::Store,
     stop: &CancellationToken,
 ) -> Result<bool> {
-    let Some(mut job) = store.claim_team_import(installation)? else {
+    let Some(mut job) = (match store.claim_team_import(installation)? {
+        Some(job) => Some(job),
+        None => store.claim_team_reception(installation)?,
+    }) else {
         return Ok(false);
     };
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(150), async {

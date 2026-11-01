@@ -1,8 +1,9 @@
 # Isolated coding source and handoff implementation
 
-C4 implementation note. Status: initial source staging, durable child import and
-receipt-gated admission physically qualified; model handoff implementation and
-full isolated preset qualification in progress.
+C4 implementation note. Initial source staging, submitted-revision export,
+independent verifier checkout, attributed reports, lead reception and explicit
+integration passed the focused local service/OpenShell qualification. The complete
+combined regression and final checkpoint are recorded in the linked journal.
 
 Related: [milestones and journal](CODING-AGENT-PRESETS-PLAN.md),
 [coding variants](CODING-AGENT-PRESETS.md),
@@ -140,10 +141,10 @@ Source transfer runs in a bounded controller task, separate from normal control
 reconciliation. Restart inspects the original export and resumes only immutable
 same-ID artifact publication. Revocation blocks staging; an explicit application
 retry after restoring authority retains the dispatch bit and original identities.
-The public isolated-preset/default and child-import admission integration is still
-a separate gate; this adapter does not itself expose new agent tools.
+The public isolated preset and model tools use this same setup/import machinery;
+setup alone does not fabricate a model call or its approval.
 
-## Next admission slice: coding defaults and source choice
+## Coding defaults and source choice
 
 The shared runtime contract now has application-owned coding defaults per prebuilt
 type. Builders select the initial pinned snapshot by default. Verifiers require an
@@ -157,8 +158,8 @@ possible. Linked worktrees cannot be combined with an independent source import.
 Dynamic types do not inherit a prebuilt default by coincidence; explicit choices
 still need the approved type's placement ceiling and original source authority.
 
-Wire this contract atomically through team configuration, reservation and the
-trusted child-import outbox before exposing the isolated preset in SDK helpers.
+Team configuration, reservation, trusted child-import outbox and SDK preset
+helpers share this contract.
 The required order is: original placement ready → selected artifact ready →
 independent checkout receipt → child cwd/admission. A directory existing by itself
 is insufficient evidence that it contains the selected source or Git metadata.
@@ -179,13 +180,13 @@ the optional field and retain their prior serialized representation.
 The private `handoff/workspace` conversion requires the original acknowledged
 import, then `workspace/verify` checks its filesystem identities at launch. The
 service import outbox must pin and acknowledge this receipt before child admission.
-The newer method/receipt requires a matching ToolRunner image; the preceding
-source/receiver physical evidence alone does not qualify this new admission path.
+The method/receipt requires a matching ToolRunner image. Qualification records
+the actual image digest; a compilation result does not establish admission safety.
 
 ## Root-repository bookkeeping
 
 For a repository at the workspace root, first dispatch appends a fixed
-`/.openworker/` exclusion to its local Git `info/exclude`, after recording the
+`/.openworker/`, `/.openworker-received/` and `/.openworker-processes/` exclusions to its local Git `info/exclude`, after recording the
 original operation. Existing patterns and tracked `.gitignore` remain unchanged.
 The metadata file is bounded to 64 KiB and symlinks are rejected. Inspection does
 not modify it. This keeps private transfer/worktree markers out of ordinary
@@ -210,7 +211,125 @@ retains work. Unknown outcomes yield deduplicated lead-inbox notices. No downloa
 URL, object key or storage credential enters ToolRunner. Bounded import I/O runs in
 a separate controller task so it cannot stall cancellation or cleanup.
 
-This slice resolves initial source only. Submitted-revision catalog lookup and
-model-facing submission/reception tools are still required before public isolated
-preset APIs are enabled. Synthetic storage tests are distinct from real Git and
-physical provider qualification.
+The same import controller resolves either the initial source or an authorized
+published submission. Public isolated presets require this adapter. Synthetic
+storage tests are distinct from real Git and physical provider qualification.
+
+## Submitted-revision model workflow
+
+Keep the following effects separate and durable; model arguments select an
+existing same-team object, never a filesystem root, storage key or credential:
+
+```text
+Builder                         Controller                    Lead / verifier
+  commit in own checkout
+  team_submit_code(commit) ---> export intent + original pin
+  <--- submission ID, pending   export / inspect original
+                               verify + publish artifact ---> inbox: ready + ID
+                                                               |
+                              +--------------------------------+
+                              | team_spawn(...,
+                              |   source: {submission, ID})
+                              v
+                       independent exact checkout ----------> verifier tests
+                                                              reports for ID
+                              +--------------------------------+
+                              | team_receive_submission(ID)
+                              v
+                       original lead reception intent ------> inspect checkout
+                              |
+                              | team_integrate_submission(ID, expected_head)
+                              v
+                       bounded fast-forward-only action ---> explicit outcome
+```
+
+The submission records the actual producing team/member/session and originating
+model call. Exact commit, source base, bundle receipt and immutable published
+artifact form the handoff; a friendly summary is untrusted descriptive data.
+Pending publication is not a completed handoff. Lifecycle inbox notices contain
+identities/status rather than embedding model-authored text as harness authority.
+
+Verification reports are separate immutable, attributed records referencing the
+frozen manifest digest and submitted revision. Adding a report must not mutate
+that manifest or invalidate another verifier's already-pinned import. A report is
+an agent's claim, not a permission grant or automatic integration decision.
+Verifiers receive the named submitted artifact, never the original source as a
+fallback. Their qualification checks actual Git HEAD and test results.
+
+The lead receives an independent inspection checkout before integration. First
+provide fast-forward-only integration into the application's original source
+repository, with a clean tracked tree, exact expected current HEAD and descendant
+check. A moved base, divergent history or conflicting local state rejects clearly;
+no force/reset or automatic conflict resolution. More involved merge/rebase work
+is an explicit coding action and may produce a new submission. Do not mark a
+report or reception as integrated merely because its bytes were imported.
+
+Persist each original operation and its dispatch decision before provider I/O.
+Lost replies permit inspection of the same export/import/integration; never repeat
+checkout, merge or publication blindly. Unknown operations keep their workspace/
+environment reference so retirement cannot discard work still needing inspection.
+An operation proven never dispatched can be closed without allocating replacement
+resources. Publication uses existing artifact ownership and storage bindings, with
+an explicit submission origin rather than pretending a later controller still
+owns the producing model turn.
+
+Preserve transaction ordering. Controllers lock lead then team and operation data;
+they must not introduce a producer-row lock after the team lock that can deadlock
+a child tool transaction holding that producer row. Completion and inbox updates
+remain atomic, original authority is rechecked on every frame, and audit append
+comes last. Metadata/contract, real Git, fault-injected PostgreSQL and physical
+OpenShell tests each qualify their own boundary before enabling SDK preset helpers.
+
+## Current model-facing workflow and approval boundary
+
+The application supplies `coding` defaults at service team creation; the server
+supplies its configured artifact-store binding. Rust and TypeScript child options
+carry an explicit `source` choice. A published submission can be consumed after its
+producer retires, provided the original lead credential and immutable catalog
+still authorize it. Reports stay separately attributed and never change a manifest.
+
+```text
+builder checkout / own .git
+  | team_submit_code(commit, summary)       Ask / reviewer / bypass
+  v
+original submission intent -> controller export -> verified immutable artifact
+  |                                                  |
+  | ready notice in durable inbox                    | same submission ID
+  v                                                  v
+lead selects verifier                         independent verifier checkout
+  |                                                  |
+  |                                   team_report_verification(id, report)
+  |                                                  |
+  +---------------- attributed claims <--------------+
+  |
+  | team_receive_submission(id)            Ask / reviewer / bypass
+  v
+lead sandbox: .openworker-received/{team}/{submission} / own .git
+  | inspect files; original source workspace is unchanged
+  |
+  | team_integrate_submission(id, expected_head)
+  v
+original source repo: ancestry + clean-tree checks -> index/files -> branch CAS
+```
+
+Mutating handoff calls pass through ordinary approval handling. Both storage
+adapters recheck the exact saved approval and active session grant inside the
+session transaction before committing a model's intent. Revocation after the
+LLM-loop check therefore cannot authorize a queued export or integration. A stale
+approval reopens the normal decision path. Trusted controller acknowledgements
+are separate private operations; a model cannot choose artifact provenance labels.
+
+The native Git integration does not execute hooks or content filters, use a remote,
+or run repository code. It stages a local operation-owned bundle, requires the
+submitted commit to descend from the current expected head, and updates the branch
+with an expected-old-ID CAS. URL rewrite and sparse-checkout configuration reject.
+Known stale/dirty/divergent rejections have durable negative receipts. Index/files
+and ref updates are separate Git operations: a crash between them can leave a
+partial outcome, which is retained for inspection. Inspection never repeats the
+index update, resets files, changes the branch or writes a replacement receipt.
+
+Root-repository bookkeeping excludes both `/.openworker/` and
+`/.openworker-received/` locally. Existing tracked ignore files are unchanged.
+This is staging hygiene, not kernel isolation or a way to hide already tracked data.
+
+Public SDK usage: [isolated coding teams](ISOLATED-CODING-TEAMS.md).
