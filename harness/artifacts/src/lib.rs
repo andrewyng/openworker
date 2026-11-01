@@ -83,9 +83,29 @@ pub struct Proof {
     pub expected: Expected,
     pub manifest_sha256: String,
 }
+/// Source setup has its own provenance; it must never fabricate an LLM turn.
+/// This metadata is not permission to publish: the catalog verifies the original
+/// trusted setup intent. Public turn-artifact APIs cannot select setup origin.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Origin {
+    #[default]
+    Turn,
+    TeamSetup {
+        team_id: String,
+        setup_id: String,
+    },
+}
+impl Origin {
+    pub fn is_turn(&self) -> bool {
+        matches!(self, Self::Turn)
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    #[serde(default, skip_serializing_if = "Origin::is_turn")]
+    pub origin: Origin,
     pub request_id: String,
     pub session_id: String,
     pub turn_id: String,
@@ -97,7 +117,14 @@ impl Registration {
     pub fn validate(&self) -> Result<()> {
         component(&self.request_id, 100)?;
         component(&self.session_id, 80)?;
-        component(&self.turn_id, 80)?;
+        match &self.origin {
+            Origin::Turn => component(&self.turn_id, 80)?,
+            Origin::TeamSetup { team_id, setup_id } => {
+                ensure!(self.turn_id.is_empty(), Error::Invalid);
+                component(team_id, 80)?;
+                component(setup_id, 80)?;
+            }
+        }
         self.expected.validate()?;
         ensure!(
             !self.name.is_empty()
@@ -111,6 +138,7 @@ impl Registration {
         ensure!(
             [
                 "application/octet-stream",
+                "application/x-git-bundle",
                 "text/plain",
                 "text/markdown",
                 "text/html",

@@ -339,6 +339,7 @@ mod tests {
         Artifact {
             id: id.clone(),
             registration: Registration {
+                origin: Default::default(),
                 request_id: "request".into(),
                 session_id: "s_test".into(),
                 turn_id: "t_test".into(),

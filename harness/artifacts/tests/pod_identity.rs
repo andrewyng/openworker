@@ -234,6 +234,7 @@ async fn pod_identity_probe() {
     let a = Artifact {
         id: "a_pod".into(),
         registration: Registration {
+            origin: Default::default(),
             request_id: "pod-upload".into(),
             session_id: "s_pod".into(),
             turn_id: "t_pod".into(),

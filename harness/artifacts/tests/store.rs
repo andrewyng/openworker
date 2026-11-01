@@ -6,6 +6,7 @@ fn artifact(store: &Store, bytes: &[u8]) -> Artifact {
     Artifact {
         id: id.clone(),
         registration: Registration {
+            origin: Default::default(),
             request_id: "request".into(),
             session_id: "s_test".into(),
             turn_id: "t_test".into(),
@@ -241,4 +242,31 @@ fn private_ca_is_explicit_bounded_and_does_not_enable_plaintext() {
     config.ca_file = None;
     config.endpoint = Some("http://objects.example".into());
     assert!(config.build(None).is_err());
+}
+
+#[test]
+fn setup_provenance_is_explicit_without_fabricating_or_changing_ordinary_turn_receipts() {
+    let old = serde_json::json!({"request_id":"one","session_id":"s_one","turn_id":"t_one","name":"source.bundle","content_type":"application/x-git-bundle","expected":{"size":5,"sha256":hash(b"hello")}});
+    let turn: Registration = serde_json::from_value(old.clone()).unwrap();
+    turn.validate().unwrap();
+    assert!(turn.origin.is_turn());
+    assert_eq!(serde_json::to_value(&turn).unwrap(), old);
+    let mut setup = turn.clone();
+    setup.origin = Origin::TeamSetup {
+        team_id: "at_one".into(),
+        setup_id: "source_one".into(),
+    };
+    assert!(setup.validate().is_err());
+    setup.turn_id.clear();
+    setup.validate().unwrap();
+    let encoded = serde_json::to_value(&setup).unwrap();
+    assert_eq!(encoded["origin"]["kind"], "team_setup");
+    assert_eq!(encoded["turn_id"], "");
+    assert_eq!(
+        serde_json::from_value::<Registration>(encoded.clone()).unwrap(),
+        setup
+    );
+    let mut injected = encoded;
+    injected["origin"]["credentials"] = serde_json::json!(["secret"]);
+    assert!(serde_json::from_value::<Registration>(injected).is_err());
 }
