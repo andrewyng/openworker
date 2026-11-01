@@ -38,6 +38,9 @@ impl Fixture {
         Self::new_with_git(false).await
     }
     async fn new_with_git(git: bool) -> Self {
+        Self::new_with_access(git, false).await
+    }
+    async fn new_with_access(git: bool, repository: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("installed");
         std::fs::create_dir_all(bundle.join("coworker")).unwrap();
@@ -53,6 +56,10 @@ impl Fixture {
         v["model_connections"] = json!([{"id":"primary","provider":"openai","identity":"stable-primary","key_env":"UNUSED_TEST_KEY"},{"id":"other","provider":"anthropic","identity":"stable-other","key_env":"UNUSED_TEST_KEY"}]);
         if git {
             v["openshell"]["git_grants"] = json!({"github@1":{"provider":{"name":"github","provider_id":"original-provider","profile_id":"github","profile_workspace":"","profile_digest":"a".repeat(64)},"scope":{"host":"github.com","repositories":["org/project"]}}});
+        }
+        if repository {
+            std::fs::write(bundle.join("tools.json"),r#"{"version":3,"tools":["coding.read_file","coding.write_file","github_broker.publish_code"]}"#).unwrap();
+            v["repository_grants"] = json!({"publisher@1":{"credential_env":"UNUSED_REPOSITORY_KEY","repositories":{"org/game":{"github":"org/game","read_refs":["refs/heads/main"],"write_prefixes":["agents/"]}}}});
         }
         let cfg: Config = serde_json::from_value(v).unwrap();
         let installed = management::installation(&cfg).unwrap();
@@ -79,6 +86,9 @@ impl Fixture {
             .unwrap();
         let user = store.authorized(&token).unwrap();
         let mut profile = json!({"id":"team@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"shared","allowedPrincipals":["alice"]});
+        if repository {
+            profile["repositoryAccess"] = json!("publisher@1");
+        }
         if git {
             profile["gitAccess"] = json!("github@1");
             let plain=admin.catalog_put("plain","profile",json!({"id":"plain@1","provider":"openshell","cpu":1,"memoryMB":512,"sharing":"exclusive","allowedPrincipals":["alice"]}),&installed).unwrap();
@@ -93,6 +103,13 @@ impl Fixture {
             .catalog_activate("activate-profile", "profile", &profile.id, None)
             .unwrap();
         let mut definition = json!({"id":"lead@1","instructions":"Trusted application lead.","tools":["read_file","write_file"],"runtimeProfiles":["team@1"],"defaultRuntimeProfile":"team@1","allowedPrincipals":["alice"],"defaultModel":{"connection":"primary","model":"working"},"reviewerModel":{"connection":"other","model":"reviewer"},"modelOverrides":[{"connection":"other","model":"delegated"}]});
+        if repository {
+            definition["tools"] = json!([
+                "coding.read_file",
+                "coding.write_file",
+                "github_broker.publish_code"
+            ]);
+        }
         if git {
             definition["runtimeProfiles"] = json!(["team@1", "plain@1"]);
         }
@@ -193,6 +210,15 @@ impl Fixture {
             args["coding"] = coding;
             args["source_store_binding"] = binding;
         }
+        let profile: openworker_store_postgres::service_catalog::Profile =
+            serde_json::from_value(self.store.catalog_get("profile", "team@1")?.definition)?;
+        let delegation: openworker_runtime::team_definition::Delegation =
+            serde_json::from_value(args["delegation"].clone())?;
+        args["_repository_access"] =
+            json!(self
+                .config
+                .repository_catalog(&self.store, &profile, Some(&delegation))?);
+
         let templates = BTreeMap::from([(
             "builder".into(),
             (self.release.id.clone(), {

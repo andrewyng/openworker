@@ -240,7 +240,7 @@ pub fn submit(
     doc.submissions.insert(state.request.id.clone(), state);
     Ok(result)
 }
-fn current_call(session: &crate::store::Session, name: &str) -> Result<Call> {
+pub(super) fn current_call(session: &crate::store::Session, name: &str) -> Result<Call> {
     use anyhow::Context;
     let turn = session
         .turn
@@ -514,6 +514,18 @@ pub fn require_approval(s: &crate::store::Session, call: &serde_json::Value) -> 
     if !approval_required(alias) {
         return Ok(());
     }
+    require_tool_approval(s, call, None, None)
+}
+/// Recheck the exact ordinary native/MCP tool approval at a durable effect-intent
+/// boundary. Called while holding the session lock, including for bypass-origin
+/// approvals; no label or previously revoked Allow Always entry can waive it.
+pub fn require_tool_approval(
+    s: &crate::store::Session,
+    call: &serde_json::Value,
+    server: Option<&str>,
+    remote: Option<&str>,
+) -> Result<()> {
+    let alias = call["name"].as_str().unwrap_or_default();
     let valid = (|| {
         let turn = s.turn.as_ref()?;
         let i = s
@@ -527,14 +539,14 @@ pub fn require_approval(s: &crate::store::Session, call: &serde_json::Value) -> 
             && Some(&i.schema_digest) == s.schema_digest.as_ref()
             && i.policy_digest == s.tool_policy.digest
             && i.resource_policy_digest == s.resource_policy.digest
-            && i.server.is_none()
-            && i.remote_tool.is_none();
+            && i.server.as_deref() == server
+            && i.remote_tool.as_deref() == remote;
         let grant = i.grant_id.as_ref().is_none_or(|id| {
             s.approval_grants.iter().any(|g| {
                 g.id == *id
                     && g.tool == alias
-                    && g.server.is_none()
-                    && g.remote_tool.is_none()
+                    && g.server.as_deref() == server
+                    && g.remote_tool.as_deref() == remote
                     && g.bundle_digest == s.bundle_digest
                     && Some(&g.schema_digest) == s.schema_digest.as_ref()
                     && g.policy_digest == s.tool_policy.digest

@@ -33,7 +33,16 @@ impl Tools {
             .bindings
             .iter()
             .filter(|(alias, b)| {
-                alias.as_str() == name || format!("{}.{}", b.server, b.tool) == name
+                alias.as_str() == name
+                    || if self
+                        .servers
+                        .get(&b.server)
+                        .is_some_and(|s| s.program == "$NATIVE")
+                    {
+                        b.tool == name
+                    } else {
+                        format!("{}.{}", b.server, b.tool) == name
+                    }
             })
             .map(|(alias, _)| alias.clone())
             .collect();
@@ -246,6 +255,32 @@ fn fingerprint(root: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 impl Bundle {
+    /// Preserve registered provider selection when publishing a scoped bundle.
+    /// Resolved $NATIVE/$HTTP bindings must never be serialized as legacy v2.
+    pub fn selection_text(&self, selected: &Tools) -> Result<String> {
+        if self.registry_digest.is_none() {
+            return Ok(serde_json::to_string(selected)?);
+        }
+        let tools: Vec<_> = selected
+            .bindings
+            .values()
+            .map(|b| {
+                if self
+                    .tools
+                    .servers
+                    .get(&b.server)
+                    .is_some_and(|s| s.program == "$NATIVE")
+                {
+                    b.tool.clone()
+                } else {
+                    format!("{}.{}", b.server, b.tool)
+                }
+            })
+            .collect();
+        Ok(serde_json::to_string(
+            &serde_json::json!({"version":3,"tools":tools}),
+        )?)
+    }
     pub fn instructions_for(
         &self,
         selected: &[String],

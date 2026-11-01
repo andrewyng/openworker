@@ -28,13 +28,16 @@ pub struct Profile {
     /// Versioned operator-installed grant, never a credential or model input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_access: Option<String>,
+    /// Trusted host-side repository broker, independent of sandbox CLI access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access: Option<String>,
     #[serde(default)]
     pub allowed_principals: Vec<String>,
 }
 impl Profile {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
-        if let Some(grant) = &self.git_access {
+        for grant in self.git_access.iter().chain(self.repository_access.iter()) {
             revision(grant)?;
         }
         ensure!(
@@ -71,7 +74,9 @@ impl Profile {
                 && self.memory_mb <= lead.memory_mb
                 && self.approval_mode == lead.approval_mode
                 && self.auto_skip_questions == lead.auto_skip_questions
-                && (self.git_access.is_none() || self.git_access == lead.git_access),
+                && (self.git_access.is_none() || self.git_access == lead.git_access)
+                && (self.repository_access.is_none()
+                    || self.repository_access == lead.repository_access),
             crate::auth::Error::Forbidden
         );
         Ok(())

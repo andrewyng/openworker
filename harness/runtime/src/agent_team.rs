@@ -65,6 +65,10 @@ pub struct Document {
     pub receptions: BTreeMap<String, crate::coding_handoff::workflow::Reception>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub integrations: BTreeMap<String, crate::coding_handoff::workflow::IntegrationState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access: Option<crate::coding_handoff::publication::Catalog>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub publications: BTreeMap<String, crate::coding_handoff::publication::State>,
     /// Enabled only by a qualified trusted placement adapter, never model input.
     #[serde(default)]
     pub placement_selection: bool,
@@ -356,6 +360,8 @@ pub fn apply(
             submissions: BTreeMap::new(),
             receptions: BTreeMap::new(),
             integrations: BTreeMap::new(),
+            repository_access: None,
+            publications: BTreeMap::new(),
             placement_selection: args["placement_selection"] == true,
             sandbox_choices: BTreeMap::new(),
             placement_bindings: BTreeMap::new(),
@@ -487,6 +493,12 @@ pub fn apply(
                         .values()
                         .filter(|i| i.request.submission_id == *id)
                         .map(crate::coding_handoff::workflow::integration_view)
+                        .collect::<Vec<_>>());
+                    v["publications"] = json!(doc
+                        .publications
+                        .values()
+                        .filter(|p| p.request.submission_id == *id)
+                        .map(crate::coding_handoff::publication::view)
                         .collect::<Vec<_>>());
                     v["reception"] = doc
                         .receptions
@@ -1337,6 +1349,8 @@ pub fn public_snapshot(mut value: Value) -> Value {
             "submissions",
             "receptions",
             "integrations",
+            "repository_access",
+            "publications",
         ] {
             object.remove(key);
         }

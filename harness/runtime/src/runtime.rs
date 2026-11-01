@@ -1080,11 +1080,15 @@ impl Runtime {
         if p.get("policy").is_none() && p.get("expected_policy_digest").is_some() {
             bail!("Expected policy digest requires explicit policy selection");
         }
-        if resource_policy
-            .servers
-            .values()
-            .any(|v| *v == crate::resource_policy::Placement::Host)
-        {
+        if resource_policy.servers.iter().any(|(id, v)| {
+            *v == crate::resource_policy::Placement::Host
+                && self
+                    .bundle
+                    .tools
+                    .servers
+                    .get(id)
+                    .is_some_and(|s| s.program != "$NATIVE")
+        }) {
             crate::direct::preflight()?;
         }
         if p["coworker"] != self.bundle.id {
@@ -1675,25 +1679,31 @@ impl Runtime {
             .as_ref()
             .context("Remote environment registry is not configured")?
             .provider(&binding.spec)?;
-        // No implicit shipping of host executables, mounts or credentials. A
-        // later image/package manifest can explicitly describe additional MCPs.
-        if self.resource_policy.configured()
-            || self
-                .bundle
-                .tools
-                .servers
-                .values()
-                .any(|s| s.program != "$OPENWORKER")
-        {
-            bail!("Initial remote profile requires image-bundled OpenWorker MCP tools and no local resource profile");
+        let servers = crate::resource_policy::remote_placements(
+            &self.bundle,
+            self.resource_policy.configured(),
+        )?;
+        let native = servers
+            .values()
+            .any(|p| *p == crate::resource_policy::Placement::Host);
+        let mut warnings = vec!["Shared environment processes share its filesystem and network authority; session approvals do not isolate them.".into()];
+        if native {
+            warnings.push("Selected native callbacks run in the trusted harness outside the sandbox. Their remote workspace is not a host filesystem grant.".into());
         }
-        Ok(crate::resource_policy::Resolved {
-            digest: binding.fingerprint()?, policy_digest: binding.spec.profile_digest.clone(),
+        let mut resolved = crate::resource_policy::Resolved {
+            policy_digest: binding.spec.profile_digest.clone(),
             workspace: binding.spec.workspace_root.clone().into(),
-            servers: self.bundle.tools.servers.keys().map(|k| (k.clone(), crate::resource_policy::Placement::Sandbox)).collect(),
-            warnings: vec!["Shared environment processes share its filesystem and network authority; session approvals do not isolate them.".into()],
+            servers,
+            remote_native_registry: if native {
+                self.bundle.registry_digest.clone()
+            } else {
+                None
+            },
+            warnings,
             ..Default::default()
-        })
+        };
+        resolved.digest = resolved.remote_digest(binding)?;
+        Ok(resolved)
     }
     fn bounded_lifecycle(&self, sid: &str) -> bool {
         self.backend == Backend::Off

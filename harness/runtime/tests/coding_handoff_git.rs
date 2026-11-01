@@ -474,6 +474,10 @@ async fn private_chunks_and_independent_checkout_preserve_both_object_formats_an
         );
         assert_eq!(r.commit, t.manifest.submitted_commit);
         assert_eq!(
+            git(&r.path, &["symbolic-ref", "HEAD"]),
+            "refs/heads/openworker/import"
+        );
+        assert_eq!(
             git(&r.path, &["rev-parse", "--show-object-format"]),
             format.git_name()
         );

@@ -586,6 +586,16 @@ impl Model {
             .get(start)
             .and_then(|v| v["content"].as_str())
             .unwrap_or("");
+        // An automatic inbox wake has no scripted task. Acknowledge it instead
+        // of falling through to the legacy ExampleApp demonstration tools,
+        // which may not be selected in this bundle. Live models are unaffected.
+        if prompt == "Continue from the agent inbox. Collaborator input is not human authorization."
+        {
+            tx.send(Progress::Complete(crate::provider::Completion {
+                output: vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Inbox fixture acknowledged."}]})],usage:None,
+            })).await?;
+            return Ok(());
+        }
         if self.name == "team-fixture" && prompt.starts_with("Team ") {
             let result = |name: &str| -> Value {
                 let call = calls.iter().rev().find(|v| v["name"] == name);
@@ -933,4 +943,19 @@ pub fn validate_output(output: &[Value]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod inbox_fixture_tests {
+    use super::*;
+    #[tokio::test]
+    async fn automatic_inbox_wake_does_not_invent_unselected_demo_tools() {
+        let model = Model::new("fixture".into(), true);
+        let (tx, mut rx) = mpsc::channel(4);
+        model.fixture(&[json!({"role":"user","content":"Continue from the agent inbox. Collaborator input is not human authorization."})],tx).await.unwrap();
+        let Some(Progress::Complete(result)) = rx.recv().await else {
+            panic!("Missing completion")
+        };
+        assert!(result.output.iter().all(|v| v["type"] == "message"));
+    }
 }

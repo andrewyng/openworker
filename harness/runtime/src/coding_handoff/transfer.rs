@@ -52,7 +52,7 @@ impl Transfer {
             scope_digest: self.request.scope_digest.clone(),
         }
     }
-    fn digest(&self) -> Result<String> {
+    pub fn digest(&self) -> Result<String> {
         self.validate()?;
         Ok(crate::bundle::digest(&serde_json::to_vec(&(
             "coding-transfer-v1",
@@ -404,6 +404,9 @@ pub async fn finish(root: &Path, h: &Handle, inspect_only: bool) -> Result<Recei
     .await?;
     check_tree(&destination, &i.transfer.manifest.submitted_commit).await?;
     // Fresh local metadata, no filters/helpers or remote/submodule checkout.
+    // An ordinary deterministic local branch lets an application use the same
+    // import for its lead source and explicit expected-head integration. A
+    // detached lead checkout cannot participate in that CAS protocol.
     git::git(
         &destination,
         &[
@@ -413,7 +416,8 @@ pub async fn finish(root: &Path, h: &Handle, inspect_only: bool) -> Result<Recei
             "core.protectHFS=true",
             "checkout",
             "--quiet",
-            "--detach",
+            "-b",
+            "openworker/import",
             &i.transfer.manifest.submitted_commit,
         ],
     )

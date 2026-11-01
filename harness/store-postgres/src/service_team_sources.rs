@@ -30,6 +30,8 @@ pub struct Intent {
     pub artifact_binding: Binding,
     pub export: Export,
     pub bundle: Option<Bundle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access: Option<openworker_runtime::coding_handoff::publication::Access>,
 }
 #[derive(Clone, Debug)]
 pub struct Job {
@@ -40,6 +42,7 @@ pub struct Job {
 pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
     tx.batch_execute("CREATE TABLE IF NOT EXISTS service_team_sources(team TEXT PRIMARY KEY REFERENCES agent_teams(id),data JSONB NOT NULL,status TEXT NOT NULL DEFAULT 'pending',dispatched BOOLEAN NOT NULL DEFAULT FALSE,claim TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
     tx.batch_execute("ALTER TABLE service_team_sources ADD COLUMN IF NOT EXISTS last_notice TEXT")?;
+    tx.batch_execute("ALTER TABLE service_team_sources ADD COLUMN IF NOT EXISTS prepare_dispatched BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN IF NOT EXISTS checkout_dispatched BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN IF NOT EXISTS checkout JSONB")?;
     Ok(())
 }
 fn notice(
@@ -94,7 +97,7 @@ fn notice(
     )?;
     Ok(())
 }
-fn document(tx: &mut postgres::Transaction<'_>, lead: &Session) -> Result<Document> {
+pub(super) fn document(tx: &mut postgres::Transaction<'_>, lead: &Session) -> Result<Document> {
     let team = &lead
         .agent_team
         .as_ref()
@@ -115,7 +118,7 @@ fn document(tx: &mut postgres::Transaction<'_>, lead: &Session) -> Result<Docume
     );
     Ok(d)
 }
-fn authority(
+pub(super) fn authority(
     tx: &mut postgres::Transaction<'_>,
     lead: &Session,
     d: &Document,
@@ -142,9 +145,24 @@ fn authority(
             && p.digest == i.profile_digest,
         "Original source authority or environment changed"
     );
+    if let Some(access) = &i.repository_access {
+        let current = d
+            .repository_access
+            .as_ref()
+            .and_then(|c| c.profiles.get(&i.profile_id));
+        ensure!(
+            current == Some(access),
+            "Original source repository grant changed"
+        );
+        let profile: crate::service_catalog::Profile = serde_json::from_value(p.definition)?;
+        ensure!(
+            profile.repository_access.as_deref() == Some(&access.grant),
+            "Source profile grant changed"
+        );
+    }
     Ok(())
 }
-fn row(tx: &mut postgres::Transaction<'_>, team: &str) -> Result<Intent> {
+pub(super) fn row(tx: &mut postgres::Transaction<'_>, team: &str) -> Result<Intent> {
     Ok(serde_json::from_value(
         tx.query_one(
             "SELECT data FROM service_team_sources WHERE team=$1 FOR UPDATE",
@@ -226,7 +244,7 @@ pub(crate) fn ready_snapshot(
     m.validate()?;
     Ok((m, b, a))
 }
-fn fenced(tx: &mut postgres::Transaction<'_>, job: &Job, i: &Intent) -> Result<()> {
+pub(super) fn fenced(tx: &mut postgres::Transaction<'_>, job: &Job, i: &Intent) -> Result<()> {
     let row = tx.query_one(
         "SELECT claim,next_check>clock_timestamp(),status FROM service_team_sources WHERE team=$1",
         &[&i.team],
@@ -317,6 +335,23 @@ pub(crate) fn configure(
     let origin=tx.query_one("SELECT release_id,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'", &[&sid])?;
     let r = crate::service_catalog::entry(tx, "release", &origin.get::<_, String>(0))?;
     let p = crate::service_catalog::entry(tx, "profile", &origin.get::<_, String>(1))?;
+    let repository_access = if let Some(reference) = &source.remote_ref {
+        let access = d
+            .repository_access
+            .as_ref()
+            .and_then(|c| c.profiles.get(&p.id))
+            .context("Remote source requires an installed RuntimeProfile repository grant")?;
+        ensure!(
+            access
+                .repositories
+                .get(&source.repository)
+                .is_some_and(|r| r.read_refs.contains(reference)),
+            "Source repository/ref denied"
+        );
+        Some(access.clone())
+    } else {
+        None
+    };
     if let Some(existing) = tx.query_opt(
         "SELECT data FROM service_team_sources WHERE team=$1 FOR UPDATE",
         &[&d.id],
@@ -378,6 +413,7 @@ pub(crate) fn configure(
         artifact_binding: binding,
         export,
         bundle: None,
+        repository_access,
     };
     tx.execute(
         "INSERT INTO service_team_sources(team,data) VALUES($1,$2)",
@@ -583,6 +619,18 @@ impl PostgresStore {
                 a.status == openworker_artifacts::Status::Ready && a.proof.is_some(),
                 "Source artifact not verified/published"
             );
+            if i.source.remote_ref.is_some() {
+                let checkout: Option<serde_json::Value> = tx
+                    .query_one(
+                        "SELECT checkout FROM service_team_sources WHERE team=$1",
+                        &[&i.team],
+                    )?
+                    .get(0);
+                ensure!(
+                    checkout.is_some(),
+                    "Remote source checkout has not been acknowledged"
+                );
+            }
             tx.execute(
                 "UPDATE service_team_sources SET status='ready',claim=NULL WHERE team=$1",
                 &[&i.team],

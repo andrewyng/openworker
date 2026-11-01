@@ -18,6 +18,28 @@ pub enum Placement {
     Host,
     Sandbox,
 }
+/// Remote files/processes stay in the environment. Explicit compiled callbacks
+/// execute in the trusted harness, never implicitly ship into that environment.
+/// A remote workspace in ToolContext is logical, not a path on the worker host.
+pub fn remote_placements(
+    bundle: &Bundle,
+    local_policy: bool,
+) -> Result<BTreeMap<String, Placement>> {
+    anyhow::ensure!(
+        !local_policy,
+        "Remote profiles cannot use local resource grants"
+    );
+    bundle.tools.servers.iter().map(|(id, server)| {
+        let placement = match server.program.as_str() {
+            "$OPENWORKER" => Placement::Sandbox,
+            "$NATIVE" if bundle.registry_digest.is_some()
+                && bundle.tools.bindings.values().filter(|b| b.server == *id)
+                    .all(|b| bundle.registry.native(&b.tool).is_some()) => Placement::Host,
+            _ => bail!("Remote profile requires image-bundled OpenWorker tools or explicitly registered native callbacks"),
+        };
+        Ok((id.clone(), placement))
+    }).collect()
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Server {
@@ -171,12 +193,37 @@ pub struct Resolved {
     pub workspace: PathBuf,
     pub workspace_identity: Option<Stamp>,
     pub servers: BTreeMap<String, Placement>,
+    /// Set only by trusted bundle preparation after exact registry selection.
+    /// Runtime reload revalidates the compiled descriptors before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_native_registry: Option<String>,
     pub files: BTreeMap<String, ResolvedFile>,
     pub network: BTreeMap<String, NetworkGrant>,
     pub credentials: BTreeMap<String, ResolvedCredential>,
     pub warnings: Vec<String>,
 }
 impl Resolved {
+    pub fn remote_digest(&self, binding: &crate::environment::Binding) -> Result<String> {
+        let fingerprint = binding.fingerprint()?;
+        match &self.remote_native_registry {
+            Some(registry) => {
+                anyhow::ensure!(
+                    registry.len() == 64 && registry.bytes().all(|b| b.is_ascii_hexdigit()),
+                    "Invalid native registry identity"
+                );
+                Ok(digest(&serde_json::to_vec(
+                    &serde_json::json!({"environment":fingerprint,"registry":registry,"servers":self.servers}),
+                )?))
+            }
+            None => {
+                anyhow::ensure!(
+                    self.servers.values().all(|p| *p == Placement::Sandbox),
+                    "Remote host placement needs trusted registry selection"
+                );
+                Ok(fingerprint)
+            }
+        }
+    }
     pub fn verify_paths(&self) -> Result<()> {
         if let Some(expected) = &self.workspace_identity {
             if &{

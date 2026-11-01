@@ -8,11 +8,15 @@ publish = false
 
 [features]
 openshell-test = []
-team-test = ["openworker-store-postgres/test-support", "dep:openworker-tools"]
+trusted-git = ["dep:openworker-git-broker"]
+# Explicit disposable local Git remotes only; never enabled by deployment images.
+trusted-git-test = ["trusted-git", "openworker-git-broker/fixture"]
+team-test = ["openworker-store-postgres/test-support"]
 
 [dependencies]
+openworker-git-broker = { path = "../git-broker", optional = true }
 openworker-observability = { path = "../observability", features = ["postgres"] }
-openworker-tools = { path = "../tools-sdk", optional = true }
+openworker-tools = { path = "../tools-sdk" }
 openworker-artifacts = { path = "../artifacts", features = ["s3", "azure"] }
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }

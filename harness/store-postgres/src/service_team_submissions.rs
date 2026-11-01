@@ -12,7 +12,6 @@ use openworker_runtime::{
     },
     environment,
     store::Session,
-    team_coordination::Phase,
     team_workspace::Receipt,
 };
 use serde::{Deserialize, Serialize};
@@ -45,7 +44,10 @@ pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
     tx.batch_execute("CREATE TABLE IF NOT EXISTS service_team_submissions(id TEXT PRIMARY KEY,team TEXT NOT NULL REFERENCES agent_teams(id),data JSONB NOT NULL,status TEXT NOT NULL DEFAULT 'pending',dispatched BOOLEAN NOT NULL DEFAULT FALSE,claim TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),last_notice TEXT);")?;
     Ok(())
 }
-fn document(tx: &mut postgres::Transaction<'_>, team: &str) -> Result<(Session, Document)> {
+pub(crate) fn document(
+    tx: &mut postgres::Transaction<'_>,
+    team: &str,
+) -> Result<(Session, Document)> {
     // Read the lead ID without a team lock, then follow lead -> team order.
     // Never acquire a producer row after the team: its worker may hold that row
     // while waiting for the team to commit its original tool result.
@@ -107,7 +109,12 @@ fn authority(
     ensure!(
         d.roster
             .instance(&producer.agent_id)
-            .is_some_and(|a| a.session_id == producer.session_id && a.phase == Phase::Ready),
+            .is_some_and(|a| a.session_id == producer.session_id
+                && openworker_runtime::team_lifecycle::accepted_effect(
+                    d,
+                    &producer.agent_id,
+                    &i.request.origin.turn_id
+                )),
         "Submission producer is retired or replaced"
     );
     let (environment, root, profile, digest) =

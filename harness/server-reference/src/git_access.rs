@@ -153,6 +153,7 @@ impl Config {
             .transpose()
     }
     pub(crate) fn profile_config(&self, profile: &Profile) -> Result<Self> {
+        self.repository_grant(profile)?;
         profile.validate()?;
         let mut c = self.clone();
         c.openshell.cpu = Some(profile.cpu);

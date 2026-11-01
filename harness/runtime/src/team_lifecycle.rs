@@ -22,6 +22,10 @@ pub struct Retirement {
     pub settled_at_ms: Option<u64>,
     #[serde(default)]
     pub pending_reason: Option<String>,
+    /// Original turn may finish already accepted async handoffs; retirement
+    /// never admits a later turn or resurrects a cancelled effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 fn limit() -> usize {
     50
@@ -86,6 +90,9 @@ pub fn apply(
                 ensure!(saved.mode==mode,"Retirement mode already pinned; use the normal turn cancellation API to interrupt current work");
             } else {
                 ensure!(member.phase != Phase::Closed, "Instance already closed");
+                let turn_id = tx
+                    .optional_session(&member.session_id)?
+                    .and_then(|s| s.turn.map(|t| t.id));
                 doc.roster.retire(&agent_id)?;
                 doc.retirements.insert(
                     agent_id.clone(),
@@ -94,6 +101,7 @@ pub fn apply(
                         requested_at_ms: now,
                         settled_at_ms: None,
                         pending_reason: None,
+                        turn_id,
                     },
                 );
             }
@@ -133,6 +141,17 @@ pub fn admits(doc: &Document, s: &Session) -> bool {
             .as_ref()
             .and_then(|m| doc.roster.instance(&m.agent_id))
             .is_some_and(|i| i.session_id == s.id && i.phase == Phase::Ready)
+}
+/// Continuation of an already approved durable operation, never admission for a
+/// new tool action. Other profile/credential/cancellation fences still apply.
+pub fn accepted_effect(doc: &Document, agent: &str, turn: &str) -> bool {
+    doc.roster
+        .instance(agent)
+        .is_some_and(|i| i.phase == Phase::Ready)
+        || doc
+            .retirements
+            .get(agent)
+            .is_some_and(|r| r.mode == Mode::FinishCurrent && r.turn_id.as_deref() == Some(turn))
 }
 pub fn schema() -> Value {
     json!({"action":{"type":"string","enum":["list","retire"]},"agent_id":{"type":"string"},"mode":{"type":"string","enum":["finish_current","cancel"]},"after":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}})

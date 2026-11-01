@@ -14,10 +14,19 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
 };
+#[cfg(feature = "trusted-git-test")]
+#[path = "support/service_broker.rs"]
+mod broker;
 #[path = "support/service_git.rs"]
 mod git;
 #[path = "support/service_handoff.rs"]
 mod handoff;
+#[cfg(feature = "trusted-git-test")]
+#[path = "support/service_live_team.rs"]
+mod live_team;
+#[cfg(feature = "trusted-git-test")]
+#[path = "support/service_parallel.rs"]
+mod parallel;
 const BIN: &str = env!("CARGO_BIN_EXE_openworker-server-reference");
 async fn api(config: &Path, node: &str) -> (Child, String) {
     let mut child = Command::new(BIN)
@@ -578,7 +587,7 @@ async fn qualify() {
         assert_eq!(import_events.iter().filter(|e|e["type"]=="team_source_import" && e["data"]["phase"]=="ready").count(),2);
         assert!(import_events.iter().filter(|e|e["type"]=="team_source_import").all(|e|e["turn_id"].is_null()));
         eprintln!("PASS two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission");
-        handoff_reference=Some(handoff::qualify(&service,&import_lead,&import_team,&imports[0].1,&base,"isolated-source").await);
+        handoff_reference=Some(handoff::qualify(&service,&import_lead,&import_team,&imports[0].1,&base,"isolated-source","").await);
 
         let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
         assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);

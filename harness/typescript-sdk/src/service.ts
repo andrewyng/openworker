@@ -33,6 +33,8 @@ export interface RuntimeProfile {
   autoSkipQuestions?: boolean;
   /** Versioned operator-installed OpenShell Git grant; never a token. */
   gitAccess?: string;
+  /** Trusted host repository broker; does not grant agent-side Git credentials. */
+  repositoryAccess?: string;
 }
 /** Exact named sets for a New sandbox or delegation ceiling. Rust validates
  * availability, approval and the lead's actual authority on every admission. */
@@ -682,7 +684,7 @@ export class ServiceSession {
       agentTypes: options.agentTypes,
       ...(options.workspaceDefaults ? {workspaceDefaults:{repository:options.workspaceDefaults.repository,base:options.workspaceDefaults.base,agent_types:options.workspaceDefaults.agentTypes}} : {}),
       ...(options.delegation ? {delegation: serviceDelegationWire(options.delegation)} : {}),
-      ...(options.coding ? {coding:{source:{repository:options.coding.source.repository,directory:options.coding.source.directory,commit:options.coding.source.commit,object_format:options.coding.source.objectFormat},agent_types:Object.fromEntries(Object.entries(options.coding.agentTypes).map(([name,value])=>[name,{source:value.source,sandbox:sandboxWire(value.sandbox)}]))}} : {}),
+      ...(options.coding ? {coding:{source:{repository:options.coding.source.repository,directory:options.coding.source.directory,commit:options.coding.source.commit,object_format:options.coding.source.objectFormat,...(options.coding.source.remoteRef?{remote_ref:options.coding.source.remoteRef}:{})},agent_types:Object.fromEntries(Object.entries(options.coding.agentTypes).map(([name,value])=>[name,{source:value.source,sandbox:sandboxWire(value.sandbox)}]))}} : {}),
       policy: {
         communication: options.communication ?? {
           board: true,
@@ -806,6 +808,8 @@ export interface CodingSource {
   directory: string;
   objectFormat: "sha1" | "sha256";
   commit: string;
+  /** App-owned permitted branch ref; pin commit too. No URL or credential. */
+  remoteRef?: string;
 }
 export interface CodingTeamDefaults {
   source: CodingSource;

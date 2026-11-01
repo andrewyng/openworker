@@ -9,7 +9,24 @@ pub(super) async fn qualify(
     builder: &Value,
     base: &str,
     source_directory: &str,
+    coding_prefix: &str,
 ) -> Value {
+    let alias = |name: &str| {
+        if [
+            "run_shell",
+            "read_file",
+            "write_file",
+            "git_status",
+            "git_log",
+        ]
+        .contains(&name)
+        {
+            format!("{coding_prefix}{name}")
+        } else {
+            name.to_owned()
+        }
+    };
+    let plan = |name: &str, args: Value| super::plan(&alias(name), args);
     let sid = builder["instance"]["session_id"].as_str().unwrap();
     let selected = service
         .json("GET", &format!("/v1/sessions/{sid}"), None, None)
@@ -47,7 +64,7 @@ pub(super) async fn qualify(
         .unwrap()
         .iter()
         .rev()
-        .find(|e| e["type"] == "tool_finished" && e["data"]["name"] == "run_shell")
+        .find(|e| e["type"] == "tool_finished" && e["data"]["name"] == alias("run_shell"))
         .map(tool_data)
         .unwrap()["stdout"]
         .as_str()
@@ -109,7 +126,7 @@ pub(super) async fn qualify(
     let task = format!(
         "TEST_RESOURCE_GRANTS {}",
         json!([
-            {"name":"run_shell","arguments":{"command":format!("test \"$(git rev-parse HEAD)\" = '{commit}' && test \"$(cat proof.txt)\" = checkout-a && test \"$(git rev-parse --absolute-git-dir)\" = \"$PWD/.git\" && printf 'verified submitted checkout'"),"yield_ms":10000}},
+            {"name":alias("run_shell"),"arguments":{"command":format!("test \"$(git rev-parse HEAD)\" = '{commit}' && test \"$(cat proof.txt)\" = checkout-a && test \"$(git rev-parse --absolute-git-dir)\" = \"$PWD/.git\" && printf 'verified submitted checkout'"),"yield_ms":10000}},
             {"name":"team_report_verification","arguments":{"submission_id":id,"report":"Checked exact submitted commit, proof contents and independent Git metadata."}}
         ])
     );
@@ -140,7 +157,7 @@ pub(super) async fn qualify(
             .unwrap()
             .iter()
             .any(|e| e["type"] == "tool_finished"
-                && e["data"]["name"] == "run_shell"
+                && e["data"]["name"] == alias("run_shell")
                 && tool_data(e)["exit_code"] == 0
                 && tool_data(e)["stdout"] == "verified submitted checkout"),
         "{verification}"
@@ -373,5 +390,5 @@ pub(super) async fn prepare(
         .await
         .unwrap();
     completed_member(&team, "checkout-a").await;
-    qualify(service, &lead, &team, &builder, base, "source").await
+    qualify(service, &lead, &team, &builder, base, "source", "").await
 }

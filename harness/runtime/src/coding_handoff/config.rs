@@ -13,9 +13,26 @@ pub struct Source {
     pub directory: String,
     pub object_format: ObjectFormat,
     pub commit: String,
+    /// App-owned pinned remote read; absent means export an existing workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_ref: Option<String>,
 }
 impl Source {
     pub fn validate(&self) -> Result<()> {
+        if let Some(reference) = &self.remote_ref {
+            super::publication::reference(reference)?;
+            ensure!(
+                self.directory != ".",
+                "Remote source needs a new relative checkout directory"
+            );
+            super::Import {
+                operation_id: "source_validation".into(),
+                scope_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+                directory: self.directory.clone(),
+            }
+            .validate()?;
+        }
         Export {
             operation_id: "source_validation".into(),
             scope_digest: "a".repeat(64),

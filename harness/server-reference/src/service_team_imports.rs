@@ -21,21 +21,77 @@ pub(super) async fn import(
     stop: &CancellationToken,
 ) -> Result<Receipt> {
     let transfer = &job.intent.transfer;
+    let original = job.clone();
+    let dispatched = std::sync::atomic::AtomicBool::new(job.checkout_dispatched);
+    let current = || {
+        let mut j = original.clone();
+        j.checkout_dispatched = dispatched.load(std::sync::atomic::Ordering::Relaxed);
+        j
+    };
+    let result = self::transfer(
+        backend,
+        connection,
+        transfer,
+        &job.intent.artifact,
+        job.prepare,
+        job.checkout_dispatched,
+        stop,
+        || store.check_team_import(&current()),
+        || {
+            store.dispatch_team_import_checkout(&current())?;
+            dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        },
+    )
+    .await;
+    job.checkout_dispatched = dispatched.load(std::sync::atomic::Ordering::Relaxed);
+    result?;
     let h = transfer.handle();
-    if !job.checkout_dispatched {
+    store.check_team_import(job)?;
+    let receipt: Receipt = serde_json::from_value(
+        connection
+            .request(
+                "handoff/workspace",
+                json!({"handle":h,"request":job.intent.workspace}),
+            )
+            .await?,
+    )?;
+    let verified: Receipt = serde_json::from_value(
+        connection
+            .request("workspace/verify", json!(receipt))
+            .await?,
+    )?;
+    ensure!(
+        receipt == verified,
+        "Original imported workspace changed before admission"
+    );
+    Ok(receipt)
+}
+/// Shared trusted transfer, used for child admission and app-owned lead setup.
+/// Preparation and checkout dispatch bits are durably fenced by the caller.
+#[allow(clippy::too_many_arguments)] // One shared protocol with explicit caller-owned authority/dispatch fences.
+pub(super) async fn transfer(
+    backend: &openworker_artifacts::Store,
+    connection: &mut dyn Connection,
+    transfer: &openworker_runtime::coding_handoff::transfer::Transfer,
+    artifact: &openworker_artifacts::Artifact,
+    prepare: bool,
+    checkout_dispatched: bool,
+    stop: &CancellationToken,
+    check: impl Fn() -> Result<()>,
+    dispatch: impl Fn() -> Result<()>,
+) -> Result<Checkout> {
+    let h = transfer.handle();
+    if !checkout_dispatched {
         let status: Status = serde_json::from_value(
             connection
                 .request(
-                    if job.prepare {
+                    if prepare {
                         "handoff/prepare"
                     } else {
                         "handoff/inspect"
                     },
-                    if job.prepare {
-                        json!(transfer)
-                    } else {
-                        json!(h)
-                    },
+                    if prepare { json!(transfer) } else { json!(h) },
                 )
                 .await?,
         )?;
@@ -48,7 +104,6 @@ pub(super) async fn import(
                 && status.receipt.is_none(),
             "Original import preparation changed"
         );
-        let artifact = &job.intent.artifact;
         let proof = artifact
             .proof
             .as_ref()
@@ -59,7 +114,7 @@ pub(super) async fn import(
         let mut bytes = vec![0; CHUNK];
         while offset < status.size {
             ensure!(!stop.is_cancelled(), "Child source transfer cancelled");
-            store.check_team_import(job)?;
+            check()?;
             let n = ((status.size - offset).min(CHUNK as u64)) as usize;
             reader.read_exact(&mut bytes[..n]).await?;
             if offset >= status.received {
@@ -88,39 +143,22 @@ pub(super) async fn import(
             reader.read(&mut bytes[..1]).await? == 0,
             "Artifact exceeds original size"
         );
-        *job = store.dispatch_team_import_checkout(job)?;
-        let _: Checkout =
-            serde_json::from_value(connection.request("handoff/finish", json!(h)).await?)?;
+        dispatch()?;
+        Ok(serde_json::from_value(
+            connection.request("handoff/finish", json!(h)).await?,
+        )?)
     } else {
         // An unknown checkout is conveyed through the durable lead inbox. Never
         // call finish again or remove/adopt a directory because a reply was lost.
-        store.check_team_import(job)?;
-        let _: Checkout = serde_json::from_value(
+        check()?;
+        Ok(serde_json::from_value(
             connection
                 .request("handoff/inspect_checkout", json!(h))
                 .await?,
-        )?;
+        )?)
     }
-    store.check_team_import(job)?;
-    let receipt: Receipt = serde_json::from_value(
-        connection
-            .request(
-                "handoff/workspace",
-                json!({"handle":h,"request":job.intent.workspace}),
-            )
-            .await?,
-    )?;
-    let verified: Receipt = serde_json::from_value(
-        connection
-            .request("workspace/verify", json!(receipt))
-            .await?,
-    )?;
-    ensure!(
-        receipt == verified,
-        "Original imported workspace changed before admission"
-    );
-    Ok(receipt)
 }
+
 pub(crate) async fn prepare_once(
     config: &Config,
     store: &PostgresStore,
