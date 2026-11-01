@@ -230,3 +230,14 @@ OpenShell cases provide that separate evidence.
 
 Cases: four `source_setup_*` tests in
 [service contracts](../../harness/server-reference/src/service_team_types_tests.rs).
+
+## Isolated coding defaults and submitted-revision verification
+
+Three contract cases check stable per-team/per-instance destinations, explicit
+relative overrides, registered prebuilt types and pinned initial source revisions.
+A verifier must receive a submitted-handoff reference and cannot fall back to the
+initial snapshot. Linked Git metadata, reserved harness paths and host/traversal
+paths reject. These are resolution tests; they grant no sandbox or artifact access
+and do not replace the later catalog/admission qualification.
+
+Cases: [isolated-default contracts](../../harness/runtime/tests/coding_handoff_config.rs).

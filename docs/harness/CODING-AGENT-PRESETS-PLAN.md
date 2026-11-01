@@ -653,3 +653,21 @@ request to supply the existing namespace/service identity headers; no authorizat
 check was loosened. Independent receiver qualification still requires a complete
 successful run. The source/default contract for the next C4 slice is being drafted
 separately while this runtime/runner protocol remains frozen for qualification.
+
+### C4 journal — isolated source/default contract
+
+Added the shared configuration contract for the next admission slice. Prebuilt
+builders default to the initial snapshot; verifiers require a submitted handoff
+reference. Independent default paths include both team and instance IDs. Explicit
+relative paths remain possible, while reserved harness paths, host paths and
+linked-worktree/source combinations reject. Dynamic types do not silently inherit
+prebuilt defaults. Three new contract cases pass, alongside the four manifest
+cases. Source configuration now uses this same runtime DTO in PostgreSQL without
+changing its serialized fields or validation; all four source catalog tests pass
+again (0.91 seconds), and runtime/PostgreSQL all-target Clippy passes.
+
+These are data/resolution contracts. Provider/profile authority, atomic team
+configuration and durable child-import admission remain the next C4 integration
+step. The SDK isolated preset is not yet exposed. The full physical source/receiver
+run uses the prior committed service/runner behavior; record its exact source
+identity separately from this additional contract slice.
