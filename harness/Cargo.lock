@@ -1842,6 +1842,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "openworker-git-broker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "fs2",
+ "libc",
+ "openworker-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "zeroize",
+]
+
+[[package]]
 name = "openworker-observability"
 version = "0.1.0"
 dependencies = [
@@ -1926,6 +1943,7 @@ dependencies = [
  "clap",
  "futures-util",
  "openworker-artifacts",
+ "openworker-git-broker",
  "openworker-observability",
  "openworker-runtime",
  "openworker-sdk",

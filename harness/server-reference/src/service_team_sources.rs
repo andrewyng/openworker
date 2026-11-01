@@ -49,6 +49,14 @@ pub(crate) async fn prepare_once(
             backend.binding() == &job.intent.artifact_binding,
             "Original source artifact binding changed"
         );
+        if job.intent.source.remote_ref.is_some() {
+            #[cfg(feature = "trusted-git")]
+            {
+                return remote(config, store, &job, backend, stop).await;
+            }
+            #[cfg(not(feature = "trusted-git"))]
+            anyhow::bail!("Remote source requires trusted-git service support");
+        }
         let mut connection = open(config, store, &job).await?;
         let result = async {
             if job.intent.bundle.is_none() {
@@ -86,6 +94,113 @@ pub(crate) async fn prepare_once(
         }
     }
     Ok(true)
+}
+
+#[cfg(feature = "trusted-git")]
+async fn remote(
+    config: &Config,
+    store: &PostgresStore,
+    job: &Job,
+    backend: &openworker_artifacts::Store,
+    stop: &CancellationToken,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+    store.check_team_source(job)?;
+    let access = job
+        .intent
+        .repository_access
+        .as_ref()
+        .context("Original source grant missing")?;
+    let grant = config
+        .repository_grants
+        .get(&access.grant)
+        .context("Original source grant unavailable")?;
+    ensure!(
+        grant.digest()? == access.digest,
+        "Original source grant changed"
+    );
+    let broker = config.repository_broker(grant)?;
+    let original = openworker_git_broker::Source {
+        id: job.intent.id.clone(),
+        grant_digest: access.digest.clone(),
+        reference: job.intent.source.remote_ref.clone().unwrap(),
+        export: job.intent.export.clone(),
+    };
+    // After lost export acknowledgement inspect only the original trusted cache.
+    // Losing that cache cannot silently regenerate different artifact bytes.
+    grant.live(openworker_runtime::store::now_ms())?;
+    let bundle = if let Some(bundle) = &job.intent.bundle {
+        bundle.clone()
+    } else {
+        let bundle = broker
+            .stage(
+                original.clone(),
+                job.dispatch,
+                openworker_runtime::store::now_ms(),
+                stop,
+            )
+            .await?;
+        return store.observe_team_source(job, Some(bundle));
+    };
+    store.check_team_source(job)?;
+    let artifact = store.register_team_source_artifact(job)?;
+    let proof = match backend.verify(&artifact, stop).await {
+        Ok(proof) => proof,
+        Err(e)
+            if e.downcast_ref::<openworker_artifacts::Error>()
+                == Some(&openworker_artifacts::Error::NotFound) =>
+        {
+            let inspected = broker
+                .stage(original, false, openworker_runtime::store::now_ms(), stop)
+                .await?;
+            ensure!(
+                inspected == bundle,
+                "Original staged source receipt changed"
+            );
+            let mut file =
+                tokio::fs::File::open(broker.exported_path(&job.intent.id, &bundle)?).await?;
+            let (input, mut output) = tokio::io::duplex(CHUNK * 2);
+            let copy = async {
+                let mut bytes = vec![0; CHUNK];
+                let mut count = 0u64;
+                loop {
+                    store.check_team_source(job)?;
+                    ensure!(!stop.is_cancelled(), "Source upload cancelled");
+                    let n = file.read(&mut bytes).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    count += n as u64;
+                    ensure!(count <= bundle.size, "Source bytes changed");
+                    output.write_all(&bytes[..n]).await?;
+                }
+                ensure!(count == bundle.size, "Source bytes truncated");
+                output.shutdown().await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let (_, proof) = tokio::try_join!(copy, backend.put(&artifact, input, stop))?;
+            proof
+        }
+        Err(e) => return Err(e),
+    };
+    let artifact = store.publish_team_source_artifact(job, &artifact.id, proof)?;
+    let (transfer, _, prepare, checkout) = store.prepare_team_source_checkout(job, &artifact.id)?;
+    let mut connection = open(config, store, job).await?;
+    let result = crate::service_team_imports::transfer(
+        backend,
+        &mut *connection,
+        &transfer,
+        &artifact,
+        prepare,
+        checkout,
+        stop,
+        || store.check_team_source(job),
+        || store.dispatch_team_source_checkout(job),
+    )
+    .await;
+    let _ = connection.close().await;
+    store.observe_team_source_checkout(job, &artifact.id, result?)?;
+    store.complete_team_source(job, &artifact.id)
 }
 async fn upload(
     store: &PostgresStore,

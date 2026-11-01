@@ -16,10 +16,13 @@ pub mod operations;
 pub mod readiness;
 pub mod recording;
 mod recording_query;
+pub mod repository_access;
 pub mod service;
 mod service_team_imports;
 mod service_team_integrations;
 mod service_team_placements;
+#[cfg(feature = "trusted-git")]
+mod service_team_publications;
 mod service_team_sources;
 mod service_team_submissions;
 mod service_team_types;
@@ -27,6 +30,18 @@ mod service_team_workspaces;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Build-time partner tools. Descriptors are pinned; functions are never
+    /// loaded from configuration files or supplied by an agent.
+    #[serde(skip)]
+    pub registry: openworker_tools::ToolRegistry,
+    /// Optional trusted-side repository broker descriptors. Secrets stay in the
+    /// named environment on controller processes, never this configuration.
+    #[serde(default)]
+    pub repository_grants:
+        std::collections::BTreeMap<String, openworker_runtime::coding_handoff::publication::Grant>,
+    #[cfg(feature = "trusted-git-test")]
+    #[serde(default)]
+    pub repository_test_remotes: std::collections::BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub observability: Option<recording::Options>,
     /// Process-local health only, never accepted from a configuration file.
@@ -226,7 +241,7 @@ impl Config {
             Backend::Openshell,
             None,
             None,
-            Default::default(),
+            self.tool_registry(Some(&store))?,
             Some(Box::new(store)),
             telemetry,
         )?;

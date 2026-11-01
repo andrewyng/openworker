@@ -71,6 +71,9 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
     } else {
         None
     };
+    let repository_access =
+        app.config
+            .repository_catalog(&app.store, &p, body.delegation.as_ref())?;
     let mut models = BTreeMap::new();
     if let Some(d) = &body.delegation {
         let release = app.store.catalog_get(
@@ -80,7 +83,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
                 .context("Missing lead release")?,
         )?;
         let source = management::release_config(&app.config, &release, &profile)?;
-        let bundle = openworker_runtime::bundle::Bundle::load(&source.bundle)?;
+        let bundle = source.load_bundle()?;
         crate::service_team_types::validate_delegation(d, &bundle)?;
         for choice in &d.models {
             models.insert(
@@ -114,17 +117,17 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         templates.insert(kind.clone(), (release_id.clone(), template));
     }
     let keys: Vec<_> = body.agent_types.keys().cloned().collect();
-    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation,"workspace_defaults":body.workspace_defaults,"coding":body.coding,"source_store_binding":source_store_binding}),templates,models)
+    app.store.configure_agent_team_models(&sid,json!({"agent_id":body.agent_id,"agent_types":keys,"policy":body.policy,"limits":body.limits,"delegation":body.delegation,"workspace_defaults":body.workspace_defaults,"coding":body.coding,"source_store_binding":source_store_binding,"_repository_access":repository_access}),templates,models)
 }
 pub(crate) async fn snapshot(
     Extension(app): Extension<App>,
     Path(sid): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(app.store.agent_team_api(
-        &sid,
-        "snapshot",
-        json!({}),
-    )?))
+    let mut value = app.store.agent_team_api(&sid, "snapshot", json!({}))?;
+    if let Some(source) = app.store.team_source_status(&sid)? {
+        value["source_setup"] = source;
+    }
+    Ok(Json(value))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

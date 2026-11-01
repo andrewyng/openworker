@@ -116,7 +116,7 @@ pub(crate) fn validate_session(tx: &mut Transaction<'_>, s: &Session) -> Result<
     } else if s.workspace != binding.spec.workspace_root {
         bail!("Child workspace requires an acknowledged team receipt");
     }
-    if s.resource_policy.digest != binding.fingerprint()? {
+    if s.resource_policy.digest != s.resource_policy.remote_digest(binding)? {
         bail!("Session resource authority must match its remote environment binding");
     }
     if s.sandbox.is_some()
@@ -128,12 +128,8 @@ pub(crate) fn validate_session(tx: &mut Transaction<'_>, s: &Session) -> Result<
     if !s.resource_policy.files.is_empty()
         || !s.resource_policy.credentials.is_empty()
         || !s.resource_policy.network.is_empty()
-        || s.resource_policy
-            .servers
-            .values()
-            .any(|p| *p == openworker_runtime::resource_policy::Placement::Host)
     {
-        bail!("Initial remote workspace profile cannot carry host/credential/network grants");
+        bail!("Remote workspace profile cannot carry local file/credential/network grants");
     }
     if let Some(member) = &s.agent_team {
         let doc: openworker_runtime::agent_team::Document = serde_json::from_value(

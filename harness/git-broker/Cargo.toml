@@ -1,0 +1,26 @@
+[package]
+name = "openworker-git-broker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Disposable local qualification only. Never enabled by production packaging.
+fixture = []
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+fs2 = "0.4"
+libc = "0.2"
+openworker-runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

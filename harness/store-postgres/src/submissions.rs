@@ -233,6 +233,10 @@ impl Database {
             tx.commit()?;
             return Ok(result);
         }
+        ensure!(
+            crate::service_team_source_checkout::ready_for_turn(&mut tx, &request.session_id)?,
+            SubmissionError::Busy
+        );
         if session.closed {
             return Err(SubmissionError::Closed.into());
         }

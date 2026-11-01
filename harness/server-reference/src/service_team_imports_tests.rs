@@ -4,7 +4,9 @@ use super::*;
 use openworker_store_postgres::service_team_imports::Job;
 
 async fn staged() -> (Fixture, openworker_artifacts::Store) {
-    let mut f = Fixture::new().await;
+    staged_fixture(Fixture::new().await).await
+}
+async fn staged_fixture(mut f: Fixture) -> (Fixture, openworker_artifacts::Store) {
     std::fs::create_dir(f._root.path().join("artifacts")).unwrap();
     let backend = openworker_artifacts::filesystem::Filesystem::open(
         &f._root.path().join("artifacts"),
@@ -450,7 +452,11 @@ fn submission_tool(f: &Fixture, sid: &str, name: &str, arguments: Value, key: &s
         .unwrap()
 }
 async fn submission_producer() -> (Fixture, openworker_artifacts::Store, String) {
-    let (f, backend) = staged().await;
+    admitted_producer(staged().await).await
+}
+async fn admitted_producer(
+    (f, backend): (Fixture, openworker_artifacts::Store),
+) -> (Fixture, openworker_artifacts::Store, String) {
     let installed = management::installation(&f.config).unwrap();
     let j = f.store.claim_team_import(&installed).unwrap().unwrap();
     let j = f.store.dispatch_team_import_checkout(&j).unwrap();
@@ -715,4 +721,381 @@ async fn undispatched_submission_revocation_is_bounded_and_pending_work_prevents
             .contains("unresolved original coding handoff"),
         "{error}"
     );
+}
+
+#[cfg(feature = "trusted-git")]
+async fn published_repository_submission() -> (Fixture, String, String) {
+    let f = Fixture::new_with_access(false, true).await;
+    let (f, backend, sid) = admitted_producer(staged_fixture(f).await).await;
+    let installed = management::installation(&f.config).unwrap();
+    let output = submission_tool(
+        &f,
+        &sid,
+        "team_submit_code",
+        json!({"commit":"b".repeat(40),"summary":"Synthetic storage-only publication fixture"}),
+        "broker-submit",
+    );
+    let id = output["id"].as_str().unwrap().to_owned();
+    let export = f.store.claim_team_submission(&installed).unwrap().unwrap();
+    let bytes = b"synthetic fixture bytes; not Git integrity evidence";
+    let bundle = openworker_runtime::coding_handoff::git::Bundle {
+        request: export.intent.export.clone(),
+        path: format!(".openworker/handoffs/{id}/source.bundle"),
+        size: bytes.len() as u64,
+        sha256: openworker_runtime::bundle::digest(bytes),
+        advertised_ref: format!("refs/openworker/handoffs/{id}"),
+    };
+    f.store.observe_team_submission(&export, bundle).unwrap();
+    let upload = f.store.claim_team_submission(&installed).unwrap().unwrap();
+    let a = f.store.register_team_submission_artifact(&upload).unwrap();
+    let proof = backend
+        .put(&a, &bytes[..], &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    f.store
+        .publish_team_submission_artifact(&upload, &a.id, proof)
+        .unwrap();
+    f.store.complete_team_submission(&upload, &a.id).unwrap();
+    (f, sid, id)
+}
+#[cfg(feature = "trusted-git")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn publication_outbox_deduplicates_and_only_inspects_after_lost_dispatch() {
+    use openworker_runtime::coding_handoff::publication::Outcome;
+    let (f, sid, id) = published_repository_submission().await;
+    let installed = management::installation(&f.config).unwrap();
+    let args = json!({"submission_id":id,"branch":"agents/builder-one","expected_head":null});
+    let first = publication_tool(&f, &sid, args.clone(), "publish-first");
+    let key = first["id"].as_str().unwrap();
+    assert_eq!(first["status"], "pending");
+    assert_eq!(publication_tool(&f, &sid, args, "publish-again")["id"], key);
+    assert_eq!(document(&f).publications.len(), 1);
+    assert!(f.user.claim_team_publication(&installed).is_err());
+    let first = f.store.claim_team_publication(&installed).unwrap().unwrap();
+    assert!(first.dispatch);
+    assert_eq!(first.intent.profile_id, "team@1");
+    assert_eq!(first.intent.request.grant, "publisher@1");
+    assert!(f
+        .store
+        .claim_team_publication(&installed)
+        .unwrap()
+        .is_none());
+    f.store.defer_team_publication(&first).unwrap();
+    sql(
+        &f,
+        "UPDATE service_team_publications SET next_check=clock_timestamp()-interval '1 second'",
+    );
+    let replacement = PostgresStore::open(f.db.clone()).unwrap();
+    let recovered = replacement
+        .claim_team_publication(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(first.intent, recovered.intent);
+    assert!(f.store.check_team_publication(&first).is_err());
+    let mut forged = recovered.intent.publication.clone();
+    forged.branch = "agents/foreign".into();
+    assert!(replacement
+        .complete_team_publication(
+            &recovered,
+            Outcome::Published {
+                request: forged,
+                observed_head: "b".repeat(40)
+            }
+        )
+        .is_err());
+    replacement
+        .complete_team_publication(
+            &recovered,
+            Outcome::Unknown {
+                request: recovered.intent.publication.clone(),
+                observed_head: None,
+            },
+        )
+        .unwrap();
+    sql(
+        &f,
+        "UPDATE service_team_publications SET next_check=clock_timestamp()-interval '1 second'",
+    );
+    let again = replacement
+        .claim_team_publication(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!again.dispatch);
+    replacement
+        .complete_team_publication(
+            &again,
+            Outcome::Published {
+                request: again.intent.publication.clone(),
+                observed_head: "b".repeat(40),
+            },
+        )
+        .unwrap();
+    assert!(replacement
+        .claim_team_publication(&installed)
+        .unwrap()
+        .is_none());
+    let rows = f
+        .user
+        .agent_team_api(
+            &f.lead.id,
+            "team_list_submissions",
+            json!({"after":null,"limit":20}),
+        )
+        .unwrap();
+    assert_eq!(rows[0]["publications"][0]["status"], "published");
+    assert!(document(&f).publications[key].error.is_none());
+}
+#[cfg(feature = "trusted-git")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn publication_revocation_blocks_the_original_claim_without_resurrection() {
+    let (f, sid, id) = published_repository_submission().await;
+    let installed = management::installation(&f.config).unwrap();
+    let value = publication_tool(
+        &f,
+        &sid,
+        json!({"submission_id":id,"branch":"agents/revoked","expected_head":null}),
+        "publish-revoke",
+    );
+    let key = value["id"].as_str().unwrap();
+    let job = f.store.claim_team_publication(&installed).unwrap().unwrap();
+    sql(&f,"UPDATE api_credentials SET revoked=TRUE WHERE id=(SELECT credential_id FROM service_operations LIMIT 1)");
+    assert!(f.store.check_team_publication(&job).is_err());
+    f.store.defer_team_publication(&job).unwrap();
+    assert!(document(&f).publications[key].error.is_some());
+    sql(&f,"UPDATE api_credentials SET revoked=FALSE; UPDATE service_team_publications SET next_check=clock_timestamp()-interval '1 second'");
+    assert!(f
+        .store
+        .claim_team_publication(&installed)
+        .unwrap()
+        .is_none());
+}
+#[cfg(feature = "trusted-git")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn cancellation_before_publication_dispatch_commits_a_blocked_status_without_effect_intent() {
+    let (f, sid, id) = published_repository_submission().await;
+    let installed = management::installation(&f.config).unwrap();
+    let value = publication_tool(
+        &f,
+        &sid,
+        json!({"submission_id":id,"branch":"agents/cancelled","expected_head":null}),
+        "publish-cancel",
+    );
+    let key = value["id"].as_str().unwrap();
+    sql(&f,&format!("UPDATE sessions SET data=jsonb_set(data,'{{turn,status}}','\"cancelled\"') WHERE id='{sid}'"));
+    assert!(f
+        .store
+        .claim_team_publication(&installed)
+        .unwrap()
+        .is_none());
+    assert!(document(&f).publications[key].error.is_some());
+    let count: i64 = tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.query_one(
+            &format!(
+                "SELECT count(*) FROM {}.service_team_publications",
+                f.db.schema
+            ),
+            &[],
+        )
+        .unwrap()
+        .get(0)
+    });
+    assert_eq!(count, 0);
+}
+
+#[cfg(feature = "trusted-git")]
+fn publication_tool(f: &Fixture, sid: &str, arguments: Value, key: &str) -> Value {
+    let tid = prepare_publication_tool(f, sid, &arguments, key);
+    f.store
+        .queue_registered_publication(sid, &tid, key, arguments)
+        .unwrap()
+}
+#[cfg(feature = "trusted-git")]
+fn prepare_publication_tool(f: &Fixture, sid: &str, arguments: &Value, key: &str) -> String {
+    let mut store = f.store.clone();
+    let mut s = store.get(sid).unwrap();
+    let tid = format!("pub_{key}");
+    let call = json!({"type":"function_call","call_id":key,"name":openworker_runtime::coding_handoff::publication::ALIAS,"arguments":arguments.to_string()});
+    let turn = s.turn.as_mut().unwrap();
+    turn.id = tid.clone();
+    turn.status = "executing".into();
+    turn.queue = vec![call.clone()];
+    s.schema_digest = Some("synthetic-native-schema".into());
+    s.interactions.push(openworker_runtime::store::Interaction {
+        id: format!("native-{key}"),
+        turn_id: tid.clone(),
+        kind: "approval".into(),
+        call,
+        bundle_digest: s.bundle_digest.clone(),
+        schema_digest: s.schema_digest.clone().unwrap(),
+        response: Some("once".into()),
+        origin: Some("human".into()),
+        server: Some("github_broker".into()),
+        remote_tool: Some(openworker_runtime::coding_handoff::publication::TOOL.into()),
+        policy_digest: s.tool_policy.digest.clone(),
+        resource_policy_digest: s.resource_policy.digest.clone(),
+        grant_id: None,
+        requested_at_ms: None,
+        resolved_at_ms: None,
+    });
+    store.save(&s, "fixture_native_started", json!({})).unwrap();
+    tid
+}
+
+#[cfg(feature = "trusted-git")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn remote_source_setup_requires_pinned_grant_and_exact_lead_checkout_before_first_turn() {
+    let mut f = Fixture::new_with_access(false, true).await;
+    std::fs::create_dir(f._root.path().join("artifacts")).unwrap();
+    let backend = openworker_artifacts::filesystem::Filesystem::open(
+        &f._root.path().join("artifacts"),
+        "remote-source",
+        false,
+        false,
+    )
+    .unwrap();
+    let mut source = coding_source();
+    source.remote_ref = Some("refs/heads/main".into());
+    source.directory = "source".into();
+    f.try_create_with_source_binding(json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team"],"profiles":{}}),Some(json!({"source":source,"agent_types":{"builder":{"sandbox":{"mode":"team"},"source":"initial"}}})),json!(backend.binding())).unwrap();
+    let installed = management::installation(&f.config).unwrap();
+    assert!(f
+        .user
+        .submit_service_turn(openworker_store_postgres::TurnSubmission {
+            session_id: f.lead.id.clone(),
+            submission_id: "too-early".into(),
+            text: "Do work".into(),
+            limits: None
+        })
+        .is_err());
+    let first = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(first.dispatch);
+    assert!(first.intent.repository_access.is_some());
+    let bytes = b"synthetic metadata test, not a valid Git bundle";
+    f.store
+        .observe_team_source(&first, Some(source_bundle(&first.intent, bytes)))
+        .unwrap();
+    expire_source(&f);
+    let upload = f.store.claim_team_source(&installed).unwrap().unwrap();
+    let a = f.store.register_team_source_artifact(&upload).unwrap();
+    let proof = backend
+        .put(&a, &bytes[..], &tokio_util::sync::CancellationToken::new())
+        .await
+        .unwrap();
+    f.store
+        .publish_team_source_artifact(&upload, &a.id, proof)
+        .unwrap();
+    assert!(f.store.complete_team_source(&upload, &a.id).is_err());
+    let (transfer, _, prepare, checkout) = f
+        .store
+        .prepare_team_source_checkout(&upload, &a.id)
+        .unwrap();
+    assert!(prepare && !checkout);
+    f.store.dispatch_team_source_checkout(&upload).unwrap();
+    assert!(f.store.dispatch_team_source_checkout(&upload).is_err());
+    f.store.defer_team_source(&upload).unwrap();
+    expire_source(&f);
+    let recovered = PostgresStore::open(f.db.clone())
+        .unwrap()
+        .claim_team_source(&installed)
+        .unwrap()
+        .unwrap();
+    assert!(!recovered.dispatch);
+    let (same, _, prepare, checkout) = f
+        .store
+        .prepare_team_source_checkout(&recovered, &a.id)
+        .unwrap();
+    assert_eq!(same, transfer);
+    assert!(!prepare && checkout);
+    assert!(f.store.check_team_source(&upload).is_err());
+    let receipt:openworker_runtime::coding_handoff::transfer::Receipt=serde_json::from_value(json!({"transfer_digest":transfer.digest().unwrap(),"path":format!("{}/{}",recovered.intent.root,source.directory),"identity":{"volume":1,"file":2},"git_identity":{"volume":1,"file":3},"commit":source.commit})).unwrap();
+    let mut wrong = receipt.clone();
+    wrong.commit = "f".repeat(40);
+    assert!(f
+        .store
+        .observe_team_source_checkout(&recovered, &a.id, wrong)
+        .is_err());
+    f.store
+        .observe_team_source_checkout(&recovered, &a.id, receipt)
+        .unwrap();
+    f.store.complete_team_source(&recovered, &a.id).unwrap();
+    assert_eq!(
+        f.user.team_source_status(&f.lead.id).unwrap().unwrap()["status"],
+        "ready"
+    );
+    assert!(f
+        .user
+        .submit_service_turn(openworker_store_postgres::TurnSubmission {
+            session_id: f.lead.id.clone(),
+            submission_id: "ready-first-turn".into(),
+            text: "Do work".into(),
+            limits: None
+        })
+        .is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn finish_current_retirement_allows_original_submission_to_settle_but_cancel_does_not() {
+    for mode in ["finish_current", "cancel"] {
+        let (f, _, sid) = admitted_producer(staged().await).await;
+        let installed = management::installation(&f.config).unwrap();
+        let result = submission_tool(
+            &f,
+            &sid,
+            "team_submit_code",
+            json!({"commit":"b".repeat(40),"summary":"Accepted before retirement"}),
+            "before-retire",
+        );
+        let id = result["id"].as_str().unwrap();
+        f.user.agent_team_api(&f.lead.id,"command",json!({"request_id":"retire-original","operation":"team_manage","arguments":{"action":"retire","agent_id":"one","mode":mode}})).unwrap();
+        let claimed = f.store.claim_team_submission(&installed).unwrap();
+        if mode == "finish_current" {
+            let job = claimed.expect("Accepted original turn must settle");
+            assert_eq!(job.intent.request.id, id);
+            f.store.check_team_submission(&job).unwrap();
+        } else {
+            assert!(claimed.is_none());
+            assert!(document(&f).submissions[id].error.is_some());
+        }
+    }
+}
+
+#[cfg(feature = "trusted-git")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn registered_publication_rechecks_approval_and_revoked_session_grants_inside_intent_transaction(
+) {
+    let (f, sid, id) = published_repository_submission().await;
+    let args = json!({"submission_id":id,"branch":"agents/approval-race","expected_head":null});
+    let tid = prepare_publication_tool(&f, &sid, &args, "approval-race");
+    let mut store = f.store.clone();
+    let mut s = store.get(&sid).unwrap();
+    s.interactions.last_mut().unwrap().response = None;
+    store.save(&s, "fixture_unapproved", json!({})).unwrap();
+    assert!(store
+        .queue_registered_publication(&sid, &tid, "approval-race", args.clone())
+        .is_err());
+    assert!(document(&f).publications.is_empty());
+    s = store.get(&sid).unwrap();
+    s.interactions.last_mut().unwrap().response = Some("session".into());
+    s.interactions.last_mut().unwrap().grant_id = Some("revoked-grant".into());
+    store.save(&s, "fixture_revoked_grant", json!({})).unwrap();
+    assert!(store
+        .queue_registered_publication(&sid, &tid, "approval-race", args.clone())
+        .is_err());
+    assert!(document(&f).publications.is_empty());
+    s = store.get(&sid).unwrap();
+    s.interactions.last_mut().unwrap().response = Some("once".into());
+    s.interactions.last_mut().unwrap().grant_id = None;
+    store.save(&s, "fixture_allow_once", json!({})).unwrap();
+    store
+        .queue_registered_publication(&sid, &tid, "approval-race", args)
+        .unwrap();
+    assert_eq!(document(&f).publications.len(), 1);
 }

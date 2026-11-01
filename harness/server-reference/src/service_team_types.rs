@@ -39,7 +39,7 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
         "Source not activated"
     );
     let mut c = management::release_config(config, &team.release, &team.profile)?;
-    let source = Bundle::load(&c.bundle)?;
+    let source = c.load_bundle()?;
     ensure!(
         serde_json::to_value(&source.manifest)? == serde_json::to_value(&team.lead.package)?,
         "Original lead package changed"
@@ -100,7 +100,7 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
         &key,
         &source,
         &text,
-        &serde_json::to_string(&tools)?,
+        &source.selection_text(&tools)?,
     )?;
     Ok(c)
 }

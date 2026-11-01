@@ -447,14 +447,55 @@ impl crate::PostgresStore {
                 .is_some_and(|d| d["placements"]
                     .as_array()
                     .is_some_and(|p| p.iter().any(|v| v != "team"))));
-            let result = agent_team::apply(
+            let mut result = agent_team::apply(
                 &mut Tx(&mut tx),
                 &mut lead,
                 "create",
                 &args,
                 openworker_runtime::store::now_ms(),
             )?;
-            let team = result["id"].as_str().context("Missing team ID")?;
+            let team_id = result["id"].as_str().context("Missing team ID")?.to_owned();
+            let team = team_id.as_str();
+            let repository_access: Option<
+                openworker_runtime::coding_handoff::publication::Catalog,
+            > = args
+                .get("_repository_access")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()?;
+            if let Some(access) = &repository_access {
+                ensure!(
+                    access.lead_profile == profile,
+                    "Original repository profile changed"
+                );
+                for (id, a) in &access.profiles {
+                    let entry = crate::service_catalog::entry(&mut tx, "profile", id)?;
+                    let p: crate::service_catalog::Profile =
+                        serde_json::from_value(entry.definition)?;
+                    ensure!(
+                        entry.activated && p.repository_access.as_deref() == Some(&a.grant),
+                        "Repository capability differs from activated profile"
+                    );
+                    ensure!(
+                        id == &profile || args["delegation"]["profiles"].get(id).is_some(),
+                        "Repository capability outside delegation"
+                    );
+                    ensure!(a.digest.len() == 64, "Invalid repository capability digest");
+                }
+            }
+            let mut doc = Tx(&mut tx).load(team)?;
+            if was_unbound {
+                doc.repository_access = repository_access;
+                Tx(&mut tx).write(&doc, false)?;
+                result = json!(doc);
+            } else {
+                ensure!(
+                    doc.repository_access == repository_access,
+                    "Changed repository capability retry"
+                );
+            }
+
             for (kind, (release, template)) in templates {
                 let payload = json!({"release":release,"session":template,"models":models});
                 tx.execute(
@@ -556,7 +597,7 @@ impl crate::PostgresStore {
                 ensure!(doc.placement_selection && doc.sandbox_choices.get(&instance.agent_id)==Some(&placement.choice),"Placement receipt differs from choice");
                 child.environment=Some(placement.environment.clone());
                 child.workspace=placement.environment.spec.workspace_root.clone();
-                child.resource_policy.digest=placement.environment.fingerprint()?;
+                child.resource_policy.digest=child.resource_policy.remote_digest(&placement.environment)?;
             }
             if let Some(receipt)=doc.workspaces.get(&instance.agent_id).and_then(|i|i.receipt.as_ref()) {
                 receipt.validate_scope(std::path::Path::new(&child.workspace), &receipt.path)?;
@@ -660,6 +701,7 @@ impl crate::PostgresStore {
             let epoch=db.epoch(&sid)?;let mut tx=db.client.transaction()?;
             let s=db::locked(&mut tx,&sid,Some((&db.owner,epoch)))?;
             let member=s.agent_team.as_ref().context("Not a team member")?;
+            if !crate::service_team_source_checkout::ready_for_turn(&mut tx,&sid)? {tx.commit()?;return Ok(());}
             if s.closed || s.provider_blocked || s.turn.as_ref().is_some_and(|t|!openworker_runtime::store::terminal(&t.status)) {tx.commit()?;return Ok(());}
             let queued:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued')",&[&sid])?.get(0);
             if queued {tx.commit()?;return Ok(());}

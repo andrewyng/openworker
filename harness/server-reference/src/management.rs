@@ -25,11 +25,18 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub fn installation(config: &Config) -> Result<String> {
-    let base = Bundle::load(&config.bundle)?;
+    let base = config.load_bundle()?;
     config.validate_git_grants()?;
+    config.validate_repository_grants()?;
     let mut identity = json!({"bundle":base.digest,"runner":digest(&std::fs::read(&config.runner)?),"gateway":config.openshell.endpoint,"gatewayIdentity":config.openshell.identity,"workspace":config.openshell.workspace,"image":config.openshell.image});
+    if let Some(registry) = &base.registry_digest {
+        identity["registry"] = json!(registry);
+    }
     if !config.openshell.git_grants.is_empty() {
         identity["gitGrants"] = json!(config.openshell.git_grants);
+    }
+    if !config.repository_grants.is_empty() {
+        identity["repositoryGrants"] = json!(config.repository_grants);
     }
     Ok(digest(&serde_json::to_vec(&identity)?))
 }
@@ -78,7 +85,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
         r.runtime_profiles.contains(&p.id),
         "Release/profile incompatible"
     );
-    let base = Bundle::load(&config.bundle)?;
+    let base = config.load_bundle()?;
     let mut manifest = base.manifest.clone();
     manifest.id = format!("svc-{}", &release.digest[..24]);
     manifest.name = r.id.clone();
@@ -92,8 +99,9 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
         serde_json::to_string(&manifest)?,
         r.instructions
     );
-    let tools_text = serde_json::to_string(&tools)?;
+    let tools_text = base.selection_text(&tools)?;
     let dir = publish_bundle(config, &release.digest, &base, &manifest_text, &tools_text)?;
+    config.repository_grant(&p)?;
     let mut c = config.profile_config(&p)?;
     c.bundle = dir;
     c.openshell.cpu = Some(p.cpu);
@@ -166,7 +174,7 @@ pub(crate) async fn put_release(
     if app.service.as_ref().is_some_and(|s| s.agent == r.id) {
         return Err(ApiError(SubmissionError::Conflict.into()));
     }
-    let base = Bundle::load(&app.config.bundle)?;
+    let base = app.config.load_bundle()?;
     if base.tools.select(&r.tools).is_err() {
         return Err(ApiError(SubmissionError::InvalidRequest.into()));
     }
@@ -376,6 +384,17 @@ pub async fn controller(
     // JoinSet aborts this task if its owning controller exits unexpectedly.
     let mut source_tasks = tokio::task::JoinSet::new();
     if let Some(artifacts) = config.artifacts.as_ref().map(|c| c.build()).transpose()? {
+        #[cfg(feature = "trusted-git")]
+        if !config.repository_grants.is_empty() {
+            let (c, s, i, a, cancel) = (
+                config.clone(),
+                store.clone(),
+                installed.clone(),
+                artifacts.clone(),
+                stop.clone(),
+            );
+            source_tasks.spawn(async move {while !cancel.is_cancelled(){if !crate::service_team_publications::prepare_once(&c,&s,&i,&a,&cancel).await?{tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}}}Ok::<_,anyhow::Error>(())});
+        }
         let (config, store, installed, stop) = (
             config.clone(),
             store.clone(),

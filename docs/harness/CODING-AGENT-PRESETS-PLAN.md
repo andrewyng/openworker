@@ -1161,3 +1161,214 @@ regressions pass (6 tests, 81.80s), with only the two newly identified disposabl
 PostgreSQL schemas removed afterward. Historical fixture schemas were retained.
 Strict all-target Clippy passes (32.70s). The SDK now reexports source-choice and
 Git object-format types so applications need no direct runtime import for them.
+
+
+### C5 implementation continuation — 2026-10-31
+
+C4 source checkpoint: `9ed64532`; corrected default OpenShell rerun is active.
+Continue on `feat/coding-trusted-git-c5-20261031`, retaining the approved sequence.
+[Trusted Git broker design/build order](TRUSTED-GIT-BROKER.md) separates optional
+host-side private staging/publication from C6 sandbox CLI credentials. Start with
+real controlled-remote adapter contracts, then wire RuntimeProfiles, durable
+service operations and remote-source admission. No live GitHub write is implied.
+Do not overwrite the server executable while the active C4 test owns it, and do
+not merge unverified broker code with the verified C4 checkpoint.
+
+
+The second combined attempt failed after **586.81s**. The new clone was left on a
+detached HEAD; native integration requires an ordinary branch and correctly did
+not dispatch it. Changed the setup checkout to an explicitly named `handoff-main`
+branch. During the wait, PostgreSQL also terminated one idle-in-transaction
+connection (3.75s configured timeout) and the client returned an explicit 503
+unknown outcome. No mutation replay or timeout relaxation was added. Rerun the
+corrected full fixture without concurrent build/Git test load; retain this timeout
+observation for C7 recovery qualification. Its owned resources were cleaned.
+
+C5 adapter checkpoint (not service completion): a separate optional
+`openworker-git-broker` crate passes **9 controlled-remote tests (3.75s)** covering
+SHA-1/SHA-256 source staging and publication, no project-file checkout in the
+trusted process, create-only conflict, expected-tip fast-forward, divergence,
+lost receipt/inspection without replay, changed remote head remaining unknown,
+scope denial, expiry/revocation, corrupt bytes, operation changes, symlink/lease
+denial and redacted command diagnostics. These are filesystem Git fixtures, not
+an authenticated HTTPS, GitHub or complete service qualification. Service/SDK,
+private-source admission and combined C7 wiring remain to be built/verified.
+
+
+Local environment health checkpoint (2026-11-01 UTC; continuing October 31 work):
+a subsequent full rerun failed after **77.60s**, before C4, with two PostgreSQL
+unknown-outcome errors and an interrupted turn. The Docker-hosted database logged
+idle-in-transaction termination under heavy host/VM load. A separate disposable
+native PostgreSQL 14.19 loopback trial retained the same timeouts, but failed
+before sandbox creation with an OpenShell TLS handshake EOF (**52.37s**). The
+shared gateway had 17 restarts and liveness/readiness timeouts; observed host load
+exceeded 200 despite ample Docker disk space. No timeout or safety gate was
+relaxed. These failed runs do not qualify C4 or PostgreSQL 14 for deployment.
+
+Inspected the native trial's exact deterministic sandbox name through the original
+OpenShell endpoint: not found. Removed only that trial's service/recording schemas
+and stopped its dedicated native PostgreSQL. Existing Docker PostgreSQL, gateway,
+demo namespaces and Langfuse remain unchanged. An optional user question asks to
+pause/restore older demo stacks for qualification; no answer means no permission
+to pause them. Continue implementation and fast tests while this is unresolved.
+The full test's early setup cleanup needs strengthening in C7: its existing caught
+panic cleanup begins after initial provider setup, so this early failure needed
+explicit original-resource reconciliation. C4 has a passing focused physical run,
+but its corrected default combined run remains unverified; do not merge it yet.
+
+
+C6 public checkpoint: fast-forwarded the approved canonical public branch from
+`f8b31eea` to **`5f3dc53f`**, excluding the unverified final C4 and C5 changes.
+The fully verified initial-source primitives and C6 named RuntimeProfile/SDK
+OpenShell Git access are now available to partners. The C4 source checkpoint
+`9ed64532` and subsequent work remain on the feature stack until qualification.
+
+C5 initial registry/Profile wiring compiles with the optional `trusted-git` service
+feature (35.90s). Portable contracts remain in the runtime; Git execution is in an
+optional separate crate. Add the publication outbox/controller on the same policy,
+approval and event framework, and recheck authority immediately before a push.
+Controller failover must inspect its original remote ref using the durable DB
+intent even when the new node lacks the old Git cache. Initial remote-source
+staging needs its original trusted cache until artifact publication; cache loss
+must remain unknown rather than generating different bytes under the same ID.
+
+
+C5 correction before release: publication must be a normal registered native tool,
+`github_broker.publish_code`, selected by each bundle's fully qualified tool list.
+A RuntimeProfile grant is the independent scope ceiling, not automatic visibility
+for every coding member. Removed the draft intrinsic publication tool/schema.
+The native callback queues only its exact currently executing worker-owned call;
+ordinary REST/team commands cannot forge a native ToolContext. The broker stays
+outside agent sandboxes. This follows the earlier partner ToolRegistry agreement.
+
+Wired the reference service's existing v3 registry through installed/release/scoped
+type bundle loading, preserving v3 selection rather than serializing resolved
+native/HTTP tools as legacy v2. Registry descriptors contribute to installation
+identity. Fixed native FQN selection (avoid `namespace.namespace.tool`) while
+preserving legacy v2 behavior. Initial registry build check passed (30.48s); the
+new callback/storage tests are still being updated and are not yet qualified.
+
+
+### Recovery after laptop restart — November 1
+
+Verified that source and working-tree changes survived. Public/local tracked
+`openworker-harness-sdk` points to verified C6 commit `5f3dc53f`; the active
+`feat/coding-trusted-git-c5-20261031` branch is at C4 fixture correction `702c46a2`
+(parent C4 implementation `9ed64532`). C5 code remains uncommitted in this worktree.
+Approximately 55 GiB free. Docker is not running and the local Kubernetes endpoint
+is unavailable. Temporary `/private/tmp` test logs/fixtures checked after reboot
+are gone; recreate them before further physical qualification. No tests were
+rerun in this recovery check.
+
+Last recorded C5 results: registered v3/native/MCP selection regressions passed
+(two tests); strict native-tool/service all-target Clippy passed (23.48s). Three
+new PostgreSQL publication cases reached a real integration gap: initial remote
+profiles currently reject all servers other than `$OPENWORKER`, including explicit
+registered native tools. Support for trusted host-native callbacks beside sandbox
+MCPs needs an explicit placement implementation and tests; do not merely remove
+the guard or claim C5 complete. The native PostgreSQL fixture was stopped after
+the failed component run. The failed isolated gateway Helm release/namespace was
+removed and namespace absence confirmed. Existing demos were not paused.
+
+Resume order: restore local infrastructure/owned fixtures; verify corrected C4
+candidate in its isolated worktree and merge once qualified; finish C5 registered
+native placement, publication and remote-source admission; then C7 combined
+parallel/mixed-placement and recovery qualification. Earlier test counts in this
+journal are historical evidence, not post-restart rerun claims.
+
+
+### C4 — complete post-restart qualification, November 1
+
+Clean candidate `702c46a2` (implementation `9ed64532`) passed the entire default
+`service_v2` local PostgreSQL 17 + Kubernetes/OpenShell qualification in **550.56s**.
+This includes two controllers, worker restart, shared worktrees, independently
+provisioned source checkouts, artifact publication, builder submission deduplication,
+exact-revision Rust and TypeScript verifiers, independent lead reception, stale-head
+rejection and explicit expected-head integration with actual source-file read-back.
+The fixture deleted/confirmed its original sandbox identities and dropped both
+owned schemas. Existing demo namespaces and Langfuse were left untouched.
+
+[Sanitized C4 evidence](evidence/coding-artifact-handoff-c4-20261101.json) records
+source/image/binary/log hashes. This uses deterministic model calls and real tool
+execution; live-model combined qualification belongs to C7. C5 remains separate
+unverified work. No cloud resources or public-main changes were made.
+
+C4 public merge: `b829af5b` is now the canonical public feature branch. C5 remains
+on its feature worktree. Restored Docker/Kubernetes/OpenShell after reboot, with
+loopback mTLS forwarding, a PostgreSQL 17 container limited to 512 MB/1 CPU and
+persistent named fixture storage. About 55 GiB free. No old demos were paused.
+
+C5 placement fixes: explicitly selected native callbacks run on the trusted host,
+image-bundled coding MCPs run in the sandbox, and local resource grants/external
+MCP executables remain rejected for this remote profile. Persisted registry and
+placement identity is checked on reload/child placement; native callbacks do not
+claim process or kernel isolation. Real PG publication tests passed **3/3 (9.49s)**;
+all ignored service-team-type regressions with the feature passed **34/34 (14.47s)**.
+Controlled real Git tests passed **11/11 (4.45s)**, including failover without the
+old publication cache and a final authorization check immediately before push.
+Corrected an outdated test that expected missing local cache to forbid an explicit
+inspection-only remote read; it still proves no new push marker is written.
+
+Remote-source wiring is in progress: app-owned `remote_ref` + exact commit,
+profile-owned trusted grant, immutable artifact staging and a durable lead checkout
+before accepting the lead's first turn. Preparation/checkout dispatch bits survive
+replacement; lost checkout replies inspect only the original receipt. This new
+path is not qualified yet. Public SDK snapshots expose bounded source setup status.
+The test transfer engine is reused rather than introducing another artifact path.
+
+C5 HTTPS qualification passed **1/1 (2.44s)** with synthetic credentials, real Git
+HTTP transport and verified TLS. It proves pinned fetch, branch publication, bad-key
+rejection/redacted diagnostics and inspection without a second receive-pack. This
+is a loopback TLS fixture, not a real GitHub write. Production origin remains fixed
+GitHub HTTPS; arbitrary endpoint/CA overrides compile only for disposable fixtures.
+
+The first physical C5 attempt correctly rejected a fixture alias collision. The
+next imported source and admitted a real independent builder, but its legacy tool
+alias was not selected in the v3 bundle. Corrected the fixture aliases, then found
+an automatic scripted inbox wake falling through to unrelated ExampleApp tools;
+fixed that scripted-only behavior. Bounded the workflow deadline. Corrected fixture
+cleanup to reconstruct each original RuntimeProfile provider, not the deployment's
+unscoped provider, and reconciled only those failed fixtures' exact sandbox IDs.
+These failed runs are not C5 qualification evidence.
+
+C7 edge-case work: finish-current retirement now pins the originating turn so an
+already accepted asynchronous handoff can settle after session closure; it cannot
+admit a later turn or cancelled effect. A new real-PG regression distinguishes it
+from cancel retirement. Expanded PG suite passed **36/36 (16.60s)** including source
+setup's one-time prepare/checkout, stale receipt rejection and first-turn gate.
+TypeScript build passed; its loopback HTTP/preset/profile tests passed **18/18**
+after running with the required local listener permission. Further C5 physical
+qualification, mixed-team parallelism and bounded live-model work remain pending.
+
+OpenShell capacity finding: the original shared 0.1.3 gateway hit its per-caller
+**1,000 durable mutation admissions** within the **24-hour successful-receipt
+retention** window. The upstream implementation counts retained successes as well
+as unresolved claims. No receipt ledger was cleared, safety gate weakened or
+uncertain tool action replayed. The original failed C5 fixture's remaining original
+sandbox IDs/DB receipts are retained for reconciliation once that gateway accepts
+cleanup. These do not qualify as cleaned resources. C4 had finished its cleanup
+before the cap was reached.
+
+Installed a separate bounded local qualification gateway in
+`ow-coding-shell-20261101` from the pinned OpenShell v0.1.3 source/chart with the
+same existing non-secret resource/security values and independent persistent
+state/mTLS. Existing `ow-helm-shell`, demos and Langfuse are unchanged. This avoids
+claiming that an old full admission ledger is a harness Git failure. Repeated
+large-scale production workloads must account for this upstream limit; record it
+in partner guidance and requalify any future upstream reconciliation change.
+
+C5 found a real end-to-end integration issue after successful source staging,
+builder submission, independent verifier and lead reception: a remotely imported
+lead source was detached, while explicit integration requires an ordinary local
+branch for expected-head CAS. Changed fresh independent imports to the deterministic
+local `openworker/import` branch, preserving the exact pinned commit, own `.git`,
+transfer identity and no-replay checkout rule. Added a both-object-format regression
+and am rebuilding the Linux ToolRunner; the prior physical run timed out safely on
+an unknown integration outcome and cleaned its isolated fixture. It is not a pass.
+
+Strengthened registered publication's transaction boundary to recheck the exact
+native-tool approval (bundle/schema/resource identity, FQN and live session grant)
+immediately before committing an intent. A new PG race test checks missing approval,
+revoked Allow Always and valid Allow Once. The first test attempt correctly refused
+a stale fixture session revision; the fixture now reloads revisions between edits.
+Publication authority and uncertainty notices use the existing durable inbox.
