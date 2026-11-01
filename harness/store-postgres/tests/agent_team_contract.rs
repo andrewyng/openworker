@@ -438,3 +438,20 @@ fn postgres_child_model_selection_contract() {
     let mut db = openworker_store_postgres::PostgresStore::open(config).unwrap();
     contract::exercise_child_model_selection(&mut db);
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn postgres_coding_default_reservation_contract() {
+    let mut config = openworker_store_postgres::Config::new(
+        std::env::var("OW_PG_TEST_URL").unwrap(),
+        format!("ow_coding_{}", uuid::Uuid::new_v4().simple()),
+    );
+    config.tls = openworker_store_postgres::Tls::LoopbackPlaintext;
+    openworker_store_postgres::PostgresStore::migrate(&config).unwrap();
+    let mut db = openworker_store_postgres::PostgresStore::open(config.clone()).unwrap();
+    contract::exercise_coding_defaults(&mut db);
+    postgres::Client::connect(&config.connection, postgres::NoTls)
+        .unwrap()
+        .batch_execute(&format!("DROP SCHEMA {} CASCADE", config.schema))
+        .unwrap();
+}

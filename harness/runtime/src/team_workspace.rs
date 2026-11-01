@@ -160,6 +160,30 @@ impl Receipt {
                 "Noncanonical workspace receipt"
             );
         }
+        if self.independent_git.is_some() {
+            ensure!(
+                matches!(self.request.selection, Selection::Directory { .. })
+                    && self.git_dir.is_none()
+                    && self.git_identity.is_none()
+                    && self.worktree_git_dir.is_none()
+                    && self.worktree_git_identity.is_none()
+                    && self.pointer_digest.is_none()
+                    && self.branch.is_none(),
+                "Independent checkout cannot inherit linked metadata exceptions"
+            );
+            let commit = self
+                .initial_commit
+                .as_ref()
+                .context("Missing imported revision")?;
+            ensure!(
+                [40, 64].contains(&commit.len())
+                    && commit
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    && commit.bytes().any(|b| b != b'0'),
+                "Imported revision is not pinned"
+            );
+        }
         let expected = match &self.request.selection {
             Selection::Team {} => project.to_owned(),
             Selection::Directory { path } | Selection::Worktree { path, .. } => project.join(path),
@@ -183,16 +207,6 @@ impl Receipt {
             "Workspace identity changed; do not adopt replacement"
         );
         if let Some(expected) = &self.independent_git {
-            ensure!(
-                matches!(self.request.selection, Selection::Directory { .. })
-                    && self.git_dir.is_none()
-                    && self.git_identity.is_none()
-                    && self.worktree_git_dir.is_none()
-                    && self.worktree_git_identity.is_none()
-                    && self.pointer_digest.is_none()
-                    && self.branch.is_none(),
-                "Independent checkout cannot inherit linked metadata exceptions"
-            );
             let dot = self.path.join(".git");
             checked_absolute(&dot)?;
             ensure!(

@@ -39,6 +39,59 @@ pub struct Job {
 }
 pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
     tx.batch_execute("CREATE TABLE IF NOT EXISTS service_team_sources(team TEXT PRIMARY KEY REFERENCES agent_teams(id),data JSONB NOT NULL,status TEXT NOT NULL DEFAULT 'pending',dispatched BOOLEAN NOT NULL DEFAULT FALSE,claim TEXT,next_check TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());")?;
+    tx.batch_execute("ALTER TABLE service_team_sources ADD COLUMN IF NOT EXISTS last_notice TEXT")?;
+    Ok(())
+}
+fn notice(
+    tx: &mut postgres::Transaction<'_>,
+    d: &Document,
+    i: &Intent,
+    key: &str,
+    body: String,
+) -> Result<()> {
+    let last: Option<String> = tx
+        .query_one(
+            "SELECT last_notice FROM service_team_sources WHERE team=$1",
+            &[&d.id],
+        )?
+        .get(0);
+    if last.as_deref() == Some(key) {
+        return Ok(());
+    }
+    let mut d = d.clone();
+    d.sequence = d
+        .sequence
+        .checked_add(1)
+        .filter(|s| *s <= i64::MAX as u64)
+        .context("Team inbox sequence exhausted")?;
+    let message = openworker_runtime::agent_team::Message {
+        id: openworker_runtime::id("tm"),
+        sequence: d.sequence,
+        sender: "harness".into(),
+        body: format!(
+            "Harness source status (not a permission grant). Setup {}: {body}",
+            i.id
+        ),
+        recipients: vec![d.lead.clone()],
+        board: false,
+    };
+    tx.execute(
+        "INSERT INTO agent_team_messages VALUES($1,$2,$3,$4)",
+        &[
+            &d.id,
+            &(message.sequence as i64),
+            &message.id,
+            &json!(message),
+        ],
+    )?;
+    tx.execute(
+        "UPDATE agent_teams SET data=$2 WHERE id=$1",
+        &[&d.id, &json!(d)],
+    )?;
+    tx.execute(
+        "UPDATE service_team_sources SET last_notice=$2 WHERE team=$1",
+        &[&d.id, &key],
+    )?;
     Ok(())
 }
 fn document(tx: &mut postgres::Transaction<'_>, lead: &Session) -> Result<Document> {
@@ -69,6 +122,10 @@ fn authority(
     i: &Intent,
 ) -> Result<()> {
     ensure!(!d.stopped, "Source setup team stopped");
+    ensure!(
+        d.coding.as_ref().is_none_or(|c| c.source == i.source),
+        "Original coding source changed"
+    );
     let (who, _) = crate::agent_team::lead_authority(tx, lead, d)?;
     let row = tx.query_one("SELECT release_id,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'", &[&lead.id])?;
     let r = crate::service_catalog::entry(tx, "release", &row.get::<_, String>(0))?;
@@ -162,6 +219,106 @@ pub(crate) fn authorize_artifact(
     );
     Ok(())
 }
+pub(crate) fn configure(
+    tx: &mut postgres::Transaction<'_>,
+    lead: &Session,
+    d: &Document,
+    source: Source,
+    binding: Binding,
+) -> Result<Intent> {
+    source.validate()?;
+    binding.validate()?;
+    ensure!(
+        d.roster
+            .instance(&d.lead)
+            .is_some_and(|i| i.session_id == lead.id),
+        "Not the original team lead"
+    );
+    ensure!(
+        d.coding.as_ref().is_none_or(|c| c.source == source),
+        "Source setup differs from coding defaults"
+    );
+    ensure!(!d.stopped, "Source setup team stopped");
+    let (who, _) = crate::agent_team::lead_authority(tx, lead, d)?;
+    let sid = &lead.id;
+    let origin=tx.query_one("SELECT release_id,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'", &[&sid])?;
+    let r = crate::service_catalog::entry(tx, "release", &origin.get::<_, String>(0))?;
+    let p = crate::service_catalog::entry(tx, "profile", &origin.get::<_, String>(1))?;
+    if let Some(existing) = tx.query_opt(
+        "SELECT data FROM service_team_sources WHERE team=$1 FOR UPDATE",
+        &[&d.id],
+    )? {
+        let i: Intent = serde_json::from_value(existing.get(0))?;
+        ensure!(
+            i.source == source && i.artifact_binding == binding,
+            "Changed source setup retry"
+        );
+        authority(tx, lead, d, &i)?;
+        // An explicit application retry may requeue this SAME intent
+        // after restoring authority. The dispatch bit is never reset.
+        tx.execute("UPDATE service_team_sources SET status='pending',claim=NULL,last_notice=NULL,next_check=clock_timestamp() WHERE team=$1 AND status='blocked'", &[&i.team])?;
+
+        return Ok(i);
+    }
+    ensure!(
+        lead.turn.is_none(),
+        "Configure source before starting the lead"
+    );
+    let environment = lead
+        .environment
+        .clone()
+        .context("Lead has no environment")?;
+    let root = lead.workspace.clone();
+    let id = openworker_runtime::id("source");
+    let scope = openworker_runtime::bundle::digest(&serde_json::to_vec(&(
+        "team-source-v1",
+        &d.id,
+        &sid,
+        &source,
+        &binding,
+        &environment,
+        &root,
+        &r.digest,
+        &p.digest,
+    ))?);
+    let export = Export {
+        operation_id: id.clone(),
+        scope_digest: scope,
+        repository: source.repository.clone(),
+        directory: source.directory.clone(),
+        object_format: source.object_format,
+        base_commit: source.commit.clone(),
+        submitted_commit: source.commit.clone(),
+    };
+    let i = Intent {
+        id,
+        team: d.id.clone(),
+        lead: sid.clone(),
+        principal: who.principal,
+        source,
+        environment,
+        root,
+        profile_id: p.id,
+        profile_digest: p.digest,
+        release_id: r.id,
+        release_digest: r.digest,
+        artifact_binding: binding,
+        export,
+        bundle: None,
+    };
+    tx.execute(
+        "INSERT INTO service_team_sources(team,data) VALUES($1,$2)",
+        &[&i.team, &json!(i)],
+    )?;
+    crate::team_execution::session_event(
+        tx,
+        &i.lead,
+        None,
+        "team_source",
+        json!({"setup_id":i.id,"phase":"pending","repository":i.source.repository,"commit":i.source.commit}),
+    )?;
+    Ok(i)
+}
 impl PostgresStore {
     /// Application setup, not a tool or a model approval. Artifact binding is
     /// supplied by the configured server adapter, never accepted in HTTP JSON.
@@ -176,35 +333,25 @@ impl PostgresStore {
         let sid = sid.to_owned();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let principal = auth::guard(&mut tx, db.auth.as_ref(), auth::Action::Control, Some(&sid), None)?;
+            let principal = auth::guard(
+                &mut tx,
+                db.auth.as_ref(),
+                auth::Action::Control,
+                Some(&sid),
+                None,
+            )?;
             let lead = db::locked(&mut tx, &sid, None)?;
             let d = document(&mut tx, &lead)?;
-            ensure!(!d.stopped, "Source setup team stopped");
-            let (who, _) = crate::agent_team::lead_authority(&mut tx, &lead, &d)?;
-            let origin=tx.query_one("SELECT release_id,profile_id FROM service_operations WHERE session_id=$1 AND status='complete'", &[&sid])?;
-            let r=crate::service_catalog::entry(&mut tx,"release",&origin.get::<_,String>(0))?;
-            let p=crate::service_catalog::entry(&mut tx,"profile",&origin.get::<_,String>(1))?;
-            if let Some(existing)=tx.query_opt("SELECT data FROM service_team_sources WHERE team=$1 FOR UPDATE", &[&d.id])? {
-                let i: Intent=serde_json::from_value(existing.get(0))?;
-                ensure!(i.source == source && i.artifact_binding == binding, "Changed source setup retry");
-                authority(&mut tx,&lead,&d,&i)?;
-                // An explicit application retry may requeue this SAME intent
-                // after restoring authority. The dispatch bit is never reset.
-                tx.execute("UPDATE service_team_sources SET status='pending',claim=NULL,next_check=clock_timestamp() WHERE team=$1 AND status='blocked'", &[&i.team])?;
-                auth::audit(&mut tx,principal.as_ref(),auth::Action::Control,Some(&sid),Some(&i.id))?;
-                tx.commit()?; return Ok(i)
-            }
-            ensure!(lead.turn.is_none(), "Configure source before starting the lead");
-            let environment = lead.environment.clone().context("Lead has no environment")?;
-            let root = lead.workspace.clone();
-            let id = openworker_runtime::id("source");
-            let scope = openworker_runtime::bundle::digest(&serde_json::to_vec(&("team-source-v1",&d.id,&sid,&source,&binding,&environment,&root,&r.digest,&p.digest))?);
-            let export=Export { operation_id:id.clone(),scope_digest:scope,repository:source.repository.clone(),directory:source.directory.clone(),object_format:source.object_format,base_commit:source.commit.clone(),submitted_commit:source.commit.clone() };
-            let i=Intent {id,team:d.id,lead:sid,principal:who.principal,source,environment,root,profile_id:p.id,profile_digest:p.digest,release_id:r.id,release_digest:r.digest,artifact_binding:binding,export,bundle:None};
-            tx.execute("INSERT INTO service_team_sources(team,data) VALUES($1,$2)",&[&i.team,&json!(i)])?;
-            crate::team_execution::session_event(&mut tx,&i.lead,None,"team_source",json!({"setup_id":i.id,"phase":"pending","repository":i.source.repository,"commit":i.source.commit}))?;
-            auth::audit(&mut tx,principal.as_ref(),auth::Action::Control,Some(&i.lead),Some(&i.id))?;
-            tx.commit()?; Ok(i)
+            let i = configure(&mut tx, &lead, &d, source, binding)?;
+            auth::audit(
+                &mut tx,
+                principal.as_ref(),
+                auth::Action::Control,
+                Some(&i.lead),
+                Some(&i.id),
+            )?;
+            tx.commit()?;
+            Ok(i)
         })
     }
     pub fn claim_team_source(&self, installation: &str) -> Result<Option<Job>> {
@@ -225,6 +372,7 @@ impl PostgresStore {
             if let Err(e) = authority(&mut tx,&lead,&d,&i) {
                 if e.downcast_ref::<postgres::Error>().is_some() { return Err(e) }
                 tx.execute("UPDATE service_team_sources SET status='blocked',claim=NULL WHERE team=$1", &[&i.team])?;
+                notice(&mut tx,&d,&i,"blocked","Original source credential, profile or team authority is unavailable. Source staging is blocked; a waiting child has not been admitted. Existing work is retained.".into())?;
                 crate::team_execution::session_event(&mut tx,&i.lead,None,"team_source",json!({"setup_id":i.id,"phase":"blocked","reason":"Original source authority unavailable"}))?;
                 tx.commit()?; return Ok(None)
             }
@@ -257,6 +405,7 @@ impl PostgresStore {
             i.bundle=bundle;
             let phase=if i.bundle.is_some(){"uploading"}else{"unknown"};
             tx.execute("UPDATE service_team_sources SET data=$2,status=$3,claim=NULL,next_check=clock_timestamp()+interval '2 seconds' WHERE team=$1",&[&i.team,&json!(i),&phase])?;
+            if i.bundle.is_none() {notice(&mut tx,&d,&i,"unknown_export","Export outcome is unknown. Inspect the original operation; no export is automatically repeated and waiting children have not been admitted.".into())?;}
             crate::team_execution::session_event(&mut tx,&i.lead,None,"team_source",json!({"setup_id":i.id,"phase":phase,"dispatch":job.dispatch}))?;
             tx.commit()?;Ok(())
         })
@@ -287,6 +436,8 @@ impl PostgresStore {
             let i=row(&mut tx,&d.id)?;fenced(&mut tx,&job,&i)?;
             let phase=if i.bundle.is_some(){"uploading"}else{"unknown"};
             tx.execute("UPDATE service_team_sources SET status=$2,claim=NULL,next_check=clock_timestamp()+interval '30 seconds' WHERE team=$1", &[&i.team,&phase])?;
+            let key=if i.bundle.is_some(){"unknown_upload"}else{"unknown_export"};
+            notice(&mut tx,&d,&i,key,"Source transfer outcome is unknown. The original export/artifact identity is retained. Inspect status before any new action; this is not evidence of child completion.".into())?;
             crate::team_execution::session_event(&mut tx,&i.lead,None,"team_source",json!({"setup_id":i.id,"phase":"outcome_unknown","inspection_only":true}))?;
             tx.commit()?;Ok(())
         })

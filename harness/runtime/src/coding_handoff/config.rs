@@ -49,6 +49,14 @@ pub enum DefaultSource {
     /// A verifier must name a submitted handoff, never silently verify the base.
     RequireSubmission,
 }
+/// Private adapter evidence, not a public request or approval. The service must
+/// fence original catalog authority and verified artifact bytes before recording.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedSource {
+    pub choice: Choice,
+    pub manifest: super::Manifest,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TypeDefault {

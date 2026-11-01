@@ -721,3 +721,52 @@ preceding physical source/receiver image. A matching new runner is available at
 `/private/tmp/ow-coding-admission-runner-20261031/openworker` for the next import/
 admission cluster slice. Preserve the earlier source evidence and image identity;
 do not claim the complete isolated preset or child-import controller is finished.
+
+### C4 journal — storage-neutral reservations and atomic source configuration
+
+Coding source/default configuration now resolves before child reservation and is
+an immutable retry input. The same domain contract runs on SQLite and PostgreSQL:
+builders get stable independent paths/initial source; verifiers must name a
+submission; source choice is stored with the original instance. Source imports
+need an explicit qualified-adapter capability. Ordinary API commands cannot record
+source acknowledgement. A generic directory receipt alone cannot make a
+source-selected child ready; it also needs the matching manifest, independent Git
+identity and managed-workspace binding. Private source receipts stay out of public
+snapshots. Existing requests omit the optional source field.
+
+PostgreSQL team creation can now record configuration, templates, lead membership
+and initial source intent in the same transaction using the server-supplied
+artifact binding. The old separate source-setup adapter shares that transaction
+logic. An injected audit failure proves all four records and source events roll
+back together. The fixture reconnects and reads durable state after the deliberately
+poisoned bridge; it never steals the model worker lease to inspect setup.
+
+Generic workspace preparation excludes source-selected children. Provisioning waits
+for source acknowledgement, and an unavailable child template closes only its
+unstarted reservation instead of stranding it behind missing source/placement
+receipts. Unknown export/upload and authority loss now produce deduplicated,
+durable notices in the lead inbox. They identify original retained work and do not
+claim completion or authorize retries. Explicit application reauthorization keeps
+the original dispatch bit.
+
+Verification so far: 16 SQLite team cases; 15 PostgreSQL team cases; 15 real Git/
+private-protocol cases; eight workspace cases; three configuration cases; and 32
+service-library cases, including atomic audit rollback and source-notice deduplication.
+The previous physical source/receiver run remains separately evidenced at
+`3564b027`; these later admission/configuration changes are not yet a complete
+physical child-import qualification. The public HTTP/SDK isolated preset remains
+gated while the durable child-import controller and submission/reception tools are
+built. C4 is still in progress; C5–C7 remain pending.
+
+Review item before C4 completion: when the repository itself is the workspace
+root (`repository: "."`), reserved `.openworker` bookkeeping must not be staged
+by an ordinary `git add -A`. Add an explicit bounded metadata exclusion/placement
+rule and a real root-repository regression before qualifying that variant.
+
+Latest source/configuration checkpoint validation: **32 service-library cases**
+pass (2.08 seconds), including notice deduplication across repeated export/upload
+reconciliation and later authority loss. The deliberately injected audit failure
+requires reconnect-and-inspect, as intended; fixture setup reads durable metadata
+as an observer rather than claiming the model worker's lease. All-target Clippy
+passes for runtime, PostgreSQL, SDK (with test support) and service (OpenShell test
+feature). No new production HTTP capability is enabled by this checkpoint.

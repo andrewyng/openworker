@@ -414,3 +414,8 @@ fn sqlite_retirement_contract() {
 fn sqlite_child_model_selection_contract() {
     contract::exercise_child_model_selection(&mut Store::memory().unwrap());
 }
+
+#[test]
+fn sqlite_coding_default_reservation_contract() {
+    contract::exercise_coding_defaults(&mut Store::memory().unwrap());
+}

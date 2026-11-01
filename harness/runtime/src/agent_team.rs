@@ -52,6 +52,13 @@ pub struct Document {
     pub workspace_selection: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_defaults: Option<crate::team_workspace_defaults::WorktreeDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coding: Option<crate::coding_handoff::config::TeamConfig>,
+    /// Set only by an adapter qualified for catalog-backed source import.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub coding_selection: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_imports: BTreeMap<String, crate::coding_handoff::config::ImportedSource>,
     /// Enabled only by a qualified trusted placement adapter, never model input.
     #[serde(default)]
     pub placement_selection: bool,
@@ -189,6 +196,30 @@ pub fn apply(
         }
         let types: std::collections::BTreeSet<String> =
             serde_json::from_value(args["agent_types"].clone())?;
+        let coding: Option<crate::coding_handoff::config::TeamConfig> = args
+            .get("coding")
+            .filter(|v| !v.is_null())
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?;
+        if let Some(c) = &coding {
+            ensure!(
+                args["coding_selection"] == true
+                    && args["workspace_selection"] == true
+                    && (args["placement_selection"] == true
+                        || c.agent_types
+                            .values()
+                            .all(|t| t.sandbox == crate::team_definition::Sandbox::default())),
+                "This adapter cannot admit catalog-backed coding imports"
+            );
+            c.validate(&types)?;
+            ensure!(
+                workspace_defaults
+                    .as_ref()
+                    .is_none_or(|w| c.agent_types.keys().all(|k| !w.agent_types.contains(k))),
+                "A type cannot default to both a linked worktree and an independent checkout"
+            );
+        }
         if let Some(defaults) = &workspace_defaults {
             ensure!(
                 defaults.agent_types.is_subset(&types),
@@ -217,6 +248,10 @@ pub fn apply(
             ensure!(
                 doc.workspace_defaults == workspace_defaults,
                 "Changed worktree defaults; create another team"
+            );
+            ensure!(
+                doc.coding == coding && doc.coding_selection == (args["coding_selection"] == true),
+                "Changed coding defaults or import adapter capability"
             );
             ensure!(
                 doc.placement_selection == (args["placement_selection"] == true),
@@ -273,6 +308,14 @@ pub fn apply(
                 crate::team_type_catalog::Catalog::new(d.bind(s)?, roster.spawn_types().clone())
             })
             .transpose()?;
+        if let Some(c) = &coding {
+            let catalog = type_catalog
+                .as_ref()
+                .context("Coding placement defaults require delegation")?;
+            for defaults in c.agent_types.values() {
+                defaults.sandbox.validate(&catalog.ceiling)?;
+            }
+        }
         let doc = Document {
             id: id.clone(),
             lead: lead_id.clone(),
@@ -296,6 +339,9 @@ pub fn apply(
             type_bindings: BTreeMap::new(),
             workspace_selection: args["workspace_selection"] == true,
             workspace_defaults,
+            coding,
+            coding_selection: args["coding_selection"] == true,
+            source_imports: BTreeMap::new(),
             placement_selection: args["placement_selection"] == true,
             sandbox_choices: BTreeMap::new(),
             placement_bindings: BTreeMap::new(),
@@ -632,6 +678,76 @@ pub fn apply(
             tx.write(&doc, false)?;
             Ok(json!({"recorded":true}))
         }
+        "source_result" => {
+            ensure!(
+                member.agent_id == doc.lead && doc.coding_selection,
+                "Only the qualified lead host acknowledges source imports"
+            );
+            let id = op(args, "agent_id")?;
+            ensure!(
+                doc.roster
+                    .instance(id)
+                    .is_some_and(|i| i.phase == rules::Phase::Reserved),
+                "Source import instance is not reserved"
+            );
+            let configured = doc
+                .coding
+                .as_ref()
+                .context("No application coding source")?;
+            let source: crate::coding_handoff::config::ImportedSource =
+                serde_json::from_value(args["source"].clone())?;
+            ensure!(
+                doc.roster.request(id).and_then(|r| r.source.as_ref()) == Some(&source.choice),
+                "Source receipt differs from the reserved choice"
+            );
+            source
+                .manifest
+                .require_source(&configured.source.repository, &configured.source.commit)?;
+            ensure!(
+                source.manifest.producer.team_id == doc.id
+                    && doc
+                        .roster
+                        .instance(&source.manifest.producer.agent_id)
+                        .is_some_and(|i| i.session_id == source.manifest.producer.session_id),
+                "Source producer belongs to another team"
+            );
+            match &source.choice {
+                crate::coding_handoff::config::Choice::Initial => ensure!(
+                    source.manifest.kind == crate::coding_handoff::Kind::Source
+                        && source.manifest.producer.agent_id == doc.lead
+                        && source.manifest.producer.session_id == s.id,
+                    "Initial source is not the original lead snapshot"
+                ),
+                crate::coding_handoff::config::Choice::Submission { .. } => ensure!(
+                    source.manifest.kind == crate::coding_handoff::Kind::Submission,
+                    "Verifier source is not a submitted handoff"
+                ),
+            }
+            let receipt: crate::team_workspace::Receipt =
+                serde_json::from_value(args["receipt"].clone())?;
+            let (root, _) = crate::team_placement::workspace_scope(&doc, s, id)?;
+            receipt.validate_scope(std::path::Path::new(&root), &receipt.path)?;
+            let intent = doc
+                .workspaces
+                .get_mut(id)
+                .context("No original import workspace intent")?;
+            ensure!(
+                intent.request == receipt.request
+                    && intent.error.is_none()
+                    && receipt.independent_git.is_some()
+                    && receipt.initial_commit.as_ref() == Some(&source.manifest.submitted_commit)
+                    && intent.receipt.as_ref().is_none_or(|r| r == &receipt),
+                "Source checkout differs from original intent/revision"
+            );
+            ensure!(
+                doc.source_imports.get(id).is_none_or(|old| old == &source),
+                "Acknowledged source changed"
+            );
+            intent.receipt = Some(receipt);
+            doc.source_imports.insert(id.into(), source);
+            tx.write(&doc, false)?;
+            Ok(json!({"recorded":true}))
+        }
         "ready" => {
             ensure!(
                 member.agent_id == doc.lead,
@@ -640,6 +756,25 @@ pub fn apply(
             let id = op(args, "agent_id")?;
             let child = doc.roster.instance(id).context("Unknown instance")?;
             let stored = tx.session(&child.session_id)?;
+            if let Some(choice) = doc.roster.request(id).and_then(|r| r.source.as_ref()) {
+                let source = doc
+                    .source_imports
+                    .get(id)
+                    .context("Selected source import is not acknowledged")?;
+                let receipt = doc
+                    .workspaces
+                    .get(id)
+                    .and_then(|i| i.receipt.as_ref())
+                    .context("Missing independent checkout receipt")?;
+                ensure!(
+                    &source.choice == choice
+                        && receipt.independent_git.is_some()
+                        && receipt.initial_commit.as_ref()
+                            == Some(&source.manifest.submitted_commit)
+                        && stored.managed_workspace.as_ref() == Some(receipt),
+                    "Child source/revision binding mismatch"
+                );
+            }
             // The selection contract alone is not a provider binding. Keep
             // admission fenced until the qualified adapter supplies that proof.
             ensure!(
@@ -696,6 +831,24 @@ pub fn apply(
                 "Only the lead may spawn instances"
             );
             let mut request: rules::SpawnRequest = serde_json::from_value(args.clone())?;
+            ensure!(
+                doc.coding_selection || request.source.is_none(),
+                "Source import is unsupported by this adapter"
+            );
+            if let Some(coding) = &doc.coding {
+                (request.workspace, request.source) = coding.resolve(
+                    &doc.id,
+                    &request.agent_type,
+                    &request.agent_id,
+                    request.workspace,
+                    request.source,
+                )?;
+            } else {
+                ensure!(
+                    request.source.is_none(),
+                    "No application coding source is configured"
+                );
+            }
             let sandbox = crate::team_placement::select(&doc, s, &request)?;
             if let Some(defaults) = &doc.workspace_defaults {
                 if sandbox == crate::team_definition::Sandbox::default() {
@@ -750,6 +903,7 @@ pub fn apply(
             }
             let task = crate::team_briefing::task(&request.message, request.background.as_deref())?;
             let workspace = request.workspace.clone();
+            let source = request.source.clone();
             doc.tasks.entry(request.agent_id).or_insert(task);
             tx.write(&doc, false)?;
             let mut result = json!({"instance":reservation.instance,"created":reservation.created});
@@ -758,6 +912,9 @@ pub fn apply(
             }
             if sandbox != crate::team_definition::Sandbox::default() {
                 result["sandbox"] = json!(sandbox);
+            }
+            if let Some(source) = source {
+                result["source"] = json!(source);
             }
             Ok(result)
         }
@@ -1037,6 +1194,9 @@ pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
         if name == "team_spawn" && doc.workspace_selection {
             properties["workspace"] = crate::team_workspace::schema();
         }
+        if name == "team_spawn" && doc.coding_selection {
+            properties["source"]=json!({"oneOf":[{"type":"object","properties":{"kind":{"const":"initial"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"submission"},"id":{"type":"string"}},"required":["kind","id"],"additionalProperties":false}],"description":"Select the application's pinned initial snapshot or a submitted same-team handoff. A verifier must name its submitted handoff. Import awaits catalog and original environment authority."});
+        }
         // Responses strict mode requires every property to be required. Optional
         // spawn/definition fields retain their actual omission semantics here;
         // dispatch still validates JSON schema and the typed policy contract.
@@ -1077,6 +1237,9 @@ pub fn public_snapshot(mut value: Value) -> Value {
             "type_catalog",
             "workspaces",
             "placement_bindings",
+            "coding",
+            "coding_selection",
+            "source_imports",
         ] {
             object.remove(key);
         }

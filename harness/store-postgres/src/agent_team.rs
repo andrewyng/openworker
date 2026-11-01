@@ -264,7 +264,7 @@ impl crate::PostgresStore {
         let installation = installation.to_owned();
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            let row = tx.query_opt("SELECT s.id,t.id,i.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates p ON p.team=t.id AND p.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') LEFT JOIN agent_team_workspace_claims w ON w.team=t.id AND w.agent=i.key WHERE c.data->>'installation'=$1 AND i.value->>'phase'='reserved' AND coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')<>'team' AND NOT coalesce((t.data->>'stopped')::boolean,false) AND coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)='null'::jsonb AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key) AND (w.expires_at IS NULL OR w.expires_at<clock_timestamp()) ORDER BY t.id,i.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
+            let row = tx.query_opt("SELECT s.id,t.id,i.key FROM agent_teams t JOIN sessions s ON s.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' JOIN service_operations o ON o.session_id=s.id JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates p ON p.team=t.id AND p.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') LEFT JOIN agent_team_workspace_claims w ON w.team=t.id AND w.agent=i.key WHERE c.data->>'installation'=$1 AND i.value->>'phase'='reserved' AND coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')<>'team' AND coalesce(t.data->'roster'->'requests'->i.key->'source','null'::jsonb)='null'::jsonb AND NOT coalesce((t.data->>'stopped')::boolean,false) AND coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)='null'::jsonb AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key) AND (w.expires_at IS NULL OR w.expires_at<clock_timestamp()) ORDER BY t.id,i.key LIMIT 1 FOR UPDATE OF s SKIP LOCKED", &[&installation])?;
             let Some(row) = row else { tx.commit()?; return Ok(None) };
             let sid: String = row.get(0); let team: String = row.get(1); let agent: String = row.get(2);
             let mut lead = db::locked(&mut tx, &sid, None)?;
@@ -385,6 +385,17 @@ impl crate::PostgresStore {
                 None,
             )?;
             let mut lead = db::locked(&mut tx, &sid, None)?;
+            let source_binding: Option<openworker_artifacts::Binding> = args
+                .as_object_mut()
+                .context("Team options must be an object")?
+                .remove("source_store_binding")
+                .filter(|v| !v.is_null())
+                .map(serde_json::from_value)
+                .transpose()?;
+            ensure!(
+                source_binding.is_none() || args.get("coding").is_some_and(|v| !v.is_null()),
+                "Artifact binding requires coding source configuration"
+            );
             let was_unbound = lead.agent_team.is_none();
             let binding = lead
                 .environment
@@ -426,6 +437,7 @@ impl crate::PostgresStore {
             );
             // Adapter capability, never a caller-configured permission switch.
             args["workspace_selection"] = json!(true);
+            args["coding_selection"] = json!(source_binding.is_some());
             args["placement_selection"] = json!(args
                 .get("delegation")
                 .filter(|v| !v.is_null())
@@ -463,11 +475,34 @@ impl crate::PostgresStore {
                 }
                 ensure!(stored == expected, "Changed team type template");
             }
+            let source_setup = if let Some(binding) = source_binding {
+                let doc: Document = serde_json::from_value(result.clone())?;
+                let source = doc
+                    .coding
+                    .as_ref()
+                    .context("Missing coding source")?
+                    .source
+                    .clone();
+                Some(crate::service_team_sources::configure(
+                    &mut tx, &lead, &doc, source, binding,
+                )?)
+            } else {
+                None
+            };
             if was_unbound {
                 db::write_metadata(&mut tx, &lead)?;
                 tx.execute(
                     "UPDATE sessions SET revision=revision+1 WHERE id=$1",
                     &[&sid],
+                )?;
+            }
+            if let Some(setup) = source_setup {
+                crate::auth::audit(
+                    &mut tx,
+                    principal.as_ref(),
+                    crate::auth::Action::Control,
+                    Some(&sid),
+                    Some(&setup.id),
                 )?;
             }
             tx.commit()?;
@@ -484,16 +519,24 @@ impl crate::PostgresStore {
         let installation = installation.map(str::to_owned);
         self.call(move|db|{
             let mut tx=db.client.transaction()?;
-            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t JOIN sessions l ON l.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved' AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key OR x.data ? 'error') AND (coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')='team' OR coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)<>'null'::jsonb OR x.data ? 'error')) AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE OF l SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
+            let Some(row)=tx.query_opt("SELECT t.id,t.data FROM agent_teams t JOIN sessions l ON l.id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i JOIN agent_team_templates x ON x.team=t.id AND x.kind=coalesce('tt_' || left(t.data->'type_bindings'->>i.key,48),i.value->>'agent_type') WHERE i.value->>'phase'='reserved' AND (coalesce(t.data->'sandbox_choices'->i.key->>'mode','team')='team' OR t.data->'placement_bindings' ? i.key OR x.data ? 'error') AND (coalesce(t.data->'roster'->'requests'->i.key->'workspace'->>'mode','team')='team' OR coalesce(t.data->'workspaces'->i.key->'receipt','null'::jsonb)<>'null'::jsonb OR x.data ? 'error') AND (coalesce(t.data->'roster'->'requests'->i.key->'source','null'::jsonb)='null'::jsonb OR t.data->'source_imports' ? i.key OR x.data ? 'error')) AND NOT coalesce((t.data->>'stopped')::boolean,false) AND ($1::text IS NULL OR EXISTS(SELECT 1 FROM service_operations o JOIN service_catalog c ON c.kind='release' AND c.id=o.release_id WHERE o.session_id=t.data->'roster'->'instances'->(t.data->>'lead')->>'session_id' AND c.data->>'installation'=$1)) ORDER BY t.id LIMIT 1 FOR UPDATE OF l SKIP LOCKED",&[&installation])? else {tx.commit()?;return Ok(false)};
             let team_id:String=row.get(0);
             let mut doc:Document=serde_json::from_value(tx.query_one("SELECT data FROM agent_teams WHERE id=$1 FOR UPDATE",&[&team_id])?.get(0))?;
             let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Reserved).cloned().collect();
             let mut selected=None;
             for i in candidates {
+                let kind=agent_team::runtime_type(&doc,&i)?;
+                let Some(row)=tx.query_opt("SELECT data FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])? else {continue};
+                let candidate:Value=row.get(0);
+                // A broken template closes only its unstarted reservation;
+                // missing placement/import receipts must not strand that error.
+                if candidate.get("error").is_some() {selected=Some(i);break}
                 if doc.sandbox_choices.get(&i.agent_id).is_some_and(|c|c!=&Default::default()) && !doc.placement_bindings.contains_key(&i.agent_id) {continue}
                 if doc.roster.request(&i.agent_id).is_some_and(|r| r.workspace != Default::default())
                     && doc.workspaces.get(&i.agent_id).and_then(|i| i.receipt.as_ref()).is_none() { continue; }
-                let kind=agent_team::runtime_type(&doc,&i)?;if tx.query_opt("SELECT kind FROM agent_team_templates WHERE team=$1 AND kind=$2",&[&doc.id,&kind])?.is_some(){selected=Some(i);break}
+                if doc.roster.request(&i.agent_id).is_some_and(|r|r.source.is_some())
+                    && !doc.source_imports.contains_key(&i.agent_id) {continue}
+                selected=Some(i);break
             }
             let Some(instance)=selected else {tx.commit()?;return Ok(false)};
             let kind=agent_team::runtime_type(&doc,&instance)?;

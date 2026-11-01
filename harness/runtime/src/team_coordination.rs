@@ -51,6 +51,8 @@ pub struct SpawnRequest {
     pub model: Option<crate::connections::Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<crate::team_definition::Sandbox>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::coding_handoff::config::Choice>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -166,6 +168,9 @@ impl Roster {
         allocate_session: impl FnOnce() -> String,
     ) -> Result<Reservation> {
         request.workspace.validate()?;
+        if let Some(source) = &request.source {
+            source.validate()?;
+        }
         if let Some(model) = &request.model {
             model.validate()?;
         }
