@@ -63,6 +63,7 @@ PROVIDER_HOSTS: dict[str, str | list[str]] = {
     "tavily": "api.tavily.com",
     "brave": "api.search.brave.com",
     "serper": "google.serper.dev",
+    "serply": "api.serply.io",
     "exa": "api.exa.ai",
     "firecrawl": "api.firecrawl.dev",
 }
