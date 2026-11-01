@@ -115,3 +115,12 @@ The grouped test catalog and journal must distinguish pure contract tests, real
 Git/filesystem tests, storage/controller tests and physical sandbox qualification.
 The independent-volume story and future sandbox-contained agent loop remain
 separate from this milestone.
+
+## Current transfer bounds
+
+Private ToolRunner frames remain capped at 64 KiB; bundle chunks are 32 KiB.
+Artifact bundles are capped at 64 MiB. Independent checkout additionally limits
+expanded file content to 128 MiB and the tree to 10,000 entries (with a bounded
+1 MiB tree listing). Submodule contents require a separately complete source;
+checkout never initializes or downloads them. These v1 bounds reject explicitly
+rather than dropping files or executing a repository-provided helper.

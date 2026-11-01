@@ -104,6 +104,13 @@ pub(crate) async fn stop(child: &mut tokio::process::Child) {
     let _ = child.wait().await;
 }
 pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
+    run_bounded(root, args, 48000).await
+}
+pub(crate) async fn run_bounded(root: &Path, args: &[String], limit: usize) -> Result<String> {
+    ensure!(
+        limit > 0 && limit <= 2 * 1024 * 1024,
+        "Invalid Git output limit"
+    );
     let mut child = GitChild(
         command(root, args)?
             .stdin(Stdio::null())
@@ -113,7 +120,7 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
             .spawn()
             .context("Git must be installed in the tool environment")?,
     );
-    let mut stdout = child.stdout.take().unwrap().take(48001);
+    let mut stdout = child.stdout.take().unwrap().take(limit as u64 + 1);
     let mut stderr = child.stderr.take().unwrap().take(4001);
     let mut out = vec![];
     let mut err = vec![];
@@ -124,7 +131,7 @@ pub(crate) async fn run(root: &Path, args: &[String]) -> Result<String> {
             child.wait()
         )?;
         ensure!(
-            out.len() <= 48000 && err.len() <= 4000,
+            out.len() <= limit && err.len() <= 4000,
             "Git output too large; narrow the path or count"
         );
         ensure!(

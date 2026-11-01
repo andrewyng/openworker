@@ -195,3 +195,20 @@ Cases: [artifact-store contracts](../../harness/artifacts/tests/store.rs),
 [PostgreSQL artifact contracts](../../harness/store-postgres/tests/artifacts.rs),
 and the `origin_tests` module in
 [artifact API](../../harness/server-reference/src/artifacts.rs).
+
+## Bounded private transfer and independent checkout
+
+Real Git repositories and separate ToolRunner subprocesses check bounded chunks,
+immutable same-byte retransmission, missing chunks, changed scope, corrupt data
+and original export/root identities. Receivers produce independent Git metadata
+and preserve binary/new/renamed/deleted files in SHA-1 and SHA-256 repositories.
+A lost checkout acknowledgement can recover its receipt, but incomplete evidence,
+changed HEAD, a replacement destination or an existing folder never authorizes a
+reset/replay. A highly compressible oversized tree stops before writing project
+files; compressed artifact size alone is insufficient to bound disk consumption.
+
+These cases qualify local mechanics and private protocol bounds. They do not
+replace artifact-catalog authorization, controller fencing or the physical
+OpenShell source→builder→verifier→lead workflow.
+
+Cases: [Git and private handoff tests](../../harness/runtime/tests/coding_handoff_git.rs).

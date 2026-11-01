@@ -520,6 +520,9 @@ pub async fn serve(root: &Path) -> Result<()> {
                 receipt.verify()?;
                 return Ok(serde_json::to_value(receipt)?);
             }
+            if let Some(method) = v["method"].as_str().filter(|m| m.starts_with("handoff/")) {
+                return crate::coding_handoff::transfer::dispatch(&root, method, v["params"].clone()).await;
+            }
             let request: Request = serde_json::from_value(v["params"].clone())?;
             ensure!(
                 matches!(

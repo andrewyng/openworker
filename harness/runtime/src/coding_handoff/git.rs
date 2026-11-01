@@ -70,6 +70,36 @@ pub struct Bundle {
     pub sha256: String,
     pub advertised_ref: String,
 }
+pub(super) fn check_export_receipt(root: &Path, bundle: &Bundle) -> Result<()> {
+    bundle.validate()?;
+    let dir = crate::runner::path(
+        root,
+        &format!(".openworker/handoffs/{}", bundle.request.operation_id),
+    )?;
+    for name in ["request.json", "receipt.json", "source.bundle"] {
+        checked(&dir.join(name))?;
+    }
+    let i: Intent = serde_json::from_slice(&crate::bundle::read_limited(
+        &dir.join("request.json"),
+        16000,
+    )?)?;
+    ensure!(
+        i.request == bundle.request
+            && i.pin.root == root
+            && identity(root)? == i.pin.root_identity
+            && identity(&i.pin.repository)? == i.pin.repository_identity
+            && identity(&i.pin.common)? == i.pin.common_identity,
+        "Original export scope changed"
+    );
+    checked(&i.pin.repository)?;
+    checked(&i.pin.common)?;
+    let saved: Bundle = serde_json::from_slice(&crate::bundle::read_limited(
+        &dir.join("receipt.json"),
+        16000,
+    )?)?;
+    ensure!(saved == *bundle, "Original export receipt differs");
+    Ok(())
+}
 impl Bundle {
     /// Validate remote response shape before treating any path/size as a fact.
     /// Artifact byte verification and original provider authority remain required.
@@ -100,7 +130,7 @@ fn args(args: &[&str]) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-async fn git(root: &Path, a: &[&str]) -> Result<String> {
+pub(super) async fn git(root: &Path, a: &[&str]) -> Result<String> {
     run(root, &args(a)).await
 }
 fn text(path: &Path) -> Result<String> {
@@ -117,7 +147,7 @@ impl Drop for Scratch {
         }
     }
 }
-async fn fingerprint(path: &Path) -> Result<(u64, String)> {
+pub(super) async fn fingerprint(path: &Path) -> Result<(u64, String)> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut buf = vec![0; 65536];
     let mut size = 0;
@@ -137,7 +167,7 @@ async fn fingerprint(path: &Path) -> Result<(u64, String)> {
     ensure!(size > 0, "Empty Git bundle");
     Ok((size, format!("{:x}", hash.finalize())))
 }
-fn checked(path: &Path) -> Result<()> {
+pub(super) fn checked(path: &Path) -> Result<()> {
     let mut p = PathBuf::new();
     for c in path.components() {
         p.push(c);
@@ -242,7 +272,7 @@ async fn pin(root: &Path, request: &Export, workspace: Option<&Workspace>) -> Re
         common,
     })
 }
-fn write_new<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+pub(super) fn write_new<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
