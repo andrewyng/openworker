@@ -102,6 +102,9 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), actor)?;
+        // A setup-origin label is not an authority receipt. Keep admission
+        // gated until the trusted source-intent catalog is wired and qualified.
+        ensure!(request.origin.is_turn(), Error::Invalid);
         let s = locked(&mut tx, &request.session_id, None)?;
         verify(&mut tx, &s.id)?;
         if let Some(row)=tx.query_opt("SELECT artifact_id,actor,request,binding FROM artifact_requests WHERE session_id=$1 AND request_id=$2",&[&s.id,&request.request_id])? {

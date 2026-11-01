@@ -535,3 +535,22 @@ checkout/defaults and physical OpenShell handoff remain the next C4 slices.
 
 C4 foundation strict all-target runtime Clippy, formatting and diff checks passed.
 The remaining storage/controller and physical handoff gates remain closed.
+
+### C4 journal — artifact provenance contract and admission gate
+
+Artifact registrations now distinguish ordinary turn outputs from trusted team
+setup snapshots. Ordinary registrations omit the default origin when serialized,
+so existing immutable receipts retain their JSON identity. Setup snapshots have
+an explicit team/setup identity and no invented LLM turn ID. Git bundle content
+uses `application/x-git-bundle`. Public registration requests cannot select setup
+origin, and PostgreSQL rejects even a well-formed setup label until the trusted
+source-intent catalog authorizes that exact original operation. This gate remains
+closed; a label is not a permission receipt.
+
+Six artifact-store tests, four real PostgreSQL artifact cases and the public
+request deserialization test pass. They cover existing receipt compatibility,
+streaming/restart/conflict behavior, setup-label rejection without publication or
+connection poisoning, and rejection of extra credential fields. No setup upload
+endpoint or model tool is enabled by this contract checkpoint. Host free disk
+remains about 56 GiB. Continuing with bounded private chunks and independent
+checkout mechanics before wiring source admission and the service controller.

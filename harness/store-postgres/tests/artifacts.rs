@@ -24,6 +24,7 @@ fn fixture() -> (Config, PostgresStore, Session, Registration) {
         .unwrap();
     let (s, _, _) = owner.accept(&s.id, "one", "make file").unwrap();
     let r = Registration {
+        origin: Default::default(),
         request_id: "upload-one".into(),
         session_id: s.id.clone(),
         turn_id: s.turn.as_ref().unwrap().id.clone(),
@@ -198,4 +199,31 @@ fn extension_is_explicit_and_preserves_existing_sessions() {
     let api = PostgresStore::open(c).unwrap();
     api.register_artifact(r, binding(), "app").unwrap();
     assert_eq!(api.read_snapshot(&s.id).unwrap()["session"]["id"], s.id);
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn a_setup_origin_label_is_not_authority_to_register_or_publish_source() {
+    let (c, p, s, mut r) = fixture();
+    r.origin = openworker_artifacts::Origin::TeamSetup {
+        team_id: "at_unregistered".into(),
+        setup_id: "source_unregistered".into(),
+    };
+    r.turn_id.clear();
+    r.content_type = "application/x-git-bundle".into();
+    r.validate().unwrap();
+    assert_eq!(
+        p.register_artifact(r.clone(), binding(), "test")
+            .unwrap_err()
+            .downcast_ref::<openworker_artifacts::Error>(),
+        Some(&openworker_artifacts::Error::Invalid)
+    );
+    assert!(p.artifacts(&s.id).unwrap().is_empty());
+    r.origin = Default::default();
+    r.turn_id = s.turn.as_ref().unwrap().id.clone();
+    let a = p.register_artifact(r, binding(), "test").unwrap();
+    assert_eq!(a.status, Status::Pending);
+    admin(&c)
+        .batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
 }

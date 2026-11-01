@@ -180,3 +180,18 @@ and [real Git bundle cases](../../harness/runtime/tests/coding_handoff_git.rs).
 These currently qualify local Unix mechanics. They do not yet qualify artifact
 transfer, model-facing tools, isolated preset/defaults or provider staging; those
 C4 layers remain explicitly tracked in the journal.
+
+## Artifact setup provenance
+
+Artifact-store contracts check that ordinary turn receipts retain their existing
+serialized identity, while application setup uses an explicit team/setup origin
+with no fabricated LLM turn. PostgreSQL tests prove that a setup label alone
+cannot register an artifact, and the public API request schema rejects attempts
+to select that trusted origin. This prevents model/client metadata from being
+mistaken for source-setup authority. The trusted source-intent controller remains
+a separate qualification requirement.
+
+Cases: [artifact-store contracts](../../harness/artifacts/tests/store.rs),
+[PostgreSQL artifact contracts](../../harness/store-postgres/tests/artifacts.rs),
+and the `origin_tests` module in
+[artifact API](../../harness/server-reference/src/artifacts.rs).

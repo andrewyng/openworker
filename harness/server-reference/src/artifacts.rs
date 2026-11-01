@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 fn public(a: &Artifact) -> Value {
-    json!({"id":a.id,"session_id":a.registration.session_id,"turn_id":a.registration.turn_id,"name":a.registration.name,"content_type":a.registration.content_type,"size":a.registration.expected.size,"sha256":a.registration.expected.sha256,"status":a.status})
+    json!({"id":a.id,"session_id":a.registration.session_id,"turn_id":if a.registration.origin.is_turn(){Some(&a.registration.turn_id)}else{None},"origin":a.registration.origin,"name":a.registration.name,"content_type":a.registration.content_type,"size":a.registration.expected.size,"sha256":a.registration.expected.sha256,"status":a.status})
 }
 fn enabled(app: &App) -> Result<&openworker_artifacts::Store, ApiError> {
     app.artifacts
@@ -43,6 +43,7 @@ pub(crate) async fn register(
     let store = enabled(&app)?;
     let a = app.store.register_artifact(
         Registration {
+            origin: Default::default(),
             request_id: body.request_id,
             session_id: sid,
             turn_id: body.turn_id,
@@ -164,4 +165,16 @@ pub(crate) async fn download(
         )
         .body(Body::from_stream(stream))
         .map_err(|_| ApiError(Error::Unavailable.into()))
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    #[test]
+    fn public_turn_artifact_request_cannot_claim_trusted_setup_provenance() {
+        let mut body = json!({"request_id":"one","turn_id":"t_one","name":"source.bundle","content_type":"application/x-git-bundle","size":5,"sha256":"a".repeat(64)});
+        assert!(serde_json::from_value::<Register>(body.clone()).is_ok());
+        body["origin"] = json!({"kind":"team_setup","team_id":"at_one","setup_id":"source_one"});
+        assert!(serde_json::from_value::<Register>(body).is_err());
+    }
 }
