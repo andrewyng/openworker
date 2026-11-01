@@ -380,10 +380,25 @@ pub async fn controller(
             installed.clone(),
             stop.clone(),
         );
+        let (import_config, import_store, import_installed, import_stop, import_artifacts) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+            artifacts.clone(),
+        );
         source_tasks.spawn(async move {
             while !stop.is_cancelled() {
                 if !crate::service_team_sources::prepare_once(&config, &store, &installed, Some(&artifacts), &stop).await? {
                     tokio::select! { _=stop.cancelled()=>break, _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{} }
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+        source_tasks.spawn(async move {
+            while !import_stop.is_cancelled() {
+                if !crate::service_team_imports::prepare_once(&import_config,&import_store,&import_installed,&import_artifacts,&import_stop).await? {
+                    tokio::select! { _=import_stop.cancelled()=>break, _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{} }
                 }
             }
             Ok::<_,anyhow::Error>(())

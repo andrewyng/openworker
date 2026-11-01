@@ -777,3 +777,21 @@ files. Read-only recovery does not edit the exclusion. Real Git regression cover
 `git add -A`, a preceding negative ignore pattern, unchanged tracked `.gitignore`,
 and symlink refusal. Runtime validation: **16 handoff Git cases and eight workspace
 cases pass**. Durable child-import controller is the next C4 slice.
+
+### C4 child-import controller checkpoint — 2026-10-31
+
+Implemented initial-source import outbox and bounded private controller. It pins
+the original published source, child placement/profile and workspace request before
+I/O, commits separate preparation/checkout dispatch bits, streams verified immutable
+chunks, and atomically acknowledges source plus independent Git workspace before
+admission. Unknown/revoked outcomes retain original work with deduplicated lead
+notices. A source-selected reservation cannot fall through to generic preparation.
+Submitted-revision lookup/tools and public isolated helpers remain gated.
+
+Validation at this checkpoint: complete service library **35 cases pass** (2.62s),
+including three new PG import cases; an additional pre-dispatch denial case is being
+run. Linux runner **44 tests pass**, one child-fixture test intentionally ignored.
+All-target strict Clippy passes (runtime/PostgreSQL/SDK/service plus OpenShell
+feature). Preparing a physical controller qualification with two independent child
+sandboxes. This entry does not claim that physical run has passed. Docker memory
+is 16 GiB and host disk remains about 54 GiB free; no cloud resources provisioned.

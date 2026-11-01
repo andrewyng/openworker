@@ -277,3 +277,20 @@ Cases: `exercise_coding_defaults` in
 [shared storage contract](../../harness/tests/agent_team_contract.rs),
 and the two `coding_*` cases in
 [service contracts](../../harness/server-reference/src/service_team_types_tests.rs).
+
+## Durable child-source admission and recovery
+
+Real PostgreSQL transactions test one preparation dispatch, one checkout dispatch,
+controller replacement, stale claim rejection, original artifact/environment pins,
+revoked credentials, no automatic revival, atomic receipt acknowledgement, and
+retirement before a late result. An injected completion failure rolls back both
+source and workspace receipts; observer reads do not claim the model worker lease.
+Pre-dispatch denial closes only an unstarted reservation and leaves reconciliation
+working for other teams. These fixtures use synthetic bytes/identities to test
+storage authority, not Git correctness or physical isolation.
+
+Cases: [child-import contracts](../../harness/server-reference/src/service_team_imports_tests.rs).
+Physical source/import tests use the real controller, artifact store and ToolRunner
+with independently provisioned OpenShell sandboxes in
+[service qualification](../../harness/server-reference/tests/service_v2.rs). Their
+actual run identity/result is recorded separately in the milestone journal.

@@ -11,7 +11,7 @@ pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
     tx.batch_execute("CREATE TABLE IF NOT EXISTS agent_teams(id TEXT PRIMARY KEY,data JSONB NOT NULL); CREATE TABLE IF NOT EXISTS agent_team_templates(team TEXT NOT NULL,kind TEXT NOT NULL,data JSONB NOT NULL,PRIMARY KEY(team,kind)); CREATE TABLE IF NOT EXISTS agent_team_messages(team TEXT NOT NULL,seq BIGINT NOT NULL,id TEXT NOT NULL UNIQUE,data JSONB NOT NULL,PRIMARY KEY(team,seq));")?;
     Ok(())
 }
-struct Tx<'a, 'b>(&'a mut postgres::Transaction<'b>);
+pub(crate) struct Tx<'a, 'b>(pub(crate) &'a mut postgres::Transaction<'b>);
 #[derive(Clone, Debug)]
 pub struct WorkspaceJob {
     pub lead: Session,
