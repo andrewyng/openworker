@@ -930,6 +930,13 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="llama-3.3-70b-versatile",
         env_key="GROQ_API_KEY",
     ),
+    _compat(
+        "opper",
+        "Opper",
+        base_url="https://api.opper.ai/v3/compat",
+        recommended_model="claude-sonnet-4-6",
+        env_key="OPPER_API_KEY",
+    ),
     # Four more OpenAI-compatible vendors (2026-10-26); endpoints, key pages and the
     # recommended ids read from each vendor's docs that day (sources in matrix.py).
     _compat(

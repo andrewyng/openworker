@@ -62,6 +62,7 @@ export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: s
   atlascloud: { url: "https://www.atlascloud.ai/console/api-keys", label: "atlascloud.ai" },
   groq: { url: "https://console.groq.com/keys", label: "console.groq.com" },
   upstage: { url: "https://console.upstage.ai/api-keys", label: "console.upstage.ai" },
+  opper: { url: "https://platform.opper.ai", label: "platform.opper.ai" },
   cerebras: { url: "https://cloud.cerebras.ai", label: "cloud.cerebras.ai" },
   huggingface: { url: "https://huggingface.co/settings/tokens", label: "huggingface.co" },
   cohere: { url: "https://dashboard.cohere.com/api-keys", label: "dashboard.cohere.com" },

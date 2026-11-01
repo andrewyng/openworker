@@ -159,6 +159,20 @@ describe("Atlas Cloud provider presentation", () => {
   });
 });
 
+describe("Opper provider presentation", () => {
+  it("links to the Opper API key page", () => {
+    expect(KEY_HELP.opper).toEqual({
+      url: "https://platform.opper.ai",
+      label: "platform.opper.ai",
+    });
+  });
+
+  it("wears the bundled Opper mark", () => {
+    const { container } = render(<ProviderMark name="opper" title="Opper" />);
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});
+
 describe("Azure OpenAI provider presentation", () => {
   it("renders the endpoint as a plain required row, not the custom-endpoint disclosure", () => {
     render(<ProviderForm ps={makePs({}, vi.fn(), AZURE)} tp="t" />);
