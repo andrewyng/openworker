@@ -87,3 +87,116 @@ part of the test scope.
 [Artifact handoff](CODING-HANDOFF-IMPLEMENTATION.md) ·
 [OpenShell CLI access](OPENSHELL-GIT-ACCESS.md) ·
 [Workspace illustrations](CODING-WORKSPACE-SCENARIOS.md)
+
+## Operator and application setup
+
+Build the optional Linux service image (the ordinary runtime/SDK does not gain a
+Git executable or credential provider):
+
+```sh
+docker build -f deploy/service/Dockerfile --target git-broker-runtime \
+  -t openworker-service:trusted-git .
+# Or a native trusted service build:
+cargo build --manifest-path harness/Cargo.toml --release \
+  -p openworker-server-reference --features trusted-git
+```
+
+Install the same **nonsecret** registration on API and controller/worker nodes:
+
+```json
+{
+  "repository_grants": {
+    "game-github@1": {
+      "credential_env": "GAME_REPOSITORY_TOKEN",
+      "repositories": {
+        "game": {
+          "github": "your-org/your-game",
+          "read_refs": ["refs/heads/main"],
+          "write_prefixes": ["agents/"]
+        }
+      }
+    }
+  }
+}
+```
+
+Select `repositoryAccess: "game-github@1"` in the activated lead RuntimeProfile.
+A narrower child profile can omit it. The installed/release tool list must also
+select `github_broker.publish_code` for any agent allowed to request publication.
+The default coding presets do **not** select it. API descriptors expose no key;
+only the trusted controller's named environment contains the repository token.
+Rotating that token does not change the pinned nonsecret grant. Changing repository
+scope requires a new grant/profile version and new compatible session.
+
+To import private source, pass an app-owned ordinary ref **and** exact commit:
+
+```typescript
+const source = {
+  repository: "game", directory: "source", objectFormat: "sha1" as const,
+  remoteRef: "refs/heads/main", commit: pinnedCommit,
+};
+// Pass source to isolatedCodingServiceTeam(...).
+const team = await lead.createTeam(preset.team);
+const snapshot = await team.snapshot();
+// snapshot.source_setup.status: pending/exporting/uploading/ready/unknown/blocked.
+// Wait for ready using your normal event/status handling before lead.send(...).
+```
+
+Rust uses `openworker_sdk::service::CodingSource` with `remote_ref` and
+`object_format` (`GitObjectFormat::Sha1` or `Sha256`).
+Omitting `remote_ref` preserves existing-workspace export. The destination must
+be a fresh relative directory; `.` is deliberately rejected for remote setup.
+The lead stays rooted at its assigned project directory; its imported source is
+`source/`. Imported repositories have their own Git metadata and the ordinary
+local branch `openworker/import`, enabling later explicit expected-head integration.
+No Git remote or credential is installed in that checkout.
+
+```text
+private GitHub repository
+    | permitted ref + pinned commit (trusted broker only)
+    v
+object-only trusted staging cache -- verified immutable bundle --> artifact store
+                                                               |
+                           ToolRunner <--- authenticated bytes --+
+                              |
+                  fresh lead source + independent child checkouts
+                              |
+                    model commit -> team_submit_code
+                              |
+                 verifier uses exact submission ID
+                              |
+       selected native github_broker.publish_code (ordinary tool approval)
+                              |
+           durable publication -> original remote branch CAS
+```
+
+The native callback returns **pending**, not a completed push. Watch
+`team.submissions()` and `team_publication` events for the original operation.
+Create-only means `expected_head: null`; updates require the exact current tip and
+fast-forward ancestry. After an unknown outcome, recovery only reads that original
+ref—even on another node with no old cache. It never repeats the push.
+
+Keep the broker's private state directory durable until source artifact publication.
+Losing an unacknowledged source export cache leaves setup unknown; a replacement
+node cannot silently generate different bytes under the original artifact ID.
+Once verified artifact bytes are published, lead import/recovery can proceed from
+that store without the old cache. Preparation and checkout each have durable
+first-dispatch bits. A lost checkout reply permits inspection only. Source setup
+blocks first-turn submission and automatic inbox wakes until the lead checkout is
+acknowledged. Original source/inbox/events survive worker replacement.
+
+## Local qualification and boundaries
+
+`trusted-git-test` / the broker `fixture` feature permit explicit disposable file
+or loopback HTTPS fixtures. Deployment images never enable those features.
+The HTTPS fixture uses a self-signed test CA with verification enabled and a
+synthetic credential; production has no endpoint or TLS-verification override.
+Real GitHub write qualification needs a separately authorized repository.
+
+OpenShell 0.1.3 retains successful durable mutation receipts for 24 hours and caps
+each caller at 1,000 retained admissions, including successes. Repeated exec/setup
+qualification reached that upstream limit. Provision an isolated gateway for
+large acceptance runs, retain original unknown-operation evidence and plan caller
+capacity with the OpenShell operator. Do not clear receipts or disable request
+identity to evade it. See the pinned upstream
+[mutation admission implementation](https://github.com/NVIDIA/OpenShell/blob/v0.1.3/crates/openshell-server/src/grpc/mutation_replay.rs).

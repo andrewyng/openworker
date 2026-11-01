@@ -1,0 +1,43 @@
+{
+  "milestone": "C5",
+  "date": "2026-11-01",
+  "source_checkpoint": "58e0e796baa238f1a8067dc4e2f14884816818a3",
+  "qualification": "Real local PostgreSQL 17, OpenShell 0.1.3, Git artifact/submission/integration and trusted native publication. Controlled file remote plus a separate authenticated loopback HTTPS fixture; no real GitHub write.",
+  "physical_seconds": 163.53,
+  "runner": {
+    "image": "openworker-runner:c5-c7-20261101",
+    "config": "sha256:1d77a3b78f5cc771abc5fbc02520b5b88350510755dd0f26da7f0fe8bba101cb",
+    "repoDigests": [
+      "openworker-runner@sha256:1d77a3b78f5cc771abc5fbc02520b5b88350510755dd0f26da7f0fe8bba101cb"
+    ],
+    "runner_sha256": "14b2b74b6d8f7d40cb4a404b53a57e9366d6cffaba0ac27e54a6a3800462d39c"
+  },
+  "gateway_namespace": "ow-coding-shell-20261101",
+  "host_server_sha256": "8315a0f12e32d31e1c7b1a795b8247e137aea960420f8e05f541cde180efbb73",
+  "logs": {
+    "c5-physical-final.log": "6c517573f8a7588ff72ac92c147f043027594d3af97b84d55fbac8606111e2ad",
+    "c5-https.log": "450c9072ae2b95f8cdd9359e545cdfa2bfb191b28180f45b92317b6d3e8b26b5",
+    "c5-c7-pg.log": "25523379253b2183f7776fdcbd6db6e79c4af089e3a1f9eed21b51bd2c05e5b6",
+    "c5-c7-runtime.log": "ced193f189a79b0668cd30092fcb35cb70218778aea2164ebe11c901e3013673",
+    "runner-build.log": "19519db2eb4eb64cb43c51dd443de33f94d769ee5c336409a5c6c01d9e66d478",
+    "c5-ts-tests.log": "5a9d84bad0bf2f914c6fe5b28a5e667b39b4ffc0ee1bc4406453e8cc848d4d83",
+    "c7-sdk-presets.log": "c6e8081fd077bc275d6bbff3ebe3e8599118116d2214d596b28f06188893f762",
+    "c7-sdk-presets-pg.log": "8c1f275a64a56b70149891a98a5f2ea6a3b23e0000fd1724bc5b9deea7c29908"
+  },
+  "results": {
+    "postgres_fences": 37,
+    "host_runtime_unit": 84,
+    "linux_runtime_unit": 91,
+    "real_git_cases_per_platform": 20,
+    "source_contract": 3,
+    "registry_selection": 2,
+    "controlled_broker_git": 11,
+    "authenticated_https": 1,
+    "typescript_wire_presets_profiles": 18,
+    "rust_presets_sqlite_modes": 2,
+    "rust_presets_postgres_modes": 2,
+    "rust_preset_contracts": 2
+  },
+  "cleanup": "Successful C5 isolated run deleted and confirmed original owned OpenShell identities and dropped its schema. Existing demos unchanged. Earlier failed fixture on original full-quota gateway remains retained with its original receipts; see journal.",
+  "remaining": "C7 combined parallel/live qualification; opt-in service image packaging smoke still running."
+}

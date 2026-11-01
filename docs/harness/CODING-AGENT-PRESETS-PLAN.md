@@ -37,9 +37,9 @@ Extend the same primitives through the remaining deployment adapters.
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Verified: complete local OpenShell/PG17 run, November 1 |
-| C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
+| C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Verified locally: controlled Git and authenticated TLS; no live GitHub write |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Verified: named grants, SDKs and local OpenShell |
-| C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
+| C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | In progress |
 
 Execute in this numbered order. C3 builds on generic team placement rather than
 adding a coding-only sandbox provisioner. Each milestone includes tests and ledger
@@ -1372,3 +1372,30 @@ immediately before committing an intent. A new PG race test checks missing appro
 revoked Allow Always and valid Allow Once. The first test attempt correctly refused
 a stale fixture session revision; the fixture now reloads revisions between edits.
 Publication authority and uncertainty notices use the existing durable inbox.
+
+
+### C5 — complete trusted Git workflow passed, November 1
+
+The corrected physical test passed **163.53s** against isolated OpenShell 0.1.3,
+PostgreSQL 17 and the rebuilt digest-pinned Linux runner. It fetched exact private
+source through the trusted broker, acknowledged the lead checkout before first
+turn, admitted independent builder/verifier sandboxes, verified exact submitted
+Git/artifact provenance, received and integrated source using expected-head CAS,
+and executed the selected registered native publisher. Main stayed unchanged;
+the allowed agents/ branch contained the exact submitted commit. A second call
+ID reused the original publication. The test deleted/confirmed its original
+sandbox identities and dropped its schema.
+
+[Sanitized C5 evidence](evidence/coding-trusted-git-c5-20261101.json) records image,
+runner/server and log identities. Host unit **84**, Linux unit **91**, Git **20**
+on each platform, source contract **3**, registry selection **2**, PG **37**, broker
+Git **11**, authenticated TLS **1**, and TypeScript wire/preset/profile **18** cases
+passed. All six Rust coding preset cases passed: two contract cases, SQLite
+embedded/managed (**64.02s**) and PostgreSQL embedded/managed (**93.67s**).
+Strict all-target broker/service Clippy passed after a test-only formatting fix.
+
+The ordinary runtime has no Git execution dependency; trusted service packaging
+is an opt-in target and is being built/smoke-checked. Source setup and controller
+events, approval/grant fences, uncertainty inbox notices and ordinary tool
+classification remain independent checks. C7 parallel and bounded live-model
+qualification follows; do not count its definitions as completed evidence.

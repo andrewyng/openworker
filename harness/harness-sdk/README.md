@@ -270,3 +270,11 @@ Set an agent default with `.limits(TurnLimits { ..Default::default() })`; use
 `session.send_with_limits(text, limits)` for one new message. Resuming keeps the
 original limits and consumption. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
 for the bounded final-summary reserve and sandbox-owned process tools.
+
+
+Service coding teams can select an optional [trusted Git broker](../../docs/harness/TRUSTED-GIT-BROKER.md).
+The app supplies a named repository, permitted ref and exact commit. The harness
+stages verified artifacts and ToolRunner imports them before the lead starts;
+GitHub credentials stay outside the sandbox. Publication is a separately selected
+registered native tool with ordinary approvals and a RuntimeProfile scope ceiling.
+This Linux service adapter does not add a Git executable to the core SDK.
