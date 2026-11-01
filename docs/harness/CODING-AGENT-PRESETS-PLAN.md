@@ -1,6 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: C1 and C2 verified; continuing the approved C3–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1–C3 verified; continuing the approved C4–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -34,7 +34,7 @@ Extend the same primitives through the remaining deployment adapters.
 | --- | --- | --- | --- |
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
-| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | In progress |
+| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Pending |
@@ -448,3 +448,40 @@ retains conservative output reservations. Set an explicit bounded test-only team
 budget for this expanded scenario; production defaults and limit handling are
 unchanged. Rerunning the full sequence, including cleanup, before marking C3
 verified.
+
+
+### C3 verified — October 31
+
+Implementation `e63e65b1`, following gated contract `e9b6049d` and outbox contract
+`fc3ba019`. [Evidence](evidence/coding-presets-c3-20261031.json),
+[implementation](TEAM-PLACEMENT-IMPLEMENTATION.md),
+[developer usage](CODING-AGENTS.md#choose-a-childs-sandbox-in-the-openshell-service)
+and the [grouped test catalog](CODING-AGENT-PRESETS-TESTING.md) describe the result.
+
+Final complete OpenShell qualification passed in **328.61 seconds**, after the
+preceding 315.39-second success. This final run includes the retirement-recovery
+follow-up and profile schema guidance. Two instances of one builder type run in
+independent 1 CPU/512 MiB sandboxes; the shared profile uses 1 CPU/768 MiB. A real
+child create loses its acknowledgement, competing restarted controllers inspect
+the original UID, and a private verifier selects the builder's existing directory.
+Lead/other-child file absence proves the physical separation. Shared worktrees,
+exact-commit verification, successful integration and explicit conflict/abort
+remain covered. Rust and TypeScript SDKs execute actual OpenShell tools.
+
+Passed 25 server-library cases, 62 PostgreSQL regressions, 49 core team cases,
+eight real Git/workspace cases, the final seven-case schema/briefing follow-up,
+two TypeScript placement cases, nine HTTP/SSE cases, strict all-target Clippy,
+format/diff checks and six-document link validation. The audit/session deadlock
+is covered by a deterministic lock barrier; audit/receipt rollback remains intact.
+Post-binding revocation preserves work without admitting a child. Pending/member
+references prevent deletion; retirement can reconcile after session closure
+committed before a crash. Storage outages retain a sanitized infrastructure type.
+
+Cleanup confirmed original sandbox deletion and removal of both test schemas;
+only the retained gateway remains in its namespace. The disposable PostgreSQL,
+private TLS files, matching runner and loopback forward remain available for C4.
+No cloud provisioning, live model calls or GitHub writes were used. Host free disk
+is about 56 GiB with incremental Rust compilation disabled. New/Member physical
+placement is qualified for the OpenShell/PostgreSQL service. Local sandbox-off
+SDKs still reject unsupported placement. Source staging and isolated preset
+handoff remain C4; publication and CLI credentials remain C5/C6.
