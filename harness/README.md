@@ -130,6 +130,7 @@ that every architecture, installer, local model or sandbox combination is qualif
 
 - [Windows build notes](WINDOWS.md)
 - [Tool and resource policy](../docs/harness/APP-POLICY-CONTRACT.md)
+- [Guardrails and hooks — draft API and plan](../docs/harness/GUARDRAILS-AND-HOOKS.md)
 - [Session approvals](../docs/harness/SESSION-GRANTS.md)
 - [Provider authentication and token rotation](../docs/harness/PROVIDER-AUTH.md)
 - [Custom native tool packaging](../docs/harness/PARTNER-SDK-BUILD.md)

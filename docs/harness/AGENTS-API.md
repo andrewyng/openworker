@@ -200,4 +200,7 @@ Export failures never fail a run; shutdown flushes for at most 5 seconds.
 - Async/steerable subagents and `fork` mode (needs engine support).
 - Typed `Agent::tool_fn(...)` closures; today tools come from `ToolRegistry`.
 - Agent-level guardrails and output schemas (`output_type` / `response_format`).
+  The proposed guardrail/hook extension is documented in the
+  [draft contract](GUARDRAILS-AND-HOOKS.md) and
+  [implementation plan](GUARDRAILS-AND-HOOKS-PLAN.md); those APIs are not yet shipped.
 - Session listing/closing helpers on `Harness`, and a typed model-connection API.
