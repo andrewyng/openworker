@@ -1,0 +1,154 @@
+{
+  "milestone": "C4 automatic initial source import/admission slice; submission/reception and full isolated preset pending",
+  "date": "2026-10-31",
+  "branch": "feat/coding-handoff-c4-20261031",
+  "physical_source_commit": "1959dbe54e147f296a462f16807d00b623abca7b",
+  "controller_fault_test_commit": "16bd1282",
+  "host_binary_sha256": "da448d183554cfb27a8f8ab3b7c15f42b57e5cd4727a470442091243872433cc",
+  "linux_runner_sha256": "e62473bc2051b9ba7fc685fbdbe7e88e84dce1dfec5fc08c7906e5383e079698",
+  "runner_image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+  "tests": {
+    "physical_openshell_service_seconds": 362.54,
+    "service_library": 37,
+    "linux_runner_executed": 44,
+    "linux_child_fixture_ignored": 1,
+    "strict_all_target_clippy": true
+  },
+  "physical_checks": [
+    "Two APIs, competing controllers and catalog worker",
+    "Private type and original shared environment after worker replacement",
+    "Bounded independent child profiles and member reuse",
+    "Shared worktrees, exact-revision verifier, lead inspection and explicit conflict abort",
+    "Application source exported and immutably published by original setup controller",
+    "Authorized HTTP artifact download with namespace identity and no fabricated turn",
+    "Private receipt inspection in two independent sandboxes",
+    "Two new child sandboxes automatically provisioned and source-imported by the outbox/controller",
+    "No child admission before source and independent Git receipt acknowledgement",
+    "Both imported children use their own Git metadata and successfully commit changes after admission",
+    "Versioned shared coding preset and Rust/TypeScript SDK regressions"
+  ],
+  "contract_checks": [
+    "One preparation and checkout dispatch across claims/recovery",
+    "Stale or altered artifact/environment claim rejection",
+    "Revocation and no automatic revival",
+    "Atomic completion rollback",
+    "Retirement rejects late results without deleting work",
+    "Pre-dispatch denial does not stop unrelated reconciliation",
+    "Lost chunk and checkout replies recover by inspection without replay; protocol peer is synthetic"
+  ],
+  "physical_sandboxes": [
+    {
+      "name": "default--owr-43bef1ef6bbf40e",
+      "uid": "181b716b-ee3d-466f-8687-59d1a7f08f4c",
+      "phase": "Running",
+      "containers": [
+        {
+          "image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "1",
+              "memory": "512Mi"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "default--owr-6434699ecf794c4",
+      "uid": "fa19a623-7b93-4b44-85f4-ba4d4654b5c0",
+      "phase": "Running",
+      "containers": [
+        {
+          "image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "1",
+              "memory": "512Mi"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "default--owr-a6adfee5b99a4c3",
+      "uid": "1346a9b2-d53c-4247-ab1b-8f9d4c7df300",
+      "phase": "Running",
+      "containers": [
+        {
+          "image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "1",
+              "memory": "512Mi"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "default--owr-ab7d2c673821475",
+      "uid": "db53337f-2bd7-435b-b54a-bc34766c60a1",
+      "phase": "Running",
+      "containers": [
+        {
+          "image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "512Mi"
+            },
+            "requests": {
+              "cpu": "1",
+              "memory": "512Mi"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "default--owr-ec4d822a610c4f9",
+      "uid": "652188fa-c8fe-4d59-8818-2a496a0f59b4",
+      "phase": "Running",
+      "containers": [
+        {
+          "image": "docker.io/library/openworker-runner@sha256:885f7a82d849f10d8c99572cbff44c948e1f4f4591005542c00b852e69349b93",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "768Mi"
+            },
+            "requests": {
+              "cpu": "1",
+              "memory": "768Mi"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "only_original_gateway_remains": true,
+    "temporary_service_and_recording_schemas_remaining": 0,
+    "disk_free_gib_approx": 54,
+    "docker_memory_gib": 16,
+    "cloud_resources_created": false,
+    "paid_model_calls": false
+  },
+  "remaining_C4": [
+    "Durable model-requested submission catalog and export publication",
+    "Submitted-revision import for verifier and explicit lead reception/integration",
+    "Rust/TypeScript isolated preset APIs and complete builder-verifier-lead qualification"
+  ]
+}

@@ -806,3 +806,21 @@ The active OpenShell run has passed automatic imports into two separately
 provisioned child sandboxes, independent Git metadata and subsequent child commits,
 plus shared-worktree/preset and Rust/TypeScript regressions. Waiting for the complete
 run and cleanup before recording it as a passing physical qualification.
+
+Physical child-import qualification **passed in 362.54 seconds** at `1959dbe5`.
+Two controllers automatically provisioned two independent child sandboxes, imported
+the original pinned artifact, acknowledged independent Git receipts and only then
+admitted the children. Both children made successful commits with their own Git
+metadata. Existing shared-worktree, conflict, preset, worker-restart and Rust/TS
+service checks also passed.
+
+Evidence: [source/import controller run](evidence/coding-handoff-import-c4-20261031.json).
+Test cleanup confirmed only the original OpenShell gateway remains and zero
+temporary service/recording schemas remain. Host disk is about 54 GiB free. No cloud
+resource or paid model was used. Five live qualification sandbox identities, runner
+digest and host binary hash are recorded in the evidence.
+
+C4 remains **in progress**: next build model-requested submission export/catalog,
+submitted-revision verifier import, explicit lead reception/integration, then expose
+and qualify the isolated Rust/TS preset. C5–C7 remain pending; do not merge this
+partial C4 feature into the canonical branch yet.
