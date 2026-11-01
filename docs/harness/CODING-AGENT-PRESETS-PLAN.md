@@ -38,7 +38,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | In progress |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
-| C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Pending |
+| C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Native plumbing qualified; service/SDK wiring pending |
 | C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
 
 Execute in this numbered order. C3 builds on generic team placement rather than
@@ -849,3 +849,86 @@ lifecycle and no raw-token fallback. Begin by checking the pinned local 0.1.3
 gateway capability; current docs alone do not qualify our adapter. Local controlled
 Git fixtures are authorized; a live GitHub write still needs a disposable approved
 repository. This adds no implicit GitHub access to the default bundle path.
+
+### C6 OpenShell Git early qualification — in progress
+
+At the user's request, began the OpenShell Git capability/qualification slice while
+C4 submission tools remain pending. Default sandbox profiles still have no attached
+credential provider. Added explicit original provider/profile pins to the native
+OpenShell adapter and opt-in Git launcher/credential-helper plumbing. Only
+OpenShell-shaped references are forwarded; a raw token rejects. Helpers match exact
+HTTPS authority and configured repository paths, never store credentials, and pass
+current references to NEW process-manager commands rather than caching them in the
+manager's environment. Offline handoff Git remains separate and credential-free.
+
+Fast validation: credential scope/pinning cases pass on macOS; disposable Linux
+execution passed 44 existing coding/handoff/workspace cases, three Git-plumbing
+unit cases and two real helper/process transport cases. One helper-invocation test
+initially failed because Git treated a shell-quoted executable as a named helper;
+fixed with an explicit Git shell-helper invocation and reran successfully. Strict
+runtime all-target Clippy passes.
+
+A local Git HTTPS remote, private fixture CA and synthetic token are running in
+namespace `ow-git-c6-20261031`, with two temporary `owgit-c6-*` OpenShell profiles/
+providers. The agent image contains the PUBLIC fixture CA, not the server key/token.
+Pinned gateway 0.1.3 requires omitting `tls` for automatic inspection; the literal
+`terminate` was rejected by its profile importer, then corrected. Real proxy
+qualification is running; do not count the adapter or C6 as qualified yet. No real
+GitHub credential, GitHub write or cloud resource has been used.
+
+Live qualification found two integration details rather than weakening checks:
+provider/profile queries in the pinned gateway use a WorkspaceSelector message
+(the local research checkout had the older string form); corrected the native wire
+model against the exact upstream v0.1.3 proto and added a golden-wire test. Five
+OpenShell adapter cases pass. The controlled Git TLS handshake then failed before
+any upstream HTTP request. Logs confirm the network binary/destination were allowed.
+OpenShell runs its proxy in a separate supervisor pod; the test CA must be trusted
+there, not only in the agent image. Setting up a separate named fixture gateway
+with a public-CA-only supervisor overlay. TLS verification remains enabled. The
+failed diagnostic sandbox and temporary profiles/providers were removed from the
+original gateway after UID checking; that gateway's configuration is unchanged.
+
+The separate fixture gateway passed **real Git HTTPS clone/fetch** through
+OpenShell's proxy using a synthetic upstream token and placeholder-only workload
+credentials. The read-only profile blocked push (upstream receive-pack count zero);
+the explicitly configured write profile allowed push. An unconfigured repository
+rejected. Git configuration/remotes contained no token or saved helper. Both
+agent and supervisor trusted the public fixture CA; TLS verification stayed on.
+
+Expiry qualification exposed a real acknowledgment distinction: an immediate
+`withheld/credential_expired` result can still contain the supervisor's OLD
+observed provider revision. One repeat correctly failed when Git ran before the
+supervisor updated. The fixture now observes that **original receipt**, requiring
+the desired environment/config/attachment/hash acknowledgment before checking
+denial. It never retries the mutation. Two deterministic Python contract cases
+protect this condition, including replacement-receipt rejection.
+
+The corrected repeat passed expiry denial, restored validity using a NEW tool
+connection through the SAME sandbox-local process manager, provider detach,
+existing-connection Git denial and rejection of new attachment. Cleanup then
+deleted and confirmed the exact original sandbox even after credential detach;
+UID, image, workspace and ownership remain mandatory for cleanup. The earlier
+failed original was separately inspected and explicitly cleaned, without creating
+a replacement for it. This tests validity/reference propagation, not an external
+OAuth refresh flow or a live GitHub write.
+
+Validation: **55 disposable-Linux tests pass** (44 existing coding/workspace/
+handoff, 3 Git-scope, 6 provider/wire/cleanup and 2 real helper/process tests),
+**37 complete service-library/PostgreSQL cases pass** (3.54s), two fixture control
+contracts pass, and strict runtime/PostgreSQL/SDK/service all-target Clippy passes.
+The complete physical C1–C4 service regression is running on the original gateway
+with a fresh digest-pinned runner; its result is not claimed yet.
+
+The test provider instances/profiles and Helm release were removed after confirming
+no retained sandbox. Its named namespace was deleted after UID/label checks, which
+also removes the chart's retained fixture encryption-key Secret; its port-forward
+was stopped. Other namespaces, the original gateway and shared test PostgreSQL
+remain. Disk remains about 53 GiB free. No cloud resources, real GitHub keys or
+paid model calls were used.
+
+Evidence: [native Git/OpenShell qualification](evidence/coding-openshell-git-c6-20261031.json).
+Repeat procedure: [fixture and lifecycle checks](../../harness/runtime/tests/fixtures/openshell-git/README.md).
+The [scenario guide](CODING-WORKSPACE-SCENARIOS.md) now distinguishes this
+qualified native path from the still-pending public RuntimeProfile/SDK grant
+wiring. C4 submissions, C5 trusted publishing, remaining C6 wiring and C7 remain
+in progress/pending; this is not a claim that the complete sequence is finished.

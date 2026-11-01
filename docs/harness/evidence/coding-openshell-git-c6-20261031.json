@@ -1,0 +1,105 @@
+{
+  "qualification": "coding-c6-native-openshell-git",
+  "date": "2026-10-31",
+  "branch": "feat/coding-handoff-c4-20261031",
+  "base_commit": "909f1f9d5151407ba8ee54f5d8c3f8059564f26a",
+  "scope": "Native OpenShell provider + Linux ToolRunner plumbing. Public service/SDK credential grant integration still pending; not all of C6.",
+  "source_sha256": {
+    "harness/runtime/src/cli.rs": "a6cee7dddaebaa3719c2f0556c283c56d6b0835393c277e77b72c054b54bf2d6",
+    "harness/runtime/src/coding/openshell_git.rs": "de5d1a2e0aa24698edc404f4a5dcc71c7d508afc42d6a6d22b419dbfae806d54",
+    "harness/runtime/src/coding/manager.rs": "43a0a9763b915394641c8311e2e13004824f05b4dc8579cd5de1965449dd2819",
+    "harness/runtime/src/coding/processes.rs": "843867497139c2a8cb1af2128722530603a1e9537597bbd3ed2951de3ebda54d",
+    "harness/runtime/src/coding/mod.rs": "4c0e9ca0375bb8cd85c4dd7af1b879ff9122315e45506071750387f0638b8614",
+    "harness/runtime/src/environment_openshell.rs": "327652c042d443a46623947f8a528aa866dd31b284b5f4b02f59e11b0a87f16d",
+    "harness/runtime/examples/openshell_git_probe.rs": "1bd325082a9a885830e12c087174a09de7ee7501e559fe6a7f31f5eced81df31",
+    "harness/runtime/tests/openshell_git.rs": "8fb6c6144113f740c29fd777ebbf0dcc3e73a5f77fcc2aa72c1a612ac696c151",
+    "harness/runtime/tests/fixtures/openshell-git/control.py": "c185cdd508a4928622a126090ba599eccef8ae475d5362fbfdca5136b3598703",
+    "harness/runtime/tests/fixtures/openshell-git/server.py": "f436ab0469a11c29d47c332b7c5ce72f24c3f0e20f96a08dfe06d1a75482b73a",
+    "harness/runtime/tests/fixtures/openshell-git/test_control.py": "63e664eacfbaaacf104adc10350c065e6504ea353727b719ff5ca857f179c59c"
+  },
+  "platform": {
+    "host": "macOS arm64",
+    "runner": "Linux arm64",
+    "kubernetes_context": "kind-ow-server-20261011",
+    "fixture_namespace": "ow-git-c6-20261031",
+    "openshell": "0.1.3",
+    "gateway_helm_chart_sha256": "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33"
+  },
+  "images": {
+    "git_fixture_runner": "sha256:521cee178f112fced25a6500a6c74e85f7fb9b5393ca473a80995527444336ec",
+    "supervisor_base": "sha256:4ab2b970cdb02c7518ba4ccbbadb4861ae9a8d0b8770e5b160697f0453b0a8e4",
+    "supervisor_public_fixture_ca_overlay": "sha256:ad57dc2699ba17f99da0b5b9bced8acdce09c57ba48bf4ecab6507af3ae4c5e2",
+    "default_path_regression_runner": "sha256:cdfbab9d845bacfb763ef937e913678c6604632b66a0376feda2231a62ec96cc"
+  },
+  "binaries": {
+    "live_git_runner_sha256": "305d30a548cd7df62ba6449cf9cff7f2a52569eb54459b60a9c067e249461b03",
+    "linux_latest_sha256": "543e1e11d224ec45551b409cb5e78ef43e832824c9759805ef3870a4497797f2",
+    "host_native_probe_sha256": "442e408aa89988183acf59bf35f9d31fb17ed5f1cb096a3bf65570a8dcbf6adf"
+  },
+  "tests": {
+    "disposable_linux_existing": 44,
+    "disposable_linux_git_scope": 3,
+    "disposable_linux_provider": 6,
+    "disposable_linux_real_helper_process": 2,
+    "expiry_control_contracts": 2,
+    "service_library_and_postgres": {
+      "passed": 37,
+      "seconds": 3.54
+    },
+    "strict_clippy": "runtime/PostgreSQL/SDK/service all-targets passed; latest native example also passed",
+    "read_only_live": {
+      "cleanup_confirmed": true,
+      "clone": true,
+      "credential_expiry_refresh": false,
+      "fetch": true,
+      "passed": true,
+      "placeholder_only": true,
+      "publication_allowed": false,
+      "unconfigured_repo_denied": true
+    },
+    "write_expiry_detach_live": {
+      "cleanup_confirmed": true,
+      "clone": true,
+      "credential_detach_revocation": true,
+      "credential_expiry_refresh": true,
+      "fetch": true,
+      "passed": true,
+      "placeholder_only": true,
+      "publication_allowed": true,
+      "unconfigured_repo_denied": true
+    },
+    "expired_revision_acknowledged": true
+  },
+  "upstream": {
+    "base": "a97cbe4672b671ca5482ab029c1a080b018a33db",
+    "counts": {
+      "authenticated": 33,
+      "unauthenticated": 19,
+      "upload_pack": 15,
+      "receive_pack": 3
+    },
+    "refs": "1b186a0e72e46afbc9179a3b9f3cde5a07863f8b refs/heads/agents/probe\n74a0695a455308aa85599ce67479e5f22010627c refs/heads/agents/probe-73a59f685e3846d\n148f0a8c2604f1347ae10778af71013b20cdb196 refs/heads/agents/probe-89f5b495566d4e8\na97cbe4672b671ca5482ab029c1a080b018a33db refs/heads/master"
+  },
+  "cleanup": {
+    "sandboxes_confirmed_deleted": true,
+    "retained_failed_original_explicitly_deleted": true,
+    "remaining_pods_at_git_completion": [
+      "git-remote",
+      "owgit-gateway-0"
+    ],
+    "fixture_namespace_teardown": "Confirmed namespace absent; own provider/profile instances removed; Helm release removed; own port-forward stopped"
+  },
+  "observations": [
+    "Provider queries require WorkspaceSelector message in pinned 0.1.3, protected by golden-wire test.",
+    "Git helper requires !exec invocation; real Linux Git caught and verified correction.",
+    "Proxy runs in a separate supervisor pod: public fixture CA trusted in both agent and supervisor; no TLS skip.",
+    "Withheld expiry receipt can precede supervisor update. Wait by observing original receipt/revision, not by replaying mutation. Repeated live test passed after acknowledgment barrier correction.",
+    "Branch prefix enforced by remote hook, not HTTP endpoint allowlist.",
+    "Refresh test restores validity and opens new ToolRunner connection through same process manager. External OAuth refresh is not exercised."
+  ],
+  "limits": [
+    "No live GitHub repository or real credential used.",
+    "No paid model or cloud resource used.",
+    "Public service/SDK grant wiring, trusted GitHub publisher and full C4/C6 remain incomplete."
+  ]
+}

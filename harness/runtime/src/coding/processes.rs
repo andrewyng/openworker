@@ -77,8 +77,19 @@ impl Processes {
         args: &Value,
         launch_id: Option<&str>,
     ) -> Result<Value> {
+        self.call_as_with_git(root, name, args, launch_id, None)
+            .await
+    }
+    pub async fn call_as_with_git(
+        &mut self,
+        root: &Path,
+        name: &str,
+        args: &Value,
+        launch_id: Option<&str>,
+        git: Option<&super::openshell_git::Environment>,
+    ) -> Result<Value> {
         if matches!(name, "run_shell" | "process_start") {
-            let id = self.start(root, args, name == "run_shell", launch_id)?;
+            let id = self.start(root, args, name == "run_shell", launch_id, git)?;
             if name == "run_shell" {
                 let wait = args["yield_ms"].as_u64().unwrap_or(1000);
                 let p = self.entries.get_mut(&id).unwrap();
@@ -133,7 +144,14 @@ impl Processes {
         }
     }
     #[cfg(not(target_os = "linux"))]
-    fn start(&mut self, _: &Path, _: &Value, _: bool, _: Option<&str>) -> Result<String> {
+    fn start(
+        &mut self,
+        _: &Path,
+        _: &Value,
+        _: bool,
+        _: Option<&str>,
+        _: Option<&super::openshell_git::Environment>,
+    ) -> Result<String> {
         anyhow::bail!("Managed coding processes currently require Linux; native macOS/Windows lifecycle support is not enabled")
     }
     #[cfg(target_os = "linux")]
@@ -143,6 +161,7 @@ impl Processes {
         args: &Value,
         foreground: bool,
         launch_id: Option<&str>,
+        git: Option<&super::openshell_git::Environment>,
     ) -> Result<String> {
         use std::process::Stdio;
         use tokio::io::AsyncReadExt;
@@ -213,6 +232,9 @@ impl Processes {
             if let Some(value) = std::env::var_os(key) {
                 cmd.env(key, value);
             }
+        }
+        if let Some(git) = git {
+            git.apply(&mut cmd)?;
         }
         let mut child = cmd.spawn()?;
         let mut group = Group {

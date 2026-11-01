@@ -3,6 +3,7 @@ mod files;
 pub(crate) mod git;
 #[cfg(target_os = "linux")]
 pub mod manager;
+pub mod openshell_git;
 mod patch;
 mod processes;
 mod web;
@@ -52,6 +53,7 @@ pub struct CodingTools {
     managed_workspace: Option<crate::team_workspace::Receipt>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     environment_owned: bool,
+    openshell_git: Option<openshell_git::Settings>,
 }
 impl CodingTools {
     pub fn with_workspace(receipt: crate::team_workspace::Receipt) -> Result<Self> {
@@ -78,11 +80,26 @@ impl CodingTools {
             }
             "web_fetch" => web::fetch(args).await,
             "run_shell" | "process_start" | "process_status" | "process_logs" | "process_stop" => {
+                let git = if matches!(name, "run_shell" | "process_start") {
+                    self.openshell_git
+                        .as_ref()
+                        .map(openshell_git::Settings::environment)
+                        .transpose()?
+                } else {
+                    None
+                };
                 #[cfg(target_os = "linux")]
                 if self.environment_owned {
-                    return manager::call(root, name, args).await;
+                    return manager::call_with_git(root, name, args, git).await;
                 }
-                self.processes.call(root, name, args).await
+                match git {
+                    Some(g) => {
+                        self.processes
+                            .call_as_with_git(root, name, args, None, Some(&g))
+                            .await
+                    }
+                    None => self.processes.call(root, name, args).await,
+                }
             }
             _ => files::call(root, name, args),
         }
@@ -103,9 +120,22 @@ pub async fn serve_managed(
     environment_owned: bool,
     receipt: Option<crate::team_workspace::Receipt>,
 ) -> Result<()> {
+    serve_with_git(root, environment_owned, receipt, None).await
+}
+pub async fn serve_with_git(
+    root: &Path,
+    environment_owned: bool,
+    receipt: Option<crate::team_workspace::Receipt>,
+    openshell_git: Option<openshell_git::Settings>,
+) -> Result<()> {
+    if let Some(s) = &openshell_git {
+        s.validate()?;
+        s.environment()?;
+    }
     let root = root.canonicalize()?;
     let mut tools = CodingTools {
         environment_owned: environment_owned && cfg!(target_os = "linux"),
+        openshell_git,
         ..match receipt {
             Some(r) => {
                 r.validate_scope(&r.project_root, &root)?;

@@ -1,5 +1,6 @@
 //! Pinned OpenShell 0.1.3 server provider. No CLI, local Docker fallback, host
-//! mounts, credential providers or automatic lifecycle retry. The gateway and
+//! mounts or automatic lifecycle retry. Credential providers require an explicit
+//! original provider/profile pin; they are absent from the default profile. The gateway and
 //! cluster operator remain trusted; app-owned objects must use this exact profile.
 use crate::{
     environment::*,
@@ -18,6 +19,49 @@ pub struct OpenShell {
     image: String,
     cpu: u16,
     memory_mb: u32,
+    credential_provider: Option<CredentialProvider>,
+}
+/// Trusted application configuration. No credential value is stored here.
+/// Pinning is explicit setup, never inferred from a model-supplied server name.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialProvider {
+    pub name: String,
+    pub provider_id: String,
+    pub profile_id: String,
+    pub profile_workspace: String,
+    pub profile_digest: String,
+}
+impl CredentialProvider {
+    fn validate(&self) -> Result<()> {
+        for id in [&self.name, &self.provider_id, &self.profile_id] {
+            anyhow::ensure!(
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+                "Invalid pinned credential provider identity"
+            );
+        }
+        anyhow::ensure!(
+            self.profile_workspace.len() <= 128
+                && self
+                    .profile_workspace
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+            "Invalid provider profile workspace"
+        );
+        anyhow::ensure!(
+            self.profile_digest.len() == 64
+                && self
+                    .profile_digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "Credential provider profile digest required"
+        );
+        Ok(())
+    }
 }
 impl OpenShell {
     pub fn new(
@@ -33,6 +77,7 @@ impl OpenShell {
             image,
             cpu: 1,
             memory_mb: 512,
+            credential_provider: None,
         };
         this.spec(Sharing::Exclusive, Management::Harness)
             .validate()?;
@@ -50,22 +95,105 @@ impl OpenShell {
         self.memory_mb = memory_mb;
         Ok(self)
     }
+    pub fn with_credential_provider(mut self, pin: CredentialProvider) -> Result<Self> {
+        pin.validate()?;
+        anyhow::ensure!(
+            pin.profile_workspace.is_empty() || pin.profile_workspace == self.config.workspace,
+            "Credential provider profile belongs to another workspace"
+        );
+        self.credential_provider = Some(pin);
+        Ok(self)
+    }
+    /// Explicit operator-owned setup. Persist the returned non-secret pin with
+    /// the RuntimeProfile; do not resolve names afresh on each session creation.
+    pub async fn pin_credential_provider(&self, name: &str) -> Result<CredentialProvider> {
+        self.check_gateway().await?;
+        self.provider_pin(name).await
+    }
+    async fn provider_pin(&self, name: &str) -> Result<CredentialProvider> {
+        anyhow::ensure!(
+            !name.is_empty()
+                && name.len() <= 128
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+            "Invalid credential provider name"
+        );
+        let response: CredentialProviderResponse = self
+            .rpc(
+                "/openshell.v1.OpenShell/GetProvider",
+                ProviderQuery {
+                    name: name.into(),
+                    scope: self.scope(),
+                },
+            )
+            .await?;
+        let p = response
+            .provider
+            .context("Original credential provider absent")?;
+        let meta = p.metadata.context("Credential provider identity absent")?;
+        anyhow::ensure!(
+            meta.name == name && meta.workspace == self.config.workspace,
+            "Credential provider scope changed"
+        );
+        let response: ProfileBytesResponse = self
+            .rpc(
+                "/openshell.v1.OpenShell/GetProviderProfile",
+                ProviderQuery {
+                    name: p.kind.clone(),
+                    scope: (!p.profile_workspace.is_empty()).then(|| WorkspaceSelector {
+                        workspace: p.profile_workspace.clone(),
+                    }),
+                },
+            )
+            .await?;
+        anyhow::ensure!(
+            !response.profile.is_empty() && response.profile.len() <= 128000,
+            "Credential provider profile unavailable or too large"
+        );
+        let pin = CredentialProvider {
+            name: name.into(),
+            provider_id: meta.id,
+            profile_id: p.kind,
+            profile_workspace: p.profile_workspace,
+            profile_digest: crate::bundle::digest(&response.profile),
+        };
+        pin.validate()?;
+        Ok(pin)
+    }
+    async fn check_credential_provider(&self) -> Result<()> {
+        if let Some(pin) = &self.credential_provider {
+            anyhow::ensure!(
+                &self.provider_pin(&pin.name).await? == pin,
+                "Original credential provider/profile changed; no automatic replacement"
+            );
+        }
+        Ok(())
+    }
     fn configured_template(&self) -> SandboxSpec {
         let mut spec = Self::template(&self.image);
         spec.template.as_mut().unwrap().resources = Some(resource_limits(self.cpu, self.memory_mb));
+        if let Some(pin) = &self.credential_provider {
+            spec.providers = vec![pin.name.clone()];
+        }
         spec
     }
     pub fn spec(&self, sharing: Sharing, management: Management) -> Spec {
         Spec {
             provider: self.key.clone(),
             provider_identity: self.identity.clone(),
-            profile_digest: crate::bundle::digest(
-                &serde_json::to_vec(&(
+            profile_digest: {
+                let bytes = serde_json::to_vec(&(
                     self.config.workspace.as_str(),
                     self.configured_template().encode_to_vec(),
                 ))
-                .expect("profile serialization"),
-            ),
+                .expect("profile serialization");
+                crate::bundle::digest(&match &self.credential_provider {
+                    None => bytes,
+                    Some(pin) => serde_json::to_vec(&("credential-provider-v1", bytes, pin))
+                        .expect("provider serialization"),
+                })
+            },
             image: self.image.clone(),
             workspace_root: "/sandbox".into(),
             sharing,
@@ -215,7 +343,7 @@ impl OpenShell {
             || !template.runtime_class.is_empty()
             || template.resources != expected_template.resources
             || desired.policy != expected.policy
-            || !desired.providers.is_empty()
+            || desired.providers != expected.providers
             || !desired.environment.is_empty()
             || desired.command != expected.command
             || desired.tty
@@ -243,10 +371,34 @@ impl OpenShell {
         binding.validate()?;
         Ok(binding)
     }
+    fn original_for_cleanup(&self, object: &Sandbox, binding: &Binding) -> Result<()> {
+        let meta = object
+            .metadata
+            .as_ref()
+            .context("Original cleanup identity absent")?;
+        let spec = object
+            .spec
+            .as_ref()
+            .context("Original cleanup spec absent")?;
+        anyhow::ensure!(
+            meta.id == binding.remote_id
+                && meta.name == binding.remote_name
+                && meta.workspace == self.config.workspace
+                && binding.workspace_scope == self.config.workspace
+                && meta.labels.get("openworker-environment") == Some(&binding.environment_id)
+                && spec
+                    .template
+                    .as_ref()
+                    .is_some_and(|t| t.image == binding.spec.image),
+            "Original cleanup identity changed; refusing replacement"
+        );
+        Ok(())
+    }
     /// Explicit application-owned registration, not a create-or-replace helper.
     pub async fn bind_existing(&self, record: &Record, name: &str) -> Result<Binding> {
         self.validate_spec(&record.spec)?;
         self.version().await?;
+        self.check_credential_provider().await?;
         let object = self.get(name).await?;
         if record.spec.management == Management::Harness
             && object
@@ -287,6 +439,7 @@ impl Provider for OpenShell {
                 bail!("Only a fresh harness-managed provisioning intent may create");
             }
             self.version().await?;
+            self.check_credential_provider().await?;
             let raw = record
                 .id
                 .strip_prefix("env_")
@@ -321,6 +474,7 @@ impl Provider for OpenShell {
                         bail!("Remote provisioning identity changed");
                     }
                     if object.status.as_ref().is_some_and(|s| s.phase == 2) {
+                        self.check_credential_provider().await?;
                         return self.observed(object, record.spec.clone(), record.id.clone());
                     }
                     if object
@@ -341,6 +495,7 @@ impl Provider for OpenShell {
         Box::pin(async move {
             self.validate_spec(&binding.spec)?;
             self.version().await?;
+            self.check_credential_provider().await?;
             if self.observed(
                 self.get(&binding.remote_name).await?,
                 binding.spec.clone(),
@@ -357,7 +512,13 @@ impl Provider for OpenShell {
             if binding.spec.management != Management::Harness {
                 bail!("Application owns environment deletion");
             }
-            self.inspect(binding.clone()).await?;
+            // Cleanup is not execution authority. Revoking/detaching a provider
+            // must not strand the ORIGINAL owned sandbox. Still fence namespace,
+            // UID, name, owner label and image; never adopt a replacement.
+            binding.validate()?;
+            self.validate_spec(&binding.spec)?;
+            self.version().await?;
+            self.original_for_cleanup(&self.get(&binding.remote_name).await?, &binding)?;
             let id = uuid::Uuid::parse_str(&operation_id)?;
             if id.is_nil() {
                 bail!("Delete ID cannot be nil");
@@ -483,6 +644,36 @@ struct Get {
     name: String,
     #[prost(message, optional, tag = "2")]
     scope: Option<WorkspaceSelector>,
+}
+#[derive(Clone, PartialEq, Message)]
+struct ProviderQuery {
+    #[prost(string, tag = "1")]
+    name: String,
+    #[prost(message, optional, tag = "2")]
+    scope: Option<WorkspaceSelector>,
+}
+#[derive(Clone, PartialEq, Message)]
+struct CredentialProviderResponse {
+    #[prost(message, optional, tag = "1")]
+    provider: Option<ProviderMetadata>,
+}
+#[derive(Clone, PartialEq, Message)]
+struct ProviderMetadata {
+    #[prost(message, optional, tag = "1")]
+    metadata: Option<Meta>,
+    #[prost(string, tag = "2")]
+    kind: String,
+    // Credential/config fields deliberately omitted. Never fetch/export values
+    // into the sandbox or persist them in the execution identity.
+    #[prost(string, tag = "6")]
+    profile_workspace: String,
+}
+#[derive(Clone, PartialEq, Message)]
+struct ProfileBytesResponse {
+    // Preserve all profile fields, including unfamiliar policy/refresh settings,
+    // for a conservative exact pin rather than silently dropping authority.
+    #[prost(bytes = "vec", tag = "1")]
+    profile: Vec<u8>,
 }
 #[derive(Clone, PartialEq, Message)]
 struct Delete {
@@ -681,6 +872,131 @@ mod tests {
             format!("registry.invalid/runner@sha256:{}", "a".repeat(64)),
         )
         .unwrap()
+    }
+    fn credential() -> CredentialProvider {
+        CredentialProvider {
+            name: "github-test".into(),
+            provider_id: "provider-original".into(),
+            profile_id: "github-read".into(),
+            profile_workspace: "default".into(),
+            profile_digest: "a".repeat(64),
+        }
+    }
+    #[test]
+    fn provider_queries_use_pinned_013_workspace_selector_wire_contract() {
+        // v0.1.3 proto/openshell.proto: GetProvider[Profile]Request field 2
+        // is a WorkspaceSelector MESSAGE, not the older workspace string.
+        let q = ProviderQuery {
+            name: "git".into(),
+            scope: Some(WorkspaceSelector {
+                workspace: "default".into(),
+            }),
+        };
+        assert_eq!(
+            q.encode_to_vec(),
+            [10, 3, b'g', b'i', b't', 18, 9, 10, 7, b'd', b'e', b'f', b'a', b'u', b'l', b't']
+        );
+        let platform = ProviderQuery {
+            name: "git".into(),
+            scope: None,
+        };
+        assert_eq!(platform.encode_to_vec(), [10, 3, b'g', b'i', b't']);
+    }
+    #[test]
+    fn provider_revocation_fences_execution_but_original_cleanup_keeps_identity_guards() {
+        let p = provider().with_credential_provider(credential()).unwrap();
+        let mut original = ready(&p);
+        original
+            .metadata
+            .as_mut()
+            .unwrap()
+            .labels
+            .insert("openworker-environment".into(), "env-test".into());
+        let b = p
+            .observed(
+                original.clone(),
+                p.spec(Sharing::Shared, Management::Harness),
+                "env-test".into(),
+            )
+            .unwrap();
+        let mut revoked = original.clone();
+        revoked.spec.as_mut().unwrap().providers.clear();
+        assert!(p
+            .observed(revoked.clone(), b.spec.clone(), b.environment_id.clone())
+            .is_err());
+        assert!(p.original_for_cleanup(&revoked, &b).is_ok());
+        let mut replaced = revoked.clone();
+        replaced.metadata.as_mut().unwrap().id = "replacement".into();
+        assert!(p.original_for_cleanup(&replaced, &b).is_err());
+        let mut replaced = revoked.clone();
+        replaced.metadata.as_mut().unwrap().labels.clear();
+        assert!(p.original_for_cleanup(&replaced, &b).is_err());
+        let mut replaced = revoked.clone();
+        replaced.metadata.as_mut().unwrap().workspace = "another".into();
+        assert!(p.original_for_cleanup(&replaced, &b).is_err());
+        let mut replaced = revoked;
+        replaced
+            .spec
+            .as_mut()
+            .unwrap()
+            .template
+            .as_mut()
+            .unwrap()
+            .image = "other".into();
+        assert!(p.original_for_cleanup(&replaced, &b).is_err());
+    }
+    #[test]
+    fn credential_attachment_is_explicit_pinned_and_changes_execution_identity() {
+        let plain = provider();
+        let p = provider().with_credential_provider(credential()).unwrap();
+        assert_ne!(
+            plain.spec(Sharing::Shared, Management::Harness),
+            p.spec(Sharing::Shared, Management::Harness)
+        );
+        assert!(plain
+            .validate_spec(&p.spec(Sharing::Shared, Management::Harness))
+            .is_err());
+        let good = ready(&p);
+        assert!(p
+            .observed(
+                good.clone(),
+                p.spec(Sharing::Shared, Management::Harness),
+                "env-test".into()
+            )
+            .is_ok());
+        let mut bad = good.clone();
+        bad.spec.as_mut().unwrap().providers.clear();
+        assert!(p
+            .observed(
+                bad,
+                p.spec(Sharing::Shared, Management::Harness),
+                "env-test".into()
+            )
+            .is_err());
+        let mut bad = good;
+        bad.spec.as_mut().unwrap().providers.push("extra".into());
+        assert!(p
+            .observed(
+                bad,
+                p.spec(Sharing::Shared, Management::Harness),
+                "env-test".into()
+            )
+            .is_err());
+        let mut changed = credential();
+        changed.provider_id = "replacement".into();
+        assert_ne!(
+            p.spec(Sharing::Shared, Management::Harness),
+            provider()
+                .with_credential_provider(changed)
+                .unwrap()
+                .spec(Sharing::Shared, Management::Harness)
+        );
+        let mut bad = credential();
+        bad.profile_workspace = "another-workspace".into();
+        assert!(provider().with_credential_provider(bad).is_err());
+        let mut bad = credential();
+        bad.profile_digest.clear();
+        assert!(provider().with_credential_provider(bad).is_err());
     }
     fn ready(p: &OpenShell) -> Sandbox {
         Sandbox {

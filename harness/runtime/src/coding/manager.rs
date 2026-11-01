@@ -47,6 +47,8 @@ struct Request {
     name: String,
     args: Value,
     launch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git: Option<super::openshell_git::Environment>,
 }
 async fn line<R: tokio::io::AsyncRead + Unpin>(r: &mut BufReader<R>) -> Result<Value> {
     let mut bytes = Vec::new();
@@ -69,6 +71,17 @@ async fn send<W: tokio::io::AsyncWrite + Unpin>(w: &mut W, v: &Value) -> Result<
 }
 /// Invoked only by the sandbox's MCP adapter, not by model-selected executables.
 pub async fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
+    call_with_git(root, name, args, None).await
+}
+pub(crate) async fn call_with_git(
+    root: &Path,
+    name: &str,
+    args: &Value,
+    git: Option<super::openshell_git::Environment>,
+) -> Result<Value> {
+    if let Some(g) = &git {
+        g.validate()?;
+    }
     let root = root.canonicalize()?;
     let dir = directory(&root)?;
     let path = dir.join("manager.sock");
@@ -169,6 +182,7 @@ pub async fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
         name: name.into(),
         args: args.clone(),
         launch_id: id.clone(),
+        git,
     })?;
     // No retry after this point: bytes may have reached the owning manager.
     let reply = async {
@@ -229,7 +243,7 @@ pub async fn serve(root: &Path) -> Result<()> {
             }else{matches!(request.name.as_str(),"process_status"|"process_logs"|"process_stop")&&request.args["process_id"].as_str().is_some_and(|id|id.starts_with(&prefix))};
             if !valid{let _=send(&mut w,&json!({"isError":true,"executed":false,"code":"invalid_process_request"})).await;continue}
             last=tokio::time::Instant::now();
-            let reply=match processes.call_as(&root,&request.name,&request.args,request.launch_id.as_deref()).await {Ok(v)=>v,Err(_)=>json!({"isError":true,"executed":false,"code":"process_request_rejected","message":"Invalid or unknown process request. Do not repeat a launch whose outcome is unknown."})};
+            let reply=match processes.call_as_with_git(&root,&request.name,&request.args,request.launch_id.as_deref(),request.git.as_ref()).await {Ok(v)=>v,Err(_)=>json!({"isError":true,"executed":false,"code":"process_request_rejected","message":"Invalid or unknown process request. Do not repeat a launch whose outcome is unknown."})};
             let _=send(&mut w,&reply).await;
         }
         Ok(())

@@ -141,7 +141,17 @@ enum Command {
         environment_processes: bool,
         #[arg(long, hide = true)]
         workspace_receipt: Option<String>,
+        /// Explicit opt-in; requires OpenShell-issued placeholders, never raw keys.
+        #[arg(long, hide = true)]
+        openshell_git: bool,
+        #[arg(long, hide = true, requires = "openshell_git")]
+        openshell_git_host: Option<String>,
+        #[arg(long, hide = true, requires = "openshell_git")]
+        openshell_git_repository: Vec<String>,
     },
+    /// Private Git credential helper. Never persists credentials.
+    #[command(hide = true)]
+    GitCredentialOpenshell { action: String },
     /// Trusted workspace provisioning channel; never a model tool.
     #[command(hide = true)]
     WorkspaceStdio {
@@ -283,16 +293,26 @@ async fn entry(args: Args, registry: openworker_tools::ToolRegistry) -> Result<(
             workspace,
             environment_processes,
             workspace_receipt,
+            openshell_git,
+            openshell_git_host,
+            openshell_git_repository,
         } => {
-            crate::coding::serve_managed(
+            crate::coding::serve_with_git(
                 &workspace,
                 environment_processes,
                 workspace_receipt
                     .as_deref()
                     .map(serde_json::from_str)
                     .transpose()?,
+                openshell_git.then(|| crate::coding::openshell_git::Settings {
+                    host: openshell_git_host.unwrap_or_else(|| "github.com".into()),
+                    repositories: openshell_git_repository,
+                }),
             )
             .await?
+        }
+        Command::GitCredentialOpenshell { action } => {
+            crate::coding::openshell_git::credential_helper(&action).await?
         }
         Command::WorkspaceStdio { root } => crate::team_workspace::serve(&root).await?,
         #[cfg(target_os = "linux")]

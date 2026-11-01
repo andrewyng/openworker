@@ -106,6 +106,35 @@ Delegated isolated placement, artifact handoff, constrained
 GitHub publishing, CLI credentials and the combined multi-team recovery matrix
 are tracked separately as C3–C7. Passing C1/C2 does not qualify those features.
 
+## Sandbox Git credentials through OpenShell
+
+The native adapter/ToolRunner slice has three test layers. Fast scope tests check
+exact HTTPS host/repository matching, malformed inputs, raw-key refusal, original
+provider/profile pins and exact OpenShell 0.1.3 protobuf wire compatibility. Cleanup
+tests separate execution revocation from permission to remove the original owned
+sandbox; replacement UID, image, ownership or workspace rejects.
+
+Disposable Linux process tests run the real Rust Git helper and shell/process
+manager. They check default secret stripping, explicit placeholder-only opt-in,
+per-command credential references and no persistent Git key/helper. These establish
+our transport behavior, not OpenShell's actual credential rewriting.
+
+The local Kubernetes fixture sends real Git clone/fetch/push traffic over verified
+HTTPS through a real OpenShell supervisor to a synthetic-token Git server. Read
+and push profiles differ. Unconfigured repositories reject; expiry waits for the
+**original supervisor revision acknowledgment** before checking denial; restored
+validity works on a new tool connection through the same process manager. Detach
+blocks existing Git access and new attachment while original-resource cleanup
+still succeeds. This is not a live GitHub write or external OAuth refresh test.
+
+Cases: [scope and credential helper](../../harness/runtime/src/coding/openshell_git.rs),
+[original provider/cleanup pins](../../harness/runtime/src/environment_openshell.rs),
+[Linux process tests](../../harness/runtime/tests/openshell_git.rs),
+[native live probe](../../harness/runtime/examples/openshell_git_probe.rs), and
+[fixture procedure and expiry-contract tests](../../harness/runtime/tests/fixtures/openshell-git/README.md).
+The journal/evidence distinguish this native C6 foundation from the still-pending
+public RuntimeProfile/SDK credential-grant wiring and C5 trusted publisher.
+
 ## Child environment allocation and recovery
 
 The PostgreSQL placement outbox contracts check original per-instance identity,
