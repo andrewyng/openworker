@@ -1,5 +1,6 @@
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
+import {sandboxWire, serviceDelegationWire, type ServiceTeamDelegation} from "./team-placement.js";
 import {
   type Json,
   type JournalEvent,
@@ -663,18 +664,11 @@ export class ServiceSession {
   async createTeam(
     options: ServiceAgentTeamOptions,
   ): Promise<ServiceAgentTeam> {
-    if (options.delegation && Object.keys(options.delegation).some(k => !["tools", "models"].includes(k))) {
-      throw new ServiceError("unsupported_team_delegation", 0);
-    }
     await this.service.json("POST", `/v1/sessions/${segment(this.id)}/team`, {
       agentId: options.agentId ?? "lead",
       agentTypes: options.agentTypes,
       ...(options.workspaceDefaults ? {workspaceDefaults:{repository:options.workspaceDefaults.repository,base:options.workspaceDefaults.base,agent_types:options.workspaceDefaults.agentTypes}} : {}),
-      ...(options.delegation ? {delegation: {
-        tools: options.delegation.tools,
-        models: (options.delegation.models ?? []).map(m => ({connection:m.provider,model:m.name})),
-        placements:["team"],profiles:{},
-      }} : {}),
+      ...(options.delegation ? {delegation: serviceDelegationWire(options.delegation)} : {}),
       policy: {
         communication: options.communication ?? {
           board: true,
@@ -796,7 +790,7 @@ export class ServiceRun {
 export interface ServiceAgentTeamOptions {
   workspaceDefaults?: import("./types.js").WorkspaceDefaults;
   /** Scoped custom types, bounded by the lead's activated release. */
-  delegation?: {tools:string[];models?:{provider:string;name:string}[]};
+  delegation?: ServiceTeamDelegation;
   agentId?: string;
   /** Type name → activated immutable release ID, e.g. builder → builder@1. */
   agentTypes: Record<string, string>;
@@ -828,6 +822,7 @@ export class ServiceAgentTeam {
     return this.command(key, "team_spawn", {
       ...options,
       model: options.model ? {connection:options.model.provider,model:options.model.name} : undefined,
+      sandbox:sandboxWire(options.sandbox),
       agent_type: agentType,
       agent_id: agentId,
       message,
@@ -865,3 +860,5 @@ export class ServiceAgentTeam {
     );
   }
 }
+
+export type { ServiceTeamDelegation } from "./team-placement.js";

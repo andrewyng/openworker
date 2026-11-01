@@ -250,7 +250,9 @@ test("team delegation pins qualified tools and working-model pairs at service cr
   assert.deepEqual(bodies[0].workspaceDefaults,{repository:"source",base:"a".repeat(40),agent_types:["builder"]});
   assert.deepEqual(bodies[0].delegation,{tools:["coding.read_file"],models:[{connection:"primary",model:"working"}],placements:["team"],profiles:{}});
   assert.equal(bodies[0].agentId,"lead");
-  await assert.rejects(session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],placements:["new"]}}), e=>e.code==="unsupported_team_delegation");
-  assert.equal(bodies.length,1);
+  await assert.rejects(session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],unknownPermission:true}}), /Unsupported team delegation/);
+  await session.createTeam({agentTypes:{builder:"builder@1"},delegation:{tools:["coding.read_file"],placements:["team","new","member"],profiles:{"small@1":{cpu:1,memoryMB:512}}}});
+  assert.deepEqual(bodies[1].delegation,{tools:["coding.read_file"],models:[],placements:["team","new","member"],profiles:{"small@1":{cpu:1,memory_mb:512,files:[],network:[],credentials:[]}}});
+  assert.equal(bodies.length,2);
   assert(!JSON.stringify(bodies).includes(token));
 });

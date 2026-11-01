@@ -1,0 +1,114 @@
+{
+  "milestone": "C3 \u2014 delegated child sandbox placement and lifecycle",
+  "date": "2026-10-31",
+  "source_commit": "e63e65b1c324fbcc52114dc042f52a28b4f7ddf2",
+  "branch": "feat/team-placement-c3-20261031",
+  "host_binary_sha256": "bf3c2bc9fbfa3b24488af120964ddbefe9280a210f4ee6f93e64b2736e3bd366",
+  "linux_runner_sha256": "b9b7fbda1d985086aaa792e05d2b4f05ef185f3f2c034251bbffcd7cd43e8a2a",
+  "runner_image": "docker.io/library/openworker-runner@sha256:947b0e2e0d20d9207fb8426ab4840c31a2d2215e05b41efb53a20c83dcb550f6",
+  "runner_reuse": "C1 runner reused: C3 changes trusted coordination/provider binding, not the existing workspace/MCP runner protocol.",
+  "tests": [
+    {
+      "suite": "server-reference library, including real PostgreSQL placement contracts",
+      "passed": 25,
+      "seconds": 2.02
+    },
+    {
+      "suite": "PostgreSQL agent_team_contract/artifacts/controls/environments/service_catalog/store/submissions",
+      "passed": 62
+    },
+    {
+      "suite": "runtime SQLite team/briefing/coordination/definition/placement/catalog",
+      "passed": 49
+    },
+    {
+      "suite": "real filesystem/Git workspace tests",
+      "passed": 8
+    },
+    {
+      "suite": "final runtime placement/briefing schema follow-up",
+      "passed": 7
+    },
+    {
+      "suite": "TypeScript sandbox/delegation serialization",
+      "passed": 2
+    },
+    {
+      "suite": "TypeScript local HTTP/SSE service contracts",
+      "passed": 9
+    },
+    {
+      "suite": "full real local OpenShell service_v2",
+      "passed": 1,
+      "seconds": 328.61,
+      "preceding_success_seconds": 315.39
+    },
+    {
+      "suite": "strict all-target Clippy, fmt, diff, six-document local links",
+      "passed": true
+    }
+  ],
+  "physical_checks": [
+    "Two APIs, competing controllers and bounded existing catalog worker",
+    "Real lost child-create acknowledgement; restarted controllers preserve original UID without replaying create",
+    "Same builder type, two distinct independent sandboxes and smaller exact profile",
+    "Private verifier selects existing builder directory in that original sandbox",
+    "Lead and second child prove builder files absent from their own filesystems",
+    "Shared builder worktrees, exact submitted commit, explicit integration and conflicting cherry-pick/abort",
+    "Rust and TypeScript service SDKs, delegated profile configuration, member serialization and actual tool reads",
+    "Original-profile cleanup, including unacknowledged creates, plus confirmed provider deletion"
+  ],
+  "physical_pod_limits": [
+    {
+      "pod": "default--owr-11095a87b9404c8",
+      "uid": "4e91de34-6765-4739-844f-77437b20cb51",
+      "phase": "Running",
+      "limits": [
+        {
+          "cpu": "1",
+          "memory": "768Mi"
+        }
+      ]
+    },
+    {
+      "pod": "default--owr-12f38b91561d439",
+      "uid": "c78b0d32-b9bc-44e1-8429-3e6ca202a924",
+      "phase": "Running",
+      "limits": [
+        {
+          "cpu": "1",
+          "memory": "512Mi"
+        }
+      ]
+    },
+    {
+      "pod": "default--owr-fe71947378c242f",
+      "uid": "3dca30f1-aa9c-4429-ab53-310511acc2bb",
+      "phase": "Running",
+      "limits": [
+        {
+          "cpu": "1",
+          "memory": "512Mi"
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "remaining_test_sandboxes": 0,
+    "remaining_fixture_service_or_recording_schemas": 0,
+    "retained_gateway_unchanged": true
+  },
+  "fixes_found_during_qualification": [
+    "Real API audit/session deadlock; corrected lock order and added deterministic barrier regression",
+    "Fixture wait completion was not child completion; assert durable child outcome",
+    "Directory selection requires an existing directory; builder creates it before verifier selection",
+    "Expanded scripted fixture consumed conservative default aggregate budget; explicit bounded test-only budget, unchanged production defaults"
+  ],
+  "scope_limits": [
+    "New/Member provisioning qualified for Linux/OpenShell PostgreSQL service; local sandbox-off SDK adapters reject unsupported placement",
+    "Exact registered CPU/memory profiles only; named file/network/credential grants unsupported and rejected",
+    "No automatic source checkout, Git metadata mount, artifact handoff or GitHub credentials/publication; C4\u2013C6 remain separate",
+    "Provider-local files persist only for that sandbox lifetime; no independent disk/volume claim",
+    "No cloud provisioning, paid model traffic or GitHub writes in this qualification"
+  ]
+}

@@ -1,6 +1,6 @@
 # Coding agent presets: implementation sequence and progress
 
-Status: C1 and C2 verified; continuing the approved C3–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
+Status: C1–C3 verified; continuing the approved C4–C7 sequence. Canonical feature branch: `openworker-harness-sdk`. Use a feature
 branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
@@ -34,7 +34,7 @@ Extend the same primitives through the remaining deployment adapters.
 | --- | --- | --- | --- |
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
-| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Pending |
+| C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
 | C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Pending |
@@ -115,6 +115,8 @@ Acceptance:
   state/events. Keep the harness/provisioner outside OpenShell for this sequence.
 
 ### C4 — Isolated coding-team preset and artifact handoff
+
+[Implementation details and build order](CODING-HANDOFF-IMPLEMENTATION.md).
 
 Stage an independent checkout/source snapshot at a recorded base revision in each
 worker environment. Do not mount a linked worktree dependent on the lead's Git
@@ -330,3 +332,156 @@ and SDK were built from the C2 source. Unsupported service-local policies and
 capabilities reject during conversion. The source coding bundle enables planning;
 verifier shell access is explicitly not read-only enforcement. Remaining isolated
 placement, source staging, publication and credential work stays in C3–C7.
+
+### C3 journal — October 31, contract slice
+
+[Placement implementation flow and initial provider scope](TEAM-PLACEMENT-IMPLEMENTATION.md).
+
+C2 merged/pushed as `08c812bb`. Continuing on
+`feat/team-placement-c3-20261031`. Adding explicit per-instance sandbox selection,
+pinning the resolved choice with the original reservation, and checking custom
+type settings against the approved envelope as well as the app ceiling. A retry
+uses its original type revision/default, not a newly approved revision. Shared
+worktree defaults do not apply to a new independent environment.
+
+A trusted adapter capability gate stays disabled in existing SDK/service adapters
+until provider provisioning, ownership/reference/quota handling and recovery are
+qualified. Adding request fields does not silently enable provisioning. Provider
+resolution must reject unsupported grants and preserve original identities.
+The separate sandbox needs its own source checkout/handoff (C4); no linked Git
+metadata is implicitly mounted across sandboxes. Implementation/tests ongoing.
+
+C3 contract qualification (in progress): shared SQLite/PostgreSQL reservation
+contract passed, including per-instance New/Member choices, excess resource/grant
+rejection and unchanged reservation identities. Unit cases pin the original
+custom revision/default after a newer type revision is approved and reject
+instance settings outside that original envelope. Existing adapters explicitly
+reject unbound non-Team choices at both preparation and admission rather than
+running them in the lead/host environment. The TypeScript serializer rejects
+unknown settings instead of silently dropping them. No New/Member provisioning
+is enabled yet; provider binding/lifecycle remains the next C3 slice.
+
+### C3 journal — provider outbox contract, October 31
+
+Added a private PostgreSQL outbox for per-instance New placement. Reservation
+atomically records the original environment/spec/profile, principal/project,
+quota ownership and durable dispatch marker before provider I/O. Immutable
+RuntimeProfile IDs and exact configured CPU/memory are required; unsupported
+file/network/credential grants and foreign deployment identities reject.
+Child and source releases must permit the target profile. Existing admission
+quotas count pending and unknown team environments alongside ordinary sessions.
+
+Recovery uses a fenced claim: only its first dispatch may create; subsequent
+claims inspect the original identity. A stale/expired claim cannot update either
+the environment binding or the outbox. The shared environment observation logic
+now participates in that same transaction. Matched lead/team/outbox lock ordering
+to avoid a claim-versus-reservation deadlock. Revocation/retirement before the
+first dispatch cancels only a proven-unstarted allocation; uncertainty after
+dispatch retains ownership/quota and allows original-resource inspection.
+
+Five new PostgreSQL contract tests and all 21 server-library cases passed in
+1.51 seconds. They cover lost-create replies, concurrent controllers/quota,
+changed/foreign identity, stale receipts, pause/unpause, credential revocation,
+retirement and quota preservation after unknown outcomes. One initial assertion
+used a reopened store without claiming the lead lease; corrected that fixture
+read to use its original owning store. These use synthetic provider observations;
+OpenShell creation and public placement admission remain gated pending the next
+C3 binding/controller/cleanup qualification. C3 is not complete or merged.
+
+### C3 journal — binding/controller integration in qualification
+
+Connected the outbox to the trusted OpenShell controller. New and Member bindings
+are pinned before workspace preparation and child admission; workspace markers,
+runner roots and private runtime factories follow the selected environment's
+actual profile. The model sees only choices within the configured delegation.
+Service configuration rejects unsupported grants, mutable profile aliases,
+resource expansion and changed approval/question behavior. Local sandbox-off SDK
+adapters still do not provision external sandboxes.
+
+Added pending/active placement references to deletion checks and extended original
+resource cleanup to team-created environments. Bound members retain their own
+reference when their source retires. Unknown provider outcomes produce durable
+activity plus a lead inbox notice; normal readiness is activity, without an extra
+wake that could distract the lead from its current task. Sanitized storage
+unavailability now has a type, so controller failures cannot be mistaken for a
+permanent denial.
+
+All 22 server-library tests passed (1.48 seconds), including normal service
+configuration and member reuse/retirement. TypeScript placement serialization
+(two tests) and all nine HTTP/service tests pass. The first physical OpenShell
+attempt cleaned up after a test read occurred before child admission: a completed
+lead wait can mean inbox wake, not child completion. The rerun checks durable
+member completion and also injects a real lost child-create reply before
+restarting competing controllers. Physical qualification is ongoing; C3 remains
+unmerged pending its final checks.
+
+The physical rerun exposed an actual PostgreSQL deadlock during the existing
+worker-restart case. The database lock graph showed an API submission holding
+the global security-audit append lock while waiting for the lead session, with
+child admission holding that lead while appending its creation audit. Moved
+submission, control and artifact audit appends after their data/row locks, keeping
+receipt/event/audit atomicity and commit-ordered audit cursors. Added a
+barrier-based test that holds the lead row, starts a blocked authenticated
+submission and proves the trusted admission can still obtain its audit lock.
+Also added sanitized storage-outage classification and post-binding credential
+revocation/retained-resource cleanup cases. These are being rerun before the next
+physical qualification. No transient operation is blindly replayed to hide errors.
+
+The deterministic audit-lock regression and all 25 server-library cases passed
+(1.70 seconds), followed by 62 PostgreSQL regressions across seven suites,
+49 core team/definition/catalog cases plus eight real filesystem/worktree cases,
+two TypeScript placement cases and nine HTTP/SSE cases. Strict all-target Clippy
+passed. The following physical attempt reached the child workspace path and
+correctly refused a missing selected directory: directory selection means use an
+existing directory, not create it. Corrected the fixture to let the new builder
+write `build/proof.txt`, then bind a private verifier to that existing directory.
+The adapter now prepares that verifier's cwd in the chosen child environment;
+C4 remains responsible for staging independent source checkouts. Original
+sandbox cleanup completed after both failed physical attempts.
+
+Physical C3 checks now pass through original-UID recovery, two independent
+smaller sandboxes and a private verifier reading the builder's selected directory.
+Kubernetes reports 1 CPU/768 MiB for the lead and 1 CPU/512 MiB for each new child.
+The combined fixture then correctly hit its aggregate default team token budget
+before the older shared-builder commit step. The scripted model intentionally
+retains conservative output reservations. Set an explicit bounded test-only team
+budget for this expanded scenario; production defaults and limit handling are
+unchanged. Rerunning the full sequence, including cleanup, before marking C3
+verified.
+
+
+### C3 verified — October 31
+
+Implementation `e63e65b1`, following gated contract `e9b6049d` and outbox contract
+`fc3ba019`. [Evidence](evidence/coding-presets-c3-20261031.json),
+[implementation](TEAM-PLACEMENT-IMPLEMENTATION.md),
+[developer usage](CODING-AGENTS.md#choose-a-childs-sandbox-in-the-openshell-service)
+and the [grouped test catalog](CODING-AGENT-PRESETS-TESTING.md) describe the result.
+
+Final complete OpenShell qualification passed in **328.61 seconds**, after the
+preceding 315.39-second success. This final run includes the retirement-recovery
+follow-up and profile schema guidance. Two instances of one builder type run in
+independent 1 CPU/512 MiB sandboxes; the shared profile uses 1 CPU/768 MiB. A real
+child create loses its acknowledgement, competing restarted controllers inspect
+the original UID, and a private verifier selects the builder's existing directory.
+Lead/other-child file absence proves the physical separation. Shared worktrees,
+exact-commit verification, successful integration and explicit conflict/abort
+remain covered. Rust and TypeScript SDKs execute actual OpenShell tools.
+
+Passed 25 server-library cases, 62 PostgreSQL regressions, 49 core team cases,
+eight real Git/workspace cases, the final seven-case schema/briefing follow-up,
+two TypeScript placement cases, nine HTTP/SSE cases, strict all-target Clippy,
+format/diff checks and six-document link validation. The audit/session deadlock
+is covered by a deterministic lock barrier; audit/receipt rollback remains intact.
+Post-binding revocation preserves work without admitting a child. Pending/member
+references prevent deletion; retirement can reconcile after session closure
+committed before a crash. Storage outages retain a sanitized infrastructure type.
+
+Cleanup confirmed original sandbox deletion and removal of both test schemas;
+only the retained gateway remains in its namespace. The disposable PostgreSQL,
+private TLS files, matching runner and loopback forward remain available for C4.
+No cloud provisioning, live model calls or GitHub writes were used. Host free disk
+is about 56 GiB with incremental Rust compilation disabled. New/Member physical
+placement is qualified for the OpenShell/PostgreSQL service. Local sandbox-off
+SDKs still reject unsupported placement. Source staging and isolated preset
+handoff remain C4; publication and CLI credentials remain C5/C6.

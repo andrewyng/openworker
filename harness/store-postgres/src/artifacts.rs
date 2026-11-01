@@ -102,18 +102,14 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), actor)?;
-        crate::auth::audit(
-            &mut tx,
-            p.as_ref(),
-            crate::auth::Action::Artifact,
-            Some(&request.session_id),
-            Some(&request.request_id),
-        )?;
         let s = locked(&mut tx, &request.session_id, None)?;
         verify(&mut tx, &s.id)?;
-        if let Some(row)=tx.query_opt("SELECT artifact_id,actor,request,binding FROM artifact_requests WHERE session_id=$1 AND request_id=$2",&[&s.id,&request.request_id])?{
-            ensure!(row.get::<_,String>(1)==actor&&row.get::<_,Value>(2)==serde_json::to_value(&request)?&&row.get::<_,Value>(3)==serde_json::to_value(&binding)?,Error::Conflict);
-            let a=load(&mut tx,&s.id,&row.get::<_,String>(0))?;tx.commit()?;return Ok(a)
+        if let Some(row)=tx.query_opt("SELECT artifact_id,actor,request,binding FROM artifact_requests WHERE session_id=$1 AND request_id=$2",&[&s.id,&request.request_id])? {
+            ensure!(row.get::<_,String>(1)==actor && row.get::<_,Value>(2)==serde_json::to_value(&request)? && row.get::<_,Value>(3)==serde_json::to_value(&binding)?,Error::Conflict);
+            let a=load(&mut tx,&s.id,&row.get::<_,String>(0))?;
+            crate::auth::audit(&mut tx,p.as_ref(),crate::auth::Action::Artifact,Some(&request.session_id),Some(&request.request_id))?;
+            tx.commit()?;
+            return Ok(a);
         }
         ensure!(!s.closed, Error::Conflict);
         let known = s.turn.as_ref().is_some_and(|t| t.id == request.turn_id)
@@ -161,6 +157,13 @@ impl Database {
         )?;
         tx.execute("INSERT INTO artifact_totals VALUES($1,1) ON CONFLICT(session_id) DO UPDATE SET total=artifact_totals.total+1",&[&s.id])?;
         event(&mut tx, &a, "artifact_pending", actor)?;
+        crate::auth::audit(
+            &mut tx,
+            p.as_ref(),
+            crate::auth::Action::Artifact,
+            Some(&a.registration.session_id),
+            Some(&a.registration.request_id),
+        )?;
         tx.commit()?;
         Ok(a)
     }
@@ -222,19 +225,19 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), actor)?;
-        crate::auth::audit(
-            &mut tx,
-            p.as_ref(),
-            crate::auth::Action::Artifact,
-            Some(sid),
-            Some(id),
-        )?;
         locked(&mut tx, sid, None)?;
         verify(&mut tx, sid)?;
         let mut a = load(&mut tx, sid, id)?;
         ensure!(proof.expected == a.registration.expected, Error::Conflict);
         if a.status == Status::Ready {
             ensure!(a.proof.as_ref() == Some(&proof), Error::Conflict);
+            crate::auth::audit(
+                &mut tx,
+                p.as_ref(),
+                crate::auth::Action::Artifact,
+                Some(sid),
+                Some(id),
+            )?;
             tx.commit()?;
             return Ok(a);
         }
@@ -246,6 +249,13 @@ impl Database {
             &[&id, &serde_json::to_value(&a)?],
         )?;
         event(&mut tx, &a, "artifact_ready", actor)?;
+        crate::auth::audit(
+            &mut tx,
+            p.as_ref(),
+            crate::auth::Action::Artifact,
+            Some(sid),
+            Some(id),
+        )?;
         tx.commit()?;
         Ok(a)
     }

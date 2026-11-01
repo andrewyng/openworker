@@ -41,12 +41,10 @@ pub(crate) fn validate_models(
     let d: openworker_runtime::team_definition::Delegation = serde_json::from_value(value.clone())?;
     d.bind(lead)?;
     ensure!(
-        d.placements
-            == std::collections::BTreeSet::from([
-                openworker_runtime::team_definition::Placement::Team
-            ])
-            && d.profiles.is_empty(),
-        "Service scoped types currently require the existing team environment"
+        !d.placements
+            .contains(&openworker_runtime::team_definition::Placement::New)
+            || !d.profiles.is_empty(),
+        "New placement requires a delegated profile"
     );
     let row = tx.query_one(
         "SELECT release_id FROM service_operations WHERE session_id=$1 AND status='complete'",
@@ -55,6 +53,38 @@ pub(crate) fn validate_models(
     let source = service_catalog::entry(tx, "release", &row.get::<_, String>(0))?;
     let release: Release = serde_json::from_value(source.definition)?;
     ensure!(source.activated, "Lead release deactivated");
+    let origin: String = tx
+        .query_one(
+            "SELECT profile_id FROM service_operations WHERE session_id=$1",
+            &[&lead.id],
+        )?
+        .get(0);
+    let origin = service_catalog::entry(tx, "profile", &origin)?;
+    let original: service_catalog::Profile = serde_json::from_value(origin.definition)?;
+    for (name, grants) in &d.profiles {
+        let entry = service_catalog::entry(tx, "profile", name)?;
+        let p: service_catalog::Profile = serde_json::from_value(entry.definition)?;
+        ensure!(
+            entry.id == *name
+                && entry.activated
+                && entry.installation == source.installation
+                && release.runtime_profiles.contains(name),
+            "Profile is not an immutable activated delegated profile"
+        );
+        ensure!(
+            grants.files.is_empty() && grants.network.is_empty() && grants.credentials.is_empty(),
+            "OpenShell placement does not implement named file/network/credential grants"
+        );
+        ensure!(
+            grants.cpu == p.cpu
+                && grants.memory_mb == p.memory_mb
+                && p.cpu <= original.cpu
+                && p.memory_mb <= original.memory_mb
+                && p.approval_mode == original.approval_mode
+                && p.auto_skip_questions == original.auto_skip_questions,
+            "Delegated profile exceeds the lead or changes approval/question behavior"
+        );
+    }
     ensure!(
         models.len() == d.models.len(),
         "Delegated model reference count changed"
@@ -94,10 +124,7 @@ fn approved<'a>(doc: &'a Document, record: &Record, lead: &Session) -> Result<&'
         .binding
         .revalidate(&catalog.ceiling, &catalog.prebuilt)?;
     ensure!(
-        matches!(
-            stored.binding.definition().sandbox,
-            openworker_runtime::team_definition::Sandbox::Team {}
-        ),
+        doc.placement_selection || stored.binding.definition().sandbox == Default::default(),
         "Unsupported service placement"
     );
     Ok(stored)

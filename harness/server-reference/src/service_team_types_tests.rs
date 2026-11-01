@@ -131,6 +131,9 @@ impl Fixture {
         }
     }
     fn create(&mut self) -> Document {
+        self.create_with_delegation(json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team"],"profiles":{}}))
+    }
+    fn create_with_delegation(&mut self, delegation: Value) -> Document {
         let rt = self
             .config
             .api_runtime("models", self.store.clone())
@@ -140,7 +143,7 @@ impl Fixture {
             openworker_store_postgres::service_team_types::model_key(&choice).unwrap(),
             rt.connections.resolve(&choice).unwrap(),
         )]);
-        let args = json!({"agent_id":"lead","agent_types":["builder"],"delegation":{"tools":["coding.read_file"],"models":[choice],"placements":["team"],"profiles":{}}});
+        let args = json!({"agent_id":"lead","agent_types":["builder"],"delegation":delegation});
         let templates = BTreeMap::from([(
             "builder".into(),
             (self.release.id.clone(), {
@@ -629,3 +632,6 @@ async fn unchanged_prebuilt_team_retry_does_not_require_rewriting_old_receipts()
         .unwrap();
     assert_eq!(again["id"], created["id"]);
 }
+
+#[path = "service_team_placements_tests.rs"]
+mod placements;

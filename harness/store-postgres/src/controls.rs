@@ -130,13 +130,6 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), &command.actor)?;
-        crate::auth::audit(
-            &mut tx,
-            p.as_ref(),
-            crate::auth::Action::Control,
-            Some(&command.session_id),
-            Some(&command.request_id),
-        )?;
         let s = locked(&mut tx, &command.session_id, None)?;
         verify(&mut tx, &s.id)?;
         if let Some(row) = tx.query_opt(
@@ -147,6 +140,13 @@ impl Database {
             if saved.command != command {
                 return Err(crate::SubmissionError::Conflict.into());
             }
+            crate::auth::audit(
+                &mut tx,
+                p.as_ref(),
+                crate::auth::Action::Control,
+                Some(&command.session_id),
+                Some(&command.request_id),
+            )?;
             tx.commit()?;
             return Ok(saved);
         }
@@ -187,6 +187,13 @@ impl Database {
             &[&s.id, &cursor, &command.turn_id, &data],
         )?;
         tx.execute("INSERT INTO audit(session_id,cursor,turn_id,kind,owner_epoch,actor) VALUES($1,$2,$3,'control_received',$4,$5)",&[&s.id,&cursor,&command.turn_id,&epoch,&command.actor])?;
+        crate::auth::audit(
+            &mut tx,
+            p.as_ref(),
+            crate::auth::Action::Control,
+            Some(&command.session_id),
+            Some(&command.request_id),
+        )?;
         tx.commit()?;
         Ok(Record {
             command,
