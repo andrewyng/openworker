@@ -22,7 +22,7 @@ Related: [SDK coding guide](CODING-AGENTS.md),
 | Team sharing one sandbox | Separate linked worktrees of an existing repository | Lead inspects local commits | Not needed for sharing work | C1–C3 verified |
 | Team with independent sandboxes | Harness transfers a pinned Git bundle; ToolRunner creates each checkout | Submitted bundle → verifier → lead | Not needed for source transfer or artifact handoff | Initial transfer/admission verified; full submission workflow is C4 in progress |
 | Trusted GitHub checkout/publication | Trusted broker fetches source or publishes a submitted artifact | Scoped branch publication with an exact commit | Not needed in the child | C5 upcoming |
-| Git CLI inside a sandbox | Git uses HTTPS through OpenShell with an attached credential provider | Explicitly permitted fetch/push | Required for these direct GitHub requests | OpenShell mechanism exists; our adapter integration/qualification is C6 upcoming |
+| Git CLI inside a sandbox | Git uses HTTPS through OpenShell with an attached credential provider | Explicitly permitted fetch/push | Required for these direct GitHub requests | Native adapter/ToolRunner qualified locally; public service/SDK wiring remains C6 work |
 
 The recommended team default is one shared sandbox with separate builder
 worktrees. Choose independent sandboxes when workers need separate execution
@@ -144,7 +144,7 @@ B. Trusted GitHub broker                              C5 upcoming
                                          |
                                          +----> Pinned source bundle
 
-C. Direct Git HTTPS in source sandbox                 C6 upcoming
+C. Direct Git HTTPS in source sandbox                 Native path qualified; public wiring C6
    GitHub <---- OpenShell proxy <---- Git + placeholder
                  real token                  |
                                              +----> Local repo at commit A
@@ -218,10 +218,12 @@ workflow into sandbox-CLI mode or inject a token as a fallback.
 
 ## 6. Direct Git CLI through OpenShell placeholders
 
-Useful when the application deliberately permits Git/`gh` to contact GitHub from
+Useful when the application deliberately permits Git to contact GitHub from
 inside a sandbox. For the OpenShell adapter, prefer its endpoint-bound credential
 placeholders instead of handing the real token to ToolRunner. This mechanism is
-documented by OpenShell; its wiring and qualification in our harness are C6 work.
+documented by OpenShell. Our native adapter and ToolRunner have been qualified
+through a local HTTPS Git remote; the public RuntimeProfile/SDK configuration and
+delegation wiring remain C6 work. `gh` and Git-over-SSH are not qualified here.
 
 ```text
 Trusted setup / credential owner
@@ -233,7 +235,7 @@ Trusted setup / credential owner
               | opaque placeholder attached to selected sandbox
               v
 +------------- OpenShell sandbox ----------------+
-| Git / gh, launched by authorized tool calls    |
+| Git, launched by authorized tool calls         |
 | HTTPS request containing placeholder          |
 +-----------------------------------------------+
               |
@@ -250,8 +252,11 @@ Trusted setup / credential owner
 The real token stays in OpenShell's trusted credential path. ToolRunner/Git uses
 the supplied opaque reference. This requires inspected HTTPS; do not assume that
 the same mechanism works for Git over SSH or an opaque TLS tunnel. Git's client
-authentication must also be configured to use the placeholder; attaching a
-provider is not a claim that our ToolRunner adapter already supplies that setup.
+authentication must also be configured to use the placeholder. The native adapter
+pins an explicitly selected OpenShell provider/profile; the opt-in ToolRunner
+launcher installs an ephemeral, repository-scoped Rust Git helper. The default
+launcher still strips Git credentials. The helper refuses a raw token and never
+saves one in Git configuration.
 [OpenShell credential injection](https://docs.nvidia.com/openshell/latest/how-it-works/providers/overview#how-credential-injection-works)
 
 Two checks are independent: allowing GitHub traffic does not by itself grant use
@@ -259,14 +264,20 @@ of a token, and supplying a credential reference does not bypass network policy.
 OpenShell's example GitHub profile permits clone/fetch while denying push by
 default; direct publication requires a separately reviewed grant. Host-level access
 alone is not repository isolation: use appropriately scoped credentials and
-supported request restrictions for the intended repository/operations.
+supported request restrictions for the intended repository/operations. Branch names
+inside Git push payloads require remote branch protections/rules or the trusted
+publisher; do not claim that an HTTP endpoint allowlist enforces a branch prefix.
 [Example GitHub profile](https://github.com/NVIDIA/OpenShell/blob/main/providers/github.yaml)
 
 A placeholder hides the secret value; it still enables an authorized capability
 inside that sandbox. Do not describe it as private to one agent in a shared
 sandbox. Scope attachment, permitted binaries/requests, expiry, refresh and
-revocation explicitly. Check the pinned OpenShell release's behavior and qualify
-those lifecycle operations before enabling this adapter. No fallback to a raw token.
+revocation explicitly. The local test checks clone/fetch, separately enabled push,
+repository denial, expiry acknowledgment, restored validity, detach and cleanup
+of the original sandbox after revocation. It uses synthetic credentials and real
+Git traffic, without a GitHub write. See the
+[test procedure](../../harness/runtime/tests/fixtures/openshell-git/README.md).
+No fallback to a raw token.
 
 ## Which configuration owns what?
 
