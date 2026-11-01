@@ -67,6 +67,10 @@ def capability_set(m: PersonaManifest) -> set[str]:
     # team capability changes who the coworker can direct or be directed by.
     if m.team:
         caps.add(f"team:{m.team}")
+    if m.subagents:
+        caps.add("trait:subagents")
+    if m.scheduling:
+        caps.add("trait:scheduling")
     return caps
 
 
