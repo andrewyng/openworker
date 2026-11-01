@@ -121,8 +121,8 @@ Cases: five `placement_outbox_*` tests in
 [provider outbox contracts](../../harness/server-reference/src/service_team_placements_tests.rs).
 These use isolated PostgreSQL schemas and synthetic provider observations, with
 no gateway/model traffic. They establish database/controller contracts, not
-physical sandbox isolation or resource enforcement. Public provisioning remains
-gated until real OpenShell qualification.
+physical sandbox isolation or resource enforcement. These contracts alone do not enable a provider; the later physical OpenShell
+section and journal record the service adapter's qualification.
 
 ## Original child bindings, retention and audit lock ordering
 

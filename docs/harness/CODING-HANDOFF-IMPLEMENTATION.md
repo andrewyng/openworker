@@ -61,6 +61,14 @@ local configuration before inspecting source. Reject alternates, replacement
 objects or external metadata that would silently enlarge the exported object set.
 No network operation is needed for artifact handoff.
 
+Git bundle export must name one exact revision, not `--all`. A raw commit ID is
+not itself an advertised bundle ref. Use an operation-owned, namespaced temporary
+ref pinned with an expected-old-ID check; record it before mutation and bundle
+only that ref. Recovery inspects its original ref/marker rather than creating a
+new one. Cleanup requires the same expected commit. This is an explicit local
+Git-metadata write, not an unreported read-only operation; existing branch tips
+must not change. The source configuration authorizes that bounded bookkeeping.
+
 Validate bundle format, expected heads, complete prerequisite closure, object
 integrity and the exact base/submitted commits. Treat Git objects and paths as
 untrusted data. Import into a fresh independent checkout owned by a durable

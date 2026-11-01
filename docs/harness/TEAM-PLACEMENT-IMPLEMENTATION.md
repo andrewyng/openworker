@@ -2,8 +2,9 @@
 
 This is the C3 implementation note, linked from the
 [coding milestone journal](CODING-AGENT-PRESETS-PLAN.md). The agreed behavior is in
-[team types and sandbox placement](TEAM-TYPES-AND-SANDBOXES.md). C3 is in progress;
-request/selection tests do not qualify provider provisioning.
+[team types and sandbox placement](TEAM-TYPES-AND-SANDBOXES.md). C3 is qualified for the OpenShell/PostgreSQL service; see the
+[evidence](evidence/coding-presets-c3-20261031.json). Request/selection tests alone
+do not qualify other provider adapters.
 
 ## Trusted flow
 
