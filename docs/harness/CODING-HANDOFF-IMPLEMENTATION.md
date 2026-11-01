@@ -1,10 +1,12 @@
 # Isolated coding source and handoff implementation
 
-C4 implementation note. Status: source staging and admission guards implemented;
-durable child import and model handoff qualification in progress. This is not a statement that the isolated preset has shipped.
+C4 implementation note. Status: initial source staging, durable child import and
+receipt-gated admission physically qualified; model handoff implementation and
+full isolated preset qualification in progress.
 
 Related: [milestones and journal](CODING-AGENT-PRESETS-PLAN.md),
 [coding variants](CODING-AGENT-PRESETS.md),
+[illustrated scenarios](CODING-WORKSPACE-SCENARIOS.md),
 [placement lifecycle](TEAM-PLACEMENT-IMPLEMENTATION.md).
 
 ## What crosses the boundary

@@ -5,6 +5,7 @@ branch for each slice and merge only verified changes. No public-main merge or
 cloud provisioning is part of this plan.
 
 Design: [coding presets, defaults and publication](CODING-AGENT-PRESETS.md).
+Illustrated options: [workspaces, source transfer and GitHub access](CODING-WORKSPACE-SCENARIOS.md).
 Underlying primitives: [team design](TEAM-TYPES-AND-SANDBOXES.md) and
 [team implementation ledger](TEAM-TYPES-AND-SANDBOXES-PLAN.md).
 
@@ -163,11 +164,15 @@ Acceptance:
 
 ### C6 — Explicit sandbox Git CLI access
 
-Add the opt-in CLI mode using provider-supported credential-helper/secret delivery.
-Keep private checkout and publishing permissions separate, avoid persistent tokens
-in Git configuration/URLs, and honor expiry, refresh and revocation. State clearly
-that a credential delivered into a shared sandbox is potentially accessible to
-other processes in that sandbox. Never switch to this mode after a publisher error.
+Add the opt-in CLI mode. For OpenShell, use its endpoint-bound credential provider
+and placeholder mechanism first: the real token stays in OpenShell's trusted path,
+while Git uses the supplied opaque reference over inspected HTTPS. Qualify allowed
+binaries/requests and credential bindings independently. Other credential-helper or
+raw-secret delivery modes require explicit provider-specific support; no fallback.
+Keep private checkout and publishing permissions separate, avoid real tokens in Git
+configuration/URLs, and honor expiry, refresh and revocation. A placeholder still
+confers capability within its sandbox; it is not agent-private in a shared sandbox.
+Never switch to this mode after a publisher error.
 
 Acceptance:
 
@@ -824,3 +829,23 @@ C4 remains **in progress**: next build model-requested submission export/catalog
 submitted-revision verifier import, explicit lead reception/integration, then expose
 and qualify the isolated Rust/TS preset. C5–C7 remain pending; do not merge this
 partial C4 feature into the canonical branch yet.
+
+### Illustrated scenarios and OpenShell Git acceptance — 2026-10-31
+
+Added [workspace/source/GitHub diagrams](CODING-WORKSPACE-SCENARIOS.md), linked
+from the SDK guide, design, handoff implementation and harness README. It separates
+shared worktrees, independent offline bundle setup, original source acquisition,
+submitted-code handoff, trusted GitHub publication and sandbox Git through OpenShell.
+It labels actual C1–C4 qualification versus upcoming C5/C6 adapters. Corrected the
+design's obsolete pre-C1 status summary. Configuration ownership includes the
+distinction between OpenWorker RuntimeProfiles and OpenShell provider profiles and
+credential-provider instances.
+
+User emphasized that direct sandbox Git through OpenShell must be implemented and
+tested for the OpenShell team. Make this an explicit C6 acceptance requirement:
+real Git traffic through the OpenShell proxy, placeholder-only workload credentials,
+clone/fetch allowed separately from push, destination/credential denial, credential
+lifecycle and no raw-token fallback. Begin by checking the pinned local 0.1.3
+gateway capability; current docs alone do not qualify our adapter. Local controlled
+Git fixtures are authorized; a live GitHub write still needs a disposable approved
+repository. This adds no implicit GitHub access to the default bundle path.

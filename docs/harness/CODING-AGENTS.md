@@ -11,6 +11,10 @@ can continue using application-provided tools. See the
 [test catalog](CODING-AGENT-PRESETS-TESTING.md) and
 [journal](CODING-AGENT-PRESETS-PLAN.md) for actual test evidence.
 
+For ASCII diagrams comparing shared worktrees, offline child source transfer,
+artifact handoff and the upcoming GitHub modes, see
+[workspace and GitHub scenarios](CODING-WORKSPACE-SCENARIOS.md).
+
 ## One agent
 
 ```rust,no_run
