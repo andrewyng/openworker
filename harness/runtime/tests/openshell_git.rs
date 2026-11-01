@@ -96,71 +96,77 @@ async fn default_shell_has_no_git_key_and_opt_in_manager_carries_only_current_re
     for managed in [false, true] {
         for enabled in [false, true] {
             let root = tempfile::tempdir().unwrap();
-            let mut cmd = Command::new(BIN);
-            cmd.args(["mcp-coding", "--workspace"]).arg(root.path());
-            if managed {
-                cmd.arg("--environment-processes");
-            }
-            if enabled {
-                cmd.args([
-                    "--openshell-git",
-                    "--openshell-git-repository",
-                    "org/project",
-                ]);
-            }
-            let mut child = cmd
-                .env("GITHUB_TOKEN", REF)
-                .env_remove("GH_TOKEN")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .kill_on_drop(true)
-                .spawn()
-                .unwrap();
-            let mut reader = BufReader::new(child.stdout.take().unwrap());
-            let init=rpc(&mut child,&mut reader,1,"initialize",json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"git-test","version":"1"}})).await;
-            assert!(init["error"].is_null());
-            child
-                .stdin
-                .as_mut()
-                .unwrap()
-                .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
-                .await
-                .unwrap();
-            let command = if enabled {
-                "test -n \"$GITHUB_TOKEN\" && printf 'protocol=https\\nhost=github.com\\npath=org/project.git\\n\\n' | git credential fill | grep -q '^password=openshell:resolve:env:' && printf 'scoped helper works'"
-            } else {
-                "test -z \"$GITHUB_TOKEN\" && test -z \"$GIT_CONFIG_COUNT\" && printf 'no credential inherited'"
-            };
-            let out = rpc(
-                &mut child,
-                &mut reader,
-                2,
-                "tools/call",
-                json!({"name":"run_shell","arguments":{"command":command,"yield_ms":10000}}),
-            )
-            .await;
-            let data: Value =
-                serde_json::from_str(out["result"]["content"][0]["text"].as_str().unwrap())
-                    .unwrap();
-            assert_eq!(
-                data["exit_code"], 0,
-                "process failed; managed={managed}, enabled={enabled}"
-            );
-            assert_eq!(
-                data["stdout"],
-                if enabled {
-                    "scoped helper works"
-                } else {
-                    "no credential inherited"
+            // Reconnect to the SAME workspace/manager with a distinct current
+            // reference. A manager that caches its launch environment must fail
+            // this assertion, even if an upstream still accepts the old token.
+            for reference in [REF, "openshell:resolve:env:v2_refreshed_GITHUB_TOKEN"] {
+                let mut cmd = Command::new(BIN);
+                cmd.args(["mcp-coding", "--workspace"]).arg(root.path());
+                if managed {
+                    cmd.arg("--environment-processes");
                 }
-            );
-            assert!(!data.to_string().contains(REF));
-            child.stdin.take();
-            child.wait().await.unwrap();
-            // A manager is sandbox-owned, not tool-connection-owned. End only
-            // this fixture's idle manager by dropping its process container in
-            // the Linux Docker test; no process IDs outside the fixture are used.
+                if enabled {
+                    cmd.args([
+                        "--openshell-git",
+                        "--openshell-git-repository",
+                        "org/project",
+                    ]);
+                }
+                let mut child = cmd
+                    .env("GITHUB_TOKEN", reference)
+                    .env_remove("GH_TOKEN")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap();
+                let mut reader = BufReader::new(child.stdout.take().unwrap());
+                let init=rpc(&mut child,&mut reader,1,"initialize",json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"git-test","version":"1"}})).await;
+                assert!(init["error"].is_null());
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+                    .await
+                    .unwrap();
+                let command = if enabled {
+                    format!("test \"$GITHUB_TOKEN\" = '{reference}' && printf 'protocol=https\\nhost=github.com\\npath=org/project.git\\n\\n' | git credential fill | grep -Fxq 'password={reference}' && printf 'scoped helper works'")
+                } else {
+                    "test -z \"$GITHUB_TOKEN\" && test -z \"$GIT_CONFIG_COUNT\" && printf 'no credential inherited'".into()
+                };
+                let out = rpc(
+                    &mut child,
+                    &mut reader,
+                    2,
+                    "tools/call",
+                    json!({"name":"run_shell","arguments":{"command":command,"yield_ms":10000}}),
+                )
+                .await;
+                let data: Value =
+                    serde_json::from_str(out["result"]["content"][0]["text"].as_str().unwrap())
+                        .unwrap();
+                assert_eq!(
+                    data["exit_code"], 0,
+                    "process failed; managed={managed}, enabled={enabled}"
+                );
+                assert_eq!(
+                    data["stdout"],
+                    if enabled {
+                        "scoped helper works"
+                    } else {
+                        "no credential inherited"
+                    }
+                );
+                assert!(!data.to_string().contains(REF));
+                assert!(!data.to_string().contains(reference));
+                child.stdin.take();
+                child.wait().await.unwrap();
+                // A manager is sandbox-owned, not tool-connection-owned. End only
+                // this fixture's idle manager by dropping its process container in
+                // the Linux Docker test; no process IDs outside the fixture are used.
+            }
         }
     }
 }

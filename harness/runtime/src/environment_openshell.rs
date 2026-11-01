@@ -663,8 +663,8 @@ struct ProviderMetadata {
     metadata: Option<Meta>,
     #[prost(string, tag = "2")]
     kind: String,
-    // Credential/config fields deliberately omitted. Never fetch/export values
-    // into the sandbox or persist them in the execution identity.
+    // Credential/config fields deliberately omitted. Do not decode/export their
+    // values into the sandbox or persist them in the execution identity.
     #[prost(string, tag = "6")]
     profile_workspace: String,
 }
