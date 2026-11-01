@@ -368,8 +368,11 @@ pub async fn controller(
     store.bind_service(&service.id, &service.namespace)?;
     let installed = installation(&config)?;
     let mut type_cursor = String::new();
+    let mut placement_cursor = String::new();
     while !stop.is_cancelled() {
         crate::service_team_types::refresh(&config, &store, &installed, &mut type_cursor).await?;
+        crate::service_team_placements::refresh(&config, &store, &installed, &mut placement_cursor)
+            .await?;
         crate::service_team_workspaces::prepare_once(&config, &store, &installed).await?;
         delete_once(&config, &store, &installed).await?;
         store.provision_agent_team_child_for(Some(&installed))?;
@@ -583,25 +586,44 @@ pub async fn worker_with_options(
                         r.status == openworker_runtime::team_type_catalog::Status::Approved
                     })
                 {
-                    let key = record.runtime_id();
-                    if cache.lock().unwrap().contains_key(&key)
-                        || !store.service_team_type_ready(&team.document.id, &key)?
-                    {
+                    let runtime_id = record.runtime_id();
+                    if !store.service_team_type_ready(&team.document.id, &runtime_id)? {
                         continue;
                     }
-                    let c = crate::service_team_types::config(&config, &team, record)?;
-                    let rt = c.runtime(&format!("private-{}", &key[3..23]), store.clone())?;
-                    let select = selector(&c, &rt)?;
-                    rt.shutdown().await?;
-                    store.verify_service_team_type_runtime(
-                        &team.document.id,
-                        &key,
-                        &select.bundle_digest,
-                    )?;
-                    let factory: Factory = Arc::new(move |sid, s| {
-                        c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
-                    });
-                    cache.lock().unwrap().insert(key, (select, factory));
+                    let mut profiles = std::collections::BTreeSet::from([team.profile.id.clone()]);
+                    if team.document.placement_selection {
+                        profiles.extend(types.ceiling.profiles.keys().cloned());
+                    }
+                    for pid in profiles {
+                        let key = format!("{runtime_id}:{pid}");
+                        if cache.lock().unwrap().contains_key(&key) {
+                            continue;
+                        }
+                        let Some(profile) = entries
+                            .iter()
+                            .find(|p| p.kind == "profile" && p.id == pid && p.activated)
+                        else {
+                            continue;
+                        };
+                        let c = crate::service_team_types::placed_config(
+                            &config, &team, record, profile,
+                        )?;
+                        let rt = c.runtime(
+                            &format!("private-{}", &digest(key.as_bytes())[..20]),
+                            store.clone(),
+                        )?;
+                        let select = selector(&c, &rt)?;
+                        rt.shutdown().await?;
+                        store.verify_service_team_type_runtime(
+                            &team.document.id,
+                            &runtime_id,
+                            &select.bundle_digest,
+                        )?;
+                        let factory: Factory = Arc::new(move |sid, s| {
+                            c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
+                        });
+                        cache.lock().unwrap().insert(key, (select, factory));
+                    }
                 }
             }
             tokio::select! {_=abort.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}}

@@ -123,3 +123,38 @@ These use isolated PostgreSQL schemas and synthetic provider observations, with
 no gateway/model traffic. They establish database/controller contracts, not
 physical sandbox isolation or resource enforcement. Public provisioning remains
 gated until real OpenShell qualification.
+
+## Original child bindings, retention and audit lock ordering
+
+Additional real PostgreSQL cases use ordinary service configuration to bind a
+New child, reuse that sandbox for another member, and refuse a forged switch to
+the lead's otherwise compatible environment. Closing/retiring the first member
+cannot remove another reserved or active member's deletion reference. A controller
+can finish retirement after session closure committed before a crash. Revocation
+after binding closes only the unstarted child and keeps owned work available for
+explicit original-resource cleanup; the existing deletion queue selects the
+original deployment/profile.
+
+A deterministic lock test holds the lead row, blocks an authenticated submission
+on it, and proves trusted child admission can still acquire the audit append
+lock. This prevents the observed submission-versus-child-creation deadlock without
+automatically replaying an uncertain action. A separate case proves database
+errors keep their sanitized infrastructure type rather than turning into a
+permanent placement denial. Existing artifact/control/submission regressions
+check that moving audit appends preserves transactional rollback and attribution.
+
+Cases: `placement_binding_member_reuse_retirement_and_original_cleanup`,
+`placement_revoked_after_binding_never_admits_child_or_destroys_retained_work`,
+`placement_admission_cannot_deadlock_turn_submission_on_security_audit` and
+`placement_controller_distinguishes_sanitized_storage_outage_from_denial` in
+[placement contracts](../../harness/server-reference/src/service_team_placements_tests.rs).
+
+The expanded [OpenShell suite](../../harness/server-reference/tests/service_v2.rs)
+also creates two instances of the same builder in separate smaller sandboxes,
+loses a real child-create reply, restarts competing controllers and checks the
+original UID. A private verifier reads the builder's selected existing directory;
+another child and the lead prove those files are absent from their environments.
+Profile identity and physical Kubernetes limits are checked. The same run retains
+the shared worktree/commit/conflict workflow and exercises TypeScript service
+placement configuration and member execution. Cleanup uses each original target
+profile, including unacknowledged creations, and confirms deletion.

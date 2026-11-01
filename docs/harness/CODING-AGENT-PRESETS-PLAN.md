@@ -116,6 +116,8 @@ Acceptance:
 
 ### C4 — Isolated coding-team preset and artifact handoff
 
+[Implementation details and build order](CODING-HANDOFF-IMPLEMENTATION.md).
+
 Stage an independent checkout/source snapshot at a recorded base revision in each
 worker environment. Do not mount a linked worktree dependent on the lead's Git
 metadata. Implement one durable handoff record for repository/base, submitted
@@ -385,3 +387,64 @@ used a reopened store without claiming the lead lease; corrected that fixture
 read to use its original owning store. These use synthetic provider observations;
 OpenShell creation and public placement admission remain gated pending the next
 C3 binding/controller/cleanup qualification. C3 is not complete or merged.
+
+### C3 journal — binding/controller integration in qualification
+
+Connected the outbox to the trusted OpenShell controller. New and Member bindings
+are pinned before workspace preparation and child admission; workspace markers,
+runner roots and private runtime factories follow the selected environment's
+actual profile. The model sees only choices within the configured delegation.
+Service configuration rejects unsupported grants, mutable profile aliases,
+resource expansion and changed approval/question behavior. Local sandbox-off SDK
+adapters still do not provision external sandboxes.
+
+Added pending/active placement references to deletion checks and extended original
+resource cleanup to team-created environments. Bound members retain their own
+reference when their source retires. Unknown provider outcomes produce durable
+activity plus a lead inbox notice; normal readiness is activity, without an extra
+wake that could distract the lead from its current task. Sanitized storage
+unavailability now has a type, so controller failures cannot be mistaken for a
+permanent denial.
+
+All 22 server-library tests passed (1.48 seconds), including normal service
+configuration and member reuse/retirement. TypeScript placement serialization
+(two tests) and all nine HTTP/service tests pass. The first physical OpenShell
+attempt cleaned up after a test read occurred before child admission: a completed
+lead wait can mean inbox wake, not child completion. The rerun checks durable
+member completion and also injects a real lost child-create reply before
+restarting competing controllers. Physical qualification is ongoing; C3 remains
+unmerged pending its final checks.
+
+The physical rerun exposed an actual PostgreSQL deadlock during the existing
+worker-restart case. The database lock graph showed an API submission holding
+the global security-audit append lock while waiting for the lead session, with
+child admission holding that lead while appending its creation audit. Moved
+submission, control and artifact audit appends after their data/row locks, keeping
+receipt/event/audit atomicity and commit-ordered audit cursors. Added a
+barrier-based test that holds the lead row, starts a blocked authenticated
+submission and proves the trusted admission can still obtain its audit lock.
+Also added sanitized storage-outage classification and post-binding credential
+revocation/retained-resource cleanup cases. These are being rerun before the next
+physical qualification. No transient operation is blindly replayed to hide errors.
+
+The deterministic audit-lock regression and all 25 server-library cases passed
+(1.70 seconds), followed by 62 PostgreSQL regressions across seven suites,
+49 core team/definition/catalog cases plus eight real filesystem/worktree cases,
+two TypeScript placement cases and nine HTTP/SSE cases. Strict all-target Clippy
+passed. The following physical attempt reached the child workspace path and
+correctly refused a missing selected directory: directory selection means use an
+existing directory, not create it. Corrected the fixture to let the new builder
+write `build/proof.txt`, then bind a private verifier to that existing directory.
+The adapter now prepares that verifier's cwd in the chosen child environment;
+C4 remains responsible for staging independent source checkouts. Original
+sandbox cleanup completed after both failed physical attempts.
+
+Physical C3 checks now pass through original-UID recovery, two independent
+smaller sandboxes and a private verifier reading the builder's selected directory.
+Kubernetes reports 1 CPU/768 MiB for the lead and 1 CPU/512 MiB for each new child.
+The combined fixture then correctly hit its aggregate default team token budget
+before the older shared-builder commit step. The scripted model intentionally
+retains conservative output reservations. Set an explicit bounded test-only team
+budget for this expanded scenario; production defaults and limit handling are
+unchanged. Rerunning the full sequence, including cleanup, before marking C3
+verified.
