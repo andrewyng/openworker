@@ -482,6 +482,9 @@ pub async fn export(
     let bundle_path = directory.join("source.bundle");
     if fresh {
         ensure!(!inspect_only, "Inspection cannot create an export marker");
+        if pin.repository == pin.root {
+            crate::team_workspace::exclude_bookkeeping(&pin.common)?;
+        }
         git(
             &pin.repository,
             &[

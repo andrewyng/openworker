@@ -770,3 +770,10 @@ requires reconnect-and-inspect, as intended; fixture setup reads durable metadat
 as an observer rather than claiming the model worker's lease. All-target Clippy
 passes for runtime, PostgreSQL, SDK (with test support) and service (OpenShell test
 feature). No new production HTTP capability is enabled by this checkpoint.
+
+Root-repository staging review resolved: fixed bounded local `info/exclude` rule
+for first export/worktree dispatch, preserving user patterns and tracked ignore
+files. Read-only recovery does not edit the exclusion. Real Git regression covers
+`git add -A`, a preceding negative ignore pattern, unchanged tracked `.gitignore`,
+and symlink refusal. Runtime validation: **16 handoff Git cases and eight workspace
+cases pass**. Durable child-import controller is the next C4 slice.

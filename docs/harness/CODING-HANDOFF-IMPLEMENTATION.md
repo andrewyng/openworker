@@ -1,7 +1,7 @@
 # Isolated coding source and handoff implementation
 
-C4 implementation note. Status: preparing the implementation after C3 provider
-qualification. This is not a statement that the isolated preset has shipped.
+C4 implementation note. Status: source staging and admission guards implemented;
+durable child import and model handoff qualification in progress. This is not a statement that the isolated preset has shipped.
 
 Related: [milestones and journal](CODING-AGENT-PRESETS-PLAN.md),
 [coding variants](CODING-AGENT-PRESETS.md),
@@ -179,3 +179,12 @@ import, then `workspace/verify` checks its filesystem identities at launch. The
 service import outbox must pin and acknowledge this receipt before child admission.
 The newer method/receipt requires a matching ToolRunner image; the preceding
 source/receiver physical evidence alone does not qualify this new admission path.
+
+## Root-repository bookkeeping
+
+For a repository at the workspace root, first dispatch appends a fixed
+`/.openworker/` exclusion to its local Git `info/exclude`, after recording the
+original operation. Existing patterns and tracked `.gitignore` remain unchanged.
+The metadata file is bounded to 64 KiB and symlinks are rejected. Inspection does
+not modify it. This keeps private transfer/worktree markers out of ordinary
+`git add -A`; it is local bookkeeping, not a stronger sandbox boundary.
