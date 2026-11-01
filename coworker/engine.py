@@ -33,6 +33,7 @@ from . import toolchain as _toolchain
 from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
+from .observability.ids import new_ulid
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
 # IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
@@ -437,7 +438,7 @@ class TurnEngine:
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
-            self.messages.insert(0, {"role": "system", "content": instructions})
+            self._add_message({"role": "system", "content": instructions}, at=0)
         self._cancel = asyncio.Event()
         # Whether the latest assistant turn hit the output-token limit — decides which
         # diagnosis a mangled (unparseable-args) tool call gets answered with.
@@ -490,6 +491,19 @@ class TurnEngine:
         finally:
             self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
 
+    def _add_message(self, message: dict[str, Any], *, at: Optional[int] = None) -> None:
+        """Append (or, with `at`, insert) one message into the history, stamping its `mid`.
+
+        `mid` is a ULID that never changes, so a recorded step can point at the message it
+        produced even after a stub is inserted mid-history or the file is rewritten
+        (observability E21). It is a sidecar like `ts`: stripped before any provider sees it.
+        """
+        message.setdefault("mid", new_ulid())
+        if at is None:
+            self.messages.append(message)
+        else:
+            self.messages.insert(at, message)
+
     def _timed_result(self, tool_call, result):
         message = _tool_result_message(tool_call, result)
         if tool_call.id in self._tool_timings:
@@ -536,7 +550,7 @@ class TurnEngine:
             message["_display"] = display
         if activity:
             message["_activity"] = activity
-        self.messages.append(message)
+        self._add_message(message)
         self._cancel.clear()
         if not self._dangerous_warned:
             if self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS:
@@ -638,7 +652,7 @@ class TurnEngine:
         if text:
             notice["text"] = text
         notice.update({k: v for k, v in fields.items() if v is not None})
-        self.messages.append(notice)
+        self._add_message(notice)
 
     @_summarizes_turn
     async def retry(self) -> AsyncIterator[Event]:
@@ -735,7 +749,7 @@ class TurnEngine:
                             }
                         )
             for offset, stub in enumerate(stubs, start=1):
-                self.messages.insert(i + offset, stub)
+                self._add_message(stub, at=i + offset)
             i += 1 + len(stubs)
 
     def _unanswered_trailing_tool_calls(self) -> list[ToolCall]:
@@ -835,7 +849,7 @@ class TurnEngine:
                 # Same contract as the stop path below: the partial the user watched
                 # arrive survives the failure.
                 if streamed or streamed_reasoning:
-                    self.messages.append(_assistant_message(_partial_turn()))
+                    self._add_message(_assistant_message(_partial_turn()))
                 friendly = friendly_model_error(self.model, exc)
                 payload = {
                     "error": friendly or str(exc),
@@ -849,7 +863,7 @@ class TurnEngine:
             if self._cancel.is_set() and turn is None:
                 # Stopped mid-stream: persist exactly what the user watched arrive.
                 if streamed or streamed_reasoning:
-                    self.messages.append(_assistant_message(_partial_turn()))
+                    self._add_message(_assistant_message(_partial_turn()))
                 self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
@@ -872,7 +886,7 @@ class TurnEngine:
                     cleaned, self.registry.schemas() or None
                 ):
                     turn.text = cleaned
-            self.messages.append(
+            self._add_message(
                 _assistant_message(
                     turn,
                     model=self.model,
@@ -916,7 +930,7 @@ class TurnEngine:
                         cut["replay"] = "stub"
                     if self._continuations < MAX_TRUNCATION_CONTINUATIONS:
                         self._continuations += 1
-                        self.messages.append(
+                        self._add_message(
                             {
                                 "role": "user",
                                 "content": TRUNCATION_NUDGE,
@@ -1369,7 +1383,7 @@ class TurnEngine:
                 "received nothing. `_raw` is not a parameter — it is the unparsed text of "
                 "the failed call. Re-issue the call using the tool's declared parameters."
             )
-        self.messages.append(_tool_error_message(tool_call, reason))
+        self._add_message(_tool_error_message(tool_call, reason))
         self._audit(tool_call, stage="finished", status="error", reason=reason)
         return Event(
             EventType.TOOL_FINISHED,
@@ -1380,7 +1394,7 @@ class TurnEngine:
         """The stop-path answer for a call that will not run: a tool-error result in the
         history (hosted chat templates reject orphaned tool_calls, and durable-resume
         would otherwise re-prompt it) + the finished event for the tool card."""
-        self.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+        self._add_message(_tool_error_message(tool_call, "interrupted by user"))
         self._audit(
             tool_call, stage="finished", status="interrupted", reason="user stop"
         )
@@ -2000,7 +2014,7 @@ class TurnEngine:
                     "approval_origin": "reviewer_denied",
                     **({"approval_note": card_note} if card_note else {}),
                 }
-                self.messages.append(deny_msg)
+                self._add_message(deny_msg)
                 self._audit(
                     tool_call,
                     stage="finished",
@@ -2142,7 +2156,7 @@ class TurnEngine:
                     "reason": "The worker request was already resolved. No further action was taken.",
                 }
                 self._approval_origins.pop(tool_call.id, None)
-                self.messages.append(self._timed_result(tool_call, result))
+                self._add_message(self._timed_result(tool_call, result))
                 self._audit(tool_call, stage="approval_resolved", call_id=tool_call.id, status="superseded", reason=result["reason"])
                 self._audit(tool_call, stage="finished", status="skipped", reason=result["reason"])
                 yield Event(EventType.TOOL_FINISHED, {
@@ -2238,7 +2252,7 @@ class TurnEngine:
                     **({"approval_note": origin["note"]} if origin.get("note") else {}),
                     **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
                 }
-            self.messages.append(err_msg)
+            self._add_message(err_msg)
             yield Event(
                 EventType.TOOL_FINISHED,
                 {"name": tool_call.name, "status": "denied", "reason": reason},
@@ -2248,7 +2262,7 @@ class TurnEngine:
             return
 
         if spec is None:
-            self.messages.append(
+            self._add_message(
                 _tool_error_message(tool_call, f"unknown tool: {tool_call.name}")
             )
             yield Event(
@@ -2379,7 +2393,7 @@ class TurnEngine:
             if self._tool_result_spill_dir is not None:
                 for spilled in self._tool_result_spill_dir.glob(f"{self._step:04d}-*"):
                     self._agent_files.mark_outside(spilled)
-        self.messages.append(message)
+        self._add_message(message)
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
         if hidden or stripped:
@@ -2514,7 +2528,7 @@ class TurnEngine:
             ) or {"approved": False, "error": "no response"}
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2566,7 +2580,7 @@ class TurnEngine:
                     "The user declined. Carry on without it and say plainly what you could not do.",
                 )
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(tool_call, stage="finished", status=status, result=result, result_preview=_preview(result))
         yield Event(
             EventType.TOOL_FINISHED,
@@ -2622,7 +2636,7 @@ class TurnEngine:
         if result.get("approved") and result.get("team_id"):
             created = {"team_id": result["team_id"], "workers": result.get("workers") or []}
             message["_display"] = {"team_created": created}
-        self.messages.append(message)
+        self._add_message(message)
         self._audit(
             tool_call,
             stage="finished",
@@ -2695,7 +2709,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2770,7 +2784,7 @@ class TurnEngine:
                 }
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2889,7 +2903,7 @@ class TurnEngine:
                 )
 
         status = "ok" if result.get("installed") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2984,7 +2998,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("granted") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -3065,7 +3079,7 @@ class TurnEngine:
         )
         if status == "ok":
             self._note_ask_replies(result, question)
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -3121,14 +3135,14 @@ class TurnEngine:
                 message["source"] = source
             if activity:
                 message["_activity"] = activity
-            self.messages.append(message)
+            self._add_message(message)
         self._steering = []
 
     def _outbound_messages(self) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
 
-        Every message is stripped of the display-only sidecars — `source`, `_display`, and
-        `ts` — (providers reject unknown keys), unconditionally — whether or not a
+        Every message is stripped of the display-only sidecars — `source`, `_display`, `ts`
+        and `mid` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
         last user message. A partial assistant turn abandoned by a turn that died mid-stream —
@@ -3137,7 +3151,7 @@ class TurnEngine:
         Never mutates `self.messages`, so none of this is persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
-        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
+        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `mid` (stable message ids), `reasoning`
         # (thinking text), `usage` (token counts), `finish_reason` (how the reply ended)
         # and `max_output_tokens` (the ceiling sent) — copying only messages that carry
         # one. Whole `notice` messages (error/interrupted/model-switch markers) are
@@ -3149,6 +3163,7 @@ class TurnEngine:
             "_display",
             "_outside",
             "ts",
+            "mid",
             "reasoning",
             "usage",
             "finish_reason",

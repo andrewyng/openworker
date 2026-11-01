@@ -1,0 +1,25 @@
+{
+ "buckets_by_turn": {
+  "sess_A:turn_1": {
+   "auto_approver": 0,
+   "model": 1200,
+   "other": 0,
+   "other_shown": false,
+   "summary": 0,
+   "tools": 0,
+   "total": 1200,
+   "waiting": 0
+  }
+ },
+ "usage": {
+  "at_least": true,
+  "auto_approver_checks_not_reported": 0,
+  "by_model": {},
+  "by_purpose": {},
+  "cache_share": null,
+  "failed_calls": 0,
+  "overflow_calls": 0,
+  "pill": 0,
+  "unreported_calls": 1
+ }
+}

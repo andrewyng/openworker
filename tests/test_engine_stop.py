@@ -92,6 +92,7 @@ def test_stop_mid_stream_keeps_partial_text(tmp_path):
         "role": "notice",
         "kind": "interrupted",
         "ts": engine.messages[-1]["ts"],
+        "mid": engine.messages[-1]["mid"],
     }
     partial = engine.messages[-2]
     assert partial["role"] == "assistant" and partial["content"].startswith("w0 ")

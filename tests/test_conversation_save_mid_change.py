@@ -85,7 +85,9 @@ def test_restart_mid_approval_then_mode_switch_then_new_turn(tmp_path):
     rec.messages.append({"role": "notice", "kind": "mode_switch", "text": "Discuss is on."})
     store.save(rec)
 
-    TurnEngine._repair_dangling_tool_calls(SimpleNamespace(messages=rec.messages))
+    engine = SimpleNamespace(messages=rec.messages)
+    engine._add_message = lambda m, at=None: TurnEngine._add_message(engine, m, at=at)
+    TurnEngine._repair_dangling_tool_calls(engine)
     rec.messages.append({"role": "user", "content": "never mind"})
     rec.messages.append({"role": "assistant", "content": "OK"})
     store.save(rec)

@@ -1,0 +1,29 @@
+{
+ "buckets_by_turn": {
+  "sess_A:turn_1": {
+   "auto_approver": 0,
+   "model": 5000,
+   "other": 0,
+   "other_shown": false,
+   "summary": 0,
+   "tools": 600,
+   "total": 5600,
+   "waiting": 0
+  }
+ },
+ "usage": {
+  "at_least": true,
+  "auto_approver_checks_not_reported": 0,
+  "by_model": {
+   "openai:gpt-5.1": 21700
+  },
+  "by_purpose": {
+   "main": 21700
+  },
+  "cache_share": 0.876,
+  "failed_calls": 0,
+  "overflow_calls": 0,
+  "pill": 21700,
+  "unreported_calls": 1
+ }
+}

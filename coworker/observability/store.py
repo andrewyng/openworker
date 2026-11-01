@@ -1,0 +1,412 @@
+"""`recordings.db`: where the recorder's turns and steps are saved (technical design §11).
+
+A SQLite file next to `coworker.db`, on the machine that ran the work. It is separate from
+`coworker.db` on purpose: recordings are pruned after 30 days while sessions are kept, the
+layout can change without migrating the sessions database, and deleting this one file resets
+all recordings and nothing else.
+
+These tables are the Python layout only. The contract between engines is the recording JSON
+of recording-format.md; `load_recording()` gives it back.
+
+Writing never makes a turn wait. `write_turn` and `write_step` only put the record in a
+pending map keyed by its id, so a step written three times before the writer runs is written
+once, with its latest state; one background thread writes the map in a single transaction
+every `FLUSH_MS`. Nothing is dropped, and no queue can grow past the number of records that
+changed since the last write.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import threading
+import time
+import zlib
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, Iterator, Optional
+
+log = logging.getLogger(__name__)
+
+FILENAME = "recordings.db"
+RETENTION_DAYS = 30  # feature spec Q12
+FLUSH_MS = 50
+SWEEP_EVERY_S = 24 * 60 * 60
+SWEEP_BATCH = 2000  # rows per transaction, so the file is never locked for long (P-8)
+SWEEP_PAUSE_S = 0.05
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS turns (
+  turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, seq INTEGER, kind TEXT, trigger TEXT,
+  started_at INTEGER, duration_ms INTEGER, status TEXT, incomplete INTEGER DEFAULT 0,
+  approval_mode TEXT, attended INTEGER, reviewer TEXT, stamp TEXT,
+  first_message_id TEXT, last_message_id TEXT,
+  schema_version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX IF NOT EXISTS turns_session ON turns(session_id, seq);
+CREATE INDEX IF NOT EXISTS turns_started ON turns(started_at);
+CREATE TABLE IF NOT EXISTS steps (
+  step_id TEXT PRIMARY KEY, turn_id TEXT, session_id TEXT, parent_step_id TEXT,
+  seq INTEGER, kind TEXT, name TEXT, started_at INTEGER, duration_ms INTEGER, status TEXT,
+  call_id TEXT, call_index INTEGER, message_id TEXT,
+  shadow INTEGER DEFAULT 0, after_turn INTEGER DEFAULT 0,
+  purpose TEXT, model TEXT, usage_reported INTEGER,
+  input_fresh INTEGER, cache_read INTEGER, cache_write INTEGER, output INTEGER, reasoning INTEGER,
+  error_type TEXT, served_model TEXT, provider_request_id TEXT, context_window INTEGER,
+  attrs TEXT, content TEXT, provider_meta BLOB);
+CREATE INDEX IF NOT EXISTS steps_turn ON steps(turn_id, seq);
+CREATE INDEX IF NOT EXISTS steps_call ON steps(session_id, call_id);
+CREATE INDEX IF NOT EXISTS steps_usage ON steps(session_id, kind, purpose, model);
+CREATE INDEX IF NOT EXISTS steps_started ON steps(started_at);
+CREATE TABLE IF NOT EXISTS exchange_pieces (
+  sha256 TEXT PRIMARY KEY, data BLOB NOT NULL, size INTEGER NOT NULL, first_seen INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS step_pieces (
+  step_id TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (step_id, sha256));
+CREATE INDEX IF NOT EXISTS step_pieces_sha ON step_pieces(sha256);
+"""
+
+_TURN_COLUMNS = (
+    "turn_id", "session_id", "seq", "kind", "trigger", "started_at", "duration_ms", "status",
+    "incomplete", "approval_mode", "attended", "reviewer", "stamp", "first_message_id",
+    "last_message_id", "schema_version",
+)
+_STEP_COLUMNS = (
+    "step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at",
+    "duration_ms", "status", "call_id", "call_index", "message_id", "shadow", "after_turn",
+    "purpose", "model", "usage_reported", "input_fresh", "cache_read", "cache_write", "output",
+    "reasoning", "error_type", "served_model", "provider_request_id", "context_window", "attrs",
+    "content", "provider_meta",
+)
+_USAGE_PARTS = ("input_fresh", "cache_read", "cache_write", "output", "reasoning")
+
+
+def _upsert(table: str, columns: tuple[str, ...], key: str, sticky: tuple[str, ...] = ()) -> str:
+    sets = ", ".join(
+        f"{c} = MAX({table}.{c}, excluded.{c})" if c in sticky else f"{c} = excluded.{c}"
+        for c in columns if c != key
+    )
+    return (
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))}) "
+        f"ON CONFLICT({key}) DO UPDATE SET {sets}"
+    )
+
+
+# `incomplete` only ever goes from 0 to 1.
+_UPSERT_TURN = _upsert("turns", _TURN_COLUMNS, "turn_id", sticky=("incomplete",))
+_UPSERT_STEP = _upsert("steps", _STEP_COLUMNS, "step_id")
+
+
+def _js(value: Any) -> Optional[str]:
+    return None if value is None else json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _bool(value: Any) -> Optional[int]:
+    return None if value is None else int(bool(value))
+
+
+def _turn_row(t: dict[str, Any]) -> tuple:
+    return (
+        t["turn_id"], t["session_id"], t.get("seq"), t.get("kind"), t.get("trigger"),
+        t.get("started_at"), t.get("duration_ms"), t.get("status"), int(bool(t.get("incomplete"))),
+        t.get("approval_mode"), _bool(t.get("attended")), _js(t.get("reviewer")),
+        _js(t.get("stamp") or {}), t.get("first_message_id"), t.get("last_message_id"),
+        t.get("schema_version", 1),
+    )
+
+
+def _piece_refs(value: Any) -> Iterator[str]:
+    """Every piece an exchange points at: manifest `$blob`s, a whole-body `blob`, `body_blob`."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k in ("$blob", "blob", "body_blob") and isinstance(v, str):
+                yield v
+            else:
+                yield from _piece_refs(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _piece_refs(v)
+
+
+def _step_row(s: dict[str, Any]) -> tuple:
+    attrs = dict(s.get("attrs") or {})
+    # provider_meta has its own compressed column, so the light step list and the usage sums
+    # never read it (§5.2.1, §11).
+    meta = attrs.pop("provider_meta", None)
+    usage = attrs.get("usage") if isinstance(attrs.get("usage"), dict) else None
+    if s.get("kind") == "model":
+        reported: Optional[int] = int(usage is not None)
+    else:
+        reported = _bool(attrs.get("usage_reported"))
+    facts = attrs.get("provider_facts") or {}
+    error = attrs.get("error") if isinstance(attrs.get("error"), dict) else {}
+    return (
+        s["step_id"], s.get("turn_id"), s.get("session_id"), s.get("parent_step_id"), s.get("seq"),
+        s.get("kind"), s.get("name"), s.get("started_at"), s.get("duration_ms"), s.get("status"),
+        s.get("call_id"), s.get("call_index"), s.get("message_id"), int(bool(s.get("shadow"))),
+        int(bool(s.get("after_turn"))), attrs.get("purpose"), attrs.get("model"), reported,
+        *((usage or {}).get(p) for p in _USAGE_PARTS),
+        error.get("type"), facts.get("served_model"), facts.get("provider_request_id"),
+        attrs.get("context_window"), _js(attrs), _js(s.get("content") or {}),
+        None if meta is None else zlib.compress(_js(meta).encode("utf-8")),
+    )
+
+
+class RecordingStore:
+    """`recordings.db`. One connection, guarded by a lock; one writer thread."""
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        retention_days: Optional[int] = RETENTION_DAYS,
+        background: bool = True,
+    ) -> None:
+        self.path = Path(path).expanduser()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.retention_days = retention_days
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+        # Records waiting to be written, by id; the latest state of each replaces the last.
+        self._pending_turns: dict[str, dict[str, Any]] = {}
+        self._pending_steps: dict[str, dict[str, Any]] = {}
+        self._pending_lock = threading.Lock()
+        self._wake = threading.Event()
+        self._closed = threading.Event()
+        self._last_sweep = 0.0
+        self._thread: Optional[threading.Thread] = None
+        if background:
+            self._thread = threading.Thread(
+                target=self._run, name="recordings-writer", daemon=True
+            )
+            self._thread.start()
+
+    @classmethod
+    def beside(cls, coworker_db_dir: str | Path, **kw: Any) -> "RecordingStore":
+        """The store for a data folder: `recordings.db` next to its `coworker.db`."""
+        return cls(Path(coworker_db_dir) / FILENAME, **kw)
+
+    # -- writing (called by the recorder; never blocks on the disk) --------------------------
+    def write_turn(self, record: dict[str, Any]) -> None:
+        with self._pending_lock:
+            self._pending_turns[record["turn_id"]] = record
+        self._wake.set()
+
+    def write_step(self, record: dict[str, Any]) -> None:
+        with self._pending_lock:
+            self._pending_steps[record["step_id"]] = record
+        self._wake.set()
+
+    def flush(self) -> None:
+        """Write everything pending now, on the calling thread."""
+        # The connection lock is taken before the pending map is swapped, so a session
+        # deleted meanwhile cannot be written back by a flush that started before it.
+        with self._lock:
+            with self._pending_lock:
+                turns, self._pending_turns = self._pending_turns, {}
+                steps, self._pending_steps = self._pending_steps, {}
+            if not turns and not steps:
+                return
+            try:
+                with self._conn:
+                    self._conn.executemany(_UPSERT_TURN, [_turn_row(t) for t in turns.values()])
+                    self._conn.executemany(_UPSERT_STEP, [_step_row(s) for s in steps.values()])
+                    for s in steps.values():
+                        refs = set(_piece_refs((s.get("content") or {}).get("exchange")))
+                        if refs:
+                            self._conn.executemany(
+                                "INSERT OR IGNORE INTO step_pieces (step_id, sha256) VALUES (?, ?)",
+                                [(s["step_id"], r) for r in refs],
+                            )
+            except Exception:
+                log.exception("recordings: write failed (%d turns, %d steps)", len(turns), len(steps))
+
+    def _run(self) -> None:
+        while not self._closed.is_set():
+            # Asleep until there is something to write (or a day passes, for the sweep).
+            self._wake.wait(timeout=SWEEP_EVERY_S)
+            self._wake.clear()
+            self.flush()
+            if (
+                self.retention_days is not None
+                and time.time() - self._last_sweep >= SWEEP_EVERY_S
+            ):
+                self._last_sweep = time.time()
+                try:
+                    self.sweep()
+                except Exception:
+                    log.exception("recordings: retention sweep failed")
+            self._closed.wait(FLUSH_MS / 1000)
+        self.flush()
+
+    def close(self) -> None:
+        self._closed.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        else:
+            self.flush()
+        with self._lock:
+            self._conn.close()
+
+    # -- exchange pieces (TD-17) --------------------------------------------------------------
+    def put_piece(self, data: bytes) -> str:
+        """Store one exchange piece once, compressed, keyed by its SHA-256. Returns the key."""
+        key = sha256(data).hexdigest()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO exchange_pieces (sha256, data, size, first_seen) "
+                "VALUES (?, ?, ?, ?)",
+                (key, zlib.compress(data), len(data), int(time.time() * 1000)),
+            )
+        return key
+
+    def get_piece(self, key: str) -> Optional[bytes]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM exchange_pieces WHERE sha256 = ?", (key,)
+            ).fetchone()
+        return None if row is None else zlib.decompress(row["data"])
+
+    # -- deleting -----------------------------------------------------------------------------
+    def delete_session(self, session_id: str) -> None:
+        """The session-delete cascade (§11): its turns, steps and the pieces only they used."""
+        with self._lock, self._conn:
+            with self._pending_lock:
+                self._pending_turns = {
+                    k: v for k, v in self._pending_turns.items()
+                    if v.get("session_id") != session_id
+                }
+                self._pending_steps = {
+                    k: v for k, v in self._pending_steps.items()
+                    if v.get("session_id") != session_id
+                }
+            self._conn.execute(
+                "DELETE FROM step_pieces WHERE step_id IN "
+                "(SELECT step_id FROM steps WHERE session_id = ?)",
+                (session_id,),
+            )
+            self._conn.execute("DELETE FROM steps WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
+        self._delete_unused_pieces()
+
+    def sweep(self, *, now_ms: Optional[int] = None) -> int:
+        """Delete turns older than the retention period, their steps, then unused pieces.
+
+        Runs in batches of `SWEEP_BATCH` rows with a short pause between them. Steps with no
+        known turn (proxy calls) age out by their own start time. Returns the turns deleted.
+        """
+        if self.retention_days is None:
+            return 0
+        now = int(time.time() * 1000) if now_ms is None else now_ms
+        cutoff = now - self.retention_days * 24 * 60 * 60 * 1000
+        deleted = 0
+        while True:
+            with self._lock, self._conn:
+                ids = [
+                    r["turn_id"]
+                    for r in self._conn.execute(
+                        "SELECT turn_id FROM turns WHERE started_at < ? LIMIT ?",
+                        (cutoff, SWEEP_BATCH),
+                    )
+                ]
+                if ids:
+                    marks = ", ".join("?" * len(ids))
+                    self._conn.execute(
+                        "DELETE FROM step_pieces WHERE step_id IN "
+                        f"(SELECT step_id FROM steps WHERE turn_id IN ({marks}))",
+                        ids,
+                    )
+                    self._conn.execute(f"DELETE FROM steps WHERE turn_id IN ({marks})", ids)
+                    self._conn.execute(f"DELETE FROM turns WHERE turn_id IN ({marks})", ids)
+                    deleted += len(ids)
+            if len(ids) < SWEEP_BATCH:
+                break
+            time.sleep(SWEEP_PAUSE_S)
+        while True:
+            with self._lock, self._conn:
+                ids = [
+                    r["step_id"]
+                    for r in self._conn.execute(
+                        "SELECT step_id FROM steps WHERE started_at < ? AND "
+                        "(turn_id IS NULL OR turn_id NOT IN (SELECT turn_id FROM turns)) LIMIT ?",
+                        (cutoff, SWEEP_BATCH),
+                    )
+                ]
+                if ids:
+                    marks = ", ".join("?" * len(ids))
+                    self._conn.execute(f"DELETE FROM step_pieces WHERE step_id IN ({marks})", ids)
+                    self._conn.execute(f"DELETE FROM steps WHERE step_id IN ({marks})", ids)
+            if len(ids) < SWEEP_BATCH:
+                break
+            time.sleep(SWEEP_PAUSE_S)
+        self._delete_unused_pieces()
+        return deleted
+
+    def _delete_unused_pieces(self) -> None:
+        while True:
+            with self._lock, self._conn:
+                cur = self._conn.execute(
+                    "DELETE FROM exchange_pieces WHERE sha256 IN (SELECT sha256 FROM "
+                    "exchange_pieces WHERE sha256 NOT IN (SELECT sha256 FROM step_pieces) "
+                    "LIMIT ?)",
+                    (SWEEP_BATCH,),
+                )
+            if cur.rowcount < SWEEP_BATCH:
+                break
+            time.sleep(SWEEP_PAUSE_S)
+
+    # -- reading ------------------------------------------------------------------------------
+    def turn_count(self, session_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM turns WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return int(row["n"])
+
+    def load_recording(self, session_id: str) -> dict[str, Any]:
+        """A session's recording as format 1.0 JSON: {"turns": [...], "steps": [...]}.
+        Turns by (started_at, turn_id); each turn's steps by `seq`."""
+        self.flush()
+        with self._lock:
+            turns = self._conn.execute(
+                "SELECT * FROM turns WHERE session_id = ? ORDER BY started_at, turn_id",
+                (session_id,),
+            ).fetchall()
+            steps = self._conn.execute(
+                "SELECT * FROM steps WHERE session_id = ?", (session_id,)
+            ).fetchall()
+        order = {t["turn_id"]: i for i, t in enumerate(turns)}
+        steps = sorted(
+            steps,
+            key=lambda s: (order.get(s["turn_id"], len(order)), s["seq"] is None, s["seq"] or 0,
+                           s["started_at"] or 0),
+        )
+        return {"turns": [_turn_record(t) for t in turns], "steps": [_step_record(s) for s in steps]}
+
+
+def _turn_record(r: sqlite3.Row) -> dict[str, Any]:
+    d = {k: r[k] for k in _TURN_COLUMNS}
+    d["incomplete"] = bool(d["incomplete"])
+    d["attended"] = None if d["attended"] is None else bool(d["attended"])
+    d["reviewer"] = None if d["reviewer"] is None else json.loads(d["reviewer"])
+    d["stamp"] = json.loads(d["stamp"] or "{}")
+    return d
+
+
+def _step_record(r: sqlite3.Row) -> dict[str, Any]:
+    attrs = json.loads(r["attrs"] or "{}")
+    if r["provider_meta"] is not None:
+        attrs["provider_meta"] = json.loads(zlib.decompress(r["provider_meta"]))
+    return {
+        "step_id": r["step_id"], "turn_id": r["turn_id"], "session_id": r["session_id"],
+        "parent_step_id": r["parent_step_id"], "seq": r["seq"], "kind": r["kind"],
+        "name": r["name"], "started_at": r["started_at"], "duration_ms": r["duration_ms"],
+        "status": r["status"], "call_id": r["call_id"], "call_index": r["call_index"],
+        "message_id": r["message_id"], "shadow": bool(r["shadow"]),
+        "after_turn": bool(r["after_turn"]), "attrs": attrs,
+        "content": json.loads(r["content"] or "{}"),
+    }

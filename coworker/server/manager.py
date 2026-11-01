@@ -43,6 +43,7 @@ from ..teams.store import WORKER_WAITING
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
+from ..observability import Recorder, RecordingStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -381,6 +382,10 @@ class SessionManager:
         # level, outside the memory table; read at engine build time.
         self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "coworker.db")
+        # Observability (Phase 1, E7): recorded turns and steps, in their own file next to
+        # coworker.db so they can be pruned and reset on their own.
+        self.recordings_store = RecordingStore.beside(base)
+        self.recorder = Recorder(store=self.recordings_store)
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
@@ -6392,6 +6397,7 @@ class SessionManager:
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
+        self.recordings_store.close()
         from ..providers import llamacpp_setup
 
         llamacpp_setup.runner().shutdown()
@@ -8613,6 +8619,8 @@ class SessionManager:
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
         ok = self.session_store.delete(session_id)
+        # ...and its recorded turns and steps (observability §11, the session-delete cascade).
+        self.recorder.delete_session(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         held = [sub.channel for sub in self.subscriptions.for_session(session_id)]
         self.subscriptions.remove_session(session_id)
