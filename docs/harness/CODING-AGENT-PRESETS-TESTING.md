@@ -241,3 +241,18 @@ paths reject. These are resolution tests; they grant no sandbox or artifact acce
 and do not replace the later catalog/admission qualification.
 
 Cases: [isolated-default contracts](../../harness/runtime/tests/coding_handoff_config.rs).
+
+## Imported Git identity through tool launch
+
+Real filesystem tests convert an acknowledged independent import to a managed
+workspace receipt and run ordinary coding tools through it. Child commits can
+advance HEAD. Replacing `.git`, adding external common/object metadata or mixing
+linked-worktree exceptions rejects before tool execution, including ordinary file
+reads. Private subprocess tests check conversion and subsequent workspace
+verification over the actual stdio channel. They also cover macOS root aliases:
+all private operations must agree on one canonical root identity.
+
+Cases: `imported_workspace_pins_own_git_metadata_across_child_commits_and_launch_checks`,
+`independent_workspace_cannot_acquire_external_git_objects_or_linked_metadata`
+and the private-stdio case in
+[Git handoff contracts](../../harness/runtime/tests/coding_handoff_git.rs).

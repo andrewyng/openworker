@@ -128,6 +128,10 @@ pub struct Receipt {
     pub pointer_digest: Option<String>,
     pub branch: Option<String>,
     pub initial_commit: Option<String>,
+    /// Independent artifact checkout: pins its own Git directory, with no
+    /// exception for metadata outside the child's file-tool working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub independent_git: Option<Identity>,
 }
 /// Saved in the team transaction before filesystem dispatch. A recovered
 /// dispatched intent authorizes inspection only, never another mutation.
@@ -178,6 +182,47 @@ impl Receipt {
             identity(&self.path)? == self.identity,
             "Workspace identity changed; do not adopt replacement"
         );
+        if let Some(expected) = &self.independent_git {
+            ensure!(
+                matches!(self.request.selection, Selection::Directory { .. })
+                    && self.git_dir.is_none()
+                    && self.git_identity.is_none()
+                    && self.worktree_git_dir.is_none()
+                    && self.worktree_git_identity.is_none()
+                    && self.pointer_digest.is_none()
+                    && self.branch.is_none(),
+                "Independent checkout cannot inherit linked metadata exceptions"
+            );
+            let dot = self.path.join(".git");
+            checked_absolute(&dot)?;
+            ensure!(
+                dot.is_dir() && identity(&dot)? == *expected,
+                "Independent Git metadata identity changed"
+            );
+            for child in [
+                "HEAD",
+                "config",
+                "objects",
+                "objects/info",
+                "objects/pack",
+                "refs",
+                "refs/heads",
+                "logs",
+            ] {
+                checked_absolute(&dot.join(child))?;
+            }
+            let (private, common) = metadata_paths(&self.path, &self.path)?;
+            ensure!(
+                private == dot && common == dot,
+                "Independent checkout acquired external metadata"
+            );
+            for file in ["objects/info/alternates", "objects/info/http-alternates"] {
+                ensure!(
+                    !dot.join(file).exists(),
+                    "Independent checkout acquired external objects"
+                );
+            }
+        }
         if let Some(git) = &self.git_dir {
             checked_absolute(git)?;
             ensure!(
@@ -351,6 +396,7 @@ pub async fn prepare(root: &Path, request: Request, inspect_only: bool) -> Resul
         pointer_digest: None,
         branch: None,
         initial_commit: None,
+        independent_git: None,
     };
     match &request.selection {
         Selection::Team {} => {}
@@ -493,7 +539,10 @@ pub async fn prepare(root: &Path, request: Request, inspect_only: bool) -> Resul
     Ok(receipt)
 }
 pub async fn serve(root: &Path) -> Result<()> {
-    let root = root.to_owned();
+    // One canonical root for prepare, handoff and later receipt verification.
+    // macOS callers may supply /var while receipts correctly pin /private/var.
+    let root = root.canonicalize()?;
+    checked_absolute(&root)?;
     let mut input = tokio::io::BufReader::new(tokio::io::stdin());
     let mut output = tokio::io::stdout();
     loop {

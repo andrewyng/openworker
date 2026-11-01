@@ -457,6 +457,45 @@ async fn check_tree(root: &Path, commit: &str) -> Result<()> {
     Ok(())
 }
 
+/// Convert only the original acknowledged import into the ordinary workspace
+/// receipt consumed by admission/tool launch. Later builder commits are allowed;
+/// replacing its Git metadata or switching to linked metadata is not.
+pub async fn workspace_receipt(
+    root: &Path,
+    handle: &Handle,
+    request: crate::team_workspace::Request,
+) -> Result<crate::team_workspace::Receipt> {
+    let (_, i) = load(root, handle)?;
+    request.validate()?;
+    ensure!(
+        request.operation_id == i.transfer.request.operation_id
+            && request.scope_digest == i.transfer.request.scope_digest
+            && request.selection
+                == (crate::team_workspace::Selection::Directory {
+                    path: i.transfer.request.directory.clone()
+                }),
+        "Workspace admission intent differs from original import"
+    );
+    let imported = finish(root, handle, true).await?;
+    let receipt = crate::team_workspace::Receipt {
+        request,
+        path: imported.path,
+        project_root: i.root,
+        identity: imported.identity,
+        repository: None,
+        git_dir: None,
+        git_identity: None,
+        worktree_git_dir: None,
+        worktree_git_identity: None,
+        pointer_digest: None,
+        branch: None,
+        initial_commit: Some(imported.commit),
+        independent_git: Some(imported.git_identity),
+    };
+    receipt.verify()?;
+    Ok(receipt)
+}
+
 /// Only called by the trusted workspace-stdio channel. Discovery never lists
 /// these methods as agent tools, and params cannot select a host path/URL/key.
 pub async fn dispatch(
@@ -485,6 +524,12 @@ pub async fn dispatch(
         handle: Handle,
         offset: u64,
         data: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Workspace {
+        handle: Handle,
+        request: crate::team_workspace::Request,
     }
     Ok(match method {
         "handoff/export" | "handoff/inspect_export" => {
@@ -522,6 +567,10 @@ pub async fn dispatch(
             )
             .await?,
         )?,
+        "handoff/workspace" => {
+            let p: Workspace = from_value(params)?;
+            to_value(workspace_receipt(root, &p.handle, p.request).await?)?
+        }
         _ => anyhow::bail!("Unknown private handoff method"),
     })
 }
