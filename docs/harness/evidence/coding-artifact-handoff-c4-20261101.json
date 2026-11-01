@@ -1,0 +1,29 @@
+{
+  "milestone": "C4",
+  "date": "2026-11-01",
+  "source_commit": "702c46a2",
+  "implementation_commit": "9ed64532",
+  "result": "passed",
+  "elapsed_seconds": 550.56,
+  "postgres": "17",
+  "openshell": "0.1.3",
+  "runner_image": "docker.io/library/openworker-runner@sha256:fe3cecc90c5d984fbc38d1dc13e879f131fa5734604aec3f77fc9f661829d287",
+  "runner_binary_sha256": "b67034b316484d6f48a165c1a36006d578d0c300a60e080a574e8ecc5737d070",
+  "log_sha256": "90bed4750561e520296fbe5c5d2c411a50111d346f6c6e35e90ac7763a71a026",
+  "checks": [
+    "approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads",
+    "independent child sandboxes, bounded smaller profile, selected child cwd, private member verifier and preserved lead filesystem",
+    "two shared-sandbox worktrees, child cwd/file scope, registered Git metadata, exact-commit verifier and lead inspection",
+    "C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes",
+    "two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission",
+    "C4 independent lead reception, explicit stale-base rejection without source changes, expected-head CAS integration and actual source read-back",
+    "C4 SDK submission catalog, real builder bundle export/publication, deduplicated new-call retry, distinct OpenShell verifier checkout and exact-revision attributed report",
+    "versioned coding preset releases, RuntimeProfile compatibility and automatically scoped service builder worktree",
+    "TypeScript exact-submission spawn, distinct OpenShell checkout, real Git/file verification and attributed report",
+    "TypeScript delegated placement configuration, member serialization and original shared sandbox tool execution",
+    "TypeScript shared verifier, independent histories, profile permissions, owner/project gates and idempotency",
+    "immutable releases, resource profile, two controllers, bounded worker, shared coder/verifier, Rust and TypeScript SDKs"
+  ],
+  "cleanup": "Test deleted and confirmed absence of its original owned OpenShell sandboxes and dropped both service/recording schemas. Existing demos left untouched.",
+  "scope": "Real local PostgreSQL, Kubernetes/OpenShell, Git artifacts and Rust/TypeScript SDKs; deterministic model fixture, no claim of live-model qualification."
+}

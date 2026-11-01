@@ -36,7 +36,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
-| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | In progress |
+| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Verified: complete local OpenShell/PG17 run, November 1 |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Verified: named grants, SDKs and local OpenShell |
 | C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
