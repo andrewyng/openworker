@@ -35,7 +35,7 @@ Extend the same primitives through the remaining deployment adapters.
 | C1 | Child directories and Git worktrees inside the shared sandbox | Existing local worktree receipts and shared service teams | Verified |
 | C2 | Single coding-agent and shared-team presets | C1 | Verified |
 | C3 | Delegated child sandbox placement and lifecycle | Existing type/delegation/lifecycle contracts | Verified |
-| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | Pending |
+| C4 | Isolated coding-team preset and artifact handoff | C2, C3 | In progress |
 | C5 | Harness-managed GitHub checkout/publication integration | C4 handoff contract | Pending |
 | C6 | Explicit sandbox Git CLI credential mode | C3, C5 policy/credential contracts | Pending |
 | C7 | Combined parallel, mixed-placement and recovery qualification | C1–C6 | Pending |
@@ -485,3 +485,53 @@ is about 56 GiB with incremental Rust compilation disabled. New/Member physical
 placement is qualified for the OpenShell/PostgreSQL service. Local sandbox-off
 SDKs still reject unsupported placement. Source staging and isolated preset
 handoff remain C4; publication and CLI credentials remain C5/C6.
+
+
+### C4 journal — starting after C3 merge
+
+C3 merged and pushed to the canonical public feature branch as `f8b31eea`.
+Continuing on `feat/coding-handoff-c4-20261031` with the approved artifact-first
+handoff. [C4 build details](CODING-HANDOFF-IMPLEMENTATION.md) separate portable
+manifest/Git validation, storage/controller recovery and final physical workflow.
+Start with bounded real Git bundles and exact repository/base/submitted identity;
+no GitHub token, network fetch or source mount is implied. Source setup and
+model-requested exports must retain distinct provenance. Artifact-store
+credentials stay in the trusted harness. Qualification fixtures remain available,
+with about 56 GiB free and incremental compilation disabled.
+
+### C4 journal — portable manifest and Git bundle foundation
+
+Added a portable manifest binding repository identity, producer, exact base and
+submitted revisions, object format and artifact reference/digest. Source snapshots
+pin one revision; collaborator reports bind that submitted revision and cannot
+supply a verified/approved flag. Import intent pins the original manifest and a
+portable relative destination. Validation is explicitly not authorization or proof
+of published artifact bytes.
+
+Implemented bounded local Git bundle export/inspection and full object validation.
+A private namespaced ref pins one exact commit; branch tips do not move and no
+`--all` export occurs. The operation marker commits before that metadata write.
+Re-entry inspects its original complete bundle/ref/receipt and never re-exports
+an incomplete or missing result. Git runs with cleared environment, disabled
+hooks/helpers/network/lazy fetching/replacement objects. Parent and pack/index
+children share a guarded process group so cancellation/limits cannot leave a
+pack helper intentionally running. Streamed output is capped at 64 MiB.
+
+Validation uses a fresh private bare repository, one advertised ref, strict object
+checks and exact commit ancestry. Incremental missing prerequisites and even
+unadvertised unreachable objects reject. Bytes remain data; no project checkout,
+tests, artifact publication, network fetch or model tool is enabled by this slice.
+
+Four portable contract tests and seven real Git cases pass (3.62 seconds for the
+Git suite), including SHA-1/SHA-256 independent repository roundtrips, binary/new/
+renamed/deleted files, replaced roots/refs, corrupt bytes, marker symlinks,
+repository helpers/alternates/replacements and a real incompressible 65 MiB export
+stopped at the 64 MiB limit without a receipt or automatic replay. The preceding
+five coding/search/patch and eight workspace regressions also pass. Tests found
+and corrected cross-platform path acceptance and a fixture using clone's branch
+selection for a deliberately private bundle ref; receivers fetch that exact ref
+explicitly. Artifact setup provenance, storage/controller transfer, independent
+checkout/defaults and physical OpenShell handoff remain the next C4 slices.
+
+C4 foundation strict all-target runtime Clippy, formatting and diff checks passed.
+The remaining storage/controller and physical handoff gates remain closed.

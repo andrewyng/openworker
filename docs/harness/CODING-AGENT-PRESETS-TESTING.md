@@ -158,3 +158,25 @@ Profile identity and physical Kubernetes limits are checked. The same run retain
 the shared worktree/commit/conflict workflow and exercises TypeScript service
 placement configuration and member execution. Cleanup uses each original target
 profile, including unacknowledged creations, and confirms deletion.
+
+## Handoff metadata and real Git bundle integrity
+
+The C4 portable contract checks exact repository/base/submitted identity, producer
+and artifact binding, SHA-1/SHA-256 formats, size/digest bounds and portable import
+paths. Reports cannot refer to another submitted revision or declare an approval.
+These are data checks, not evidence of artifact ownership or publication.
+
+Real temporary Git repositories export one exact ref and transfer binary, renamed,
+deleted and new files into independent Git metadata. Re-entry preserves the
+original result even after HEAD advances. Missing/incomplete bundles never trigger
+another export. Tests reject changed refs or repository identity, corrupt bytes,
+marker symlinks, unsafe helpers, external object stores, replacements, missing
+prerequisites, extra advertised refs and hidden unreachable objects. A real
+incompressible 65 MiB source verifies that the 64 MiB stream cap stops without
+publishing a receipt or automatically restarting on inspection.
+
+Cases: [portable manifest/import tests](../../harness/runtime/tests/coding_handoff.rs)
+and [real Git bundle cases](../../harness/runtime/tests/coding_handoff_git.rs).
+These currently qualify local Unix mechanics. They do not yet qualify artifact
+transfer, model-facing tools, isolated preset/defaults or provider staging; those
+C4 layers remain explicitly tracked in the journal.
