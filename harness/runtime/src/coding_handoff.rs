@@ -4,6 +4,7 @@
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod config;
 pub mod git;
 pub mod transfer;
 

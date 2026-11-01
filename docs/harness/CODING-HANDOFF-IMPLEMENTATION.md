@@ -140,3 +140,26 @@ same-ID artifact publication. Revocation blocks staging; an explicit application
 retry after restoring authority retains the dispatch bit and original identities.
 The public isolated-preset/default and child-import admission integration is still
 a separate gate; this adapter does not itself expose new agent tools.
+
+## Next admission slice: coding defaults and source choice
+
+The shared runtime contract now has application-owned coding defaults per prebuilt
+type. Builders select the initial pinned snapshot by default. Verifiers require an
+explicit submitted handoff reference. A choice is only `initial` or a named
+`submission`; it cannot carry an endpoint, storage key or credential. The catalog
+still has to authorize that reference and verify its immutable artifact.
+
+Default independent destinations are `checkouts/{team}/{instance}`, so identical
+instance names in two teams do not collide. An explicit relative directory remains
+possible. Linked worktrees cannot be combined with an independent source import.
+Dynamic types do not inherit a prebuilt default by coincidence; explicit choices
+still need the approved type's placement ceiling and original source authority.
+
+Wire this contract atomically through team configuration, reservation and the
+trusted child-import outbox before exposing the isolated preset in SDK helpers.
+The required order is: original placement ready → selected artifact ready →
+independent checkout receipt → child cwd/admission. A directory existing by itself
+is insufficient evidence that it contains the selected source or Git metadata.
+The import receipt must remain bound at launch; replacing `.git` cannot be
+accepted as a newly discovered repository. Model submissions/reports and explicit
+lead reception/integration use the same durable handoff/artifact records.

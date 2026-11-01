@@ -5,38 +5,14 @@ use anyhow::{ensure, Context, Result};
 use openworker_artifacts::{Artifact, Binding, Expected, Origin, Proof, Registration};
 use openworker_runtime::{
     agent_team::Document,
-    coding_handoff::{
-        git::{Bundle, Export},
-        ObjectFormat,
-    },
+    coding_handoff::git::{Bundle, Export},
     environment,
     store::Session,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Source {
-    pub repository: String,
-    pub directory: String,
-    pub object_format: ObjectFormat,
-    pub commit: String,
-}
-impl Source {
-    pub fn validate(&self) -> Result<()> {
-        Export {
-            operation_id: "source_validation".into(),
-            scope_digest: "a".repeat(64),
-            repository: self.repository.clone(),
-            directory: self.directory.clone(),
-            object_format: self.object_format,
-            base_commit: self.commit.clone(),
-            submitted_commit: self.commit.clone(),
-        }
-        .validate()
-    }
-}
+pub use openworker_runtime::coding_handoff::config::Source;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Intent {
