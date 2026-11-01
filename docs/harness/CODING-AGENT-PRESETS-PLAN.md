@@ -554,3 +554,33 @@ connection poisoning, and rejection of extra credential fields. No setup upload
 endpoint or model tool is enabled by this contract checkpoint. Host free disk
 remains about 56 GiB. Continuing with bounded private chunks and independent
 checkout mechanics before wiring source admission and the service controller.
+
+### C4 journal — private chunks and independent checkout mechanics
+
+Extended the existing trusted `workspace-stdio` channel with private handoff
+methods, not discoverable model tools. Frames remain bounded at 64 KiB and data
+chunks at 32 KiB. Transfers bind the original manifest, export receipt, scope and
+root identity before accepting bytes. Immutable chunks may be acknowledged again
+only when their offset and bytes match; holes and changed data reject. Reads
+require the original completed export receipt and original repository identities.
+Artifact-backend digest verification remains required before publication.
+
+A receiver validates the complete bundle and exact commits before checkout. It
+creates independent Git metadata without remote access, templates, hooks, filters
+or recursive submodules. Checkout dispatch commits before the filesystem mutation;
+a lost reply permits receipt inspection only. Missing evidence, replaced metadata,
+a changed pre-acknowledgement HEAD or an existing destination never triggers a
+reset, replacement or replay. Reserved `.openworker` paths cannot be destinations.
+A separate 128 MiB expanded-tree / 10,000-entry bound prevents a small compressed
+bundle from materializing an unlimited working tree. A failed/unknown checkout
+remains explicit rather than deleting its original directory.
+
+Qualification: four manifest cases, thirteen real Git/private-stdio cases, eight
+workspace regressions and five coding/search/patch regressions pass. The Git
+suite takes 4.13 seconds and includes SHA-1/SHA-256, actual subprocess chunk
+transport, inspection after lost acknowledgement, corrupt bytes, immutable chunk
+replay, wrong scope, symlink markers and an oversized compressible checkout.
+Strict all-target Clippy passes for runtime, artifacts, PostgreSQL and the service
+(with its OpenShell test feature); format and diff checks pass. PostgreSQL setup
+admission remains gated pending the durable source-intent controller. These tests
+are local process/filesystem tests, not yet the C4 physical OpenShell workflow.

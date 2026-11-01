@@ -5,6 +5,7 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
 pub mod git;
+pub mod transfer;
 
 pub const VERSION: u8 = 1;
 pub const MAX_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
@@ -219,6 +220,10 @@ impl Import {
             "Checkout directory must be a portable relative path"
         );
         crate::runner::relative_path(&self.directory)?;
+        ensure!(
+            self.directory.split('/').next() != Some(".openworker"),
+            "Checkout cannot replace reserved harness bookkeeping"
+        );
         Ok(())
     }
     pub fn require_manifest(&self, manifest: &Manifest) -> Result<()> {

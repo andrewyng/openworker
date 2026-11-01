@@ -392,3 +392,347 @@ async fn oversized_stream_stops_without_receipt_and_inspection_never_restarts_ex
         .is_err());
     assert!(!op.join("source.bundle").exists());
 }
+
+use openworker_runtime::coding_handoff::{
+    transfer::{self, Transfer, CHUNK},
+    ArtifactRef, Import, Kind, Manifest, Producer,
+};
+async fn exported(f: &Fixture, directory: &str) -> Transfer {
+    let b = export(&f.repo, f.request.clone(), false, None)
+        .await
+        .unwrap();
+    let manifest = Manifest {
+        version: 1,
+        kind: Kind::Submission,
+        repository: f.request.repository.clone(),
+        producer: Producer {
+            team_id: "at_one".into(),
+            agent_id: "builder_one".into(),
+            session_id: "s_one".into(),
+        },
+        object_format: f.request.object_format,
+        base_commit: f.request.base_commit.clone(),
+        submitted_commit: f.request.submitted_commit.clone(),
+        artifact: ArtifactRef {
+            session_id: "s_one".into(),
+            artifact_id: "a_one".into(),
+            size: b.size,
+            sha256: b.sha256.clone(),
+        },
+        reports: vec![],
+    };
+    Transfer {
+        request: Import {
+            operation_id: "receive_one".into(),
+            scope_digest: "b".repeat(64),
+            manifest_digest: manifest.digest().unwrap(),
+            directory: directory.into(),
+        },
+        manifest,
+        bundle: b,
+    }
+}
+async fn stage(f: &Fixture, target: &Path, t: &Transfer) {
+    let status = transfer::prepare(target, t.clone(), false).await.unwrap();
+    assert_eq!(status.received, 0);
+    let mut offset = 0;
+    while offset < t.bundle.size {
+        let bytes = transfer::read_chunk(&f.repo, &t.bundle, offset)
+            .await
+            .unwrap();
+        assert!(bytes.len() <= CHUNK);
+        let status = transfer::write_chunk(target, &t.handle(), offset, &bytes)
+            .await
+            .unwrap();
+        let replay = transfer::write_chunk(target, &t.handle(), offset, &bytes)
+            .await
+            .unwrap();
+        assert_eq!(status, replay); // Immutable chunk receipt after a lost reply.
+        offset += bytes.len() as u64;
+        assert_eq!(status.received, offset);
+    }
+}
+#[tokio::test]
+async fn private_chunks_and_independent_checkout_preserve_both_object_formats_and_lost_ack() {
+    for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
+        let f = fixture(format);
+        let t = exported(&f, "project").await;
+        let target = tempfile::tempdir().unwrap();
+        stage(&f, target.path(), &t).await;
+        assert!(transfer::finish(target.path(), &t.handle(), true)
+            .await
+            .is_err());
+        assert!(!target.path().join("project").exists());
+        let r = transfer::finish(target.path(), &t.handle(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            r,
+            transfer::finish(target.path(), &t.handle(), true)
+                .await
+                .unwrap()
+        );
+        assert_eq!(r.commit, t.manifest.submitted_commit);
+        assert_eq!(
+            git(&r.path, &["rev-parse", "--show-object-format"]),
+            format.git_name()
+        );
+        assert_eq!(
+            git(&r.path, &["rev-parse", "--absolute-git-dir"]),
+            r.path.join(".git").to_str().unwrap()
+        );
+        assert_eq!(
+            std::fs::read(r.path.join("binary.bin")).unwrap(),
+            [0, 255, 1, 0, 200]
+        );
+        assert!(r.path.join("renamed.txt").is_file());
+        assert!(!r.path.join("gone.txt").exists());
+        assert!(!r.path.join("old.txt").exists());
+        assert_eq!(git(&r.path, &["remote"]), "");
+        assert_eq!(
+            transfer::inspect(target.path(), &t.handle())
+                .await
+                .unwrap()
+                .receipt,
+            Some(r.clone())
+        );
+        git(&r.path, &["checkout", "--quiet", &t.manifest.base_commit]);
+        assert!(transfer::finish(target.path(), &t.handle(), false)
+            .await
+            .is_err());
+        assert_eq!(git(&r.path, &["rev-parse", "HEAD"]), t.manifest.base_commit);
+        // Never reset it.
+    }
+}
+#[tokio::test]
+async fn private_transfer_refuses_changed_identity_chunks_holes_and_symlink_markers() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    assert!(transfer::prepare(target.path(), t.clone(), true)
+        .await
+        .is_err());
+    assert!(!target.path().join(".openworker").exists());
+    transfer::prepare(target.path(), t.clone(), false)
+        .await
+        .unwrap();
+    let mut changed = t.clone();
+    changed.request.directory = "other".into();
+    assert!(transfer::prepare(target.path(), changed, false)
+        .await
+        .is_err());
+    let mut handle = t.handle();
+    handle.scope_digest = "c".repeat(64);
+    assert!(transfer::inspect(target.path(), &handle).await.is_err());
+    let bytes = transfer::read_chunk(&f.repo, &t.bundle, 0).await.unwrap();
+    assert!(transfer::write_chunk(target.path(), &t.handle(), 1, &bytes)
+        .await
+        .is_err());
+    assert!(
+        transfer::write_chunk(target.path(), &t.handle(), 0, &bytes[..bytes.len() - 1])
+            .await
+            .is_err()
+    );
+    assert!(
+        transfer::write_chunk(target.path(), &t.handle(), CHUNK as u64, &bytes)
+            .await
+            .is_err()
+    );
+    transfer::write_chunk(target.path(), &t.handle(), 0, &bytes)
+        .await
+        .unwrap();
+    let mut changed = bytes;
+    changed[0] ^= 1;
+    assert!(
+        transfer::write_chunk(target.path(), &t.handle(), 0, &changed)
+            .await
+            .is_err()
+    );
+    let marker = target
+        .path()
+        .join(".openworker/imports/receive_one/request.json");
+    let original = std::fs::read(&marker).unwrap();
+    std::fs::remove_file(&marker).unwrap();
+    let foreign = target.path().join("foreign");
+    std::fs::write(&foreign, original).unwrap();
+    std::os::unix::fs::symlink(&foreign, &marker).unwrap();
+    assert!(transfer::inspect(target.path(), &t.handle()).await.is_err());
+    assert!(transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .is_err());
+    assert!(!target.path().join("project").exists());
+}
+#[tokio::test]
+async fn original_checkout_dispatch_is_not_replayed_and_existing_folders_survive() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    let marker = target
+        .path()
+        .join(".openworker/imports/receive_one/checkout.json");
+    std::fs::write(&marker, "dispatch persisted, acknowledgement lost").unwrap();
+    assert!(
+        transfer::inspect(target.path(), &t.handle())
+            .await
+            .unwrap()
+            .checkout_dispatched
+    );
+    assert!(transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .is_err());
+    assert!(!target.path().join("project").exists());
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    std::fs::create_dir(target.path().join("project")).unwrap();
+    std::fs::write(target.path().join("project/keep"), "leave me").unwrap();
+    assert!(transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .is_err());
+    assert_eq!(
+        std::fs::read_to_string(target.path().join("project/keep")).unwrap(),
+        "leave me"
+    );
+    assert!(!target.path().join("project/.git").exists());
+}
+#[tokio::test]
+async fn transferred_bytes_and_original_repository_identity_are_checked() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    let chunk = target
+        .path()
+        .join(".openworker/imports/receive_one/chunk-00000000");
+    let mut bytes = std::fs::read(&chunk).unwrap();
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 1;
+    std::fs::write(chunk, bytes).unwrap();
+    assert!(transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("Imported bytes differ"));
+    assert!(!target.path().join("project").exists());
+    std::fs::rename(f.repo.join(".git"), f.repo.join("saved-git")).unwrap();
+    git(&f.repo, &["init", "-q"]);
+    assert!(transfer::read_chunk(&f.repo, &t.bundle, 0).await.is_err());
+    let mut changed = t.clone();
+    changed.bundle.sha256 = "c".repeat(64);
+    assert!(changed.validate().is_err());
+    for path in [
+        ".openworker",
+        ".openworker/imports/other",
+        "../outside",
+        "C:\\host",
+    ] {
+        let mut changed = t.clone();
+        changed.request.directory = path.into();
+        assert!(changed.validate().is_err());
+    }
+}
+#[tokio::test]
+async fn expanded_checkout_limit_stops_compressible_bundles_before_materializing_files() {
+    let mut f = fixture(ObjectFormat::Sha1);
+    let file = std::fs::File::create(f.repo.join("huge.bin")).unwrap();
+    file.set_len(transfer::MAX_CHECKOUT_BYTES + 1).unwrap();
+    git(&f.repo, &["add", "huge.bin"]);
+    git(&f.repo, &["commit", "-qm", "compressible"]);
+    f.request.submitted_commit = git(&f.repo, &["rev-parse", "HEAD"]);
+    let t = exported(&f, "project").await;
+    assert!(t.bundle.size < 1024 * 1024);
+    let target = tempfile::tempdir().unwrap();
+    stage(&f, target.path(), &t).await;
+    let e = transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("Expanded checkout exceeds"), "{e}");
+    assert!(!target.path().join("project/huge.bin").exists());
+    assert!(
+        transfer::inspect(target.path(), &t.handle())
+            .await
+            .unwrap()
+            .checkout_dispatched
+    );
+    assert!(transfer::finish(target.path(), &t.handle(), false)
+        .await
+        .is_err());
+}
+
+async fn private_rpc(root: &Path, method: &str, params: serde_json::Value) -> serde_json::Value {
+    use tokio::io::AsyncWriteExt;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_openworker"))
+        .args(["workspace-stdio", "--root"])
+        .arg(root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let frame = serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params});
+    let mut input = child.stdin.take().unwrap();
+    input
+        .write_all(format!("{frame}\n").as_bytes())
+        .await
+        .unwrap();
+    input.shutdown().await.unwrap();
+    drop(input);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stdout.len() <= 64000);
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+#[tokio::test]
+async fn private_stdio_transfers_chunks_across_processes_without_discovering_model_tools() {
+    let f = fixture(ObjectFormat::Sha1);
+    let t = exported(&f, "project").await;
+    let target = tempfile::tempdir().unwrap();
+    use serde_json::json;
+    let p = private_rpc(target.path(), "handoff/prepare", json!(t)).await;
+    assert_eq!(p["result"]["received"], 0, "{p}");
+    let mut offset = 0;
+    while offset < t.bundle.size {
+        let r = private_rpc(
+            &f.repo,
+            "handoff/read",
+            json!({"bundle":t.bundle,"offset":offset}),
+        )
+        .await;
+        assert!(r.get("error").is_none(), "{r}");
+        let w = private_rpc(
+            target.path(),
+            "handoff/write",
+            json!({"handle":t.handle(),"offset":offset,"data":r["result"]["data"]}),
+        )
+        .await;
+        assert!(w.get("error").is_none(), "{w}");
+        offset = w["result"]["received"].as_u64().unwrap();
+    }
+    let r = private_rpc(target.path(), "handoff/finish", json!(t.handle())).await;
+    assert_eq!(r["result"]["commit"], t.manifest.submitted_commit, "{r}");
+    let recovered = private_rpc(target.path(), "handoff/inspect_checkout", json!(t.handle())).await;
+    assert_eq!(recovered["result"], r["result"]);
+    assert!(private_rpc(target.path(), "tools/list", json!({}))
+        .await
+        .get("error")
+        .is_some());
+    let bad = private_rpc(
+        target.path(),
+        "handoff/write",
+        json!({"handle":t.handle(),"offset":0,"data":"AA==","host":"/tmp/other"}),
+    )
+    .await;
+    assert!(bad.get("error").is_some());
+    assert_eq!(
+        std::fs::read(target.path().join("project/binary.bin")).unwrap(),
+        [0, 255, 1, 0, 200]
+    );
+}
