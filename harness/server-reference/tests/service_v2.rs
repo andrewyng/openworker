@@ -500,7 +500,7 @@ async fn qualify() {
             }
         }).await.unwrap();
         assert!(artifact.registration.turn_id.is_empty());
-        let response=reqwest::Client::new().get(format!("{url_a}/v1/sessions/{}/artifacts/{}/content",preset_lead.id(),artifact.id)).bearer_auth(&user_token).send().await.unwrap();
+        let response=reqwest::Client::new().get(format!("{url_a}/v1/sessions/{}/artifacts/{}/content",preset_lead.id(),artifact.id)).bearer_auth(&user_token).header("x-openworker-namespace","test").header("x-openworker-service-id","m2-test").send().await.unwrap();
         assert!(response.status().is_success(),"Source artifact download: {}",response.status());
         let bytes=response.bytes().await.unwrap();
         assert_eq!(openworker_runtime::bundle::digest(&bytes),artifact.registration.expected.sha256);

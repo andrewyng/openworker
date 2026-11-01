@@ -642,3 +642,14 @@ OCI index `sha256:bb4c0555152bed2c2bf43428a2cd147449aa9220720d56e19cc765ef1378ef
 its runtime code is unchanged by this trusted-controller-only UUID correction.
 Rerun the fresh physical workflow before recording successful source/receiver
 qualification or merging any C4 milestone.
+
+### C4 journal — physical source publication and namespace boundary
+
+The UUID-corrected run successfully exported and published the real pinned source
+artifact, then stopped at the test's direct HTTP download (255.03 seconds). The
+raw test client omitted the required `x-openworker-namespace` header that the SDK
+normally supplies, and the service correctly returned 403. Corrected that test
+request to supply the existing namespace/service identity headers; no authorization
+check was loosened. Independent receiver qualification still requires a complete
+successful run. The source/default contract for the next C4 slice is being drafted
+separately while this runtime/runner protocol remains frozen for qualification.
