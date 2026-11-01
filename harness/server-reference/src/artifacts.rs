@@ -83,6 +83,9 @@ pub(crate) async fn upload(
     let store = enabled(&app)?;
     let _permit = transfer(&app)?;
     let a = app.store.artifact(&sid, &id)?;
+    if !a.registration.origin.is_turn() {
+        return Err(ApiError(Error::Invalid.into()));
+    }
     if let Some(n) = request.headers().get(header::CONTENT_LENGTH) {
         if n.to_str().ok().and_then(|v| v.parse::<u64>().ok()) != Some(a.registration.expected.size)
         {

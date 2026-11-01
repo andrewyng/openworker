@@ -584,3 +584,42 @@ Strict all-target Clippy passes for runtime, artifacts, PostgreSQL and the servi
 (with its OpenShell test feature); format and diff checks pass. PostgreSQL setup
 admission remains gated pending the durable source-intent controller. These tests
 are local process/filesystem tests, not yet the C4 physical OpenShell workflow.
+
+### C4 journal — durable source setup and catalog publication
+
+Added a PostgreSQL source-setup outbox keyed to the original team/lead, activated
+release/profile digests, environment, pinned repository revision and configured
+artifact-store binding. Application setup authorizes bounded source bookkeeping;
+it does not manufacture a tool approval or LLM turn. The original credential is
+rechecked before export claims, source reads and artifact registration/publication.
+One controller gets first export dispatch. Reclaimed work inspects the same
+operation; stale claims cannot record or publish a replacement. Immutable artifact
+uploads can resume against the same original ID/bytes. An uncertain transfer
+retains its bundle and artifact identity. Authority loss blocks work; restoring a
+profile still needs an explicit application retry and never resets dispatch.
+
+The private catalog path now admits setup provenance only with that live original
+source claim, exact exported byte/digest receipt and original store binding. Public
+registration/upload and generic host publication cannot manufacture setup authority.
+Setup artifact events use SQL NULL turn IDs rather than invented/empty LLM turns.
+Existing ordinary-turn artifact validation and quotas remain in use.
+
+Trusted source staging streams bounded ToolRunner chunks into the existing artifact
+backend; no storage URL/key/credential enters the sandbox. Transfer has its own
+bounded controller task so a slow export/upload cannot block cancellation or
+cleanup reconciliation. No second model/agent loop was introduced.
+
+All 30 service-library tests pass, including four new real PostgreSQL source cases
+(1.65 seconds for the full library suite). The tests distinguish synthetic catalog
+receipts from Git integrity. They cover lease expiry, stale owners, changed source
+or artifact binding, original-credential revocation, same-ID upload recovery and
+explicit reauthorization without replay. A test-fixture synchronous PostgreSQL call
+initially ran directly on a Tokio worker; it now uses the existing blocking bridge.
+Strict all-target Clippy passes. The matching offline Linux runner build passes
+38 executed runtime/Git/workspace/process tests (one fixture-only test ignored).
+
+Preparing physical OpenShell qualification for this source/receiver slice. The
+isolated preset/default configuration, durable child import admission and
+model-requested submission/integration APIs remain C4 work; source staging alone
+is not the complete isolated coding-team feature. Canonical stays at verified C3
+until the full C4 milestone is qualified.

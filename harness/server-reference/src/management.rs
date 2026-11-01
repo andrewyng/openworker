@@ -369,10 +369,33 @@ pub async fn controller(
     let installed = installation(&config)?;
     let mut type_cursor = String::new();
     let mut placement_cursor = String::new();
+    // Bounded source I/O has its own task so a slow bundle cannot block
+    // cancellation, environment cleanup or other control-plane reconciliation.
+    // JoinSet aborts this task if its owning controller exits unexpectedly.
+    let mut source_tasks = tokio::task::JoinSet::new();
+    if let Some(artifacts) = config.artifacts.as_ref().map(|c| c.build()).transpose()? {
+        let (config, store, installed, stop) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+        );
+        source_tasks.spawn(async move {
+            while !stop.is_cancelled() {
+                if !crate::service_team_sources::prepare_once(&config, &store, &installed, Some(&artifacts), &stop).await? {
+                    tokio::select! { _=stop.cancelled()=>break, _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{} }
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+    }
     while !stop.is_cancelled() {
         crate::service_team_types::refresh(&config, &store, &installed, &mut type_cursor).await?;
         crate::service_team_placements::refresh(&config, &store, &installed, &mut placement_cursor)
             .await?;
+        if let Some(result) = source_tasks.try_join_next() {
+            result??;
+        }
         crate::service_team_workspaces::prepare_once(&config, &store, &installed).await?;
         delete_once(&config, &store, &installed).await?;
         store.provision_agent_team_child_for(Some(&installed))?;
@@ -382,6 +405,7 @@ pub async fn controller(
             tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
         }
     }
+    source_tasks.shutdown().await;
     Ok(())
 }
 

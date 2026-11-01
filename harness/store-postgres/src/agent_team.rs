@@ -24,18 +24,14 @@ pub struct WorkspaceJob {
     pub root: String,
     pub profile: String,
 }
-pub(crate) fn workspace_authority(
+pub(crate) fn lead_authority(
     tx: &mut postgres::Transaction<'_>,
     lead: &Session,
     doc: &Document,
-    agent: &str,
-) -> Result<crate::auth::Identity> {
+) -> Result<(crate::auth::Identity, crate::service_catalog::Profile)> {
     ensure!(!lead.closed, "Lead session is closed");
     if let Some(catalog) = &doc.type_catalog {
         catalog.check_scope(lead)?;
-        if let Some(choice) = doc.sandbox_choices.get(agent) {
-            choice.validate(&catalog.ceiling)?;
-        }
     }
     let row=tx.query_opt("SELECT o.principal,k.spec,o.release_id,o.profile_id FROM service_operations o JOIN api_credentials k ON k.id=o.credential_id AND NOT k.revoked AND ((k.spec->>'expires_at') IS NULL OR (k.spec->>'expires_at')::bigint>extract(epoch FROM clock_timestamp())) WHERE o.session_id=$1 AND o.status='complete' FOR SHARE OF k", &[&lead.id])?.context("Delegation credential expired/revoked")?;
     let spec: crate::auth::Spec = serde_json::from_value(row.get(1))?;
@@ -61,6 +57,18 @@ pub(crate) fn workspace_authority(
     );
     crate::service_catalog::allowed(&identity, &r.allowed_principals)?;
     crate::service_catalog::allowed(&identity, &p.allowed_principals)?;
+    Ok((identity, p))
+}
+pub(crate) fn workspace_authority(
+    tx: &mut postgres::Transaction<'_>,
+    lead: &Session,
+    doc: &Document,
+    agent: &str,
+) -> Result<crate::auth::Identity> {
+    let (identity, p) = lead_authority(tx, lead, doc)?;
+    if let (Some(catalog), Some(choice)) = (&doc.type_catalog, doc.sandbox_choices.get(agent)) {
+        choice.validate(&catalog.ceiling)?;
+    }
     let instance = doc.roster.instance(agent).context("Missing reservation")?;
     let kind = agent_team::runtime_type(doc, instance)?;
     let template: Value = tx

@@ -18,6 +18,7 @@ pub mod service_admin;
 pub mod service_catalog;
 pub mod service_pools;
 pub mod service_team_placements;
+pub mod service_team_sources;
 pub mod service_team_types;
 mod submissions;
 mod team_execution;

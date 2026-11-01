@@ -48,7 +48,7 @@ fn verify(tx: &mut Transaction<'_>, sid: &str) -> Result<()> {
     );
     Ok(())
 }
-fn load(tx: &mut Transaction<'_>, sid: &str, id: &str) -> Result<Artifact> {
+pub(crate) fn load(tx: &mut Transaction<'_>, sid: &str, id: &str) -> Result<Artifact> {
     let row = tx
         .query_opt(
             "SELECT data FROM artifacts WHERE session_id=$1 AND id=$2",
@@ -71,7 +71,11 @@ fn load(tx: &mut Transaction<'_>, sid: &str, id: &str) -> Result<Artifact> {
 }
 fn event(tx: &mut Transaction<'_>, a: &Artifact, kind: &str, actor: &str) -> Result<()> {
     let sid = &a.registration.session_id;
-    let tid = &a.registration.turn_id;
+    let tid = a
+        .registration
+        .origin
+        .is_turn()
+        .then_some(a.registration.turn_id.as_str());
     let row = tx.query_one(
         "UPDATE sessions SET cursor=cursor+1 WHERE id=$1 RETURNING cursor,epoch",
         &[sid],
@@ -81,9 +85,9 @@ fn event(tx: &mut Transaction<'_>, a: &Artifact, kind: &str, actor: &str) -> Res
     let data = json!({"artifact_id":a.id,"request_id":a.registration.request_id,"status":a.status});
     tx.execute(
         "INSERT INTO events(session_id,cursor,turn_id,kind,data) VALUES($1,$2,$3,$4,$5)",
-        &[sid, &cursor, tid, &kind, &data],
+        &[sid, &cursor, &tid, &kind, &data],
     )?;
-    tx.execute("INSERT INTO audit(session_id,cursor,turn_id,kind,owner_epoch,actor) VALUES($1,$2,$3,$4,$5,$6)",&[sid,&cursor,tid,&kind,&epoch,&actor])?;
+    tx.execute("INSERT INTO audit(session_id,cursor,turn_id,kind,owner_epoch,actor) VALUES($1,$2,$3,$4,$5,$6)",&[sid,&cursor,&tid,&kind,&epoch,&actor])?;
     Ok(())
 }
 impl Database {
@@ -92,6 +96,15 @@ impl Database {
         request: Registration,
         binding: Binding,
         actor: &str,
+    ) -> Result<Artifact> {
+        self.register_artifact_inner(request, binding, actor, None)
+    }
+    pub(crate) fn register_artifact_inner(
+        &mut self,
+        request: Registration,
+        binding: Binding,
+        actor: &str,
+        source_claim: Option<&str>,
     ) -> Result<Artifact> {
         let mut tx = self.client.transaction()?;
         let p = crate::auth::guard(
@@ -102,10 +115,23 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), actor)?;
-        // A setup-origin label is not an authority receipt. Keep admission
-        // gated until the trusted source-intent catalog is wired and qualified.
-        ensure!(request.origin.is_turn(), Error::Invalid);
+        // Public/generic registration cannot grant setup authority. Only the
+        // private controller supplies its live original source-intent claim.
+        ensure!(
+            request.origin.is_turn() || (self.auth.is_none() && source_claim.is_some()),
+            Error::Invalid
+        );
         let s = locked(&mut tx, &request.session_id, None)?;
+        if !request.origin.is_turn() {
+            crate::service_team_sources::authorize_artifact(
+                &mut tx,
+                &s,
+                &request,
+                &binding,
+                actor,
+                source_claim,
+            )?;
+        }
         verify(&mut tx, &s.id)?;
         if let Some(row)=tx.query_opt("SELECT artifact_id,actor,request,binding FROM artifact_requests WHERE session_id=$1 AND request_id=$2",&[&s.id,&request.request_id])? {
             ensure!(row.get::<_,String>(1)==actor && row.get::<_,Value>(2)==serde_json::to_value(&request)? && row.get::<_,Value>(3)==serde_json::to_value(&binding)?,Error::Conflict);
@@ -122,7 +148,7 @@ impl Database {
                     &[&s.id, &request.turn_id],
                 )?
                 .get::<_, bool>(0);
-        ensure!(known, Error::NotFound);
+        ensure!(!request.origin.is_turn() || known, Error::NotFound);
         let used:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM events WHERE session_id=$1 AND kind='artifact_pending' AND data->>'request_id'=$2)",&[&s.id,&request.request_id])?.get(0);
         ensure!(!used, Error::Conflict);
         let count: i64 = tx
@@ -219,6 +245,16 @@ impl Database {
         proof: Proof,
         actor: &str,
     ) -> Result<Artifact> {
+        self.publish_artifact_inner(sid, id, proof, actor, None)
+    }
+    pub(crate) fn publish_artifact_inner(
+        &mut self,
+        sid: &str,
+        id: &str,
+        proof: Proof,
+        actor: &str,
+        source_claim: Option<&str>,
+    ) -> Result<Artifact> {
         let mut tx = self.client.transaction()?;
         let p = crate::auth::guard(
             &mut tx,
@@ -228,9 +264,23 @@ impl Database {
             None,
         )?;
         crate::auth::actor(p.as_ref(), actor)?;
-        locked(&mut tx, sid, None)?;
+        let s = locked(&mut tx, sid, None)?;
         verify(&mut tx, sid)?;
         let mut a = load(&mut tx, sid, id)?;
+        if !a.registration.origin.is_turn() {
+            ensure!(
+                self.auth.is_none() && source_claim.is_some(),
+                Error::Invalid
+            );
+            crate::service_team_sources::authorize_artifact(
+                &mut tx,
+                &s,
+                &a.registration,
+                &a.binding,
+                actor,
+                source_claim,
+            )?;
+        }
         ensure!(proof.expected == a.registration.expected, Error::Conflict);
         if a.status == Status::Ready {
             ensure!(a.proof.as_ref() == Some(&proof), Error::Conflict);

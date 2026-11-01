@@ -135,7 +135,10 @@ async fn qualify() {
     )
     .unwrap();
 
-    let value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    let mut value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    let artifact_root = root.path().join("artifacts");
+    std::fs::create_dir(&artifact_root).unwrap();
+    value["artifacts"] = json!({"kind":"filesystem","root":artifact_root,"deployment":"coding-handoff-test","shared_durable":true});
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let cfg: Config = serde_json::from_value(value).unwrap();
     let db = cfg.database().unwrap();
@@ -485,6 +488,43 @@ async fn qualify() {
         let preset_agent=service.agent("preset-lead@1").await.unwrap();
         let preset_lead=preset_agent.new_session_with(openworker_sdk::service::SessionOptions{environment_id:Some(environment_id.clone()),project:Some("game".into()),..Default::default()},Some("preset-lead-session")).await.unwrap();
         let preset_team=preset_lead.create_team(preset.service_team("1")).await.unwrap();
+        // C4 source-staging slice: the application pins source before starting
+        // the lead. The actual trusted controller exports/publishes; no fake
+        // model turn or sandbox artifact-store credential is introduced.
+        let backend=cfg.artifacts.as_ref().unwrap().build().unwrap();
+        let source=store.authorized(&user_token).unwrap().configure_team_source(preset_lead.id(),serde_json::from_value(json!({"repository":"org/game","directory":"source","object_format":"sha1","commit":base})).unwrap(),backend.binding().clone()).unwrap();
+        let artifact=tokio::time::timeout(Duration::from_secs(60),async {
+            loop {
+                if let Some(a)=store.artifacts(preset_lead.id()).unwrap().into_iter().find(|a|matches!(&a.registration.origin,openworker_artifacts::Origin::TeamSetup {setup_id,..} if *setup_id==source.id) && a.status==openworker_artifacts::Status::Ready) {break a}
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }).await.unwrap();
+        assert!(artifact.registration.turn_id.is_empty());
+        let response=reqwest::Client::new().get(format!("{url_a}/v1/sessions/{}/artifacts/{}/content",preset_lead.id(),artifact.id)).bearer_auth(&user_token).send().await.unwrap();
+        assert!(response.status().is_success(),"Source artifact download: {}",response.status());
+        let bytes=response.bytes().await.unwrap();
+        assert_eq!(openworker_runtime::bundle::digest(&bytes),artifact.registration.expected.sha256);
+        let source_manifest:openworker_runtime::coding_handoff::Manifest=serde_json::from_value(json!({"version":1,"kind":"source","repository":"org/game","producer":{"team_id":source.team,"agent_id":"lead","session_id":preset_lead.id()},"object_format":"sha1","base_commit":base,"submitted_commit":base,"artifact":{"session_id":preset_lead.id(),"artifact_id":artifact.id,"size":bytes.len(),"sha256":artifact.registration.expected.sha256},"reports":[]})).unwrap();
+        let exported=openworker_runtime::coding_handoff::git::Bundle {request:source.export.clone(),path:format!(".openworker/handoffs/{}/source.bundle",source.id),size:bytes.len() as u64,sha256:artifact.registration.expected.sha256.clone(),advertised_ref:format!("refs/openworker/handoffs/{}",source.id)};
+        // These explicit private calls qualify receiver mechanics in physically
+        // distinct filesystems. Durable child-source/default admission and model
+        // submission tools remain the next C4 slice, not implied by this test.
+        use base64::{engine::general_purpose::STANDARD,Engine};
+        for (id,env) in [("builder",aenv),("verifier",benv)] {
+            let receiver=openworker_runtime::coding_handoff::transfer::Transfer {request:openworker_runtime::coding_handoff::Import {operation_id:format!("source-import-{id}"),scope_digest:openworker_runtime::bundle::digest(format!("{}:{id}",source.id).as_bytes()),manifest_digest:source_manifest.digest().unwrap(),directory:"artifact-source".into()},manifest:source_manifest.clone(),bundle:exported.clone()};
+            let binding=serde_json::from_value(env.clone()).unwrap();
+            let mut channel=ap.attach(binding,format!("handoff-{id}"),vec!["/opt/openworker/openworker".into(),"workspace-stdio".into(),"--root".into(),"/sandbox".into()]).await.unwrap();
+            channel.request("handoff/prepare",json!(receiver)).await.unwrap();
+            for (index,chunk) in bytes.chunks(openworker_runtime::coding_handoff::transfer::CHUNK).enumerate() {
+                channel.request("handoff/write",json!({"handle":receiver.handle(),"offset":index*openworker_runtime::coding_handoff::transfer::CHUNK,"data":STANDARD.encode(chunk)})).await.unwrap();
+            }
+            let imported=channel.request("handoff/finish",json!(receiver.handle())).await.unwrap();
+            assert_eq!(imported["commit"],base);assert_eq!(imported["path"],"/sandbox/artifact-source");
+            assert_eq!(channel.request("handoff/inspect_checkout",json!(receiver.handle())).await.unwrap(),imported);
+            let _=channel.close().await;
+        }
+        eprintln!("PASS C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes (controller/default admission still pending)");
+
         let child=preset_team.spawn("preset-build","preset-builder","ui",&plan("write_file",json!({"path":"proof.txt","content":"preset-scoped change"}))).await.unwrap();
         assert_eq!(child["workspace"]["mode"],"worktree");assert_eq!(child["workspace"]["base"],base);
         let waited=preset_lead.send(&plan("team_wait_agent",json!({"agent_ids":["ui"],"timeout_ms":120000})),Some("wait-preset-builder")).await.unwrap();assert_eq!(waited.result().await.unwrap().status,"completed");

@@ -635,3 +635,290 @@ async fn unchanged_prebuilt_team_retry_does_not_require_rewriting_old_receipts()
 
 #[path = "service_team_placements_tests.rs"]
 mod placements;
+
+fn coding_source() -> openworker_store_postgres::service_team_sources::Source {
+    serde_json::from_value(json!({"repository":"org/game","directory":".","object_format":"sha1","commit":"a".repeat(40)})).unwrap()
+}
+fn source_bundle(
+    i: &openworker_store_postgres::service_team_sources::Intent,
+    bytes: &[u8],
+) -> openworker_runtime::coding_handoff::git::Bundle {
+    openworker_runtime::coding_handoff::git::Bundle {
+        request: i.export.clone(),
+        path: format!(".openworker/handoffs/{}/source.bundle", i.id),
+        size: bytes.len() as u64,
+        sha256: openworker_runtime::bundle::digest(bytes),
+        advertised_ref: format!("refs/openworker/handoffs/{}", i.id),
+    }
+}
+fn expire_source(f: &Fixture) {
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!(
+            "UPDATE {}.service_team_sources SET next_check=clock_timestamp()-interval '1 second'",
+            f.db.schema
+        ))
+        .unwrap();
+    });
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn source_setup_outbox_fences_export_and_artifact_provenance_without_fake_turns() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let tmp = tempfile::tempdir().unwrap();
+    let backend =
+        openworker_artifacts::filesystem::Filesystem::open(tmp.path(), "source-test", false, false)
+            .unwrap();
+    let intent = f
+        .user
+        .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+        .unwrap();
+    assert_eq!(
+        intent,
+        f.user
+            .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+            .unwrap()
+    );
+    let mut changed = coding_source();
+    changed.commit = "b".repeat(40);
+    assert!(f
+        .user
+        .configure_team_source(&f.lead.id, changed, backend.binding().clone())
+        .is_err());
+    let installed = management::installation(&f.config).unwrap();
+    assert!(f.user.claim_team_source(&installed).is_err());
+    let first = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(first.dispatch);
+    assert_eq!(first.intent, intent);
+    assert!(f.store.claim_team_source(&installed).unwrap().is_none());
+    let bytes = b"synthetic bytes: catalog authority, not Git integrity fixture";
+    let bundle = source_bundle(&intent, bytes);
+    let mut bad = bundle.clone();
+    bad.request.scope_digest = "c".repeat(64);
+    assert!(f.store.observe_team_source(&first, Some(bad)).is_err());
+    expire_source(&f);
+    let replacement = PostgresStore::open(f.db.clone()).unwrap();
+    let recovered = replacement.claim_team_source(&installed).unwrap().unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(first.intent, recovered.intent);
+    assert!(f
+        .store
+        .observe_team_source(&first, Some(bundle.clone()))
+        .is_err());
+    replacement
+        .observe_team_source(&recovered, Some(bundle))
+        .unwrap();
+    expire_source(&f);
+    let upload = replacement.claim_team_source(&installed).unwrap().unwrap();
+    assert!(!upload.dispatch);
+    assert!(upload.intent.bundle.is_some());
+    assert!(f.store.register_team_source_artifact(&recovered).is_err());
+    let artifact = replacement.register_team_source_artifact(&upload).unwrap();
+    assert!(artifact.registration.turn_id.is_empty());
+    assert_eq!(
+        replacement
+            .register_team_source_artifact(&upload)
+            .unwrap()
+            .id,
+        artifact.id
+    );
+    assert!(f
+        .user
+        .register_artifact(
+            artifact.registration.clone(),
+            backend.binding().clone(),
+            "alice"
+        )
+        .is_err());
+    assert!(f
+        .store
+        .register_artifact(
+            artifact.registration.clone(),
+            backend.binding().clone(),
+            "alice"
+        )
+        .is_err());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let proof = backend.put(&artifact, &bytes[..], &cancel).await.unwrap();
+    assert!(f
+        .store
+        .publish_artifact(&f.lead.id, &artifact.id, proof.clone(), "alice")
+        .is_err());
+    replacement
+        .publish_team_source_artifact(&upload, &artifact.id, proof)
+        .unwrap();
+    replacement
+        .complete_team_source(&upload, &artifact.id)
+        .unwrap();
+    assert!(replacement.claim_team_source(&installed).unwrap().is_none());
+    assert!(replacement.register_team_source_artifact(&upload).is_err());
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog", f.db.schema))
+            .unwrap();
+        assert_eq!(pg.query_one("SELECT count(*) FROM events WHERE session_id=$1 AND kind IN ('artifact_pending','artifact_ready') AND turn_id IS NULL",&[&f.lead.id]).unwrap().get::<_,i64>(0),2);
+        assert_eq!(
+            pg.query_one(
+                "SELECT count(*) FROM events WHERE session_id=$1 AND turn_id=''",
+                &[&f.lead.id]
+            )
+            .unwrap()
+            .get::<_, i64>(0),
+            0
+        );
+    });
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn source_setup_rechecks_original_credential_and_cannot_switch_artifact_binding() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let tmp = tempfile::tempdir().unwrap();
+    let backend =
+        openworker_artifacts::filesystem::Filesystem::open(tmp.path(), "source-test", false, false)
+            .unwrap();
+    let i = f
+        .user
+        .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+        .unwrap();
+    let mut other = backend.binding().clone();
+    other.identity = "b".repeat(64);
+    assert!(f
+        .user
+        .configure_team_source(&f.lead.id, coding_source(), other)
+        .is_err());
+    let installed = management::installation(&f.config).unwrap();
+    let first = f.store.claim_team_source(&installed).unwrap().unwrap();
+    f.store
+        .observe_team_source(&first, Some(source_bundle(&i, b"data")))
+        .unwrap();
+    expire_source(&f);
+    let upload = f.store.claim_team_source(&installed).unwrap().unwrap();
+    let a = f.store.register_team_source_artifact(&upload).unwrap();
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog", f.db.schema))
+            .unwrap();
+        pg.execute("UPDATE api_credentials SET revoked=TRUE WHERE id=(SELECT credential_id FROM service_operations WHERE session_id=$1)",&[&f.lead.id]).unwrap();
+    });
+    assert!(f.store.register_team_source_artifact(&upload).is_err());
+    let proof = backend
+        .put(
+            &a,
+            &b"data"[..],
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .publish_team_source_artifact(&upload, &a.id, proof)
+        .is_err());
+    assert_eq!(
+        f.store.artifact(&f.lead.id, &a.id).unwrap().status,
+        openworker_artifacts::Status::Pending
+    );
+    assert!(f.store.complete_team_source(&upload, &a.id).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn source_setup_unknown_transfer_retains_original_bundle_artifact_and_inspection_authority() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let tmp = tempfile::tempdir().unwrap();
+    let backend =
+        openworker_artifacts::filesystem::Filesystem::open(tmp.path(), "source-test", false, false)
+            .unwrap();
+    let i = f
+        .user
+        .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+        .unwrap();
+    let installed = management::installation(&f.config).unwrap();
+    let first = f.store.claim_team_source(&installed).unwrap().unwrap();
+    f.store.defer_team_source(&first).unwrap();
+    expire_source(&f);
+    let inspect = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(!inspect.dispatch);
+    assert_eq!(inspect.intent.export, first.intent.export);
+    assert!(f.store.defer_team_source(&first).is_err());
+    f.store
+        .observe_team_source(&inspect, Some(source_bundle(&i, b"same original artifact")))
+        .unwrap();
+    expire_source(&f);
+    let upload = f.store.claim_team_source(&installed).unwrap().unwrap();
+    let a = f.store.register_team_source_artifact(&upload).unwrap();
+    f.store.defer_team_source(&upload).unwrap();
+    expire_source(&f);
+    let recovered = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(upload.intent, recovered.intent);
+    assert_eq!(
+        f.store
+            .register_team_source_artifact(&recovered)
+            .unwrap()
+            .id,
+        a.id
+    );
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog", f.db.schema))
+            .unwrap();
+        pg.execute("UPDATE api_credentials SET revoked=TRUE WHERE id=(SELECT credential_id FROM service_operations WHERE session_id=$1)",&[&f.lead.id]).unwrap();
+    });
+    expire_source(&f);
+    assert!(f.store.claim_team_source(&installed).unwrap().is_none());
+    assert!(f.store.claim_team_source(&installed).unwrap().is_none());
+    assert!(f.store.check_team_source(&recovered).is_err());
+    assert_eq!(
+        f.store.artifact(&f.lead.id, &a.id).unwrap().status,
+        openworker_artifacts::Status::Pending
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn source_setup_explicit_reauthorization_never_resets_original_dispatch() {
+    let mut f = Fixture::new().await;
+    f.create();
+    let tmp = tempfile::tempdir().unwrap();
+    let backend =
+        openworker_artifacts::filesystem::Filesystem::open(tmp.path(), "source-test", false, false)
+            .unwrap();
+    let i = f
+        .user
+        .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+        .unwrap();
+    let installed = management::installation(&f.config).unwrap();
+    let first = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(first.dispatch);
+    f.store.defer_team_source(&first).unwrap();
+    expire_source(&f);
+    let active = |enabled: bool| {
+        tokio::task::block_in_place(|| {
+            let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+            pg.execute(
+                &format!(
+                    "UPDATE {}.service_catalog SET activated=$1 WHERE kind='profile' AND id=$2",
+                    f.db.schema
+                ),
+                &[&enabled, &i.profile_id],
+            )
+            .unwrap();
+        })
+    };
+    active(false);
+    assert!(f.store.claim_team_source(&installed).unwrap().is_none());
+    active(true);
+    assert!(f.store.claim_team_source(&installed).unwrap().is_none()); // Explicit app action, not automatic revival.
+    assert_eq!(
+        f.user
+            .configure_team_source(&f.lead.id, coding_source(), backend.binding().clone())
+            .unwrap(),
+        i
+    );
+    let recovered = f.store.claim_team_source(&installed).unwrap().unwrap();
+    assert!(!recovered.dispatch);
+    assert_eq!(recovered.intent.export, first.intent.export);
+}

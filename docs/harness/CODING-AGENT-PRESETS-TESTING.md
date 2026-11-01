@@ -212,3 +212,21 @@ replace artifact-catalog authorization, controller fencing or the physical
 OpenShell source→builder→verifier→lead workflow.
 
 Cases: [Git and private handoff tests](../../harness/runtime/tests/coding_handoff_git.rs).
+
+## Trusted source staging, publication and revocation
+
+Real PostgreSQL tests pin application setup to the original team, lead, revision,
+environment, active release/profile and artifact-store binding. Competing and
+restarted controllers must preserve first-dispatch identity. Stale/expired claims,
+changed settings and revoked original credentials reject. Immutable artifact
+registration/publication uses the same catalog and byte-verification backend;
+setup labels and generic API calls cannot grant publication authority. Source
+artifact events have no fabricated model turn. Unknown upload/retry retains the
+same export and artifact IDs; restoring a profile alone cannot revive work.
+
+These tests establish transactional authority and restart behavior. Synthetic
+bundle receipts in catalog cases do not claim Git validation; real Git and
+OpenShell cases provide that separate evidence.
+
+Cases: four `source_setup_*` tests in
+[service contracts](../../harness/server-reference/src/service_team_types_tests.rs).
