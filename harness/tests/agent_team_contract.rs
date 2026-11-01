@@ -646,3 +646,119 @@ pub fn exercise_child_model_selection(db: &mut dyn StateStore) {
         .agent_team("without-delegation", "team_spawn", &args, None)
         .is_err());
 }
+
+/// Resolution/admission intents only: this mock-capable domain contract does not
+/// provision provider resources, publish source data or acknowledge an import.
+pub fn exercise_coding_defaults(db: &mut dyn StateStore) {
+    db.save(&session("lead", "lead"), "created", json!({}))
+        .unwrap();
+    let args = json!({"agent_id":"lead","agent_types":["builder","verifier"],"workspace_selection":true,"placement_selection":true,"coding_selection":true,"delegation":{"tools":["coding.read_file"],"placements":["team","new"],"profiles":{"small":{"files":[],"network":[],"credentials":[],"cpu":1,"memory_mb":512}}},"coding":{"source":{"repository":"org/game","directory":"source","object_format":"sha1","commit":"a".repeat(40)},"agent_types":{"builder":{"sandbox":{"mode":"new","profile":"small","cpu":1,"memory_mb":512},"source":"initial"},"verifier":{"sandbox":{"mode":"new","profile":"small","cpu":1,"memory_mb":512},"source":"require_submission"}}}});
+    let mut unavailable = args.clone();
+    unavailable["coding_selection"] = json!(false);
+    assert!(db.agent_team("lead", "create", &unavailable, None).is_err());
+    let doc = db.agent_team("lead", "create", &args, None).unwrap();
+    assert_eq!(
+        db.agent_team("lead", "create", &args, None).unwrap()["id"],
+        doc["id"]
+    );
+    let request = json!({"agent_type":"builder","agent_id":"ui","message":"Build"});
+    let result = db.agent_team("lead", "team_spawn", &request, None).unwrap();
+    assert_eq!(result["source"], json!({"kind":"initial"}));
+    assert_eq!(
+        result["workspace"]["path"],
+        format!("checkouts/{}/ui", doc["id"].as_str().unwrap())
+    );
+    assert_eq!(result["sandbox"]["mode"], "new");
+    assert_eq!(
+        db.agent_team("lead", "team_spawn", &request, None).unwrap()["instance"],
+        result["instance"]
+    );
+    let verifier =
+        json!({"agent_type":"verifier","agent_id":"check","message":"Verify exact submission"});
+    assert!(db
+        .agent_team("lead", "team_spawn", &verifier, None)
+        .is_err());
+    let mut wrong = verifier.clone();
+    wrong["source"] = json!({"kind":"initial"});
+    assert!(db.agent_team("lead", "team_spawn", &wrong, None).is_err());
+    let mut selected = verifier;
+    selected["source"] = json!({"kind":"submission","id":"handoff_original"});
+    let v = db
+        .agent_team("lead", "team_spawn", &selected, None)
+        .unwrap();
+    assert_eq!(v["instance"]["phase"], "reserved");
+    assert_eq!(v["source"], selected["source"]);
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(
+        snapshot["roster"]["requests"]["ui"]["source"],
+        json!({"kind":"initial"})
+    );
+    assert_eq!(
+        snapshot["roster"]["requests"]["check"]["source"],
+        selected["source"]
+    );
+    assert!(snapshot["workspaces"].as_object().unwrap().is_empty()); // Still needs real import/admission.
+    let public = openworker_runtime::agent_team::public_snapshot(snapshot);
+    assert!(public.get("coding").is_none());
+    assert!(public.get("coding_selection").is_none());
+    let shared=db.agent_team("lead","team_spawn",&json!({"agent_type":"builder","agent_id":"shared-source","message":"Build after import","sandbox":{"mode":"team"}}),None).unwrap();
+    let dispatched = db
+        .agent_team(
+            "lead",
+            "workspace_dispatch",
+            &json!({"agent_id":"shared-source"}),
+            None,
+        )
+        .unwrap();
+    let path = format!("/work/{}", shared["workspace"]["path"].as_str().unwrap());
+    let receipt = json!({"request":dispatched["intent"]["request"],"path":path,"project_root":"/work","identity":{"volume":1,"file":2},"repository":null,"git_dir":null,"git_identity":null,"branch":null,"initial_commit":"a".repeat(40),"independent_git":{"volume":1,"file":3}});
+    let mut child = session(
+        shared["instance"]["session_id"].as_str().unwrap(),
+        "builder",
+    );
+    child.workspace = path;
+    child.managed_workspace = Some(serde_json::from_value(receipt.clone()).unwrap());
+    child.agent_team = Some(Membership {
+        team_id: doc["id"].as_str().unwrap().into(),
+        agent_id: "shared-source".into(),
+        inbox_cursor: 0,
+        last_output: None,
+        notices: vec![],
+        waiting: None,
+    });
+    db.save(&child, "created", json!({})).unwrap();
+    db.agent_team("lead","workspace_result",&json!({"agent_id":"shared-source","request":dispatched["intent"]["request"],"receipt":receipt}),None).unwrap();
+    assert!(db
+        .agent_team("lead", "ready", &json!({"agent_id":"shared-source"}), None)
+        .unwrap_err()
+        .to_string()
+        .contains("source import"));
+    let source = json!({"choice":{"kind":"initial"},"manifest":{"version":1,"kind":"source","repository":"org/game","producer":{"team_id":doc["id"],"agent_id":"lead","session_id":"lead"},"object_format":"sha1","base_commit":"a".repeat(40),"submitted_commit":"a".repeat(40),"artifact":{"session_id":"lead","artifact_id":"a_source","size":1,"sha256":"b".repeat(64)},"reports":[]}});
+    let mut wrong = source.clone();
+    wrong["manifest"]["producer"]["team_id"] = json!("at_other");
+    assert!(db
+        .agent_team(
+            "lead",
+            "source_result",
+            &json!({"agent_id":"shared-source","source":wrong,"receipt":receipt}),
+            None
+        )
+        .is_err());
+    assert!(db.agent_team("lead","command",&json!({"request_id":"not-a-controller","operation":"source_result","arguments":{"agent_id":"shared-source","source":source,"receipt":receipt}}),None).is_err());
+    db.agent_team(
+        "lead",
+        "source_result",
+        &json!({"agent_id":"shared-source","source":source,"receipt":receipt}),
+        None,
+    )
+    .unwrap();
+    db.agent_team("lead", "ready", &json!({"agent_id":"shared-source"}), None)
+        .unwrap();
+    let mut changed = args.clone();
+    changed["coding"]["source"]["commit"] = json!("b".repeat(40));
+    assert!(db.agent_team("lead", "create", &changed, None).is_err());
+    let mut both = args;
+    both["workspace_defaults"] =
+        json!({"repository":"source","base":"a".repeat(40),"agent_types":["builder"]});
+    assert!(db.agent_team("lead", "create", &both, None).is_err());
+}

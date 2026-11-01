@@ -49,6 +49,16 @@ pub fn select(doc: &Document, lead: &Session, request: &SpawnRequest) -> Result<
             }
         })
         .or_else(|| record.map(|r| r.binding.definition().sandbox.clone()))
+        .or_else(|| {
+            if record.is_none() {
+                doc.coding
+                    .as_ref()
+                    .and_then(|c| c.sandbox_default(&request.agent_type))
+                    .cloned()
+            } else {
+                None
+            }
+        })
         .unwrap_or_default();
     ensure!(
         doc.placement_selection || selected == Sandbox::default(),

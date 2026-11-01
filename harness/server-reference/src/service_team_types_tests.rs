@@ -134,6 +134,17 @@ impl Fixture {
         self.create_with_delegation(json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team"],"profiles":{}}))
     }
     fn create_with_delegation(&mut self, delegation: Value) -> Document {
+        self.create_with_configuration(delegation, None)
+    }
+    fn create_with_configuration(&mut self, delegation: Value, coding: Option<Value>) -> Document {
+        self.try_create_with_configuration(delegation, coding)
+            .unwrap()
+    }
+    fn try_create_with_configuration(
+        &mut self,
+        delegation: Value,
+        coding: Option<Value>,
+    ) -> anyhow::Result<Document> {
         let rt = self
             .config
             .api_runtime("models", self.store.clone())
@@ -143,7 +154,12 @@ impl Fixture {
             openworker_store_postgres::service_team_types::model_key(&choice).unwrap(),
             rt.connections.resolve(&choice).unwrap(),
         )]);
-        let args = json!({"agent_id":"lead","agent_types":["builder"],"delegation":delegation});
+        let mut args = json!({"agent_id":"lead","agent_types":["builder"],"delegation":delegation});
+        if let Some(coding) = coding {
+            args["coding"] = coding;
+            args["source_store_binding"] =
+                json!({"deployment":"fixture-artifacts","identity":"a".repeat(64)});
+        }
         let templates = BTreeMap::from([(
             "builder".into(),
             (self.release.id.clone(), {
@@ -155,10 +171,23 @@ impl Fixture {
         )]);
         let doc = self
             .user
-            .configure_agent_team_models(&self.lead.id, args, templates, models)
-            .unwrap();
-        self.lead = self.store.clone().metadata(&self.lead.id).unwrap();
-        serde_json::from_value(doc).unwrap()
+            .configure_agent_team_models(&self.lead.id, args, templates, models)?;
+        // Setup is an API/controller operation, not a claim of the model's
+        // worker lease. Read this fixture's durable metadata without taking it.
+        self.lead = tokio::task::block_in_place(|| -> anyhow::Result<Session> {
+            let mut pg = postgres::Client::connect(&self.db.connection, postgres::NoTls)?;
+            let row = pg.query_one(
+                &format!(
+                    "SELECT data,revision FROM {}.sessions WHERE id=$1",
+                    self.db.schema
+                ),
+                &[&self.lead.id],
+            )?;
+            let mut s: Session = serde_json::from_value(row.get(0))?;
+            s.storage_revision = row.get(1);
+            Ok(s)
+        })?;
+        Ok(serde_json::from_value(doc)?)
     }
     fn approve(&mut self, name: &str, tools: Value) -> Record {
         let mut state = self.store.clone();
@@ -844,6 +873,24 @@ async fn source_setup_unknown_transfer_retains_original_bundle_artifact_and_insp
     assert!(!inspect.dispatch);
     assert_eq!(inspect.intent.export, first.intent.export);
     assert!(f.store.defer_team_source(&first).is_err());
+    f.store.defer_team_source(&inspect).unwrap();
+    expire_source(&f);
+    let inspect = f.store.claim_team_source(&installed).unwrap().unwrap();
+    let notices = || {
+        tokio::task::block_in_place(|| {
+            let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+            pg.query_one(
+                &format!(
+                    "SELECT count(*) FROM {}.agent_team_messages WHERE data->>'sender'='harness'",
+                    f.db.schema
+                ),
+                &[],
+            )
+            .unwrap()
+            .get::<_, i64>(0)
+        })
+    };
+    assert_eq!(notices(), 1); // Repeated export inspection failure is one notice.
     f.store
         .observe_team_source(&inspect, Some(source_bundle(&i, b"same original artifact")))
         .unwrap();
@@ -872,6 +919,8 @@ async fn source_setup_unknown_transfer_retains_original_bundle_artifact_and_insp
     assert!(f.store.claim_team_source(&installed).unwrap().is_none());
     assert!(f.store.claim_team_source(&installed).unwrap().is_none());
     assert!(f.store.check_team_source(&recovered).is_err());
+    assert_eq!(notices(), 3); // Export unknown, upload unknown, authority blocked.
+
     assert_eq!(
         f.store.artifact(&f.lead.id, &a.id).unwrap().status,
         openworker_artifacts::Status::Pending
@@ -922,4 +971,133 @@ async fn source_setup_explicit_reauthorization_never_resets_original_dispatch() 
     let recovered = f.store.claim_team_source(&installed).unwrap().unwrap();
     assert!(!recovered.dispatch);
     assert_eq!(recovered.intent.export, first.intent.export);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn coding_source_children_cannot_use_generic_directory_preparation_or_admit_without_source() {
+    let mut f = Fixture::new().await;
+    // Trusted declaration here qualifies DOMAIN/storage guards only. No provider
+    // I/O, source artifact publication or import-controller capability is claimed.
+    f.create_with_configuration(json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team"],"profiles":{}}),Some(json!({"source":{"repository":"org/game","directory":"source","object_format":"sha1","commit":"a".repeat(40)},"agent_types":{"builder":{"sandbox":{"mode":"team"},"source":"initial"}}})));
+    let spawned = f.spawn("builder", "one", None);
+    assert_eq!(spawned["source"], json!({"kind":"initial"}));
+    let installed = management::installation(&f.config).unwrap();
+    assert!(f.store.claim_team_workspace(&installed).unwrap().is_none());
+    assert!(!f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    let mut state = f.store.clone();
+    let dispatched = state
+        .agent_team(
+            &f.lead.id,
+            "workspace_dispatch",
+            &json!({"agent_id":"one"}),
+            None,
+        )
+        .unwrap();
+    let path = format!(
+        "/sandbox/{}",
+        spawned["workspace"]["path"].as_str().unwrap()
+    );
+    let receipt = json!({"request":dispatched["intent"]["request"],"path":path,"project_root":"/sandbox","identity":{"volume":1,"file":2},"repository":null,"git_dir":null,"git_identity":null,"branch":null,"initial_commit":"a".repeat(40),"independent_git":{"volume":1,"file":3}});
+    state
+        .agent_team(
+            &f.lead.id,
+            "workspace_result",
+            &json!({"agent_id":"one","request":dispatched["intent"]["request"],"receipt":receipt}),
+            None,
+        )
+        .unwrap();
+    // Even a structurally valid directory receipt cannot replace source/catalog
+    // acknowledgement or run the initial child task prematurely.
+    assert!(!f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    assert!(state
+        .metadata(spawned["instance"]["session_id"].as_str().unwrap())
+        .is_err());
+    assert!(f
+        .user
+        .agent_team_api(&f.lead.id, "source_result", json!({"agent_id":"one"}))
+        .is_err());
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.execute(
+            &format!(
+                "UPDATE {}.agent_team_templates SET data=$1 WHERE team=$2 AND kind='builder'",
+                f.db.schema
+            ),
+            &[
+                &json!({"error":"synthetic unavailable source type"}),
+                &f.lead.agent_team.as_ref().unwrap().team_id,
+            ],
+        )
+        .unwrap();
+    });
+    assert!(f
+        .store
+        .provision_agent_team_child_for(Some(&installed))
+        .unwrap());
+    let stopped = state
+        .agent_team(&f.lead.id, "snapshot", &json!({}), None)
+        .unwrap();
+    assert_eq!(stopped["roster"]["instances"]["one"]["phase"], "closed");
+    assert!(state
+        .metadata(spawned["instance"]["session_id"].as_str().unwrap())
+        .is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+async fn coding_team_source_templates_membership_and_audit_commit_or_roll_back_together() {
+    let mut f = Fixture::new().await;
+    let delegation = json!({"tools":["coding.read_file"],"models":[Choice::new("other","delegated")],"placements":["team"],"profiles":{}});
+    let coding = json!({"source":{"repository":"org/game","directory":"source","object_format":"sha1","commit":"a".repeat(40)},"agent_types":{"builder":{"sandbox":{"mode":"team"},"source":"initial"}}});
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("CREATE FUNCTION {0}.reject_source_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='control.submit' THEN RAISE EXCEPTION 'synthetic source audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_source_audit BEFORE INSERT ON {0}.api_security_audit FOR EACH ROW EXECUTE FUNCTION {0}.reject_source_audit();",f.db.schema)).unwrap();
+    });
+    assert!(f
+        .try_create_with_configuration(delegation.clone(), Some(coding.clone()))
+        .is_err());
+    // A database failure poisons that bridge by design. Reconnect and inspect
+    // durable state before deciding that setup can be attempted again.
+    f.store = PostgresStore::open(f.db.clone()).unwrap();
+    f.user = f.store.authorized(&"test-user-".repeat(6)).unwrap();
+    assert!(f
+        .user
+        .agent_team_api(&f.lead.id, "snapshot", json!({}))
+        .is_err());
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog", f.db.schema))
+            .unwrap();
+        let row=pg.query_one("SELECT (SELECT count(*) FROM agent_teams),(SELECT count(*) FROM agent_team_templates),(SELECT count(*) FROM service_team_sources),(SELECT count(*) FROM events WHERE kind='team_source')",&[]).unwrap();
+        for n in 0..4 {
+            assert_eq!(row.get::<_, i64>(n), 0)
+        }
+        pg.batch_execute("DROP TRIGGER reject_source_audit ON api_security_audit; DROP FUNCTION reject_source_audit();").unwrap();
+    });
+    let doc = f
+        .try_create_with_configuration(delegation, Some(coding.clone()))
+        .unwrap();
+    assert!(doc.coding_selection);
+    assert_eq!(serde_json::to_value(doc.coding.unwrap()).unwrap(), coding);
+    tokio::task::block_in_place(|| {
+        let mut pg = postgres::Client::connect(&f.db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog", f.db.schema))
+            .unwrap();
+        let row=pg.query_one("SELECT (SELECT count(*) FROM agent_teams),(SELECT count(*) FROM agent_team_templates),(SELECT count(*) FROM service_team_sources),(SELECT count(*) FROM events WHERE kind='team_source')",&[]).unwrap();
+        for n in 0..4 {
+            assert_eq!(row.get::<_, i64>(n), 1)
+        }
+        let source: Value = pg
+            .query_one("SELECT data->'source' FROM service_team_sources", &[])
+            .unwrap()
+            .get(0);
+        assert_eq!(source, coding["source"]);
+    });
 }

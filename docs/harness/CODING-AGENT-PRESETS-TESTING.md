@@ -256,3 +256,24 @@ Cases: `imported_workspace_pins_own_git_metadata_across_child_commits_and_launch
 `independent_workspace_cannot_acquire_external_git_objects_or_linked_metadata`
 and the private-stdio case in
 [Git handoff contracts](../../harness/runtime/tests/coding_handoff_git.rs).
+
+## Reservation and admission parity across storage adapters
+
+The same synthetic source/default contract runs against SQLite and PostgreSQL.
+It verifies deterministic reservation paths and source choices, immutable retries,
+explicit submitted-revision selection, and rejection of unqualified adapters.
+Directory acknowledgement alone cannot admit a source-selected child. A private
+matching manifest/import receipt is required; ordinary API commands cannot forge
+that acknowledgement. These are transaction/data contracts, with synthetic
+filesystem identities; actual Git identity checks belong to the filesystem layer.
+
+PostgreSQL service tests additionally prevent the generic workspace controller
+from consuming source-selected children, keep incomplete imports out of admission,
+and close unavailable templates without starting a child. An audit failure rolls
+back configuration, templates, membership, source setup and source events together.
+Failure notices persist in the lead inbox and deduplicate repeated reconciliation.
+
+Cases: `exercise_coding_defaults` in
+[shared storage contract](../../harness/tests/agent_team_contract.rs),
+and the two `coding_*` cases in
+[service contracts](../../harness/server-reference/src/service_team_types_tests.rs).
