@@ -1,0 +1,96 @@
+{
+  "milestone": "C7",
+  "date": "2026-11-01",
+  "application_checkpoint": "5d3534a4",
+  "runner": {
+    "image": "openworker-runner:c5-c7-20261101",
+    "config": "sha256:1d77a3b78f5cc771abc5fbc02520b5b88350510755dd0f26da7f0fe8bba101cb",
+    "repoDigests": [
+      "openworker-runner@sha256:1d77a3b78f5cc771abc5fbc02520b5b88350510755dd0f26da7f0fe8bba101cb"
+    ],
+    "runner_sha256": "14b2b74b6d8f7d40cb4a404b53a57e9366d6cffaba0ac27e54a6a3800462d39c"
+  },
+  "scenarios": {
+    "two_parallel_mixed_teams": {
+      "seconds": 167.33,
+      "teams": 2,
+      "builders": 4,
+      "verifiers": 4,
+      "evidence": "All four initial tool execution intervals overlapped in PostgreSQL audit timestamps; own exact output checked through member sandbox; worker replacement and retirement admission passed."
+    },
+    "bounded_live_model_team": {
+      "seconds": 195.16,
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "evidence": "Lead spawned independent builder and exact-submission verifier; artifact SHA256, Git integrity, actual committed counter HTML and verifier read-back checked. No GitHub publication/integration."
+    },
+    "complete_service_regression": {
+      "seconds": 308.46,
+      "evidence": [
+        "approved private type, original shared OpenShell sandbox, two controllers, worker restart and real child file reads",
+        "independent child sandboxes, bounded smaller profile, selected child cwd, private member verifier and preserved lead filesystem",
+        "two shared-sandbox worktrees, child cwd/file scope, registered Git metadata, exact-commit verifier and lead inspection",
+        "C4 trusted setup export, authorized artifact publication/download and independent Git checkout in two separate OpenShell sandboxes",
+        "two controller-provisioned independent source children, original artifact admission receipts, separate OpenShell sandboxes, own Git metadata and commits after admission",
+        "C4 independent lead reception, explicit stale-base rejection without source changes, expected-head CAS integration and actual source read-back",
+        "C4 SDK submission catalog, real builder bundle export/publication, deduplicated new-call retry, distinct OpenShell verifier checkout and exact-revision attributed report",
+        "versioned coding preset releases, RuntimeProfile compatibility and automatically scoped service builder worktree",
+        "TypeScript exact-submission spawn, distinct OpenShell checkout, real Git/file verification and attributed report",
+        "TypeScript delegated placement configuration, member serialization and original shared sandbox tool execution",
+        "TypeScript shared verifier, independent histories, profile permissions, owner/project gates and idempotency",
+        "immutable releases, resource profile, two controllers, bounded worker, shared coder/verifier, Rust and TypeScript SDKs"
+      ]
+    },
+    "sdk_postgres_owned_schema_cleanup": {
+      "seconds": 69.94,
+      "cases": 2
+    },
+    "optional_linux_image": {
+      "image": "openworker-service:trusted-git-c5-20261101",
+      "digest": "sha256:ff598854018fdd0de4377cd722d198bcbdfe9c2b0320ff7a88806bc636960a44",
+      "evidence": "Release build + CLI smoke as UID1000 with read-only filesystem/network disabled; Git installed, Python absent. Complete API/worker/controller flow separately exercised by host service with Linux OpenShell ToolRunner."
+    }
+  },
+  "logs": {
+    "c7-parallel.log": "634524f9c242ba38a8f4d2eefb18d2bf0991976575cfceee22828bf4f7dfeddc",
+    "c7-live.log": "deb2e91aa37d0b4492720c70ef1c6861ebf6208fbeb1c9220c86b5e6790a02b4",
+    "c7-combined-regression.log": "c6cff750b1e6ae7fc872aa3ce8de3e14b1e13dc96217373c40aca6830f6a9f5c",
+    "c7-final-clippy.log": "ed78a9d060a7fa31b3f39f8834c631a8bdc76ea1771a196eef9a07af2b17bb07",
+    "c5-production-clippy.log": "15ca932e9a3049144b45f2f07ddd43ef6512051dab3a6164df13656754810a2f",
+    "c7-sdk-pg-cleanup.log": "a85c9130d93feb5b666afb8fc769ea99892b33b78a8bb359177de491ad4c3a2e",
+    "c7-broker-final.log": "00fb967de010da0708a753bcf7c8c87666975ef52d8655817055c3a0ee0d7517",
+    "c5-ts-tests.log": "5a9d84bad0bf2f914c6fe5b28a5e667b39b4ffc0ee1bc4406453e8cc848d4d83",
+    "c5-packaging.log": "ec49d72291b5d6e4edf896ac6dda07ab5310280a14f52da2cbb139944225030f",
+    "c5-packaging-smoke.log": "469b1acf8275955250bdef50b4190688e8e36453cfcb29816ae6dcfb31097039"
+  },
+  "cleanup": {
+    "successful_cases": "Confirmed original owned OpenShell identities deleted; service/recording/SDK schemas removed. Isolated gateway remains available for follow-up. Existing demos/Langfuse untouched.",
+    "retained_previous_failed_fixture": {
+      "schema": "ow_broker_0638e1792d974ffa92e170a5e68bdf8f",
+      "gateway_namespace": "ow-helm-shell",
+      "reason": "Original OpenShell0.1.3 caller reached 1000 retained mutation admissions; do not clear ledger, erase original evidence or claim deletion. Reconcile only original objects after admission capacity recovers.",
+      "identities": [
+        {
+          "environment": "env_47371b847e914198af825f7b1f9b77a3",
+          "remote_id": "e3b9fdd7-be88-4fdf-bc53-60ad67e7a642",
+          "remote_name": "owr-47371b847e91419",
+          "profile": "team@1"
+        },
+        {
+          "environment": "env_b6883402588c4a809906eb862d61a383",
+          "remote_id": "e3eaf312-62e0-4a9d-a38e-16f24a353502",
+          "remote_name": "owr-b6883402588c4a8",
+          "profile": "small@1"
+        },
+        {
+          "environment": "env_cd610b81c3b2415abf9f4328bfd454f3",
+          "remote_id": "6ab052d5-68a4-4072-8cba-91619252ed35",
+          "remote_name": "owr-cd610b81c3b2415",
+          "profile": "small@1"
+        }
+      ]
+    }
+  },
+  "platform_scope": "Local macOS service + PostgreSQL17 + Linux ARM64 OpenShell0.1.3 execution. Unix trusted Git adapter. No real GitHub write, cloud trial or Windows broker qualification claimed.",
+  "free_disk_gib_approx": 52
+}

@@ -13,7 +13,9 @@ ENV CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 RUN rustup component add clippy --toolchain 1.96.1
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
     cargo test --locked -p openworker-runtime --lib && \
-    cargo test --locked -p openworker-runtime --test coding --test coding_extended --test core --test telemetry --test permissions && \
+    cargo test --locked -p openworker-runtime --test coding --test coding_extended --test core --test telemetry --test permissions \
+      --test coding_handoff_config --test coding_handoff_git --test registered_selection && \
+    cargo test --locked -p openworker-git-broker && \
     cargo test --locked -p openworker-sdk --features test-support --test agents --test agents_regressions --test desktop_api && \
     cargo test --locked -p openworker-observability -p openworker-telemetry && \
     cargo clippy --locked -p openworker-runtime -p openworker-sdk -p openworker-store-postgres -p openworker-server-reference -p openworker-telemetry -p openworker-observability --lib --features openworker-sdk/test-support -- -D warnings

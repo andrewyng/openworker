@@ -24,9 +24,11 @@ Lead: receive in separate checkout
 
 The operator installs a coding tool bundle, artifact backend, activated releases
 and RuntimeProfiles. The application supplies the original repository identity
-and exact base SHA; that checkout must already exist in the lead environment.
-Source staging exports only committed data. Private remote checkout/publication
-is a separate optional integration, not implied by this preset.
+and exact base SHA. By default that checkout already exists in the lead environment
+and source staging exports only committed data. The optional
+[trusted Git adapter](TRUSTED-GIT-BROKER.md) can instead fetch a permitted remote
+ref at that exact commit and import the lead checkout before its first turn;
+publication remains a separately selected tool and profile permission.
 
 Use a shared-capable lead profile and an explicit child profile inside the lead's
 delegation ceiling. A new child profile supplies exact supported resource and
@@ -123,9 +125,10 @@ user changes, pushes a branch or creates a pull request automatically.
 The controller persists dispatch intent before I/O. A lost reply causes inspection
 of the original operation, not another export, checkout or integration. Git's
 index/files update and branch CAS are separate operations; partial outcomes remain
-unknown. Keep the original work for inspection. Retirement/cancellation race
-qualification and mixed-team recovery are tracked in C7; unpublished work is not
-automatically deleted when a member closes.
+unknown. Keep the original work for inspection. Finish-current retirement lets
+already accepted operations from its pinned turn settle; cancellation does not
+admit new effects. Unpublished work is not automatically deleted when a member
+closes. The test catalog and journal record the mixed-team qualification.
 
 [Design and implementation](CODING-HANDOFF-IMPLEMENTATION.md) ·
 [Test catalog](CODING-AGENT-PRESETS-TESTING.md) ·

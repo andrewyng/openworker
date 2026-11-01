@@ -1922,6 +1922,7 @@ dependencies = [
  "openworker-store-postgres",
  "openworker-telemetry",
  "openworker-tools",
+ "postgres",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

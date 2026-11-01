@@ -100,11 +100,12 @@ Cases: [Rust preset qualification](../../harness/harness-sdk/tests/coding_preset
 service/OpenShell suite above. The TypeScript configuration copy is checked against
 the Rust-owned versioned JSON; no agent loop is duplicated across SDKs.
 
-## Later milestones
+## Qualification scope
 
-Delegated isolated placement, artifact handoff, constrained
-GitHub publishing, CLI credentials and the combined multi-team recovery matrix
-are tracked separately as C3–C7. Passing C1/C2 does not qualify those features.
+Delegated placement, artifact handoff, trusted Git publication, sandbox CLI
+credentials and combined multi-team recovery retain separate evidence as C3–C7.
+Passing C1/C2 alone does not qualify them. The journal identifies actual local
+passes, platform limits and any original resources retained after uncertain cleanup.
 
 ## Sandbox Git credentials through OpenShell
 
@@ -502,3 +503,40 @@ Cases: [mixed teams](../../harness/server-reference/tests/support/service_parall
 [live team](../../harness/server-reference/tests/support/service_live_team.rs),
 and the PG retirement/approval cases linked above. Consult the journal for which
 cases and platforms have actually passed; definitions alone are not qualification.
+
+## Running the layers
+
+Use the [acceptance driver](../../harness/tests/coding-qualification.sh) from a
+Linux or macOS Rust/Node development checkout. Install TypeScript dependencies with `npm ci` in
+`harness/typescript-sdk` first. Git must be installed. The optional authenticated
+HTTPS fixture additionally needs Python 3, OpenSSL and curl **for testing only**.
+
+```sh
+harness/tests/coding-qualification.sh fast
+OW_PG_TEST_URL=postgres://... harness/tests/coding-qualification.sh storage
+harness/tests/coding-qualification.sh https
+```
+
+For cluster tests, configure `OW_PG_TEST_URL`, `OW_PROBE_ENDPOINT`,
+`OW_PROBE_CERTS`, optional `OW_PROBE_TLS_NAME`, `OW_PROBE_RUNNER` and
+`OW_PROBE_IMAGE`. The last two must identify the same tested Linux runner; use an
+immutable image digest already available to local Kubernetes. Then run:
+
+```sh
+harness/tests/coding-qualification.sh cluster
+```
+
+The driver runs physical cases sequentially. It neither creates a cloud cluster
+nor modifies your existing gateway or model credentials. Tests create their own
+schemas and original sandbox identities. Use a dedicated acceptance gateway with
+room in its durable mutation ledger; the OpenShell 0.1.3 limit discussed in the
+[broker guide](TRUSTED-GIT-BROKER.md) applies even to successful retained requests.
+Do not treat an unknown cleanup response as proof a sandbox was deleted.
+
+Live-model testing is explicit and separate from the default layers. First build
+`service_v2` with `openshell-test,trusted-git-test` **without** model keys in the
+compiler environment. Set `OW_SERVICE_TEST_BIN` to the exact generated test
+executable printed by Cargo, `OW_C7_LIVE_MODEL` to an authorized available model,
+and supply `ANTHROPIC_API_KEY` only to the test/runtime environment. With the same
+cluster variables, run the driver with `live`. It bounds calls/output/time and
+uses synthetic source; it does not authorize a GitHub write or cloud deployment.

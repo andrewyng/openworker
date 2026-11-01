@@ -200,3 +200,10 @@ large acceptance runs, retain original unknown-operation evidence and plan calle
 capacity with the OpenShell operator. Do not clear receipts or disable request
 identity to evade it. See the pinned upstream
 [mutation admission implementation](https://github.com/NVIDIA/OpenShell/blob/v0.1.3/crates/openshell-server/src/grpc/mutation_replay.rs).
+
+The trusted Git execution adapter is currently qualified on Unix (Linux service
+packaging and local macOS qualification). Unsupported hosts reject it explicitly;
+this optional adapter does not change the portable core/SDK's Windows support.
+Native registered callbacks are trusted compiled application code. They execute
+outside the remote sandbox, and their `ToolContext.workspace` is a remote logical
+path rather than authorization to open that same path on the worker host.

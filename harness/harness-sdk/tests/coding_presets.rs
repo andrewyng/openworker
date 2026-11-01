@@ -1,4 +1,5 @@
 #![cfg(all(feature = "test-support", unix))]
+use futures_util::FutureExt;
 use openworker_sdk::agents::*;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
@@ -176,15 +177,44 @@ fn pg() -> Storage {
         loopback_plaintext: true,
     }
 }
+async fn postgres_scenario(managed: bool) {
+    let storage = pg();
+    let Storage::Postgres { schema, .. } = &storage else {
+        unreachable!()
+    };
+    let schema = schema.clone();
+    let outcome = std::panic::AssertUnwindSafe(scenario(managed, storage))
+        .catch_unwind()
+        .await;
+    tokio::task::spawn_blocking(move || {
+        // This helper generates the name; never interpolate application input.
+        assert!(
+            schema.starts_with("ow_presets_x_")
+                && schema
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        );
+        let mut pg =
+            postgres::Client::connect(&std::env::var("OW_PG_TEST_URL").unwrap(), postgres::NoTls)
+                .unwrap();
+        pg.batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL"]
 async fn postgres_embedded() {
-    scenario(false, pg()).await
+    postgres_scenario(false).await
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL"]
 async fn postgres_managed() {
-    scenario(true, pg()).await
+    postgres_scenario(true).await
 }
 #[test]
 fn preset_configuration_is_safe_customizable_and_service_conversion_is_explicit() {
