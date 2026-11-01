@@ -41,6 +41,17 @@ COPY --from=build /out/ /opt/openworker/
 FROM base AS coding-runtime
 # Local coding acceptance only. Use gcp-cleanup for an expiry guard, never this image.
 COPY --from=coding-build /out/ /opt/openworker/
+FROM source AS git-broker-build
+# Opt-in trusted-side Git execution; default service/core builds stay unchanged.
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
+    cargo build --locked --release -p openworker-server-reference -p openworker-runtime \
+      --features openworker-server-reference/trusted-git && \
+    mkdir /out && cp target/release/openworker-server-reference target/release/openworker /out/
+FROM base AS git-broker-runtime
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+USER 1000:1000
+COPY --from=git-broker-build /out/ /opt/openworker/
 FROM source AS cleanup-build
 ARG TARGETARCH
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

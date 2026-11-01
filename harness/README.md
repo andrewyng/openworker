@@ -43,6 +43,9 @@ executable from that same checkout. Source manifests remain development packages
   file editing/search, managed preview processes and auto-skip questions.
 - **[Coding agents](../docs/harness/CODING-AGENTS.md)** — versioned single-agent
   and shared-team presets, scoped builder worktrees and service releases.
+- **[Trusted Git broker](../docs/harness/TRUSTED-GIT-BROKER.md)** — optional
+  private-source staging and constrained publication outside agent sandboxes;
+  separate from [sandbox Git through OpenShell](../docs/harness/OPENSHELL-GIT-ACCESS.md).
 - **[Workspace and GitHub scenarios](../docs/harness/CODING-WORKSPACE-SCENARIOS.md)** —
   ASCII flows for shared worktrees, independent bundle transfer and GitHub access.
 - **[Turn limits and process ownership](../docs/harness/TURN-LIMITS-AND-PROCESSES.md)** —

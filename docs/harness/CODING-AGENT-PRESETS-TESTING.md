@@ -431,3 +431,74 @@ This guards against valid nested checkout names silently disabling process tools
 The regression was found by the physical verifier test; shortening its name would
 have hidden a production defect. Run the real manager test only in the disposable
 Linux fixture, which owns its processes.
+
+## Registered native tools alongside sandbox tools
+
+The v3 selection regressions check exact fully qualified names, versioned registry
+identity and release/type subsets. Remote coding MCPs stay in ToolRunner; explicitly
+compiled native callbacks run on the trusted host. Unregistered callbacks, implicit
+external executables, HTTP bindings and local file/credential grants fail closed in
+this remote profile. Stored placement/registry fingerprints are rechecked when
+attaching and when a child selects another environment.
+
+This ensures a RuntimeProfile grant cannot accidentally expose an unselected tool,
+and that a trusted callback is never described as kernel-sandboxed. Native callbacks
+must interpret remote workspace paths as logical paths, not host filesystem grants.
+
+Cases: [registered selection](../../harness/runtime/tests/registered_selection.rs)
+and [publication registry/profile checks](../../harness/server-reference/src/repository_access.rs).
+
+## Trusted repository staging and constrained publication
+
+Real temporary Git repositories exercise pinned source reads, SHA-1/SHA-256,
+create-only publication, expected-head fast-forward CAS, dirty/stale/divergent
+inputs, corrupted artifacts, expiry/revocation and branch/repository denial. Lost
+push acknowledgements and controller cache loss permit original-ref inspection,
+without another push. A final authorization check runs immediately before mutation.
+The HTTPS fixture additionally checks real Git HTTP, verified TLS, an ephemeral
+synthetic header, denied authentication and receive-pack counts after inspection.
+
+Real PostgreSQL cases verify one durable publication identity across new call IDs,
+claim/epoch fences, credential revocation, cancellation, immutable manifest/proof
+bindings and outcome notices. The native callback must have its exact current
+ordinary tool approval; revoked session grants reject inside the intent transaction.
+Source setup requires app-owned scope/ref/commit, retains prepare/checkout dispatch
+bits across replacement, rejects stale receipts and blocks the lead's first turn
+until its original checkout is acknowledged. These PG fixtures use synthetic Git
+bytes and do not substitute for real Git validation.
+
+The optional physical service case combines private staging, verified artifact
+storage, a fresh lead checkout, independent builder/verifier sandboxes, attributed
+exact-revision reports, explicit integration and registered native publication.
+A controlled file remote proves service wiring; the separate HTTPS case proves
+auth transport. Neither makes an unapproved write to a real GitHub repository.
+
+Cases: [broker Git and TLS tests](../../harness/git-broker/src/tests.rs),
+[PG/controller fault cases](../../harness/server-reference/src/service_team_imports_tests.rs),
+and [physical trusted workflow](../../harness/server-reference/tests/support/service_broker.rs).
+
+## Parallel teams, retirement and bounded live-model work
+
+The mixed-placement case creates two teams, four builders and four readers.
+Builders run in both their lead's sandbox and independent child sandboxes. A worker
+is replaced before initial execution; database audit intervals must show all four
+tool calls overlapping. Each reader shares its particular builder's environment
+and checks that builder's exact output. Team identities, different directories,
+closed-member admission and retained work are checked independently.
+
+Finish-current retirement pins the original turn so an already accepted handoff
+can settle; it does not accept new work or later turns. Cancel retirement refuses
+undispatched effects. Existing quota, approval, budget, provider replacement and
+lost-chunk/checkout tests remain part of the real-PG layer.
+
+The explicitly enabled live-model case asks a lead to create a builder and an
+exact-submission verifier for a tiny single-file counter app. It independently
+checks the published artifact's checksum, Git integrity and actual committed HTML,
+plus recorded verifier file reads. Reports alone are not treated as proof. Calls,
+output and wall time are bounded. No model key enters ToolRunner, and no model
+request can publish, merge or create a PR as part of that test.
+
+Cases: [mixed teams](../../harness/server-reference/tests/support/service_parallel.rs),
+[live team](../../harness/server-reference/tests/support/service_live_team.rs),
+and the PG retirement/approval cases linked above. Consult the journal for which
+cases and platforms have actually passed; definitions alone are not qualification.
