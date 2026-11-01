@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { getI18n, useTranslation } from "react-i18next";
 import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
@@ -37,10 +37,19 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
-function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
+// Reuse the system-locale formatters across bubbles, including the first render
+// after returning from Settings. Date.toLocale* constructs a formatter per call.
+const BUBBLE_TIME = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
+const BUBBLE_TITLE = new Intl.DateTimeFormat([], {
+  year: "numeric", month: "numeric", day: "numeric",
+  hour: "numeric", minute: "numeric", second: "numeric",
+});
+
+const BubbleMeta = memo(function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
+  const validTime = when && !Number.isNaN(when.getTime());
   const copy = () => {
     // "Copied" only after the write actually lands — WebKit can reject outside a
     // trusted gesture, and claiming success on a silent no-op would gaslight the user.
@@ -69,14 +78,14 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           {copied ? t("transcript.copied") : <Icon name="copy" size={11} />}
         </button>
         {when && (
-          <span data-testid="bubble-ts" title={when.toLocaleString()}>
-            {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+          <span data-testid="bubble-ts" title={validTime ? BUBBLE_TITLE.format(when) : when.toString()}>
+            {validTime ? BUBBLE_TIME.format(when) : when.toString()}
           </span>
         )}
       </div>
     </div>
   );
-}
+});
 
 // Reasoning-model thinking text (model-layer roadmap item 4): a quiet disclosure —
 // collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
