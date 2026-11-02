@@ -303,3 +303,20 @@ def test_the_context_window_is_the_one_the_engine_compacts_against(monkeypatch):
     assert _context_window("openrouter:model-b") == 64_000
     assert _context_window("ollama:model-c") == 40_960
     assert _context_window("together:model-d") is None
+
+
+def test_a_saved_window_is_read_after_the_call_not_before(tmp_path, monkeypatch):
+    # Reading the user's saved size before the request delayed it (a title call then raced
+    # ahead in test_server). The step starts with the catalogue's value only and gets the
+    # saved size once the call is over.
+    from coworker import model_config
+
+    monkeypatch.setattr(model_config, "context_size_for", lambda model: 64_000)
+    engine, rec = _engine(tmp_path, [AssistantTurn(text="hi", finish_reason="stop", usage=None)])
+    events = []
+    rec.add_listener(lambda ev: events.append(ev))
+    _run(engine, "hello")
+    [started] = [e for e in events if e.get("type") == "step_started" and e.get("kind") == "model"]
+    assert started["attrs"]["context_window"] is None  # not in the catalogue; nothing read yet
+    [step] = [s for s in rec.as_dict()["steps"] if s["kind"] == "model"]
+    assert step["attrs"]["context_window"] == 64_000

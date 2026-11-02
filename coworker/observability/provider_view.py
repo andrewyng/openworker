@@ -194,14 +194,17 @@ def _provider_title(provider: str) -> Optional[str]:
         return None
 
 
-def _context_window(model: str) -> Optional[int]:
+def _context_window(model: str, *, catalogue_only: bool = False) -> Optional[int]:
     """The window the engine compacts against (`TurnEngine._compaction_config`): the
     catalogue, else the user's saved size, else an Ollama model's `num_ctx`. A local
-    server's window is left out: finding it may mean a request to that server."""
+    server's window is left out: finding it may mean a request to that server. With
+    `catalogue_only` (a call's start) nothing is read from disk, so the request is not held."""
     try:
         from ..providers.matrix import model_context_windows
 
         window = model_context_windows().get(model)
+        if catalogue_only:
+            return int(window) if window else None
         if not window:
             from .. import model_config
 
@@ -288,7 +291,7 @@ class _ModelCall:
                 attrs={
                     "purpose": tags.purpose, "provider": provider,
                     "provider_title": _provider_title(provider), "model": model,
-                    "stream": streamed, "context_window": _context_window(model),
+                    "stream": streamed, "context_window": _context_window(model, catalogue_only=True),
                     "tools_offered": len(tools or []), "tools_hash": tools_hash(tools),
                 },
             )
@@ -297,7 +300,18 @@ class _ModelCall:
             return None
         if step_id is None:
             return None
-        return cls(tags, sink, step_id, streamed)
+        call = cls(tags, sink, step_id, streamed)
+        call.model = model
+        return call
+
+    def _window(self, attrs: dict[str, Any]) -> None:
+        """A window the catalogue lacks (the user's saved size, Ollama's num_ctx), looked up
+        once the call is over so recording never delays the request."""
+        model = getattr(self, "model", "")
+        if model and not _context_window(model, catalogue_only=True):
+            window = _context_window(model)
+            if window:
+                attrs["context_window"] = window
 
     def saw(self, chunk: Any) -> None:
         # The first streamed piece of the reply: text or thinking (§7.2).
@@ -334,6 +348,7 @@ class _ModelCall:
             more, content = self._exchange()
             attrs.update(more)
             _fill_from_facts(attrs)
+            self._window(attrs)
             self.sink.end_step(
                 self.step_id, status="ok", attrs=attrs, content=content,
                 wait_for_reply_message=self.tags.purpose == "main",
@@ -350,6 +365,7 @@ class _ModelCall:
             more, content = self._exchange()
             attrs: dict[str, Any] = {"finish_reason": None, "ttft_ms": self.ttft_ms if self.streamed else None,
                                      "usage": {"reported": False}, **more}
+            self._window(attrs)
             text = str(root_cause(exc)).strip()[:200] or None
             self.sink.end_step(self.step_id, status="error", attrs=attrs, content=content,
                                error={"type": classify_error(exc), "text": text})
