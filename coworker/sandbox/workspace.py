@@ -281,7 +281,18 @@ class RunnerWorkspace(Workspace):
         for _, entry in new:
             counts[entry] = counts.get(entry, 0) + 1
         late = any(when < started - 0.5 for when, _ in new)
-        return {"blocked_sites": list(counts), "network_note": network_note_text(counts, can_ask=self._asking(), late=late)}
+        first: dict[str, float] = {}
+        for when, entry in new:
+            first[entry] = min(first.get(entry, when), when)
+        # `_blocked` is for the recording's tool step (observability E13, V-04); the engine
+        # takes it out of the result before the model sees it.
+        blocked = [
+            {"site": entry, "count": n, "first_at": int(first[entry] * 1000),
+             "late": first[entry] < started - 0.5, "uncertain": True}
+            for entry, n in counts.items()
+        ]
+        return {"blocked_sites": list(counts), "network_note": network_note_text(counts, can_ask=self._asking(), late=late),
+                "_blocked": blocked}
 
     def _blocked_untold(self) -> list[tuple[float, str]]:
         return [item for item in self.blocked_since(self._blocked_told) if item[0] > self._blocked_told]

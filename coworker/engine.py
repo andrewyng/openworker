@@ -35,6 +35,8 @@ from . import unattended as _attendance
 from .events import Event, EventType
 from .observability.decision import DecisionPath
 from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
+from .observability.recorder import short_hash as _short_hash
+from .observability import stamps as _stamps
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
@@ -565,6 +567,13 @@ class TurnEngine:
         # Auto-approver check steps by tool call (E12), and shadow checks waiting to be
         # compared with your answer: call id -> (step id, verdict or None).
         self._review_steps: dict[str, str] = {}
+        # The coworker fingerprint and the session-start context facts, set by the session
+        # build (observability E16, E5); and this turn's context block, to spot a change.
+        self.persona_fp: Optional[str] = None
+        self.context_facts: dict[str, Any] = {}
+        self._last_context_block = ""
+        self._turn_context_hash: Optional[str] = None
+        self._context_turn: Optional[str] = None
         self._shadow_checks: dict[str, tuple[Optional[str], Any]] = {}
         self._user_answers: dict[str, bool] = {}
         if instructions and not (
@@ -704,10 +713,58 @@ class TurnEngine:
                     "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
                 },
             },
-            stamp={},
+            stamp=self._turn_stamp(),
             first_message_id=first,
             wait_for_first_message=kind == "retry",
         )
+
+    def _turn_stamp(self) -> dict[str, Any]:
+        """Facts saved with the turn (observability §9): machine, model, sandbox, coworker."""
+        stamp: dict[str, Any] = {}
+        try:
+            stamp["machine"] = _stamps.machine_stamp()
+            stamp["model"] = _stamps.model_stamp(self.model)
+            sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+            if sandbox:
+                stamp["sandbox"] = sandbox
+            if self.persona_fp:
+                stamp["persona_fp"] = self.persona_fp
+        except Exception:  # noqa: BLE001 - a stamp never breaks a turn
+            logger.exception("observability: could not stamp the turn")
+        return stamp
+
+    def _note_context(self) -> None:
+        """The context step at the turn's first model call, and a `context_changed` notice
+        when the per-turn block changes later in the turn (observability E5, §5.6)."""
+        obs = self._obs
+        if not obs.enabled or not obs.in_turn or not getattr(obs, "records_context", True):
+            return
+        block = self._last_context_block or ""
+        block_hash = _short_hash(block) if block else None
+        per_turn = {
+            "mode_note": self.permissions.mode.value if self.permissions.mode in (Mode.PLAN, Mode.DISCUSS) else None,
+            "folders": len(getattr(self, "roots", None) or []) if isinstance(getattr(self, "roots", None), (list, tuple)) else None,
+            "sandbox_note": getattr(getattr(self, "sandbox_workspace", None), "describe", None) is not None,
+            "skills_menu": None,
+            "skills_hash": None,
+        }
+        if self._context_turn != obs.turn_id:
+            self._context_turn, self._turn_context_hash = obs.turn_id, block_hash
+            system = self.messages[0].get("content") if self.messages and self.messages[0].get("role") == "system" else None
+            attrs: dict[str, Any] = {
+                "session_prompt_hash": _short_hash(system) if isinstance(system, str) else None,
+                "per_turn": per_turn,
+                "size_chars": len(block),
+                "block_hash": block_hash,
+            }
+            if self.context_facts and not getattr(self, "_context_session_told", False):
+                attrs["session_start"] = dict(self.context_facts)
+                self._context_session_told = True
+            obs.instant_step(kind="context", name="context", status="ok", attrs=attrs)
+        elif block_hash != self._turn_context_hash:
+            self._turn_context_hash = block_hash
+            obs.instant_step(kind="notice", name="context_changed", status="ok",
+                             attrs={"per_turn": per_turn, "size_chars": len(block), "block_hash": block_hash})
 
     def _observe_event(self, event: Event) -> None:
         """Ids on a UI event, a call that never ran as a zero-length tool step, and the turn's
@@ -735,7 +792,11 @@ class TurnEngine:
             if step_id:
                 event.data.setdefault("step_id", step_id)
         if event.type is EventType.TURN_END:
-            obs.end_turn(str(event.data.get("status") or "completed"))
+            status = str(event.data.get("status") or "completed")
+            if status in ("max_iterations_exceeded", "truncated"):
+                obs.instant_step(kind="notice", name="step_limit" if status == "max_iterations_exceeded" else "truncated",
+                                 status="ok", attrs={})
+            obs.end_turn(status)
         elif event.type is EventType.INTERRUPTED:
             obs.end_turn("interrupted")
         elif event.type is EventType.ERROR:
@@ -916,6 +977,9 @@ class TurnEngine:
             notice["text"] = text
         notice.update({k: v for k, v in fields.items() if v is not None})
         self._add_message(notice)
+        if kind in ("interrupted", "error", "reviewer_paused"):
+            # A zero-length marker on the timeline (observability §5.8).
+            self._obs.instant_step(kind="notice", name=kind, status="ok", attrs={})
 
     @_records_turn("retry")
     @_summarizes_turn
@@ -1516,6 +1580,7 @@ class TurnEngine:
             self._outbound_messages(),
             self.model_settings,
         )
+        self._note_context()
         provider = self.provider
 
         def produce():
@@ -2703,9 +2768,12 @@ class TurnEngine:
             result, status = self._execute_call(tool_call)
         finally:
             set_tool_run(outer)
+        blocked = result.pop("_blocked", None) if isinstance(result, dict) else None
         if step_id is not None:
+            attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result)
             self._obs.end_step(
-                step_id, status=status, attrs=self._tool_step_attrs(tool_call, result),
+                step_id, status=status, attrs=attrs,
+                content={"blocked": blocked} if blocked else {},
                 wait_for_tool_message=True,
             )
         return result, status
@@ -2724,7 +2792,22 @@ class TurnEngine:
             pass
         if isinstance(result, dict) and isinstance(result.get("exit_code"), int):
             attrs["exit_code"] = result["exit_code"]
+        attrs["sandbox"] = self._sandbox_facts(result)
         return attrs
+
+    def _sandbox_facts(self, result: Any) -> Optional[dict[str, Any]]:
+        """Per-call sandbox facts (observability E13, §9.3): whether this sandbox can report
+        blocked sites now, and how many connections it refused during the call. None when
+        the call did not run in a sandbox."""
+        ws = getattr(self, "sandbox_workspace", None)
+        if ws is None or not hasattr(ws, "reports_blocked"):
+            return None
+        blocked = result.get("_blocked") if isinstance(result, dict) else None
+        return {
+            "blocked_known": bool(getattr(ws, "reports_blocked", False)),
+            "blocked_count": sum(int(b.get("count") or 0) for b in blocked or []),
+            "notice": None,
+        }
 
     def _execute_call(self, tool_call: ToolCall) -> tuple[Any, str]:
         started, clock = time.time(), time.monotonic()
@@ -3727,6 +3810,7 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
+        self._last_context_block = context
         if not context:
             return out
         # The block rides on the LAST user message — one shape for every provider. In a

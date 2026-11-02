@@ -28,6 +28,7 @@ from .environment import environment_context
 from .memory import (
     MemoryStore,
     Scope,
+    format_memories,
     format_user_rules,
     memory_tools,
     render_memory_block,
@@ -487,6 +488,9 @@ def build_engine(
     # sleep_until all come from here.
     registry.register_all(clock_tools())
 
+    _remembered: list = []
+    _memory_mode = "full"
+    _agents_md_count = 0
     instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
     if agent.team == "lead":
         from .teams.proposals import PROPOSAL_GUIDANCE
@@ -519,6 +523,7 @@ def build_engine(
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)
+        _agents_md_count = conventions.count(" AGENTS.md>\n") if conventions else 0
         if conventions:
             instructions = f"{instructions}\n\n{conventions}"
 
@@ -562,7 +567,9 @@ def build_engine(
         remembered = memory_store.list(scope=Scope.GLOBAL)
         if mem_ws is not None:
             remembered += memory_store.list(scope=Scope.WORKSPACE, workspace=mem_ws)
+        _remembered = remembered
         block = render_memory_block(remembered)
+        _memory_mode = "index" if block and block != format_memories(remembered) else "full"
         if block:
             instructions = f"{instructions}\n\n{block}"
 
@@ -886,6 +893,22 @@ def build_engine(
         # attached but the LIVE path stays off unless the live feature flag is also on
         # and the session is in Mode.AUTO_APPROVE. Shadow verdicts never clear actions.
         engine.reviewer_shadow = bool(shadow_on)
+    # Observability E16 / E5: which version of the coworker this is, and what the session's
+    # system prompt was built from (counts and ids, never the text).
+    try:
+        from .observability.stamps import persona_fingerprint
+
+        engine.persona_fp = persona_fingerprint(
+            agent.name, agent.system_prompt, [Path(d) for d in (extra_skill_dirs or [])]
+        )
+    except Exception:  # noqa: BLE001
+        engine.persona_fp = None
+    engine.context_facts = {
+        "memories": [getattr(m, "id", None) for m in (_remembered or [])],
+        "memory_mode": _memory_mode,
+        "rules": len([ln for ln in (rules_block or "").splitlines() if ln.strip().startswith("-")]),
+        "agents_md": _agents_md_count,
+    }
     engine.audit_context = {
         "session_id": session_id or "",
         "agent": agent.name,

@@ -397,6 +397,9 @@ class HelperRecording:
     not recorded as turns. Its tools run read-only in Plan mode, so their decision is
     `{helper: true}` instead of a full path."""
 
+    # The helper's context is not the session's: no context step under the explore step.
+    records_context = False
+
     def __init__(self, parent: TurnRecording, parent_step_id: str, turn_id: Optional[str]) -> None:
         self.parent, self.parent_step_id = parent, parent_step_id
         self.turn_id = turn_id

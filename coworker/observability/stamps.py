@@ -1,0 +1,123 @@
+"""Stamps: facts saved with every turn (observability E15a, E16; technical design §9).
+
+`turn.stamp` has four optional keys: `machine` (where the work ran), `model` (which model
+and provider key), `sandbox` (how protected) and `persona_fp` (which version of the coworker).
+They are taken once at turn start.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import socket
+import threading
+from pathlib import Path
+from typing import Any, Iterable, Optional
+
+CLOUD_CONTROLLER = "https://machines.openworker.com"
+
+_machine_lock = threading.Lock()
+_machine: Optional[dict[str, Any]] = None
+
+
+def machine_kind(controller: Optional[str], cloud_base: str = CLOUD_CONTROLLER) -> str:
+    """`this_machine` when not joined to a controller; `cloud` for OpenWorker's cloud
+    machines; `own_machine` for a remote machine you added (§9.1)."""
+    if not controller:
+        return "this_machine"
+    return "cloud" if controller.rstrip("/") == cloud_base.rstrip("/") else "own_machine"
+
+
+def app_version_or_unknown() -> str:
+    """The OpenWorker version; `unknown`, never `0.0.0` (C6)."""
+    try:
+        from ..remote.channel import app_version
+
+        v = app_version()
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    return "unknown" if (not v or v == "0.0.0") else v
+
+
+def machine_stamp() -> dict[str, Any]:
+    """Where this server runs: read once per process."""
+    global _machine
+    with _machine_lock:
+        if _machine is None:
+            cfg: dict[str, Any] = {}
+            try:
+                from ..remote.joiner import load_remote_config
+                from ..secrets import state_dir
+
+                cfg = load_remote_config(state_dir()) or {}
+            except Exception:  # noqa: BLE001
+                cfg = {}
+            try:
+                host = socket.gethostname()
+            except Exception:  # noqa: BLE001
+                host = None
+            _machine = {
+                "kind": machine_kind(cfg.get("controller")),
+                "id": cfg.get("machine_id") or None,
+                "name": cfg.get("name") or host,
+                "app_version": app_version_or_unknown(),
+            }
+        return dict(_machine)
+
+
+def model_stamp(model: str) -> dict[str, Any]:
+    """The turn's model and which provider key it used (§9.2)."""
+    provider = model.split(":", 1)[0] if ":" in model else "openai"
+    title = kind = None
+    try:
+        from ..providers.registry import get_descriptor
+
+        d = get_descriptor(provider)
+        if d is not None:
+            title, kind = getattr(d, "title", None), getattr(d, "kind", None)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"id": model, "provider_title": title, "kind": kind}
+
+
+def sandbox_stamp(workspace: Any) -> Optional[dict[str, Any]]:
+    """The turn's sandbox (§9.3, per turn), from `describe()`; None when there is none."""
+    describe = getattr(workspace, "describe", None)
+    if describe is None:
+        return None
+    try:
+        info = describe() or {}
+    except Exception:  # noqa: BLE001
+        return None
+    runner = info.get("runner") or {}
+    out = {
+        "provider": info.get("provider"),
+        "enforcement": info.get("enforcement"),
+        "profile": getattr(getattr(workspace, "provider", None), "profile", None),
+        "sites": _site_count(workspace),
+        "runner_version": runner.get("runner_version"),
+        "image": info.get("image"),
+    }
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _site_count(workspace: Any) -> Optional[int]:
+    sites = getattr(getattr(workspace, "provider", None), "allowed_sites", None)
+    try:
+        return len(sites) if sites is not None else None
+    except TypeError:
+        return None
+
+
+def persona_fingerprint(persona_id: str, manifest: str | bytes, skill_dirs: Iterable[Path] = ()) -> str:
+    """Which version of this coworker ran (§9.4): sha256 of its id, its manifest text and
+    its own skill files (sorted by relative path), first 6 hex characters. Not your own or
+    the workspace's skills, memories, AGENTS.md, the model or the tools."""
+    data = manifest.encode("utf-8") if isinstance(manifest, str) else manifest
+    h = hashlib.sha256(("persona:" + persona_id + "\n").encode("utf-8") + data)
+    for d in skill_dirs:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        for f in sorted((p for p in d.rglob("*") if p.is_file()), key=lambda p: p.relative_to(d).as_posix()):
+            h.update(f.relative_to(d).as_posix().encode("utf-8") + b"\n" + f.read_bytes())
+    return h.hexdigest()[:6]

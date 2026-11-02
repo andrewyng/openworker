@@ -146,8 +146,8 @@ def test_every_model_call_is_a_main_model_step(tmp_path):
     assert first["attrs"]["model"] == "openai:model-a" and first["attrs"]["provider"] == "openai"
     assert first["attrs"]["tools_offered"] > 0 and first["attrs"]["tools_hash"]
     assert all(s["turn_id"] == d["turns"][0]["turn_id"] for s in models)
-    # canonical order: model, tool, model
-    assert [s["kind"] for s in d["steps"]] == ["model", "tool", "model"]
+    # canonical order: the context taken at the first model call, then model, tool, model
+    assert [s["kind"] for s in d["steps"]] == ["context", "model", "tool", "model"]
 
 
 def test_a_failed_model_call_is_an_error_step(tmp_path):
