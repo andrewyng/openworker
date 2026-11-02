@@ -11,6 +11,7 @@ import pytest
 
 from coworker.observability import Recorder, RecordingStore, new_ulid
 from coworker.observability import store as store_mod
+from coworker.observability.recorder import now_ms
 
 DAY_MS = 24 * 60 * 60 * 1000
 
@@ -262,3 +263,12 @@ def test_ulids_sort_by_creation_and_never_repeat():
     assert len(set(ids)) == 5000
     assert ids == sorted(ids)
     assert all(len(i) == 26 for i in ids)
+
+
+def test_the_step_clock_ticks_every_millisecond():
+    # Windows' time.monotonic ticks every 15.6 ms; durations need millisecond steps.
+    first = now_ms()[1]
+    deadline = time.perf_counter() + 0.2
+    while (tick := now_ms()[1]) == first and time.perf_counter() < deadline:
+        pass
+    assert tick - first == 1

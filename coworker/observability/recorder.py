@@ -130,8 +130,11 @@ def _merge_top(into: dict[str, Any], new: Optional[dict[str, Any]]) -> None:
 
 
 def now_ms() -> tuple[int, int]:
-    """(at_ms, mono_ms) for an event sent now."""
-    return time.time_ns() // 1_000_000, time.monotonic_ns() // 1_000_000
+    """(at_ms, mono_ms) for an event sent now.
+
+    `mono_ms` uses `perf_counter`, which is monotonic too: on Windows `time.monotonic` only
+    ticks every 15.6 ms, so a short tool step read 0 or 16 ms there."""
+    return time.time_ns() // 1_000_000, time.perf_counter_ns() // 1_000_000
 
 
 def new_turn_id() -> str:
