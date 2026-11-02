@@ -71,6 +71,9 @@ def test_a_recorded_turn_reads_back_through_the_endpoints(tmp_path):
     assert detail["message"]["role"] == "tool" and "Friday" in detail["message"]["content"]
     assert detail["message"]["mid"] == tool["message_id"]
     assert any(row.get("call_id") == "c1" for row in detail["audit"])
+    # The details card's arguments come from the transcript's tool call (UX-059 OB-2).
+    assert detail["arguments"] == {"path": "notes.txt"}
+    assert "wait" not in detail  # a low-risk read had no card
 
     usage = client.get("/v1/sessions/r1/usage").json()
     assert usage["pill"] == turn["usage"]["pill"] and usage["at_least"] is False
@@ -89,3 +92,26 @@ def test_a_session_recorded_before_phase_1_says_so(tmp_path):
     client = TestClient(create_app(manager))
     assert client.get("/v1/sessions/old/turns").json() == {"turns": []}
     assert client.get("/v1/sessions/old/usage").json()["recorded"] is False
+
+
+def test_a_tool_card_brings_its_wait_and_a_check_names_its_call():
+    # UX-059 OB-2 / OB-11: the tool's card shows how long it waited on its approval card;
+    # an auto-approver check names the call it judged.
+    from coworker.observability import read_api
+
+    def s(step_id, kind, name, **kw):
+        return {"step_id": step_id, "turn_id": "t", "kind": kind, "name": name, "call_id": "c1",
+                "parent_step_id": None, "attrs": kw.pop("attrs", {}), "content": {}, **kw}
+
+    rec = {"turns": [{"turn_id": "t"}], "steps": [
+        s("a", "auto_approver", "run_shell", attrs={"result": "unsure"}),
+        s("w", "wait", "approval", duration_ms=2000, attrs={"for_call_id": "c1", "outcome": "approved"}),
+        s("x", "tool", "run_shell", duration_ms=40),
+    ]}
+    messages = [{"role": "assistant", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "run_shell", "arguments": '{"command": "make"}'}}]}]
+    kw = dict(get_piece=lambda k: None, messages=messages, audit_rows=lambda c: [])
+    tool = read_api.step(rec, "x", **kw)
+    assert tool["arguments"] == {"command": "make"} and tool["wait"]["duration_ms"] == 2000
+    check = read_api.step(rec, "a", **kw)
+    assert check["for_step"]["step_id"] == "x" and check["arguments"] == {"command": "make"}

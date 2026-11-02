@@ -57,9 +57,39 @@ def step(recording: dict[str, Any], step_id: str, *, get_piece: Callable[[str], 
         message = next((m for m in messages if m.get("mid") == mid), None)
         if message is not None:
             out["message"] = _cut(message)
-    out["audit"] = audit_rows(found["call_id"]) if found.get("call_id") else []
+    call_id = found.get("call_id")
+    out["audit"] = audit_rows(call_id) if call_id else []
     out["children"] = [_light(s) for s in steps if s.get("parent_step_id") == step_id]
+    if call_id and found.get("kind") in ("tool", "auto_approver"):
+        # The details panel shows a tool call as one card: its arguments (from the
+        # transcript), the card it waited on, and for a check, the call it judged (UX-059).
+        args = _tool_arguments(messages, call_id)
+        if args is not None:
+            out["arguments"] = args
+        wait = next((s for s in steps if s.get("kind") == "wait" and s.get("turn_id") == found.get("turn_id")
+                     and (s.get("call_id") == call_id or (s.get("attrs") or {}).get("for_call_id") == call_id)), None)
+        if wait is not None:
+            out["wait"] = _light(wait)
+        if found.get("kind") == "auto_approver":
+            target = next((s for s in steps if s.get("kind") == "tool" and s.get("call_id") == call_id), None)
+            if target is not None:
+                out["for_step"] = _light(target)
     return out
+
+
+def _tool_arguments(messages: list[dict[str, Any]], call_id: str) -> Any:
+    """The arguments of the model's tool call with this id, as sent (parsed when JSON)."""
+    for m in reversed(messages):
+        for tc in m.get("tool_calls") or []:
+            if tc.get("id") == call_id:
+                raw = (tc.get("function") or {}).get("arguments", tc.get("arguments"))
+                if isinstance(raw, str):
+                    try:
+                        return json.loads(raw)
+                    except ValueError:
+                        return raw
+                return raw
+    return None
 
 
 def _rebuilt(entry: dict[str, Any], get_piece: Callable[[str], Optional[bytes]]) -> dict[str, Any]:
@@ -79,8 +109,14 @@ def _cut(message: dict[str, Any]) -> dict[str, Any]:
     content = message.get("content")
     text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
     cut = len(text) > MESSAGE_CUT
-    return {"role": message.get("role"), "mid": message.get("mid"), "tool_call_id": message.get("tool_call_id"),
-            "content": text[:MESSAGE_CUT], "cut": cut}
+    out = {"role": message.get("role"), "mid": message.get("mid"), "tool_call_id": message.get("tool_call_id"),
+           "content": text[:MESSAGE_CUT], "cut": cut}
+    calls = [{"name": (tc.get("function") or {}).get("name") or tc.get("name"),
+              "arguments": str((tc.get("function") or {}).get("arguments", tc.get("arguments", "")))[:MESSAGE_CUT // 4]}
+             for tc in message.get("tool_calls") or []]
+    if calls:
+        out["tool_calls"] = calls  # a model reply's tool calls, for the details' Output (UX-059 OB-2)
+    return out
 
 
 def usage(recording: dict[str, Any], session_id: str) -> dict[str, Any]:

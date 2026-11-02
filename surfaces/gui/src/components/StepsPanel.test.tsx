@@ -72,7 +72,7 @@ describe("StepsPanel", () => {
     const tokens = await screen.findByTestId("steps-tokens");
     expect(tokens.textContent).toContain("from cache 900");
     expect(tokens.textContent).toContain("written to cache —");  // not reported is not 0
-    expect(screen.getByTestId("steps-details").textContent).toContain("tool_calls");
+    expect(screen.getByTestId("steps-details").textContent).toContain("stopped because it asked for a tool");
   });
 
   it("shows the session's usage by purpose and model", async () => {
@@ -151,7 +151,7 @@ describe("StepsPanel", () => {
     await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(3));
     fireEvent.click(screen.getAllByTestId("steps-row")[0]);
     let d = (await screen.findByTestId("steps-details")).textContent || "";
-    for (const s of ["Memories2 · as an index", "Your rules1", "AGENTS.md files1", "Folders2", "Mode noteplan", "Skills offered3 · ab12cd", "1057 · 69a95b"]) expect(d).toContain(s);
+    for (const s of ["Memories 2 · as an index", "Your rules 1", "AGENTS.md files 1", "Folders 2", "Mode note plan", "Skills offered 3 ⓢab12cd", "1057 · 69a95b"]) expect(d).toContain(s);
     fireEvent.click(screen.getAllByTestId("steps-row")[1]);
     await waitFor(() => expect(screen.getByTestId("steps-details").textContent).toContain("req_1"));
     d = screen.getByTestId("steps-details").textContent || "";
@@ -213,7 +213,7 @@ describe("StepsPanel", () => {
     vi.mocked(getStepDetail).mockResolvedValue(check as any);
     render(<StepsPanel sessionId="s1" onClose={() => {}} />);
     fireEvent.click((await screen.findAllByTestId("steps-row"))[0]);
-    expect((await screen.findByTestId("steps-questions")).textContent).toContain("unrelated_destination: yes (0.99)");
+    expect((await screen.findByTestId("steps-questions")).textContent).toContain("unrelated_destinationyes 0.99");
   });
 
   it("shows the mode, the reviewer and the turn's stamps in the header", async () => {
