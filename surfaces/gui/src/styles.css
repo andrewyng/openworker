@@ -2432,6 +2432,9 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .steps-turn-picker button { padding:2px 6px!important; }
 .steps-turn-picker button:disabled { opacity:.35; cursor:default; }
 .steps-body { flex:1; min-height:0; overflow:auto; padding:12px 14px 20px; }
+.steps-stamp { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:8px 14px 0; font-size:var(--fs-meta); color:var(--muted); }
+.steps-mode { padding:1px 8px; border-radius:999px; background:var(--chrome-hover); color:var(--ink); white-space:nowrap; }
+.steps-stamp-line { min-width:0; overflow-wrap:anywhere; }
 .steps-empty { padding:16px 14px; color:var(--muted); font-size:var(--fs-ui); }
 .steps-tiles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
 .steps-tile { background:var(--chrome-hover); border-radius:8px; padding:9px 10px; display:flex; flex-direction:column; gap:2px; }

@@ -410,4 +410,13 @@ describe("mode notice", () => {
     expect(screen.queryByTestId("mode-notice")).toBeNull();
     expect(screen.getByText("Context compacted").className).not.toContain("notice-block");
   });
+
+  it("offers the turn's steps from its answer", () => {
+    // UX-059 OB-1: a "Steps" link in each answer's footer, with the answer's time.
+    const onOpenSteps = vi.fn();
+    render(<Transcript items={[{ kind: "user", text: "hi", ts: 100 }, { kind: "assistant", text: "hello", ts: 105 }] as any}
+                       onApprove={() => {}} onOpenSteps={onOpenSteps} />);
+    fireEvent.click(screen.getByTestId("bubble-steps"));
+    expect(onOpenSteps).toHaveBeenCalledWith(105);
+  });
 });

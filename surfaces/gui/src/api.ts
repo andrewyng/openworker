@@ -4401,6 +4401,10 @@ export interface RecordedTurn {
   stamp: Record<string, any>;
   buckets: Record<string, any>;
   usage: Record<string, any>;
+  // The approval mode and auto-approver at turn start (UX-059 OB-1 header pill).
+  approval_mode?: string | null;
+  attended?: boolean | null;
+  reviewer?: { active?: boolean; shadow?: boolean; kind?: string | null; model?: string | null } | null;
 }
 
 export interface RecordedStep {

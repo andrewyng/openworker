@@ -419,6 +419,8 @@ export function App() {
   // team view; `stepsKey` moves on live step events and at a turn's end so it follows along.
   const [stepsOpen, setStepsOpen] = useState(false);
   const [stepsKey, setStepsKey] = useState(0);
+  // A turn's answer opened the panel: the answer's time picks the turn (unix seconds).
+  const [stepsAt, setStepsAt] = useState<{ ts?: number; n: number } | null>(null);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
   const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
@@ -2355,6 +2357,12 @@ export function App() {
                       setSurface("audit");
                     }}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
+                    onOpenSteps={agent !== "chat" ? (ts) => {
+                      setStepsAt((prev) => ({ ts, n: (prev?.n || 0) + 1 }));
+                      setStepsOpen(true);
+                      setTeamViewOpen(false);
+                      setRailHidden(false);
+                    } : undefined}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
@@ -2631,7 +2639,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} onClose={() => setStepsOpen(false)} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} openAt={stepsAt} onClose={() => setStepsOpen(false)} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}

@@ -3015,9 +3015,32 @@
       "summary": "摘要",
       "other": "其他"
     },
-    "checks_line_other": "自动审批：{{count}} 次检查 · {{allowed}} 次允许 · {{asked}} 次询问你 · {{blocked}} 次阻止",
+    "checks_line_other": "自动审批：{{count}} 次检查 · {{allowed}} 次允许 · {{asked}} 次询问你 · {{blocked}} 次阻止 · {{time}} · {{reviewer}}",
     "unknown_line_one": "{{count}} 个步骤在 OpenWorker 停止时仍在运行，其用时未知。",
     "unknown_line_other": "{{count}} 个步骤在 OpenWorker 停止时仍在运行，其用时未知。",
+    "mode": {
+      "plan": "计划",
+      "dangerous": "危险的完全访问"
+    },
+    "reviewer": {
+      "session_model": "会话模型",
+      "session_model_named": "会话模型（{{model}}）",
+      "openai_decisions": "OpenAI Decisions",
+      "typesafe_jev": "TypeSafe Jev",
+      "shadow": "影子：{{reviewer}}"
+    },
+    "machine": {
+      "this_machine": "本机",
+      "cloud": "云端",
+      "remote": "远程机器",
+      "joined": "已加入的机器"
+    },
+    "sandbox": {
+      "none": "无沙箱",
+      "full": "强制执行",
+      "partial": "部分执行",
+      "network": "网络 {{profile}}"
+    },
     "row": {
       "context": "构建上下文",
       "model": "模型",

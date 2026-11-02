@@ -37,7 +37,7 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
-function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
+function BubbleMeta({ text, ts, align, onOpenSteps }: { text: string; ts?: number; align: "left" | "right"; onOpenSteps?: (ts?: number) => void }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
@@ -72,6 +72,17 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
             {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
           </span>
+        )}
+        {onOpenSteps && (
+          // UX-059 OB-1: the turn's steps, from its answer.
+          <button
+            className="cursor-pointer hover:text-muted"
+            data-testid="bubble-steps"
+            title={t("steps.open_title")}
+            onClick={() => onOpenSteps(ts)}
+          >
+            {t("steps.open")}
+          </button>
         )}
       </div>
     </div>
@@ -487,6 +498,8 @@ interface Props {
   // OPE-238: open Activity on one tool call's audit rows (from the "changes made without
   // asking" summary). Without it the summary shows no audit links.
   onOpenAudit?: (callId: string) => void;
+  // UX-059 OB-1: open the Steps panel at the turn that ended with this answer (its time).
+  onOpenSteps?: (ts?: number) => void;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -546,7 +559,7 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit, onOpenSteps }: Props) {
   const { t } = useTranslation();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -666,7 +679,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
                 <div className="who">{t("transcript.who_assistant")}</div>
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
-                <BubbleMeta text={item.text} ts={item.ts} align="left" />
+                <BubbleMeta text={item.text} ts={item.ts} align="left" onOpenSteps={onOpenSteps} />
               </div>
             );
           case "dirreq":

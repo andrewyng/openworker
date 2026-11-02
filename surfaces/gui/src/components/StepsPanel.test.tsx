@@ -216,6 +216,48 @@ describe("StepsPanel", () => {
     expect((await screen.findByTestId("steps-questions")).textContent).toContain("unrelated_destination: yes (0.99)");
   });
 
+  it("shows the mode, the reviewer and the turn's stamps in the header", async () => {
+    // UX-059 OB-1 mode pill; OB-12, OB-14, OB-15 stamp line.
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn,
+      approval_mode: "auto-approve", reviewer: { active: true, shadow: false, kind: "session_model", model: "openrouter:model-b" },
+      buckets: { ...turn.buckets, auto_approver: 2900 },
+      stamp: { machine: { kind: "this_machine", name: "DESKTOP-1", app_version: "0.2.3" }, sandbox: { provider: "direct", enforcement: "none" },
+               persona_fp: "c5dc98", model: { id: "openrouter:model-b", provider_title: "OpenRouter" } } }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    expect((await screen.findByTestId("steps-mode")).textContent).toBe("Auto-approve · session model (openrouter:model-b)");
+    const stamp = screen.getByTestId("steps-stamp").textContent || "";
+    for (const part of ["DESKTOP-1 · 0.2.3", "No sandbox", "ⓕc5dc98", "openrouter:model-b · OpenRouter"]) expect(stamp).toContain(part);
+    expect((await screen.findByTestId("steps-checks")).textContent).toContain("1 check · 1 allowed · 0 asked you · 0 blocked · 2.9s · session model (openrouter:model-b)");
+  });
+
+  it("names a shadow reviewer and a sandbox", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, approval_mode: "interactive",
+      reviewer: { active: false, shadow: true, kind: "openai_decisions", model: null },
+      stamp: { machine: { kind: "cloud", name: "box-7" }, sandbox: { provider: "OpenShell", enforcement: "full", profile: "limited" } } }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    expect((await screen.findByTestId("steps-mode")).textContent).toBe("Ask for approval · shadow: OpenAI Decisions");
+    expect(screen.getByTestId("steps-stamp").textContent).toContain("box-7 (cloud)");
+    expect(screen.getByTestId("steps-stamp").textContent).toContain("OpenShell · enforced · network limited");
+  });
+
+  it("opens the turn an answer's Steps link points at", async () => {
+    // UX-059 OB-1: the "Steps" link in a turn's footer. The answer's time picks the turn.
+    // The next message was sent within a second of turn 1's answer (round-2 check).
+    const turns = [{ ...turn, turn_id: "t1", seq: 1, started_at: 1_000_000, duration_ms: 4_200 },
+                   { ...turn, turn_id: "t2", seq: 2, started_at: 1_004_600, duration_ms: 3_000 },
+                   { ...turn, turn_id: "t3", seq: 3, started_at: 3_000_000, duration_ms: null }];
+    vi.mocked(getRecordedTurns).mockResolvedValue(turns as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    const { rerender } = render(<StepsPanel sessionId="s1" openAt={{ ts: 1004, n: 1 }} onClose={() => {}} />);
+    await screen.findByText("Turn 1 of 3");
+    rerender(<StepsPanel sessionId="s1" openAt={{ ts: 1007, n: 2 }} onClose={() => {}} />);
+    await screen.findByText("Turn 2 of 3");
+    rerender(<StepsPanel sessionId="s1" openAt={{ ts: 3010, n: 3 }} onClose={() => {}} />);
+    await screen.findByText("Turn 3 of 3");
+  });
+
   it("says when a session has no recorded steps", async () => {
     vi.mocked(getRecordedTurns).mockResolvedValue([]);
     render(<StepsPanel sessionId="old" onClose={() => {}} />);

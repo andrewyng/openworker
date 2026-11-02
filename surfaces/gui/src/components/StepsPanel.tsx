@@ -28,6 +28,52 @@ export function formatDuration(ms: number | null | undefined): string {
   return s ? `${m}m ${s}s` : `${m}m`;
 }
 
+const MODE_KEYS: Record<string, string> = {
+  discuss: "composer.mode.discuss", interactive: "composer.mode.interactive", plan: "steps.mode.plan",
+  "auto-approve": "composer.mode.auto_approve", "bypass-approvals": "composer.mode.auto", auto: "composer.mode.auto",
+  "dangerously-bypass-approvals": "steps.mode.dangerous",
+};
+
+/** Who reviews in Auto-approve or Shadow evaluation: the session model by name, or the service. */
+export function reviewerLabel(r: RecordedTurn["reviewer"], t: (k: string, o?: any) => string): string {
+  if (!r || !r.kind) return "";
+  if (r.kind === "session_model") return r.model ? t("steps.reviewer.session_model_named", { model: r.model }) : t("steps.reviewer.session_model");
+  return t(`steps.reviewer.${r.kind}`, { defaultValue: r.kind });
+}
+
+/** The mode pill (OB-1): the approval mode, and in Auto-approve or Shadow evaluation the reviewer. */
+export function modeLabel(turn: RecordedTurn, t: (k: string, o?: any) => string): string {
+  if (!turn.approval_mode) return "";
+  const mode = t(MODE_KEYS[turn.approval_mode] || "", { defaultValue: turn.approval_mode });
+  const r = turn.reviewer;
+  const who = reviewerLabel(r, t);
+  if (r?.active && who) return `${mode} · ${who}`;
+  if (r?.shadow && who) return `${mode} · ${t("steps.reviewer.shadow", { reviewer: who })}`;
+  return mode;
+}
+
+/** The header's stamp line (OB-12, OB-14, OB-15): machine · sandbox · coworker · model and provider. */
+export function stampLine(stamp: Record<string, any> | undefined, t: (k: string, o?: any) => string): string {
+  if (!stamp) return "";
+  const parts: string[] = [];
+  const m = stamp.machine;
+  if (m) {
+    const where = m.kind && m.kind !== "this_machine" ? ` (${t(`steps.machine.${m.kind}`, { defaultValue: m.kind })})` : "";
+    parts.push(`${m.name || t("steps.machine.this_machine")}${where}${m.app_version ? ` · ${m.app_version}` : ""}`);
+  }
+  const sb = stamp.sandbox;
+  if (sb) {
+    parts.push(!sb.enforcement || sb.enforcement === "none" || sb.provider === "direct"
+      ? t("steps.sandbox.none")
+      : [sb.provider, t(`steps.sandbox.${sb.enforcement}`, { defaultValue: sb.enforcement }),
+         sb.profile ? t("steps.sandbox.network", { profile: sb.profile }) : ""].filter(Boolean).join(" · "));
+  }
+  if (stamp.persona_fp) parts.push(`ⓕ${stamp.persona_fp}`);
+  const md = stamp.model;
+  if (md?.id) parts.push([md.id, md.provider_title].filter(Boolean).join(" · "));
+  return parts.join("  ·  ");
+}
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -121,10 +167,13 @@ function nest(steps: RecordedStep[]): { step: RecordedStep; depth: number }[] {
 export function StepsPanel({
   sessionId,
   refreshKey = 0,
+  openAt = null,
   onClose,
 }: {
   sessionId: string;
   refreshKey?: number;
+  // Opened from a turn's answer: its time (unix seconds) picks the turn that produced it.
+  openAt?: { ts?: number; n: number } | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -156,6 +205,16 @@ export function StepsPanel({
     };
   }, [sessionId, refreshKey]);
 
+  // An answer's Steps link: the first turn that had not ended before that answer (the turns
+  // before it all ended earlier). The answer's time is in whole seconds, hence the second's slack.
+  useEffect(() => {
+    if (!openAt || !turns || !turns.length || openAt.ts == null) return;
+    const at = openAt.ts * 1000 - 1000;
+    const idx = turns.findIndex((tn) => tn.duration_ms == null || tn.started_at + tn.duration_ms >= at);
+    setTurnIdx(idx < 0 ? turns.length - 1 : idx);
+    setTab("timeline");
+  }, [openAt?.n, turns]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   const turn = turns && turnIdx != null && turnIdx >= 0 ? turns[turnIdx] : null;
   // A step's details belong to its turn: picking another turn closes them.
   useEffect(() => setSelected(null), [turn?.turn_id]);
@@ -185,6 +244,12 @@ export function StepsPanel({
         <button className="team-close" aria-label={t("steps.close")} onClick={onClose}>×</button>
       </div>
 
+      {turn && (modeLabel(turn, t) || stampLine(turn.stamp, t)) && (
+        <div className="steps-stamp" data-testid="steps-stamp">
+          {modeLabel(turn, t) && <span className="steps-mode" data-testid="steps-mode">{modeLabel(turn, t)}</span>}
+          {stampLine(turn.stamp, t) && <span className="steps-stamp-line">{stampLine(turn.stamp, t)}</span>}
+        </div>
+      )}
       {error && <p className="steps-empty">{t("steps.load_error")}</p>}
       {turns && turns.length === 0 && <p className="steps-empty" data-testid="steps-none">{t("steps.not_recorded")}</p>}
 
@@ -209,6 +274,8 @@ export function StepsPanel({
                 allowed: checks.filter((c) => c.attrs.result === "allow").length,
                 asked: checks.filter((c) => c.attrs.result !== "allow" && c.attrs.result !== "deny").length,
                 blocked: checks.filter((c) => c.attrs.result === "deny").length,
+                time: formatDuration(turn.buckets.auto_approver || 0),
+                reviewer: reviewerLabel(turn.reviewer, t) || reviewerLabel(checks[0]?.attrs?.reviewer, t) || "—",
               })}
             </p>
           )}

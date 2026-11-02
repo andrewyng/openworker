@@ -3059,10 +3059,33 @@
       "summary": "Summary",
       "other": "Other"
     },
-    "checks_line_one": "Auto-approve: {{count}} check · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked",
-    "checks_line_other": "Auto-approve: {{count}} checks · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked",
+    "checks_line_one": "Auto-approve: {{count}} check · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked · {{time}} · {{reviewer}}",
+    "checks_line_other": "Auto-approve: {{count}} checks · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked · {{time}} · {{reviewer}}",
     "unknown_line_one": "{{count}} step was still running when OpenWorker stopped; its time is unknown.",
     "unknown_line_other": "{{count}} steps were still running when OpenWorker stopped; their times are unknown.",
+    "mode": {
+      "plan": "Plan",
+      "dangerous": "Dangerous full access"
+    },
+    "reviewer": {
+      "session_model": "session model",
+      "session_model_named": "session model ({{model}})",
+      "openai_decisions": "OpenAI Decisions",
+      "typesafe_jev": "TypeSafe Jev",
+      "shadow": "shadow: {{reviewer}}"
+    },
+    "machine": {
+      "this_machine": "This machine",
+      "cloud": "cloud",
+      "remote": "remote machine",
+      "joined": "joined machine"
+    },
+    "sandbox": {
+      "none": "No sandbox",
+      "full": "enforced",
+      "partial": "partly enforced",
+      "network": "network {{profile}}"
+    },
     "row": {
       "context": "Context built",
       "model": "Model",
