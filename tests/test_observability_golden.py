@@ -82,3 +82,25 @@ def test_the_store_gives_back_the_same_recording(scenario, tmp_path):
             assert store.load_recording(session) == want
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_the_screen_numbers(scenario):
+    """`expected-numbers.json`: every token number and time bucket the screens show."""
+    from coworker.observability import calculator
+
+    expected = json.loads((GOLDEN / scenario / "expected-numbers.json").read_text("utf-8"))
+    rec = _replay(_events(scenario)).as_dict()
+    sessions = sorted({t["session_id"] for t in rec["turns"] if t["session_id"]}
+                      | {s["session_id"] for s in rec["steps"] if s["session_id"]})
+
+    def usage(sid=None):
+        u = calculator.usage(rec, sid)
+        u.pop("unreported_step_ids")  # an addition for the "≥" links (M-R19), not in the golden
+        return u
+
+    got = {"usage": usage()}
+    if len(sessions) > 1:
+        got["usage_by_session"] = {sid: usage(sid) for sid in sessions}
+    got["buckets_by_turn"] = {t["turn_id"]: calculator.buckets(rec, t) for t in rec["turns"]}
+    assert got == expected

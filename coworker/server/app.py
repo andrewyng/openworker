@@ -826,6 +826,23 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
 
+    # Observability (§12): the recorded turns and steps of a session.
+    @app.get("/v1/sessions/{session_id}/turns")
+    def session_turns(session_id: str) -> dict[str, Any]:
+        return manager.recording_turns(session_id)
+
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/steps")
+    def session_turn_steps(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.recording_turn_steps(session_id, turn_id)
+
+    @app.get("/v1/sessions/{session_id}/steps/{step_id}")
+    def session_step(session_id: str, step_id: str) -> dict[str, Any]:
+        return manager.recording_step(session_id, step_id)
+
+    @app.get("/v1/sessions/{session_id}/usage")
+    def session_usage(session_id: str) -> dict[str, Any]:
+        return manager.recording_usage(session_id)
+
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
         body = body or {}

@@ -44,6 +44,7 @@ from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..observability import Recorder, RecordingStore
+from ..observability import read_api as recording_api
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
@@ -387,6 +388,11 @@ class SessionManager:
         # coworker.db so they can be pruned and reset on their own.
         self.recordings_store = RecordingStore.beside(base)
         self.recorder = Recorder(store=self.recordings_store)
+        # Live: the same recording events go to the session's sockets, batched (§12).
+        self._live_steps: dict[str, list[dict[str, Any]]] = {}
+        self._live_steps_lock = threading.Lock()
+        self._live_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.recorder.add_listener(self._forward_recording_event)
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
@@ -6307,6 +6313,60 @@ class SessionManager:
 
     def has_session_clients(self, session_id: str) -> bool:
         return bool(self._session_clients.get(session_id))
+
+    # -- observability: reading recordings (§12) -------------------------------------------
+    LIVE_STEP_BATCH_S = 0.1
+
+    def recording_turns(self, session_id: str) -> dict[str, Any]:
+        return {"turns": recording_api.turns(self.recordings_store.load_recording(session_id))}
+
+    def recording_turn_steps(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        rec = self.recordings_store.load_recording(session_id)
+        return {"steps": recording_api.turn_steps(rec, turn_id)}
+
+    def recording_step(self, session_id: str, step_id: str) -> dict[str, Any]:
+        rec = self.recordings_store.load_recording(session_id)
+        found = recording_api.step(
+            rec, step_id, get_piece=self.recordings_store.get_piece,
+            messages=self.session_messages(session_id),
+            audit_rows=lambda call_id: self.audit_store.list(session_id=session_id, call_id=call_id),
+        )
+        return {"step": found} if found is not None else {"step": None, "error": "no such step"}
+
+    def recording_usage(self, session_id: str) -> dict[str, Any]:
+        return recording_api.usage(self.recordings_store.load_recording(session_id), session_id)
+
+    def _forward_recording_event(self, event: dict[str, Any]) -> None:
+        """Queue one recording event for the session's sockets; a batch goes out every
+        100 ms as `{"type": "step", "events": [...]}`, so a burst of steps does not flood
+        the connection (P-5). Older app versions ignore the unknown type."""
+        session_id = event.get("session_id")
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()  # a turn's start runs on the server's loop
+            except RuntimeError:
+                loop = self._live_loop
+        if not session_id or loop is None:
+            return
+        self._live_loop = loop
+        with self._live_steps_lock:
+            batch = self._live_steps.setdefault(session_id, [])
+            batch.append(event)
+            first = len(batch) == 1
+        if first:
+            try:
+                loop.call_soon_threadsafe(
+                    loop.call_later, self.LIVE_STEP_BATCH_S, self._send_live_steps, session_id
+                )
+            except RuntimeError:
+                pass  # the loop is closed: the server is stopping
+
+    def _send_live_steps(self, session_id: str) -> None:
+        with self._live_steps_lock:
+            events = self._live_steps.pop(session_id, [])
+        if events and self.has_session_clients(session_id):
+            asyncio.ensure_future(self.broadcast_session(session_id, {"type": "step", "events": events}))
 
     def _inbox_item_changed(self, item: Any) -> None:
         """A card was added or moved to the Inbox: tell the waiting engine where it is shown

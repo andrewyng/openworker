@@ -9,5 +9,6 @@ Do not edit these files here. A change to the format needs a new version in `ocw
 (its `tracing-spec.md` §12), and then a fresh copy of the folder here.
 
 `tests/test_observability_golden.py` replays every scenario's `events.jsonl` into the
-recorder and compares the result with `expected-recording.json`. `expected-numbers.json`
-(the screen numbers) is checked once the read endpoints are built.
+recorder and compares the result with `expected-recording.json`, and computes the screen
+numbers (`coworker/observability/calculator.py`) and compares them with
+`expected-numbers.json`.
