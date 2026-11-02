@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS exchange_pieces (
 CREATE TABLE IF NOT EXISTS step_pieces (
   step_id TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (step_id, sha256));
 CREATE INDEX IF NOT EXISTS step_pieces_sha ON step_pieces(sha256);
+CREATE TABLE IF NOT EXISTS export_marks (
+  destination TEXT NOT NULL, item_id TEXT NOT NULL, turn_id TEXT, state TEXT NOT NULL, at INTEGER NOT NULL,
+  PRIMARY KEY (destination, item_id));
+CREATE INDEX IF NOT EXISTS export_marks_turn ON export_marks(turn_id);
+CREATE TABLE IF NOT EXISTS export_counters (
+  destination TEXT PRIMARY KEY, failed INTEGER NOT NULL DEFAULT 0, dropped INTEGER NOT NULL DEFAULT 0);
 """
 
 _TURN_COLUMNS = (
@@ -195,6 +201,9 @@ class RecordingStore:
         self._closed = False
         self._last_sweep = 0.0
         self._background = background
+        # OB-6: the destination being exported to and the time it was chosen, so a turn the
+        # retention sweep deletes before it was sent is counted as dropped (design §10.5).
+        self.export_destination: Optional[tuple[str, int]] = None
         if background:
             _writer.add(self)
 
@@ -352,6 +361,10 @@ class RecordingStore:
                 "(SELECT step_id FROM steps WHERE session_id = ?)",
                 (session_id,),
             )
+            self._conn.execute(
+                "DELETE FROM export_marks WHERE turn_id IN (SELECT turn_id FROM turns WHERE session_id = ?)",
+                (session_id,),
+            )
             self._conn.execute("DELETE FROM steps WHERE session_id = ?", (session_id,))
             self._conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
         self._delete_unused_pieces()
@@ -378,6 +391,8 @@ class RecordingStore:
                 ]
                 if ids:
                     marks = ", ".join("?" * len(ids))
+                    self._count_unsent_dropped(ids, marks)
+                    self._conn.execute(f"DELETE FROM export_marks WHERE turn_id IN ({marks})", ids)
                     self._conn.execute(
                         "DELETE FROM step_pieces WHERE step_id IN "
                         f"(SELECT step_id FROM steps WHERE turn_id IN ({marks}))",
@@ -421,6 +436,107 @@ class RecordingStore:
             if cur.rowcount < SWEEP_BATCH:
                 break
             time.sleep(SWEEP_PAUSE_S)
+
+    # -- export marks (OB-6, phase-2 design §10.2, §10.5) ----------------------------------------
+    # The queue is the store itself: a finished turn's root and steps with no mark for the
+    # destination are still to send. A mark is `sent`, `dropped` (refused on its own) or
+    # `skipped` (a notice that came after its turn's span had gone). Marks are per destination,
+    # so turning export off and on again never re-sends a step.
+
+    def _count_unsent_dropped(self, ids: list[str], marks: str) -> None:
+        """Inside the sweep's transaction: turns about to be deleted that ended after the
+        destination was chosen and were never sent."""
+        dest = self.export_destination
+        if dest is None:
+            return
+        key, since = dest
+        n = self._conn.execute(
+            f"SELECT COUNT(*) AS n FROM turns t WHERE t.turn_id IN ({marks}) "
+            "AND t.status IS NOT NULL AND t.status != 'running' "
+            "AND t.started_at + COALESCE(t.duration_ms, 0) >= ? AND NOT EXISTS "
+            "(SELECT 1 FROM export_marks m WHERE m.destination = ? AND m.item_id = t.turn_id)",
+            (*ids, since, key),
+        ).fetchone()["n"]
+        if n:
+            self._bump(key, dropped=n)
+
+    def _bump(self, destination: str, *, failed: int = 0, dropped: int = 0) -> None:
+        self._conn.execute(
+            "INSERT INTO export_counters (destination, failed, dropped) VALUES (?, ?, ?) "
+            "ON CONFLICT(destination) DO UPDATE SET failed = failed + excluded.failed, "
+            "dropped = dropped + excluded.dropped",
+            (destination, failed, dropped),
+        )
+
+    def count_export(self, destination: str, *, failed: int = 0, dropped: int = 0) -> None:
+        with self._lock, self._conn:
+            self._bump(destination, failed=failed, dropped=dropped)
+
+    def export_queue(self, destination: str, since_ms: int, limit: int = 50) -> list[str]:
+        """Finished turns, ended at or after `since_ms`, with something not yet marked for
+        this destination: the turn itself, or a step that has ended (an `after_turn` step
+        is sent alone when it ends). Oldest first."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT t.turn_id FROM turns t "
+                "WHERE t.status IS NOT NULL AND t.status != 'running' "
+                "AND t.started_at + COALESCE(t.duration_ms, 0) >= ? AND ("
+                " NOT EXISTS (SELECT 1 FROM export_marks m WHERE m.destination = ? AND m.item_id = t.turn_id)"
+                " OR EXISTS (SELECT 1 FROM steps s WHERE s.turn_id = t.turn_id"
+                "  AND s.status IS NOT NULL AND s.status != 'running' AND NOT EXISTS"
+                "  (SELECT 1 FROM export_marks m WHERE m.destination = ? AND m.item_id = s.step_id))) "
+                "ORDER BY t.started_at, t.turn_id LIMIT ?",
+                (since_ms, destination, destination, limit),
+            ).fetchall()
+        return [r["turn_id"] for r in rows]
+
+    def export_marked(self, destination: str, turn_id: str) -> set[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT item_id FROM export_marks WHERE destination = ? AND turn_id = ?",
+                (destination, turn_id),
+            ).fetchall()
+        return {r["item_id"] for r in rows}
+
+    def mark_export(self, destination: str, items: list[tuple[str, str]], state: str) -> None:
+        """`items`: (item id, turn id) pairs. A mark, once written, is kept."""
+        now = int(time.time() * 1000)
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO export_marks (destination, item_id, turn_id, state, at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(destination, item, turn, state, now) for item, turn in items],
+            )
+
+    def export_counts(self, destination: str, *, since_ms: int = 0) -> dict[str, int]:
+        """Steps sent (since `since_ms`), steps dropped, and batches failed for good."""
+        with self._lock:
+            sent = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM export_marks WHERE destination = ? AND state = 'sent' AND at >= ?",
+                (destination, since_ms),
+            ).fetchone()["n"]
+            dropped = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM export_marks WHERE destination = ? AND state = 'dropped'",
+                (destination,),
+            ).fetchone()["n"]
+            row = self._conn.execute(
+                "SELECT failed, dropped FROM export_counters WHERE destination = ?", (destination,)
+            ).fetchone()
+        return {"sent": int(sent), "dropped": int(dropped) + (int(row["dropped"]) if row else 0),
+                "failed": int(row["failed"]) if row else 0}
+
+    def load_turn(self, turn_id: str) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """One turn and its steps (by `seq`), content included."""
+        self.flush()
+        with self._lock:
+            t = self._conn.execute("SELECT * FROM turns WHERE turn_id = ?", (turn_id,)).fetchone()
+            if t is None:
+                return None
+            steps = self._conn.execute(
+                "SELECT * FROM steps WHERE turn_id = ? ORDER BY seq IS NULL, seq, started_at", (turn_id,)
+            ).fetchall()
+        return _turn_record(t), [_step_record(s) for s in steps]
 
     # -- the Issues result (phase-2 design §5): derived, stored beside the turn ---------------
     def write_issues(self, turn_id: str, result: dict[str, Any], *, seen: bool = False) -> None:

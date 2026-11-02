@@ -402,21 +402,28 @@ def apply_policy(
     app, policy: dict[str, Any], *, state: Optional[Path] = None, exporter=None
 ) -> tuple[bool, int]:
     """Persist + apply an org policy DOCUMENT on this box (spec §Versioned org
-    policy). Today one field acts: `audit_export` (remote/audit_export.py).
+    policy). Two fields act: `audit_export` (remote/audit_export.py) and
+    `observability_export` (observability/export.py).
     Unknown keys are kept verbatim so the machine can display them; nothing
     turns on by accident. A document OLDER than the one held is ignored — a
     stale controller never rolls a machine back. Returns (applied, version
     now held)."""
+    from ..observability.export import take_policy_secrets
     from .audit_export import ExportPolicy, save_policy
 
     incoming, current = policy_version(policy), policy_version(held_policy(app))
     if incoming and current and incoming < current:
         return False, current
+    manager = getattr(app.state, "manager", None)
+    # OB-6: the observability export's keys go to the secret store, never policy.json.
+    policy = take_policy_secrets(policy, getattr(manager, "secrets", None))
     if state is not None:
         save_policy(state, policy)
-    manager = getattr(app.state, "manager", None)
     if manager is not None:
         manager.org_policy = dict(policy)
+        apply = getattr(manager, "apply_org_policy", None)
+        if apply is not None:
+            apply(policy)
     if exporter is not None:
         exporter.set_policy(ExportPolicy.from_policy(policy))
     return True, incoming
@@ -443,6 +450,9 @@ def _build_exporter(state: Path, app, welcome: dict[str, Any]):
     stored = load_policy(state)
     if stored and not getattr(manager, "org_policy", None):
         manager.org_policy = stored
+        apply = getattr(manager, "apply_org_policy", None)
+        if apply is not None:
+            apply(stored)
     return exporter
 
 

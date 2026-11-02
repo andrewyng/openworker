@@ -46,7 +46,9 @@ from ..audit import AuditStore
 from ..observability import Recorder, RecordingStore
 from ..observability import read_api as recording_api
 from ..observability import signals as recording_signals
+from ..observability.export import ObservabilityExport
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
+from ..remote.audit_export import load_policy
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -431,6 +433,15 @@ class SessionManager:
         self._autotitle_sig: dict[str, int] = {}
         self.workspace_trust = WorkspaceTrustStore()
         self.secrets = SecretStore()
+        # OB-6: record on or off, keep for, and sending recordings to Langfuse or an
+        # OpenTelemetry endpoint. Settings live in the machine's state folder (beside the
+        # secrets), never in a project. Off by default: then no exporter exists at all.
+        self.observability = ObservabilityExport(
+            self.secrets.path.parent, self.secrets, self.recordings_store,
+            session_title=self.session_store.display_title,
+        )
+        self.observability.apply_policy(load_policy(self.secrets.path.parent))
+        self.recorder.add_listener(self._export_on_turn_end)
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
         # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
@@ -1019,8 +1030,9 @@ class SessionManager:
             auto_approve_shadow=self.auto_approve_shadow(),
             auto_approve_reviewer=self.auto_approve_reviewer(),
         )
-        # Observability (E1): this engine's turns and steps go to the server's recorder.
-        engine.recorder = self.recorder
+        # Observability (E1): this engine's turns and steps go to the server's recorder,
+        # unless recording is off on this machine (OB-6): then new engines record nothing.
+        engine.recorder = self.recorder if self.observability.settings.record else None
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
@@ -6379,6 +6391,35 @@ class SessionManager:
     def recording_usage(self, session_id: str) -> dict[str, Any]:
         return recording_api.usage(self.recordings_store.load_recording(session_id), session_id)
 
+    # -- observability: export and its settings (OB-6, phase-2 design §10) ------------------
+    def _export_on_turn_end(self, event: dict[str, Any]) -> None:
+        """A turn ended: the exporter sends soon. A late step (the session title) goes with
+        the exporter's next pass, within its flush interval."""
+        if event.get("type") == "turn_ended":
+            self.observability.wake()
+
+    def apply_org_policy(self, policy: dict[str, Any]) -> None:
+        """The org policy changed: its `observability_export` field manages the page."""
+        self.observability.apply_policy(policy)
+
+    def recording_file(self, session_id: str) -> dict[str, Any]:
+        """Everything recorded for one session, content included, in the shape the read
+        endpoints serve: turns, each turn's steps, and each step in full (§10.6)."""
+        rec = self.recordings_store.load_recording(session_id)
+        messages = self.session_messages(session_id)
+        details = {}
+        for s in rec.get("steps") or []:
+            details[s["step_id"]] = {"step": recording_api.step(
+                rec, s["step_id"], get_piece=self.recordings_store.get_piece, messages=messages,
+                audit_rows=lambda call_id: self.audit_store.list(session_id=session_id, call_id=call_id))}
+        return {
+            "format": "openworker-recording", "version": "1.2", "session_id": session_id,
+            "exported_at": int(time.time() * 1000),
+            "turns": recording_api.turns(rec),
+            "steps": {t["turn_id"]: recording_api.turn_steps(rec, t["turn_id"]) for t in rec.get("turns") or []},
+            "details": details,
+        }
+
     def _forward_recording_event(self, event: dict[str, Any]) -> None:
         """Queue one recording event for the session's sockets; a batch goes out every
         100 ms as `{"type": "step", "events": [...]}`, so a burst of steps does not flood
@@ -6517,6 +6558,7 @@ class SessionManager:
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
+        self.observability.close()
         self.recordings_store.close()
         from ..providers import llamacpp_setup
 
@@ -7080,8 +7122,9 @@ class SessionManager:
                 [d] if (d := self.persona_skill_scope(task.agent)[0]) is not None else None
             ),
         )
-        # Observability (E1): this engine's turns and steps go to the server's recorder.
-        engine.recorder = self.recorder
+        # Observability (E1): this engine's turns and steps go to the server's recorder,
+        # unless recording is off on this machine (OB-6): then new engines record nothing.
+        engine.recorder = self.recorder if self.observability.settings.record else None
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         self._seed_task_permissions(engine, task)
         return engine

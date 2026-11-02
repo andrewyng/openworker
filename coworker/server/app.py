@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger("coworker.server.app")
 
@@ -851,6 +851,33 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/sessions/{session_id}/issues/seen")
     def session_issues_seen(session_id: str) -> dict[str, Any]:
         return manager.mark_recording_issues_seen(session_id)
+
+    # OB-6: one session's recording as a file, content included (phase-2 design §10.6).
+    @app.get("/v1/sessions/{session_id}/recording")
+    def session_recording(session_id: str):
+        body = json.dumps(manager.recording_file(session_id), ensure_ascii=False)
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "session"
+        return Response(content=body, media_type="application/json", headers={
+            "Content-Disposition": f'attachment; filename="recording-{safe}.json"'})
+
+    # OB-6: Settings ▸ Machine ▸ Observability. Keys are write-only: answers carry masked
+    # hints, never a value (phase-2 design §10.8).
+    @app.get("/v1/observability/settings")
+    def observability_settings() -> dict[str, Any]:
+        return manager.observability.get_settings()
+
+    @app.put("/v1/observability/settings")
+    def observability_settings_put(body: dict):
+        code, answer = manager.observability.put_settings(body or {})
+        return JSONResponse(answer, status_code=code)
+
+    @app.post("/v1/observability/test")
+    async def observability_test() -> dict[str, Any]:
+        return await asyncio.to_thread(manager.observability.send_test)
+
+    @app.get("/v1/observability/status")
+    def observability_status() -> dict[str, Any]:
+        return manager.observability.status()
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
@@ -3309,6 +3336,16 @@ def create_app(manager: SessionManager) -> FastAPI:
                     },
                 }
             )
+        # OB-6 (TD2-11): the company's policy sends this machine's content somewhere. Each
+        # new session says what goes where, once, before its first message.
+        export_notice = manager.observability.content_notice()
+        if export_notice and not any(
+            m.get("role") in ("user", "assistant") or m.get("kind") == "export_notice"
+            for m in engine.messages
+        ):
+            engine._append_notice("export_notice", export_notice)
+            manager.save(session_id, engine, touch=False)
+            await ws.send_json({"type": "export_notice", "data": {"text": export_notice}})
         inbound_times: deque[float] = deque()
 
         async def reject_input(reason: str) -> None:
