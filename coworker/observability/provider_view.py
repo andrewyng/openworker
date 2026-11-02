@@ -110,7 +110,7 @@ class ProviderView(ProviderClient):
         return result
 
     def complete(self, *, model: str, messages: list[dict[str, Any]], tools: Any = None, **settings: Any):
-        call = _ModelCall.begin(self.tags, model=model, tools=tools, streamed=False)
+        call = _ModelCall.begin(self.tags, model=model, tools=tools, streamed=False, settings=settings)
         if call is None:
             return self.base.inner.complete(model=model, messages=messages, tools=tools, **settings)
         try:
@@ -123,7 +123,7 @@ class ProviderView(ProviderClient):
         return turn
 
     def stream(self, *, model: str, messages: list[dict[str, Any]], tools: Any = None, **settings: Any) -> Iterator[Any]:
-        call = _ModelCall.begin(self.tags, model=model, tools=tools, streamed=True)
+        call = _ModelCall.begin(self.tags, model=model, tools=tools, streamed=True, settings=settings)
         if call is None:
             yield from self.base.inner.stream(model=model, messages=messages, tools=tools, **settings)
             return
@@ -268,6 +268,15 @@ def usage_attrs(usage: Any) -> dict[str, Any]:
     }
 
 
+def _max_output(settings: Optional[dict[str, Any]]) -> Optional[int]:
+    """The output limit the request asks for (format 1.2): the "cut off" issue says it."""
+    for key in ("max_tokens", "max_output_tokens", "max_completion_tokens"):
+        value = (settings or {}).get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
 class _ModelCall:
     """The state of one recorded model call, from start to end."""
 
@@ -278,7 +287,8 @@ class _ModelCall:
         self.ttft_ms: Optional[int] = None
 
     @classmethod
-    def begin(cls, tags: Tags, *, model: str, tools: Any, streamed: bool) -> Optional["_ModelCall"]:
+    def begin(cls, tags: Tags, *, model: str, tools: Any, streamed: bool,
+              settings: Optional[dict[str, Any]] = None) -> Optional["_ModelCall"]:
         sink = tags.sink
         if sink is None or not sink.enabled:
             return None
@@ -293,6 +303,7 @@ class _ModelCall:
                     "provider_title": _provider_title(provider), "model": model,
                     "stream": streamed, "context_window": _context_window(model, catalogue_only=True),
                     "tools_offered": len(tools or []), "tools_hash": tools_hash(tools),
+                    "max_output": _max_output(settings),
                 },
             )
         except Exception:  # noqa: BLE001 - recording never breaks a call

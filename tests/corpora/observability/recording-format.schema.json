@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:openworker:observability:recording-format:1.1",
+  "$id": "urn:openworker:observability:recording-format:1.2",
   "title": "OpenWorker observability recording format 1.0",
   "description": "Turns, steps, recording events and exchange pieces, as defined in recording-format.md (version 1.0, frozen 2026-10-31). Field names are those of phase-1/technical-design.md (Draft 5). Validate a recording file against #/$defs/recording, one recording event against #/$defs/event, one line of an exchange piece store against #/$defs/piece, one live message against #/$defs/live_message. Wherever a field may be null, its description says what null means.",
   "$ref": "#/$defs/recording",
@@ -13,7 +13,7 @@
     "count_or_null": {"type": ["integer", "null"], "minimum": 0},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "short_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{6}$", "description": "First 6 hex characters of a SHA-256. null = nothing to hash."},
-    "step_kind": {"enum": ["context", "model", "tool", "wait", "auto_approver", "summary", "notice"]},
+    "step_kind": {"enum": ["context", "model", "tool", "wait", "auto_approver", "summary", "notice", "sandbox"], "description": "sandbox: added in 1.2 (sandbox setup, Phase 2 OB-13)."},
     "step_status": {"enum": ["running", "ok", "error", "denied", "interrupted", "skipped", "unknown"]},
     "turn_status": {"enum": ["completed", "max_iterations_exceeded", "truncated", "sleeping", "interrupted", "error", "unknown"]},
     "turn_kind": {"enum": ["run", "resume", "retry"]},
@@ -78,7 +78,8 @@
             "profile": {"enum": ["allowlist", "open", null], "description": "null = no network profile (direct)."},
             "sites": {"type": ["integer", "null"], "minimum": 0, "description": "null = no allowlist."},
             "runner_version": {"type": ["string", "null"]},
-            "image": {"type": ["string", "null"]}
+            "image": {"type": ["string", "null"]},
+            "expected": {"type": "boolean", "description": "1.2. This machine has a sandbox switched on in Settings, whatever this session used."}
           }
         },
         "persona_fp": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "Coworker fingerprint: first 6 hex characters of the section 9.4 hash. The session record keeps the same value."}
@@ -108,7 +109,9 @@
         "stamp": {"$ref": "#/$defs/stamp"},
         "first_message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the message that opened the turn. null = empty: a retry that appended no message, or a message written before Phase 1."},
         "last_message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the last message appended before the turn ended. null = no message was appended."},
-        "schema_version": {"const": 1, "description": "The record layout version: 1 for every 1.x version of this format. It goes up only when old readers cannot read the new shape."}
+        "schema_version": {"const": 1, "description": "The record layout version: 1 for every 1.x version of this format. It goes up only when old readers cannot read the new shape."},
+        "max_iterations": {"type": ["integer", "null"], "minimum": 1, "description": "1.2. The step limit in force for this turn. null or absent = not recorded (before 1.2)."},
+        "woken_by": {"$ref": "#/$defs/woken_by"}
       }
     },
 
@@ -160,7 +163,11 @@
                                  "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}},
         {"if": {"properties": {"kind": {"const": "notice"}}},
          "then": {"properties": {"name": {"$ref": "#/$defs/notice_name"}, "attrs": {"$ref": "#/$defs/notice_attrs"},
-                                 "content": {"$ref": "#/$defs/no_content"}, "status": {"const": "ok"}}}}
+                                 "content": {"$ref": "#/$defs/no_content"}, "status": {"const": "ok"}}}},
+        {"if": {"properties": {"kind": {"const": "sandbox"}}},
+         "then": {"properties": {"name": {"const": "setup"}, "attrs": {"$ref": "#/$defs/sandbox_attrs"},
+                                 "content": {"$ref": "#/$defs/no_content"},
+                                 "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}}
       ]
     },
 
@@ -307,6 +314,7 @@
         "usage": {"$ref": "#/$defs/usage"},
         "tools_offered": {"$ref": "#/$defs/count"},
         "tools_hash": {"$ref": "#/$defs/short_hash"},
+        "max_output": {"type": ["integer", "null"], "minimum": 1, "description": "1.2. The output limit the request asked for (max_tokens, max_output_tokens). null = none was sent."},
         "error": {"$ref": "#/$defs/model_error"},
         "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
       }
@@ -363,6 +371,20 @@
             "notice": {"enum": ["restart", "regrant", null]}
           }
         },
+        "args_hash": {"oneOf": [{"$ref": "#/$defs/short_hash"}, {"type": "null"}], "description": "1.2. Short code of the call's arguments: SHA-256 over canonical JSON, first 6 hex. null = the arguments never parsed."},
+        "repeat_ok": {"type": "boolean", "description": "1.2. The tool declares that calling it again with the same arguments is normal (polling)."},
+        "result_error": {"type": "boolean", "description": "1.2. The tool ran and returned a result with a non-empty error key instead of raising."},
+        "error_kind": {"enum": ["unknown_tool", "bad_arguments", "raised", null], "description": "1.2. Why a tool step has status error. null = it did not."},
+        "reaches_network": {"type": ["boolean", "null"], "description": "1.2. The call reaches the network: risk class egress, or a shell command that names a network client or a URL (review_facts.shell_reaches_network). null = not known (the call never ran)."},
+        "plan": {"type": "object", "additionalProperties": false, "required": ["items"], "description": "1.2. todo_write only: the list as written.",
+          "properties": {"items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["h", "s"],
+            "properties": {"h": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "6 hex of the item's text."}, "s": {"enum": ["pending", "in_progress", "done"]}}}}}},
+        "helper": {"type": "object", "additionalProperties": false, "required": ["index", "status", "model_calls", "tool_calls", "tokens"], "description": "1.2. explore only, for display: what its helper did. The pill adds up the helper's own model steps, never this.",
+          "properties": {"index": {"type": "integer", "minimum": 1}, "status": {"enum": ["ok", "step_limit", "error", "interrupted"]},
+            "model_calls": {"$ref": "#/$defs/count"}, "tool_calls": {"$ref": "#/$defs/count"}, "tokens": {"$ref": "#/$defs/count"}}},
+        "team": {"type": "object", "additionalProperties": false, "required": ["team_id"], "description": "1.2. Team tools only: ids, no text.",
+          "properties": {"team_id": {"type": "string"}, "item_id": {"type": ["string", "null"]}, "worker_session_id": {"type": ["string", "null"]},
+            "worker_session_ids": {"type": "array", "items": {"type": "string"}, "description": "propose_team only: the sessions it created."}}},
         "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
       }
     },
@@ -394,6 +416,7 @@
         "where": {"enum": ["session", "inbox"]},
         "attended": {"type": "boolean"},
         "outcome": {"enum": ["approved", "denied", "answered", "interrupted", null], "description": "null or absent = still waiting (live only)."},
+        "inbox_at": {"type": ["integer", "null"], "description": "1.2. Epoch ms when the card reached the Inbox: the step's start if it began there, else the step_updated that moved it. null = it never did."},
         "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
       }
     },
@@ -468,7 +491,7 @@
       }
     },
 
-    "notice_name": {"enum": ["interrupted", "error", "reviewer_paused", "step_limit", "truncated", "context_changed", "stamp_changed", "summary_failed", "recording_gap"]},
+    "notice_name": {"enum": ["interrupted", "error", "reviewer_paused", "step_limit", "truncated", "context_changed", "stamp_changed", "summary_failed", "recording_gap", "controller_offline", "nobody_watching", "clock_jump", "sandbox_restarted"], "description": "The last four: added in 1.2. controller_offline, nobody_watching and clock_jump have a duration (a gap); the others are zero-length."},
     "notice_attrs": {
       "description": "{} for every notice except two, which carry what changed, under names already defined elsewhere, with the new value and only the keys that changed. context_changed: the per-turn context block as it is now, under the context step's names (per_turn, size_chars, block_hash). stamp_changed: attended, reviewer or stamp, under the turn's names (stamp holding only the changed groups).",
       "type": "object",
@@ -479,9 +502,37 @@
         "block_hash": {"$ref": "#/$defs/short_hash"},
         "attended": {"type": "boolean"},
         "reviewer": {"$ref": "#/$defs/reviewer_settings"},
-        "stamp": {"$ref": "#/$defs/stamp"}
+        "stamp": {"$ref": "#/$defs/stamp"},
+        "reason": {"enum": ["closed", "failed", "ping_timeout", "folders_changed", "runner_restarted"], "description": "1.2. controller_offline: closed, failed, ping_timeout. sandbox_restarted: folders_changed, runner_restarted."},
+        "skipped_ms": {"type": "integer", "minimum": 0, "description": "1.2. clock_jump: the time the machine slept."},
+        "cause": {"enum": ["restart", "stopped", "unknown"], "description": "1.2. recording_gap: why the turn was found open."},
+        "until": {"type": "integer", "description": "1.2. recording_gap: epoch ms of the app start that found it."},
+        "provider": {"type": "string", "description": "1.2. sandbox_restarted: which sandbox."},
+        "how": {"enum": ["restart", "regrant"], "description": "1.2. sandbox_restarted: a new sandbox, or folder grants changed in place (Windows)."}
       }
     },
+    "sandbox_attrs": {
+      "description": "1.2. A sandbox setup step (kind sandbox, name setup): its stages in the order run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "stages", "failed_stage", "trigger"],
+      "properties": {
+        "provider": {"type": "string", "description": "openshell, seatbelt, windows, runner-local."},
+        "stages": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "started_at", "duration_ms", "status"],
+          "properties": {"name": {"enum": ["preparing", "download_image", "copy_logins", "create", "connect", "verify", "ready"]},
+            "started_at": {"$ref": "#/$defs/epoch_ms"}, "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+            "status": {"enum": ["ok", "error"]}, "uncertain": {"type": "boolean", "description": "download_image only: the provider cannot say how long the pull took."}}}},
+        "failed_stage": {"enum": ["preparing", "download_image", "copy_logins", "create", "connect", "verify", "ready", null], "description": "null = it worked."},
+        "error": {"$ref": "#/$defs/sandbox_error"},
+        "trigger": {"enum": ["turn_start", "first_tool"]},
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+    "sandbox_error": {"type": "object", "additionalProperties": false, "required": ["type", "text"], "description": "1.2. A sandbox failure: the exception's class and its short text.",
+      "properties": {"type": {"type": "string"}, "text": {"type": ["string", "null"]}}},
+    "woken_by": {"type": ["object", "null"], "additionalProperties": false, "description": "1.2. A team worker's turn: who woke it. null or absent = not a worker turn, or not recorded.",
+      "properties": {"lead_session_id": {"type": "string"}, "team_id": {"type": "string"}, "item_ids": {"type": "array", "items": {"type": "string"}},
+        "via": {"enum": ["board", "steer", "mention", "timer"]}}},
     "no_content": {"type": "object", "additionalProperties": false, "maxProperties": 0},
 
     "live_message": {

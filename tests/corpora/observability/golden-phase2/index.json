@@ -1,0 +1,321 @@
+{
+ "format": "1.2",
+ "signals_version": "0.3",
+ "built": true,
+ "scenarios": [
+  {
+   "id": "S2-01",
+   "check": "repeated_step",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "repeated_step"
+   ]
+  },
+  {
+   "id": "S2-01c",
+   "check": "repeated_step",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-02",
+   "check": "off_plan",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "off_plan"
+   ]
+  },
+  {
+   "id": "S2-02b",
+   "check": "off_plan",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "off_plan"
+   ]
+  },
+  {
+   "id": "S2-02c",
+   "check": "off_plan",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-02n",
+   "check": "off_plan",
+   "should": "not run",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-03",
+   "check": "refused",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "refused"
+   ]
+  },
+  {
+   "id": "S2-03b",
+   "check": "refused",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-04",
+   "check": "overridden",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "overridden"
+   ]
+  },
+  {
+   "id": "S2-04n",
+   "check": "overridden",
+   "should": "not run",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-05",
+   "check": "reviewer_could_not_run",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "reviewer_could_not_run"
+   ]
+  },
+  {
+   "id": "S2-05c",
+   "check": "reviewer_could_not_run",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-06",
+   "check": "reviewer_paused",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "reviewer_paused"
+   ]
+  },
+  {
+   "id": "S2-19",
+   "check": "reviewer_allowed_send",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "reviewer_allowed_send"
+   ]
+  },
+  {
+   "id": "S2-19c",
+   "check": "reviewer_allowed_send",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-07",
+   "check": "shadow_disagreed",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "shadow_disagreed"
+   ]
+  },
+  {
+   "id": "S2-08",
+   "check": "tool_failed",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "tool_failed"
+   ]
+  },
+  {
+   "id": "S2-08b",
+   "check": "tool_failed",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "tool_failed"
+   ]
+  },
+  {
+   "id": "S2-08c",
+   "check": "tool_failed",
+   "should": "stay quiet",
+   "also_fires": [
+    "made_up_tool"
+   ],
+   "fired": [
+    "made_up_tool"
+   ]
+  },
+  {
+   "id": "S2-09",
+   "check": "model_failed",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "model_failed"
+   ]
+  },
+  {
+   "id": "S2-09c",
+   "check": "model_failed",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-10",
+   "check": "retried",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "retried"
+   ]
+  },
+  {
+   "id": "S2-10b",
+   "check": "retried",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-11",
+   "check": "cut_off",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "cut_off"
+   ]
+  },
+  {
+   "id": "S2-12",
+   "check": "step_limit",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "step_limit"
+   ]
+  },
+  {
+   "id": "S2-13",
+   "check": "made_up_tool",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "made_up_tool"
+   ]
+  },
+  {
+   "id": "S2-14",
+   "check": "context_full",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "context_full"
+   ]
+  },
+  {
+   "id": "S2-14b",
+   "check": "context_full",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-14d",
+   "check": "context_full",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "context_full"
+   ]
+  },
+  {
+   "id": "S2-15",
+   "check": "blocked_by_sandbox",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "blocked_by_sandbox"
+   ]
+  },
+  {
+   "id": "S2-15c",
+   "check": "blocked_by_sandbox",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-18",
+   "check": "sandbox_failed",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "sandbox_failed"
+   ]
+  },
+  {
+   "id": "S2-18c",
+   "check": "sandbox_failed",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-16",
+   "check": "ran_without_sandbox",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "ran_without_sandbox"
+   ]
+  },
+  {
+   "id": "S2-16c",
+   "check": "ran_without_sandbox",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-17",
+   "check": "waited_unwatched",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "waited_unwatched"
+   ]
+  },
+  {
+   "id": "S2-17b",
+   "check": "waited_unwatched",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  },
+  {
+   "id": "S2-17c",
+   "check": "waited_unwatched",
+   "should": "stay quiet",
+   "also_fires": [],
+   "fired": []
+  }
+ ]
+}

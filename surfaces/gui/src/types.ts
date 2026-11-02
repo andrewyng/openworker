@@ -111,6 +111,8 @@ export interface SessionInfo {
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
   liveness?: "working" | "sleeping" | "idle";
+  // OB-3: warnings in turns whose Issues you have not opened (an amber ring in the sidebar).
+  issues_unseen?: number;
   // When sleeping: the next timer fire (ISO) — drives the "sleeping until…" strip.
   sleeping_until?: string | null;
   // Channels this session listens to (inbound subscriptions).

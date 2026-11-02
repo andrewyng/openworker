@@ -2566,3 +2566,20 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
   .steps-kv { grid-template-columns:minmax(0,1fr); gap:0; }
   .steps-kv dd { margin-bottom:4px; }
 }
+
+/* OB-3 Issues tab (UX-059 ob3, Phase 2 mock review): grouped callouts, folded "Checked and fine". */
+.steps-issues{padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.steps-callout{border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5}
+.steps-callout.warn{background:var(--warn-soft);color:var(--warn-ink)}
+.steps-callout.info{background:var(--accent-soft);color:var(--accent)}
+.steps-callout b{font-weight:600}
+.steps-info-pill{margin-left:6px;font-size:10px;padding:0 5px;background:var(--paper);color:var(--muted)}
+.steps-issue-line{margin-top:4px;overflow-wrap:anywhere}
+.steps-issue-arg{font-size:11px}
+.steps-issue-out{font-style:italic}
+.steps-link{background:none;border:0;padding:0 0 0 6px;color:var(--accent);cursor:pointer;font:inherit}
+.steps-link:hover{text-decoration:underline}
+.steps-issues-none{margin:4px 0;color:var(--muted);font-size:12px}
+.steps-fine-toggle{align-self:flex-start;background:none;border:0;padding:4px 0;color:var(--faint);font-size:12px;font-weight:600;cursor:pointer}
+.steps-fine{font-size:12px;line-height:1.85;color:var(--muted)}
+

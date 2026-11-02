@@ -37,6 +37,7 @@ from .observability.decision import DecisionPath
 from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
 from .observability.recorder import short_hash as _short_hash
 from .observability import stamps as _stamps
+from .observability.canonical import short_hash as _args_hash, text_hash as _text_hash
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
@@ -557,6 +558,11 @@ class TurnEngine:
         # it makes is recorded as a model step of the current turn, purpose `main`.
         self.provider = view_for_engine(self.provider, self._obs)
         self._call_index: dict[str, int] = {}
+        # Each proposed call's arguments, for the 1.2 tool fields of calls that never ran.
+        self._call_args: dict[str, Any] = {}
+        # Whether this machine has a sandbox switched on (stamp.sandbox.expected, 1.2): set
+        # by whoever builds the engine from the machine's setting; None = not known.
+        self.sandbox_expected: Optional[bool] = None
         # Who answered a waiting call's card (observability §5.4): set by the server, which
         # reads it from the Inbox.
         self.resolver_of: Optional[Callable[[str], str]] = None
@@ -639,7 +645,8 @@ class TurnEngine:
         step_id = self._obs.start_step(
             kind="wait", name=kind, call_id=tool_call.id,
             attrs={"for_call_id": tool_call.id, "kind": kind, "attended": attended,
-                   "where": "session" if attended else "inbox"},
+                   "where": "session" if attended else "inbox",
+                   "inbox_at": None if attended else int(started * 1000)},
         )
         self._obs.track_wait(tool_call.id, step_id)
         result: Any = interrupted
@@ -703,6 +710,7 @@ class TurnEngine:
                 "approval_mode": self.permissions.mode.value,
                 "attended": attended,
                 "reviewer": reviewer,
+                "max_iterations": self.max_iterations,
             },
             stamp=stamp,
             first_message_id=first,
@@ -731,6 +739,14 @@ class TurnEngine:
             "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
         }
 
+    def _sandbox_stamp(self) -> Optional[dict[str, Any]]:
+        """The stamp's sandbox group now, with `expected` (format 1.2) when it is known. The
+        turn's stamp and the mid-turn comparison both use this, so they cannot differ by it."""
+        sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+        if sandbox and self.sandbox_expected is not None:
+            sandbox["expected"] = bool(self.sandbox_expected)
+        return sandbox
+
     def _note_stamp(self) -> None:
         """A `stamp_changed` notice when attendance, the reviewer or the sandbox differ from
         the turn's start or the last notice (observability §9, V2-27). The Unattended toggle
@@ -749,7 +765,7 @@ class TurnEngine:
         if reviewer != seen.get("reviewer"):
             changed["reviewer"] = seen["reviewer"] = reviewer
         try:
-            sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+            sandbox = self._sandbox_stamp()
         except Exception:  # noqa: BLE001 - a stamp never breaks a turn
             sandbox = seen.get("sandbox")
         if sandbox and sandbox != seen.get("sandbox"):
@@ -764,7 +780,7 @@ class TurnEngine:
         try:
             stamp["machine"] = _stamps.machine_stamp()
             stamp["model"] = _stamps.model_stamp(self.model)
-            sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+            sandbox = self._sandbox_stamp()
             if sandbox:
                 stamp["sandbox"] = sandbox
             if self.persona_fp:
@@ -817,6 +833,8 @@ class TurnEngine:
         obs = self._obs
         event.data.setdefault("turn_id", obs.turn_id)
         event.data.setdefault("ts_ms", time.time_ns() // 1_000_000)
+        if event.type is EventType.TOOL_PROPOSED and event.data.get("tool_call_id"):
+            self._call_args[str(event.data["tool_call_id"])] = event.data.get("arguments")
         if event.type in (EventType.TOOL_STARTED, EventType.TOOL_FINISHED):
             call_id = str(event.data.get("tool_call_id") or "")
             if event.type is EventType.TOOL_FINISHED and call_id:
@@ -834,6 +852,11 @@ class TurnEngine:
                     # flow: no stage decided it (recording-format: origin null).
                     attrs["decision"] = {"path": [], "origin": None}
                 data = event.data
+                if obs.step_for_call(call_id) is None:
+                    attrs.update(self._call_facts(
+                        str(data.get("name") or ""), self._call_args.get(call_id), ran=False,
+                        status=str(data.get("status") or ""), reason=str(data.get("reason") or ""),
+                    ))
                 answered_by_stop = path is not None and (path.stage("resolved") or {}).get("outcome") == "interrupted"
                 if (data.get("status") == "denied" and self._cancel.is_set()
                         and (data.get("name") in _WAIT_KINDS or answered_by_stop)):
@@ -2874,7 +2897,7 @@ class TurnEngine:
             set_tool_run(outer)
         blocked = result.pop("_blocked", None) if isinstance(result, dict) else None
         if step_id is not None:
-            attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result)
+            attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result, status)
             step_status = status
             if self._cancel.is_set() and isinstance(result, dict) and result.get("error"):
                 # Stop killed it (a shell command answers "interrupted by user"): §7.4.
@@ -2886,7 +2909,7 @@ class TurnEngine:
             )
         return result, status
 
-    def _tool_step_attrs(self, tool_call: ToolCall, result: Any) -> dict[str, Any]:
+    def _tool_step_attrs(self, tool_call: ToolCall, result: Any, status: str = "ok") -> dict[str, Any]:
         attrs: dict[str, Any] = {"risk_class": self._risk_class(tool_call.name)}
         path = self._decisions.pop(tool_call.id, None)
         if path is not None:
@@ -2901,7 +2924,51 @@ class TurnEngine:
         if isinstance(result, dict) and isinstance(result.get("exit_code"), int):
             attrs["exit_code"] = result["exit_code"]
         attrs["sandbox"] = self._sandbox_facts(result)
+        attrs.update(self._call_facts(tool_call.name, tool_call.arguments, ran=True,
+                                      status=status, result=result, risk=attrs["risk_class"]))
         return attrs
+
+    def _call_facts(self, name: str, arguments: Any, *, ran: bool, status: str, result: Any = None,
+                    reason: str = "", risk: Optional[str] = None) -> dict[str, Any]:
+        """The tool fields of recording format 1.2 that the Issues checks read (phase-2
+        design §4): ids and flags only, never text. Facts never break a call."""
+        out: dict[str, Any] = {}
+        try:
+            mangled = isinstance(arguments, dict) and "_raw" in arguments
+            out["args_hash"] = None if mangled or arguments is None else _args_hash(arguments)
+            spec = self.registry.get(name)
+            out["repeat_ok"] = bool(getattr(getattr(spec, "metadata", None), "repeat_ok", False))
+            out["result_error"] = bool(ran and status == "ok" and isinstance(result, dict) and result.get("error"))
+            if status != "error":
+                out["error_kind"] = None
+            elif ran:
+                out["error_kind"] = "raised"
+            elif mangled:
+                out["error_kind"] = "bad_arguments"
+            elif spec is None or reason.startswith("unknown tool"):
+                out["error_kind"] = "unknown_tool"
+            else:
+                out["error_kind"] = "raised"
+            if not ran:
+                out["reaches_network"] = None
+            else:
+                command = arguments.get("command") if isinstance(arguments, dict) and name == "run_shell" else None
+                out["reaches_network"] = bool(
+                    (risk or self._risk_class(name)) == "egress"
+                    or (isinstance(command, str) and review_facts.shell_reaches_network(command))
+                )
+            if name == "todo_write" and isinstance(arguments, dict):
+                entries = arguments.get("todos", arguments.get("items")) or []
+                items = []
+                for entry in entries if isinstance(entries, list) else []:
+                    text = str(entry.get("content", "")) if isinstance(entry, dict) else str(entry)
+                    st = entry.get("status", "pending") if isinstance(entry, dict) else "pending"
+                    st = "done" if st in ("done", "completed") else st if st in ("pending", "in_progress") else "pending"
+                    items.append({"h": _text_hash(text), "s": st})
+                out["plan"] = {"items": items}
+        except Exception:  # noqa: BLE001 - recording never breaks a call
+            logger.exception("observability: could not record a tool call's facts")
+        return out
 
     def _sandbox_facts(self, result: Any) -> Optional[dict[str, Any]]:
         """Per-call sandbox facts (observability E13, §9.3): whether this sandbox can report

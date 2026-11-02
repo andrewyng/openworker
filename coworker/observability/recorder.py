@@ -54,6 +54,8 @@ TURN_FIELDS = (
     "incomplete", "approval_mode", "attended", "reviewer", "stamp", "first_message_id",
     "last_message_id", "schema_version",
 )
+# Format 1.2 turn fields: written only when known, so a 1.1 recording reads back unchanged.
+TURN_FIELDS_12 = ("max_iterations", "woken_by")
 STEP_FIELDS = (
     "step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at",
     "duration_ms", "status", "call_id", "call_index", "message_id", "shadow", "after_turn",
@@ -83,6 +85,8 @@ class Turn:
     status: str = "running"
     incomplete: bool = False
     schema_version: int = SCHEMA_VERSION
+    max_iterations: Optional[int] = None
+    woken_by: Optional[dict[str, Any]] = None
     mono_start: Optional[int] = field(default=None, repr=False)  # not part of the record
     mono_end: Optional[int] = field(default=None, repr=False)
 
@@ -91,7 +95,9 @@ class Turn:
         return None if self.duration_ms is None else self.started_at + self.duration_ms
 
     def record(self) -> dict[str, Any]:
-        return {k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS}
+        out = {k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS}
+        out.update({k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS_12 if getattr(self, k) is not None})
+        return out
 
 
 @dataclass
@@ -265,6 +271,7 @@ class Recorder:
             attended=a.get("attended"), reviewer=copy.deepcopy(a.get("reviewer")),
             stamp=copy.deepcopy(ev.get("stamp") or {}),
             first_message_id=ev.get("first_message_id"), mono_start=ev["mono_ms"],
+            max_iterations=a.get("max_iterations"), woken_by=copy.deepcopy(a.get("woken_by")),
         )
         self.turns[turn.turn_id] = turn
         self._write_turn(turn)
@@ -288,7 +295,21 @@ class Recorder:
         for s in self.steps.values():
             if s.turn_id == turn.turn_id:
                 self._write_step(s)
+        self._check_turn(turn)
         self._forget_old_turns(ev["mono_ms"])
+
+    def _check_turn(self, turn: "Turn") -> None:
+        """The Issues checks over the turn just ended (OB-3), stored with it as not yet seen.
+        A check never breaks the recording."""
+        if self.store is None:
+            return
+        try:
+            from . import signals
+
+            steps = [s.record() for s in self.steps.values() if s.turn_id == turn.turn_id]
+            self.store.write_issues(turn.turn_id, signals.check_turn(turn.record(), steps))
+        except Exception:  # noqa: BLE001
+            log.exception("recording: the Issues checks failed for a turn")
 
     def _anchor(self, turn_id: Optional[str], at_ms: int, mono_ms: int) -> int:
         """§7.3: a step's start is its turn's start plus the monotonic time since then."""

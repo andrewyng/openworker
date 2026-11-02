@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from .ids import new_ulid
@@ -242,7 +243,10 @@ class TurnRecording:
             return
         with self._lock:
             step_id = self._waits.get(call_id)
-        self.update_step(step_id, attrs={"where": where})
+        attrs: dict[str, Any] = {"where": where}
+        if where == "inbox":
+            attrs["inbox_at"] = int(time.time() * 1000)  # when nobody was watching any more (1.2)
+        self.update_step(step_id, attrs=attrs)
 
     # -- summary steps (E4) ---------------------------------------------------------------------
     def reserve_step(self) -> Optional[str]:

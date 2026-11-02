@@ -11,9 +11,13 @@ import {
   getRecordedTurns,
   getRecordedUsage,
   getStepDetail,
+  getTurnIssues,
   getTurnSteps,
+  markIssuesSeen,
   type RecordedStep,
   type RecordedTurn,
+  type TurnIssue,
+  type TurnIssues,
 } from "../api";
 import { formatTokens } from "../usage";
 
@@ -201,7 +205,8 @@ export function StepsPanel({
   const [turns, setTurns] = useState<RecordedTurn[] | null>(null);
   const [turnIdx, setTurnIdx] = useState<number | null>(null);
   const [steps, setSteps] = useState<RecordedStep[]>([]);
-  const [tab, setTab] = useState<"timeline" | "usage">("timeline");
+  const [tab, setTab] = useState<"timeline" | "usage" | "issues">("timeline");
+  const [issues, setIssues] = useState<TurnIssues | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -248,6 +253,22 @@ export function StepsPanel({
     };
   }, [sessionId, turn?.turn_id, refreshKey]);
 
+  // OB-3: the turn's Issues, for the tab and the row marks; a turn still running has none.
+  useEffect(() => {
+    setIssues(null);
+    if (!turn || turn.status === "running") return;
+    let live = true;
+    getTurnIssues(sessionId, turn.turn_id).then((x) => live && setIssues(x)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sessionId, turn?.turn_id, turn?.status, refreshKey]);
+  // Opening Issues is "I have looked": the session's ring in the sidebar clears.
+  useEffect(() => {
+    if (tab === "issues") markIssuesSeen(sessionId).catch(() => {});
+  }, [tab, sessionId, turn?.turn_id]);
+  const flagged = useMemo(() => new Set((issues?.issues || []).filter((i) => i.severity === "warn").map((i) => i.step_id)), [issues]);
+
   const rows = useMemo(() => nest(steps), [steps]);
   const checks = steps.filter((s) => s.kind === "auto_approver" && !s.shadow);
   const inspecting = tab === "timeline" && !!selected && !!turn;
@@ -277,6 +298,7 @@ export function StepsPanel({
           total={total}
           label={stepLabel(step, t)}
           selected={selected === step.step_id}
+          issue={flagged.has(step.step_id)}
           onSelect={() => setSelected(selected === step.step_id ? null : step.step_id)}
         />
       ))}
@@ -332,6 +354,9 @@ export function StepsPanel({
           <div className="steps-tabs" role="tablist">
             <button role="tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>{t("steps.tab.timeline")}</button>
             <button role="tab" aria-selected={tab === "usage"} onClick={() => setTab("usage")}>{t("steps.tab.usage")}</button>
+            <button role="tab" aria-selected={tab === "issues"} onClick={() => setTab("issues")} data-testid="steps-tab-issues">
+              {(turn.issues?.warn ?? issues?.warn) ? t("steps.issues.tab_n", { n: turn.issues?.warn ?? issues?.warn }) : t("steps.issues.tab")}
+            </button>
           </div>
         )}
       </div>
@@ -353,6 +378,20 @@ export function StepsPanel({
         </div>
       )}
       {turn && tab === "usage" && <div className="steps-railbody"><UsageView sessionId={sessionId} refreshKey={refreshKey} /></div>}
+      {turn && tab === "issues" && (
+        <div className="steps-railbody">
+          <IssuesView
+            sessionId={sessionId}
+            turn={turn}
+            issues={issues}
+            steps={steps}
+            onGo={(stepId) => {
+              setTab("timeline");
+              setSelected(stepId);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -366,8 +405,9 @@ function Tile({ value, label }: { value: string; label: string }) {
   );
 }
 
-function StepRow({ step, depth, turn, total, label, selected, onSelect }: {
-  step: RecordedStep; depth: number; turn: RecordedTurn; total: number; label: string; selected: boolean; onSelect: () => void;
+function StepRow({ step, depth, turn, total, label, selected, issue, onSelect }: {
+  step: RecordedStep; depth: number; turn: RecordedTurn; total: number; label: string; selected: boolean;
+  issue?: boolean; onSelect: () => void;
 }) {
   const { t } = useTranslation();
   const left = Math.min(100, Math.max(0, ((step.started_at - turn.started_at) / total) * 100));
@@ -385,12 +425,107 @@ function StepRow({ step, depth, turn, total, label, selected, onSelect }: {
         {stepFlags(step, t).map((f) => (
           <span key={f.text} className={`steps-badge ${f.cls}`}>{f.text}</span>
         ))}
+        {issue && <span className="steps-badge warn" data-testid="steps-row-issue">{t("steps.issues.badge")}</span>}
       </span>
       <span className="steps-track">
         <span className="steps-bar" style={{ left: `${left}%`, width: width ? `${width}%` : undefined }} />
       </span>
       <span className="steps-time">{formatDuration(step.duration_ms)}</span>
     </button>
+  );
+}
+
+// -- Issues (OB-3) --------------------------------------------------------------------------------
+
+/** One title per check, and per kind for the context check (mock review M2-R4). */
+function issueTitle(i: { check: string; facts?: Record<string, any> }, t: T): string {
+  const kind = i.check === "context_full" ? i.facts?.kind : null;
+  return kind ? t(`steps.issues.title.context_full_${kind}`, { defaultValue: t("steps.issues.title.context_full") })
+    : t(`steps.issues.title.${i.check}`, { defaultValue: i.check });
+}
+
+/** What the app adds from the step's own content, shown here only (design §6): the command a
+ * failed tool ran and the first line of its output; the call a shadow check judged. */
+function IssueDetail({ sessionId, issue }: { sessionId: string; issue: TurnIssue }) {
+  const [d, setD] = useState<any>(null);
+  useEffect(() => {
+    if (!issue.step_id || !["tool_failed", "shadow_disagreed", "refused", "reviewer_allowed_send", "blocked_by_sandbox"].includes(issue.check)) return;
+    let live = true;
+    getStepDetail(sessionId, issue.step_id).then((x) => live && setD(x)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [sessionId, issue.step_id, issue.check]);
+  if (!d) return null;
+  const args = d.kind === "auto_approver" ? d.for_step?.arguments : d.arguments;
+  const main = args && typeof args === "object" ? (args.command ?? args.path ?? args.url ?? args.query) : null;
+  let first = "";
+  if (issue.check === "tool_failed" && typeof d.message?.content === "string") {
+    try {
+      const r = JSON.parse(d.message.content);
+      first = String(r?.output ?? r?.error ?? "").split("\n").map((l: string) => l.trim()).find(Boolean) || "";
+    } catch {
+      first = "";
+    }
+  }
+  return (
+    <>
+      {main != null && <span className="steps-mono steps-issue-arg"> {String(main).slice(0, 120)}</span>}
+      {first && <span className="steps-issue-out"> {first.slice(0, 140)}</span>}
+    </>
+  );
+}
+
+function IssuesView({ sessionId, turn, issues, steps, onGo }: {
+  sessionId: string; turn: RecordedTurn; issues: TurnIssues | null; steps: RecordedStep[]; onGo: (stepId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [openFine, setOpenFine] = useState(false);
+  if (turn.status === "running") return <p className="steps-empty">{t("steps.issues.running")}</p>;
+  if (!issues) return <p className="steps-empty">{t("steps.loading")}</p>;
+  // Grouped by check (V2-17), warnings first; context_full by kind (M2-R4).
+  const groups: { key: string; items: TurnIssue[] }[] = [];
+  for (const i of [...issues.issues].sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "warn" ? -1 : 1))) {
+    const key = i.check === "context_full" ? `${i.check}:${i.facts?.kind}` : i.check;
+    const g = groups.find((x) => x.key === key);
+    if (g) g.items.push(i);
+    else groups.push({ key, items: [i] });
+  }
+  const noPlan = issues.not_checked.find((n) => n.check === "off_plan");
+  return (
+    <div className="steps-issues" data-testid="steps-issues">
+      {groups.length === 0 && <p className="steps-issues-none">{t("steps.issues.none")}</p>}
+      {groups.map((g) => {
+        const first = g.items[0];
+        const info = first.severity === "info";
+        return (
+          <div key={g.key} className={"steps-callout " + (info ? "info" : "warn")} data-testid="steps-issue">
+            <b>{issueTitle(first, t)}{g.items.length > 1 ? ` · ${g.items.length}` : ""}</b>
+            {info && <span className="steps-pill steps-info-pill">{t("steps.issues.information")}</span>}
+            {g.items.map((i, n) => (
+              <div key={(i.step_id || "") + n} className="steps-issue-line">
+                {i.step_seq != null && <span className="steps-faint">{t("steps.insp.step", { n: i.step_seq })} </span>}
+                <span>{i.text}</span>
+                <IssueDetail sessionId={sessionId} issue={i} />
+                {i.step_id && steps.some((s) => s.step_id === i.step_id) && (
+                  <button className="steps-link" onClick={() => onGo(i.step_id!)}>{t("steps.issues.go")}</button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      <button className="steps-fine-toggle" onClick={() => setOpenFine(!openFine)} data-testid="steps-fine-toggle">
+        {t("steps.issues.fine", { n: issues.fine.length })} {openFine ? "▾" : "▸"}
+      </button>
+      {openFine && (
+        <div className="steps-fine" data-testid="steps-fine">
+          {issues.fine.map((f) => <div key={f.check}>✓ {f.text}</div>)}
+          {noPlan && <div className="steps-faint">– {t("steps.issues.no_plan")}</div>}
+        </div>
+      )}
+      {!openFine && noPlan && <div className="steps-faint steps-fine">– {t("steps.issues.no_plan")}</div>}
+    </div>
   );
 }
 

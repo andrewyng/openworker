@@ -52,7 +52,7 @@ from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
 from .sandbox import inside as _openshell
 from .sandbox.selection import select as select_sandbox
-from .sandbox.workspace import open_workspace
+from .sandbox.workspace import open_workspace, provider_name as _sandbox_provider_name
 from .tools.todo import TodoList
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
@@ -776,6 +776,9 @@ def build_engine(
     if executor is not None:
         engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
+    # Whether this machine has a sandbox switched on (stamp.sandbox.expected, format 1.2), for
+    # the "ran without the sandbox" check: the setting, whatever this session ended up using.
+    engine.sandbox_expected = _sandbox_provider_name(config.sandbox_provider) != "direct"
     # OPE-219: a sandboxed session with "Only the sites you allow" holds its web tools to
     # the same list as its commands. They run in this process, outside the sandbox, so the
     # permission engine is the wall for them. No sandbox, or "Allow everything": no wall.

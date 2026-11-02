@@ -4405,6 +4405,29 @@ export interface RecordedTurn {
   approval_mode?: string | null;
   attended?: boolean | null;
   reviewer?: { active?: boolean; shadow?: boolean; kind?: string | null; model?: string | null } | null;
+  // OB-3: how many issues the turn's checks found (warnings count on the tab).
+  issues?: { warn: number; info: number };
+}
+
+// One turn's Issues (OB-3): what the checks in signals.yaml found, what was fine, what did not
+// apply. `text` is the engine's English sentence; `facts` what it was built from.
+export interface TurnIssue {
+  check: string;
+  severity: "warn" | "info";
+  step_id: string | null;
+  step_seq: number | null;
+  text: string;
+  facts: Record<string, any>;
+}
+export interface TurnIssues {
+  turn_id: string;
+  signals_version?: string;
+  warn: number;
+  info: number;
+  seen?: boolean;
+  issues: TurnIssue[];
+  fine: { check: string; text: string }[];
+  not_checked: { check: string; text: string }[];
 }
 
 export interface RecordedStep {
@@ -4445,4 +4468,14 @@ export async function getStepDetail(sessionId: string, stepId: string): Promise<
 
 export async function getRecordedUsage(sessionId: string): Promise<any> {
   return recordingGet(sessionId, "/usage");
+}
+
+export async function getTurnIssues(sessionId: string, turnId: string): Promise<TurnIssues | null> {
+  const r = await recordingGet(sessionId, `/turns/${encodeURIComponent(turnId)}/issues`);
+  return r && Array.isArray(r.issues) ? (r as TurnIssues) : null;
+}
+
+/** Opening a session's Issues clears its amber ring in the sidebar (TD2-4). */
+export async function markIssuesSeen(sessionId: string): Promise<void> {
+  await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/issues/seen`, { method: "POST" });
 }

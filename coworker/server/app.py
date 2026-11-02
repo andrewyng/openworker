@@ -843,6 +843,15 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_usage(session_id: str) -> dict[str, Any]:
         return manager.recording_usage(session_id)
 
+    # OB-3: a turn's Issues, and "I have looked" (clears the session's amber dot).
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/issues")
+    def session_turn_issues(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.recording_turn_issues(session_id, turn_id)
+
+    @app.post("/v1/sessions/{session_id}/issues/seen")
+    def session_issues_seen(session_id: str) -> dict[str, Any]:
+        return manager.mark_recording_issues_seen(session_id)
+
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
         body = body or {}

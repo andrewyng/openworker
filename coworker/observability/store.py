@@ -70,7 +70,16 @@ CREATE INDEX IF NOT EXISTS step_pieces_sha ON step_pieces(sha256);
 _TURN_COLUMNS = (
     "turn_id", "session_id", "seq", "kind", "trigger", "started_at", "duration_ms", "status",
     "incomplete", "approval_mode", "attended", "reviewer", "stamp", "first_message_id",
-    "last_message_id", "schema_version",
+    "last_message_id", "schema_version", "max_iterations", "woken_by",
+)
+# Columns added after the first release of the store: an existing recordings.db gets them
+# here (CREATE TABLE IF NOT EXISTS does not add columns). `issues` and `issues_seen` hold the
+# Issues checks' result for the turn (phase-2 design §5): derived, not part of the format.
+_ADDED_COLUMNS = (
+    ("turns", "max_iterations", "INTEGER"),
+    ("turns", "woken_by", "TEXT"),
+    ("turns", "issues", "TEXT"),
+    ("turns", "issues_seen", "INTEGER DEFAULT 0"),
 )
 _STEP_COLUMNS = (
     "step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at",
@@ -112,7 +121,7 @@ def _turn_row(t: dict[str, Any]) -> tuple:
         t.get("started_at"), t.get("duration_ms"), t.get("status"), int(bool(t.get("incomplete"))),
         t.get("approval_mode"), _bool(t.get("attended")), _js(t.get("reviewer")),
         _js(t.get("stamp") or {}), t.get("first_message_id"), t.get("last_message_id"),
-        t.get("schema_version", 1),
+        t.get("schema_version", 1), t.get("max_iterations"), _js(t.get("woken_by")),
     )
 
 
@@ -172,9 +181,15 @@ class RecordingStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        for table, column, kind in _ADDED_COLUMNS:
+            try:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            except sqlite3.OperationalError:
+                pass  # already there
         self._conn.commit()
         # Records waiting to be written, by id; the latest state of each replaces the last.
         self._pending_turns: dict[str, dict[str, Any]] = {}
+        self._pending_issues: dict[str, tuple[str, int]] = {}  # turn_id -> (json, seen)
         self._pending_steps: dict[str, dict[str, Any]] = {}
         self._pending_lock = threading.Lock()
         self._closed = False
@@ -209,12 +224,17 @@ class RecordingStore:
             with self._pending_lock:
                 turns, self._pending_turns = self._pending_turns, {}
                 steps, self._pending_steps = self._pending_steps, {}
-            if not turns and not steps:
+                issues, self._pending_issues = self._pending_issues, {}
+            if not turns and not steps and not issues:
                 return
             try:
                 with self._conn:
                     self._conn.executemany(_UPSERT_TURN, [_turn_row(t) for t in turns.values()])
                     self._conn.executemany(_UPSERT_STEP, [_step_row(s) for s in steps.values()])
+                    self._conn.executemany(
+                        "UPDATE turns SET issues = ?, issues_seen = ? WHERE turn_id = ?",
+                        [(js, seen, tid) for tid, (js, seen) in issues.items()],
+                    )
                     for s in steps.values():
                         refs = set(_piece_refs((s.get("content") or {}).get("exchange")))
                         if refs:
@@ -402,6 +422,53 @@ class RecordingStore:
                 break
             time.sleep(SWEEP_PAUSE_S)
 
+    # -- the Issues result (phase-2 design §5): derived, stored beside the turn ---------------
+    def write_issues(self, turn_id: str, result: dict[str, Any], *, seen: bool = False) -> None:
+        """Store a turn's Issues result. `seen` is false only for a result worked out when the
+        turn ended: one worked out later, for an old turn, never lights the session dot."""
+        with self._pending_lock:
+            self._pending_issues[turn_id] = (json.dumps(result, ensure_ascii=False), int(seen))
+        if self._background:
+            _writer.wake()
+
+    def read_issues(self, session_id: str) -> dict[str, dict[str, Any]]:
+        """The stored results of a session's turns, by turn id, each with `seen`."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT turn_id, issues, issues_seen FROM turns WHERE session_id = ? AND issues IS NOT NULL",
+                (session_id,),
+            ).fetchall()
+        out = {}
+        for r in rows:
+            try:
+                out[r["turn_id"]] = {**json.loads(r["issues"]), "seen": bool(r["issues_seen"])}
+            except ValueError:
+                continue
+        return out
+
+    def mark_issues_seen(self, session_id: str) -> None:
+        self.flush()
+        with self._lock, self._conn:
+            self._conn.execute("UPDATE turns SET issues_seen = 1 WHERE session_id = ?", (session_id,))
+
+    def unseen_warnings(self) -> dict[str, int]:
+        """Warnings not seen yet, by session: the sidebar dot (TD2-4)."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, issues FROM turns WHERE issues_seen = 0 AND issues IS NOT NULL"
+            ).fetchall()
+        out: dict[str, int] = {}
+        for r in rows:
+            try:
+                warn = int(json.loads(r["issues"]).get("warn") or 0)
+            except (ValueError, TypeError):
+                continue
+            if warn:
+                out[r["session_id"]] = out.get(r["session_id"], 0) + warn
+        return out
+
     # -- reading ------------------------------------------------------------------------------
     def turn_count(self, session_id: str) -> int:
         with self._lock:
@@ -482,6 +549,13 @@ def _turn_record(r: sqlite3.Row) -> dict[str, Any]:
     d["attended"] = None if d["attended"] is None else bool(d["attended"])
     d["reviewer"] = None if d["reviewer"] is None else json.loads(d["reviewer"])
     d["stamp"] = json.loads(d["stamp"] or "{}")
+    # Format 1.2 fields are left out when not recorded, so a 1.1 turn reads back unchanged.
+    if d.get("max_iterations") is None:
+        d.pop("max_iterations", None)
+    if d.get("woken_by") is None:
+        d.pop("woken_by", None)
+    else:
+        d["woken_by"] = json.loads(d["woken_by"])
     return d
 
 

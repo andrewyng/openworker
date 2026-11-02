@@ -1,7 +1,7 @@
 // Observability Phase 1 (UX-059 OB-1, OB-2, OB-4): the Steps panel reads the recording.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getRecordedTurns, getRecordedUsage, getStepDetail, getTurnSteps } from "../api";
+import { getRecordedTurns, getRecordedUsage, getStepDetail, getTurnIssues, getTurnSteps, markIssuesSeen } from "../api";
 import { StepsPanel, formatDuration } from "./StepsPanel";
 
 vi.mock("../api", () => ({
@@ -9,6 +9,8 @@ vi.mock("../api", () => ({
   getTurnSteps: vi.fn(),
   getStepDetail: vi.fn(),
   getRecordedUsage: vi.fn(),
+  getTurnIssues: vi.fn(() => Promise.resolve(null)),
+  markIssuesSeen: vi.fn(() => Promise.resolve()),
 }));
 
 const turn = {
@@ -276,3 +278,39 @@ describe("formatDuration", () => {
     expect(formatDuration(null)).toBe("—");
   });
 });
+
+describe("Issues tab (OB-3)", () => {
+  const issues = {
+    turn_id: "t1", signals_version: "0.2", warn: 2, info: 1, seen: false,
+    issues: [
+      { check: "tool_failed", severity: "warn", step_id: "x1", step_seq: 5, text: "run_shell failed with exit code 6.", facts: { how: "exit" } },
+      { check: "tool_failed", severity: "warn", step_id: "x1", step_seq: 5, text: "run_shell failed with exit code 6 again.", facts: { how: "exit" } },
+      { check: "shadow_disagreed", severity: "info", step_id: "a1", step_seq: 3, text: "The shadow reviewer would have said allow.", facts: {} },
+    ],
+    fine: [{ check: "repeated_step", text: "No step repeated 3 times in a row" }],
+    not_checked: [{ check: "off_plan", text: "No plan to check against" }],
+  };
+
+  it("groups issues by check, puts warnings first, folds the fine list, and goes to the step", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, issues: { warn: 2, info: 1 } }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    vi.mocked(getTurnIssues).mockResolvedValue(issues as any);
+    vi.mocked(getStepDetail).mockResolvedValue(null);
+    render(<StepsPanel sessionId="s1" refreshKey={0} onClose={() => {}} />);
+    const tab = await screen.findByTestId("steps-tab-issues");
+    expect(tab.textContent).toBe("Issues · 2");
+    fireEvent.click(tab);
+    const groups = await screen.findAllByTestId("steps-issue");
+    expect(groups.map((g) => g.querySelector("b")?.textContent)).toEqual(["A tool failed · 2", "Shadow check disagreed with you"]);
+    expect(groups[1].className).toContain("info");
+    expect(markIssuesSeen).toHaveBeenCalledWith("s1");
+    expect(screen.queryByTestId("steps-fine")?.textContent ?? "").not.toContain("No step repeated");
+    fireEvent.click(screen.getByTestId("steps-fine-toggle"));
+    expect(screen.getByTestId("steps-fine").textContent).toContain("No step repeated 3 times in a row");
+    expect(screen.getByTestId("steps-fine").textContent).toContain("No plan to check against");
+    fireEvent.click(screen.getAllByText("Go to step")[0]);
+    await waitFor(() => expect(screen.getByTestId("steps-timeline")).toBeTruthy());
+    expect(screen.getAllByTestId("steps-row-issue").length).toBe(1);
+  });
+});
+

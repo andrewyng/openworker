@@ -45,6 +45,7 @@ from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..observability import Recorder, RecordingStore
 from ..observability import read_api as recording_api
+from ..observability import signals as recording_signals
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
@@ -6318,7 +6319,49 @@ class SessionManager:
     LIVE_STEP_BATCH_S = 0.1
 
     def recording_turns(self, session_id: str) -> dict[str, Any]:
-        return {"turns": recording_api.turns(self.recordings_store.load_recording(session_id))}
+        rec = self.recordings_store.load_recording(session_id)
+        issues = self._recording_issues(session_id, rec)
+        turns = recording_api.turns(rec)
+        for t in turns:
+            r = issues.get(t["turn_id"]) or {}
+            t["issues"] = {"warn": int(r.get("warn") or 0), "info": int(r.get("info") or 0)}
+        return {"turns": turns}
+
+    def recording_turn_issues(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        """The Issues tab of one turn (OB-3): its issues, the checks that were fine, the ones
+        not run here, and the signals.yaml version that made them."""
+        rec = self.recordings_store.load_recording(session_id)
+        found = self._recording_issues(session_id, rec).get(turn_id)
+        if found is None:
+            return {"turn_id": turn_id, "error": "no such turn"}
+        return {"turn_id": turn_id, **found}
+
+    def mark_recording_issues_seen(self, session_id: str) -> dict[str, Any]:
+        self.recordings_store.mark_issues_seen(session_id)
+        return {"ok": True}
+
+    def _recording_issues(self, session_id: str, rec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Each finished turn's stored Issues result. A turn with none (it ended before this
+        version), or one made by an older signals.yaml, is checked again now and stored; a
+        result worked out now for an old turn is stored as seen (TD2-2, TD2-4)."""
+        stored = self.recordings_store.read_issues(session_id)
+        current = recording_signals.version()
+        steps_of: dict[str, list[dict[str, Any]]] = {}
+        for s in rec.get("steps") or []:
+            steps_of.setdefault(s.get("turn_id"), []).append(s)
+        out: dict[str, dict[str, Any]] = {}
+        for t in rec.get("turns") or []:
+            if t.get("status") in (None, "running"):
+                continue
+            have = stored.get(t["turn_id"])
+            if have is not None and have.get("signals_version") == current:
+                out[t["turn_id"]] = have
+                continue
+            result = recording_signals.check_turn(t, steps_of.get(t["turn_id"], []))
+            seen = True if have is None else bool(have.get("seen"))
+            self.recordings_store.write_issues(t["turn_id"], result, seen=seen)
+            out[t["turn_id"]] = {**result, "seen": seen}
+        return out
 
     def recording_turn_steps(self, session_id: str, turn_id: str) -> dict[str, Any]:
         rec = self.recordings_store.load_recording(session_id)
@@ -8786,6 +8829,10 @@ class SessionManager:
     # -- read models ------------------------------------------------------------
     def list_sessions(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
         ws = self.resolve_workspace(workspace) if workspace else None
+        try:
+            unseen_issues = self.recordings_store.unseen_warnings()
+        except Exception:  # noqa: BLE001 - the dot never breaks the list
+            unseen_issues = {}
         return [
             {
                 "session_id": r.session_id,
@@ -8808,6 +8855,8 @@ class SessionManager:
                 # session → persona → footer Inbox). Liveness = working (in-flight turn) /
                 # sleeping (a self-wake is pending) / idle — a count-less dot that never bubbles.
                 "attention": len(self.inbox.pending(session_id=r.session_id)),
+                # OB-3: warnings in turns whose Issues you have not opened (the amber dot).
+                "issues_unseen": unseen_issues.get(r.session_id, 0),
                 "liveness": self._session_liveness(r.session_id),
                 # When sleeping: the next timer fire (ISO) — drives the "sleeping
                 # until…" strip so a scheduled agent never reads as a dead one.

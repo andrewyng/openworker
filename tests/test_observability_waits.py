@@ -107,7 +107,7 @@ def test_an_approved_card_is_a_wait_step_and_the_call_records_its_path(tmp_path)
     [wait] = _steps(rec, "wait")
     assert (wait["name"], wait["call_id"], wait["status"]) == ("approval", "c1", "ok")
     assert wait["attrs"] == {"for_call_id": "c1", "kind": "approval", "attended": True,
-                             "where": "session", "outcome": "approved"}
+                             "where": "session", "outcome": "approved", "inbox_at": None}
     assert wait["content"] == {"resolved_by": "devika"}
     [tool] = _steps(rec, "tool")
     assert tool["status"] == "ok"

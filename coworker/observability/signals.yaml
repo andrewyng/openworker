@@ -1,0 +1,422 @@
+# OpenWorker observability: the Issues checks (signals)
+#
+# What this file is. Every check on the Issues tab (OB-3), in one place: what it looks at,
+# when it fires, its numbers, and the words it shows. Both engines (the desktop's Python
+# engine now, the Rust harness SDK later) read the same file, so the same recording gets
+# the same issues in both. The numbers in a rule ("3 times", "80%") are settings here, not
+# code.
+#
+# Status: DRAFT 0.2 (2026-11-02), Phase 2 design. Not frozen. It freezes at the end of the
+# Phase 2 design (phased-plan.md section 3), after validation on real recordings
+# (phase-2/validation-report.md).
+#
+# How a check works (phase-2/technical-design.md section 2).
+# - A check is a pure function of one finished turn: the turn record and its steps, as
+#   recording-format.md defines them, plus the step fields this file adds (`needs`). It
+#   reads `attrs` only, never `content`, so the same issues come out of a recording whose
+#   text was left out (export with metadata only).
+# - Every check gives one of three answers for a turn:
+#     fired       one or more issues, each pointing at a step
+#     fine        it ran and found nothing; the tab lists it under "Checked and fine"
+#     not_checked it does not apply to this turn (for example the auto-approver checks in
+#                 a turn with no reviewer); the tab does not list it
+# - `severity`: `warn` issues count on the tab and turn the session dot amber; `info`
+#   issues are listed but count nowhere.
+#
+# How to read an entry.
+#   title       the issue's name on the tab
+#   severity    warn | info
+#   applies     when the check runs at all (else not_checked)
+#   fires       the exact rule, in plain words, with the fields it reads
+#   points_at   which step the issue's "Go to step" opens
+#   params      the numbers, with their defaults
+#   says        the issue text; {placeholders} are filled from the fields named
+#   fine        the "Checked and fine" line
+#   needs       recording fields this check needs that format 1.1 does not have yet
+#               (the Phase 2 additions, phase-2/technical-design.md section 4)
+#   golden      the scenarios that test it (phase-2/scenarios.md)
+#   source      where the check was asked for
+
+version: "0.3"
+draft: 2026-11-02
+# 0.3: ran_without_sandbox runs only where a sandbox is expected (found in the first live run).
+# 0.2: reviewer_allowed_send (TD2-20), sandbox_failed, the mock-review wording (M2-R1 to M2-R9),
+# waited_unwatched from inbox_at (V2-25). Goes with recording format 1.2.
+
+# Steps the checks never look at, whatever the check:
+#   - nested steps (parent_step_id not null) unless a check says otherwise: a helper's own
+#     tool calls belong to the helper (OB-7 nests them; their checks come with OB-7)
+#   - shadow steps, except in shadow_disagreed
+#   - steps with after_turn = true (the session title runs after the answer)
+scope:
+  top_level_only: true
+  skip_shadow: true
+  skip_after_turn: true
+
+checks:
+
+  repeated_step:
+    title: "Repeated the same step"
+    severity: warn
+    applies: "always"
+    fires: >-
+      `min_run` or more tool steps in a row (canonical order, top-level tool steps only)
+      with the same `name` and the same `args_hash`, none of them `repeat_ok`. Steps with
+      status `denied` or `skipped` break a run (a refused call that is asked again is the
+      refused check's business). One issue per run.
+    points_at: "the last step of the run"
+    params:
+      min_run: 3
+    says: "{name} was called {count} times in a row with the same arguments. That cost {extra_tokens} extra tokens."
+    extra_tokens: >-
+      Total tokens (input + output, recording-format.md 3.5) of the main model steps that
+      asked for the 2nd to the last call of the run. A model step that asked for several
+      calls counts once.
+    fine: "No step repeated {min_run} times in a row"
+    needs: [tool.args_hash, tool.repeat_ok]
+    golden: [S2-01, S2-01c]
+    source: "desktop-feature-spec.md OB-3"
+
+  off_plan:
+    title: "Left its plan"
+    severity: warn
+    applies: "the turn has at least one top-level todo_write step with at least one item"
+    fires: >-
+      Either (a) an item disappeared from the plan before it was done: comparing a
+      todo_write's `plan.items` with the previous todo_write in the same turn, the items
+      that were not `done` and whose hash is gone outnumber the new hashes (a new item
+      stands in for a gone one, because the agent may reword an item; V2-08); or (b) the agent kept acting after it said the plan was done:
+      a top-level tool step other than todo_write, with risk_class other than `read`,
+      starts after a todo_write whose items are all `done`, and no later todo_write adds
+      an item. Version 1 matches items by exact hash only (Q6; FO-12 is fuzzy matching).
+    points_at: "(a) the todo_write that dropped the item; (b) the first such tool step"
+    params: {}
+    says:
+      dropped: "A plan step was dropped before it was done ({dropped} of {items})."
+      after_done: "It kept acting after it marked every plan step done: {name}."
+    fine: "No plan step was dropped ({done} of {items} done)"
+    not_checked_says: "No plan to check against"
+    note: >-
+      Per Q6 the tab shows "No plan to check against" in the fine list when there is no
+      plan, instead of hiding the check, so an empty list never reads as "we checked".
+      Items still pending when the turn ends are not an issue: the agent may be waiting
+      for you. They show in the fine line ("3 of 4 steps done").
+    needs: [tool.plan]
+    golden: [S2-02, S2-02b, S2-02c]
+    source: "desktop-feature-spec.md OB-3, Q6"
+
+  refused:
+    title: "An action was refused"
+    severity: warn
+    applies: "always"
+    fires: >-
+      A top-level tool step with status `denied` and a `decision.origin` (who said no:
+      `user`, `denied_by_rule`, `reviewer_denied`, `unattended_auto`). A denied step with
+      origin `null` was stopped or superseded, not refused, so it does not fire (V2-07).
+      One issue per step.
+    points_at: "the denied step"
+    params: {}
+    says:
+      user: "You refused {name}."
+      denied_by_rule: "A rule refused {name}."
+      reviewer_denied: "The auto-approver refused {name} and you did not allow it."
+      unattended_auto: "{name} was refused because nobody was at the app to approve it."
+    fine: "No actions were refused by you, a rule or the auto-approver"
+    needs: []
+    golden: [S2-03, S2-03b]
+    source: "desktop-feature-spec.md OB-3"
+
+  overridden:
+    title: "You allowed a blocked action"
+    severity: info
+    applies: "the turn's reviewer is active (turn.reviewer.active)"
+    fires: "A top-level tool step whose decision.path has a `grant` stage with outcome `allow_anyway`."
+    points_at: "the tool step"
+    params: {}
+    says: "The auto-approver blocked {name} and you used Allow anyway. Either the reviewer or the decision was wrong; worth a look."
+    fine: "You did not override the auto-approver"
+    needs: []
+    golden: [S2-04]
+    source: "desktop-feature-spec.md OB-3"
+
+  reviewer_could_not_run:
+    title: "Auto-approver could not run"
+    severity: warn
+    applies: "turn.reviewer.active or turn.reviewer.shadow"
+    fires: "An auto_approver step (live or shadow) with result `could_not_run`."
+    points_at: "the auto_approver step"
+    params: {}
+    says: "The auto-approver could not check {name}, so it was shown to you instead."
+    fine:
+      live: "Auto-approver checked {checks} action(s): {allowed} allowed, {asked} asked you, {blocked} blocked; none failed to run"
+      shadow: "Shadow reviewer checked {checks} action(s); none failed to run"
+    fine_note: "The verdicts are in the line, so a turn where the reviewer allowed everything does not read as just \"ran\" (mock review M2-R1). A shadow-only turn names the shadow reviewer (M2-R5)."
+    needs: []
+    golden: [S2-05]
+    source: "desktop-feature-spec.md OB-3"
+
+  reviewer_paused:
+    title: "Auto-approver paused"
+    severity: warn
+    applies: "turn.reviewer.active"
+    fires: "A notice step named `reviewer_paused`, or an auto_approver step with breaker.tripped = true."
+    points_at: "the notice, else the first tripped check"
+    params: {}
+    says: "The auto-approver paused after {denials} refusals in a row. Later actions were shown to you."
+    fine: "Auto-approver was never paused"
+    needs: []
+    golden: [S2-06]
+    source: "desktop-feature-spec.md OB-3"
+
+  reviewer_allowed_send:
+    title: "The auto-approver let data leave the machine"
+    severity: info
+    applies: "turn.reviewer.active"
+    fires: >-
+      A top-level tool step that ran (status `ok`), with decision.origin `reviewer`, that
+      reaches the network: risk_class `egress`, or `reaches_network` true (new in 1.2; a
+      shell command that names a network client or a URL, by the engine's own rule,
+      `review_facts.shell_reaches_network`). Shell commands are classed `exec` even when
+      they upload, so risk_class alone missed every real case (B5). The auto-approver, not
+      you or a rule, allowed an action that sends data off the machine. Information, not a warning: the reviewer may be
+      right; this makes the decision visible. Found in the Phase 2 mock review (M2-R1):
+      the reviewer allowed eight uploads of a file to unknown hosts and nothing was
+      flagged. TD2-20.
+    points_at: "the tool step; one line per step, grouped"
+    params: {}
+    says: "The auto-approver allowed {name} without asking you. It sends data off the machine."
+    fine: "The auto-approver let nothing leave the machine without asking you"
+    needs: [tool.reaches_network]
+    golden: [S2-19, S2-19c]
+    source: "phase-2/mock-review/REVIEW.md M2-R1; TD2-20"
+
+  shadow_disagreed:
+    title: "Shadow check disagreed with you"
+    severity: info
+    applies: "turn.reviewer.shadow"
+    fires: "An auto_approver step with shadow = true and matched_user = false."
+    points_at: "the shadow check; the line names the tool call it judged (mock review M2-R6)"
+    params: {}
+    says: "The shadow reviewer would have {result_in_words} {name}; you {user_decision}. You were the decider; this is information."
+    fine: "The shadow reviewer agreed with you on {compared} of {compared} actions"
+    needs: []
+    golden: [S2-07]
+    source: "desktop-feature-spec.md OB-3"
+
+  tool_failed:
+    title: "A tool failed"
+    severity: warn
+    applies: "always"
+    fires: >-
+      A top-level tool step that ran and failed: status `error` with `error_kind` `raised`
+      or `result_error`, or status `ok` with `result_error` = true (a tool that returns an
+      error instead of raising, such as read_file on a missing file), or a non-zero
+      `exit_code`. Unknown tools and bad arguments are made_up_tool, not this check. A
+      step the sandbox blocked requests on (blocked_by_sandbox fires on it) is not
+      reported again here: one issue per step, the more specific one (V2-10).
+    points_at: "the failed step"
+    params: {}
+    says: "{name} failed{exit_part}. {first_error_line} {recovered_part}"
+    first_error_line: "Shown in the app only: the first line of the command's error output (content), so \"exit code 6\" reads as \"Could not resolve host\" (mock review M2-R8)."
+    exit_part: " with exit code {exit_code}"
+    recovered_part:
+      yes: "A later {name} in this turn worked."
+      no: ""
+    fine: "No tool failed"
+    needs: [tool.error_kind, tool.result_error]
+    golden: [S2-08, S2-08b]
+    source: "desktop-feature-spec.md OB-3; build-notes.md (error results)"
+
+  model_failed:
+    title: "A model call failed"
+    severity: warn
+    applies: "always"
+    fires: >-
+      A top-level main model step with status `error`, error.type other than
+      `context_length` and `cancelled`, that is not followed in the same turn by a main
+      model step with status `ok` (a failure that was retried and then worked is the
+      retried check's business). Added in Phase 2 validation (V2-03): a turn that ends
+      because its model call failed matched no check in the spec. A failed summary call
+      is not counted here: context_full reports what it led to, a trim or summary_failed
+      (V2-06). A failed session title is not counted anywhere (FO-97).
+    points_at: "the failed model step"
+    params: {}
+    says: "The model call failed: {error_in_words}. {provider_message} {turn_part}"
+    provider_message: "Shown in the app only: the provider's own error message from the response (content), cut to one line. The error type alone, and error.text (a URL), did not say what went wrong (mock review M2-R3)."
+    turn_part:
+      error: "The turn stopped here."
+      other: ""
+    fine: "No model call failed"
+    needs: []
+    golden: [S2-09]
+    source: "phase-2/validation-report.md V2-03"
+
+  retried:
+    title: "A model call was retried"
+    severity: warn
+    applies: "always"
+    fires: >-
+      Either a top-level model step whose `provider_meta` has more than one entry without
+      `auxiliary` = true (the provider's SDK retried on the wire), or a model step with
+      status `error` followed later in the same parent (the turn, or the same summary
+      step) by a model step of the same purpose with status `ok` (the engine tried
+      again). An error of type `context_length` or `cancelled` does not count: a call
+      that was too long, summarised and tried again is context_full's (V2-09). Nested
+      model steps count here (a summary's retry is nested in its summary
+      step). Session title calls never count: their second try is the engine's own
+      parameter fallback, not provider trouble (V2-05). One issue per call that needed
+      more than one try.
+    points_at: "the model step that finally worked"
+    params: {}
+    says: "The model call needed {attempts} tries ({purpose})."
+    fine: "No model call needed a second try"
+    fine_note: "Not \"worked first time\": that read as a contradiction beside \"A model call failed\" (mock review M2-R2)."
+    needs: []
+    golden: [S2-10, S2-10b]
+    source: "desktop-feature-spec.md OB-3"
+
+  cut_off:
+    title: "An answer was cut off"
+    severity: warn
+    applies: "always"
+    fires: >-
+      A top-level main model step with finish_reason `length` (the engine's normalized
+      value; tracing-spec.md), or turn.status `truncated`.
+    points_at: "the model step, else the `truncated` notice"
+    params: {}
+    says: "The model stopped at its output limit{limit_part}. The answer may be incomplete."
+    limit_part: " ({max_output} tokens); needs `max_output` on model steps (1.2, mock review M2-R9)"
+    fine: "No answers were cut off (length limit)"
+    needs: [model.max_output]
+    golden: [S2-11]
+    source: "desktop-feature-spec.md OB-3"
+
+  step_limit:
+    title: "Hit the step limit"
+    severity: warn
+    applies: "always"
+    fires: "turn.status `max_iterations_exceeded`, or a notice step named `step_limit`."
+    points_at: "the `step_limit` notice"
+    params: {}
+    says: "The turn stopped after {iterations} steps, the limit. The task may not be finished."
+    fine: "Stayed under the step limit ({iterations} of {max_iterations})"
+    iterations: "the number of top-level main model steps in the turn"
+    needs: [turn.max_iterations]
+    golden: [S2-12]
+    source: "desktop-feature-spec.md OB-3"
+
+  made_up_tool:
+    title: "Unknown tool or bad arguments"
+    severity: warn
+    applies: "always"
+    fires: "A top-level tool step with status `error` and error_kind `unknown_tool` or `bad_arguments`."
+    points_at: "the tool step"
+    params: {}
+    says:
+      unknown_tool: "The model asked for a tool that does not exist: {name}."
+      bad_arguments: "The model sent arguments for {name} that could not be read."
+    fine: "No unknown tools or invalid arguments"
+    needs: [tool.error_kind]
+    golden: [S2-13]
+    source: "desktop-feature-spec.md OB-3"
+
+  context_full:
+    title: "Context was full"
+    severity: warn
+    applies: "always"
+    fires: >-
+      Any of: (a) a summary step with reason `overflow` (the provider refused the call as
+      too long, so the summary was forced); (b) a summary step named `trim` (older
+      messages were cut, not summarised); (c) a notice step named `summary_failed`; (d) a
+      top-level main model step whose context fill is at least `hard_fill`. Context fill
+      = total input (recording-format.md 3.5) / attrs.context_window, for a step with
+      usage reported and a window known. A summary at the normal threshold (reason
+      `threshold`) is not an issue: it is the engine working as planned (V2-04).
+    points_at: "the summary or notice, else the model step"
+    params:
+      hard_fill: 0.95
+    titles:
+      overflow: "Context overflowed"
+      trim: "Older messages were cut"
+      summary_failed: "Summary failed"
+      hard_fill: "Context nearly full"
+    says:
+      overflow: "The conversation became too long for the model, so it was summarised in a hurry."
+      trim: "Summarising failed ({summary_error}), so older messages were cut to make room. The agent no longer sees them."
+      summary_failed: "Summarising failed ({summary_error}), so the context stayed full."
+      hard_fill: "The context was {fill_pct}% full on this call."
+    summary_error: "the error type of the summary's last failed model call, in words"
+    fine: "Context had room (at most {max_fill_pct}% of the window){summary_part}"
+    summary_part: "; summarised {summaries} time(s) at the normal point"
+    title_note: "One title per kind: a failed summary followed by Trim is not \"context was full\" (mock review M2-R4)."
+    needs: []
+    golden: [S2-14, S2-14b]
+    source: "desktop-feature-spec.md OB-3; validation V2-04"
+
+  blocked_by_sandbox:
+    title: "Blocked by the sandbox"
+    severity: warn
+    applies: "turn.stamp.sandbox.enforcement is not `none`"
+    fires: "A top-level tool step with sandbox.blocked_known = true and sandbox.blocked_count > 0."
+    points_at: "the tool step"
+    params: {}
+    says: "The sandbox blocked {blocked_count} network request(s) during {name}{exit_part}. If the command needed them, add the site in Settings."
+    exit_part: ", which exited with code {exit_code}"
+    fine: "The sandbox blocked nothing"
+    needs: []
+    golden: [S2-15]
+    source: "across-features.md OB-12"
+
+  sandbox_failed:
+    title: "The sandbox could not start"
+    severity: warn
+    applies: "the turn has a top-level step of kind `sandbox` (new in 1.2, OB-13)"
+    fires: "A `sandbox` step named `setup` with status `error`."
+    points_at: "the setup step"
+    params: {}
+    says: "The sandbox could not start at {failed_stage}: {error_type}."
+    fine: "The sandbox started ({provider}, {setup_s} s)"
+    needs: [step.kind.sandbox]
+    golden: [S2-18, S2-18c]
+    source: "phase-2/technical-design.md section 12 (OB-13)"
+
+  ran_without_sandbox:
+    title: "Ran without the sandbox"
+    severity: warn
+    applies: >-
+      turn.stamp.sandbox.expected is true: this machine has a sandbox switched on. Otherwise
+      the check does not run, and "Checked and fine" does not list it: on a machine with no
+      sandbox set up, "Ran inside the sandbox" would be false (found live, 2026-11-02)
+    fires: >-
+      turn.stamp.sandbox.expected = true and turn.stamp.sandbox.provider = `direct` (the
+      machine has a sandbox switched on but this session ran direct, or the sandbox could
+      not start), and the turn has at least one top-level tool step with risk_class
+      `exec`, `egress` or `write_local` that ran (Q24).
+    points_at: "the first such tool step"
+    params: {}
+    says: "This machine has a sandbox switched on, but this turn ran {count} action(s) without it."
+    fine: "Ran inside the sandbox"
+    needs: [stamp.sandbox.expected]
+    golden: [S2-16]
+    source: "across-features.md OB-12, Q24"
+
+  waited_unwatched:
+    title: "Waited while nobody was watching"
+    severity: warn
+    applies: "always"
+    fires: >-
+      A wait step of kind `approval`, `question` or `plan` with where = `inbox` that
+      waited at least `min_wait_ms` after it reached the Inbox: wait end minus `inbox_at`
+      (new; the step's start when it began in the Inbox). A card reaches the Inbox when
+      the turn started unattended or when the last viewer left the session
+      (`inbox.py` promote_to_inbox), so where = `inbox` is the recorded fact for "nobody
+      was watching". The wait's `attended` is not used: it is the Unattended toggle, not
+      whether a desktop is connected (V2-25). Q27.
+    points_at: "the wait step"
+    params:
+      min_wait_ms: 900000
+    says: "{name} waited {wait} in the Inbox for an answer while nobody was at the app."
+    fine: "Nothing waited long for an answer while nobody was watching"
+    needs: [wait.inbox_at]
+    golden: [S2-17, S2-17b, S2-17c]
+    source: "across-features.md OB-14, Q27; validation V2-25"

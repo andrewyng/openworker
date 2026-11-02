@@ -1,0 +1,31 @@
+{
+ "signals_version": "0.3",
+ "warn": 1,
+ "fired": {
+  "model_failed": [
+   1
+  ]
+ },
+ "fine": [
+  "context_full",
+  "cut_off",
+  "made_up_tool",
+  "refused",
+  "repeated_step",
+  "retried",
+  "step_limit",
+  "tool_failed",
+  "waited_unwatched"
+ ],
+ "not_checked": [
+  "blocked_by_sandbox",
+  "off_plan",
+  "overridden",
+  "ran_without_sandbox",
+  "reviewer_allowed_send",
+  "reviewer_could_not_run",
+  "reviewer_paused",
+  "sandbox_failed",
+  "shadow_disagreed"
+ ]
+}
