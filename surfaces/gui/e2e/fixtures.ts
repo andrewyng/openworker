@@ -1481,6 +1481,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
+    if (p.endsWith("/v1/cloud/machines")) return json({ session: "signed_out", machines: [] });
 
     // Settings ▸ Customization ▸ Web search (UX-058). Keys live per provider; "Test and
     // save" fails for a key spelled "bad-*", the way the real server relays a 401.

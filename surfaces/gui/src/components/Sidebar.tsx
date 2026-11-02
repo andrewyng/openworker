@@ -131,6 +131,7 @@ interface Props {
   workspace: string;
   surfaces: SurfaceVisibility;
   sessions: SessionInfo[];
+  sessionStatus?: ReactNode;
   projects: RecentWorkspace[];
   activeSession: string;
   onSwitchAgent: (agent: string) => void;
@@ -1128,6 +1129,7 @@ export function Sidebar(props: Props) {
           {scheduledBand()}
           <div>
             {recentHeader()}
+            {props.sessionStatus}
             {layout === "grouped" ? (
             <div className="space-y-1.5">
               {visibleSurfaces.map((s) => {

@@ -57,6 +57,11 @@
     "stop": "Stop"
   },
   "sidebar": {
+    "refresh_remote": "Refreshing remote conversations…",
+    "refresh_remote_error": "Could not refresh remote conversations. Previous results are shown where available.",
+    "refresh_local_error": "Could not refresh local conversations. Previous results are shown where available.",
+    "refresh_retry": "Retry",
+    "restoring_session": "Restoring your conversation. You can select a conversation from the sidebar.",
     "new_session": "New session",
     "new_project": "New project",
     "collapse": "Collapse sidebar",
