@@ -2040,7 +2040,10 @@ class TurnEngine:
                                 "model": getattr(reviewer, "model", None) if kind == "session_model" else None}},
         )
         if step_id is not None and _accepts_view(reviewer):
-            review_kw["view"] = _tag_provider(reviewer.provider, parent=step_id, call_id=tool_call.id,
+            # A decision-model reviewer has no provider of its own: its request is recorded
+            # through the engine's view (E23).
+            review_kw["view"] = _tag_provider(getattr(reviewer, "provider", None) or self.provider,
+                                              parent=step_id, call_id=tool_call.id,
                                               shadow=shadow, purpose="auto_approver")
         try:
             verdict = await reviewer.review(**review_kw)

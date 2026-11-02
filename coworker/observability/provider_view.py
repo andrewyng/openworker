@@ -27,6 +27,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any, Callable, Iterator, Optional
 
 from ..providers.base import ProviderClient
@@ -91,6 +92,23 @@ class ProviderView(ProviderClient):
         return getattr(self.base.inner, name)
 
     # -- calls --------------------------------------------------------------------------------
+    def record_call(self, fn: Callable[[], Any], *, model: str) -> Any:
+        """Record a model call made outside the provider router as a model step: a
+        decision-model reviewer's request to its own service (E23, TD-16). `fn` makes the
+        request on this thread; its HTTP exchange is captured, and the usage is read from
+        the service's reply with the Responses-style mapping (input includes cached)."""
+        call = _ModelCall.begin(self.tags, model=model, tools=None, streamed=False)
+        if call is None:
+            return fn()
+        try:
+            with call.http.active():
+                result = fn()
+        except BaseException as exc:
+            call.failed(exc)
+            raise
+        call.finished(SimpleNamespace(finish_reason=None, usage=_reply_usage(call.http.entries()), served_by=None))
+        return result
+
     def complete(self, *, model: str, messages: list[dict[str, Any]], tools: Any = None, **settings: Any):
         call = _ModelCall.begin(self.tags, model=model, tools=tools, streamed=False)
         if call is None:
@@ -322,6 +340,27 @@ class _ModelCall:
                                error={"type": classify_error(exc), "text": text})
         except Exception:  # noqa: BLE001
             log.exception("recording: could not record a failed model step")
+
+
+def _reply_usage(entries: list[dict[str, Any]]) -> Any:
+    """The `usage` object of the last JSON reply, as `TokenUsage`; None if there is none."""
+    from ..providers.openai_responses import _usage_from
+
+    for e in reversed(entries):
+        try:
+            body = json.loads(e.get("body") or "")
+        except ValueError:
+            continue
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict):
+            return _usage_from(_ns(usage))
+    return None
+
+
+def _ns(value: Any) -> Any:
+    if isinstance(value, dict):
+        return SimpleNamespace(**{k: _ns(v) for k, v in value.items()})
+    return value
 
 
 def _is_stop(exc: BaseException) -> bool:

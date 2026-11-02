@@ -192,3 +192,54 @@ def test_explore_helper_steps_are_nested_under_the_explore_step(tmp_path):
     assert len(d["turns"]) == 1
     mains = [s for s in d["steps"] if s["kind"] == "model" and s["attrs"]["purpose"] == "main"]
     assert len(mains) == 2
+
+
+# -- E23: a decision-model reviewer's request is a nested model step ----------------------------
+
+import threading as _threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class _JevHandler(BaseHTTPRequestHandler):
+    def do_POST(self):  # noqa: N802
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)))
+        answers = {name: {"noul": 0.97, "probabilities": {"yes": 0.97, "no": 0.03}}
+                   for name in (body.get("questions") or {})}
+        data = json.dumps({"model": "jev-test-1", "answers": answers,
+                           "usage": {"input_tokens": 6203, "output_tokens": 529}}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("x-request-id", "req_jev")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *a):
+        pass
+
+
+def test_a_decision_reviewer_check_has_a_model_step_with_usage(tmp_path):
+    from coworker.decision_reviewer import build_decision_reviewer
+
+    server = HTTPServer(("127.0.0.1", 0), _JevHandler)
+    _threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        engine, rec = _engine(tmp_path, [_call("c1", "run_shell", {"command": "make clean"}),
+                                         AssistantTurn(text="done")], [])
+        engine.reviewer = build_decision_reviewer(
+            "jev", api_key="test-key-not-real", base_url=f"http://127.0.0.1:{server.server_address[1]}")
+        engine.reviewer_choice = "jev"
+        _run(engine)
+    finally:
+        server.shutdown()
+    steps = rec.as_dict()["steps"]
+    [check] = [s for s in steps if s["kind"] == "auto_approver"]
+    assert check["attrs"]["reviewer"] == {"kind": "typesafe_jev", "external": True, "model": None}
+    [inner] = [s for s in steps if s["kind"] == "model" and s["parent_step_id"] == check["step_id"]]
+    assert inner["attrs"]["purpose"] == "auto_approver" and inner["attrs"]["provider"] == "typesafe_jev"
+    assert inner["attrs"]["usage"] == {"reported": True, "input_fresh": 6203, "cache_read": None,
+                                       "cache_write": None, "output": 529, "reasoning": None}
+    assert inner["attrs"]["provider_meta"][0]["wire"] == "typesafe_jev"
+    assert inner["attrs"]["provider_facts"]["provider_request_id"] == "req_jev"
+    assert check["attrs"]["usage_reported"] is True
+    assert "test-key-not-real" not in json.dumps(steps)

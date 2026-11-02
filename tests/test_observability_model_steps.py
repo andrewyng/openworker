@@ -254,3 +254,14 @@ def test_capture_is_off_outside_a_recorded_call(fake_server):
     assert getattr(capture._active, "log", None) is None
     inner.complete(model="model-a", messages=[{"role": "user", "content": "x"}])
     assert getattr(capture._active, "log", None) is None
+
+
+DECISION_VECTORS = [v for v in VECTORS if v["family"] in ("openai_decisions", "typesafe_jev")]
+
+
+@pytest.mark.parametrize("vector", DECISION_VECTORS, ids=[v["id"] for v in DECISION_VECTORS])
+def test_decision_reviewer_usage_vectors(vector):
+    from coworker.observability.provider_view import _reply_usage
+
+    entries = [{"body": json.dumps({"usage": vector["raw"]})}]
+    assert usage_attrs(_reply_usage(entries)) == {"reported": True, **vector["expected"]}
