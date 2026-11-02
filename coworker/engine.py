@@ -484,11 +484,11 @@ class TurnEngine:
             cancel_wait.cancel()
 
     async def _wait_tool(self, tool_call, coro, interrupted):
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         try:
             return await self._interruptible(coro, interrupted)
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.perf_counter() - clock) * 1000)
 
     def _timed_result(self, tool_call, result):
         message = _tool_result_message(tool_call, result)
@@ -802,7 +802,7 @@ class TurnEngine:
                     reasoning="".join(streamed_reasoning) or None,
                 )
 
-            model_started, model_clock = time.time(), time.monotonic()
+            model_started, model_clock = time.time(), time.perf_counter()
             try:
                 async for chunk in self._astream():
                     if chunk.reasoning_delta:
@@ -879,7 +879,7 @@ class TurnEngine:
                     effort_setting=self.model_settings.get("reasoning_effort"),
                 )
             )
-            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.monotonic() - model_clock) * 1000}
+            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.perf_counter() - model_clock) * 1000}
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
@@ -2283,7 +2283,7 @@ class TurnEngine:
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         try:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
             if delegated and delegated != self._delegated_context(tool_call):
@@ -2302,7 +2302,7 @@ class TurnEngine:
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.perf_counter() - clock) * 1000)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         spec = self.registry.get(tool_call.name)
