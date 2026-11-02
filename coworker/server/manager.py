@@ -92,7 +92,7 @@ from ..providers import (
     verify_provider_key,
 )
 from ..providers.local_server import LOCAL_SERVERS
-from ..providers.registry import CUSTOM_PROVIDERS_PROFILE
+from ..providers.registry import CUSTOM_PROVIDERS_PROFILE, DEFAULT_OLLAMA_URL
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
 from ..teams import Actor as TeamActor
@@ -4682,7 +4682,7 @@ class SessionManager:
         if cached and now - cached[0] < 30:
             return cached[1]
         profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
+        base = (profile.get("base_url") or DEFAULT_OLLAMA_URL).strip().rstrip("/")
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         try:
@@ -4697,7 +4697,7 @@ class SessionManager:
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama is
-        unreachable — best-effort, never raises. No stored profile → the default localhost
+        unreachable — best-effort, never raises. No stored profile → the default 127.0.0.1
         endpoint, same as `_ollama_alive` (keyless Ollama needs no saved form)."""
         from ..providers import ollama_facts
 
