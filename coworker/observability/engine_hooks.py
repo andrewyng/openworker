@@ -51,6 +51,7 @@ class TurnRecording:
         self._waits: dict[str, str] = {}  # call_id -> its open wait step (E20)
         self._reserved: dict[str, dict[str, Any]] = {}  # summary steps written at their end (E4)
         self._tokens_after_for: Optional[str] = None  # a summary waiting for the next main call
+        self._child_usage: dict[str, bool] = {}  # parent step -> its model call reported usage
 
     @property
     def enabled(self) -> bool:
@@ -207,6 +208,10 @@ class TurnRecording:
                 ev["content"] = content
             self._send(ev)
 
+    def child_usage_reported(self, step_id: Optional[str]) -> bool:
+        with self._lock:
+            return self._child_usage.pop(step_id or "", False)
+
     # -- wait steps (E20) -----------------------------------------------------------------------
     def track_wait(self, call_id: str, step_id: Optional[str]) -> None:
         if step_id:
@@ -302,6 +307,8 @@ class TurnRecording:
                 ev["error"] = error
             ev.update({k: idn[k] for k in ("kind", "name", "parent_step_id", "call_id",
                                            "call_index", "shadow", "after_turn", "started_at")})
+            if idn["kind"] == "model" and idn["parent_step_id"]:
+                self._child_usage[idn["parent_step_id"]] = bool(((attrs or {}).get("usage") or {}).get("reported"))
             waiting_turn = idn["turn_id"] is not None and idn["turn_id"] == self.turn_id and not self._ended
             if wait_for_tool_message and idn["call_id"] and waiting_turn:
                 self._tool_ends[idn["call_id"]] = ev
@@ -357,3 +364,119 @@ class TurnRecording:
         self.instant_step(kind="tool", name=str(data.get("name") or ""), status=status,
                           call_id=call_id, call_index=call_index, attrs=attrs,
                           message_id=message_id)
+
+
+# -- the explore helper (E6) --------------------------------------------------------------------
+
+_tool_run = threading.local()
+
+
+class ToolRun:
+    """What a running tool may know about itself: its step, its turn, and the engine's
+    provider view and recording. Published for the tool's thread by `_execute_sync`."""
+
+    def __init__(self, *, step_id: Optional[str], turn_id: Optional[str], view: Any,
+                 recording: "TurnRecording") -> None:
+        self.step_id, self.turn_id, self.view, self.recording = step_id, turn_id, view, recording
+
+
+def current_tool_run() -> Optional[ToolRun]:
+    return getattr(_tool_run, "run", None)
+
+
+def set_tool_run(run: Optional[ToolRun]) -> Optional[ToolRun]:
+    """Publish `run` for this thread; returns the one it replaces."""
+    outer = getattr(_tool_run, "run", None)
+    _tool_run.run = run
+    return outer
+
+
+class HelperRecording:
+    """The recording of an explore helper's engine (§5.3, E6). Its steps go to the parent's
+    recording, on the parent's turn, nested under the `explore` step. Its own turn events are
+    not recorded as turns. Its tools run read-only in Plan mode, so their decision is
+    `{helper: true}` instead of a full path."""
+
+    def __init__(self, parent: TurnRecording, parent_step_id: str, turn_id: Optional[str]) -> None:
+        self.parent, self.parent_step_id = parent, parent_step_id
+        self.turn_id = turn_id
+
+    @property
+    def recorder(self) -> Any:
+        return self.parent.recorder
+
+    @property
+    def enabled(self) -> bool:
+        return self.parent.enabled
+
+    @property
+    def in_turn(self) -> bool:
+        return True
+
+    def begin_turn(self, **_kw: Any) -> Optional[str]:
+        return self.turn_id
+
+    def end_turn(self, status: str) -> None:
+        pass
+
+    def note_message(self, message: dict[str, Any]) -> None:
+        pass
+
+    def note_main_usage(self, usage: dict[str, Any]) -> None:
+        pass
+
+    def start_step(self, **kw: Any) -> Optional[str]:
+        kw.setdefault("parent_step_id", None)
+        kw["parent_step_id"] = kw["parent_step_id"] or self.parent_step_id
+        kw["turn_id"] = self.turn_id
+        return self.parent.start_step(**kw)
+
+    def end_step(self, step_id: Optional[str], **kw: Any) -> None:
+        kw.pop("wait_for_tool_message", None)
+        kw.pop("wait_for_reply_message", None)
+        attrs = kw.get("attrs")
+        if attrs is not None and "decision" in attrs:
+            attrs["decision"] = {"helper": True}
+        self.parent.end_step(step_id, **kw)
+
+    def instant_step(self, **kw: Any) -> None:
+        attrs = kw.get("attrs")
+        if attrs is not None and "decision" in attrs:
+            attrs["decision"] = {"helper": True}
+        step_id = self.start_step(kind=kw["kind"], name=kw["name"], call_id=kw.get("call_id"),
+                                  call_index=kw.get("call_index"))
+        self.parent.end_step(step_id, status=kw["status"], attrs=attrs,
+                             message_id=kw.get("message_id"))
+
+    def tool_finished(self, data: dict[str, Any], **kw: Any) -> None:
+        pass  # a helper's refused calls stay in its own transcript
+
+    def step_for_call(self, call_id: str) -> Optional[str]:
+        return None
+
+    def update_step(self, step_id: Optional[str], **kw: Any) -> None:
+        self.parent.update_step(step_id, **kw)
+
+    def track_wait(self, call_id: str, step_id: Optional[str]) -> None:
+        pass
+
+    def end_wait(self, call_id: str) -> Optional[str]:
+        return None
+
+    def wait_where(self, call_id: Optional[str], where: str) -> None:
+        pass
+
+    def reserve_step(self) -> Optional[str]:
+        return None
+
+    def model_children(self, step_id: Optional[str]) -> list[str]:
+        return []
+
+    def finish_reserved(self, *a: Any, **kw: Any) -> None:
+        pass
+
+    def drop_reserved(self, step_id: Optional[str]) -> None:
+        pass
+
+    def child_usage_reported(self, step_id: Optional[str]) -> bool:
+        return self.parent.child_usage_reported(step_id)

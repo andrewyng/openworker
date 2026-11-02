@@ -34,7 +34,7 @@ from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
 from .observability.decision import DecisionPath
-from .observability.engine_hooks import TurnRecording
+from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
@@ -250,6 +250,23 @@ _WAIT_KINDS = {
     "request_tool": "tool_install",
     "request_directory": "directory",
 }
+
+
+def _accepts_view(reviewer: Any) -> bool:
+    """Whether this reviewer's `review` takes the provider view for its check (the session
+    model reviewer does; decision-model reviewers call their own service, E23)."""
+    try:
+        import inspect
+
+        return "view" in inspect.signature(reviewer.review).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _verdict_matches(result: str, approved: bool) -> bool:
+    """A shadow check matched you when it would have allowed what you approved, or denied
+    what you denied; an unsure never matches."""
+    return (result == "allow" and approved) or (result == "deny" and not approved)
 
 
 def _reviewer_skip(engine: "TurnEngine", decision: Any) -> str:
@@ -545,6 +562,11 @@ class TurnEngine:
         # (observability E4, §8.3); and where its card was shown.
         self._decisions: dict[str, DecisionPath] = {}
         self._card_where: dict[str, str] = {}
+        # Auto-approver check steps by tool call (E12), and shadow checks waiting to be
+        # compared with your answer: call id -> (step id, verdict or None).
+        self._review_steps: dict[str, str] = {}
+        self._shadow_checks: dict[str, tuple[Optional[str], Any]] = {}
+        self._user_answers: dict[str, bool] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
@@ -1918,7 +1940,8 @@ class TurnEngine:
         settings_epoch = self.reviewer_settings_epoch
         verdicts = await asyncio.gather(
             *[
-                consulted_reviewer.review(
+                self._recorded_review(
+                    consulted_reviewer, tc,
                     request=request,
                     history=history,
                     tool_name=tc.name,
@@ -1936,8 +1959,64 @@ class TurnEngine:
                     or not self._reviewer_active()
                     or (request, history, context) != self._review_inputs()):
                 verdict = _settings_changed(verdict)
+                self._review_context_changed(tc.id)
             self._reviewer_verdicts[tc.id] = verdict
             self._reviewer_input_snapshots[tc.id] = (request, history, context)
+
+    async def _recorded_review(self, reviewer: Any, tool_call: ToolCall, *, shadow: bool = False,
+                               **review_kw: Any) -> Any:
+        """One auto-approver check, recorded as its own step (observability E12, §5.5),
+        linked to the tool call by `call_id`; the reviewer's model call is nested in it."""
+        kind = _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
+        step_id = self._obs.start_step(
+            kind="auto_approver", name=tool_call.name, call_id=tool_call.id, shadow=shadow,
+            attrs={"mode": "shadow" if shadow else "live",
+                   "reviewer": {"kind": kind, "external": kind != "session_model",
+                                "model": getattr(reviewer, "model", None) if kind == "session_model" else None}},
+        )
+        if step_id is not None and _accepts_view(reviewer):
+            review_kw["view"] = _tag_provider(reviewer.provider, parent=step_id, call_id=tool_call.id,
+                                              shadow=shadow, purpose="auto_approver")
+        try:
+            verdict = await reviewer.review(**review_kw)
+        except BaseException:
+            self._obs.end_step(step_id, status="error", attrs={"result": "could_not_run"})
+            raise
+        if step_id is not None:
+            failed = bool(getattr(verdict, "error", False))
+            result = "could_not_run" if failed else verdict.verdict
+            attrs: dict[str, Any] = {"result": result,
+                                     "usage_reported": self._obs.child_usage_reported(step_id)}
+            for key in ("score", "cutoff"):
+                if getattr(verdict, key, None) is not None:
+                    attrs[key] = getattr(verdict, key)
+            if shadow:
+                answer = self._user_answers.pop(tool_call.id, None)
+                attrs["matched_user"] = None if failed or answer is None else _verdict_matches(result, answer)
+                if answer is None and not failed:
+                    self._shadow_checks[tool_call.id] = (step_id, result)
+            else:
+                denials = self._reviewer_denials + 1 if result == "deny" else 0
+                attrs["breaker"] = {"denials_in_row": denials, "tripped": denials >= _REVIEWER_TRIP}
+                self._review_steps[tool_call.id] = step_id
+            reason = getattr(verdict, "reason", "") or ""
+            self._obs.end_step(step_id, status="error" if failed else "ok", attrs=attrs,
+                               content={"reason": reason} if reason else {})
+        return verdict
+
+    def _review_context_changed(self, call_id: str) -> None:
+        """The request, history or settings changed while the check ran: the engine treats
+        it as unsure, and the step's result says so (§8.2)."""
+        self._obs.update_step(self._review_steps.pop(call_id, None), attrs={"result": "context_changed"})
+
+    def _note_user_answer(self, call_id: str, *, approved: bool) -> None:
+        """Your answer on a card, compared with a shadow check's verdict (`matched_user`)."""
+        waiting = self._shadow_checks.pop(call_id, None)
+        if waiting is not None:
+            step_id, result = waiting
+            self._obs.update_step(step_id, attrs={"matched_user": _verdict_matches(result, approved)})
+        elif self.reviewer_shadow:
+            self._user_answers[call_id] = approved
 
     async def _consult_reviewer(self, tool_call: ToolCall) -> Any:
         """The parked verdict from `_preconsult_reviewer`, or a fresh single call."""
@@ -1946,6 +2025,7 @@ class TurnEngine:
         if verdict is not None:
             if snapshot is not None and snapshot != self._review_inputs():
                 from .reviewer import Verdict
+                self._review_context_changed(tool_call.id)
                 return Verdict("unsure", "Approval context changed since review; a human must decide.")
             return verdict
         request, history, context = self._review_inputs()
@@ -1954,7 +2034,8 @@ class TurnEngine:
             from .reviewer import Verdict
             if delegated.get("hard_deny") or delegated.get("human_only"):
                 return Verdict("unsure", delegated["reason"])
-            verdict = await self.reviewer.review(
+            verdict = await self._recorded_review(
+                self.reviewer, tool_call,
                 request=request, history=history,
                 tool_name=delegated["tool"], arguments=delegated["arguments"],
                 provenance=delegated.get("provenance", ""),
@@ -1963,7 +2044,8 @@ class TurnEngine:
             if delegated != self._delegated_context(tool_call) or (request, history, context) != self._review_inputs():
                 return Verdict("unsure", "The worker request or its permissions changed during review. Review the current request.")
             return verdict
-        result = await self.reviewer.review(
+        result = await self._recorded_review(
+            self.reviewer, tool_call,
             request=request,
             history=history,
             tool_name=tool_call.name,
@@ -1974,6 +2056,7 @@ class TurnEngine:
         )
         if (request, history, context) != self._review_inputs():
             from .reviewer import Verdict
+            self._review_context_changed(tool_call.id)
             return Verdict("unsure", "Approval context changed during review; review the current request.")
         return result
 
@@ -2047,7 +2130,8 @@ class TurnEngine:
 
         async def _shadow() -> None:
             try:
-                verdict = await self.reviewer.review(
+                verdict = await self._recorded_review(
+                    self.reviewer, tool_call, shadow=True,
                     request=request,
                     history=history,
                     provenance=prov,
@@ -2259,6 +2343,7 @@ class TurnEngine:
                                 or not self._reviewer_active())
             if settings_changed:
                 verdict = _settings_changed(verdict)
+                self._review_context_changed(tool_call.id)
             path.add("auto_approver", "context_changed" if settings_changed
                      else "could_not_run" if getattr(verdict, "error", False) else verdict.verdict)
             self._audit(
@@ -2457,6 +2542,8 @@ class TurnEngine:
                 outcome.value if isinstance(outcome, ApprovalOutcome) else str(outcome),
                 interrupted=outcome is ApprovalOutcome.DENY and self._cancel.is_set(),
             )
+            if not self._cancel.is_set() and outcome is not ApprovalOutcome.SUPERSEDED:
+                self._note_user_answer(tool_call.id, approved=outcome is not ApprovalOutcome.DENY)
             if outcome is ApprovalOutcome.SUPERSEDED:
                 result = {
                     "skipped": True,
@@ -2609,7 +2696,13 @@ class TurnEngine:
             kind="tool", name=tool_call.name, call_id=tool_call.id,
             call_index=self._call_index.get(tool_call.id),
         )
-        result, status = self._execute_call(tool_call)
+        # A tool that starts its own work (the explore helper, E6) records it under this step.
+        outer = set_tool_run(ToolRun(step_id=step_id, turn_id=self._obs.turn_id,
+                                     view=self.provider, recording=self._obs))
+        try:
+            result, status = self._execute_call(tool_call)
+        finally:
+            set_tool_run(outer)
         if step_id is not None:
             self._obs.end_step(
                 step_id, status=status, attrs=self._tool_step_attrs(tool_call, result),

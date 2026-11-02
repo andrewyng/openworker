@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 import aisuite as ai
 
+from ..observability.engine_hooks import HelperRecording, current_tool_run
+from ..observability.provider_view import tag as tag_provider
 from ..engine import TurnEngine
 from ..events import EventType
 from ..permissions import Mode, PermissionEngine
@@ -96,12 +98,21 @@ def explorer_tools(
             task (str): The research question, with any constraints and the expected
                 shape of the report.
         """
+        # Observability E6: the helper's model and tool calls are recorded under this
+        # `explore` step, on the parent's turn, with purpose `helper`.
+        run = current_tool_run()
+        helper_provider = provider
+        if run is not None and run.step_id is not None:
+            helper_provider = tag_provider(run.view, purpose="helper", parent=run.step_id,
+                                           turn=run.turn_id)
         engine = build_explorer_engine(
             workspace=workspace,
-            provider=provider,
+            provider=helper_provider,
             model=model,
             model_settings=model_settings,
         )
+        if run is not None and run.step_id is not None:
+            engine._obs = HelperRecording(run.recording, run.step_id, run.turn_id)
 
         async def _run() -> tuple[str, str]:
             report, status = "", "unknown"
