@@ -194,7 +194,9 @@ async fn invalid_definitions_fail_before_anything_starts() {
     let root = tmp.path().canonicalize().unwrap();
     let ok = || Agent::new("a").instructions("x").tool("sdk.probe");
     let cases = [
-        Agent::new("a").instructions("x"),
+        Agent::new("a")
+            .instructions("x")
+            .tools((0..65).map(|n| format!("sdk.tool{n}"))),
         Agent::new("bad id").instructions("x").tool("sdk.probe"),
         Agent::new("a").tool("sdk.probe"),
         ok().interrupt_on(["test.probe"]),
