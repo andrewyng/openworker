@@ -305,6 +305,8 @@ class _ModelCall:
                 self.step_id, status="ok", attrs=attrs, content=content,
                 wait_for_reply_message=self.tags.purpose == "main",
             )
+            if self.tags.purpose == "main":
+                self.sink.note_main_usage(attrs["usage"])
         except Exception:  # noqa: BLE001
             log.exception("recording: could not end a model step")
 

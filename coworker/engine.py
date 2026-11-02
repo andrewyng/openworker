@@ -33,6 +33,7 @@ from . import toolchain as _toolchain
 from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
+from .observability.decision import DecisionPath
 from .observability.engine_hooks import TurnRecording
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
@@ -236,6 +237,54 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
         return wrapper
 
     return deco
+
+
+# `_wait_tool` kind by tool (observability §5.4); any other wait is an approval card.
+_WAIT_KINDS = {
+    "ask_user": "question",
+    "propose_plan": "plan",
+    "propose_team": "team",
+    "propose_work_items": "items",
+    "request_connector": "connector",
+    "grant_connector": "connector",
+    "request_tool": "tool_install",
+    "request_directory": "directory",
+}
+
+
+def _reviewer_skip(engine: "TurnEngine", decision: Any) -> str:
+    """Why the auto-approver was not consulted on a call that needed a person (§8.2)."""
+    if decision.human_only:
+        return "skipped_human_only"
+    if engine.reviewer is not None and engine._reviewer_denials >= _REVIEWER_TRIP:
+        return "skipped_paused"
+    try:
+        attended = bool(engine.is_attended and engine.is_attended())
+    except Exception:  # noqa: BLE001
+        attended = False
+    if engine.reviewer is not None and engine.reviewer_enabled and not attended:
+        return "skipped_unattended"
+    return "skipped_off"
+
+
+def _wait_outcome(result: Any, interrupted: Any, kind: str, *, stopped: bool) -> str:
+    """A wait step's `outcome`: approved, denied, answered or interrupted (§5.4). An approval
+    card's "interrupted" value is the same DENY a person can click, so Stop is told apart by
+    whether it was pressed."""
+    if result is interrupted and stopped:
+        return "interrupted"
+    if isinstance(result, ApprovalOutcome):
+        if result is ApprovalOutcome.DENY:
+            return "denied"
+        return "answered" if result is ApprovalOutcome.SUPERSEDED else "approved"
+    if isinstance(result, dict):
+        if result.get("error") == "interrupted by user":
+            return "interrupted"
+        if kind == "question":
+            return "answered" if result.get("answer") or result.get("answers") else "denied"
+        ok = result.get("approved") or result.get("granted") or result.get("installed")
+        return "approved" if ok else "denied"
+    return "answered" if result else "denied"
 
 
 def _action_failed(action: dict[str, Any]) -> bool:
@@ -489,6 +538,13 @@ class TurnEngine:
         # it makes is recorded as a model step of the current turn, purpose `main`.
         self.provider = view_for_engine(self.provider, self._obs)
         self._call_index: dict[str, int] = {}
+        # Who answered a waiting call's card (observability §5.4): set by the server, which
+        # reads it from the Inbox.
+        self.resolver_of: Optional[Callable[[str], str]] = None
+        # Each tool call's decision path, built in `_authorize`, attached to its tool step
+        # (observability E4, §8.3); and where its card was shown.
+        self._decisions: dict[str, DecisionPath] = {}
+        self._card_where: dict[str, str] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
@@ -538,12 +594,51 @@ class TurnEngine:
         finally:
             cancel_wait.cancel()
 
-    async def _wait_tool(self, tool_call, coro, interrupted):
+    async def _wait_tool(self, tool_call, coro, interrupted, kind: Optional[str] = None):
         started, clock = time.time(), time.monotonic()
+        # Observability E20: a wait step from the moment the card is shown to the answer, so
+        # a slow answer is never mistaken for a slow agent (§5.4).
+        kind = kind or _WAIT_KINDS.get(tool_call.name, "approval")
         try:
-            return await self._interruptible(coro, interrupted)
+            attended = bool(self.is_attended and self.is_attended())
+        except Exception:  # noqa: BLE001 - a broken getter must not break the wait
+            attended = False
+        step_id = self._obs.start_step(
+            kind="wait", name=kind, call_id=tool_call.id,
+            attrs={"for_call_id": tool_call.id, "kind": kind, "attended": attended,
+                   "where": "session" if attended else "inbox"},
+        )
+        self._obs.track_wait(tool_call.id, step_id)
+        result: Any = interrupted
+        failed = False
+        try:
+            result = await self._interruptible(coro, interrupted)
+            return result
+        except BaseException:
+            failed = True
+            raise
         finally:
             self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
+            self._obs.end_wait(tool_call.id)
+            if step_id is not None:
+                who = ""
+                if self.resolver_of is not None:
+                    try:
+                        who = str(self.resolver_of(tool_call.id) or "")
+                    except Exception:  # noqa: BLE001
+                        who = ""
+                self._obs.end_step(
+                    step_id, status="error" if failed else "ok",
+                    attrs={"outcome": "interrupted" if failed else _wait_outcome(
+                        result, interrupted, kind, stopped=self._cancel.is_set())},
+                    content={"resolved_by": who} if who else {},
+                )
+
+    def note_wait_where(self, call_id: Optional[str], where: str) -> None:
+        """Where a waiting call's card is shown, `session` or `inbox` (observability §5.4)."""
+        if call_id:
+            self._card_where[call_id] = where
+        self._obs.wait_where(call_id, where)
 
     @property
     def recorder(self) -> Any:
@@ -606,9 +701,13 @@ class TurnEngine:
                      if m.get("role") == "tool" and m.get("tool_call_id") == call_id),
                     None,
                 )
+                attrs: dict[str, Any] = {"risk_class": self._risk_class(str(event.data.get("name") or ""))}
+                path = self._decisions.pop(call_id, None)
+                if path is not None and obs.step_for_call(call_id) is None:
+                    attrs["decision"] = path.finish(ran=event.data.get("status") == "ok")
                 obs.tool_finished(
                     event.data, message_id=mid, call_index=self._call_index.get(call_id),
-                    attrs={"risk_class": self._risk_class(str(event.data.get("name") or ""))},
+                    attrs=attrs,
                 )
             step_id = obs.step_for_call(call_id)
             if step_id:
@@ -1248,11 +1347,38 @@ class TurnEngine:
             cfg.get("summary_max_tokens") or _compaction.SUMMARY_MAX_TOKENS
         )
         model = str(cfg.get("model") or "") or self.model
+        # Observability E4: a summary step, written only if a summary or trim happens (§5.7);
+        # its model calls are nested under it.
+        summary_step = self._obs.reserve_step()
+        tokens_before = self._last_context_tokens
+        try:
+            notice = await self._compact_with(summary_step, force=force, cfg=cfg, trigger=trigger,
+                                              keep=keep, user_budget=user_budget,
+                                              summary_max=summary_max, model=model)
+        except BaseException:
+            self._obs.drop_reserved(summary_step)
+            raise
+        children = self._obs.model_children(summary_step)
+        if notice is not None or children:
+            trimmed = notice is not None and notice.startswith("Context trimmed")
+            self._obs.finish_reserved(
+                summary_step, kind="summary", name="trim" if trimmed else "summary",
+                status="ok" if notice is not None else "error",
+                attrs={"reason": "overflow" if force else "threshold", "tokens_before": tokens_before,
+                       "model_step_id": None if trimmed or not children else children[-1]},
+                wait_for_tokens_after=notice is not None,
+            )
+        else:
+            self._obs.drop_reserved(summary_step)
+        return notice
 
+    async def _compact_with(self, summary_step: Optional[str], *, force: bool, cfg: dict[str, Any],
+                            trigger: int, keep: int, user_budget: int, summary_max: int,
+                            model: str) -> Optional[str]:
         def _build() -> Optional[_compaction.CompactionState]:
             return _compaction.build_state(
                 self.messages,
-                provider=_tag_provider(self.provider, purpose="summary"),
+                provider=_tag_provider(self.provider, purpose="summary", parent=summary_step),
                 model=model,
                 keep_tokens=keep,
                 prior=self.compaction_state,
@@ -1271,6 +1397,11 @@ class TurnEngine:
                 failed = True
         if failed and self.question_asker is not None and self.is_attended and self.is_attended():
             while True:
+                # The "Retry or trim?" question is a wait, nested under the summary (E20).
+                wait_step = self._obs.start_step(
+                    kind="wait", name="question", parent_step_id=summary_step,
+                    attrs={"for_call_id": None, "kind": "question", "attended": True, "where": "session"},
+                )
                 answer = await self._interruptible(
                     self.question_asker(
                         {
@@ -1286,6 +1417,7 @@ class TurnEngine:
                     ),
                     interrupted=None,
                 )
+                self._obs.end_step(wait_step, attrs={"outcome": "answered" if answer else "interrupted"})
                 if not answer or answer.get("answer") != "Retry":
                     break
                 try:
@@ -1999,6 +2131,12 @@ class TurnEngine:
                     human_only=True,
                 )
 
+        path = self._decisions[tool_call.id] = DecisionPath()
+        path.permission(
+            allowed=allowed, needs_user=decision.needs_user, human_only=decision.human_only,
+            reason=reason, tier=decision.tier if allowed else None,
+        )
+
         # OPE-233: an Auto-Approve gate tier let this call run without the reviewer —
         # recorded, never invisible (transcript chip + audit row), like every other
         # cardless origin.
@@ -2075,6 +2213,7 @@ class TurnEngine:
             # deny card. One-shot — consumed above; a different action never matches.
             allowed = True
             reason = "approved by user (allow anyway)"
+            path.add("grant", "allow_anyway")
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
 
         # A lead DENYING one of its workers' waiting calls runs nothing: the worker is told
@@ -2092,6 +2231,7 @@ class TurnEngine:
         ):
             allowed = True
             reason = "a lead's denial of a worker's call runs nothing"
+            path.add("grant", "lead_denial")
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
 
         consulted_live = False
@@ -2114,10 +2254,13 @@ class TurnEngine:
             consulted_reviewer = self.reviewer
             settings_epoch = self.reviewer_settings_epoch
             verdict = await self._consult_reviewer(tool_call)
-            if (self.reviewer is not consulted_reviewer
-                    or self.reviewer_settings_epoch != settings_epoch
-                    or not self._reviewer_active()):
+            settings_changed = (self.reviewer is not consulted_reviewer
+                                or self.reviewer_settings_epoch != settings_epoch
+                                or not self._reviewer_active())
+            if settings_changed:
                 verdict = _settings_changed(verdict)
+            path.add("auto_approver", "context_changed" if settings_changed
+                     else "could_not_run" if getattr(verdict, "error", False) else verdict.verdict)
             self._audit(
                 tool_call,
                 stage="reviewer_verdict",
@@ -2184,6 +2327,10 @@ class TurnEngine:
                 if not card_note:
                     unsure_silent_kind = "reviewer_unavailable" if verdict.error else "reviewer_asks"
 
+        if (not allowed and decision.needs_user and not consulted_live
+                and self.permissions.mode is Mode.AUTO_APPROVE):
+            path.add("auto_approver", _reviewer_skip(self, decision))
+
         if not allowed and decision.needs_user and self._nobody_answers_cards():
             # Attendance "auto": nobody can answer a card, and the mode did not allow
             # the call — so the answer is no, recorded, never a hang. (The dangerous mode
@@ -2203,6 +2350,7 @@ class TurnEngine:
                 reason=reason,
             )
             decision = replace(decision, needs_user=False)
+            path.add("card", "auto_refused")
 
         if not allowed and decision.needs_user:
             escalation = (
@@ -2286,7 +2434,7 @@ class TurnEngine:
                 call_id=tool_call.id,
             )
             outcome = await self._wait_tool(tool_call,
-                self.approver(
+                kind="approval", coro=self.approver(
                     PermissionRequest(
                         tool_name=tool_call.name,
                         arguments=tool_call.arguments,
@@ -2303,6 +2451,11 @@ class TurnEngine:
                     )
                 ),
                 interrupted=ApprovalOutcome.DENY,
+            )
+            path.add("card", "parked_inbox" if self._card_where.pop(tool_call.id, "") == "inbox" else "shown_session")
+            path.resolved(
+                outcome.value if isinstance(outcome, ApprovalOutcome) else str(outcome),
+                interrupted=outcome is ApprovalOutcome.DENY and self._cancel.is_set(),
             )
             if outcome is ApprovalOutcome.SUPERSEDED:
                 result = {
@@ -2466,6 +2619,9 @@ class TurnEngine:
 
     def _tool_step_attrs(self, tool_call: ToolCall, result: Any) -> dict[str, Any]:
         attrs: dict[str, Any] = {"risk_class": self._risk_class(tool_call.name)}
+        path = self._decisions.pop(tool_call.id, None)
+        if path is not None:
+            attrs["decision"] = path.finish(ran=True)
         try:
             attrs["result_bytes"] = len(
                 result.encode("utf-8") if isinstance(result, str)

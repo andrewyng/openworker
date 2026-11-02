@@ -48,6 +48,9 @@ class TurnRecording:
         self._tool_steps: dict[str, str] = {}  # call_id -> step_id, for this turn's tools
         self._tool_ends: dict[str, dict[str, Any]] = {}  # call_id -> step_ended awaiting its mid
         self._reply_end: Optional[dict[str, Any]] = None  # a main model step awaiting its reply's mid
+        self._waits: dict[str, str] = {}  # call_id -> its open wait step (E20)
+        self._reserved: dict[str, dict[str, Any]] = {}  # summary steps written at their end (E4)
+        self._tokens_after_for: Optional[str] = None  # a summary waiting for the next main call
 
     @property
     def enabled(self) -> bool:
@@ -89,6 +92,7 @@ class TurnRecording:
             self._tool_steps.clear()
             self._tool_ends.clear()
             self._reply_end = None
+            self._waits.clear()
             ev = self._base("turn_started", self.turn_id, self._turn_session)
             ev.update({"kind": kind, "trigger": trigger, "first_message_id": first_message_id,
                        "attrs": copy.deepcopy(attrs), "stamp": copy.deepcopy(stamp)})
@@ -182,8 +186,96 @@ class TurnRecording:
             }
             if kind == "tool" and call_id:
                 self._tool_steps[call_id] = step_id
+            reserved = self._reserved.get(parent_step_id or "")
+            if reserved is not None and kind == "model":
+                reserved["children"].append(step_id)
             self._send(ev)
             return step_id
+
+    def update_step(self, step_id: Optional[str], *, attrs: Optional[dict[str, Any]] = None,
+                    content: Optional[dict[str, Any]] = None) -> None:
+        """`step_updated`: a fact that arrives after the step started."""
+        if not self.enabled or not step_id:
+            return
+        with self._lock:
+            idn = self._ident.get(step_id) or {}
+            ev = self._base("step_updated", idn.get("turn_id", self.turn_id), idn.get("session_id", self._turn_session))
+            ev["step_id"] = step_id
+            if attrs is not None:
+                ev["attrs"] = attrs
+            if content is not None:
+                ev["content"] = content
+            self._send(ev)
+
+    # -- wait steps (E20) -----------------------------------------------------------------------
+    def track_wait(self, call_id: str, step_id: Optional[str]) -> None:
+        if step_id:
+            with self._lock:
+                self._waits[call_id] = step_id
+
+    def end_wait(self, call_id: str) -> Optional[str]:
+        with self._lock:
+            return self._waits.pop(call_id, None)
+
+    def wait_where(self, call_id: Optional[str], where: str) -> None:
+        """Where the card for a waiting call is shown: `session` or `inbox` (§5.4). Reported
+        by the Inbox when the card is added or moved there."""
+        if not call_id:
+            return
+        with self._lock:
+            step_id = self._waits.get(call_id)
+        self.update_step(step_id, attrs={"where": where})
+
+    # -- summary steps (E4) ---------------------------------------------------------------------
+    def reserve_step(self) -> Optional[str]:
+        """An id for a step written only at its end, from its identity copy (§3.2): a summary
+        step exists only if a summary or trim happened, which is known only at the end. Model
+        calls made inside it name it as their parent."""
+        if not self.enabled:
+            return None
+        with self._lock:
+            step_id = new_ulid()
+            tid = self.turn_id if self.in_turn else None
+            self._reserved[step_id] = {
+                "at_ms": now_ms()[0], "turn_id": tid,
+                "session_id": self._turn_session if tid else (self._session_id() or ""),
+                "children": [],
+            }
+            return step_id
+
+    def model_children(self, step_id: Optional[str]) -> list[str]:
+        with self._lock:
+            return list((self._reserved.get(step_id or "") or {}).get("children", []))
+
+    def finish_reserved(self, step_id: Optional[str], *, kind: str, name: str, status: str,
+                        attrs: dict[str, Any], wait_for_tokens_after: bool = False) -> None:
+        """Write a reserved step whole, from its end alone; or drop it with `status=None`."""
+        if not self.enabled or not step_id:
+            return
+        with self._lock:
+            r = self._reserved.pop(step_id, None)
+            if r is None:
+                return
+            ev = self._base("step_ended", r["turn_id"], r["session_id"])
+            ev.update({"step_id": step_id, "status": status, "message_id": None, "attrs": attrs,
+                       "content": {}, "kind": kind, "name": name, "parent_step_id": None,
+                       "call_id": None, "call_index": None, "shadow": False, "after_turn": False,
+                       "started_at": r["at_ms"]})
+            self._send(ev)
+            if wait_for_tokens_after:
+                self._tokens_after_for = step_id
+
+    def drop_reserved(self, step_id: Optional[str]) -> None:
+        with self._lock:
+            self._reserved.pop(step_id or "", None)
+
+    def note_main_usage(self, usage: dict[str, Any]) -> None:
+        """The first main call after a summary gives its `tokens_after` (§5.7)."""
+        with self._lock:
+            step_id, self._tokens_after_for = self._tokens_after_for, None
+        if step_id and usage.get("reported"):
+            after = (usage.get("input_fresh") or 0) + (usage.get("cache_read") or 0) + (usage.get("cache_write") or 0)
+            self.update_step(step_id, attrs={"tokens_after": after})
 
     def _started_at(self, ev: dict[str, Any]) -> int:
         # The recorder anchors a step's start to its turn's start (§7.3); the identity copy

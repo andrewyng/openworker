@@ -273,3 +273,13 @@ def test_the_step_clock_ticks_every_millisecond():
     while (tick := now_ms()[1]) == first and time.perf_counter() < deadline:
         pass
     assert tick - first == 1
+
+
+def test_every_store_shares_one_writer_thread(tmp_path):
+    stores = [RecordingStore(tmp_path / f"r{i}.db") for i in range(20)]
+    try:
+        writers = [t for t in threading.enumerate() if t.name == "recordings-writer"]
+        assert len(writers) == 1
+    finally:
+        for s in stores:
+            s.close()

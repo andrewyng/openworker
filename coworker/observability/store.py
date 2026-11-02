@@ -10,7 +10,8 @@ of recording-format.md; `load_recording()` gives it back.
 
 Writing never makes a turn wait. `write_turn` and `write_step` only put the record in a
 pending map keyed by its id, so a step written three times before the writer runs is written
-once, with its latest state; one background thread writes the map in a single transaction
+once, with its latest state; one background thread, shared by every store in the process,
+writes the map in a single transaction
 every `FLUSH_MS`. Nothing is dropped, and no queue can grow past the number of records that
 changed since the last write.
 """
@@ -22,6 +23,7 @@ import logging
 import sqlite3
 import threading
 import time
+import weakref
 import zlib
 from hashlib import sha256
 from pathlib import Path
@@ -175,15 +177,11 @@ class RecordingStore:
         self._pending_turns: dict[str, dict[str, Any]] = {}
         self._pending_steps: dict[str, dict[str, Any]] = {}
         self._pending_lock = threading.Lock()
-        self._wake = threading.Event()
-        self._closed = threading.Event()
+        self._closed = False
         self._last_sweep = 0.0
-        self._thread: Optional[threading.Thread] = None
+        self._background = background
         if background:
-            self._thread = threading.Thread(
-                target=self._run, name="recordings-writer", daemon=True
-            )
-            self._thread.start()
+            _writer.add(self)
 
     @classmethod
     def beside(cls, coworker_db_dir: str | Path, **kw: Any) -> "RecordingStore":
@@ -194,12 +192,14 @@ class RecordingStore:
     def write_turn(self, record: dict[str, Any]) -> None:
         with self._pending_lock:
             self._pending_turns[record["turn_id"]] = record
-        self._wake.set()
+        if self._background:
+            _writer.wake()
 
     def write_step(self, record: dict[str, Any]) -> None:
         with self._pending_lock:
             self._pending_steps[record["step_id"]] = record
-        self._wake.set()
+        if self._background:
+            _writer.wake()
 
     def flush(self) -> None:
         """Write everything pending now, on the calling thread."""
@@ -225,32 +225,25 @@ class RecordingStore:
             except Exception:
                 log.exception("recordings: write failed (%d turns, %d steps)", len(turns), len(steps))
 
-    def _run(self) -> None:
-        while not self._closed.is_set():
-            # Asleep until there is something to write (or a day passes, for the sweep).
-            self._wake.wait(timeout=SWEEP_EVERY_S)
-            self._wake.clear()
-            self.flush()
-            if (
-                self.retention_days is not None
-                and time.time() - self._last_sweep >= SWEEP_EVERY_S
-            ):
-                self._last_sweep = time.time()
-                try:
-                    self.sweep()
-                except Exception:
-                    log.exception("recordings: retention sweep failed")
-            self._closed.wait(FLUSH_MS / 1000)
+    def _tick(self) -> None:
+        """One turn of the shared writer: write what is pending, and sweep once a day."""
+        if self._closed:
+            return
         self.flush()
+        if self.retention_days is not None and time.time() - self._last_sweep >= SWEEP_EVERY_S:
+            self._last_sweep = time.time()
+            try:
+                self.sweep()
+            except Exception:
+                log.exception("recordings: retention sweep failed")
 
     def close(self) -> None:
-        self._closed.set()
-        self._wake.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-        else:
-            self.flush()
+        _writer.remove(self)
         with self._lock:
+            if self._closed:
+                return
+            self.flush()
+            self._closed = True
             self._conn.close()
 
     # -- exchange pieces (TD-17) --------------------------------------------------------------
@@ -387,6 +380,51 @@ class RecordingStore:
                            s["started_at"] or 0),
         )
         return {"turns": [_turn_record(t) for t in turns], "steps": [_step_record(s) for s in steps]}
+
+
+class _SharedWriter:
+    """One background thread for every open store in the process. It sleeps until a store
+    has something to write (or an hour passes, to check the daily sweep), then writes each
+    store's pending records in one transaction. Stores are held weakly, so a store nobody
+    uses any more is not kept alive by the writer (tests make thousands of them)."""
+
+    def __init__(self) -> None:
+        self._stores: "weakref.WeakSet[RecordingStore]" = weakref.WeakSet()
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def add(self, store: "RecordingStore") -> None:
+        with self._lock:
+            self._stores.add(store)
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="recordings-writer", daemon=True)
+                self._thread.start()
+        self._wake.set()  # a new store's first sweep runs soon
+
+    def remove(self, store: "RecordingStore") -> None:
+        with self._lock:
+            self._stores.discard(store)
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def _run(self) -> None:
+        while True:
+            self._wake.wait(timeout=3600)
+            self._wake.clear()
+            with self._lock:
+                stores = list(self._stores)
+            for store in stores:
+                try:
+                    store._tick()
+                except Exception:
+                    log.exception("recordings: writer failed")
+            del stores
+            time.sleep(FLUSH_MS / 1000)  # gather the next burst of writes into one transaction
+
+
+_writer = _SharedWriter()
 
 
 def _turn_record(r: sqlite3.Row) -> dict[str, Any]:

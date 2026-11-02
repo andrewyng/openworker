@@ -505,6 +505,7 @@ class SessionManager:
         # Inbox (cross-session human-attention queue), routing (named inboxes + Slack/Telegram
         # bindings), the Unattended toggle, and self-wake records.
         self.inbox = InboxStore(base / "inbox.json")
+        self.inbox.on_change = self._inbox_item_changed
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
@@ -1013,6 +1014,7 @@ class SessionManager:
         )
         # Observability (E1): this engine's turns and steps go to the server's recorder.
         engine.recorder = self.recorder
+        engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
         engine.reviewer_owner_history = lambda: self.approval_owner_history(session_id, engine)
@@ -6306,6 +6308,14 @@ class SessionManager:
     def has_session_clients(self, session_id: str) -> bool:
         return bool(self._session_clients.get(session_id))
 
+    def _inbox_item_changed(self, item: Any) -> None:
+        """A card was added or moved to the Inbox: tell the waiting engine where it is shown
+        (observability §5.4, a wait step's `where`)."""
+        engine = self._engines.get(item.session_id)
+        note = getattr(engine, "note_wait_where", None)
+        if note is not None and item.tool_call_id:
+            note(item.tool_call_id, "inbox" if item.visibility == VIS_INBOX else "session")
+
     async def promote_pending_prompts(self, session_id: str) -> int:
         """The last viewer left while the agent waits on an inline prompt: move it to the
         Inbox and mirror it, so the question is visible somewhere (see
@@ -6969,6 +6979,7 @@ class SessionManager:
         )
         # Observability (E1): this engine's turns and steps go to the server's recorder.
         engine.recorder = self.recorder
+        engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         self._seed_task_permissions(engine, task)
         return engine
 
