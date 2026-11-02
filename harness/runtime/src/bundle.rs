@@ -385,9 +385,7 @@ impl Bundle {
         } else {
             None
         };
-        if (tools.bindings.is_empty() && !meta.memory && !meta.scheduling && !meta.planning)
-            || tools.bindings.len() > 64
-        {
+        if tools.bindings.len() > 64 {
             bail!("Invalid server or binding count");
         }
         for (alias, b) in &tools.bindings {

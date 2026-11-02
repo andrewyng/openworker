@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-02",
+  "sourceBase": "673e5d62efec85dd13ca1dc638bd5f5518b766f9",
+  "implementationBranch": "fix/harness-tool-free-agents",
+  "providerMode": "synthetic loopback HTTP/SSE; no live models",
+  "protocols": ["openai-responses", "chat-completions", "anthropic-messages"],
+  "assertions": [
+    "Startup and dynamic empty-tool agent registration succeed",
+    "Planning, memory and scheduling remain disabled",
+    "Provider requests contain an empty or absent tools array and no tool_choice",
+    "Incremental text arrives while provider completion is held",
+    "Unexpected registered-but-unselected callback, ask_user, read_history and unknown tool calls fail before approval/dispatch",
+    "No rejected callback effects or tool/approval events occur"
+  ],
+  "macosArm64": {
+    "rustToolFree": {"passed": 6, "failed": 0, "ignored": 0, "backends": ["embedded", "managed"]},
+    "typescriptManagedToolFree": {"passed": 3, "failed": 0, "skipped": 0},
+    "runtimeCodingPolicyRegressions": {"passed": 100, "failed": 0},
+    "sdkUnitCodingDesktopRegressions": {"passed": 24, "failed": 0, "ignoredPostgres": 2},
+    "typescriptRegressions": {"passed": 30, "failed": 0, "skipped": 0},
+    "testHostSha256": "48d1df2636566f3acec5fe0c883603a761c15ccbbf326b55ac1e6fe08cb61b9c"
+  },
+  "linuxArm64": {
+    "environment": "cached Docker Rust/Debian image; no external network; bounded CPU/memory; Node 24 for TypeScript",
+    "sdkUnitAgentsReviewerCodingAndToolFree": {"passed": 33, "failed": 0, "ignoredPostgres": 1, "includesToolFree": 6},
+    "typescriptManagedToolFree": {"passed": 3, "failed": 0, "skipped": 0, "cpuLimit": 1},
+    "testHostSha256": "3787596b3e4b55e5497456aaf34fb87091f16d367b08429cf7d74fd897a0297a"
+  },
+  "checks": {"sdkToolFreeStrictClippy": "passed", "typescriptBuild": "passed", "documentationLinks": 23},
+  "notQualified": ["live Anthropic/OpenAI models", "Windows", "ignored PostgreSQL-only regression cases"]
+}

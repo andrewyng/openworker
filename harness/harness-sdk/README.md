@@ -35,6 +35,11 @@ Partner Rust application → HarnessClient
 
 ## Quick start: the agents API
 
+For a lesson guide or text-only assistant, use an empty tool list with optional
+capabilities disabled. It receives no implicit question/history tools. See
+[tool-free agents](../../docs/harness/TOOL-FREE-AGENTS.md) for Rust/TypeScript
+examples and regression coverage.
+
 ```rust,no_run
 use openworker_sdk::{Agent, Credentials, Harness, Model, ModelProvider, Sandbox, Tool};
 use futures_util::StreamExt;
