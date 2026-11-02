@@ -105,9 +105,18 @@ class TurnRecording:
             return self.turn_id
 
     def end_turn(self, status: str) -> None:
+        pending = self.close_turn(status)
+        if pending is not None:
+            self.emit_turn_ended(pending)
+
+    def close_turn(self, status: str) -> Optional[dict[str, Any]]:
+        """The turn is over, now: what it still held is sent, and its `turn_ended` is built
+        with this moment's clocks. `emit_turn_ended` sends it, possibly later, once the
+        turn's background work (shadow checks) has ended, so the turn's end does not close
+        those steps as interrupted while they still run."""
         with self._lock:
             if self._ended or self.turn_id is None:
-                return
+                return None
             self._ended = True
             self._release(None)  # a retry that added no message at all
             for ev in self._tool_ends.values():  # a tool whose result message never came
@@ -116,7 +125,10 @@ class TurnRecording:
             self._flush_reply(None)
             ev = self._base("turn_ended", self.turn_id, self._turn_session)
             ev.update({"status": status, "last_message_id": self._last_mid})
-            self.recorder.emit(ev)
+            return ev
+
+    def emit_turn_ended(self, event: dict[str, Any]) -> None:
+        self.recorder.emit(event)
 
     @property
     def in_turn(self) -> bool:
@@ -421,6 +433,12 @@ class HelperRecording:
         return self.turn_id
 
     def end_turn(self, status: str) -> None:
+        pass
+
+    def close_turn(self, status: str) -> None:
+        return None
+
+    def emit_turn_ended(self, event: dict[str, Any]) -> None:
         pass
 
     def note_message(self, message: dict[str, Any]) -> None:

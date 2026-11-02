@@ -142,16 +142,19 @@ class ProviderView(ProviderClient):
                     except StopIteration:
                         break
                 call.saw(chunk)
-                if getattr(chunk, "turn", None) is not None:
+                if getattr(chunk, "turn", None) is not None and turn is None:
+                    # The step ends as the reply arrives, before the engine sees it: the
+                    # engine may add the reply and end the turn before this generator runs
+                    # again, and the turn's end must find this step already closed.
                     turn = chunk.turn
+                    call.finished(turn)
                 yield chunk
         except GeneratorExit:
             raise
         except BaseException as exc:
-            call.failed(exc)
+            if turn is None:
+                call.failed(exc)
             raise
-        if turn is not None:
-            call.finished(turn)
 
 
 # -- one recorded call ----------------------------------------------------------------------------

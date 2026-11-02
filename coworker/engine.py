@@ -234,7 +234,7 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
             finally:
                 await inner.aclose()
                 if started:
-                    obs.end_turn("interrupted" if self._cancel.is_set() else "unknown")
+                    self._end_recorded_turn("interrupted" if self._cancel.is_set() else "unknown")
 
         return wrapper
 
@@ -567,6 +567,7 @@ class TurnEngine:
         # Auto-approver check steps by tool call (E12), and shadow checks waiting to be
         # compared with your answer: call id -> (step id, verdict or None).
         self._review_steps: dict[str, str] = {}
+        self._turn_end_tasks: set[asyncio.Task] = set()
         # The coworker fingerprint and the session-start context facts, set by the session
         # build (observability E16, E5); and this turn's context block, to spot a change.
         self.persona_fp: Optional[str] = None
@@ -797,11 +798,34 @@ class TurnEngine:
             if status in ("max_iterations_exceeded", "truncated"):
                 obs.instant_step(kind="notice", name="step_limit" if status == "max_iterations_exceeded" else "truncated",
                                  status="ok", attrs={})
-            obs.end_turn(status)
+            self._end_recorded_turn(status)
         elif event.type is EventType.INTERRUPTED:
-            obs.end_turn("interrupted")
+            self._end_recorded_turn("interrupted")
         elif event.type is EventType.ERROR:
-            obs.end_turn("error")
+            self._end_recorded_turn("error")
+
+    def _end_recorded_turn(self, status: str) -> None:
+        """`turn_ended` with this moment's time. If shadow checks are still running in the
+        background, it is sent once they end (at most 30 s later), so their steps are not
+        closed as interrupted while they run; the turn's recorded end stays this moment."""
+        pending = self._obs.close_turn(status)
+        if pending is None:
+            return
+        running = [t for t in self._shadow_tasks if not t.done()]
+        if not running:
+            self._obs.emit_turn_ended(pending)
+            return
+
+        async def after_shadows() -> None:
+            try:
+                await asyncio.wait_for(asyncio.gather(*running, return_exceptions=True), 30)
+            except Exception:  # noqa: BLE001 - a slow shadow check must not lose the turn's end
+                pass
+            self._obs.emit_turn_ended(pending)
+
+        task = asyncio.ensure_future(after_shadows())
+        self._turn_end_tasks.add(task)
+        task.add_done_callback(self._turn_end_tasks.discard)
 
     def _risk_class(self, tool_name: str) -> Optional[str]:
         try:
@@ -2229,9 +2253,12 @@ class TurnEngine:
         task.add_done_callback(self._shadow_tasks.discard)
 
     async def drain_shadow_reviews(self) -> None:
-        """Await in-flight shadow verdicts (tests and orderly shutdown; never the hot path)."""
+        """Await in-flight shadow verdicts (tests and orderly shutdown; never the hot path),
+        and the recorded turn ends that waited for them."""
         if self._shadow_tasks:
             await asyncio.gather(*list(self._shadow_tasks), return_exceptions=True)
+        if self._turn_end_tasks:
+            await asyncio.gather(*list(self._turn_end_tasks), return_exceptions=True)
 
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields

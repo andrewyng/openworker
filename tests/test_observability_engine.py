@@ -172,7 +172,13 @@ def test_a_turn_through_the_server_lands_in_recordings_db(tmp_path):
 
     from coworker.server import SessionManager, create_app
 
-    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([_text("hi there")]))
+    class WithTitle(ScriptedProvider):
+        def complete(self, *, model, messages, tools=None, **settings):
+            if str(messages[0].get("content") or "").startswith("You title"):
+                return _text("Greeting")  # the session title, which can run before the turn's call
+            return super().complete(model=model, messages=messages, tools=tools, **settings)
+
+    manager = SessionManager(workspace=tmp_path, provider=WithTitle([_text("hi there")]))
     client = TestClient(create_app(manager))
     with client.websocket_connect("/ws/session/obs1") as ws:
         assert ws.receive_json()["type"] == "ready"

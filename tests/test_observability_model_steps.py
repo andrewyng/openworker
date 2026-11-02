@@ -265,3 +265,24 @@ def test_decision_reviewer_usage_vectors(vector):
 
     entries = [{"body": json.dumps({"usage": vector["raw"]})}]
     assert usage_attrs(_reply_usage(entries)) == {"reported": True, **vector["expected"]}
+
+
+def test_a_streamed_model_step_is_closed_before_the_engine_sees_the_reply():
+    """The engine may add the reply and end the turn before the stream generator runs again;
+    the turn's end must then find the model step closed, not close it as interrupted."""
+    from coworker.providers.base import StreamChunk
+
+    class Streaming(ScriptedProvider):
+        def stream(self, *, model, messages, tools=None, **settings):
+            yield StreamChunk(text_delta="hi")
+            yield StreamChunk(turn=AssistantTurn(text="hi", finish_reason="stop", usage=TokenUsage(input=3, output=1)))
+
+    rec = Recorder()
+    sink = TurnRecording(rec, lambda: "sess_s")
+    sink.begin_turn(kind="run", trigger="user", attrs={}, stamp={}, first_message_id=None)
+    view = RecordingProvider(Streaming([])).tagged(purpose="helper", sink=sink)
+    for chunk in view.stream(model="openai:model-a", messages=[]):
+        if chunk.turn is not None:
+            [step] = [s for s in rec.as_dict()["steps"] if s["kind"] == "model"]
+            assert step["status"] == "ok" and step["attrs"]["finish_reason"] == "stop"
+            assert step["attrs"]["ttft_ms"] is not None
