@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:openworker:observability:recording-format:1.0",
+  "$id": "urn:openworker:observability:recording-format:1.1",
   "title": "OpenWorker observability recording format 1.0",
   "description": "Turns, steps, recording events and exchange pieces, as defined in recording-format.md (version 1.0, frozen 2026-10-31). Field names are those of phase-1/technical-design.md (Draft 5). Validate a recording file against #/$defs/recording, one recording event against #/$defs/event, one line of an exchange piece store against #/$defs/piece, one live message against #/$defs/live_message. Wherever a field may be null, its description says what null means.",
   "$ref": "#/$defs/recording",
@@ -329,7 +329,7 @@
                "stage": {"enum": ["permission", "grant", "auto_approver", "card", "resolved"]},
                "outcome": {"enum": ["allowed", "needs_user", "human_only", "denied",
                                     "config_allowlist", "session_grant", "standing_rule", "trusted_rule", "trusted_server", "run_grant",
-                                    "suspended_in_auto_approve", "allow_anyway", "lead_denial",
+                                    "suspended_in_auto_approve", "allow_anyway", "lead_denial", "readonly_tier", "gate_tier",
                                     "allow", "deny", "unsure", "could_not_run", "context_changed",
                                     "skipped_human_only", "skipped_unattended", "skipped_paused", "skipped_off",
                                     "shown_session", "parked_inbox", "auto_refused",
@@ -337,7 +337,7 @@
                "detail": {"enum": ["low_risk", "bypass", "cleared_by_mode", "always_tool", "always_command", "always_domain", "always_site", "readonly_session"], "description": "permission allowed: the reason id (low_risk, bypass, cleared_by_mode); resolved approved_session: which approval (always_tool, always_command, always_domain, always_site, readonly_session). Absent when the outcome has none."}
              }}},
            "origin": {"enum": ["low_risk", "bypass", "config_allowlist", "session_grant", "standing_rule", "trusted_rule", "trusted_server",
-                               "run_grant", "allow_anyway", "lead_denial", "reviewer", "user",
+                               "run_grant", "allow_anyway", "lead_denial", "readonly_tier", "gate_tier", "reviewer", "user",
                                "denied_by_rule", "reviewer_denied", "unattended_auto", null],
                       "description": "The single stage that decided. null = no stage decided (the call never reached a decision: bad arguments, unknown tool, superseded, stopped)."}
          }}
