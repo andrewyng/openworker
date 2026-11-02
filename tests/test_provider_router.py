@@ -378,7 +378,8 @@ def test_manager_provider_config(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
-    assert isinstance(mgr.provider, ProviderRouter)
+    # The router, wrapped once so every model call is recorded (observability E2).
+    assert isinstance(mgr.provider.inner, ProviderRouter)
 
     res = mgr.set_provider("ollama", {"base_url": "http://localhost:9999"})
     assert res["ok"] is True
