@@ -158,7 +158,7 @@ def test_blocked_sites_go_to_the_tool_step_not_the_transcript(tmp_path):
             url: the page
         """
         return {"exit_code": 1, "blocked_sites": ["semgrep.dev:443"], "network_note": "blocked",
-                "_blocked": [{"site": "semgrep.dev:443", "count": 2, "first_at": 1, "late": False,
+                "_blocked": [{"host": "semgrep.dev", "port": 443, "count": 2, "first_at": 1, "late": False,
                               "uncertain": True}]}
 
     engine, rec = _engine(tmp_path, [_call("c1", "fetch", {"url": "https://semgrep.dev"}), AssistantTurn(text="ok")])
@@ -167,7 +167,7 @@ def test_blocked_sites_go_to_the_tool_step_not_the_transcript(tmp_path):
     _run(engine)
     [tool] = [s for s in rec.as_dict()["steps"] if s["kind"] == "tool"]
     assert tool["attrs"]["sandbox"] == {"blocked_known": True, "blocked_count": 2, "notice": None}
-    assert tool["content"]["blocked"][0]["site"] == "semgrep.dev:443"
+    assert tool["content"]["blocked"][0]["host"] == "semgrep.dev"
     result = next(m for m in engine.messages if m.get("role") == "tool")
     assert "_blocked" not in str(result["content"])
     assert rec.as_dict()["turns"][0]["stamp"]["sandbox"] == {"provider": "openshell", "enforcement": "full"}
@@ -184,5 +184,5 @@ def test_network_note_keeps_the_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(ws, "_asking", lambda: False, raising=False)
     note = ws.network_note(started=100.0, result={"exit_code": 0})
     assert note["blocked_sites"] == ["semgrep.dev:443"]
-    assert note["_blocked"] == [{"site": "semgrep.dev:443", "count": 2, "first_at": 100000, "late": False,
-                                 "uncertain": True}]
+    assert note["_blocked"] == [{"host": "semgrep.dev", "port": 443, "count": 2, "first_at": 100000,
+                                 "late": False, "uncertain": True}]

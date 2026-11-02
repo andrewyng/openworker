@@ -741,12 +741,13 @@ class TurnEngine:
             return
         block = self._last_context_block or ""
         block_hash = _short_hash(block) if block else None
+        skills = sorted(getattr(getattr(self, "skill_loader", None), "_skills", None) or {})
         per_turn = {
             "mode_note": self.permissions.mode.value if self.permissions.mode in (Mode.PLAN, Mode.DISCUSS) else None,
-            "folders": len(getattr(self, "roots", None) or []) if isinstance(getattr(self, "roots", None), (list, tuple)) else None,
+            "folders": len(getattr(self.permissions, "roots", None) or []),
             "sandbox_note": getattr(getattr(self, "sandbox_workspace", None), "describe", None) is not None,
-            "skills_menu": None,
-            "skills_hash": None,
+            "skills_menu": len(skills),
+            "skills_hash": _short_hash(",".join(skills)) if skills else None,
         }
         if self._context_turn != obs.turn_id:
             self._context_turn, self._turn_context_hash = obs.turn_id, block_hash

@@ -1,0 +1,547 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openworker:observability:recording-format:1.0",
+  "title": "OpenWorker observability recording format 1.0",
+  "description": "Turns, steps, recording events and exchange pieces, as defined in recording-format.md (version 1.0, frozen 2026-10-31). Field names are those of phase-1/technical-design.md (Draft 5). Validate a recording file against #/$defs/recording, one recording event against #/$defs/event, one line of an exchange piece store against #/$defs/piece, one live message against #/$defs/live_message. Wherever a field may be null, its description says what null means.",
+  "$ref": "#/$defs/recording",
+  "$defs": {
+
+    "id": {"type": "string", "minLength": 1},
+    "id_or_null": {"type": ["string", "null"], "minLength": 1},
+    "epoch_ms": {"type": "integer", "minimum": 0, "description": "Wall-clock time, epoch milliseconds."},
+    "count": {"type": "integer", "minimum": 0},
+    "count_or_null": {"type": ["integer", "null"], "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "short_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{6}$", "description": "First 6 hex characters of a SHA-256. null = nothing to hash."},
+    "step_kind": {"enum": ["context", "model", "tool", "wait", "auto_approver", "summary", "notice"]},
+    "step_status": {"enum": ["running", "ok", "error", "denied", "interrupted", "skipped", "unknown"]},
+    "turn_status": {"enum": ["completed", "max_iterations_exceeded", "truncated", "sleeping", "interrupted", "error", "unknown"]},
+    "turn_kind": {"enum": ["run", "resume", "retry"]},
+    "trigger": {"enum": ["user", "channel", "schedule", "team_wake", "unknown"]},
+    "reviewer_kind": {"enum": ["session_model", "openai_decisions", "typesafe_jev"]},
+    "wire": {"enum": ["anthropic", "openai_responses", "openai_chat", "gemini", "bedrock_converse", "ollama", "openai_decisions", "typesafe_jev"]},
+
+    "recording": {
+      "description": "One recording file: the turns and steps of one or more sessions. Turns are sorted by started_at, then turn_id. Steps are sorted by seq within their turn (the canonical order, recording-format.md section 4); steps of no turn (proxy calls) follow, by started_at.",
+      "type": "object",
+      "required": ["turns", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "turns": {"type": "array", "items": {"$ref": "#/$defs/turn"}},
+        "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}}
+      }
+    },
+
+    "reviewer_settings": {
+      "description": "Auto-approver settings at turn start (technical design section 4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "shadow", "kind"],
+      "properties": {
+        "active": {"type": "boolean"},
+        "shadow": {"type": "boolean"},
+        "kind": {"anyOf": [{"$ref": "#/$defs/reviewer_kind"}, {"type": "null"}], "description": "null = no reviewer is configured."},
+        "model": {"type": ["string", "null"], "description": "The model used, for kind session_model. null = not a session-model reviewer, or none configured."}
+      }
+    },
+
+    "stamp": {
+      "description": "Machine, model provider, sandbox and coworker facts taken at turn start (technical design section 9): the groups machine, model and sandbox, and the coworker fingerprint persona_fp. Every key is optional; a missing key means it was not stamped.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"enum": ["this_machine", "own_machine", "cloud"]},
+            "id": {"type": ["string", "null"], "description": "null = the machine has no id (not joined to a controller)."},
+            "name": {"type": "string", "description": "The machine's name, or the host name. Personal data for Phase 2's export rules (P-7)."},
+            "app_version": {"type": "string", "description": "\"unknown\" when only 0.0.0 is available (C6); never 0.0.0."}
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {"type": "string"},
+            "provider_title": {"type": "string", "description": "The provider card's name in Settings; identifies which key."},
+            "kind": {"enum": ["api_key", "subscription", "local"]}
+          }
+        },
+        "sandbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {"type": "string", "description": "Which sandbox, or direct."},
+            "enforcement": {"enum": ["full", "none"]},
+            "profile": {"enum": ["allowlist", "open", null], "description": "null = no network profile (direct)."},
+            "sites": {"type": ["integer", "null"], "minimum": 0, "description": "null = no allowlist."},
+            "runner_version": {"type": ["string", "null"]},
+            "image": {"type": ["string", "null"]}
+          }
+        },
+        "persona_fp": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "Coworker fingerprint: first 6 hex characters of the section 9.4 hash. The session record keeps the same value."}
+      }
+    },
+
+    "turn": {
+      "description": "One turn: the engine working on one request (technical design section 4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turn_id", "session_id", "seq", "kind", "trigger", "started_at", "duration_ms", "status", "incomplete",
+                   "approval_mode", "attended", "reviewer", "stamp", "first_message_id", "last_message_id", "schema_version"],
+      "properties": {
+        "turn_id": {"$ref": "#/$defs/id", "description": "A ULID in the app; any unique string in tests."},
+        "session_id": {"$ref": "#/$defs/id"},
+        "seq": {"type": "integer", "minimum": 1, "description": "1st, 2nd, 3rd... turn of the session."},
+        "kind": {"$ref": "#/$defs/turn_kind"},
+        "trigger": {"$ref": "#/$defs/trigger"},
+        "started_at": {"$ref": "#/$defs/epoch_ms"},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0, "description": "From a monotonic clock. null = unknown: the turn was found open after a crash (status unknown)."},
+        "ended_at": {"type": ["integer", "null"], "description": "Optional and derived: started_at + duration_ms. null when duration_ms is null. Never read from a clock."},
+        "status": {"$ref": "#/$defs/turn_status"},
+        "incomplete": {"type": "boolean", "description": "True if any recording event of this turn was dropped."},
+        "approval_mode": {"type": "string", "description": "engine.permissions.mode at turn start, for example auto-approve."},
+        "attended": {"type": "boolean"},
+        "reviewer": {"$ref": "#/$defs/reviewer_settings"},
+        "stamp": {"$ref": "#/$defs/stamp"},
+        "first_message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the message that opened the turn. null = empty: a retry that appended no message, or a message written before Phase 1."},
+        "last_message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the last message appended before the turn ended. null = no message was appended."},
+        "schema_version": {"const": 1, "description": "The record layout version: 1 for every 1.x version of this format. It goes up only when old readers cannot read the new shape."}
+      }
+    },
+
+    "step": {
+      "description": "One unit of work inside a turn (technical design section 5.1). attrs and content depend on kind.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at", "duration_ms",
+                   "status", "call_id", "call_index", "message_id", "shadow", "after_turn", "attrs", "content"],
+      "properties": {
+        "step_id": {"$ref": "#/$defs/id"},
+        "turn_id": {"$ref": "#/$defs/id_or_null", "description": "null = empty: a proxy call, which belongs to no turn."},
+        "session_id": {"$ref": "#/$defs/id_or_null", "description": "null = empty: a proxy call, which belongs to no session."},
+        "parent_step_id": {"$ref": "#/$defs/id_or_null", "description": "null = not nested. Real nesting only; auto-approver and wait steps link to their tool call by call_id instead (V-09)."},
+        "seq": {"type": "integer", "minimum": 1, "description": "Position in the turn's canonical order; final when the turn ends."},
+        "kind": {"$ref": "#/$defs/step_kind"},
+        "name": {"type": "string", "minLength": 1},
+        "started_at": {"$ref": "#/$defs/epoch_ms", "description": "The turn's started_at plus the monotonic time since the turn started; steps with no turn read the wall clock."},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0, "description": "From a monotonic clock. null = still running (live only), or status unknown (found open after a crash)."},
+        "ended_at": {"type": ["integer", "null"], "description": "Optional and derived: started_at + duration_ms; null when duration_ms is null."},
+        "status": {"$ref": "#/$defs/step_status", "description": "running only while live."},
+        "call_id": {"$ref": "#/$defs/id_or_null", "description": "The tool_call_id. null = the step is not about a tool call."},
+        "call_index": {"type": ["integer", "null"], "minimum": 0, "description": "The call's position in the model's list of tool calls for that reply. null = not a tool call."},
+        "message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the transcript message this step produced. null = it produced none."},
+        "shadow": {"type": "boolean", "description": "True only for Shadow evaluation checks and their nested model step."},
+        "after_turn": {"type": "boolean", "description": "True when tagged with a turn that had already ended when the step started."},
+        "attrs": {"type": "object"},
+        "content": {"type": "object", "description": "Text and personal data only (TD-13). {} when there is none."}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "model"}}},
+         "then": {"properties": {"attrs": {"$ref": "#/$defs/model_attrs"}, "content": {"$ref": "#/$defs/model_content"},
+                                 "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}},
+        {"if": {"properties": {"kind": {"const": "tool"}}},
+         "then": {"properties": {"attrs": {"$ref": "#/$defs/tool_attrs"}, "content": {"$ref": "#/$defs/tool_content"},
+                                 "status": {"enum": ["running", "ok", "error", "denied", "interrupted", "skipped", "unknown"]}}}},
+        {"if": {"properties": {"kind": {"const": "wait"}}},
+         "then": {"properties": {"attrs": {"$ref": "#/$defs/wait_attrs"}, "content": {"$ref": "#/$defs/wait_content"},
+                                 "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}},
+        {"if": {"properties": {"kind": {"const": "auto_approver"}}},
+         "then": {"properties": {"attrs": {"$ref": "#/$defs/auto_approver_attrs"}, "content": {"$ref": "#/$defs/auto_approver_content"},
+                                 "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}},
+        {"if": {"properties": {"kind": {"const": "context"}}},
+         "then": {"properties": {"attrs": {"$ref": "#/$defs/context_attrs"}, "content": {"$ref": "#/$defs/context_content"},
+                                 "status": {"const": "ok"}}}},
+        {"if": {"properties": {"kind": {"const": "summary"}}},
+         "then": {"properties": {"name": {"enum": ["summary", "trim"]}, "attrs": {"$ref": "#/$defs/summary_attrs"},
+                                 "content": {"$ref": "#/$defs/no_content"},
+                                 "status": {"enum": ["running", "ok", "error", "interrupted", "unknown"]}}}},
+        {"if": {"properties": {"kind": {"const": "notice"}}},
+         "then": {"properties": {"name": {"$ref": "#/$defs/notice_name"}, "attrs": {"$ref": "#/$defs/notice_attrs"},
+                                 "content": {"$ref": "#/$defs/no_content"}, "status": {"const": "ok"}}}}
+      ]
+    },
+
+    "ended_after_turn_ms": {"type": "integer", "minimum": 0, "description": "Set when a step_ended arrived after its turn had already closed the step: how late it came (section 7.4). Absent otherwise."},
+
+    "usage": {
+      "description": "Token counts of one model call (technical design sections 5.2 and 6.2).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reported"],
+      "properties": {
+        "reported": {"type": "boolean", "description": "Whether the provider gave token counts. When false, the four parts are absent or null and the call adds the at-least marker."},
+        "input_fresh": {"type": ["integer", "null"], "minimum": 0, "description": "Fresh input tokens. null only when reported is false."},
+        "cache_read": {"type": ["integer", "null"], "minimum": 0, "description": "Input reused from cache. null = the provider sent no cache-read count (TypeSafe Jev, older Ollama); left out of the cache share; shown as a dash, never 0."},
+        "cache_write": {"type": ["integer", "null"], "minimum": 0, "description": "Input stored in cache. null = the provider sent no cache-write count (V-05, V-13); shown as a dash, never 0."},
+        "output": {"type": ["integer", "null"], "minimum": 0, "description": "Output tokens, including thinking where billed so. null only when reported is false."},
+        "reasoning": {"type": ["integer", "null"], "minimum": 0, "description": "Thinking tokens within output. null = the provider sent none."},
+        "inconsistent": {"type": "array", "items": {"enum": ["reasoning_exceeds_output", "provider_total_differs"]}, "description": "Present only when the provider's numbers are impossible; they are kept as sent (V-19)."}
+      },
+      "if": {"properties": {"reported": {"const": true}}},
+      "then": {"required": ["input_fresh", "cache_read", "cache_write", "output", "reasoning"],
+               "properties": {"input_fresh": {"type": "integer"}, "output": {"type": "integer"}}}
+    },
+
+    "model_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["context_length", "overloaded", "rate_limited", "auth", "network", "timeout", "provider_error", "cancelled"]},
+        "text": {"type": ["string", "null"], "description": "The root cause's short text, for example 529. null = none."}
+      }
+    },
+
+    "provider_facts": {
+      "description": "Fixed names read from provider_meta when the step ends (section 5.2.1). Every fact: null = the provider did not send it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "served_model": {"type": ["string", "null"]},
+        "provider_request_id": {"type": ["string", "null"]},
+        "provider_response_id": {"type": ["string", "null"]},
+        "served_by": {"type": ["string", "null"]},
+        "reasoning": {"$ref": "#/$defs/count_or_null"},
+        "cache_read": {"$ref": "#/$defs/count_or_null"},
+        "cache_write": {"$ref": "#/$defs/count_or_null"},
+        "cache_write_by_ttl": {"type": ["object", "null"]},
+        "provider_total": {"$ref": "#/$defs/count_or_null"},
+        "requested": {"type": ["object", "null"]},
+        "applied": {"type": ["object", "null"]},
+        "stop": {"type": ["object", "null"]},
+        "provider_timing": {"type": ["object", "null"]},
+        "rate_limit": {"type": ["object", "null"]},
+        "hosted_tools": {"type": ["object", "null"]},
+        "cost_reported": {"type": ["object", "null"], "description": "Saved, not shown (tokens-only ruling; FO-78)."}
+      }
+    },
+
+    "provider_meta_entry": {
+      "description": "One HTTP response of a model call, as sent, minus content (deny list) and secrets (section 5.2.1).",
+      "type": "object",
+      "required": ["wire", "status", "request", "headers", "event_counts", "events"],
+      "properties": {
+        "wire": {"$ref": "#/$defs/wire", "description": "Which API shape. A helper request such as Ollama's /api/show is on the call's own wire, with auxiliary true."},
+        "status": {"type": "integer"},
+        "request": {"type": "object", "description": "Every request parameter except content; tools_offered as a count."},
+        "headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Every response header except secrets."},
+        "event_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "events": {"type": "object", "description": "Per event kind, every field of those events merged in order, later values winning, content removed."},
+        "auxiliary": {"type": "boolean", "description": "True for a helper request made before the call (M-R9); never counted as an attempt."},
+        "after_call": {"type": ["object", "null"], "description": "The provider's own record fetched after the call (OpenRouter). null = the fetch failed or is turned off."}
+      }
+    },
+
+    "blob_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$blob"],
+      "properties": {"$blob": {"$ref": "#/$defs/sha256"}},
+      "description": "A reference to one piece in the exchange piece store, by its SHA-256."
+    },
+
+    "exchange_entry": {
+      "description": "One HTTP attempt of a model call: the exact request and the exact response, content included, secrets left out (TD-15, TD-17).",
+      "type": "object",
+      "required": ["request", "response"],
+      "properties": {
+        "auxiliary": {"type": "boolean"},
+        "request": {
+          "type": "object",
+          "required": ["method", "url", "headers", "body_sha256"],
+          "properties": {
+            "method": {"type": "string"},
+            "url": {"type": "string"},
+            "headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Every request header except secrets (section 6 of recording-format.md)."},
+            "body_sha256": {"$ref": "#/$defs/sha256", "description": "SHA-256 of the exact bytes sent."},
+            "body_size": {"$ref": "#/$defs/count"},
+            "manifest": {"type": "object", "description": "The request JSON with pieces replaced by blob references."},
+            "blob": {"$ref": "#/$defs/sha256", "description": "For a body that is not a JSON object: the whole body as one piece."}
+          }
+        },
+        "response": {
+          "type": ["object", "null"],
+          "description": "null = no response arrived (the connection failed).",
+          "required": ["status", "headers", "body_blob"],
+          "properties": {
+            "status": {"type": "integer"},
+            "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+            "body_blob": {"$ref": "#/$defs/sha256", "description": "The full response body as received (after content decoding), one piece."},
+            "body_size": {"$ref": "#/$defs/count"}
+          }
+        }
+      }
+    },
+
+    "piece": {
+      "description": "One line of an exchange piece store file (exchange-store.jsonl), or one row of exchange_pieces.",
+      "type": "object",
+      "required": ["sha256", "size", "data"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256", "description": "SHA-256 of the piece's bytes (data encoded as UTF-8)."},
+        "size": {"$ref": "#/$defs/count", "description": "Length of the piece in bytes."},
+        "data": {"type": "string", "description": "The piece, as UTF-8 text."},
+        "first_seen": {"$ref": "#/$defs/epoch_ms", "description": "When the piece was first stored."}
+      }
+    },
+
+    "model_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "provider", "provider_title", "model", "stream", "finish_reason", "ttft_ms", "context_window", "usage", "tools_offered"],
+      "properties": {
+        "purpose": {"enum": ["main", "summary", "auto_approver", "helper", "title", "proxy", "unattributed"], "description": "unattributed = a call made with no tags at all (section 3.3)."},
+        "provider": {"type": "string", "description": "Provider id, the prefix of the model id; openai_decisions or typesafe_jev for decision-model checks."},
+        "provider_title": {"type": ["string", "null"], "description": "null = the provider has no Settings card (decision-model services)."},
+        "model": {"type": "string"},
+        "served_by": {"type": ["string", "null"], "description": "Backend host behind a router. null or absent = not a router, or not said."},
+        "provider_facts": {"$ref": "#/$defs/provider_facts"},
+        "provider_meta": {"type": "array", "items": {"$ref": "#/$defs/provider_meta_entry"}, "description": "One entry per HTTP response; the last is the reply."},
+        "stream": {"type": "boolean"},
+        "finish_reason": {"type": ["string", "null"], "description": "null = the call ended without a reply (failed or stopped)."},
+        "ttft_ms": {"type": ["integer", "null"], "minimum": 0, "description": "Time to the first streamed piece of any kind. null = not streamed, or nothing arrived."},
+        "context_window": {"type": ["integer", "null"], "minimum": 0, "description": "From the model catalogue at call time. null = the catalogue has no value."},
+        "usage": {"$ref": "#/$defs/usage"},
+        "tools_offered": {"$ref": "#/$defs/count"},
+        "tools_hash": {"$ref": "#/$defs/short_hash"},
+        "error": {"$ref": "#/$defs/model_error"},
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+    "model_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"exchange": {"type": "array", "items": {"$ref": "#/$defs/exchange_entry"}}}
+    },
+
+    "decision": {
+      "description": "How a tool call was allowed or refused, stage by stage (section 8.3). A helper's tool step has {helper: true} instead.",
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["helper"], "properties": {"helper": {"const": true}}},
+        {"type": "object", "additionalProperties": false, "required": ["path", "origin"],
+         "properties": {
+           "path": {"type": "array", "items": {
+             "type": "object", "additionalProperties": false, "required": ["stage", "outcome"],
+             "properties": {
+               "stage": {"enum": ["permission", "grant", "auto_approver", "card", "resolved"]},
+               "outcome": {"enum": ["allowed", "needs_user", "human_only", "denied",
+                                    "config_allowlist", "session_grant", "standing_rule", "trusted_rule", "trusted_server", "run_grant",
+                                    "suspended_in_auto_approve", "allow_anyway", "lead_denial",
+                                    "allow", "deny", "unsure", "could_not_run", "context_changed",
+                                    "skipped_human_only", "skipped_unattended", "skipped_paused", "skipped_off",
+                                    "shown_session", "parked_inbox", "auto_refused",
+                                    "approved_once", "approved_session", "approved_run", "approved_always", "interrupted", "superseded"]},
+               "detail": {"enum": ["low_risk", "bypass", "cleared_by_mode", "always_tool", "always_command", "always_domain", "always_site", "readonly_session"], "description": "permission allowed: the reason id (low_risk, bypass, cleared_by_mode); resolved approved_session: which approval (always_tool, always_command, always_domain, always_site, readonly_session). Absent when the outcome has none."}
+             }}},
+           "origin": {"enum": ["low_risk", "bypass", "config_allowlist", "session_grant", "standing_rule", "trusted_rule", "trusted_server",
+                               "run_grant", "allow_anyway", "lead_denial", "reviewer", "user",
+                               "denied_by_rule", "reviewer_denied", "unattended_auto", null],
+                      "description": "The single stage that decided. null = no stage decided (the call never reached a decision: bad arguments, unknown tool, superseded, stopped)."}
+         }}
+      ]
+    },
+    "tool_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision"],
+      "properties": {
+        "risk_class": {"enum": ["read", "egress", "write_local", "exec", "external", null], "description": "From risk.classify. null = not classified (unknown tool)."},
+        "connector": {"type": ["string", "null"], "description": "null = not a connector tool."},
+        "result_bytes": {"$ref": "#/$defs/count_or_null", "description": "null = the call never ran."},
+        "exit_code": {"type": ["integer", "null"], "description": "Shell commands only. null = not a shell command, or it did not exit."},
+        "decision": {"$ref": "#/$defs/decision"},
+        "sandbox": {
+          "type": ["object", "null"],
+          "description": "null = not sandboxed.",
+          "additionalProperties": false,
+          "properties": {
+            "blocked_known": {"type": "boolean", "description": "When false, blocked sites are shown as unknown, never none."},
+            "blocked_count": {"$ref": "#/$defs/count_or_null", "description": "null = unknown: blocked_known is false, or the sandbox gives no counts (V-04, until E13)."},
+            "notice": {"enum": ["restart", "regrant", null]}
+          }
+        },
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+    "tool_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "decision_details": {"type": ["object", "null"], "description": "Permission rule text, the allow reason, a standing rule's tool to target."},
+        "blocked": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["host", "port", "count", "first_at", "late", "uncertain"],
+          "properties": {
+            "host": {"type": "string"}, "port": {"type": "integer"},
+            "count": {"type": ["integer", "null"], "minimum": 1, "description": "null = the sandbox did not report it (V-04: today's sandbox gives host names only, until E13)."},
+            "first_at": {"type": ["integer", "null"], "minimum": 0, "description": "Epoch milliseconds. null = not reported (V-04, until E13)."},
+            "late": {"type": ["boolean", "null"], "description": "null = not reported (V-04, until E13)."},
+            "uncertain": {"type": "boolean"}
+          }}}
+      }
+    },
+
+    "wait_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["for_call_id", "kind", "where", "attended"],
+      "properties": {
+        "for_call_id": {"$ref": "#/$defs/id_or_null", "description": "null = empty: the summary's Retry-or-trim question."},
+        "kind": {"enum": ["approval", "question", "plan", "team", "items", "connector", "tool_install", "directory"]},
+        "where": {"enum": ["session", "inbox"]},
+        "attended": {"type": "boolean"},
+        "outcome": {"enum": ["approved", "denied", "answered", "interrupted", null], "description": "null or absent = still waiting (live only)."},
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+    "wait_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"resolved_by": {"type": ["string", "null"], "description": "Who answered. null = not known."}}
+    },
+
+    "auto_approver_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "mode", "result"],
+      "properties": {
+        "reviewer": {"type": "object", "additionalProperties": false, "required": ["kind", "external"],
+                     "properties": {"kind": {"$ref": "#/$defs/reviewer_kind"},
+                                    "model": {"type": ["string", "null"], "description": "For session_model. null = a decision-model reviewer."},
+                                    "external": {"type": "boolean"}}},
+        "mode": {"enum": ["live", "shadow"]},
+        "result": {"enum": ["allow", "deny", "unsure", "could_not_run", "context_changed", null], "description": "null = still running (live only)."},
+        "score": {"type": ["number", "null"], "description": "Decision-model reviewers only. null = session-model reviewer."},
+        "cutoff": {"type": ["number", "null"]},
+        "usage_reported": {"type": "boolean"},
+        "breaker": {"type": "object", "additionalProperties": false, "required": ["denials_in_row", "tripped"],
+                    "properties": {"denials_in_row": {"$ref": "#/$defs/count"}, "tripped": {"type": "boolean"}}},
+        "matched_user": {"type": ["boolean", "null"], "description": "Shadow checks only. null = cannot be compared (no answer, the check failed, or it said unsure)."},
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+    "auto_approver_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {"type": ["string", "null"], "description": "The reviewer's own sentence. null = none given."},
+        "questions": {"type": ["array", "null"], "description": "A decision model's questions, each with its answer and score. null = not a decision-model check."}
+      }
+    },
+
+    "context_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_prompt_hash", "per_turn", "size_chars", "block_hash"],
+      "properties": {
+        "session_prompt_hash": {"$ref": "#/$defs/short_hash", "description": "null = the session has no system prompt."},
+        "session_start": {"type": "object", "additionalProperties": false, "description": "First turn only.",
+                          "properties": {"memories": {"type": "array"}, "memory_mode": {"enum": ["full", "index"]},
+                                         "rules": {"$ref": "#/$defs/count"}, "agents_md": {"$ref": "#/$defs/count"}}},
+        "per_turn": {"type": "object", "additionalProperties": false,
+                     "properties": {"mode_note": {"enum": ["plan", "discuss", null], "description": "null = no mode note."},
+                                    "folders": {"$ref": "#/$defs/count"}, "sandbox_note": {"type": "boolean"},
+                                    "skills_menu": {"$ref": "#/$defs/count"}, "skills_hash": {"$ref": "#/$defs/short_hash"}}},
+        "size_chars": {"$ref": "#/$defs/count"},
+        "block_hash": {"$ref": "#/$defs/short_hash"}
+      }
+    },
+    "context_content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"agents_md": {"type": "array", "items": {"type": "string"}}}
+    },
+
+    "summary_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "tokens_before", "model_step_id"],
+      "properties": {
+        "reason": {"enum": ["threshold", "overflow"]},
+        "tokens_before": {"$ref": "#/$defs/count_or_null", "description": "Context tokens of the last main call before. null = no main call reported usage before it."},
+        "tokens_after": {"$ref": "#/$defs/count_or_null", "description": "Filled by step_updated when the first main call after it ends. null or absent = not yet."},
+        "model_step_id": {"$ref": "#/$defs/id_or_null", "description": "The model call inside it. null = empty: a trim."},
+        "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
+      }
+    },
+
+    "notice_name": {"enum": ["interrupted", "error", "reviewer_paused", "step_limit", "truncated", "context_changed", "stamp_changed", "summary_failed", "recording_gap"]},
+    "notice_attrs": {
+      "description": "{} for every notice except two, which carry what changed, under names already defined elsewhere, with the new value and only the keys that changed. context_changed: the per-turn context block as it is now, under the context step's names (per_turn, size_chars, block_hash). stamp_changed: attended, reviewer or stamp, under the turn's names (stamp holding only the changed groups).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "per_turn": {"$ref": "#/$defs/context_attrs/properties/per_turn"},
+        "size_chars": {"$ref": "#/$defs/count"},
+        "block_hash": {"$ref": "#/$defs/short_hash"},
+        "attended": {"type": "boolean"},
+        "reviewer": {"$ref": "#/$defs/reviewer_settings"},
+        "stamp": {"$ref": "#/$defs/stamp"}
+      }
+    },
+    "no_content": {"type": "object", "additionalProperties": false, "maxProperties": 0},
+
+    "live_message": {
+      "description": "One live message on the session's WebSocket while a turn runs (technical design section 12): the recording events of the last 100 ms, unchanged.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "events"],
+      "properties": {
+        "type": {"const": "step"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/event"}}
+      }
+    },
+
+    "event": {
+      "description": "One recording event (technical design section 3.2). Common fields first; the rest depend on type.",
+      "type": "object",
+      "required": ["type", "v", "at_ms", "mono_ms", "session_id", "turn_id"],
+      "properties": {
+        "type": {"enum": ["turn_started", "turn_ended", "step_started", "step_updated", "step_ended"]},
+        "v": {"const": 1, "description": "The event contract version."},
+        "at_ms": {"$ref": "#/$defs/epoch_ms"},
+        "mono_ms": {"type": "integer", "description": "A monotonic clock in milliseconds, for durations. Only differences within one process mean anything."},
+        "session_id": {"$ref": "#/$defs/id_or_null", "description": "null = empty: a proxy call."},
+        "turn_id": {"$ref": "#/$defs/id_or_null", "description": "null = empty: no turn."}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "turn_started"}}},
+         "then": {"required": ["kind", "trigger", "first_message_id", "attrs", "stamp"],
+                  "properties": {"kind": {"$ref": "#/$defs/turn_kind"}, "trigger": {"$ref": "#/$defs/trigger"},
+                                 "first_message_id": {"$ref": "#/$defs/id_or_null"},
+                                 "attrs": {"type": "object", "additionalProperties": false, "required": ["approval_mode", "attended", "reviewer"],
+                                           "properties": {"approval_mode": {"type": "string"}, "attended": {"type": "boolean"},
+                                                          "reviewer": {"$ref": "#/$defs/reviewer_settings"}}},
+                                 "stamp": {"$ref": "#/$defs/stamp"}}}},
+        {"if": {"properties": {"type": {"const": "turn_ended"}}},
+         "then": {"required": ["status", "last_message_id"],
+                  "properties": {"status": {"$ref": "#/$defs/turn_status"}, "last_message_id": {"$ref": "#/$defs/id_or_null"}}}},
+        {"if": {"properties": {"type": {"const": "step_started"}}},
+         "then": {"required": ["step_id", "parent_step_id", "kind", "name", "call_id", "call_index", "shadow", "after_turn", "attrs", "content"],
+                  "properties": {"step_id": {"$ref": "#/$defs/id"}, "parent_step_id": {"$ref": "#/$defs/id_or_null"},
+                                 "kind": {"$ref": "#/$defs/step_kind"}, "name": {"type": "string", "minLength": 1},
+                                 "call_id": {"$ref": "#/$defs/id_or_null"}, "call_index": {"type": ["integer", "null"], "minimum": 0},
+                                 "shadow": {"type": "boolean"}, "after_turn": {"type": "boolean"},
+                                 "attrs": {"type": "object"}, "content": {"type": "object"}}}},
+        {"if": {"properties": {"type": {"const": "step_updated"}}},
+         "then": {"required": ["step_id"], "anyOf": [{"required": ["attrs"]}, {"required": ["content"]}],
+                  "properties": {"step_id": {"$ref": "#/$defs/id"}, "attrs": {"type": "object"}, "content": {"type": "object"}}}},
+        {"if": {"properties": {"type": {"const": "step_ended"}}},
+         "then": {"required": ["step_id", "status", "kind", "name", "parent_step_id", "call_id", "started_at"],
+                  "properties": {"step_id": {"$ref": "#/$defs/id"}, "status": {"$ref": "#/$defs/step_status"},
+                                 "message_id": {"$ref": "#/$defs/id_or_null"},
+                                 "attrs": {"type": "object"}, "content": {"type": "object"},
+                                 "error": {"anyOf": [{"$ref": "#/$defs/model_error"}, {"type": "null"}], "description": "null or absent = no error. Folded into attrs.error."},
+                                 "kind": {"$ref": "#/$defs/step_kind"}, "name": {"type": "string", "minLength": 1},
+                                 "parent_step_id": {"$ref": "#/$defs/id_or_null"}, "call_id": {"$ref": "#/$defs/id_or_null"},
+                                 "call_index": {"type": ["integer", "null"], "minimum": 0},
+                                 "shadow": {"type": "boolean"}, "after_turn": {"type": "boolean"},
+                                 "started_at": {"$ref": "#/$defs/epoch_ms"}}}}
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

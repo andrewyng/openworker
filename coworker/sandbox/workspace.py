@@ -287,7 +287,7 @@ class RunnerWorkspace(Workspace):
         # `_blocked` is for the recording's tool step (observability E13, V-04); the engine
         # takes it out of the result before the model sees it.
         blocked = [
-            {"site": entry, "count": n, "first_at": int(first[entry] * 1000),
+            {**_host_port(entry), "count": n, "first_at": int(first[entry] * 1000),
              "late": first[entry] < started - 0.5, "uncertain": True}
             for entry, n in counts.items()
         ]
@@ -337,6 +337,14 @@ _NOTE_SITES = 10  # more than this many blocked sites in one command are counted
 def _site_name(entry: str) -> str:
     """"github.com:443" reads as "github.com": the port only matters when it is not the web's."""
     return entry[:-4] if entry.endswith(":443") else entry
+
+
+def _host_port(entry: str) -> dict[str, Any]:
+    """A blocked-site entry ("host:port", or a bare host) as the recording's {host, port}."""
+    host, sep, port = str(entry).rpartition(":")
+    if sep and port.isdigit() and host:
+        return {"host": host.strip("[]"), "port": int(port)}
+    return {"host": str(entry), "port": 443}
 
 
 def network_note_text(counts: dict[str, int], *, can_ask: bool, late: bool = False) -> str:

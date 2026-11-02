@@ -60,8 +60,9 @@ class TurnRecording:
     # -- sending ------------------------------------------------------------------------------
     def _base(self, typ: str, turn_id: Optional[str], session_id: str) -> dict[str, Any]:
         at, mono = now_ms()
+        # A step with no session (a proxy call) or no turn records null, as the format says.
         return {"type": typ, "v": EVENT_V, "at_ms": at, "mono_ms": mono,
-                "session_id": session_id, "turn_id": turn_id or ""}
+                "session_id": session_id or None, "turn_id": turn_id or None}
 
     def _send(self, ev: dict[str, Any]) -> None:
         if self._held is not None and ev["type"] != "turn_started" and ev.get("turn_id") == self.turn_id:
