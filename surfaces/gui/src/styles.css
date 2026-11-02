@@ -965,15 +965,16 @@ button.btn.danger { color: var(--accent); }
 .task-card:hover .task-card-act { opacity: 1; color: var(--accent); }
 .task-card.gated .task-card-act { opacity: 1; color: var(--accent); }
 
-/* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden */
-.topbar-artifacts-btn {
+/* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden; the Steps
+   button (UX-059 OB-1) looks the same */
+.topbar-artifacts-btn, .topbar-steps-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 10px; margin-right: 6px;
   border: 1px solid var(--line-strong); border-radius: 8px;
   background: var(--panel); color: var(--muted); cursor: pointer;
   font: inherit; font-size: var(--fs-ui);
 }
-.topbar-artifacts-btn:hover { color: var(--ink); border-color: var(--accent); }
+.topbar-artifacts-btn:hover, .topbar-steps-btn:hover { color: var(--ink); border-color: var(--accent); }
 .topbar-artifacts-count {
   /* Neutral count (owner call 2026-08-21): a passive tally is not a primary action,
      an active state, or a live signal — the accent budget says no cobalt here. */

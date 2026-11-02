@@ -549,6 +549,10 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
             self.calls = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
+            # The fire-and-forget auto-title call runs concurrently with the turn; it must
+            # not take the one scripted outage meant for the chat call.
+            if messages and "title chat sessions" in str(messages[0].get("content", "")):
+                return _text("A Title")
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("outage")

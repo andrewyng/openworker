@@ -2248,7 +2248,7 @@ export function App() {
             {/* UX-059 OB-1: every step of each turn, and where the time and tokens went. */}
             {surface === "session" && agent !== "chat" && (
               <button
-                className={"topbar-artifacts-btn" + (stepsOpen ? " active" : "")}
+                className={"topbar-steps-btn" + (stepsOpen ? " active" : "")}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => {
                   setStepsOpen(!stepsOpen);
