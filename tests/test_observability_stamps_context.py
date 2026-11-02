@@ -186,3 +186,28 @@ def test_network_note_keeps_the_counts(tmp_path, monkeypatch):
     assert note["blocked_sites"] == ["semgrep.dev:443"]
     assert note["_blocked"] == [{"host": "semgrep.dev", "port": 443, "count": 2, "first_at": 100000,
                                  "late": False, "uncertain": True}]
+
+
+def test_the_skills_menu_is_the_one_offered_this_turn(tmp_path):
+    # Round-2 in-app check: a skill disabled mid-session left the menu, but the context step
+    # still counted every skill on disk. The step counts what the turn's block offered.
+    from coworker.agent import build_engine
+    from coworker.agents.chat import chat_agent
+
+    skills = tmp_path / "skills"
+    for name in ("alpha", "beta"):
+        (skills / name).mkdir(parents=True)
+        (skills / name / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: The {name} skill.\n---\nDo {name}.\n", encoding="utf-8")
+    offered = {"alpha", "beta"}
+    (tmp_path / "w").mkdir()
+    engine = build_engine(agent=chat_agent(), model="openai:model-a", workspace=tmp_path / "w",
+                          provider=_Scripted([AssistantTurn(text="a"), AssistantTurn(text="b")]),
+                          extra_skill_dirs=[skills], skill_filter=lambda: set(offered))
+    engine.recorder = rec = Recorder()
+    _run(engine, "one")
+    offered.discard("beta")  # turned off in Settings between the two messages
+    _run(engine, "two")
+    menus = [s["attrs"]["per_turn"] for s in rec.as_dict()["steps"] if s["kind"] == "context"]
+    assert [m["skills_menu"] for m in menus] == [2, 1]
+    assert menus[0]["skills_hash"] != menus[1]["skills_hash"]

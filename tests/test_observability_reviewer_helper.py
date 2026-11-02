@@ -242,4 +242,30 @@ def test_a_decision_reviewer_check_has_a_model_step_with_usage(tmp_path):
     assert inner["attrs"]["provider_meta"][0]["wire"] == "typesafe_jev"
     assert inner["attrs"]["provider_facts"]["provider_request_id"] == "req_jev"
     assert check["attrs"]["usage_reported"] is True
+    # Each question's answer (round-2 in-app check: these were not recorded).
+    questions = {q["name"]: q for q in check["content"]["questions"]}
+    assert questions["requested"] == {"name": "requested", "answer": "yes", "score": 0.97}
+    assert all(set(q) == {"name", "answer", "score"} for q in questions.values())
+    assert check["attrs"].get("score") is None and check["attrs"].get("cutoff") is None
     assert "test-key-not-real" not in json.dumps(steps)
+
+
+def test_a_session_grant_set_aside_in_auto_approve_is_in_the_path(tmp_path):
+    # Technical design §8.3 worked example (S1-05, call C): a command allowed for the
+    # session is still judged in Auto-approve; the path says the grant was set aside.
+    engine, rec = _engine(tmp_path, [_call("c1", "run_shell", {"command": "make"}), AssistantTurn(text="ok")],
+                          [json.dumps({"verdict": "unsure", "reason": "r"})])
+    engine.permissions.session_allow_commands.add("make")
+    _run(engine)
+    [tool] = [s for s in rec.as_dict()["steps"] if s["kind"] == "tool"]
+    stages = [(p["stage"], p["outcome"]) for p in tool["attrs"]["decision"]["path"]]
+    assert stages[:3] == [("permission", "needs_user"), ("grant", "suspended_in_auto_approve"), ("auto_approver", "unsure")]
+    assert tool["attrs"]["decision"]["origin"] == "user"
+
+
+def test_no_grant_stage_without_a_matching_grant(tmp_path):
+    engine, rec = _engine(tmp_path, [_call("c1", "run_shell", {"command": "make"}), AssistantTurn(text="ok")],
+                          [json.dumps({"verdict": "allow", "reason": "r"})])
+    _run(engine)
+    [tool] = [s for s in rec.as_dict()["steps"] if s["kind"] == "tool"]
+    assert "grant" not in [p["stage"] for p in tool["attrs"]["decision"]["path"]]

@@ -536,6 +536,7 @@ def _build_local_app(state: Path):
     os.environ.pop("COWORKER_API_TOKEN", None)
     cfg = load_config()
     manager = SessionManager(data_dir=state, model=cfg.model, mode=Mode(cfg.mode))
+    manager.recordings_store.close_open_turns()  # the engine lock is held (observability TD-12)
     return create_app(manager)
 
 

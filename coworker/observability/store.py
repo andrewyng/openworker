@@ -265,6 +265,55 @@ class RecordingStore:
             ).fetchone()
         return None if row is None else zlib.decompress(row["data"])
 
+    # -- found open at start (TD-12) ------------------------------------------------------------
+    def close_open_turns(self) -> int:
+        """Close the turns and steps a previous run of the app left open (it crashed, was
+        killed or restarted mid-turn): status `unknown` with no duration, the turn's steps
+        numbered in canonical order, and a `recording_gap` notice at the turn's last known
+        moment. Only the process that owns the data folder may call this, at start: a
+        running turn of another process would look the same. Returns the turns closed."""
+        from .ids import new_ulid
+        from .recorder import KIND_ORDER, fill_unended
+
+        with self._lock:
+            self.flush()
+            open_turns = self._conn.execute(
+                "SELECT turn_id, session_id, started_at FROM turns WHERE status = 'running' OR status IS NULL"
+            ).fetchall()
+            if not open_turns:
+                return 0
+            with self._conn:
+                for t in open_turns:
+                    tid = t["turn_id"]
+                    self._conn.execute(
+                        "UPDATE turns SET status = 'unknown', duration_ms = NULL WHERE turn_id = ?", (tid,))
+                    opened = self._conn.execute(
+                        "SELECT step_id, kind, attrs FROM steps "
+                        "WHERE turn_id = ? AND (status = 'running' OR status IS NULL)", (tid,)).fetchall()
+                    self._conn.executemany(
+                        "UPDATE steps SET status = 'unknown', duration_ms = NULL, attrs = ? WHERE step_id = ?",
+                        [(json.dumps(fill_unended(o["kind"], json.loads(o["attrs"] or "{}"))), o["step_id"])
+                         for o in opened])
+                    steps = self._conn.execute(
+                        "SELECT step_id, kind, name, started_at, duration_ms, call_index, call_id, shadow "
+                        "FROM steps WHERE turn_id = ?", (tid,)).fetchall()
+                    # The last moment known: a step's end, or the start of one still open.
+                    last = max([t["started_at"] or 0] + [s["started_at"] + (s["duration_ms"] or 0) for s in steps
+                                                          if s["started_at"] is not None])
+                    gap = {"step_id": new_ulid(), "kind": "notice", "name": "recording_gap", "started_at": last,
+                           "duration_ms": 0, "call_index": None, "call_id": None, "shadow": 0}
+                    self._conn.execute(
+                        "INSERT INTO steps (step_id, turn_id, session_id, kind, name, started_at, duration_ms, "
+                        "status, shadow, after_turn, attrs, content) VALUES (?, ?, ?, 'notice', 'recording_gap', ?, 0, "
+                        "'ok', 0, 0, '{}', '{}')", (gap["step_id"], tid, t["session_id"], last))
+                    ordered = sorted([dict(s) for s in steps] + [gap], key=lambda s: (
+                        s["started_at"] or 0, 0 if s["duration_ms"] == 0 else 1, KIND_ORDER.get(s["kind"], 9),
+                        s["call_index"] or 0, s["name"] or "", s["call_id"] or "", bool(s["shadow"])))
+                    self._conn.executemany("UPDATE steps SET seq = ? WHERE step_id = ?",
+                                           [(i, s["step_id"]) for i, s in enumerate(ordered, 1)])
+            log.info("recordings: closed %d turn(s) left open by an earlier run", len(open_turns))
+            return len(open_turns)
+
     # -- deleting -----------------------------------------------------------------------------
     def delete_session(self, session_id: str) -> None:
         """The session-delete cascade (§11): its turns, steps and the pieces only they used."""

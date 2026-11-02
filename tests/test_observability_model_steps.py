@@ -286,3 +286,20 @@ def test_a_streamed_model_step_is_closed_before_the_engine_sees_the_reply():
             [step] = [s for s in rec.as_dict()["steps"] if s["kind"] == "model"]
             assert step["status"] == "ok" and step["attrs"]["finish_reason"] == "stop"
             assert step["attrs"]["ttft_ms"] is not None
+
+
+def test_the_context_window_is_the_one_the_engine_compacts_against(monkeypatch):
+    # Round-2 in-app check: an Ollama model is not in the catalogue, so its steps had no
+    # window and the Usage tab hid "Context now". The step records the window the engine
+    # uses: the catalogue, else the user's saved size, else Ollama's num_ctx.
+    from coworker import model_config
+    from coworker.observability.provider_view import _context_window
+    from coworker.providers import ollama_context
+
+    monkeypatch.setattr("coworker.providers.matrix.model_context_windows", lambda: {"openai:model-a": 400_000})
+    monkeypatch.setattr(model_config, "context_size_for", lambda m: 64_000 if m == "openrouter:model-b" else None)
+    monkeypatch.setitem(ollama_context._resolved, "model-c", 40_960)
+    assert _context_window("openai:model-a") == 400_000
+    assert _context_window("openrouter:model-b") == 64_000
+    assert _context_window("ollama:model-c") == 40_960
+    assert _context_window("together:model-d") is None

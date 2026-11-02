@@ -283,3 +283,63 @@ def test_every_store_shares_one_writer_thread(tmp_path):
     finally:
         for s in stores:
             s.close()
+
+
+def test_turns_left_open_by_a_crash_are_closed_as_unknown_at_start(tmp_path):
+    # TD-12 (round-2 in-app check: a restart while an approval card waited left the turn
+    # "running" for good). At start, an open turn and its open steps become `unknown` with
+    # no duration, every step gets its place, and a recording_gap notice marks the gap.
+    import jsonschema, json
+    from pathlib import Path
+    from coworker.observability import calculator
+
+    path = tmp_path / "recordings.db"
+    s1 = RecordingStore(path, background=False)
+    rec = Recorder(store=s1)
+    _turn(rec, "t1", at=1000, mono=0)
+    _model_step(rec, "m1", "t1", at=1010, mono=10, end=60)  # 50 ms on the step clock
+    rec.emit({"v": 1, "type": "step_started", "session_id": "sess_A", "turn_id": "t1", "step_id": "w1",
+              "at_ms": 1070, "mono_ms": 70, "kind": "wait", "name": "approval", "parent_step_id": None,
+              "call_id": "c1", "call_index": 0, "shadow": False, "after_turn": False,
+              "attrs": {"for_call_id": "c1", "kind": "approval", "where": "session", "attended": True}, "content": {}})
+    s1.flush()
+    s1.close()  # the app is killed here
+
+    s2 = RecordingStore(path, background=False)
+    try:
+        assert s2.close_open_turns() == 1
+        assert s2.close_open_turns() == 0  # nothing left open
+        r = s2.load_recording("sess_A")
+        [turn] = r["turns"]
+        assert (turn["status"], turn["duration_ms"]) == ("unknown", None)
+        by = {s["name"]: s for s in r["steps"]}
+        assert (by["approval"]["status"], by["approval"]["duration_ms"]) == ("unknown", None)
+        assert by["model"]["status"] == "ok"
+        assert by["recording_gap"]["kind"] == "notice" and by["recording_gap"]["started_at"] == 1070  # the open wait's start
+        # zero-length first at the same moment (recording-format §4)
+        assert [s["name"] for s in r["steps"]] == ["model", "recording_gap", "approval"]
+        assert [s["seq"] for s in r["steps"]] == [1, 2, 3]
+        schema = json.loads((Path(__file__).parent / "corpora/observability/recording-format.schema.json").read_text("utf-8"))
+        errors = jsonschema.validators.validator_for(schema)(schema).iter_errors(r)
+        # The helper's model step is deliberately minimal; the turn, the closed wait and the
+        # notice must fit the schema exactly.
+        model_at = [s["name"] for s in r["steps"]].index("model")
+        assert not [e for e in errors if list(e.absolute_path)[:2] != ["steps", model_at]]
+        b = calculator.buckets(r, turn)  # the unknown wait is not counted; the turn ran until it started
+        assert (b["total"], b["model"], b["waiting"]) == (70, 50, 0)
+    finally:
+        s2.close()
+
+
+def test_a_running_turn_is_not_closed_without_being_asked(tmp_path):
+    # Only the process that owns the folder closes open turns; opening the store never does.
+    path = tmp_path / "recordings.db"
+    s1 = RecordingStore(path, background=False)
+    _turn(Recorder(store=s1), "t1")
+    s1.flush()
+    s2 = RecordingStore(path, background=False)
+    try:
+        assert s2.load_recording("sess_A")["turns"][0]["status"] == "running"
+    finally:
+        s1.close()
+        s2.close()

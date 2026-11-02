@@ -134,9 +134,17 @@ def buckets(recording: dict[str, Any], turn: dict[str, Any], now: Optional[int] 
     to the first bucket in the order waiting, tools, model, auto-approver, summary; Other is
     the rest, shown when it is 1% of the total or more (M-R5)."""
     start = turn["started_at"]
-    end_of_turn = (start + turn["duration_ms"] if turn.get("duration_ms") is not None
-                   else (now if now is not None else start))
-    steps = [s for s in recording.get("steps") or [] if s.get("turn_id") == turn["turn_id"]]
+    # Steps found open when the app started have no time (status unknown): not counted (TD-12).
+    steps = [s for s in recording.get("steps") or []
+             if s.get("turn_id") == turn["turn_id"] and s.get("status") != "unknown"]
+    if turn.get("duration_ms") is not None:
+        end_of_turn = start + turn["duration_ms"]
+    elif turn.get("status") == "unknown":
+        # A turn found open at start: it ran at least until its last known step end.
+        end_of_turn = max([start] + [s["started_at"] + s["duration_ms"] for s in steps
+                                     if s.get("duration_ms") is not None])
+    else:
+        end_of_turn = now if now is not None else start
     # A step still open is counted up to the turn's end (or now, for a running turn; TD-12).
     spans = [(s, s["started_at"], s["started_at"] + s["duration_ms"] if s.get("duration_ms") is not None
               else end_of_turn) for s in steps]

@@ -195,10 +195,22 @@ def _provider_title(provider: str) -> Optional[str]:
 
 
 def _context_window(model: str) -> Optional[int]:
+    """The window the engine compacts against (`TurnEngine._compaction_config`): the
+    catalogue, else the user's saved size, else an Ollama model's `num_ctx`. A local
+    server's window is left out: finding it may mean a request to that server."""
     try:
         from ..providers.matrix import model_context_windows
 
-        return model_context_windows().get(model)
+        window = model_context_windows().get(model)
+        if not window:
+            from .. import model_config
+
+            window = model_config.context_size_for(model)
+        if not window:
+            from ..providers.ollama_context import context_window_for
+
+            window = context_window_for(model)
+        return int(window) if window else None
     except Exception:  # noqa: BLE001
         return None
 

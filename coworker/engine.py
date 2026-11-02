@@ -742,7 +742,11 @@ class TurnEngine:
             return
         block = self._last_context_block or ""
         block_hash = _short_hash(block) if block else None
-        skills = sorted(getattr(getattr(self, "skill_loader", None), "_skills", None) or {})
+        # The menu this turn's block offered (set by the agent's context provider, which
+        # leaves out skills disabled for the session); else every skill the loader found.
+        offered = getattr(self, "skills_offered", None)
+        skills = sorted(offered if offered is not None
+                        else getattr(getattr(self, "skill_loader", None), "_skills", None) or {})
         per_turn = {
             "mode_note": self.permissions.mode.value if self.permissions.mode in (Mode.PLAN, Mode.DISCUSS) else None,
             "folders": len(getattr(self.permissions, "roots", None) or []),
@@ -786,8 +790,19 @@ class TurnEngine:
                 path = self._decisions.pop(call_id, None)
                 if path is not None and obs.step_for_call(call_id) is None:
                     attrs["decision"] = path.finish(ran=event.data.get("status") == "ok")
+                elif path is None:
+                    # An interactive tool (question, plan, folder…) skips the permission
+                    # flow: no stage decided it (recording-format: origin null).
+                    attrs["decision"] = {"path": [], "origin": None}
+                data = event.data
+                answered_by_stop = path is not None and (path.stage("resolved") or {}).get("outcome") == "interrupted"
+                if (data.get("status") == "denied" and self._cancel.is_set()
+                        and (data.get("name") in _WAIT_KINDS or answered_by_stop)):
+                    # A Stop while a card waited (approval, question, plan, folder) is not a
+                    # refusal: the handler answers "denied", the step says interrupted (§5.3).
+                    data = {**data, "status": "interrupted"}
                 obs.tool_finished(
-                    event.data, message_id=mid, call_index=self._call_index.get(call_id),
+                    data, message_id=mid, call_index=self._call_index.get(call_id),
                     attrs=attrs,
                 )
             step_id = obs.step_for_call(call_id)
@@ -2093,8 +2108,18 @@ class TurnEngine:
                 attrs["breaker"] = {"denials_in_row": denials, "tripped": denials >= _REVIEWER_TRIP}
                 self._review_steps[tool_call.id] = step_id
             reason = getattr(verdict, "reason", "") or ""
-            self._obs.end_step(step_id, status="error" if failed else "ok", attrs=attrs,
-                               content={"reason": reason} if reason else {})
+            content: dict[str, Any] = {"reason": reason} if reason else {}
+            # A decision model's answers: each question's probability of "yes" (§5.5, §5.9).
+            # There is no single score or cut-off (several questions, each with its own
+            # threshold), so those stay null.
+            probabilities = getattr(verdict, "probabilities", None)
+            if isinstance(probabilities, dict) and probabilities:
+                content["questions"] = [
+                    {"name": name, "answer": "yes" if float(p) >= 0.5 else "no", "score": round(float(p), 4)}
+                    for name, p in probabilities.items()
+                    if not str(name).startswith("_") and isinstance(p, (int, float))
+                ]
+            self._obs.end_step(step_id, status="error" if failed else "ok", attrs=attrs, content=content)
         return verdict
 
     def _review_context_changed(self, call_id: str) -> None:
@@ -2316,6 +2341,13 @@ class TurnEngine:
             allowed=allowed, needs_user=decision.needs_user, human_only=decision.human_only,
             reason=reason, tier=decision.tier if allowed else None,
         )
+        if not allowed and decision.needs_user:
+            try:
+                # A session grant covered it, but Auto-Approve hands it to the reviewer (§8.3).
+                if self.permissions.session_grant_suspended(tool_call.name, tool_call.arguments, metadata):
+                    path.add("grant", "suspended_in_auto_approve")
+            except Exception:  # noqa: BLE001 - a recording fact never breaks a call
+                pass
 
         # OPE-233: an Auto-Approve gate tier let this call run without the reviewer —
         # recorded, never invisible (transcript chip + audit row), like every other
@@ -2802,8 +2834,12 @@ class TurnEngine:
         blocked = result.pop("_blocked", None) if isinstance(result, dict) else None
         if step_id is not None:
             attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result)
+            step_status = status
+            if self._cancel.is_set() and isinstance(result, dict) and result.get("error"):
+                # Stop killed it (a shell command answers "interrupted by user"): §7.4.
+                step_status = "interrupted"
             self._obs.end_step(
-                step_id, status=status, attrs=attrs,
+                step_id, status=step_status, attrs=attrs,
                 content={"blocked": blocked} if blocked else {},
                 wait_for_tool_message=True,
             )

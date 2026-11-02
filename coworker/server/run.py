@@ -99,13 +99,18 @@ def _watch_parent_windows(parent: int) -> None:
     threading.Thread(target=watch, daemon=True).start()
 
 
-def build_app(workspace: str | None, model: str, mode: str):
+def build_app(workspace: str | None, model: str, mode: str, *, owns_state: bool = False):
     manager = SessionManager(
         workspace=Path(workspace).expanduser().resolve() if workspace else None,
         data_dir=state_dir(),
         model=model,
         mode=Mode(mode),
     )
+    if owns_state:
+        # Turns an earlier run left open (crash, restart mid-turn) are closed as unknown
+        # (observability TD-12). Only with the engine lock: a second server on the same
+        # folder may have turns running right now.
+        manager.recordings_store.close_open_turns()
     return create_app(manager)
 
 
@@ -222,7 +227,7 @@ def main(argv=None) -> None:
 
         _exit_when_orphaned()
         _warn_if_state_shared()
-        app = build_app(args.cwd, args.model, args.mode)
+        app = build_app(args.cwd, args.model, args.mode, owns_state=_ENGINE_LOCK is not None)
         uvicorn.run(
             app, host=args.host, port=args.port, ws_max_size=_WS_MAX_FRAME_BYTES
         )

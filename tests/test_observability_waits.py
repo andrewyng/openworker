@@ -208,3 +208,75 @@ def test_no_summary_step_when_nothing_was_summarised(tmp_path, monkeypatch):
 
     assert asyncio.run(go()) is None
     assert _steps(rec, "summary") == []
+
+
+def test_a_stop_while_a_plan_card_waits_is_interrupted_not_refused(tmp_path):
+    # Round-2 in-app check: the plan handler answers "denied" when the turn is stopped, so
+    # the propose_plan step read as refused. A Stop is recorded as interrupted.
+    engine, rec = _engine(tmp_path, [_call("p1", "propose_plan", {"plan": "do it"}), AssistantTurn(text="x")],
+                          mode=Mode.PLAN)
+
+    async def never(args, call_id):
+        await asyncio.sleep(30)
+
+    engine.plan_approver = never
+
+    async def go():
+        async def stop_soon():
+            await asyncio.sleep(0.3)
+            engine.request_interrupt()
+        task = asyncio.create_task(stop_soon())
+        [ev async for ev in engine.run("plan", trigger="user")]
+        await task
+
+    asyncio.run(go())
+    [wait] = _steps(rec, "wait")
+    [plan] = [s for s in _steps(rec, "tool") if s["name"] == "propose_plan"]
+    assert wait["attrs"]["outcome"] == "interrupted"
+    assert plan["status"] == "interrupted"
+
+
+def test_a_stop_while_an_approval_card_waits_is_interrupted_not_refused(tmp_path):
+    # Round-2 in-app check (F3): the wait and the path said interrupted, the tool step denied.
+    engine, rec = _engine(tmp_path, [_call("c1", "run_shell", {"command": "make"}), AssistantTurn(text="x")])
+
+    async def never(request):
+        await asyncio.sleep(30)
+
+    engine.approver = never
+
+    async def go():
+        async def stop_soon():
+            await asyncio.sleep(0.3)
+            engine.request_interrupt()
+        task = asyncio.create_task(stop_soon())
+        [ev async for ev in engine.run("go", trigger="user")]
+        await task
+
+    asyncio.run(go())
+    [tool] = _steps(rec, "tool")
+    assert tool["status"] == "interrupted"
+    assert tool["attrs"]["decision"]["path"][-1] == {"stage": "resolved", "outcome": "interrupted"}
+
+
+def test_a_tool_killed_by_stop_is_interrupted(tmp_path):
+    # Round-2 in-app check (F2): a shell command killed by Stop answers "interrupted by
+    # user" and the step said ok.
+    engine, rec = _engine(tmp_path, [_call("c1", "run_shell", {"command": "sleep 40"}), AssistantTurn(text="x")],
+                          mode=Mode.BYPASS_APPROVALS)
+
+    def run_shell(command: str) -> dict:
+        """Run a command.
+
+        Args:
+            command: the command line
+        """
+        engine.request_interrupt()  # the Stop arrives while it runs; it is killed
+        return {"command": command, "exit_code": None, "error": "interrupted by user"}
+
+    registry = ToolRegistry()
+    registry.register(run_shell, metadata=_Meta())
+    engine.registry = registry
+    _run(engine)
+    [tool] = _steps(rec, "tool")
+    assert tool["status"] == "interrupted"

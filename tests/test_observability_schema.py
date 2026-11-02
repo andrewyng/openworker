@@ -118,3 +118,51 @@ def test_context_notices_stamps_and_sandbox_facts(tmp_path):
     engine, rec = stamps._engine(tmp_path, [RuntimeError("boom")])
     stamps._run(engine)
     _check(rec.as_dict())
+
+
+def test_interactive_tools_and_steps_closed_by_a_stop_fit_the_schema(tmp_path):
+    # Round-2 in-app check: interactive tools (plan, question, folder) had no `decision`, and
+    # a step closed at its turn's end kept none of its kind's end fields.
+    import asyncio as _asyncio
+    from coworker.permissions import Mode
+
+    engine, rec = waits._engine(tmp_path, [waits._call("p1", "propose_plan", {"plan": "do it"}),
+                                           AssistantTurn(text="x")], mode=Mode.PLAN)
+
+    async def never(*a):
+        await _asyncio.sleep(30)
+
+    engine.plan_approver = never
+
+    async def go():
+        async def stop_soon():
+            await _asyncio.sleep(0.3)
+            engine.request_interrupt()
+        task = _asyncio.create_task(stop_soon())
+        [ev async for ev in engine.run("plan", trigger="user")]
+        await task
+
+    _asyncio.run(go())
+    [plan] = [s for s in rec.as_dict()["steps"] if s["name"] == "propose_plan"]
+    assert plan["attrs"]["decision"] == {"path": [], "origin": None}
+    _check(rec.as_dict())
+
+
+def test_a_model_step_still_open_at_the_turns_end_fits_the_schema():
+    from coworker.observability import Recorder
+
+    rec = Recorder()
+    base = {"v": 1, "session_id": "s", "turn_id": "t"}
+    rec.emit({**base, "type": "turn_started", "at_ms": 1000, "mono_ms": 0, "kind": "run", "trigger": "user",
+              "first_message_id": "m1", "stamp": {},
+              "attrs": {"approval_mode": "interactive", "attended": True,
+                        "reviewer": {"active": False, "shadow": False, "kind": None, "model": None}}})
+    rec.emit({**base, "type": "step_started", "step_id": "x", "at_ms": 1010, "mono_ms": 10, "kind": "model",
+              "name": "model", "parent_step_id": None, "call_id": None, "call_index": None, "shadow": False,
+              "after_turn": False, "content": {},
+              "attrs": {"purpose": "title", "provider": "openai", "provider_title": "OpenAI", "model": "openai:model-a",
+                        "stream": False, "context_window": None, "tools_offered": 0, "tools_hash": None}})
+    rec.emit({**base, "type": "turn_ended", "at_ms": 1100, "mono_ms": 100, "status": "completed", "last_message_id": "m2"})
+    [step] = rec.as_dict()["steps"]
+    assert step["status"] == "interrupted" and step["attrs"]["usage"] == {"reported": False}
+    _check(rec.as_dict())

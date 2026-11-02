@@ -124,6 +124,24 @@ class Step:
         return {k: copy.deepcopy(getattr(self, k)) for k in STEP_FIELDS}
 
 
+def fill_unended(kind: str, attrs: dict[str, Any]) -> dict[str, Any]:
+    """A step closed without its own end (at its turn's end, or found open at start, §7.4)
+    still has every field its kind requires: what only the end would have told is "not
+    known" (recording-format null rules)."""
+    if kind == "model":
+        attrs.setdefault("finish_reason", None)
+        attrs.setdefault("ttft_ms", None)
+        attrs.setdefault("usage", {"reported": False})
+    elif kind == "tool":
+        attrs.setdefault("decision", {"path": [], "origin": None})
+    elif kind == "auto_approver":
+        attrs.setdefault("result", None)
+    elif kind == "summary":
+        for key in ("tokens_before", "model_step_id"):
+            attrs.setdefault(key, None)
+    return attrs
+
+
 def _merge_top(into: dict[str, Any], new: Optional[dict[str, Any]]) -> None:
     """step_updated / step_ended merge: each top-level key replaces the same key."""
     for k, v in (new or {}).items():
@@ -264,6 +282,7 @@ class Recorder:
                     and not s.after_turn):
                 s.duration_ms = max(0, turn.ended_at - s.started_at)
                 s.status, s.closed_by_turn = "interrupted", True
+                fill_unended(s.kind, s.attrs)
         self._assign_seq()
         self._write_turn(turn)
         for s in self.steps.values():

@@ -705,6 +705,10 @@ def build_engine(
         skills_ctx = skill_catalog_text(skill_loader, allowed=allowed)
         if skills_ctx:
             parts.append(skills_ctx)
+        if eng is not None:
+            # The menu the model is offered this turn, for the recording (observability §5.6).
+            eng.skills_offered = [c["name"] for c in skill_loader.catalog()
+                                  if allowed is None or c["name"] in allowed]
         # Disable countermand (§3): instructions already loaded into this conversation keep
         # steering the model even after the skill is turned off/deleted — history can't be
         # un-read. So a loaded-but-no-longer-available skill gets an explicit stop note,
