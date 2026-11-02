@@ -20,6 +20,7 @@ Rust engine too.
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 import threading
 import time
@@ -129,6 +130,11 @@ def _merge_top(into: dict[str, Any], new: Optional[dict[str, Any]]) -> None:
         into[k] = copy.deepcopy(v)
 
 
+def short_hash(text: str) -> str:
+    """First 6 hex characters of the SHA-256: the short codes of §5.2 and §9.4."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:6]
+
+
 def now_ms() -> tuple[int, int]:
     """(at_ms, mono_ms) for an event sent now.
 
@@ -160,6 +166,23 @@ class Recorder:
         self._lock = threading.RLock()
         self._turn_count: dict[str, int] = {}  # session_id -> turns seen, for `seq`
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
+        self._pieces: dict[str, bytes] = {}  # exchange pieces when there is no store
+
+    # -- exchange pieces (TD-17) ------------------------------------------------------------
+    def put_piece(self, data: bytes) -> str:
+        """Store one exchange piece once, by its SHA-256: in the store, or in memory."""
+        if self.store is not None:
+            return self.store.put_piece(data)
+        key = hashlib.sha256(data).hexdigest()
+        with self._lock:
+            self._pieces.setdefault(key, data)
+        return key
+
+    def get_piece(self, key: str) -> Optional[bytes]:
+        if self.store is not None:
+            return self.store.get_piece(key)
+        with self._lock:
+            return self._pieces.get(key)
 
     # -- listeners ---------------------------------------------------------------------------
     def add_listener(self, fn: Callable[[dict[str, Any]], None]) -> Callable[[], None]:

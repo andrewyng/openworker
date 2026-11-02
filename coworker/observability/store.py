@@ -134,7 +134,8 @@ def _step_row(s: dict[str, Any]) -> tuple:
     meta = attrs.pop("provider_meta", None)
     usage = attrs.get("usage") if isinstance(attrs.get("usage"), dict) else None
     if s.get("kind") == "model":
-        reported: Optional[int] = int(usage is not None)
+        # A call the provider gave no counts for is `usage: {"reported": false}` (§5.2).
+        reported: Optional[int] = int(bool(usage) and usage.get("reported", True) is not False)
     else:
         reported = _bool(attrs.get("usage_reported"))
     facts = attrs.get("provider_facts") or {}

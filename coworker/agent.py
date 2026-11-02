@@ -36,6 +36,7 @@ from .permissions import Mode, PermissionEngine
 from .project import load_agents_md
 from . import session_facts
 from .roots import RootDir, normalize_roots, render_context
+from .observability.provider_view import tag as tag_provider
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
@@ -876,7 +877,7 @@ def build_engine(
         )
         engine.reviewer = make_auto_reviewer(
             choice,
-            provider=provider,
+            provider=tag_provider(engine.provider, purpose="auto_approver"),
             model=model,
             known_world=engine.session_facts.world.render() + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(engine.runtime_facts),
         )

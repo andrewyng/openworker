@@ -44,6 +44,7 @@ from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..observability import Recorder, RecordingStore
+from ..observability.provider_view import RecordingProvider, tag as tag_provider
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -430,6 +431,10 @@ class SessionManager:
             self.provider = ProviderRouter(
                 self.secrets, default_provider="openai", on_use=self._note_provider_use
             )
+        # Observability (E2): every model call goes through one recording wrapper; each
+        # caller tags its own view (engine, summary, reviewer, title, proxy).
+        if not isinstance(self.provider, RecordingProvider):
+            self.provider = RecordingProvider(self.provider, recorder=self.recorder)
         self.mcp = MCPManager(secrets=self.secrets)
         # OAuth MCP servers with a sign-in in flight / their last connect error —
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
@@ -1299,7 +1304,7 @@ class SessionManager:
         elif engine.reviewer is None or getattr(engine, "reviewer_choice", "session") != choice:
             from ..decision_reviewer import make_auto_reviewer
             engine.reviewer = make_auto_reviewer(
-                choice, provider=engine.provider, model=engine.model,
+                choice, provider=tag_provider(engine.provider, purpose="auto_approver"), model=engine.model,
                 known_world=(engine.session_facts.world.render() if engine.session_facts else "") + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(getattr(engine, "runtime_facts", {})),
             )
             engine.reviewer_choice = choice
@@ -8192,8 +8197,11 @@ class SessionManager:
         self._autotitle_inflight.add(session_id)
         # Retain the task: the loop holds only a weak ref, and a GC'd task would both
         # kill the title mid-flight and strand the inflight guard.
+        # The title call is recorded on the turn running now, or the one that just ended
+        # (observability §3.3): captured here, not when the call starts.
+        turn_id = getattr(getattr(engine, "_obs", None), "turn_id", None)
         task = loop.create_task(
-            self._generate_autotitle(session_id, engine, openers, assistant)
+            self._generate_autotitle(session_id, engine, openers, assistant, turn_id=turn_id)
         )
         self._autotitle_tasks.add(task)
         task.add_done_callback(self._autotitle_tasks.discard)
@@ -8204,6 +8212,7 @@ class SessionManager:
         engine: TurnEngine,
         openers: list[str],
         assistant: str = "",
+        turn_id: Optional[str] = None,
     ) -> None:
         """One cheap non-streaming completion on the session's own provider/model. Every
         failure (provider error, empty, absurdly long) is swallowed — the title_from
@@ -8211,7 +8220,7 @@ class SessionManager:
         retry can run."""
         try:
             turn = await asyncio.to_thread(
-                engine.provider.complete,
+                tag_provider(engine.provider, purpose="title", turn=turn_id).complete,
                 model=engine.model,
                 messages=[
                     {"role": "system", "content": self._AUTOTITLE_PROMPT},
@@ -8690,7 +8699,9 @@ class SessionManager:
 
     # -- provider proxy ---------------------------------------------------------
     def provider_complete(self, model, messages, tools=None):
-        return self.provider.complete(model=model, messages=messages, tools=tools)
+        return tag_provider(self.provider, purpose="proxy", turn=None).complete(
+            model=model, messages=messages, tools=tools
+        )
 
     def _refresh_provider(self, name: Optional[str] = None) -> None:
         """Drop the router's cached client(s) so the next turn rebuilds with fresh config.

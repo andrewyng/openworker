@@ -23,6 +23,9 @@ from typing import Any, Callable, Optional
 from .ids import new_ulid
 from .recorder import EVENT_V, Recorder, now_ms
 
+# `start_step(turn_id=CURRENT)`: the engine's current turn.
+CURRENT = object()
+
 # TOOL_FINISHED status -> tool step status (technical design §5.1).
 _TOOL_STATUS = {"ok": "ok", "error": "error", "denied": "denied", "interrupted": "interrupted",
                 "skipped": "skipped"}
@@ -44,6 +47,7 @@ class TurnRecording:
         self._ident: dict[str, dict[str, Any]] = {}  # step_id -> identity copy
         self._tool_steps: dict[str, str] = {}  # call_id -> step_id, for this turn's tools
         self._tool_ends: dict[str, dict[str, Any]] = {}  # call_id -> step_ended awaiting its mid
+        self._reply_end: Optional[dict[str, Any]] = None  # a main model step awaiting its reply's mid
 
     @property
     def enabled(self) -> bool:
@@ -84,6 +88,7 @@ class TurnRecording:
             self._last_mid = None
             self._tool_steps.clear()
             self._tool_ends.clear()
+            self._reply_end = None
             ev = self._base("turn_started", self.turn_id, self._turn_session)
             ev.update({"kind": kind, "trigger": trigger, "first_message_id": first_message_id,
                        "attrs": copy.deepcopy(attrs), "stamp": copy.deepcopy(stamp)})
@@ -102,6 +107,7 @@ class TurnRecording:
             for ev in self._tool_ends.values():  # a tool whose result message never came
                 self.recorder.emit(ev)
             self._tool_ends.clear()
+            self._flush_reply(None)
             ev = self._base("turn_ended", self.turn_id, self._turn_session)
             ev.update({"status": status, "last_message_id": self._last_mid})
             self.recorder.emit(ev)
@@ -132,28 +138,47 @@ class TurnRecording:
                 if ev is not None:
                     ev["message_id"] = mid
                     self._send(ev)
+            elif message.get("role") == "assistant":
+                self._flush_reply(mid)
 
     # -- steps ----------------------------------------------------------------------------------
     def start_step(self, *, kind: str, name: str, call_id: Optional[str] = None,
                    call_index: Optional[int] = None, parent_step_id: Optional[str] = None,
                    attrs: Optional[dict[str, Any]] = None,
-                   content: Optional[dict[str, Any]] = None) -> Optional[str]:
+                   content: Optional[dict[str, Any]] = None,
+                   turn_id: Any = CURRENT, shadow: bool = False) -> Optional[str]:
+        """`step_started`. The step belongs to the engine's current turn, or with `turn_id` to
+        that turn: a step tagged with a turn that already ended is `after_turn` (§3.3, an
+        after-turn title). A model step outside any turn is recorded with no turn; a tool
+        step outside a turn is not recorded."""
         if not self.enabled:
             return None
         with self._lock:
-            if not self.in_turn:
-                return None
+            after = False
+            if turn_id is CURRENT:
+                if self.in_turn:
+                    tid, sid = self.turn_id, self._turn_session
+                elif kind == "tool":
+                    return None
+                else:
+                    tid, sid = None, self._session_id() or ""
+            else:
+                tid = turn_id or None
+                same = tid is not None and tid == self.turn_id
+                sid = self._turn_session if same else (self._session_id() or "")
+                # Turns of one engine run one after another: another turn of this engine has
+                # ended, and so has this one once its end was sent.
+                after = tid is not None and (not same or self._ended)
             step_id = new_ulid()
-            ev = self._base("step_started", self.turn_id, self._turn_session)
+            ev = self._base("step_started", tid, sid)
             ev.update({"step_id": step_id, "parent_step_id": parent_step_id, "kind": kind,
                        "name": name, "call_id": call_id, "call_index": call_index,
-                       "shadow": False, "after_turn": False, "attrs": attrs or {},
+                       "shadow": bool(shadow), "after_turn": after, "attrs": attrs or {},
                        "content": content or {}})
             self._ident[step_id] = {
                 "kind": kind, "name": name, "parent_step_id": parent_step_id, "call_id": call_id,
-                "call_index": call_index, "shadow": False, "after_turn": False,
-                "started_at": self._started_at(ev), "turn_id": self.turn_id,
-                "session_id": self._turn_session,
+                "call_index": call_index, "shadow": bool(shadow), "after_turn": after,
+                "started_at": self._started_at(ev), "turn_id": tid, "session_id": sid,
             }
             if kind == "tool" and call_id:
                 self._tool_steps[call_id] = step_id
@@ -168,7 +193,10 @@ class TurnRecording:
     def end_step(self, step_id: Optional[str], *, status: str = "ok",
                  attrs: Optional[dict[str, Any]] = None, content: Optional[dict[str, Any]] = None,
                  message_id: Optional[str] = None, error: Optional[dict[str, Any]] = None,
-                 wait_for_tool_message: bool = False) -> None:
+                 wait_for_tool_message: bool = False,
+                 wait_for_reply_message: bool = False) -> None:
+        """`step_ended`. A tool step's end waits for its result message, a main model step's
+        end for the reply message the engine adds next, so each carries that message's `mid`."""
         if not self.enabled or step_id is None:
             return
         with self._lock:
@@ -182,10 +210,20 @@ class TurnRecording:
                 ev["error"] = error
             ev.update({k: idn[k] for k in ("kind", "name", "parent_step_id", "call_id",
                                            "call_index", "shadow", "after_turn", "started_at")})
-            if wait_for_tool_message and idn["call_id"] and not self._ended:
+            waiting_turn = idn["turn_id"] is not None and idn["turn_id"] == self.turn_id and not self._ended
+            if wait_for_tool_message and idn["call_id"] and waiting_turn:
                 self._tool_ends[idn["call_id"]] = ev
+            elif wait_for_reply_message and waiting_turn:
+                self._flush_reply(None)  # an earlier reply that never got a message
+                self._reply_end = ev
             else:
                 self._send(ev)
+
+    def _flush_reply(self, mid: Optional[str]) -> None:
+        ev, self._reply_end = self._reply_end, None
+        if ev is not None:
+            ev["message_id"] = mid
+            self._send(ev)
 
     def instant_step(self, *, kind: str, name: str, status: str, call_id: Optional[str] = None,
                      call_index: Optional[int] = None, attrs: Optional[dict[str, Any]] = None,

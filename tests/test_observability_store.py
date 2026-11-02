@@ -92,10 +92,11 @@ def test_a_model_call_without_usage_is_marked_unreported(store):
     rec = Recorder(store=store)
     _turn(rec, "t1")
     _model_step(rec, "s1", "t1", usage=None)
+    _model_step(rec, "s2", "t1", usage={"reported": False}, at=70, mono=70, end=80)
     _end_turn(rec, "t1")
     store.flush()
-    row = store._conn.execute("SELECT usage_reported, output FROM steps").fetchone()
-    assert (row["usage_reported"], row["output"]) == (0, None)
+    rows = store._conn.execute("SELECT usage_reported, output FROM steps ORDER BY seq").fetchall()
+    assert [(r["usage_reported"], r["output"]) for r in rows] == [(0, None), (0, None)]
 
 
 def test_a_step_written_many_times_is_one_row_with_its_last_state(store):

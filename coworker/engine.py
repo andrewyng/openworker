@@ -34,6 +34,7 @@ from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
 from .observability.engine_hooks import TurnRecording
+from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
@@ -484,6 +485,9 @@ class TurnEngine:
         # Observability (E1): the turn and step events this engine sends to its recorder.
         # Off until a recorder is set (`engine.recorder = ...`), like the other surface hooks.
         self._obs = TurnRecording(None, lambda: str(self.audit_context.get("session_id") or ""))
+        # The engine's own tagged view of its provider (observability E2, §3.3): every call
+        # it makes is recorded as a model step of the current turn, purpose `main`.
+        self.provider = view_for_engine(self.provider, self._obs)
         self._call_index: dict[str, int] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
@@ -1248,7 +1252,7 @@ class TurnEngine:
         def _build() -> Optional[_compaction.CompactionState]:
             return _compaction.build_state(
                 self.messages,
-                provider=self.provider,
+                provider=_tag_provider(self.provider, purpose="summary"),
                 model=model,
                 keep_tokens=keep,
                 prior=self.compaction_state,
