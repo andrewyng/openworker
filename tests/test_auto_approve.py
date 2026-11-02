@@ -1091,6 +1091,23 @@ def test_reviewer_follows_a_model_switch(tmp_path):
     assert engine.reviewer.model == "anthropic:claude-sonnet-5"
 
 
+def test_a_decision_model_reviewer_keeps_its_model_on_a_switch(tmp_path):
+    # With OpenAI Decisions or Jev as the reviewer, picking a model in a session raised
+    # AttributeError (DecisionReviewer.model has no setter) and closed the session's socket.
+    # Those reviewers judge with their own service's model, so a switch leaves it alone.
+    from coworker.decision_reviewer import build_decision_reviewer
+
+    engine, _rows, _approvals = _engine(tmp_path, [AssistantTurn(text="ok", finish_reason="stop")])
+    engine.reviewer = build_decision_reviewer("jev", api_key="test-key-not-real")
+    before = engine.reviewer.model
+    engine.messages.append({"role": "user", "content": "hi"})
+
+    engine.switch_model("openai:model-b")  # must not raise
+
+    assert engine.model == "openai:model-b"
+    assert engine.reviewer.model == before
+
+
 def test_model_switch_with_no_reviewer_attached_still_works(tmp_path):
     engine, _rows, _approvals = _engine(tmp_path, [AssistantTurn(text="ok", finish_reason="stop")])
     engine.reviewer = None
