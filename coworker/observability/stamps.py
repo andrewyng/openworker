@@ -101,10 +101,23 @@ def sandbox_stamp(workspace: Any) -> Optional[dict[str, Any]]:
 
 
 def _site_count(workspace: Any) -> Optional[int]:
-    sites = getattr(getattr(workspace, "provider", None), "allowed_sites", None)
+    """How many sites the sandbox lets through: its profile's own hosts, the machine's added
+    hosts and the hosts the copied logins need (OpenShell). None for the `open` profile (any
+    host) or a sandbox that keeps no list. No provider has an `allowed_sites` list, which the
+    first version read, so this was always None (V2-28)."""
+    from ..sandbox import network_profiles
+
+    provider = getattr(workspace, "provider", None)
+    profile = getattr(provider, "profile", None)
+    extra = getattr(provider, "extra_hosts", None)
+    if not isinstance(profile, str) or extra is None:
+        return None
     try:
-        return len(sites) if sites is not None else None
-    except TypeError:
+        if network_profiles.is_open(profile):
+            return None
+        copied = getattr(getattr(provider, "copied", None), "hosts", None) or []
+        return len({*network_profiles.hosts(profile), *extra, *copied})
+    except (ValueError, TypeError):
         return None
 
 

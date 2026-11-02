@@ -575,6 +575,7 @@ class TurnEngine:
         self._last_context_block = ""
         self._turn_context_hash: Optional[str] = None
         self._context_turn: Optional[str] = None
+        self._stamp_seen: dict[str, Any] = {}
         self._shadow_checks: dict[str, tuple[Optional[str], Any]] = {}
         self._user_answers: dict[str, bool] = {}
         if instructions and not (
@@ -693,31 +694,69 @@ class TurnEngine:
                  if m.get("role") == "assistant" and m.get("tool_calls")),
                 None,
             )
-        reviewer_kind = (
-            _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
-            if self.reviewer is not None else None
-        )
-        try:
-            attended = bool(self.is_attended and self.is_attended())
-        except Exception:  # noqa: BLE001 - a broken getter must not break the turn
-            attended = False
-        self._obs.begin_turn(
+        attended, reviewer = self._attended_now(), self._reviewer_facts()
+        stamp = self._turn_stamp()
+        turn_id = self._obs.begin_turn(
             kind=kind,
             trigger=trigger,
             attrs={
                 "approval_mode": self.permissions.mode.value,
                 "attended": attended,
-                "reviewer": {
-                    "active": self._reviewer_active() if self.reviewer is not None else False,
-                    "shadow": bool(self.reviewer_shadow),
-                    "kind": reviewer_kind,
-                    "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
-                },
+                "reviewer": reviewer,
             },
-            stamp=self._turn_stamp(),
+            stamp=stamp,
             first_message_id=first,
             wait_for_first_message=kind == "retry",
         )
+        # What `stamp_changed` compares against for the rest of the turn (V2-27).
+        self._stamp_seen = {"turn": turn_id, "attended": attended, "reviewer": reviewer,
+                            "sandbox": stamp.get("sandbox")}
+
+    def _attended_now(self) -> bool:
+        try:
+            return bool(self.is_attended and self.is_attended())
+        except Exception:  # noqa: BLE001 - a broken getter must not break the turn
+            return False
+
+    def _reviewer_facts(self) -> dict[str, Any]:
+        """The turn's `reviewer` (observability §4): as at turn start, or now."""
+        reviewer_kind = (
+            _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
+            if self.reviewer is not None else None
+        )
+        return {
+            "active": self._reviewer_active() if self.reviewer is not None else False,
+            "shadow": bool(self.reviewer_shadow),
+            "kind": reviewer_kind,
+            "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
+        }
+
+    def _note_stamp(self) -> None:
+        """A `stamp_changed` notice when attendance, the reviewer or the sandbox differ from
+        the turn's start or the last notice (observability §9, V2-27). The Unattended toggle
+        and the reviewer settings apply mid-turn, and the first turn makes the sandbox after
+        its stamp was taken, so the runner version arrives here. Only the keys that changed,
+        with their new values."""
+        obs = self._obs
+        seen = getattr(self, "_stamp_seen", None) or {}
+        if (not obs.enabled or not obs.in_turn or not getattr(obs, "records_context", True)
+                or seen.get("turn") != obs.turn_id):
+            return
+        changed: dict[str, Any] = {}
+        attended, reviewer = self._attended_now(), self._reviewer_facts()
+        if attended != seen.get("attended"):
+            changed["attended"] = seen["attended"] = attended
+        if reviewer != seen.get("reviewer"):
+            changed["reviewer"] = seen["reviewer"] = reviewer
+        try:
+            sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+        except Exception:  # noqa: BLE001 - a stamp never breaks a turn
+            sandbox = seen.get("sandbox")
+        if sandbox and sandbox != seen.get("sandbox"):
+            changed["stamp"] = {"sandbox": sandbox}
+            seen["sandbox"] = sandbox
+        if changed:
+            obs.instant_step(kind="notice", name="stamp_changed", status="ok", attrs=changed)
 
     def _turn_stamp(self) -> dict[str, Any]:
         """Facts saved with the turn (observability §9): machine, model, sandbox, coworker."""
@@ -1059,6 +1098,7 @@ class TurnEngine:
             yield Event(EventType.ERROR, {"error": text, "error_type": type(exc).__name__})
             return
         info = workspace.describe()
+        self._note_stamp()  # the runner's version is known only now (V2-28)
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
 
     @_records_turn("resume")
@@ -1621,6 +1661,7 @@ class TurnEngine:
             self.model_settings,
         )
         self._note_context()
+        self._note_stamp()
         provider = self.provider
 
         def produce():

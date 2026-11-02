@@ -7311,9 +7311,11 @@ class SessionManager:
                     # semantics intact while grouping check-ins in the transcript.
                     source = self._board_source(team, message, rows=activity["board_rows"])
                     source["board"]["check_in"] = True
-            # Who started the turn (observability §4): board activity and team timers wake a
-            # team; a session's own timer is a schedule; anything else came from a channel.
-            if board_delivery:
+            # Who started the turn (observability §4): board activity, a lead's steering and
+            # team timers wake a team; a session's own timer is a schedule; anything else came
+            # from a channel. Steering arrives as the `team` connector (`steer_worker`); it
+            # was recorded as `channel` (V2-30).
+            if board_delivery or (source or {}).get("connector") == "team":
                 trigger = "team_wake"
             elif wake is not None:
                 trigger = "team_wake" if self.teams.for_lead_session(session_id) is not None else "schedule"

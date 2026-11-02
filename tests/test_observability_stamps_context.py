@@ -211,3 +211,101 @@ def test_the_skills_menu_is_the_one_offered_this_turn(tmp_path):
     menus = [s["attrs"]["per_turn"] for s in rec.as_dict()["steps"] if s["kind"] == "context"]
     assert [m["skills_menu"] for m in menus] == [2, 1]
     assert menus[0]["skills_hash"] != menus[1]["skills_hash"]
+
+
+def test_sites_count_the_profile_the_machine_list_and_the_logins_hosts():
+    """V2-28: the stamp's `sites` read a list no provider has, so it was always None."""
+    provider = type("P", (), {"profile": "allowlist", "extra_hosts": ["a.example:443", "b.example:443"],
+                              "copied": type("C", (), {"hosts": ["a.example:443", "c.example:443"]})()})()
+    ws = type("W", (), {"provider": provider})()
+    assert stamps._site_count(ws) == 3
+    provider.profile = "open"
+    assert stamps._site_count(ws) is None  # any host: no count
+    assert stamps._site_count(type("W", (), {"provider": object()})()) is None  # keeps no list
+
+
+class _LateSandbox:
+    """A sandbox the first turn makes after the turn's stamp was taken."""
+
+    reports_blocked = False
+
+    def __init__(self):
+        self.started = False
+        self.provider = type("P", (), {"name": "openshell", "profile": "allowlist", "extra_hosts": ["x.example:443"]})()
+
+    def ensure_started(self):
+        self.started = True
+
+    def describe(self):
+        info = {"provider": "openshell", "enforcement": "full"}
+        if self.started:
+            info["runner"] = {"runner_version": "0.4.1"}
+        return info
+
+
+def test_the_sandbox_made_by_the_first_turn_is_restamped(tmp_path):
+    """V2-28: the runner's version is known only once the sandbox started, after the stamp."""
+    engine, rec = _engine(tmp_path, [_call("c1", "look", {"path": "x"}), AssistantTurn(text="ok"),
+                                     AssistantTurn(text="again")])
+    engine.sandbox_workspace = _LateSandbox()
+    _run(engine)
+    d = rec.as_dict()
+    assert "runner_version" not in d["turns"][0]["stamp"]["sandbox"]
+    [notice] = [s for s in d["steps"] if s["kind"] == "notice"]
+    assert notice["name"] == "stamp_changed"
+    assert notice["attrs"] == {"stamp": {"sandbox": {"provider": "openshell", "enforcement": "full",
+                                                     "profile": "allowlist", "sites": 1,
+                                                     "runner_version": "0.4.1"}}}
+    _run(engine, "again")  # the next turn's stamp has it, and nothing changes in it
+    d = rec.as_dict()
+    assert d["turns"][1]["stamp"]["sandbox"]["runner_version"] == "0.4.1"
+    assert [s["name"] for s in d["steps"] if s["kind"] == "notice"] == ["stamp_changed"]
+
+
+def test_attendance_changing_mid_turn_is_a_stamp_changed_notice(tmp_path):
+    """V2-27: the Unattended toggle applies mid-turn; the turn keeps its start value and a
+    notice carries the new one, with only the key that changed."""
+    attended = {"now": True}
+    engine, rec = _engine(tmp_path, [_call("c1", "look", {"path": "x"}), AssistantTurn(text="ok")])
+    engine.is_attended = lambda: attended["now"]
+    original = engine._execute_sync
+
+    def run_tool(*a, **kw):
+        attended["now"] = False  # you switched to Unattended while the tool ran
+        return original(*a, **kw)
+
+    engine._execute_sync = run_tool
+    _run(engine)
+    d = rec.as_dict()
+    assert d["turns"][0]["attended"] is True
+    [notice] = [s for s in d["steps"] if s["kind"] == "notice"]
+    assert notice["name"] == "stamp_changed" and notice["attrs"] == {"attended": False}
+
+
+def test_a_turn_where_nothing_changes_has_no_stamp_notice(tmp_path):
+    engine, rec = _engine(tmp_path, [_call("c1", "look", {"path": "x"}), _call("c2", "look", {"path": "y"}),
+                                     AssistantTurn(text="ok")])
+    engine.is_attended = lambda: True
+    _run(engine)
+    assert not [s for s in rec.as_dict()["steps"] if s["kind"] == "notice"]
+
+
+def test_a_leads_steering_wakes_the_worker_as_a_team(tmp_path, monkeypatch):
+    """V2-30: `steer_worker` delivers through the `team` connector; it was recorded as `channel`."""
+    from coworker.providers import AssistantTurn as _T
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(workspace=tmp_path, provider=_Scripted([_T(text="on it"), _T(text="hi")]))
+    engine = mgr.get_engine("W", agent="chat")
+    seen: list[str] = []
+    real_run = engine.run
+
+    def run(*a, trigger="user", **kw):
+        seen.append(trigger)
+        return real_run(*a, trigger=trigger, **kw)
+
+    monkeypatch.setattr(engine, "run", run)
+    asyncio.run(mgr.deliver_to_session("W", "[Lead] switch to the API docs",
+                                       source={"connector": "team", "sender_name": "lead"}))
+    asyncio.run(mgr.deliver_to_session("W", "hello", source={"connector": "slack", "sender_name": "pat"}))
+    assert seen == ["team_wake", "channel"]

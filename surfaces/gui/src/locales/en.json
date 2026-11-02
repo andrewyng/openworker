@@ -3119,7 +3119,17 @@
       "after": "after {{t}}",
       "match": "Match",
       "matched": "same as you",
-      "not_matched": "different from you"
+      "not_matched": "different from you",
+      "changed": "What changed",
+      "changed_attended": "Someone at the app",
+      "attended_yes": "yes: cards are shown in the session",
+      "attended_no": "no: cards go to the Inbox",
+      "changed_reviewer": "Auto-approver",
+      "reviewer_off": "off",
+      "changed_sandbox": "Sandbox",
+      "sites_one": "{{count}} site",
+      "sites_other": "{{count}} sites",
+      "runner": "runner {{version}}"
     },
     "loading": "Loading…",
     "load_error": "Steps could not be loaded.",

@@ -3073,7 +3073,16 @@
       "after": "{{t}} 后",
       "match": "是否一致",
       "matched": "与你相同",
-      "not_matched": "与你不同"
+      "not_matched": "与你不同",
+      "changed": "变化内容",
+      "changed_attended": "有人在应用中",
+      "attended_yes": "是：卡片显示在会话中",
+      "attended_no": "否：卡片进入收件箱",
+      "changed_reviewer": "自动批准",
+      "reviewer_off": "关闭",
+      "changed_sandbox": "沙盒",
+      "sites_other": "{{count}} 个站点",
+      "runner": "运行器 {{version}}"
     },
     "loading": "加载中…",
     "load_error": "无法加载步骤。",

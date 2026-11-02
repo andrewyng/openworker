@@ -678,11 +678,18 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
               [t("steps.detail.tokens_after"), a.tokens_after == null ? "—" : formatTokens(a.tokens_after)]);
   }
   if (d.kind === "context") rows.push([t("steps.detail.session_prompt"), <span className="steps-mono">{a.session_prompt_hash || "—"}</span>]);
+  const changed = d.kind === "notice" && d.name === "stamp_changed" ? stampChanges(a, t) : [];
   const showsContext = d.kind === "context" || (d.kind === "notice" && d.name === "context_changed");
   return (
     <>
       <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} />{stepLabel(d, t)}<span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
       <Kv rows={rows} />
+      {changed.length > 0 && (
+        <>
+          <Sec label={t("steps.insp.changed")} />
+          <Kv rows={changed} />
+        </>
+      )}
       {showsContext && (
         <>
           <Sec label={d.kind === "context" ? t("steps.insp.context_added") : t("steps.insp.context_now")} />
@@ -702,6 +709,28 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
       {exact}
     </>
   );
+}
+
+/** A `stamp_changed` notice's new values: only the keys that changed (attended, reviewer,
+ * the sandbox group). */
+function stampChanges(a: Record<string, any>, t: T): [string, React.ReactNode][] {
+  const out: [string, React.ReactNode][] = [];
+  if (typeof a.attended === "boolean")
+    out.push([t("steps.insp.changed_attended"), t(a.attended ? "steps.insp.attended_yes" : "steps.insp.attended_no")]);
+  if (a.reviewer) {
+    const who = reviewerLabel(a.reviewer, t);
+    out.push([t("steps.insp.changed_reviewer"),
+              a.reviewer.active && who ? who
+                : a.reviewer.shadow && who ? t("steps.reviewer.shadow", { reviewer: who })
+                : t("steps.insp.reviewer_off")]);
+  }
+  const sb = a.stamp?.sandbox;
+  if (sb) {
+    const extra = [sb.sites != null ? t("steps.insp.sites", { count: sb.sites }) : "",
+                   sb.runner_version ? t("steps.insp.runner", { version: sb.runner_version }) : ""].filter(Boolean);
+    out.push([t("steps.insp.changed_sandbox"), [stampLine({ sandbox: sb }, t), ...extra].join(" · ")]);
+  }
+  return out;
 }
 
 function InputBox({ lines, t }: { lines: string[]; t: T }) {
