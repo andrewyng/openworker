@@ -3100,6 +3100,7 @@
       "mode": "模式",
       "reviewer": "审批者",
       "reason": "原因",
+      "coworker": "协作者指纹",
       "session_prompt": "会话提示词",
       "size": "上下文块大小"
     },

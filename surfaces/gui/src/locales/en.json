@@ -3145,6 +3145,7 @@
       "mode": "Mode",
       "reviewer": "Reviewer",
       "reason": "Reason",
+      "coworker": "Coworker fingerprint",
       "session_prompt": "Session prompt",
       "size": "Context block size"
     },

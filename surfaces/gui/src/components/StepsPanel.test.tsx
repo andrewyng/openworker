@@ -94,6 +94,21 @@ describe("StepsPanel", () => {
     expect(usage.textContent).toContain("1 call did not report usage");
   });
 
+  it("closes a step's details when another turn is picked", async () => {
+    const turn2 = { ...turn, turn_id: "t2", seq: 2 };
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn, turn2] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    vi.mocked(getStepDetail).mockResolvedValue(steps[1]);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await screen.findByText("Turn 2 of 2");
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(6));
+    fireEvent.click(screen.getAllByTestId("steps-row")[1]);
+    await screen.findByTestId("steps-details");
+    fireEvent.click(screen.getByRole("button", { name: "Previous turn" }));
+    await screen.findByText("Turn 1 of 2");
+    expect(screen.queryByTestId("steps-details")).toBeNull();
+  });
+
   it("says when a session has no recorded steps", async () => {
     vi.mocked(getRecordedTurns).mockResolvedValue([]);
     render(<StepsPanel sessionId="old" onClose={() => {}} />);
@@ -104,6 +119,8 @@ describe("StepsPanel", () => {
 describe("formatDuration", () => {
   it("reads like the mock", () => {
     expect(formatDuration(100)).toBe("0.1s");
+    expect(formatDuration(4)).toBe("<0.1s");
+    expect(formatDuration(0)).toBe("0.0s");
     expect(formatDuration(3400)).toBe("3.4s");
     expect(formatDuration(41_000)).toBe("41s");
     expect(formatDuration(134_000)).toBe("2m 14s");

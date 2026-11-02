@@ -20,6 +20,7 @@ const BUCKETS = ["waiting", "tools", "model", "auto_approver", "summary"] as con
 /** 0.1s, 3.4s, 41s, 2m 14s: the panel's one duration format. */
 export function formatDuration(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "—";
+  if (ms > 0 && ms < 100) return "<0.1s";
   if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   const m = Math.floor(ms / 60_000);
@@ -105,6 +106,8 @@ export function StepsPanel({
   }, [sessionId, refreshKey]);
 
   const turn = turns && turnIdx != null && turnIdx >= 0 ? turns[turnIdx] : null;
+  // A step's details belong to its turn: picking another turn closes them.
+  useEffect(() => setSelected(null), [turn?.turn_id]);
   useEffect(() => {
     if (!turn) return;
     let live = true;
@@ -242,6 +245,7 @@ function StepDetails({ sessionId, stepId, turn }: { sessionId: string; stepId: s
     if (a.ttft_ms != null) rows.push([t("steps.detail.ttft"), formatDuration(a.ttft_ms)]);
     if (a.finish_reason) rows.push([t("steps.detail.stopped"), a.finish_reason]);
     if (a.tools_offered) rows.push([t("steps.detail.tools"), `${a.tools_offered} · ${a.tools_hash || ""}`]);
+    if (turn.stamp?.persona_fp) rows.push([t("steps.detail.coworker"), `ⓕ${turn.stamp.persona_fp}`]);
     if (a.error) rows.push([t("steps.detail.error"), `${a.error.type}${a.error.text ? ` · ${a.error.text}` : ""}`]);
   }
   if (d.kind === "tool") {
@@ -294,7 +298,7 @@ function StepDetails({ sessionId, stepId, turn }: { sessionId: string; stepId: s
           ))}
         </ol>
       )}
-      {d.message && (
+      {d.message && d.message.content && (
         <pre className="steps-pre">{d.message.content}{d.message.cut ? "\n…" : ""}</pre>
       )}
       {d.exchange_rebuilt?.length > 0 && (
