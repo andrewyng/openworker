@@ -3061,13 +3061,31 @@
     },
     "checks_line_one": "Auto-approve: {{count}} check · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked",
     "checks_line_other": "Auto-approve: {{count}} checks · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked",
+    "unknown_line_one": "{{count}} step was still running when OpenWorker stopped; its time is unknown.",
+    "unknown_line_other": "{{count}} steps were still running when OpenWorker stopped; their times are unknown.",
     "row": {
       "context": "Context built",
       "model": "Model",
       "wait": "Waiting for you",
       "auto_approver": "Auto-approver",
       "summary": "Summary",
-      "trim": "Trim"
+      "trim": "Trim",
+      "wait_inbox": "Waiting · parked in Inbox",
+      "shadow": "Shadow check"
+    },
+    "would": {
+      "allow": "would have allowed",
+      "deny": "would have blocked",
+      "unsure": "would have asked",
+      "context_changed": "would have asked (changed while checking)"
+    },
+    "flag": {
+      "failed": "failed · {{type}}",
+      "over_limit": "over the context limit",
+      "no_usage": "no usage",
+      "exit": "exit {{code}}",
+      "blocked": "blocked by sandbox",
+      "auto_approved": "auto-approved"
     },
     "purpose": {
       "main": "main",
@@ -3147,7 +3165,94 @@
       "reason": "Reason",
       "coworker": "Coworker fingerprint",
       "session_prompt": "Session prompt",
-      "size": "Context block size"
+      "size": "Context block size",
+      "request_id": "Request id",
+      "response_id": "Response id",
+      "attempts": "Attempts",
+      "result_size": "Result size",
+      "call_id": "Call id",
+      "breaker": "Refusals in a row",
+      "breaker_tripped": "{{n}} · paused",
+      "matched_user": "Same as your answer",
+      "yes": "yes",
+      "no": "no",
+      "summary_reason": "Why",
+      "tokens_before": "Context before",
+      "tokens_after": "Context after",
+      "memories": "Memories",
+      "as_index": "as an index",
+      "rules": "Your rules",
+      "agents_md": "AGENTS.md files",
+      "folders": "Folders",
+      "mode_note": "Mode note",
+      "skills": "Skills offered",
+      "sandbox_note": "Sandbox note"
+    },
+    "summary_reason": {
+      "threshold": "reached the compaction size",
+      "overflow": "the model said the conversation was too long"
+    },
+    "outcome": {
+      "allowed": "allowed",
+      "needs_user": "needs you",
+      "human_only": "only a person may approve",
+      "denied": "denied",
+      "config_allowlist": "your allowlist",
+      "session_grant": "allowed for this session",
+      "standing_rule": "a standing rule",
+      "trusted_rule": "your trust rule",
+      "trusted_server": "server trust",
+      "run_grant": "allowed for this request",
+      "suspended_in_auto_approve": "held for you in Auto-approve",
+      "allow_anyway": "you chose Allow anyway",
+      "lead_denial": "the lead's denial",
+      "readonly_tier": "read-only command",
+      "gate_tier": "safe change",
+      "allow": "allowed",
+      "deny": "blocked",
+      "unsure": "asked you",
+      "could_not_run": "could not run",
+      "context_changed": "changed while checking",
+      "skipped_human_only": "skipped (a person must decide)",
+      "skipped_unattended": "skipped (nobody watching)",
+      "skipped_paused": "skipped (auto-approve paused)",
+      "skipped_off": "skipped (auto-approve off)",
+      "shown_session": "shown in the session",
+      "parked_inbox": "parked in the Inbox",
+      "auto_refused": "refused automatically (attendance auto)",
+      "approved_once": "approved once",
+      "approved_session": "allowed for this session",
+      "approved_run": "allowed for this request",
+      "approved_always": "always allowed",
+      "interrupted": "stopped",
+      "superseded": "already answered elsewhere",
+      "approved": "approved",
+      "answered": "answered"
+    },
+    "where": {
+      "session": "in the session",
+      "inbox": "in the Inbox"
+    },
+    "check_mode": {
+      "live": "decides",
+      "shadow": "shadow (advice only)"
+    },
+    "risk": {
+      "read": "read",
+      "egress": "network",
+      "write_local": "local change",
+      "exec": "runs commands",
+      "external": "outside service"
+    },
+    "error_type": {
+      "context_length": "too long",
+      "overloaded": "provider overloaded",
+      "rate_limited": "rate limited",
+      "auth": "key or sign-in refused",
+      "network": "network",
+      "timeout": "timed out",
+      "provider_error": "provider error",
+      "cancelled": "cancelled"
     },
     "origin": {
       "low_risk": "low risk",
@@ -3166,7 +3271,13 @@
       "reviewer_denied": "the auto-approver",
       "unattended_auto": "attendance auto",
       "readonly_tier": "read-only command",
-      "gate_tier": "safe change"
+      "gate_tier": "safe change",
+      "always_tool": "this tool",
+      "always_command": "this command",
+      "always_domain": "this site",
+      "always_site": "this site, kept in the sandbox list",
+      "readonly_session": "read-only commands",
+      "cleared_by_mode": "the mode"
     },
     "stage": {
       "permission": "Permission",
@@ -3192,6 +3303,7 @@
       "out": "Out",
       "context_now": "Context now",
       "context_line": "{{used}} of {{window}}",
+      "context_no_window": "{{used}} (window not known)",
       "unreported_one": "{{count}} call did not report usage",
       "unreported_other": "{{count}} calls did not report usage",
       "failed_one": "{{count}} failed call (usage unknown)",

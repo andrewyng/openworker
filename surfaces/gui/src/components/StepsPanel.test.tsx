@@ -109,6 +109,113 @@ describe("StepsPanel", () => {
     expect(screen.queryByTestId("steps-details")).toBeNull();
   });
 
+  it("badges rows the way the mock does", async () => {
+    // Round-2 in-app check: a failed shell command, a failed or unreported model call, a
+    // shadow check, an Inbox wait and an auto-approved action each say so on their row.
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([
+      step({ step_id: "e1", kind: "tool", name: "run_shell", attrs: { exit_code: 3 } }),
+      step({ step_id: "e2", kind: "model", name: "model", status: "error", attrs: { purpose: "title", error: { type: "provider_error" }, usage: { reported: false } } }),
+      step({ step_id: "e3", kind: "model", name: "model", status: "error", attrs: { purpose: "main", error: { type: "context_length" }, usage: { reported: false } } }),
+      step({ step_id: "e4", kind: "model", name: "model", attrs: { purpose: "main", usage: { reported: false } } }),
+      step({ step_id: "e5", kind: "auto_approver", name: "write_file", shadow: true, attrs: { result: "allow", mode: "shadow" } }),
+      step({ step_id: "e6", kind: "wait", name: "approval", attrs: { kind: "approval", where: "inbox", outcome: "approved" } }),
+      step({ step_id: "e7", kind: "tool", name: "run_shell", attrs: { exit_code: 0, decision: { origin: "reviewer", path: [] } } }),
+      step({ step_id: "e8", kind: "tool", name: "write_file", status: "denied", attrs: {} }),
+    ] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(8));
+    const labels = screen.getAllByTestId("steps-row").map((r) => r.textContent);
+    expect(labels[0]).toContain("exit 3");
+    expect(labels[1]).toContain("failed · provider error");
+    expect(labels[2]).toContain("over the context limit");
+    expect(labels[3]).toContain("no usage");
+    expect(labels[4]).toContain("Shadow check · would have allowed");
+    expect(labels[5]).toContain("Waiting · parked in Inbox · approval");
+    expect(labels[6]).toContain("auto-approved");
+    expect(labels[7]).toContain("refused");
+  });
+
+  it("shows what the context held, a tool's result size and a model call's ids", async () => {
+    const ctx = step({ step_id: "c", kind: "context", name: "context", duration_ms: 0, attrs: {
+      session_prompt_hash: "42070c", size_chars: 1057, block_hash: "69a95b",
+      session_start: { memories: ["m1", "m2"], memory_mode: "index", rules: 1, agents_md: 1 },
+      per_turn: { folders: 2, mode_note: "plan", sandbox_note: true, skills_menu: 3, skills_hash: "ab12cd" } } });
+    const tool = step({ step_id: "t", kind: "tool", name: "read_file", call_id: "call-9", attrs: { result_bytes: 2048 } });
+    const model = step({ step_id: "m", kind: "model", name: "model", attrs: { purpose: "main", usage: { reported: true },
+      provider_facts: { provider_request_id: "req_1", provider_response_id: "resp_1" } } });
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([ctx, model, tool] as any);
+    vi.mocked(getStepDetail).mockImplementation(async (_s, id) => ({ c: ctx, m: { ...model, exchange_rebuilt: [{ request: {}, response: "" }, { request: {}, response: "" }, { auxiliary: true, request: {}, response: "" }] }, t: tool } as any)[id]);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(3));
+    fireEvent.click(screen.getAllByTestId("steps-row")[0]);
+    let d = (await screen.findByTestId("steps-details")).textContent || "";
+    for (const s of ["Memories2 · as an index", "Your rules1", "AGENTS.md files1", "Folders2", "Mode noteplan", "Skills offered3 · ab12cd", "1057 · 69a95b"]) expect(d).toContain(s);
+    fireEvent.click(screen.getAllByTestId("steps-row")[1]);
+    await waitFor(() => expect(screen.getByTestId("steps-details").textContent).toContain("req_1"));
+    d = screen.getByTestId("steps-details").textContent || "";
+    expect(d).toContain("resp_1");
+    expect(d).toContain("Attempts2");  // the auxiliary lookup is not an attempt
+    fireEvent.click(screen.getAllByTestId("steps-row")[2]);
+    await waitFor(() => expect(screen.getByTestId("steps-details").textContent).toContain("2.0 KB"));
+    expect(screen.getByTestId("steps-details").textContent).toContain("call-9");
+  });
+
+  it("shows the context size when the window is not known", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    vi.mocked(getRecordedUsage).mockResolvedValue({
+      pill: 10, at_least: false, unreported_calls: 0, failed_calls: 0, overflow_calls: 0, cache_share: 0,
+      by_purpose: { main: 10 }, totals: { input: 9, cache: 0, output: 1 }, by_model_parts: {},
+      context: { tokens: 6837, window: null },
+    });
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Usage" }));
+    expect((await screen.findByTestId("steps-usage")).textContent).toContain("6.8k (window not known)");
+  });
+
+  it("says which steps were still running when the app stopped", async () => {
+    // TD-12: a turn found open at start is closed as unknown; its open steps have no time.
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, status: "unknown", duration_ms: null }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([
+      step({ step_id: "m", kind: "model", name: "model", attrs: { purpose: "main", usage: { reported: true } } }),
+      step({ step_id: "g", kind: "notice", name: "recording_gap", duration_ms: 0 }),
+      step({ step_id: "w", kind: "wait", name: "approval", status: "unknown", duration_ms: null, attrs: { kind: "approval", where: "inbox" } }),
+    ] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    expect((await screen.findByTestId("steps-gap")).textContent).toContain("1 step was still running when OpenWorker stopped");
+    const labels = screen.getAllByTestId("steps-row").map((r) => r.textContent);
+    expect(labels[1]).toContain("Recording gap");
+    expect(labels[2]).toContain("unknown");
+    expect(labels[2]).toContain("—");
+  });
+
+  it("opens another session at its newest turn", async () => {
+    // Round-2 in-app check: switching sessions with the panel open kept the old turn
+    // position ("Turn 1 of 2" instead of the newest).
+    vi.mocked(getRecordedTurns).mockImplementation(async (sid) =>
+      (sid === "a" ? [turn, { ...turn, turn_id: "t2", seq: 2 }] : [turn, { ...turn, turn_id: "t2", seq: 2 }, { ...turn, turn_id: "t3", seq: 3 }]) as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    const { rerender } = render(<StepsPanel sessionId="a" onClose={() => {}} />);
+    await screen.findByText("Turn 2 of 2");
+    fireEvent.click(screen.getByRole("button", { name: "Previous turn" }));
+    await screen.findByText("Turn 1 of 2");
+    rerender(<StepsPanel sessionId="b" onClose={() => {}} />);
+    await screen.findByText("Turn 3 of 3");
+  });
+
+  it("lists a decision model's answers", async () => {
+    const check = step({ step_id: "q", kind: "auto_approver", name: "run_shell", attrs: { result: "unsure", mode: "live", reviewer: { kind: "openai_decisions" } },
+      content: { reason: "requested 0.98 but unrelated_destination 0.99", questions: [{ name: "requested", answer: "yes", score: 0.98 }, { name: "unrelated_destination", answer: "yes", score: 0.99 }] } });
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([check] as any);
+    vi.mocked(getStepDetail).mockResolvedValue(check as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    fireEvent.click((await screen.findAllByTestId("steps-row"))[0]);
+    expect((await screen.findByTestId("steps-questions")).textContent).toContain("unrelated_destination: yes (0.99)");
+  });
+
   it("says when a session has no recorded steps", async () => {
     vi.mocked(getRecordedTurns).mockResolvedValue([]);
     render(<StepsPanel sessionId="old" onClose={() => {}} />);
