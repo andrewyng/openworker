@@ -589,9 +589,14 @@ class TurnEngine:
         # The reviewer judges with the session's own model (§1.5: "if it's trusted to
         # drive the agent, it's strong enough to review it"). Bound once at session build,
         # it would otherwise keep the OLD model for the rest of the session after a
-        # switch — silently reviewing with a model the user moved away from.
+        # switch — silently reviewing with a model the user moved away from. A
+        # decision-model reviewer (OpenAI Decisions, Jev) judges with its own service's
+        # model, which a session switch must not change (its `model` is read-only).
         if self.reviewer is not None:
-            self.reviewer.model = model
+            from .decision_reviewer import DecisionReviewer
+
+            if not isinstance(self.reviewer, DecisionReviewer):
+                self.reviewer.model = model
         if not had_history:
             return None
         from .providers.matrix import model_labels
