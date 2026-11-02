@@ -2378,7 +2378,8 @@
       "slack": "Slack",
       "github": "GitHub",
       "machines": "机器",
-      "sandbox": "沙箱"
+      "sandbox": "沙箱",
+      "observability": "可观测性"
     },
     "back_to_app": "返回应用",
     "machine_scope_aria": "机器范围",
@@ -3408,6 +3409,117 @@
       "unreported_other": "{{count}} 次调用没有报告用量",
       "failed_other": "{{count}} 次调用失败（用量未知）",
       "overflow_other": "{{count}} 次调用超出上下文上限，对话已被摘要"
+    }
+  },
+  "obs": {
+    "title": "可观测性",
+    "sub": "你的同事执行的每一步都会记录在这台机器上，你可以在“步骤”中查看。你也可以把这些记录发送到公司使用的工具。记录采用 OpenTelemetry 标准。",
+    "load_failed": "无法读取这台机器的可观测性设置。",
+    "error_save": "无法保存。",
+    "error_address": "请输入以 http:// 或 https:// 开头的地址。",
+    "list_sep": "、",
+    "list_and": "和",
+    "callout_item": {
+      "messages": "你的消息和 AI 的回答",
+      "tool_io": "工具输入和结果",
+      "context": "OpenWorker 添加的上下文",
+      "names": "会话和用户名称"
+    },
+    "kept_note": "与你的其他密钥一起保存在这台机器上",
+    "refused_key": "目标拒绝了这个密钥",
+    "not_found": "找不到该地址",
+    "record_off_note": "记录已关闭，因此不会发送任何内容。",
+    "never_sent": "无论开关如何，以下内容都不会发送：模型的思考文本、错误信息（其中含有地址）以及服务商报告的费用。自动审批的结论（允许、拦截、询问你）、审核者的名称和耗时属于元数据，发送时始终包含。",
+    "sec": {
+      "machine": "在这台机器上",
+      "send_to": "把记录发送到",
+      "include": "发送时包含的内容",
+      "included": "包含的内容",
+      "status": "状态"
+    },
+    "record": {
+      "title": "记录步骤",
+      "sub": "“步骤”“问题”和“用量”需要它。一般使用每天约 2.5 MB。",
+      "off": "已关闭：新会话不会被记录，它们的“步骤”“问题”和“用量”将为空。"
+    },
+    "keep": {
+      "title": "记录保留时长",
+      "sub": "更早的记录会被删除，对话记录不受影响。尚未发送就被删除的记录计为已丢弃。",
+      "days_other": "{{count}} 天"
+    },
+    "file": {
+      "title": "保存一个会话的记录",
+      "sub": "一个会话记录的全部内容（包括正文），保存为一个文件。用于技术支持或你自己的存档。",
+      "button": "保存…",
+      "pick": "会话",
+      "none": "还没有会话",
+      "save": "保存文件",
+      "cancel": "取消",
+      "failed": "无法保存这份记录。"
+    },
+    "dest": {
+      "off": "关闭",
+      "off_sub": "不会有任何内容离开这台机器",
+      "langfuse_sub": "开源 · 云端或自托管",
+      "otlp": "OpenTelemetry 端点",
+      "otlp_sub": "你自己的收集器、Grafana、Datadog、Phoenix 等"
+    },
+    "langfuse": {
+      "address": "Langfuse 地址",
+      "public_key": "公钥",
+      "secret_key": "私钥"
+    },
+    "otlp": {
+      "url": "追踪地址（OTLP/HTTP）",
+      "header_name": "请求头名称",
+      "header_value": "值",
+      "add_header": "添加请求头"
+    },
+    "test": {
+      "button": "发送一条测试记录",
+      "sending": "正在发送…",
+      "ok_langfuse": "已连接 Langfuse · {{ms}} 毫秒",
+      "ok_otlp": "已连接端点 · {{ms}} 毫秒",
+      "unreachable": "无法连接这台机器。"
+    },
+    "include": {
+      "metadata": "步骤、耗时、令牌数、模型和工具名称",
+      "metadata_short": "步骤、耗时、令牌数、模型、工具名称",
+      "metadata_sub": "发送时始终包含。不含会话中的任何文字。",
+      "metadata_locked": "发送时始终包含",
+      "messages": "你的消息和 AI 的回答",
+      "messages_sub": "你写的内容和 AI 的回复。除非打开下一个开关，否则对话中的工具输入和结果不会发送。每条最多 8 KB；密钥和令牌会被遮盖。",
+      "tool_io": "工具输入和结果",
+      "tool_io_sub": "命令、文件内容、命令输出和连接器数据。如果上面的开关也打开：还包括自动审批的理由及其看到的内容，以及摘要（它们会引用工具内容）。",
+      "context": "OpenWorker 添加的上下文",
+      "context_sub": "系统提示、工具列表，以及每轮添加的上下文（文件夹、技能菜单、模式说明）。",
+      "names": "会话和用户名称",
+      "names_sub": "会话标题、回答每张卡片的人，以及这台机器的名称。关闭时这些都不会发送。",
+      "names_on": "会话标题、回答每张卡片的人，以及这台机器的名称会被发送。"
+    },
+    "status": {
+      "off_title": "未在发送",
+      "off_sub": "选择发送目标后开始发送。只发送此后结束的轮次。",
+      "nothing_yet": "还没有发送任何内容",
+      "last_sent": "上次发送：{{when}}",
+      "counts": "今天：已发送 {{sent}} 个步骤 · {{failed}} 次失败 · {{dropped}} 个已丢弃。",
+      "resumes": "如果目标停止响应，不会丢失任何内容：发送会从中断处继续。",
+      "failed_sub": "在设置更改之前，发送已停止。"
+    },
+    "state": {
+      "off": "关闭",
+      "sending": "发送中",
+      "retrying": "重试中",
+      "failed": "失败",
+      "managed": "发送中"
+    },
+    "managed": {
+      "by": "由 {{by}} 管理",
+      "sub": "你所在组织的策略决定记录发送到哪里以及包含哪些内容。如需更改，请联系管理员。",
+      "set_by": "由策略“{{name}}”设置",
+      "set_by_policy": "由策略设置",
+      "locked": "已锁定",
+      "callout": "这台机器上的{{what}}会发送到 {{by}} 的 {{where}}。每个新会话都会显示一条简短提示。"
     }
   }
 }

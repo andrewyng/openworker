@@ -110,11 +110,13 @@ def test_a_company_policy_makes_the_page_read_only_and_tells_new_sessions(tmp_pa
     assert "PLANT" not in json.dumps(got)
     r = client.put("/v1/observability/settings", json={"include": {"tool_io": True}})
     assert r.status_code == 409 and r.json()["error"] == "Managed by Acme Corp"
-    # Each new session says what goes where, once.
+    # Each new session says what goes where, once. An empty draft is not saved for it.
     with client.websocket_connect("/ws/session/fresh") as ws:
         msgs = [ws.receive_json() for _ in range(2)]
         notice = next(m for m in msgs if m["type"] == "export_notice")
     assert notice["data"]["text"] == "Acme Corp receives this session's messages (Langfuse, langfuse.acme.internal)."
+    assert "fresh" not in [s["session_id"] for s in client.get("/v1/sessions").json()["sessions"]]
+    _turn(client, "fresh")  # reconnects (no second notice) and runs the first turn
     kinds = [m.get("kind") for m in client.get("/v1/sessions/fresh/messages").json()["messages"]]
     assert kinds.count("export_notice") == 1
     manager.observability.close()

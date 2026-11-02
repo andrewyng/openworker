@@ -2422,7 +2422,8 @@
       "slack": "Slack",
       "github": "GitHub",
       "machines": "Machines",
-      "sandbox": "Sandbox"
+      "sandbox": "Sandbox",
+      "observability": "Observability"
     },
     "back_to_app": "Back to app",
     "machine_scope_aria": "Machine scope",
@@ -3462,6 +3463,118 @@
       "failed_other": "{{count}} failed calls (usage unknown)",
       "overflow_one": "{{count}} call was over the context limit and the conversation was summarised",
       "overflow_other": "{{count}} calls were over the context limit and the conversation was summarised"
+    }
+  },
+  "obs": {
+    "title": "Observability",
+    "sub": "Every step your coworkers take is recorded on this machine so you can see it under Steps. You can also send these recordings to a tool your company uses. They use the OpenTelemetry standard.",
+    "load_failed": "Could not read this machine's observability settings.",
+    "error_save": "Could not save.",
+    "error_address": "Enter an address that starts with http:// or https://.",
+    "list_sep": ", ",
+    "list_and": " and ",
+    "callout_item": {
+      "messages": "your messages and the AI's answers",
+      "tool_io": "tool inputs and results",
+      "context": "the context OpenWorker adds",
+      "names": "session and user names"
+    },
+    "kept_note": "kept with your other keys on this machine",
+    "refused_key": "The destination refused the key",
+    "not_found": "Address not found",
+    "record_off_note": "Recording is off, so nothing is sent.",
+    "never_sent": "Never sent, whatever is on: the model's thinking text, error messages (they hold addresses) and provider-reported cost. Auto-approver verdicts (allowed, blocked, asked you), the reviewer's name and its timings are metadata, so they are always included when sending.",
+    "sec": {
+      "machine": "On this machine",
+      "send_to": "Send recordings to",
+      "include": "What to include when sending",
+      "included": "What is included",
+      "status": "Status"
+    },
+    "record": {
+      "title": "Record steps",
+      "sub": "Needed for Steps, Issues and Usage. About 2.5 MB a day for typical use.",
+      "off": "Off: new sessions are not recorded. Steps, Issues and Usage stay empty for them."
+    },
+    "keep": {
+      "title": "Keep recordings for",
+      "sub": "Older recordings are deleted. Transcripts are not affected. A recording deleted before it was sent counts as dropped.",
+      "days_one": "{{count}} day",
+      "days_other": "{{count}} days"
+    },
+    "file": {
+      "title": "Save a session's recording",
+      "sub": "Everything recorded for one session, content included, as one file. For support or your own records.",
+      "button": "Save…",
+      "pick": "Session",
+      "none": "No sessions yet",
+      "save": "Save file",
+      "cancel": "Cancel",
+      "failed": "Could not save the recording."
+    },
+    "dest": {
+      "off": "Off",
+      "off_sub": "Nothing leaves this machine",
+      "langfuse_sub": "Open source · cloud or self-hosted",
+      "otlp": "OpenTelemetry endpoint",
+      "otlp_sub": "Your own collector, Grafana, Datadog, Phoenix and others"
+    },
+    "langfuse": {
+      "address": "Langfuse address",
+      "public_key": "Public key",
+      "secret_key": "Secret key"
+    },
+    "otlp": {
+      "url": "Traces address (OTLP/HTTP)",
+      "header_name": "Header name",
+      "header_value": "Value",
+      "add_header": "Add a header"
+    },
+    "test": {
+      "button": "Send a test recording",
+      "sending": "Sending…",
+      "ok_langfuse": "Reached Langfuse · {{ms}} ms",
+      "ok_otlp": "Reached the endpoint · {{ms}} ms",
+      "unreachable": "Could not reach this machine."
+    },
+    "include": {
+      "metadata": "Steps, timings, token counts, models and tool names",
+      "metadata_short": "Steps, timings, token counts, models, tool names",
+      "metadata_sub": "Always included while sending. No text from your sessions.",
+      "metadata_locked": "Always included while sending",
+      "messages": "Your messages and the AI's answers",
+      "messages_sub": "What you wrote and what the AI wrote back. Tool inputs and results inside the conversation stay out unless the next switch is on. Cut to 8 KB each; keys and tokens are masked.",
+      "tool_io": "Tool inputs and results",
+      "tool_io_sub": "Commands, file contents, command output and connector data. With the switch above also on: the auto-approver's reasons and what it was shown, and summaries (they quote tool content).",
+      "context": "Context added by OpenWorker",
+      "context_sub": "The system prompt, the tool list, and the context added to each turn (folders, skills menu, mode notes).",
+      "names": "Session and user names",
+      "names_sub": "The session's title, who answered each card, and this machine's name. Off: none of these are sent.",
+      "names_on": "The session's title, who answered each card, and this machine's name are sent."
+    },
+    "status": {
+      "off_title": "Not sending",
+      "off_sub": "Choose where to send recordings to start. Only turns that end after that are sent.",
+      "nothing_yet": "Nothing sent yet",
+      "last_sent": "Last sent {{when}}",
+      "counts": "Today: {{sent}} steps sent · {{failed}} failed · {{dropped}} dropped.",
+      "resumes": "If the destination stops answering, nothing is lost: sending resumes where it stopped.",
+      "failed_sub": "Sending has stopped until the settings change."
+    },
+    "state": {
+      "off": "Off",
+      "sending": "Sending",
+      "retrying": "Retrying",
+      "failed": "Failed",
+      "managed": "Sending"
+    },
+    "managed": {
+      "by": "Managed by {{by}}",
+      "sub": "Your organisation's policy sets where recordings go and what they include. Ask your admin to change it.",
+      "set_by": "Set by policy \"{{name}}\"",
+      "set_by_policy": "Set by policy",
+      "locked": "Locked",
+      "callout": "{{what}} from this machine are sent to {{by}}'s {{where}}. A small notice appears in each new session."
     }
   }
 }

@@ -2347,6 +2347,96 @@ export async function setSandboxSettings(
   return res.json();
 }
 
+// OB-6: Settings ▸ Machine ▸ Observability — where recordings go and what they include, on
+// the machine that ran the work. Keys and header values are write-only: answers carry
+// masked hints ("pk-lf-••••••••3a91"), never a value.
+export type ObservabilityDestination =
+  | { kind: "off" }
+  | { kind: "langfuse"; host: string }
+  | { kind: "otlp"; url: string; header_names: string[] };
+export interface ObservabilityInclude {
+  messages: boolean;
+  tool_io: boolean;
+  context: boolean;
+  names: boolean;
+}
+export interface ObservabilitySettings {
+  record: boolean;
+  retention_days: 7 | 30 | 90;
+  destination: ObservabilityDestination;
+  include: ObservabilityInclude;
+  secrets: { public_key?: string; secret_key?: string; headers?: Record<string, string> };
+  managed: { by: string; name: string; at: string } | null;
+  notice: string | null;
+}
+export interface ObservabilitySecretsIn {
+  public_key?: string;
+  secret_key?: string;
+  headers?: Record<string, string>;
+}
+export interface ObservabilityStatus {
+  state: "off" | "sending" | "retrying" | "failed" | "managed";
+  last_sent_at: number | null; // seconds
+  sent: number;
+  sent_today: number;
+  failed: number;
+  dropped: number;
+  last_error: string;
+}
+
+export async function getObservabilitySettings(machineId?: string | null): Promise<ObservabilitySettings> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/settings`);
+  return res.json();
+}
+
+export async function setObservabilitySettings(
+  patch: Partial<Pick<ObservabilitySettings, "record" | "retention_days" | "destination">> & {
+    include?: Partial<ObservabilityInclude>;
+    secrets?: ObservabilitySecretsIn;
+  },
+  machineId?: string | null,
+): Promise<{ ok: boolean; error?: string } & Partial<ObservabilitySettings>> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function getObservabilityStatus(machineId?: string | null): Promise<ObservabilityStatus> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/status`);
+  return res.json();
+}
+
+export async function sendObservabilityTest(
+  machineId?: string | null,
+): Promise<{ ok: boolean; status: number; text: string; ms?: number }> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/test`, { method: "POST" });
+  return res.json();
+}
+
+/** One session's recording, content included, as a file the browser saves. */
+export async function downloadSessionRecording(sessionId: string, machineId?: string | null): Promise<boolean> {
+  const res = await fetch(`${engineBase(machineId)}/v1/sessions/${encodeURIComponent(sessionId)}/recording`);
+  if (!res.ok) return false;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `recording-${sessionId.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
+/** A machine's sessions (id and title), for picking one recording to save. */
+export async function getMachineSessions(machineId?: string | null): Promise<{ session_id: string; title?: string | null }[]> {
+  const res = await fetch(`${engineBase(machineId)}/v1/sessions`);
+  return (await res.json()).sessions ?? [];
+}
+
 // OPE-207: the readiness checklist behind Settings ▸ Sandbox (the rows `openworker machine
 // sandbox status` prints, with a key and whether the app may fix each one itself), and
 // the guided setup job that walks it on the machine where sessions run.

@@ -1096,6 +1096,11 @@ export function App() {
           else if (d.status === "truncated")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
+        case "export_notice":
+          // OB-6: the company's policy sends this machine's content somewhere; a new session
+          // says what goes where (server-authored, persisted like mode_notice).
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "" }]);
+          break;
         case "mode_notice":
           if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve

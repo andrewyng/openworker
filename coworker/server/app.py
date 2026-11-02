@@ -3343,8 +3343,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             m.get("role") in ("user", "assistant") or m.get("kind") == "export_notice"
             for m in engine.messages
         ):
+            # Not saved here: an empty draft session must not appear in the sidebar. The
+            # notice is kept on the engine and saved with the session's first turn.
             engine._append_notice("export_notice", export_notice)
-            manager.save(session_id, engine, touch=False)
             await ws.send_json({"type": "export_notice", "data": {"text": export_notice}})
         inbound_times: deque[float] = deque()
 

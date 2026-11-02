@@ -30,6 +30,8 @@ const TAB_BY_SLUG: Record<string, string> = {
   connectors: "connectors",
   // UX-058: the services behind the tools.
   customization: "customization",
+  // OB-6: recording, keep for, and sending recordings.
+  observability: "observability",
   // UX-049: per-connector glance pages.
   slack: "slack",
   github: "github",
