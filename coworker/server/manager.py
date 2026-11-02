@@ -8094,6 +8094,9 @@ class SessionManager:
     # instruction ("4-5 word title") yields English titles for Chinese/Japanese/…
     # sessions. Same-language also relaxes the word count to a length that is natural
     # for the opener's script (CJK titles are a few characters, not 4-5 "words").
+    # A title asked again without an effort setting (OPE-201): room for the reasoning a
+    # model that cannot turn it off spends before the few words of the title.
+    _AUTOTITLE_REASONING_MAX_TOKENS = 1024
     _AUTOTITLE_PROMPT = (
         "You title chat sessions. Given the user's opening message(s) — and, when "
         "present, the assistant's first reply for context — reply with ONLY a short "
@@ -8192,31 +8195,49 @@ class SessionManager:
         fallback stays; the small-talk sentinel leaves auto_title unset so the turn-2
         retry can run."""
         try:
-            turn = await asyncio.to_thread(
-                engine.provider.complete,
-                model=engine.model,
-                messages=[
-                    {"role": "system", "content": self._AUTOTITLE_PROMPT},
-                    {
-                        "role": "user",
-                        "content": "\n\n".join(openers)
-                        + (
-                            f"\n\n[the assistant's first reply]\n{assistant}"
-                            if assistant
-                            else ""
-                        ),
-                    },
-                ],
-                temperature=0.2,
-                # Reasoning-routed models spend hidden tokens BEFORE emitting text; a
-                # tight cap plus default effort yields an empty completion and a silent
-                # no-op. Effort "none" means "no thinking": every provider's effort
-                # mapper handles it (OpenAI-vocabulary endpoints get it on the wire,
-                # Anthropic omits the field; see effort.NO_EFFORT), and 64 leaves
-                # headroom either way.
-                max_tokens=64,
-                reasoning_effort="none",
-            )
+            messages = [
+                {"role": "system", "content": self._AUTOTITLE_PROMPT},
+                {
+                    "role": "user",
+                    "content": "\n\n".join(openers)
+                    + (
+                        f"\n\n[the assistant's first reply]\n{assistant}"
+                        if assistant
+                        else ""
+                    ),
+                },
+            ]
+            try:
+                turn = await asyncio.to_thread(
+                    engine.provider.complete,
+                    model=engine.model,
+                    messages=messages,
+                    temperature=0.2,
+                    # Reasoning-routed models spend hidden tokens BEFORE emitting text; a
+                    # tight cap plus default effort yields an empty completion and a silent
+                    # no-op. Effort "none" means "no thinking": every provider's effort
+                    # mapper handles it (OpenAI-vocabulary endpoints get it on the wire,
+                    # Anthropic omits the field; see effort.NO_EFFORT), and 64 leaves
+                    # headroom either way.
+                    max_tokens=64,
+                    reasoning_effort="none",
+                )
+            except Exception as exc:
+                # OPE-201: some endpoints cannot turn reasoning off and refuse "none"
+                # (OpenRouter GLM 5.3: 400 "Reasoning is mandatory for this endpoint and
+                # cannot be disabled"). Ask once more with the model's own effort, and
+                # room for the reasoning it spends before the few words of the title.
+                text = str(exc).lower()
+                if "reasoning" not in text and "effort" not in text:
+                    raise
+                logger.info("autotitle for %s: retrying without reasoning effort (%s)", session_id, exc)
+                turn = await asyncio.to_thread(
+                    engine.provider.complete,
+                    model=engine.model,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=self._AUTOTITLE_REASONING_MAX_TOKENS,
+                )
             raw = (getattr(turn, "text", None) or "").strip()
             # Sanitize: surrounding quotes off, whitespace collapsed, capped at 60.
             title = " ".join(raw.strip("\"'“”‘’`").split())
