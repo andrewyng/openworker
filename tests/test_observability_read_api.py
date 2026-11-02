@@ -77,6 +77,8 @@ def test_a_recorded_turn_reads_back_through_the_endpoints(tmp_path):
     assert usage["recorded"] is True
     assert usage["cache_share"] == round(1900 / (100 + 900 + 20 + 1000 + 40), 3)
     assert usage["context"]["tokens"] == 1020
+    assert usage["totals"] == {"input": 100 + 900 + 20 + 1000 + 40, "cache": 1900, "output": 17}
+    assert usage["turns"] == 1
 
     types = [e["type"] for e in live]
     assert types[0] == "turn_started" and "turn_ended" in types and "step_ended" in types

@@ -1,5 +1,7 @@
 export type EventType =
   | "ready"
+  // Observability: batched recording events for the Steps panel ({events: [...]}).
+  | "step"
   | "inbound"
   | "turn_start"
   | "assistant_delta"

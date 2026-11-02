@@ -2990,5 +2990,164 @@
       "row": "也通过 {{name}} 抓取网页",
       "caution": "{{name}} 届时会看到智能体打开的每个网页的地址。"
     }
+  },
+  "steps": {
+    "title": "步骤",
+    "open": "步骤",
+    "open_title": "每一轮的每个步骤，以及时间和令牌用在了哪里",
+    "close": "关闭步骤",
+    "prev_turn": "上一轮",
+    "next_turn": "下一轮",
+    "turn_of": "第 {{n}} 轮，共 {{total}} 轮",
+    "loading": "加载中…",
+    "load_error": "无法加载步骤。",
+    "not_recorded": "还没有记录的步骤。从现在起运行的轮次会被记录。",
+    "tab": {
+      "timeline": "时间线",
+      "usage": "用量"
+    },
+    "bucket": {
+      "total": "总计",
+      "waiting": "等待你",
+      "tools": "工具",
+      "model": "模型",
+      "auto_approver": "自动审批",
+      "summary": "摘要",
+      "other": "其他"
+    },
+    "checks_line_other": "自动审批：{{count}} 次检查 · {{allowed}} 次允许 · {{asked}} 次询问你 · {{blocked}} 次阻止",
+    "row": {
+      "context": "构建上下文",
+      "model": "模型",
+      "wait": "等待你",
+      "auto_approver": "自动审批",
+      "summary": "摘要",
+      "trim": "裁剪"
+    },
+    "purpose": {
+      "main": "主要",
+      "helper": "助手",
+      "summary": "摘要",
+      "auto_approver": "自动审批",
+      "title": "标题",
+      "proxy": "代理",
+      "unattributed": "未归属"
+    },
+    "purpose_long": {
+      "main": "主要工作",
+      "helper": "助手代理（探索）",
+      "summary": "摘要（压缩）",
+      "auto_approver": "自动审批",
+      "title": "会话标题",
+      "unattributed": "未归属"
+    },
+    "wait": {
+      "approval": "审批",
+      "question": "问题",
+      "plan": "计划",
+      "team": "团队",
+      "items": "工作项",
+      "connector": "连接器",
+      "tool_install": "安装工具",
+      "directory": "文件夹"
+    },
+    "result": {
+      "allow": "已允许",
+      "deny": "已阻止",
+      "unsure": "询问你",
+      "could_not_run": "无法运行",
+      "context_changed": "询问你（检查时有变化）"
+    },
+    "notice": {
+      "error": "错误",
+      "interrupted": "已停止",
+      "reviewer_paused": "自动审批已暂停",
+      "step_limit": "达到步骤上限",
+      "truncated": "回复被截断",
+      "context_changed": "上下文已变化",
+      "stamp_changed": "设置已变化",
+      "summary_failed": "摘要失败",
+      "recording_gap": "记录缺口"
+    },
+    "status": {
+      "ok": "正常",
+      "error": "错误",
+      "denied": "已拒绝",
+      "interrupted": "已停止",
+      "skipped": "已跳过",
+      "running": "运行中",
+      "unknown": "未知"
+    },
+    "after_turn": "轮次结束后",
+    "detail": {
+      "status": "状态",
+      "started": "开始于",
+      "duration": "时长",
+      "model": "模型",
+      "served": "实际回答",
+      "ttft": "首次回复用时",
+      "stopped": "停止原因",
+      "tools": "提供的工具",
+      "error": "错误",
+      "risk": "风险",
+      "exit": "退出码",
+      "origin": "决定者",
+      "blocked": "被阻止的站点",
+      "unknown": "未知",
+      "where": "显示于",
+      "outcome": "结果",
+      "answered_by": "回答者",
+      "mode": "模式",
+      "reviewer": "审批者",
+      "reason": "原因",
+      "session_prompt": "会话提示词",
+      "size": "上下文块大小"
+    },
+    "origin": {
+      "low_risk": "低风险",
+      "bypass": "完全访问",
+      "config_allowlist": "你的允许列表",
+      "session_grant": "本会话已允许",
+      "standing_rule": "常设规则",
+      "trusted_rule": "你的信任规则",
+      "trusted_server": "服务器信任",
+      "run_grant": "本次请求已允许",
+      "allow_anyway": "你（仍然允许）",
+      "lead_denial": "负责人的拒绝",
+      "reviewer": "自动审批",
+      "user": "你",
+      "denied_by_rule": "规则",
+      "reviewer_denied": "自动审批",
+      "unattended_auto": "自动值守",
+      "readonly_tier": "只读命令",
+      "gate_tier": "安全更改"
+    },
+    "stage": {
+      "permission": "权限",
+      "grant": "授权",
+      "auto_approver": "自动审批",
+      "card": "卡片",
+      "resolved": "回答"
+    },
+    "tokens_line": "来自缓存 {{cache}} · 写入缓存 {{written}} · 新增 {{fresh}} · 输出 {{out}}",
+    "reasoning": "其中推理 {{n}}",
+    "tokens_not_reported": "提供方没有报告这次调用的令牌数。",
+    "exchange_other": "确切的请求和响应（{{count}} 次尝试）",
+    "usage": {
+      "input": "输入",
+      "output": "输出",
+      "from_cache": "来自缓存",
+      "by_purpose": "按用途",
+      "by_model": "按模型",
+      "model": "模型",
+      "in": "输入",
+      "cache": "缓存",
+      "out": "输出",
+      "context_now": "当前上下文",
+      "context_line": "{{used}} / {{window}}",
+      "unreported_other": "{{count}} 次调用没有报告用量",
+      "failed_other": "{{count}} 次调用失败（用量未知）",
+      "overflow_other": "{{count}} 次调用超出上下文上限，对话已被摘要"
+    }
   }
 }

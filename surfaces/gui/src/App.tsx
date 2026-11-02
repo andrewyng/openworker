@@ -111,6 +111,7 @@ import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { TeamView, TeamQuickLook } from "./components/TeamView";
+import { StepsPanel } from "./components/StepsPanel";
 import type { WorkerFilter } from "./teamRoster";
 import type { TeamSummary } from "./teamView";
 import { getTeamSummary } from "./api";
@@ -414,6 +415,10 @@ export function App() {
   boardSessionRef.current = sessionId;
   const [boardOwner, setBoardOwner] = useState("");
   const [teamViewOpen, setTeamViewOpen] = useState(false);
+  // Observability (UX-059 OB-1): the Steps panel takes the rail's full-view slot, like the
+  // team view; `stepsKey` moves on live step events and at a turn's end so it follows along.
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [stepsKey, setStepsKey] = useState(0);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
   const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
@@ -1154,8 +1159,13 @@ export function App() {
             { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
           ]);
           break;
+        case "step":
+          // Recording events for the Steps panel (batched by the server every 100 ms).
+          setStepsKey((k) => k + 1);
+          break;
         case "turn_done":
           setRunning(false);
+          setStepsKey((k) => k + 1);
           setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
@@ -2233,6 +2243,23 @@ export function App() {
             {surface === "session" && (
               <SandboxChip info={sandboxInfo} onOpenSettings={() => openSettings("sandbox")} />
             )}
+            {/* UX-059 OB-1: every step of each turn, and where the time and tokens went. */}
+            {surface === "session" && agent !== "chat" && (
+              <button
+                className={"topbar-artifacts-btn" + (stepsOpen ? " active" : "")}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => {
+                  setStepsOpen(!stepsOpen);
+                  setTeamViewOpen(false);
+                  setRailHidden(false);
+                }}
+                title={t("steps.open_title")}
+                aria-pressed={stepsOpen}
+                data-testid="steps-open"
+              >
+                <span>{t("steps.open")}</span>
+              </button>
+            )}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
             {agent !== "chat" && (
@@ -2604,7 +2631,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} onClose={() => setStepsOpen(false)} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}

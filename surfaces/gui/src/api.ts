@@ -4385,3 +4385,60 @@ export async function forgetConnectorOnMachine(sourceMachineId: string, name: st
   );
   return res.json();
 }
+
+// -- Observability (Phase 1): recorded turns and steps of a session ----------------------------
+// Served by the engine (technical design §12); `sessionApiBase` reaches a remote machine's
+// session through the machine proxy, like the transcript.
+
+export interface RecordedTurn {
+  turn_id: string;
+  seq: number;
+  kind: string;
+  trigger: string;
+  status: string;
+  started_at: number;
+  duration_ms: number | null;
+  stamp: Record<string, any>;
+  buckets: Record<string, any>;
+  usage: Record<string, any>;
+}
+
+export interface RecordedStep {
+  step_id: string;
+  turn_id: string | null;
+  parent_step_id: string | null;
+  seq: number | null;
+  kind: string;
+  name: string;
+  started_at: number;
+  duration_ms: number | null;
+  status: string;
+  call_id: string | null;
+  message_id: string | null;
+  shadow: boolean;
+  after_turn: boolean;
+  attrs: Record<string, any>;
+  content?: Record<string, any>;
+}
+
+async function recordingGet(sessionId: string, path: string): Promise<any> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}${path}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getRecordedTurns(sessionId: string): Promise<RecordedTurn[]> {
+  return (await recordingGet(sessionId, "/turns")).turns ?? [];
+}
+
+export async function getTurnSteps(sessionId: string, turnId: string): Promise<RecordedStep[]> {
+  return (await recordingGet(sessionId, `/turns/${encodeURIComponent(turnId)}/steps`)).steps ?? [];
+}
+
+export async function getStepDetail(sessionId: string, stepId: string): Promise<any> {
+  return (await recordingGet(sessionId, `/steps/${encodeURIComponent(stepId)}`)).step ?? null;
+}
+
+export async function getRecordedUsage(sessionId: string): Promise<any> {
+  return recordingGet(sessionId, "/usage");
+}

@@ -86,6 +86,24 @@ def _cut(message: dict[str, Any]) -> dict[str, Any]:
 def usage(recording: dict[str, Any], session_id: str) -> dict[str, Any]:
     out = calculator.usage(recording, session_id)
     out["recorded"] = bool(recording.get("turns"))
+    out["turns"] = len(recording.get("turns") or [])
+    # The popover's parts: input, from cache, output, per model row and in all (OB-4).
+    parts: dict[str, dict[str, int]] = {}
+    totals = {"input": 0, "cache": 0, "output": 0}
+    for s in recording.get("steps") or []:
+        a = s.get("attrs") or {}
+        u = a.get("usage") or {}
+        if s.get("kind") != "model" or not u.get("reported") or a.get("error") or a.get("purpose") == "proxy":
+            continue
+        p = a.get("purpose", "main")
+        key = a.get("model", "?") + ("" if p == "main" else f" ({p})")
+        row = parts.setdefault(key, {"input": 0, "cache": 0, "output": 0})
+        for target in (row, totals):
+            target["input"] += calculator.input_total(u)
+            target["cache"] += u.get("cache_read") or 0
+            target["output"] += u.get("output") or 0
+    out["by_model_parts"] = parts
+    out["totals"] = totals
     # Context fill: the last main call's total input against its model's context window (M-R18).
     last = next((s for s in reversed(recording.get("steps") or [])
                  if s.get("kind") == "model" and (s.get("attrs") or {}).get("purpose") == "main"
