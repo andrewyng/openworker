@@ -92,9 +92,36 @@ def test_the_workspace_folder_name_is_the_path_with_dashes() -> None:
     assert len(long) < 200 and long != workspace_folder_name(Path("/" + "/".join(["folder"] * 61)))
 
 
+@pytest.fixture
+def _windows_path_policy(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    def configure(value):
+        def open_key(root, path):
+            assert root == 0
+            assert path == r"SYSTEM\CurrentControlSet\Control\FileSystem"
+            return nullcontext()
+
+        def query(key, name):
+            assert name == "LongPathsEnabled"
+            if isinstance(value, OSError):
+                raise value
+            return value, 4  # REG_DWORD
+
+        monkeypatch.setitem(sys.modules, "winreg", SimpleNamespace(
+            HKEY_LOCAL_MACHINE=0,
+            OpenKey=open_key,
+            QueryValueEx=query,
+        ))
+
+    configure(0)
+    return configure
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
 @pytest.mark.parametrize("non_bmp", [False, True])
-def test_windows_session_path_leaves_room_for_generated_records(tmp_path, monkeypatch, non_bmp):
+def test_windows_session_path_leaves_room_for_generated_records(tmp_path, monkeypatch, non_bmp, _windows_path_policy):
     from coworker.headless.runner import session_folder
     from coworker.toolresult import bound_tool_result
 
@@ -115,7 +142,7 @@ def test_windows_session_path_leaves_room_for_generated_records(tmp_path, monkey
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
-def test_windows_session_path_rejects_a_state_root_without_room(tmp_path, monkeypatch):
+def test_windows_session_path_rejects_a_state_root_without_room(tmp_path, monkeypatch, _windows_path_policy):
     from coworker.headless.runner import UsageError, session_folder
 
     state = tmp_path / ("s" * 160)
@@ -125,13 +152,49 @@ def test_windows_session_path_rejects_a_state_root_without_room(tmp_path, monkey
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
-def test_windows_session_path_preserves_an_existing_name_that_fits(monkeypatch):
+def test_windows_session_path_preserves_an_existing_name_that_fits(monkeypatch, _windows_path_policy):
     from coworker.headless.runner import session_folder
 
     state = Path("C:/") / ("s" * 127)
     monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
     workspace = Path("C:/w")
     assert session_folder(workspace, "0123456789ab") == state / "sessions" / workspace_folder_name(workspace) / "0123456789ab"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows extended path namespace")
+def test_windows_session_path_preserves_extended_namespace(tmp_path, monkeypatch, _windows_path_policy):
+    from coworker.headless.runner import session_folder
+
+    state = Path("\\\\?\\" + str(tmp_path.resolve())) / ("s" * 100) / ("s" * 100)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    workspace = Path("C:/w")
+    run = session_folder(workspace, "0123456789ab")
+    assert run == state / "sessions" / "C--w" / "0123456789ab"
+    run.mkdir(parents=True)
+    record = run / "summary.json"
+    record.write_text("{}", encoding="utf-8")
+    assert record.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows long-path policy")
+def test_windows_session_path_preserves_names_when_long_paths_enabled(monkeypatch, _windows_path_policy):
+    from coworker.headless.runner import session_folder
+
+    _windows_path_policy(1)
+    state = Path("C:/") / ("s" * 160)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    workspace = Path("C:/w")
+    assert session_folder(workspace, "0123456789ab") == state / "sessions" / "C--w" / "0123456789ab"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows long-path policy")
+def test_windows_session_path_uses_legacy_budget_when_policy_unreadable(monkeypatch, _windows_path_policy):
+    from coworker.headless.runner import UsageError, session_folder
+
+    _windows_path_policy(OSError("registry unavailable"))
+    monkeypatch.setenv("COWORKER_STATE_DIR", "C:/" + "s" * 160)
+    with pytest.raises(UsageError, match="--out"):
+        session_folder(Path("C:/w"), "0123456789ab")
 
 
 def test_this_computers_settings_are_read_and_not_changed(tmp_path: Path) -> None:

@@ -794,12 +794,27 @@ def workspace_folder_name(workspace: Path, *, max_length: int = 180) -> str:
     return name
 
 
+def _windows_long_paths_enabled() -> bool:
+    """Python 3.6+ honors this Windows policy; unreadable policy uses the legacy budget."""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except (ImportError, OSError):
+        return False
+
+
 def session_folder(workspace: Path, run_id: str) -> Path:
     from ..secrets import state_dir
 
     base = state_dir() / "sessions"
     name = workspace_folder_name(workspace)
-    if sys.platform == "win32":
+    if (
+        sys.platform == "win32"
+        and not str(base).startswith("\\\\?\\")
+        and not _windows_long_paths_enabled()
+    ):
         # MAX_PATH includes the whole absolute path and its NUL. Reserve 100 code units
         # below the run for generated records (tool-output names can take 93). Counting
         # UTF-16 matters when the state root contains characters outside the BMP.
