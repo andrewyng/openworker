@@ -3243,6 +3243,25 @@
       "unknown": "未知"
     },
     "after_turn": "轮次结束后",
+    "helper": {
+      "summary_other": "助手 {{index}} · {{count}} 个步骤 · {{tokens}} 个 token · {{status}}",
+      "status": {
+        "ok": "完成",
+        "step_limit": "达到步骤上限",
+        "error": "失败",
+        "interrupted": "已停止",
+        "running": "运行中"
+      },
+      "show": "显示助手的步骤",
+      "hide": "隐藏助手的步骤"
+    },
+    "worker": {
+      "row": "同事 {{name}} · 第 {{seq}} 轮",
+      "row_unnamed": "同事 · 第 {{seq}} 轮",
+      "tokens": "{{tokens}} 个 token",
+      "open": "打开同事的会话 ↗",
+      "title": "本轮唤醒的团队同事的一轮。它的 token 计入该同事自己的总量，不计入本会话。"
+    },
     "detail": {
       "status": "状态",
       "started": "开始于",

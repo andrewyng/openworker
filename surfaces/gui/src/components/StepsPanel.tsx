@@ -16,6 +16,7 @@ import {
   markIssuesSeen,
   type RecordedStep,
   type RecordedTurn,
+  type RecordedWorkerRow,
   type TurnIssue,
   type TurnIssues,
 } from "../api";
@@ -185,6 +186,55 @@ function nest(steps: RecordedStep[]): { step: RecordedStep; depth: number }[] {
   return out;
 }
 
+/** What the timeline draws (OB-7): a step; under an explore step, the summary row its
+ * helper's steps fold behind; or a team worker's turn this turn woke. */
+export type TimelineRow =
+  | { type: "step"; step: RecordedStep; depth: number }
+  | { type: "helper"; step: RecordedStep; depth: number; open: boolean; children: RecordedStep[] }
+  | { type: "worker"; worker: RecordedWorkerRow };
+
+/** The helper's summary line, "Helper 1 · 6 steps · 12.3k tokens · ok": from the explore step's
+ * `attrs.helper` (1.2), or, while it runs or in an older recording, from its nested steps. */
+export function helperSummary(step: RecordedStep, children: RecordedStep[], t: T): string {
+  const h = step.attrs?.helper;
+  const count = h ? (h.model_calls || 0) + (h.tool_calls || 0) : children.filter((c) => c.kind === "model" || c.kind === "tool").length;
+  const tokens = h ? h.tokens || 0 : children.reduce((n, c) => {
+    const u = c.kind === "model" ? c.attrs?.usage : null;
+    return u?.reported ? n + (u.input_fresh || 0) + (u.cache_read || 0) + (u.cache_write || 0) + (u.output || 0) : n;
+  }, 0);
+  const status = h?.status || step.status;
+  return t("steps.helper.summary", {
+    index: h?.index ?? 1, count, tokens: formatTokens(tokens),
+    status: t(`steps.helper.status.${status}`, { defaultValue: status }),
+  });
+}
+
+/** The timeline's rows: each explore step's helper steps folded behind a summary row unless
+ * opened (TD2-19), and the turn's worker rows placed among the top-level steps by start. */
+export function timelineRows(steps: RecordedStep[], workers: RecordedWorkerRow[], open: Set<string>): TimelineRow[] {
+  const nested = nest(steps);
+  const out: TimelineRow[] = [];
+  for (let i = 0; i < nested.length; i++) {
+    const { step, depth } = nested[i];
+    out.push({ type: "step", step, depth });
+    if (step.kind !== "tool" || step.name !== "explore") continue;
+    let j = i + 1;
+    while (j < nested.length && nested[j].depth > depth) j++;
+    const children = nested.slice(i + 1, j);
+    if (!children.length && !step.attrs?.helper) continue;
+    const isOpen = open.has(step.step_id);
+    out.push({ type: "helper", step, depth: depth + 1, open: isOpen, children: children.map((c) => c.step) });
+    if (isOpen) for (const c of children) out.push({ type: "step", step: c.step, depth: c.depth + 1 });
+    i = j - 1;
+  }
+  for (const w of [...workers].sort((a, b) => a.started_at - b.started_at)) {
+    // Before the first top-level step that started after the worker turn did.
+    const at = out.findIndex((r) => r.type === "step" && r.depth === 0 && r.step.started_at > w.started_at);
+    out.splice(at < 0 ? out.length : at, 0, { type: "worker", worker: w });
+  }
+  return out;
+}
+
 const KIND_CLASS: Record<string, string> = {
   context: "ctx", model: "model", tool: "tool", wait: "wait", auto_approver: "review", summary: "sum", notice: "ctx",
 };
@@ -194,9 +244,12 @@ export function StepsPanel({
   refreshKey = 0,
   openAt = null,
   onClose,
+  onOpenSession,
 }: {
   sessionId: string;
   refreshKey?: number;
+  // A worker row's "Open worker session" (OB-7).
+  onOpenSession?: (sessionId: string) => void;
   // Opened from a turn's answer: its time (unix seconds) picks the turn that produced it.
   openAt?: { ts?: number; n: number } | null;
   onClose: () => void;
@@ -209,6 +262,7 @@ export function StepsPanel({
   const [issues, setIssues] = useState<TurnIssues | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [openHelpers, setOpenHelpers] = useState<Set<string>>(new Set());
 
   // Another session: start again at its newest turn.
   useEffect(() => {
@@ -242,8 +296,11 @@ export function StepsPanel({
   }, [openAt?.n, turns]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const turn = turns && turnIdx != null && turnIdx >= 0 ? turns[turnIdx] : null;
-  // A step's details belong to its turn: picking another turn closes them.
-  useEffect(() => setSelected(null), [turn?.turn_id]);
+  // A step's details belong to its turn: picking another turn closes them, and folds its helpers.
+  useEffect(() => {
+    setSelected(null);
+    setOpenHelpers(new Set());
+  }, [turn?.turn_id]);
   useEffect(() => {
     if (!turn) return;
     let live = true;
@@ -269,7 +326,13 @@ export function StepsPanel({
   }, [tab, sessionId, turn?.turn_id]);
   const flagged = useMemo(() => new Set((issues?.issues || []).filter((i) => i.severity === "warn").map((i) => i.step_id)), [issues]);
 
-  const rows = useMemo(() => nest(steps), [steps]);
+  const rows = useMemo(() => timelineRows(steps, turn?.workers || [], openHelpers), [steps, turn?.workers, openHelpers]);
+  const toggleHelper = (id: string) => setOpenHelpers((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   const checks = steps.filter((s) => s.kind === "auto_approver" && !s.shadow);
   const inspecting = tab === "timeline" && !!selected && !!turn;
   const total = turn ? Math.max(1, turn.buckets.total || turn.duration_ms || 1) : 1;
@@ -289,17 +352,21 @@ export function StepsPanel({
         <span className="steps-ticks">{ticks(total).map((x, i) => <span key={i}>{x}</span>)}</span>
         <span className="steps-axis-time">{t("steps.axis.time")}</span>
       </div>
-      {rows.map(({ step, depth }) => (
+      {rows.map((row) => row.type === "helper" ? (
+        <HelperRow key={`helper-${row.step.step_id}`} row={row} turn={turn} total={total} onToggle={() => toggleHelper(row.step.step_id)} />
+      ) : row.type === "worker" ? (
+        <WorkerRow key={`worker-${row.worker.turn_id}`} worker={row.worker} turn={turn} total={total} onOpen={onOpenSession} />
+      ) : (
         <StepRow
-          key={step.step_id}
-          step={step}
-          depth={depth}
+          key={row.step.step_id}
+          step={row.step}
+          depth={row.depth}
           turn={turn}
           total={total}
-          label={stepLabel(step, t)}
-          selected={selected === step.step_id}
-          issue={flagged.has(step.step_id)}
-          onSelect={() => setSelected(selected === step.step_id ? null : step.step_id)}
+          label={stepLabel(row.step, t)}
+          selected={selected === row.step.step_id}
+          issue={flagged.has(row.step.step_id)}
+          onSelect={() => setSelected(selected === row.step.step_id ? null : row.step.step_id)}
         />
       ))}
     </div>
@@ -432,6 +499,62 @@ function StepRow({ step, depth, turn, total, label, selected, issue, onSelect }:
       </span>
       <span className="steps-time">{formatDuration(step.duration_ms)}</span>
     </button>
+  );
+}
+
+function barAt(started: number, duration: number | null, turn: RecordedTurn, total: number) {
+  const left = Math.min(100, Math.max(0, ((started - turn.started_at) / total) * 100));
+  const width = duration ? Math.min(100 - left, (duration / total) * 100) : 0;
+  return { left: `${left}%`, width: width ? `${width}%` : undefined };
+}
+
+/** The summary row a helper's steps fold behind (OB-7, TD2-19). */
+function HelperRow({ row, turn, total, onToggle }: {
+  row: Extract<TimelineRow, { type: "helper" }>; turn: RecordedTurn; total: number; onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      className="steps-row k-tool steps-helper"
+      onClick={onToggle}
+      aria-expanded={row.open}
+      title={row.open ? t("steps.helper.hide") : t("steps.helper.show")}
+      data-testid="steps-helper"
+    >
+      <span className="steps-label" style={{ paddingLeft: row.depth * 16 }}>
+        <span className="steps-fold" aria-hidden>{row.open ? "▾" : "▸"}</span>
+        <span className="steps-name">{helperSummary(row.step, row.children, t)}</span>
+      </span>
+      <span className="steps-track"><span className="steps-bar" style={barAt(row.step.started_at, row.step.duration_ms, turn, total)} /></span>
+      <span className="steps-time">{formatDuration(row.step.duration_ms)}</span>
+    </button>
+  );
+}
+
+/** A team worker's turn this turn woke (OB-7): one row, worked out on read; its tokens are the
+ * worker's, shown here for reading only. */
+function WorkerRow({ worker, turn, total, onOpen }: {
+  worker: RecordedWorkerRow; turn: RecordedTurn; total: number; onOpen?: (sessionId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const label = worker.name
+    ? t("steps.worker.row", { name: worker.name, seq: worker.seq ?? "?" })
+    : t("steps.worker.row_unnamed", { seq: worker.seq ?? "?" });
+  return (
+    <div className="steps-row k-model steps-worker" title={t("steps.worker.title")} data-testid="steps-worker">
+      <span className="steps-label">
+        <span className="steps-kind" />
+        <span className="steps-name">{label}</span>
+        <span className="steps-badge">{(worker.at_least ? "≥ " : "") + t("steps.worker.tokens", { tokens: formatTokens(worker.tokens) })}</span>
+        {onOpen && (
+          <button className="steps-worker-open" onClick={() => onOpen(worker.session_id)} data-testid="steps-worker-open">
+            {t("steps.worker.open")}
+          </button>
+        )}
+      </span>
+      <span className="steps-track"><span className="steps-bar" style={barAt(worker.started_at, worker.duration_ms, turn, total)} /></span>
+      <span className="steps-time">{formatDuration(worker.duration_ms)}</span>
+    </div>
   );
 }
 

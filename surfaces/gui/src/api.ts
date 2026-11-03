@@ -4497,6 +4497,24 @@ export interface RecordedTurn {
   reviewer?: { active?: boolean; shadow?: boolean; kind?: string | null; model?: string | null } | null;
   // OB-3: how many issues the turn's checks found (warnings count on the tab).
   issues?: { warn: number; info: number };
+  // OB-7: team workers' turns this (lead) turn woke, worked out on read. Display only.
+  workers?: RecordedWorkerRow[];
+}
+
+// One worker turn under a lead's turn (OB-7). `tokens` are the worker's own, never the lead's.
+export interface RecordedWorkerRow {
+  session_id: string;
+  turn_id: string;
+  seq: number | null;
+  name: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: string;
+  tokens: number;
+  at_least: boolean;
+  team_id: string | null;
+  item_ids: string[];
+  via: string | null;
 }
 
 // One turn's Issues (OB-3): what the checks in signals.yaml found, what was fine, what did not

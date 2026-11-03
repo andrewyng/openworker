@@ -2493,6 +2493,12 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .steps-badge { font-size:10px; line-height:1.5; border-radius:4px; padding:0 4px; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:var(--paper); color:var(--muted); }
 .steps-badge.err { background:var(--danger-soft); color:var(--danger); }
 .steps-badge.warn { background:var(--warn-soft); color:var(--warn-ink); }
+/* Helper summary rows and team worker rows (OB-7): work done elsewhere, drawn lighter. */
+.steps-fold { width:10px; flex:none; color:var(--muted); }
+.steps-helper .steps-bar, .steps-worker .steps-bar { opacity:.35; }
+.steps-worker { cursor:default; }
+.steps-worker-open { border:0; background:none; padding:0; color:var(--accent); font:inherit; cursor:pointer; white-space:nowrap; }
+.steps-worker-open:hover { text-decoration:underline; }
 
 /* One step's details (OB-2, OB-11): the inspector beside the list. */
 .steps-insp { position:relative; padding:12px 14px 20px; overflow:auto; min-height:0; font-size:var(--fs-ui); }

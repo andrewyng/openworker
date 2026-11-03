@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRecordedTurns, getRecordedUsage, getStepDetail, getTurnIssues, getTurnSteps, markIssuesSeen } from "../api";
 import { StepsPanel, formatDuration } from "./StepsPanel";
+import i18n from "i18next";
+import zh from "../locales/zh.json";
 
 vi.mock("../api", () => ({
   getRecordedTurns: vi.fn(),
@@ -314,3 +316,93 @@ describe("Issues tab (OB-3)", () => {
   });
 });
 
+
+describe("Helpers and team workers (OB-7)", () => {
+  const usage = (n: number) => ({ purpose: "helper", usage: { reported: true, input_fresh: n - 100, cache_read: 0, cache_write: 0, output: 100 } });
+  const helperSteps = [
+    step({ step_id: "m0", kind: "model", name: "model", duration_ms: 500, attrs: { purpose: "main" } }),
+    step({ step_id: "e1", name: "explore", call_id: "c1", started_at: 1500, duration_ms: 6000,
+           attrs: { helper: { index: 1, status: "ok", model_calls: 4, tool_calls: 2, tokens: 12300 } } }),
+    step({ step_id: "e1m", kind: "model", name: "model", parent_step_id: "e1", started_at: 1600, attrs: usage(6000) }),
+    step({ step_id: "e1t", name: "grep", parent_step_id: "e1", started_at: 1700 }),
+    step({ step_id: "e2", name: "explore", call_id: "c2", started_at: 1500, duration_ms: 5000,
+           attrs: { helper: { index: 2, status: "step_limit", model_calls: 10, tool_calls: 9, tokens: 40000 } } }),
+    step({ step_id: "e2m", kind: "model", name: "model", parent_step_id: "e2", started_at: 1600, attrs: usage(4000) }),
+    step({ step_id: "m9", kind: "model", name: "model", started_at: 8000, duration_ms: 2000, attrs: { purpose: "main" } }),
+  ];
+
+  it("folds each helper's steps behind its summary line, and opens them on click", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(helperSteps as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    const helpers = await screen.findAllByTestId("steps-helper");
+    expect(helpers.map((h) => h.querySelector(".steps-name")?.textContent)).toEqual([
+      "Helper 1 · 6 steps · 12.3k tokens · ok",
+      "Helper 2 · 19 steps · 40k tokens · hit its step limit",
+    ]);
+    // Folded by default: the explore rows and the lead's own steps, no helper steps.
+    expect(screen.getAllByTestId("steps-row")).toHaveLength(4);
+    fireEvent.click(helpers[0]);
+    expect(helpers[0].getAttribute("aria-expanded")).toBe("true");
+    const labels = screen.getAllByTestId("steps-row").map((r) => r.textContent || "");
+    expect(labels).toHaveLength(6);
+    expect(labels[2]).toContain("Model · helper");
+    expect(labels[3]).toContain("grep");
+    fireEvent.click(helpers[0]);
+    expect(screen.getAllByTestId("steps-row")).toHaveLength(4);
+  });
+
+  it("sums a running helper's own steps until its summary is recorded", async () => {
+    const running = helperSteps.slice(0, 4).map((x) => x.step_id === "e1" ? { ...x, status: "running", duration_ms: null, attrs: {} } : x);
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(running as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    const [helper] = await screen.findAllByTestId("steps-helper");
+    expect(helper.querySelector(".steps-name")?.textContent).toBe("Helper 1 · 2 steps · 6k tokens · running");
+  });
+
+  const workers = [{ session_id: "sess_qa", turn_id: "W1", seq: 3, name: "qa", started_at: 6000, duration_ms: 41_000,
+                     status: "completed", tokens: 12_000, at_least: false, team_id: "team-1", item_ids: ["3"], via: "board" }];
+
+  it("shows a worker's turn as one row that opens the worker session", async () => {
+    const onOpen = vi.fn();
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, workers }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(helperSteps as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} onOpenSession={onOpen} />);
+    const row = await screen.findByTestId("steps-worker");
+    expect(row.textContent).toContain("Worker qa · turn 3");
+    expect(row.textContent).toContain("12k tokens");
+    expect(row.textContent).toContain("41s");
+    // In time order: after the helpers, before the final answer (which started at 8000).
+    const timeline = screen.getByTestId("steps-timeline");
+    const order = Array.from(timeline.querySelectorAll("[data-testid]")).map((e) => e.getAttribute("data-testid")).filter((x) => x !== "steps-worker-open");
+    expect(order.slice(-2)).toEqual(["steps-worker", "steps-row"]);
+    fireEvent.click(screen.getByTestId("steps-worker-open"));
+    expect(onOpen).toHaveBeenCalledWith("sess_qa");
+  });
+
+  it("has no open link where the app cannot open sessions", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, workers }] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await screen.findByTestId("steps-worker");
+    expect(screen.queryByTestId("steps-worker-open")).toBeNull();
+  });
+
+  it("reads in Chinese", async () => {
+    i18n.addResourceBundle("zh", "translation", zh, true, true);
+    await i18n.changeLanguage("zh");
+    try {
+      vi.mocked(getRecordedTurns).mockResolvedValue([{ ...turn, workers }] as any);
+      vi.mocked(getTurnSteps).mockResolvedValue(helperSteps as any);
+      render(<StepsPanel sessionId="s1" onClose={() => {}} onOpenSession={() => {}} />);
+      const helpers = await screen.findAllByTestId("steps-helper");
+      expect(helpers[0].querySelector(".steps-name")?.textContent).toBe("助手 1 · 6 个步骤 · 12.3k 个 token · 完成");
+      expect(helpers[1].textContent).toContain("达到步骤上限");
+      expect(screen.getByTestId("steps-worker").textContent).toContain("同事 qa · 第 3 轮");
+      expect(screen.getByTestId("steps-worker-open").textContent).toBe("打开同事的会话 ↗");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+});

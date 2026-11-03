@@ -3292,6 +3292,26 @@
       "unknown": "unknown"
     },
     "after_turn": "after the turn",
+    "helper": {
+      "summary_one": "Helper {{index}} · {{count}} step · {{tokens}} tokens · {{status}}",
+      "summary_other": "Helper {{index}} · {{count}} steps · {{tokens}} tokens · {{status}}",
+      "status": {
+        "ok": "ok",
+        "step_limit": "hit its step limit",
+        "error": "failed",
+        "interrupted": "stopped",
+        "running": "running"
+      },
+      "show": "Show the helper's steps",
+      "hide": "Hide the helper's steps"
+    },
+    "worker": {
+      "row": "Worker {{name}} · turn {{seq}}",
+      "row_unnamed": "Worker · turn {{seq}}",
+      "tokens": "{{tokens}} tokens",
+      "open": "Open worker session ↗",
+      "title": "A turn of a team worker this turn woke. Its tokens are in the worker's own total, not this session's."
+    },
     "detail": {
       "status": "Status",
       "started": "Started at",
