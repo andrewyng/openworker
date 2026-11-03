@@ -1,6 +1,7 @@
-"""llama.cpp and vLLM: servers the user starts, reached through their OpenAI-compatible
-`/v1`. One module for both, since OpenWorker treats them the same way and the two
-differ only in what they report about themselves.
+"""llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner and mlx-lm: servers the user
+starts, reached through their OpenAI-compatible `/v1`. One module for all of them, since
+OpenWorker treats them the same way and they differ only in what they report about
+themselves.
 
 - llama.cpp `llama-server`: `localhost:8080` by default; `/v1/models` lists the loaded
   model (its id is the file path unless the server was started with `--alias`), with
@@ -11,9 +12,20 @@ differ only in what they report about themselves.
   `max_model_len`. Tool calls work only when the server was started with
   `--enable-auto-tool-choice --tool-call-parser <name>`; the harness cannot turn them on,
   but it can find out, and say so, before a session breaks.
+- LM Studio: `localhost:1234` by default (`lms server start` or the Developer tab); its
+  `/v1/models` lists every downloaded model, and its own `/api/v0/models` adds each one's
+  `max_context_length` and whether it is loaded. Tool calls go through the model's chat
+  template, as in llama.cpp.
+- Jan: `127.0.0.1:1337` by default (Settings ▸ Local API Server ▸ Start Server, read from
+  docs.jan.ai/desktop/api-server 2026-10-26); a plain OpenAI listing, an optional key.
+- Docker Model Runner: `localhost:12434/engines/v1` by default (TCP host access turned on
+  in Docker Desktop; docs.docker.com/ai/model-runner/api-reference, read 2026-10-26). The
+  `/engines` segment is part of the path, so v1_base adds it when the user types the root.
+- mlx-lm: `127.0.0.1:8080` by default (`mlx_lm.server`, Apple silicon only; its server.py
+  read 2026-10-26) — the same port as llama.cpp, so the help says to move one of them.
 
-Neither tells the harness what the machine is; that is local_machine.py. Both may take an
-API key; without one any value is accepted, and OpenWorker sends a placeholder.
+None of them tells the harness what the machine is; that is local_machine.py. All may take
+an API key; without one any value is accepted, and OpenWorker sends a placeholder.
 """
 
 from __future__ import annotations
@@ -31,6 +43,10 @@ from .recommended import recommendation_for
 LOCAL_SERVERS: dict[str, dict[str, str]] = {
     "llamacpp": {"title": "llama.cpp", "default_base": "http://localhost:8080"},
     "vllm": {"title": "vLLM", "default_base": "http://localhost:8000"},
+    "lmstudio": {"title": "LM Studio", "default_base": "http://localhost:1234"},
+    "jan": {"title": "Jan", "default_base": "http://127.0.0.1:1337"},
+    "docker": {"title": "Docker Model Runner", "default_base": "http://localhost:12434/engines"},
+    "mlx": {"title": "mlx-lm", "default_base": "http://127.0.0.1:8080"},
 }
 PLACEHOLDER_KEY = "none"
 CACHE_SECONDS = 60.0
@@ -40,8 +56,12 @@ _lock = threading.Lock()
 
 
 def v1_base(name: str, base_url: Optional[str]) -> str:
-    """The server's `/v1` root from what the user typed: the root, or already `/v1`."""
+    """The server's `/v1` root from what the user typed: the root, or already `/v1`.
+    Docker Model Runner serves under `/engines/v1` (or `/engines/<engine>/v1`), so a bare
+    host:port gets the `/engines` segment too."""
     base = (base_url or LOCAL_SERVERS[name]["default_base"]).strip().rstrip("/")
+    if name == "docker" and "/engines" not in base:
+        base += "/engines"
     return base if base.endswith("/v1") else base + "/v1"
 
 
@@ -122,6 +142,8 @@ def _fetch(name: str, base: str, api_key: Optional[str]) -> list[dict[str, Any]]
     if not isinstance(items, list):
         return []
     props: dict[str, Any] = {}
+    if name == "lmstudio":
+        props = _lmstudio_catalog(base, headers)
     if name == "llamacpp":
         try:
             got = httpx.get(base[: -len("/v1")] + "/props", headers=headers, timeout=4.0).json()
@@ -140,6 +162,20 @@ def _fetch(name: str, base: str, api_key: Optional[str]) -> list[dict[str, Any]]
             continue
         rows.append(_row(name, item, props, tools))
     return rows
+
+
+def _lmstudio_catalog(base: str, headers: dict[str, str]) -> dict[str, Any]:
+    """LM Studio's own listing (`/api/v0/models`), keyed by id: the trained window
+    (`max_context_length`) and the load state the OpenAI-compatible listing leaves out.
+    Empty when the server does not answer it."""
+    try:
+        got = httpx.get(base[: -len("/v1")] + "/api/v0/models", headers=headers, timeout=4.0).json()
+    except (httpx.HTTPError, ValueError, OSError):
+        return {}
+    items = got.get("data") if isinstance(got, dict) else None
+    if not isinstance(items, list):
+        return {}
+    return {str(it["id"]): it for it in items if isinstance(it, dict) and it.get("id")}
 
 
 def _vllm_tools_on(base: str, headers: dict[str, str], model: str) -> Optional[bool]:
@@ -171,6 +207,13 @@ def _row(name: str, item: dict[str, Any], props: dict[str, Any], tools: Optional
         context = _int((props.get("default_generation_settings") or {}).get("n_ctx"))
         context_max = _int(meta.get("n_ctx_train"))
         size = _int(meta.get("size"))
+    elif name == "lmstudio":
+        # LM Studio sizes the window when it loads the model (JIT, on first request, by
+        # default); until then the trained window is the only figure it reports.
+        own = props.get(served_id) if isinstance(props.get(served_id), dict) else {}
+        context_max = _int(own.get("max_context_length"))
+        context = _int(own.get("loaded_context_length")) or context_max
+        size = None
     else:
         context = _int(item.get("max_model_len"))
         context_max = context
@@ -205,9 +248,10 @@ def _int(value: Any) -> Optional[int]:
 
 
 def thinking_as_template_kwargs(settings: dict[str, Any]) -> dict[str, Any]:
-    """The thinking switch travels as Ollama's `think` field (model_config.py); llama.cpp
-    and vLLM read it from the chat template's `enable_thinking` instead. Rewrites one into
-    the other and leaves everything else alone."""
+    """The thinking switch travels as Ollama's `think` field (model_config.py); llama.cpp,
+    vLLM, LM Studio and the other OpenAI-compatible local servers read it from the chat
+    template's `enable_thinking` instead. Rewrites one into the other and leaves everything
+    else alone."""
     extra = settings.get("extra_body")
     if not isinstance(extra, dict) or "think" not in extra:
         return settings

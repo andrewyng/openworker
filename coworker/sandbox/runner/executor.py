@@ -60,7 +60,7 @@ class Executor(ABC):
     def run_background(self, command: str) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
-    def background_output(self, task_id: str) -> dict[str, Any]:
+    def background_output(self, task_id: str, wait_seconds: float = 0) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
@@ -133,6 +133,17 @@ class _BackgroundTask:
             new = "".join(self._lines[self._cursor :])
             self._cursor = len(self._lines)
         return new
+
+    def has_new(self) -> bool:
+        """Unread output exists — without moving the cursor, so a waiter can look
+        without consuming what the caller is about to read."""
+        with self._lock:
+            return len(self._lines) > self._cursor
+
+    def drain(self, timeout: float) -> None:
+        """After the process exits, give the reader thread a moment to append the
+        last lines, so an exit-triggered read does not miss the final output."""
+        self._reader.join(timeout=timeout)
 
     def kill(self) -> None:
         if self.proc.poll() is not None:
@@ -364,13 +375,28 @@ class LocalExecutor(Executor):
             "task_id": task_id,
             "command": command,
             "status": "running",
-            "note": "use shell_task_output to read its output, shell_task_kill to stop it",
+            "note": "use shell_task_output to read its output (wait_seconds=N to wait for "
+            "it to exit or print more), shell_task_kill to stop it",
         }
 
-    def background_output(self, task_id: str) -> dict[str, Any]:
+    def background_output(self, task_id: str, wait_seconds: float = 0) -> dict[str, Any]:
         task = self._bg_tasks.get(task_id)
         if task is None:
             return {"error": f"unknown task: {task_id}"}
+        # Wait (bounded) until the task exits or prints something new. Without this a
+        # model whose next step depends on the task has to poll, and every poll is a
+        # full model call: measured at 297 polls on one background job in a sealed
+        # evaluation run. A sleep via run_shell is the only alternative and cannot
+        # return early. Capped at the shell's own ceiling so a tool call never outlives
+        # what run_shell would allow.
+        started = time.monotonic()
+        deadline = started + max(0.0, min(float(wait_seconds or 0), _MAX_TIMEOUT))
+        while time.monotonic() < deadline:
+            if task.proc.poll() is not None or task.has_new() or self._abort.is_set():
+                break
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+        if task.proc.poll() is not None:
+            task.drain(0.5)
         output = task.read_new()
         truncated = len(output) > self.max_output_chars
         if truncated:
@@ -382,6 +408,7 @@ class LocalExecutor(Executor):
             "exit_code": exit_code,
             "output": output,
             "truncated": truncated,
+            "waited_seconds": round(time.monotonic() - started, 1),
         }
 
     def background_kill(self, task_id: str) -> dict[str, Any]:

@@ -28,6 +28,8 @@ const TAB_BY_SLUG: Record<string, string> = {
   coworkers: "personas",
   machines: "machines",
   connectors: "connectors",
+  // UX-058: the services behind the tools.
+  customization: "customization",
   // UX-049: per-connector glance pages.
   slack: "slack",
   github: "github",

@@ -801,6 +801,13 @@ def test_ws_browser_tool_audit_round_trip(tmp_path):
     )
     assert any(r["tool"] == "browser_close" and r["stage"] == "finished" for r in rows)
 
+    # OPE-238: one tool call's rows, by its id (the GUI's "changes made without asking"
+    # summary links each item this way).
+    call_id = next(r["call_id"] for r in rows if r["stage"] == "finished")
+    one = client.get("/v1/audit", params={"call_id": call_id}).json()["events"]
+    assert one and {r["call_id"] for r in one} == {call_id}
+    assert client.get("/v1/audit", params={"call_id": "no-such-call"}).json()["events"] == []
+
 
 def test_open_and_recent_workspaces(tmp_path):
     proj = tmp_path / "proj"
@@ -1123,6 +1130,32 @@ def test_provider_set_and_remove_roundtrip(tmp_path):
     assert not prov["zai"]["key_set_at"]
 
     assert not client.delete("/v1/providers/nope").json()["ok"]
+
+
+def test_custom_provider_rest_create_and_delete(tmp_path, monkeypatch):
+    """The public Settings API creates a separately-routed custom provider."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    client = TestClient(create_app(manager))
+
+    created = client.post(
+        "/v1/providers/custom",
+        json={
+            "name": "acme",
+            "title": "Acme Gateway",
+            "fields": {
+                "api_key": "acme-test",
+                "base_url": "https://llm.acme.example/v1",
+            },
+        },
+    ).json()
+    assert created == {"ok": True, "provider": "acme", "recommended_model": None}
+    provider = {p["name"]: p for p in client.get("/v1/providers").json()}["acme"]
+    assert provider["is_custom"] is True and provider["values"]["base_url"].endswith("/v1")
+    assert "acme-test" not in str(provider)
+
+    assert client.delete("/v1/providers/acme").json()["ok"] is True
+    assert "acme" not in {p["name"] for p in client.get("/v1/providers").json()}
 
 
 def test_always_allow_grants_survive_restart(tmp_path):

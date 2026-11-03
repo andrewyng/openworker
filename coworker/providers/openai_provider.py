@@ -229,7 +229,7 @@ class OpenAIProvider(ProviderClient):
         # inject a `client` directly, bypassing all of this.
         #
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
-        # provider router for Ollama (`http://localhost:11434/v1`, with a placeholder key) and,
+        # provider router for Ollama (`http://127.0.0.1:11434/v1`, with a placeholder key) and,
         # later, other OpenAI-shaped backends. When None, behavior is identical to stock OpenAI.
         #
         # `http_client` is an optional httpx.Client handed to the SDK. Ollama uses it to carry
