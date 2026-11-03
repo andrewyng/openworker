@@ -146,7 +146,7 @@ impl Database {
             })
             .collect();
         let truncated = (messages.len() as i64) < count;
-        let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"coworker":s.coworker,"workspace":s.workspace,"environment":s.environment,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"closed":s.closed,"permissions":s.permissions,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"cursor":cursor,"messages":messages,"history_truncated":truncated,"attempts":attempts,"interactions":pending,"mode":if s.scripted{"scripted-test"}else{"live"}});
+        let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"workspace":s.workspace,"environment":s.environment,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"closed":s.closed,"permissions":s.permissions,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"cursor":cursor,"messages":messages,"history_truncated":truncated,"attempts":attempts,"interactions":pending,"mode":if s.scripted{"scripted-test"}else{"live"}});
         // Control receipts are separate from the agent's current state. Expose their
         // bounded status so a reconnect does not invite a duplicate human decision.
         let tid = s.turn.as_ref().map(|t| t.id.as_str()).unwrap_or("");

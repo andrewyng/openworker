@@ -1842,6 +1842,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "openworker-compliance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "openworker-git-broker"
 version = "0.1.0"
 dependencies = [
@@ -1864,7 +1873,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures-util",
- "openworker-tools",
  "regex",
  "serde",
  "serde_json",
@@ -1903,6 +1911,7 @@ dependencies = [
  "ignore",
  "jsonschema",
  "libc",
+ "openworker-compliance",
  "openworker-guardrails",
  "openworker-telemetry",
  "openworker-tools",
@@ -1934,6 +1943,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "openworker-runtime",
+ "openworker-security-adapters",
  "openworker-store-postgres",
  "openworker-telemetry",
  "openworker-tools",
@@ -1943,6 +1953,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-util",
+ "zeroize",
+]
+
+[[package]]
+name = "openworker-security-adapters"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openworker-guardrails",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "zeroize",
@@ -1963,6 +1987,7 @@ dependencies = [
  "openworker-observability",
  "openworker-runtime",
  "openworker-sdk",
+ "openworker-security-adapters",
  "openworker-store-postgres",
  "openworker-telemetry",
  "openworker-tools",

@@ -1,3 +1,5 @@
+import { normalizeSafety, type SafetyOptions, type SafetyHandler, type SafetyContext, type SafetyDecision } from "./safety.js";
+export * from "./safety.js";
 import { Service, type ServiceOptions } from "./service.js";
 export * from "./service.js";
 export * from "./coding.js";
@@ -79,6 +81,7 @@ function interruptionOf(value: unknown): Interruption {
     typeof v.session_id !== "string" ||
     typeof v.agent !== "string" ||
     !(
+      (v.kind === "safety" && typeof v.code === "string") ||
       (v.kind === "approval" &&
         typeof v.tool === "string" &&
         v.arguments !== undefined) ||
@@ -102,11 +105,13 @@ export class Harness {
   private readonly callbacks = new Map<string, ApplicationTool>();
   private readonly callbackRuns = new Map<string, AbortController>();
   private readonly providerAuth = new Map<string, ProviderAuth>();
+  private readonly safetyHandlers = new Map<string,{callback:SafetyHandler;ready:Promise<void>}>();
   private constructor(
     private readonly transport: Transport,
     public readonly agents: readonly string[],
   ) {
     transport.onApplicationEvent((event) => {
+      if(event.kind==="safety_call"||event.kind==="safety_cancel"){void this.safetyEvent(event).catch(()=>{});return;}
       if (
         event.kind === "provider_auth" ||
         event.kind === "provider_auth_cancel"
@@ -120,6 +125,44 @@ export class Harness {
       if (state !== "ready")
         for (const controller of this.callbackRuns.values()) controller.abort();
     });
+  }
+  async safetyOptions(options:SafetyOptions):Promise<Json|undefined> {
+    if((options.guardrails||options.hooks||options.blockedOutputOptions)&&this.capabilities.guardrails!==true)throw new HarnessError("Setup","This harness build does not support guardrails");
+    return normalizeSafety(options,(ref,callback)=>this.registerSafetyHandler(ref,callback));
+  }
+  async registerSecurityAdapter(handler:{name:string;version:string},config:import("./types.js").SecurityAdapterConfig):Promise<void> {
+    if(this.capabilities.security_adapters!==true)throw new HarnessError("Setup","Security adapters are not included in this harness build");
+    const wire={handler,config};
+    await this.request("safety/register-adapter",wire);
+    this.transport.rememberSafetyRegistration("adapter:"+JSON.stringify(handler),wire,"safety/register-adapter");
+  }
+  async registerSafetyHandler(ref:{name:string;version:string},callback:SafetyHandler):Promise<void> {
+    if(this.capabilities.guardrails!==true)throw new HarnessError("Setup","This harness build does not support guardrails");
+    const key=JSON.stringify([ref.name,ref.version]);const old=this.safetyHandlers.get(key);
+    if(old){if(old.callback!==callback)throw new HarnessError("InvalidInput","Safety handler identity already registered; use a new version");return old.ready;}
+    const wire={handler:ref,owner:this.callbackOwner};
+    const ready=this.request("safety/register",wire).then(()=>{this.transport.rememberSafetyRegistration(key,wire);}).catch(error=>{this.safetyHandlers.delete(key);throw error;});
+    this.safetyHandlers.set(key,{callback,ready});return ready;
+  }
+  private async safetyEvent(event:Record<string,unknown>):Promise<void> {
+    if(event.owner!==this.callbackOwner)return;
+    const id=String(event.invocation_id);
+    if(event.kind==="safety_cancel"){this.callbackRuns.get(id)?.abort();return;}
+    if(this.callbackRuns.has(id)||this.callbackRuns.size>=64)return;
+    const ref=record(event.handler),entry=this.safetyHandlers.get(JSON.stringify([ref.name,ref.version]));
+    const controller=new AbortController();this.callbackRuns.set(id,controller);
+    const timer=setTimeout(()=>controller.abort(),120000);
+    let onAbort=()=>{};
+    try {
+      if(!entry)throw new Error("Safety callback unavailable");
+      const context={...record(event.context),signal:controller.signal} as unknown as SafetyContext;
+      const work=Promise.resolve().then(()=>entry.callback(context));
+      const cancelled=new Promise<never>((_,reject)=>{onAbort=()=>reject(new Error("Safety check cancelled"));controller.signal.addEventListener("abort",onAbort,{once:true});if(controller.signal.aborted)onAbort();});
+      const decision:SafetyDecision=await Promise.race([work,cancelled]);
+      if(!controller.signal.aborted)await this.transport.callbackMessage("safety/result",{owner:this.callbackOwner,invocation_id:id,decision});
+    } catch {
+      if(!controller.signal.aborted)await this.transport.callbackMessage("safety/result",{owner:this.callbackOwner,invocation_id:id,error:true}).catch(()=>{});
+    } finally {clearTimeout(timer);controller.signal.removeEventListener("abort",onAbort);this.callbackRuns.delete(id);}
   }
   async registerTools(registration: ApplicationTools): Promise<void> {
     if (this.capabilities.application_callbacks !== true)
@@ -259,7 +302,10 @@ export class Harness {
     }
   }
   static async start(options: HarnessOptions = {}): Promise<Harness> {
-    const transport = await Transport.start(options);
+    const pending:{ref:{name:string;version:string};callback:SafetyHandler}[]=[];
+    const safety=await normalizeSafety(options,async(ref,callback)=>{pending.push({ref,callback});});
+    const {guardrails:_guards,hooks:_hooks,blockedOutputOptions:_blocked,...launchOptions}=options;
+    const transport = await Transport.start(launchOptions,safety);
     try {
       const listed = record(await transport.request("agent/list", {}));
       if (!Array.isArray(listed.agents))
@@ -268,6 +314,7 @@ export class Harness {
         transport,
         listed.agents.map((a) => String(record(a).id)),
       );
+      for(const {ref,callback} of pending)await harness.registerSafetyHandler(ref,callback);
       for (const provider of options.modelProviders ?? [])
         await harness.setModelProvider(provider);
       return harness;
@@ -522,6 +569,8 @@ export class Harness {
         agent,
         workspace: options.workspace,
         scratch: options.scratch,
+        safety: await this.safetyOptions(options),
+        compliance: options.compliance,
         auto_skip_questions: options.autoSkipQuestions,
         name: options.name,
         ...(options.model
@@ -704,6 +753,12 @@ export class Session {
       cursor: Number(value.cursor),
     };
   }
+  /** Metadata-only compliance evidence; never returns prompts or tool payloads. */
+  async complianceDeliveryHealth():Promise<import("./types.js").ComplianceDeliveryHealth>{return await this.harness.request("compliance/delivery-health",{session_id:this.id}) as unknown as import("./types.js").ComplianceDeliveryHealth;}
+  async complianceActivity(query: import("./types.js").ComplianceQuery = {}): Promise<import("./types.js").CompliancePage> {
+    return await this.harness.request("compliance/read", { ...query, session_id: this.id }) as unknown as import("./types.js").CompliancePage;
+  }
+  async resumeSafety():Promise<void>{await this.harness.request("safety/resume",{session_id:this.id});}
   async send(input: MessageInput, options?: RunOptions): Promise<Run>;
   async send(
     input: ControlInput,
@@ -719,7 +774,7 @@ export class Session {
     }
     const value = typeof input === "string" ? { text: input } : input;
     const control = value.type === "approval" || value.type === "answer";
-    if (control && options.limits !== undefined) {
+    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions)) {
       throw new HarnessError(
         "InvalidInput",
         "Limits apply only to new message turns",
@@ -753,6 +808,7 @@ export class Session {
         submission_id: submissionId,
         input: wire,
         limits: options.limits,
+        safety: control?undefined:await this.harness.safetyOptions(options),
       }),
     );
     if (control)

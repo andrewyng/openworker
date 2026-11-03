@@ -1,3 +1,4 @@
+import type { SafetyOptions } from "./safety.js";
 export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Provider = "openai" | "anthropic";
@@ -128,7 +129,10 @@ export interface Model {
   provider: string;
   name: string;
 }
-export interface SessionOptions {
+export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
+export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
+export interface SessionOptions extends SafetyOptions {
+  compliance?: ComplianceOptions;
   /** Overrides the agent default for this new session. */
   autoSkipQuestions?: boolean;
   workspace?: string;
@@ -159,7 +163,10 @@ export interface Telemetry {
     redact_secrets?: boolean;
   };
 }
-export interface HarnessOptions {
+export interface ComplianceSink { name:string; endpoint:string; credentialEnv:string; allowLoopbackHttp?:boolean }
+export interface HarnessOptions extends SafetyOptions {
+  complianceSinks?:ComplianceSink[];
+  compliance?: ComplianceOptions;
   /** App-owned immutable coworker bundles; same host policy as dynamically defined agents. */
   coworkers?: {
     bundle: string;
@@ -209,6 +216,7 @@ export type Interruption = {
 } & (
   | { kind: "approval"; tool: string; arguments: Json; category?: string }
   | { kind: "question"; question: string; options: string[] }
+  | { kind: "safety"; code: string }
 );
 export type Response =
   | { decision: "once" | "session" | "deny" }
@@ -225,7 +233,7 @@ export interface RunResult {
   board: Json | null;
 }
 export type Cursors = Record<string, number>;
-export interface RunOptions {
+export interface RunOptions extends SafetyOptions {
   limits?: TurnLimits;
   /** Persist before sending if the application must survive a crash. */
   submissionId?: string;
@@ -360,3 +368,18 @@ export function checkMemberErrors(v: unknown): void {
     );
   }
 }
+
+export interface SecurityAdapterConfig {
+  endpoint: string;
+  protocol: {kind:"selectedContext"} | {kind:"prismaAirs";profile:string};
+  credentialEnv: string;
+  timeoutMs?: number;
+  allowLoopbackHttp?: boolean;
+}
+
+export interface ComplianceActivity {
+  schemaVersion:number; id:string; sessionId:string; turnId:string|null;
+  createdAtMs:number; kind:string; agent?:string; facts:Record<string,Json>;
+}
+export interface CompliancePage { activities:ComplianceActivity[]; nextAfter:number; hasMore:boolean }
+export interface ComplianceDeliveryHealth { sinks:{sink:string;cursor:number;pending:number;failures:number;nextAtMs:number;lastSuccessMs:number|null}[] }

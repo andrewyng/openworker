@@ -8,6 +8,8 @@ pub struct Model {
     pub name: String,
     pub scripted: bool,
     pub observation: Option<CallContext>,
+    /// Withhold candidate bodies from exporters until runtime safety checks finish.
+    pub content_withheld: bool,
     pub connection: Option<(
         std::sync::Arc<crate::connections::Manager>,
         crate::connections::Selection,
@@ -91,6 +93,7 @@ impl Model {
             name,
             scripted,
             observation: None,
+            content_withheld: false,
             connection: None,
             #[cfg(test)]
             sample_hook: None,
@@ -255,7 +258,9 @@ impl Model {
         span.metadata("langfuse.observation.type", "generation");
         span.metadata("gen_ai.request.model", &self.name);
         span.model_started();
-        span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":&history[history.len().saturating_sub(20)..]})).unwrap_or_default());
+        if !self.content_withheld {
+            span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":&history[history.len().saturating_sub(20)..]})).unwrap_or_default());
+        }
         let (inner, mut rx) = mpsc::channel(32);
         let future = request(inner);
         tokio::pin!(future);
@@ -294,9 +299,11 @@ impl Model {
                     }) {
                         span.first_output();
                     }
-                    span.content("gen_ai.completion", || {
-                        serde_json::to_string(&completion.output).unwrap_or_default()
-                    });
+                    if !self.content_withheld {
+                        span.content("gen_ai.completion", || {
+                            serde_json::to_string(&completion.output).unwrap_or_default()
+                        });
+                    }
                 }
                 _ => {}
             }

@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct App {
     pub(crate) recording_readers: Arc<Semaphore>,
+    pub(crate) safety_readers: Arc<Semaphore>,
     recovery_read_only: bool,
     pub(crate) store: PostgresStore,
     pub(crate) runtime: Arc<Runtime>,
@@ -54,6 +55,7 @@ impl App {
         }
         Ok(Self {
             recording_readers: Arc::new(Semaphore::new(4)),
+            safety_readers: Arc::new(Semaphore::new(8)),
             config: Arc::new(config.clone()),
             service: config.service.clone(),
             recovery_read_only: config.recovery_read_only,
@@ -125,7 +127,8 @@ impl App {
 }
 async fn authenticate(State(app): State<App>, request: Request, next: Next) -> Response {
     let recording_route =
-        crate::recording_query::authority(request.method().as_str(), request.uri().path());
+        crate::recording_query::authority(request.method().as_str(), request.uri().path())
+            || request.uri().path().starts_with("/v1/compliance/");
     let span = app
         .runtime
         .telemetry
@@ -178,7 +181,7 @@ async fn authenticate_inner(mut app: App, mut request: Request, next: Next) -> R
         Ok(s) => s,
         Err(_) => return ApiError(AuthError::Unauthorized.into()).into_response(),
     };
-    let p = match app.store.authorize(Action::Read, None, None) {
+    let p = match app.store.authorize(Action::Identify, None, None) {
         Ok(p) => p,
         Err(e) => return ApiError(e).into_response(),
     };
@@ -269,6 +272,20 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Some(error) = self.0.downcast_ref::<crate::service_safety::InputError>() {
+            return match error {
+                crate::service_safety::InputError::Blocked => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({"error":"policy_blocked"})),
+                )
+                    .into_response(),
+                crate::service_safety::InputError::Unavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error":"guardrail_unavailable"})),
+                )
+                    .into_response(),
+            };
+        }
         if self
             .0
             .downcast_ref::<crate::git_access::Unavailable>()
@@ -410,12 +427,14 @@ async fn submit(
     Path(sid): Path<String>,
     Json(body): Json<Turn>,
 ) -> Result<Response, ApiError> {
+    let text =
+        crate::service_safety::inspect(&app, Some(&sid), &body.submission_id, &body.text).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(app.store.submit_turn(TurnSubmission {
             session_id: sid,
             submission_id: body.submission_id,
-            text: body.text,
+            text,
             limits: body.limits,
         })?),
     )
@@ -439,6 +458,8 @@ async fn control(
     Path(sid): Path<String>,
     Json(body): Json<Control>,
 ) -> Result<Response, ApiError> {
+    let action =
+        crate::service_safety::inspect_control(&app, &sid, &body.request_id, body.action).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(
@@ -448,7 +469,7 @@ async fn control(
                     request_id: body.request_id,
                     turn_id: body.turn_id,
                     actor: app.actor,
-                    action: body.action,
+                    action,
                 })?,
         ),
     )

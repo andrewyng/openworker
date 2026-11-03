@@ -138,16 +138,25 @@ impl Database {
                 .collect::<Vec<_>>();
             (!texts.is_empty()).then(|| texts.join("\n"))
         });
-        let pending: Vec<Value> = session
+        let mut pending: Vec<Value> = session
             .interactions
             .iter()
             .filter(|i| i.turn_id == tid && i.response.is_none())
             .map(|i| serde_json::to_value(i).expect("interaction"))
             .collect();
         let current = session.turn.as_ref().is_some_and(|t| t.id == tid);
-        let waiting = current
-            && session.turn.as_ref().is_some_and(|t| t.status == "waiting")
-            && !pending.is_empty();
+        let safety_waiting = current
+            && session
+                .turn
+                .as_ref()
+                .is_some_and(|t| t.status == "waiting_safety");
+        if safety_waiting {
+            pending.push(json!({"id":format!("safety:{tid}"),"turn_id":tid,"kind":"safety","code":"GUARDRAIL_UNAVAILABLE","call":null,"bundle_digest":session.bundle_digest,"schema_digest":"","policy_digest":"","resource_policy_digest":"","response":null}));
+        }
+        let waiting = safety_waiting
+            || (current
+                && session.turn.as_ref().is_some_and(|t| t.status == "waiting")
+                && !pending.is_empty());
         let status = if waiting {
             "interrupted"
         } else {

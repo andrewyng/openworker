@@ -17,9 +17,8 @@ pub(crate) fn route(method: &str, path: &str) -> Option<Action> {
     }
     let p: Vec<_> = path.split('/').collect();
     match (method, p.as_slice()) {
-        ("GET", ["", "healthz" | "readyz" | "sessions"]) | ("GET", ["", "auth", "me"]) => {
-            Some(Action::Read)
-        }
+        ("GET", ["", "auth", "me"]) => Some(Action::Identify),
+        ("GET", ["", "healthz" | "readyz" | "sessions"]) => Some(Action::Read),
         ("POST", ["", "sessions"]) => Some(Action::Submit),
         ("POST", ["", "teams"]) | ("POST", ["", "teams", _, "commands"]) => Some(Action::Control),
         ("GET", ["", "teams", _])
@@ -43,7 +42,7 @@ pub(crate) fn route(method: &str, path: &str) -> Option<Action> {
 }
 pub(crate) async fn me(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!(app.store.authorize(
-        Action::Read,
+        Action::Identify,
         None,
         None
     )?)))

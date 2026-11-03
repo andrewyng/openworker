@@ -116,8 +116,11 @@ async fn sample(
     check_effects(&api, root.path(), &ids, &vec![1; count]);
     let (queue, end_to_end) = tokio::task::block_in_place(|| {
         let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-        db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-            .unwrap();
+        db.batch_execute(&format!(
+            "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+            c.schema
+        ))
+        .unwrap();
         let rows=db.query("SELECT extract(epoch FROM min(a.created) FILTER (WHERE a.kind='turn_started')-s.created)::float8, extract(epoch FROM max(a.created) FILTER (WHERE a.kind='turn_completed')-s.created)::float8 FROM submissions s JOIN audit a ON a.session_id=s.session_id AND a.turn_id=s.turn_id WHERE s.id='load' GROUP BY s.session_id,s.created",&[]).unwrap();
         assert_eq!(rows.len(), count);
         (

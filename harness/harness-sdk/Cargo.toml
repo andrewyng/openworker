@@ -7,15 +7,19 @@ license.workspace = true
 publish = false
 
 [features]
-default = ["guardrails"]
-guardrails = ["openworker-runtime/guardrails"]
+default = ["guardrails", "compliance"]
+guardrails = ["openworker-runtime/guardrails", "openworker-store-postgres/guardrails"]
+compliance = ["openworker-runtime/compliance", "openworker-store-postgres/compliance"]
 test-support = []
+compliance-export = ["compliance", "openworker-runtime/compliance-export"]
+security-adapters = ["guardrails", "dep:openworker-security-adapters"]
 
 [[bin]]
 name = "openworker-harness"
 path = "src/main.rs"
 
 [dependencies]
+openworker-security-adapters = { path = "../security-adapters", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 anyhow = "1"
 fs2 = "0.4"

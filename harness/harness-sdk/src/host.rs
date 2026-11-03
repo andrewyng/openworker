@@ -142,6 +142,7 @@ pub(crate) struct Host {
     tools: RwLock<ToolRegistry>,
     pub callbacks: Arc<crate::callbacks::Bridge>,
     pub provider_callbacks: Arc<crate::provider_callbacks::Bridge>,
+    pub safety_callbacks: Arc<crate::safety_callbacks::Bridge>,
     catalog: catalog::Catalog,
     connections: Arc<openworker_runtime::connections::Manager>,
     instrumentation: openworker_telemetry::Telemetry,
@@ -164,6 +165,41 @@ impl HostConfig {
             "Scripted models require a development SDK build with test-support"
         );
         self.desktop.compaction.validate()?;
+        self.desktop.safety.validate()?;
+        ensure!(
+            self.desktop.inherit_env.len() <= 64,
+            "Too many environment references"
+        );
+        for name in &self.desktop.inherit_env {
+            ensure!(
+                !name.is_empty()
+                    && name.len() <= 128
+                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                "Invalid environment reference"
+            );
+        }
+        ensure!(
+            self.desktop.compliance_sinks.is_empty() || cfg!(feature = "compliance-export"),
+            "Compliance exporter not included"
+        );
+        ensure!(
+            self.desktop.compliance_sinks.len() <= 16,
+            "Too many compliance sinks"
+        );
+        for sink in &self.desktop.compliance_sinks {
+            sink.validate()?;
+        }
+        ensure!(
+            self.desktop.compliance_sinks.is_empty() || self.desktop.compliance.is_some(),
+            "Enable compliance capture before adding sinks"
+        );
+        if let Some(c) = &self.desktop.compliance {
+            ensure!(
+                cfg!(feature = "compliance"),
+                "Compliance feature not included"
+            );
+            c.validate()?;
+        }
         ensure!(
             [&self.desktop.session_dir, &self.desktop.scratch_dir]
                 .into_iter()
@@ -246,6 +282,7 @@ impl Host {
         let catalog = catalog::Catalog::open(&config.state_dir)?;
         let callbacks = crate::callbacks::Bridge::new();
         let provider_callbacks = crate::provider_callbacks::Bridge::new(callbacks.events.clone());
+        let safety_callbacks = crate::safety_callbacks::Bridge::new(callbacks.events.clone());
         let mut servers = catalog.servers()?;
         for server in &config.desktop.mcp_servers {
             if let Some(saved) = servers.iter().find(|s| s.name() == server.name()) {
@@ -400,6 +437,11 @@ impl Host {
                 })),
                 telemetry.clone(),
             )?;
+            Runtime::configure_safety(
+                &mut rt,
+                config.desktop.safety.clone(),
+                safety_callbacks.registry.clone(),
+            )?;
             Arc::get_mut(&mut rt)
                 .context("Runtime published before provider binding")?
                 .connections = connections.clone();
@@ -433,6 +475,7 @@ impl Host {
             tools: RwLock::new(registry),
             callbacks,
             provider_callbacks,
+            safety_callbacks,
             catalog,
             connections,
             instrumentation: telemetry,
@@ -446,6 +489,11 @@ impl Host {
             auto_approval_failures: Default::default(),
             _state_lock: state_lock,
         });
+        openworker_runtime::compliance_export::start(
+            host.store.clone(),
+            config.desktop.compliance_sinks.clone(),
+            host.stop.child_token(),
+        )?;
         let weak = Arc::downgrade(&host);
         let stop = host.stop.clone();
         let task = tokio::spawn(async move {
@@ -544,6 +592,7 @@ impl Host {
         let store = self.store.clone();
         let telemetry = self.instrumentation.clone();
         let connections = self.connections.clone();
+        let safety_handlers = self.safety_callbacks.registry.clone();
         let definition = agent.clone();
         let (profiles, agents) = tokio::task::spawn_blocking(move || -> Result<_> {
             let (configs, agents) =
@@ -570,6 +619,11 @@ impl Host {
                         coworker: bundle.id.clone(),
                     })),
                     telemetry.clone(),
+                )?;
+                Runtime::configure_safety(
+                    &mut runtime,
+                    config.desktop.safety.clone(),
+                    safety_handlers.clone(),
                 )?;
                 Arc::get_mut(&mut runtime)
                     .context("Runtime published before provider binding")?
@@ -728,7 +782,7 @@ impl Host {
                             .request(&instance.agent_id)
                             .and_then(|r| r.title.as_deref())
                             .unwrap_or(&instance.agent_id);
-                        let mut parameters = json!({"workspace":workspace,"name":title,"coworker":runtime_type,"permissions":s.permissions,"compaction":s.compaction_config});
+                        let mut parameters = json!({"workspace":workspace,"name":title,"coworker":runtime_type,"compliance":s.compliance,"permissions":s.permissions,"compaction":s.compaction_config,"safety":s.safety.merge(&s.turn.as_ref().map(|t|t.safety.clone()).unwrap_or_default())?});
                         let definition = self
                             .registry
                             .read()
@@ -864,6 +918,18 @@ impl Host {
             model.probe().await?;
             return Ok(json!({"connected":true}));
         }
+        if method == "safety/result" {
+            return self.safety_callbacks.respond(p);
+        }
+        if method == "safety/register-adapter" {
+            #[cfg(feature = "security-adapters")]
+            return self.safety_callbacks.register_adapter(p);
+            #[cfg(not(feature = "security-adapters"))]
+            anyhow::bail!("Security adapters not included in this build");
+        }
+        if method == "safety/register" {
+            return self.safety_callbacks.register(p);
+        }
         if method == "provider/auth/result" {
             return self.provider_callbacks.respond(p);
         }
@@ -950,6 +1016,15 @@ impl Host {
                 .get_mut("capabilities")
                 .and_then(Value::as_object_mut)
             {
+                c.insert(
+                    "compliance_export".into(),
+                    json!(cfg!(feature = "compliance-export")),
+                );
+                c.insert(
+                    "security_adapters".into(),
+                    json!(cfg!(feature = "security-adapters")),
+                );
+                c.insert("compliance".into(), json!(cfg!(feature = "compliance")));
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("agent_runs".into(), json!(true));
                 c.insert(
@@ -970,6 +1045,10 @@ impl Host {
                 c.insert("application_callbacks".into(), json!(true));
                 c.insert("application_tool_images".into(), json!(true));
                 c.insert("provider_access_tokens".into(), json!(true));
+                c.insert(
+                    "guardrails".into(),
+                    json!(openworker_runtime::safety::available()),
+                );
             }
         }
         Ok(result)
@@ -1190,6 +1269,16 @@ impl Host {
                         "Workspace must not overlap harness state or session storage"
                     );
                 }
+            }
+            if let Some(required) = &self.config.desktop.compliance {
+                // Application requirements cannot be disabled or weakened by
+                // a session option. Retain the application retention policy.
+                ensure!(
+                    p.get("compliance")
+                        .is_none_or(|v| v.is_null() || *v == json!(required)),
+                    "Session cannot replace required compliance configuration"
+                );
+                p["compliance"] = json!(required);
             }
             if p.get("compaction").is_none() {
                 p["compaction"] = json!(self.config.desktop.compaction);

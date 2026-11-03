@@ -93,7 +93,17 @@ impl Host {
         let _run_admission = self.run_admission.lock().await;
         let sid = text(p, "session_id")?;
         let submission = text(p, "submission_id")?;
-        let input = openworker_runtime::runtime::text(p, "text", 32000)?;
+        let raw_input = openworker_runtime::runtime::text(p, "text", 32000)?;
+        let coworker = self.store.lock().unwrap().metadata(sid)?.coworker;
+        let safety = p
+            .get("safety")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value::<openworker_runtime::safety::Config>(v.clone()))
+            .transpose()?;
+        let input = self
+            .runtime(&coworker)?
+            .check_user_input_with(sid, raw_input, safety.as_ref())
+            .await?;
         if let Some(value) = p.get("limits").filter(|v| !v.is_null()) {
             let limits: openworker_runtime::budget::Limits = serde_json::from_value(value.clone())?;
             limits.validate()?;
@@ -105,7 +115,9 @@ impl Host {
             .agent_run(sid, Some(submission))?;
         let mut record = if let Some(record) = existing {
             ensure!(
-                record["text"] == input && record["limits"] == p["limits"],
+                record["text"] == input
+                    && record["limits"] == p["limits"]
+                    && record["safety"] == p["safety"],
                 "Submission ID reused with different text"
             );
             if !record["turn"].is_null() || record.get("result").is_some() {
@@ -135,7 +147,7 @@ impl Host {
             for (s, _) in &members {
                 cursors.insert(s.clone(), json!(self.store.lock().unwrap().cursor(s)?));
             }
-            let record = json!({"submission_id":submission,"text":input,"limits":p["limits"],"cursors":cursors,"turn":null});
+            let record = json!({"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"cursors":cursors,"turn":null});
             // The original cursors and input survive even a lost start response.
             self.save_run(sid, &record)?;
             record
@@ -143,7 +155,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"]}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"]}),
             )
             .await;
         match started {
@@ -262,7 +274,8 @@ impl Host {
                 "session_id",
                 "submission_id",
                 "input",
-                "limits"
+                "limits",
+                "safety"
             ]
             .contains(&k.as_str()))),
             "Unknown send options"
@@ -290,8 +303,12 @@ impl Host {
             kind == "message" || p.get("limits").is_none_or(Value::is_null),
             "Limits apply only to new message turns"
         );
+        ensure!(
+            kind == "message" || p.get("safety").is_none_or(Value::is_null),
+            "Safety overrides apply only to new turns"
+        );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"]})).await;
+            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"]})).await;
         }
         let target = input
             .get("target_session_id")
@@ -357,10 +374,15 @@ impl Host {
             for i in snapshot["interactions"].as_array().into_iter().flatten() {
                 pending.push(interruption(id, agent, i, &snapshot));
             }
-            if let Some(status) = snapshot["turn"]["status"]
-                .as_str()
-                .filter(|s| !terminal(s) && *s != "waiting")
-            {
+            if snapshot["turn"]["status"] == "waiting_safety" && !self.runtime(agent)?.is_busy(id) {
+                pending.push(safety_interruption(id, agent, &snapshot));
+            }
+            if let Some(status) = snapshot["turn"]["status"].as_str().filter(|s| {
+                !terminal(s)
+                    && *s != "waiting"
+                    && (*s != "waiting_safety"
+                        || self.runtime(agent).is_ok_and(|rt| rt.is_busy(id)))
+            }) {
                 active.push(json!({"session_id":id,"agent":agent,"turn_id":snapshot["turn"]["id"],"phase":match status {"executing"=>"tool","running"=>"model","cancelling"=>"cancelling","recoverable"=>"recovering","waiting_agents"=>"waiting_agents",_=>"queued"},"call_id":if status=="executing"{snapshot["turn"]["queue"][0]["call_id"].clone()}else{Value::Null}}));
             }
         }
@@ -547,6 +569,12 @@ impl Host {
                 if let Some(model) = p.get("model") {
                     options["model"] = model.clone();
                 }
+            }
+            if let Some(compliance) = p.get("compliance") {
+                options["compliance"] = compliance.clone();
+            }
+            if let Some(safety) = p.get("safety") {
+                options["safety"] = safety.clone();
             }
             options
         };
@@ -843,6 +871,9 @@ impl Host {
 
             let mut interruptions = vec![];
             for ((s, agent), snap) in members.iter().zip(&snaps) {
+                if snap["turn"]["status"] == "waiting_safety" && !self.runtime(agent)?.is_busy(s) {
+                    interruptions.push(safety_interruption(s, agent, snap));
+                }
                 let approvals = self.profile(agent).approvals;
                 for raw in snap["interactions"].as_array().into_iter().flatten() {
                     let tool = raw["call"]["name"].as_str().unwrap_or_default();
@@ -1052,6 +1083,10 @@ fn stream_item(agent: &str, e: Event) -> Value {
         _ => None,
     };
     json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary})
+}
+
+fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {
+    json!({"id":format!("safety:{}",snapshot["turn"]["id"].as_str().unwrap_or_default()),"session_id":sid,"agent":agent,"kind":"safety","code":"GUARDRAIL_UNAVAILABLE"})
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ pub enum ModelPurpose {
     Helper,
     Title,
     Probe,
+    Guardrail,
 }
 impl ModelPurpose {
     pub fn name(self) -> &'static str {
@@ -21,6 +22,7 @@ impl ModelPurpose {
             Self::Helper => "helper",
             Self::Title => "title",
             Self::Probe => "probe",
+            Self::Guardrail => "guardrail",
         }
     }
 }

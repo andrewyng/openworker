@@ -6,6 +6,53 @@ pub struct ScopedStore {
     pub coworker: String,
 }
 impl StateStore for ScopedStore {
+    fn claim_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        binding: &str,
+        token: &str,
+    ) -> Result<Option<crate::compliance::delivery::Batch>> {
+        self.metadata(sid)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .claim_compliance_export(sid, sink, binding, token)
+    }
+    fn settle_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        token: &str,
+        success: bool,
+    ) -> Result<()> {
+        self.metadata(sid)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .settle_compliance_export(sid, sink, token, success)
+    }
+    fn compliance_delivery_health(&self, sid: &str) -> Result<Value> {
+        self.metadata(sid)?;
+        self.inner.lock().unwrap().compliance_delivery_health(sid)
+    }
+
+    fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
+        self.metadata(sid)?;
+        self.inner.lock().unwrap().pending_observers(sid)
+    }
+    fn settle_observer(&mut self, sid: &str, receipt: &Value, success: bool) -> Result<()> {
+        self.metadata(sid)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .settle_observer(sid, receipt, success)
+    }
+
+    fn compliance_page(&self, sid: &str, query: crate::compliance::Query) -> Result<Value> {
+        self.metadata(sid)?;
+        self.inner.lock().unwrap().compliance_page(sid, query)
+    }
     fn supports_agent_teams(&self) -> bool {
         self.inner.lock().unwrap().supports_agent_teams()
     }
@@ -225,6 +272,19 @@ impl StateStore for ScopedStore {
             .lock()
             .unwrap()
             .accept_with_limits(sid, key, text, limits)
+    }
+    fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .accept_with_safety(sid, key, text, limits, safety)
     }
     fn cursor(&self, sid: &str) -> Result<i64> {
         self.inner.lock().unwrap().cursor(sid)

@@ -67,8 +67,11 @@ fn creation_audit_failure_rolls_back_and_missing_receipt_never_recreates() {
     let c = fixture();
     let api = PostgresStore::open(c.clone()).unwrap();
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     db.batch_execute("CREATE FUNCTION reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fault'; END $$; CREATE TRIGGER reject_audit BEFORE INSERT ON audit FOR EACH ROW EXECUTE FUNCTION reject_audit()").unwrap();
     assert!(api.create_session(request(), session()).is_err());
     assert_eq!(

@@ -130,8 +130,11 @@ fn immutable_catalog_admission_ownership_and_one_dispatch() {
     assert!(first);
     assert!(store.service_claim().unwrap().is_none());
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    pg.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     pg.execute(
         "UPDATE service_operations SET next_check=clock_timestamp() WHERE id=$1",
         &[&o.id],
@@ -202,8 +205,11 @@ fn admission_failure_rolls_back_environment_and_receipt() {
     let (c, store, a, u) = setup();
     let (r, p) = catalog(&a);
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    pg.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     pg.batch_execute("CREATE FUNCTION fail_admission() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fault'; END $$; CREATE TRIGGER fail_admission BEFORE INSERT ON api_security_audit FOR EACH ROW EXECUTE FUNCTION fail_admission()").unwrap();
     assert!(u.service_admit("fail", admission(), r, p, spec()).is_err());
     for table in [
@@ -308,8 +314,11 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
         .service_update_operation(&o.id, "ready", None)
         .unwrap();
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    pg.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     pg.batch_execute("CREATE FUNCTION fail_initial_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fault'; END $$; CREATE TRIGGER fail_initial_task BEFORE INSERT ON submissions FOR EACH ROW EXECUTE FUNCTION fail_initial_task()").unwrap();
     assert!(store
         .service_finish(&o.id, session("prepared", binding.clone()), "svc", "test")
@@ -552,8 +561,11 @@ fn credential_expiring_during_provisioning_cannot_commit_a_session() {
         .service_update_operation(&o.id, "ready", None)
         .unwrap();
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    pg.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    pg.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     pg.batch_execute("UPDATE api_credentials SET spec=jsonb_set(spec,'{expires_at}',to_jsonb(1::bigint)) WHERE spec->>'principal'='alice'").unwrap();
     assert!(store
         .service_finish(&o.id, session("prepared", binding), "svc", "test")

@@ -231,7 +231,7 @@ impl Database {
             .query_one("SELECT cursor FROM teams WHERE id=$1", &[&id])?
             .get(0);
         let pending: bool = tx.query_one(
-            "SELECT EXISTS(SELECT 1 FROM team_deliveries d JOIN submissions s ON s.session_id=d.session_id AND s.id=d.submission_id WHERE d.team_id=$1 AND s.status NOT IN ('completed','failed','cancelled','interrupted','truncated')) OR EXISTS(SELECT 1 FROM team_completions WHERE team_id=$1 AND NOT processed)",
+            "SELECT EXISTS(SELECT 1 FROM team_deliveries d JOIN submissions s ON s.session_id=d.session_id AND s.id=d.submission_id WHERE d.team_id=$1 AND s.status NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked')) OR EXISTS(SELECT 1 FROM team_completions WHERE team_id=$1 AND NOT processed)",
             &[&id],
         )?.get(0);
         tx.commit()?;
@@ -474,18 +474,24 @@ impl Database {
             "INSERT INTO team_commands VALUES($1,$2,$3,$4,$5)",
             &[&team, &key, &sid, &call, &output],
         )?;
-        s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
-        s.turn.as_mut().unwrap().queue.remove(0);
+        if !openworker_runtime::safety::hold_internal_result(&mut s, &call) {
+            s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
+            s.turn.as_mut().unwrap().queue.remove(0);
+        }
         db::append_history(&mut tx, &s)?;
         db::write_metadata(&mut tx, &s)?;
-        let event = db::event(
+        let mut event = db::event(
             &mut tx,
             &s,
             &self.owner,
             epoch,
             "tool_finished",
-            json!({"name":name,"call_id":call["call_id"],"result":output,"execution_kind":"internal","team_id":team,"enforcement":"team-role-and-session-scope"}),
+            openworker_runtime::safety::public_internal_event(
+                &s,
+                json!({"name":name,"call_id":call["call_id"],"result":output,"execution_kind":"internal","team_id":team,"enforcement":"team-role-and-session-scope"}),
+            ),
         )?;
+        event.data["result"] = output;
         tx.commit()?;
         Ok(event)
     }

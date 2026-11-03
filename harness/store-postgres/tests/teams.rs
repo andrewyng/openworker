@@ -347,8 +347,11 @@ fn concurrent_assignment_has_one_winner_and_failed_commit_enqueues_nothing() {
     let fresh = item(&db, &team, vec![]);
     let before = db.team_snapshot(&team).unwrap();
     let mut sql = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    sql.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    sql.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     sql.batch_execute("CREATE FUNCTION fail_team_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$; CREATE TRIGGER fail_team_event BEFORE INSERT ON team_events FOR EACH ROW EXECUTE FUNCTION fail_team_event();").unwrap();
     let failing = PostgresStore::open(c.clone()).unwrap();
     assert!(failing

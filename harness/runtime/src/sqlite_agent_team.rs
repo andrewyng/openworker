@@ -133,7 +133,7 @@ impl Store {
                 params![serde_json::to_string(&s)?, sid],
             )?;
         }
-        tx.execute("INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",params![sid,s.turn.as_ref().map(|t|&t.id),"agent_team",json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])}).to_string()])?;
+        tx.execute("INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",params![sid,s.turn.as_ref().map(|t|&t.id),"agent_team",crate::safety::public_internal_event(&s,json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])})).to_string()])?;
         tx.commit()?;
         Ok(result)
     }

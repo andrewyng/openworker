@@ -5,6 +5,10 @@ use std::path::PathBuf;
 #[derive(Default, Clone, Serialize)]
 pub struct SessionOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
+    safety: Option<crate::guardrails::Config>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compliance: Option<openworker_runtime::compliance::Config>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<crate::Model>,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace: Option<PathBuf>,
@@ -14,6 +18,14 @@ pub struct SessionOptions {
     auto_skip_questions: Option<bool>,
 }
 impl SessionOptions {
+    pub fn compliance(mut self, config: openworker_runtime::compliance::Config) -> Self {
+        self.compliance = Some(config);
+        self
+    }
+    pub fn safety(mut self, config: crate::guardrails::Config) -> Self {
+        self.safety = Some(config);
+        self
+    }
     /// Override this agent's question policy for the new session only.
     pub fn auto_skip_questions(mut self, enabled: bool) -> Self {
         self.auto_skip_questions = Some(enabled);
@@ -36,6 +48,10 @@ impl SessionOptions {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DesktopOptions {
+    pub inherit_env: Vec<String>,
+    pub safety: crate::guardrails::Config,
+    pub compliance: Option<openworker_runtime::compliance::Config>,
+    pub compliance_sinks: Vec<openworker_runtime::compliance_export::Sink>,
     pub mcp_servers: Vec<crate::McpServer>,
     pub persist_sessions: bool,
     pub session_dir: Option<PathBuf>,
@@ -45,6 +61,10 @@ pub struct DesktopOptions {
 impl Default for DesktopOptions {
     fn default() -> Self {
         Self {
+            inherit_env: vec![],
+            safety: Default::default(),
+            compliance: None,
+            compliance_sinks: vec![],
             mcp_servers: vec![],
             persist_sessions: true,
             session_dir: None,
@@ -107,4 +127,12 @@ pub(crate) fn default_executable() -> Result<PathBuf> {
         "Bundled openworker-harness not found; use a desktop starter or set executable explicitly"
             .into(),
     ))
+}
+
+/// Per-message options. Session and application safety requirements remain active.
+#[derive(Clone, Default)]
+pub struct TurnOptions {
+    pub submission_id: Option<String>,
+    pub limits: Option<crate::TurnLimits>,
+    pub safety: Option<crate::guardrails::Config>,
 }

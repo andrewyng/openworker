@@ -2609,3 +2609,5 @@ summary {
   flex-wrap: wrap;
   gap: 20px 40px;
 }
+
+.safety-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:8px 0 20px}.safety-summary>div{padding:18px;border:1px solid var(--line,#e5e7eb);border-radius:12px;background:#fafafa}.safety-summary strong{display:block;font-size:26px;font-weight:550;letter-spacing:-.03em}.safety-summary span{font-size:12px;text-transform:capitalize;color:#616976}.safety-finding{border-bottom:1px solid #e8e9ec;padding:14px 0}.safety-finding summary{display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer}.safety-finding pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.safety-finding .small-note{margin:12px 0}

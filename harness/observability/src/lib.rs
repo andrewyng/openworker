@@ -206,6 +206,7 @@ impl Step {
                     | "question.wait"
                     | "tool.execute"
                     | "policy.review"
+                    | "safety.check"
                     | "environment.operation"
                     | "storage.call"
                     | "worker.activation"
@@ -257,7 +258,13 @@ impl Step {
         ensure!(
             self.purpose.as_ref().is_none_or(|v| matches!(
                 v.as_str(),
-                "main" | "auto_approver" | "compaction" | "helper" | "title" | "probe"
+                "main"
+                    | "auto_approver"
+                    | "compaction"
+                    | "helper"
+                    | "title"
+                    | "probe"
+                    | "guardrail"
             )),
             "Invalid model purpose"
         );

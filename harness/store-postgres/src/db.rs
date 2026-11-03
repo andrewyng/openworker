@@ -71,7 +71,7 @@ fn connect(config: &Config) -> Result<Client> {
         }
     };
     let millis = config.timeout.as_millis().saturating_mul(3) / 4;
-    client.batch_execute(&format!("SET statement_timeout={millis}; SET lock_timeout={millis}; SET idle_in_transaction_session_timeout={millis}; SET search_path={},pg_catalog",config.schema))?;
+    client.batch_execute(&format!("SET statement_timeout={millis}; SET lock_timeout={millis}; SET idle_in_transaction_session_timeout={millis}; SET ow.runtime_schema='6'; SET search_path={},pg_catalog",config.schema))?;
     Ok(client)
 }
 pub(crate) fn migrate(config: &Config) -> Result<()> {
@@ -87,8 +87,22 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
         .get(0);
     if exists {
         let rows = tx.query("SELECT version FROM version WHERE singleton", &[])?;
-        if rows.len() != 1 || rows[0].get::<_, i32>(0) != 5 {
+        if rows.len() != 1 || !matches!(rows[0].get::<_, i32>(0), 5 | 6) {
             bail!("Unsupported PostgreSQL schema version; migration required");
+        }
+        if rows[0].get::<_, i32>(0) == 5 {
+            // Stop/drain all old API and worker processes before this upgrade. Never
+            // revoke live execution ownership while an external action may be running.
+            let active: bool = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE expires>clock_timestamp())",
+                    &[],
+                )?
+                .get(0);
+            if active {
+                bail!("Stop old API/worker/SDK processes and release or expire their leases before upgrading schema 5 to 6");
+            }
+            tx.execute("UPDATE version SET version=6 WHERE singleton", &[])?;
         }
     } else {
         // Do not adopt/reset an unrelated partially populated schema.
@@ -102,7 +116,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
             bail!("Refusing to initialize a nonempty unversioned PostgreSQL schema");
         }
         tx.batch_execute(include_str!("schema.sql"))?;
-        tx.execute("INSERT INTO version VALUES(TRUE,5)", &[])?;
+        tx.execute("INSERT INTO version VALUES(TRUE,6)", &[])?;
     }
     // Optional query accelerators; explicit migration only.
     tx.batch_execute("CREATE INDEX IF NOT EXISTS submissions_recent ON submissions(created DESC,session_id DESC,sequence DESC); CREATE INDEX IF NOT EXISTS submissions_session_recent ON submissions(session_id,created DESC,sequence DESC)")?;
@@ -110,6 +124,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     tx.batch_execute("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS limits JSONB")?;
     crate::artifacts::migrate(&mut tx)?;
     crate::auth::migrate(&mut tx)?;
+    crate::compliance::migrate(&mut tx)?;
     crate::pools::migrate(&mut tx)?;
     crate::teams::migrate(&mut tx)?;
     crate::assistant::migrate(&mut tx)?;
@@ -123,6 +138,7 @@ pub(crate) fn migrate(config: &Config) -> Result<()> {
     crate::service_team_submissions::migrate(&mut tx)?;
     crate::service_team_publications::migrate(&mut tx)?;
     tx.batch_execute("CREATE TABLE IF NOT EXISTS sdk_host_mode(singleton BOOLEAN PRIMARY KEY CHECK(singleton), mode TEXT NOT NULL CHECK(mode='sdk'))")?;
+    tx.batch_execute(include_str!("compatibility.sql"))?;
     tx.commit()?;
     Ok(())
 }
@@ -272,13 +288,22 @@ fn write_event(
     if kind.len() > 100 || data.to_string().len() > 1024 * 1024 {
         bail!("Event exceeds storage limit");
     }
+    crate::compliance::admit_event(tx, s, kind)?;
     crate::controls::before_event(tx, s, kind, &data)?;
     crate::team_execution::check(tx, s, kind)?;
     // The row lock serializes cursor allocation and ownership transfer. A final
     // database-time check guards each commit, never a cached local lease alone.
     let row=tx.query_opt("UPDATE sessions SET cursor=cursor+1,revision=revision+CASE WHEN $5 THEN 1 ELSE 0 END WHERE id=$1 AND owner=$2 AND epoch=$3 AND expires>clock_timestamp() AND revision=$4 RETURNING cursor", &[&s.id,&owner,&epoch,&s.storage_revision,&canonical])?.context("Session ownership or revision changed before commit")?;
     let cursor: i64 = row.get(0);
-    let tid = s.turn.as_ref().map(|t| t.id.clone());
+    let tid = s
+        .turn
+        .as_ref()
+        .filter(|t| {
+            !(kind == "safety_evaluation"
+                && data["phase"] == "userInput"
+                && openworker_runtime::store::terminal(&t.status))
+        })
+        .map(|t| t.id.clone());
     tx.execute(
         "INSERT INTO events VALUES($1,$2,$3,$4,$5)",
         &[&s.id, &cursor, &tid, &kind, &data],
@@ -300,7 +325,7 @@ impl Database {
     pub fn open(config: Config) -> Result<Self> {
         let mut client = connect(&config)?;
         let rows = client.query("SELECT version FROM version WHERE singleton", &[])?;
-        if rows.len() != 1 || rows[0].get::<_, i32>(0) != 5 {
+        if rows.len() != 1 || rows[0].get::<_, i32>(0) != 6 {
             bail!("Unsupported PostgreSQL schema; run explicit migration");
         }
         let owner = uuid::Uuid::new_v4().to_string();
@@ -397,16 +422,16 @@ impl Database {
              AND COALESCE(data->'environment'->'spec'->>'provider_identity','')=$7
              AND COALESCE(data->'environment'->'spec'->>'profile_digest','')=$8
              AND (EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.status='pending')
-               OR (COALESCE(data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated')
+               OR (COALESCE(data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated','blocked')
                    AND NOT COALESCE((data->>'provider_blocked')::boolean,FALSE)
                    AND EXISTS(SELECT 1 FROM submissions q WHERE q.session_id=s.id AND q.status='queued'))
-               OR EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated') OR t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel'))
+               OR EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed','failed','cancelled','interrupted','truncated','blocked') OR t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel'))
                OR (s.data->'agent_team'->>'team_id' IS NOT NULL AND NOT COALESCE((s.data->>'provider_blocked')::boolean,FALSE)
                   AND NOT EXISTS(SELECT 1 FROM agent_teams t WHERE t.id=s.data->'agent_team'->>'team_id' AND (t.data->>'stopped')::boolean)
                   AND (COALESCE(s.data->'turn'->>'status','idle') IN ('idle','completed') OR s.data->'turn'->>'status'='waiting_agents')
                   AND (EXISTS(SELECT 1 FROM agent_team_messages m WHERE m.team=s.data->'agent_team'->>'team_id' AND m.seq>COALESCE((s.data->'agent_team'->>'inbox_cursor')::bigint,0) AND m.data->'recipients' ? (s.data->'agent_team'->>'agent_id'))
                        OR (s.data->'turn'->>'status'='waiting_agents' AND ((s.data->'agent_team'->'waiting'->>'deadline_ms')::bigint<=extract(epoch FROM clock_timestamp())*1000
-                           OR EXISTS(SELECT 1 FROM agent_teams t,jsonb_each(t.data->'roster'->'instances') i WHERE t.id=s.data->'agent_team'->>'team_id' AND (s.data->'agent_team'->'waiting'->'agent_ids') ? i.key AND (i.value->>'phase'='closed' OR EXISTS(SELECT 1 FROM sessions c WHERE c.id=i.value->>'session_id' AND c.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated'))))))))
+                           OR EXISTS(SELECT 1 FROM agent_teams t,jsonb_each(t.data->'roster'->'instances') i WHERE t.id=s.data->'agent_team'->>'team_id' AND (s.data->'agent_team'->'waiting'->'agent_ids') ? i.key AND (i.value->>'phase'='closed' OR EXISTS(SELECT 1 FROM sessions c WHERE c.id=i.value->>'session_id' AND c.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated','blocked'))))))))
                OR COALESCE(data->'turn'->>'status','idle') IN ('accepted','running','executing','cancelling','resuming_agents'))
              ORDER BY expires,created LIMIT 1 FOR UPDATE SKIP LOCKED",
             &[&selector.coworker,&selector.bundle_digest,&selector.backend.name(),&selector.scripted,&selector.environment_provider.as_deref().unwrap_or(""),&selector.fallback_model,&selector.environment_identity.as_deref().unwrap_or(""),&selector.environment_profile.as_deref().unwrap_or(""),&selector.model_provider.name(),&json!(selector.model_connections)])?;
@@ -759,6 +784,20 @@ impl Database {
         text: &str,
         limits: Option<openworker_runtime::budget::Limits>,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_safety(sid, key, text, limits, None)
+    }
+    pub fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        safety: Option<openworker_runtime::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        if let Some(config) = &safety {
+            config.validate()?;
+        }
+
         if let Some(l) = &limits {
             l.validate()?;
         }
@@ -781,8 +820,16 @@ impl Database {
                 return Err(crate::SubmissionError::Conflict.into());
             }
             if row.get::<_, String>(2) != "queued" {
+                let original=tx.query_opt("SELECT data->'safety' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1",&[&sid,&tid])?.and_then(|r|r.get::<_,Option<Value>>(0)).filter(|v|!v.is_null());
+                anyhow::ensure!(
+                    original == safety.as_ref().map(serde_json::to_value).transpose()?,
+                    "Submission ID reused with different safety settings"
+                );
                 if s.turn.as_ref().is_none_or(|t| t.id != tid) {
                     s.turn = Some(Turn {
+                        pending_safety_result: None,
+                        safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
+                        safety_retries: 0,
                         budget: openworker_runtime::budget::State::new(
                             s.package.limits.as_ref(),
                             limits.clone(),
@@ -862,7 +909,11 @@ impl Database {
         if let Some(member) = &mut s.agent_team {
             member.waiting = None;
         }
+        openworker_runtime::safety::reconcile_pending_result(&mut s);
         s.turn = Some(Turn {
+            pending_safety_result: None,
+            safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
+            safety_retries: 0,
             budget: openworker_runtime::budget::State::new(
                 s.package.limits.as_ref(),
                 limits.clone(),
@@ -885,7 +936,14 @@ impl Database {
             "UPDATE submissions SET status='started',owner_epoch=$3 WHERE session_id=$1 AND id=$2",
             &[&sid, &key, &epoch],
         )?;
-        let e = event(&mut tx, &s, &self.owner, epoch, "turn_accepted", json!({}))?;
+        let e = event(
+            &mut tx,
+            &s,
+            &self.owner,
+            epoch,
+            "turn_accepted",
+            json!({"safety":safety}),
+        )?;
         tx.commit()?;
         s.storage_revision += 1;
         Ok((s, true, Some(e)))
@@ -920,6 +978,9 @@ impl Database {
                     };
                     changed = t.status != next;
                     t.status = next.into();
+                    if let Some(receipt) = t.pending_safety_result.take() {
+                        s.history.push(json!({"type":"function_call_output","call_id":receipt["call_id"],"output":json!({"executed":true,"outputBlocked":true,"code":"INSPECTION_INTERRUPTED","message":"The internal operation completed, but its result was not released before restart. Do not repeat the action."}).to_string()}));
+                    }
                     let mut remaining = vec![];
                     for call in &t.queue {
                         let has_result = s.history.iter().any(|v| {

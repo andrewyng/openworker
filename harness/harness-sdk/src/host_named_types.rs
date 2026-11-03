@@ -150,6 +150,7 @@ impl Host {
                 let tools = self.tools.read().unwrap().clone();
                 let telemetry = self.instrumentation.clone();
                 let connections = self.connections.clone();
+                let safety_handlers = self.safety_callbacks.registry.clone();
                 let prepared = agent.clone();
                 let (runtime, mut profile) = tokio::task::spawn_blocking(move || -> Result<_> {
                     let (configs, profiles) =
@@ -179,6 +180,11 @@ impl Host {
                             coworker: bundle.id.clone(),
                         })),
                         telemetry,
+                    )?;
+                    Runtime::configure_safety(
+                        &mut runtime,
+                        config.desktop.safety.clone(),
+                        safety_handlers,
                     )?;
                     Arc::get_mut(&mut runtime)
                         .context("Scoped runtime already published")?

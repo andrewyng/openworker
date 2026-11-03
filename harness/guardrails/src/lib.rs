@@ -10,7 +10,7 @@ use anyhow::{ensure, Result};
 #[cfg(feature = "engine")]
 pub use detectors::fragments;
 #[cfg(feature = "engine")]
-pub use engine::{apply, observe, Evaluation};
+pub use engine::{apply, observe};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -212,6 +212,7 @@ pub enum Phase {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum HookPhase {
+    BeforeInput,
     BeforeModel,
     BeforeTool,
     AfterTool,
@@ -222,7 +223,8 @@ impl HookPhase {
     pub fn applies(self, p: Phase) -> bool {
         matches!(
             (self, p),
-            (Self::BeforeModel, Phase::ModelInput)
+            (Self::BeforeInput, Phase::UserInput)
+                | (Self::BeforeModel, Phase::ModelInput)
                 | (Self::BeforeTool, Phase::ToolCall)
                 | (Self::AfterTool, Phase::ToolResult)
                 | (Self::BeforeOutput, Phase::ModelOutput)
@@ -270,7 +272,7 @@ pub struct ToolRules {
 fn validate_tools(tools: &[String]) -> Result<()> {
     ensure!(tools.len() <= 64, "Too many safety tool selectors");
     for name in tools {
-        openworker_tools::qualified_parts(name)?;
+        ensure!(identifier(name), "Invalid safety tool selector");
     }
     Ok(())
 }
@@ -437,6 +439,8 @@ fn extend(target: &mut Vec<Rule>, source: &[Rule]) -> Result<()> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Context {
+    #[serde(default)]
+    pub call_id: Option<String>,
     pub evaluation_id: String,
     pub session_id: String,
     pub turn_id: Option<String>,
@@ -532,6 +536,8 @@ impl Registry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Finding {
+    pub call_id: Option<String>,
+    pub tool: Option<String>,
     pub evaluation_id: String,
     pub phase: Phase,
     pub check: String,
@@ -544,6 +550,8 @@ pub struct Finding {
 #[cfg(feature = "engine")]
 fn unavailable(context: &Context, name: &str, version: &str) -> Finding {
     Finding {
+        call_id: context.call_id.clone(),
+        tool: context.tool.clone(),
         evaluation_id: context.evaluation_id.clone(),
         phase: context.phase,
         check: name.into(),
@@ -620,5 +628,63 @@ mod minimal_tests {
             timeout_ms: 10,
         };
         assert!(h.validate().is_err());
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Evaluation {
+    pub text: String,
+    pub findings: Vec<Finding>,
+    pub block: Option<Decision>,
+    pub unavailable: bool,
+}
+
+/// Adapt an application closure to the shared embedded/private-stdio handler.
+pub fn handler<F, Fut>(callback: F) -> Arc<dyn Handler>
+where
+    F: Fn(Context, CancellationToken) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Decision>> + Send + 'static,
+{
+    struct Closure<F>(F);
+    impl<F, Fut> Handler for Closure<F>
+    where
+        F: Fn(Context, CancellationToken) -> Fut + Send + Sync,
+        Fut: Future<Output = Result<Decision>> + Send + 'static,
+    {
+        fn call(&self, c: Context, cancel: CancellationToken) -> CheckFuture<'_> {
+            Box::pin((self.0)(c, cancel))
+        }
+    }
+    Arc::new(Closure(callback))
+}
+impl Hook {
+    pub fn new(name: impl Into<String>, when: HookPhase, handler: HandlerRef) -> Self {
+        Self {
+            name: name.into(),
+            version: version(),
+            when,
+            tools: vec![],
+            handler,
+            timeout_ms: timeout(),
+        }
+    }
+}
+impl Rule {
+    pub fn model(
+        name: impl Into<String>,
+        model: ModelRef,
+        instructions: impl Into<String>,
+        action: Action,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version: version(),
+            detector: Detector::Model {
+                model,
+                instructions: instructions.into(),
+            },
+            action,
+            timeout_ms: timeout(),
+        }
     }
 }

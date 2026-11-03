@@ -241,7 +241,10 @@ impl Database {
                 &self.owner,
                 epoch,
                 "agent_team",
-                json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])}),
+                openworker_runtime::safety::public_internal_event(
+                    &s,
+                    json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])}),
+                ),
             )?;
         } else {
             db::progress_event(
@@ -250,7 +253,10 @@ impl Database {
                 &self.owner,
                 epoch,
                 "agent_team",
-                json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])}),
+                openworker_runtime::safety::public_internal_event(
+                    &s,
+                    json!({"operation":operation,"result":result,"call_id":call.map(|(_,c)|&c["call_id"])}),
+                ),
             )?;
         }
         tx.commit()?;
@@ -673,7 +679,7 @@ impl crate::PostgresStore {
         if cancelled_queued {
             return Ok(true);
         }
-        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel')) AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
+        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel')) AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
         let Some((sid, tid, actor, team)) = target else {
             return Ok(false);
         };
@@ -750,7 +756,7 @@ impl crate::PostgresStore {
         ensure!(self.auth.is_none(), crate::auth::Error::Forbidden);
         self.call(|db|{
             let mut tx=db.client.transaction()?;
-            let row=tx.query_opt("SELECT t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='retiring' AND (NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id') OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id' AND (s.data->>'closed')::boolean AND (s.data->'turn' IS NULL OR s.data->'turn'='null'::jsonb OR s.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated'))))) ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED",&[])?;
+            let row=tx.query_opt("SELECT t.data FROM agent_teams t WHERE EXISTS(SELECT 1 FROM jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase'='retiring' AND (NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id') OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=i.value->>'session_id' AND (s.data->>'closed')::boolean AND (s.data->'turn' IS NULL OR s.data->'turn'='null'::jsonb OR s.data->'turn'->>'status' IN ('completed','failed','cancelled','interrupted','truncated','blocked'))))) ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED",&[])?;
             let Some(row)=row else {tx.commit()?;return Ok(false)};
             let mut doc:Document=serde_json::from_value(row.get(0))?;
             let candidates:Vec<_>=doc.roster.instances().filter(|i|i.phase==openworker_runtime::team_coordination::Phase::Retiring).cloned().collect();

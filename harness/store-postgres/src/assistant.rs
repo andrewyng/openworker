@@ -65,7 +65,15 @@ impl Database {
         }
         db::append_history(&mut tx, &s)?;
         db::write_metadata(&mut tx, &s)?;
-        let event = db::event(&mut tx, &s, &self.owner, epoch, "tool_finished", data)?;
+        let mut event = db::event(
+            &mut tx,
+            &s,
+            &self.owner,
+            epoch,
+            "tool_finished",
+            openworker_runtime::safety::public_internal_event(&s, data.clone()),
+        )?;
+        event.data = data;
         tx.commit()?;
         Ok(event)
     }

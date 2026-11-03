@@ -4,7 +4,9 @@ pub mod agents;
 mod application_tools;
 mod callbacks;
 mod provider_callbacks;
+mod safety_callbacks;
 pub use application_tools::{Tool, ToolContext};
+pub use openworker_runtime::safety as guardrails;
 pub mod cli;
 mod desktop;
 mod mcp;
@@ -17,7 +19,7 @@ pub use agents::{
     Agent, AgentHandle, AgentTeam, AgentTeamRef, Harness, HarnessBuilder, TeamOptions, TeamPolicy,
 };
 pub use agents::{Run, Session, SessionInput, TurnLimits};
-pub use desktop::{DesktopOptions, SessionOptions};
+pub use desktop::{DesktopOptions, SessionOptions, TurnOptions};
 mod transport;
 pub use host::{CoworkerConfig, HostConfig, HostProcessConfig, Storage};
 pub use openworker_runtime::provider_auth::{AccessToken, Reason as TokenRefreshReason};
@@ -499,3 +501,10 @@ impl HarnessClient {
 
 /// Authenticated REST/SSE service transport; independent of managed child lifecycle.
 pub mod service;
+
+pub use openworker_runtime::compliance;
+
+#[cfg(feature = "security-adapters")]
+pub use openworker_security_adapters as security_adapters;
+
+pub use openworker_runtime::compliance_export::Sink as ComplianceSink;

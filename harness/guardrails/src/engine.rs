@@ -3,13 +3,6 @@ use anyhow::bail;
 use futures_util::FutureExt;
 use std::panic::AssertUnwindSafe;
 use std::time::{Duration, Instant};
-#[derive(Clone, Debug)]
-pub struct Evaluation {
-    pub text: String,
-    pub findings: Vec<Finding>,
-    pub block: Option<Decision>,
-    pub unavailable: bool,
-}
 async fn bounded<T>(
     ms: u64,
     cancel: &CancellationToken,
@@ -56,6 +49,8 @@ fn finding(
     started: Instant,
 ) -> Finding {
     Finding {
+        call_id: c.call_id.clone(),
+        tool: c.tool.clone(),
         evaluation_id: c.evaluation_id.clone(),
         phase: c.phase,
         check: name.into(),
@@ -64,6 +59,48 @@ fn finding(
         code,
         match_count: count,
         duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+    }
+}
+fn safe_block(decision: Decision, rules: &[&Rule], context: &Context) -> Decision {
+    let Decision::Block {
+        mut code,
+        mut feedback_to_model,
+    } = decision
+    else {
+        return decision;
+    };
+    // Application feedback is a new output surface. Never echo a detected
+    // fragment into history, public errors or compliance reason codes.
+    let unsafe_text = |text: &str| {
+        context
+            .matches
+            .iter()
+            .any(|m| !m.text.is_empty() && text.contains(&m.text))
+            || rules.iter().any(|r| match &r.detector {
+                Detector::Model { .. } => false,
+                detector => detectors::detect(detector, text).map_or(true, |m| !m.is_empty()),
+            })
+    };
+    if unsafe_text(&code) {
+        code = "CONTENT_BLOCKED".into();
+    }
+    if feedback_to_model.trim().is_empty()
+        || unsafe_text(&feedback_to_model)
+        || rules
+            .iter()
+            .any(|r| matches!(r.detector, Detector::Model { .. }))
+    {
+        if let Decision::Block {
+            feedback_to_model: safe,
+            ..
+        } = Decision::block("CONTENT_BLOCKED")
+        {
+            feedback_to_model = safe;
+        }
+    }
+    Decision::Block {
+        code,
+        feedback_to_model,
     }
 }
 fn reject(out: &mut Evaluation, decision: Decision) {
@@ -177,6 +214,7 @@ pub async fn apply(
                 ));
             }
             decision @ Decision::Block { .. } => {
+                let decision = safe_block(decision, &rules, &context);
                 let code = if let Decision::Block { code, .. } = &decision {
                     Some(code.clone())
                 } else {
@@ -229,6 +267,12 @@ pub async fn apply(
     }
     context.text = out.text.clone();
     context.matches.clear();
+    if context.phase == Phase::ToolCall && context.arguments.is_some() {
+        context.arguments = Some(
+            serde_json::from_str(&context.text)
+                .map_err(|_| anyhow::anyhow!("Sanitized tool arguments are not valid JSON"))?,
+        );
+    }
     for hook in config.hooks.iter().filter(|h| {
         h.when != HookPhase::OnEvent
             && h.when.applies(context.phase)
@@ -255,6 +299,7 @@ pub async fn apply(
                 started,
             )),
             Ok(decision @ Decision::Block { .. }) if decision.validate().is_ok() => {
+                let decision = safe_block(decision, &rules, &context);
                 let code = if let Decision::Block { code, .. } = &decision {
                     Some(code.clone())
                 } else {

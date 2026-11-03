@@ -55,6 +55,10 @@ executable from that same checkout. Source manifests remain development packages
 - **[Python/Rust tool survey](../docs/harness/TOOL-PARITY.md)** — remaining parity gaps.
 - **[Observability](../docs/harness/OBSERVABILITY.md)** — recording storage,
   independent PostgreSQL connections and staged usage/timeline implementation.
+- **[Guardrails and compliance](../docs/harness/GUARDRAILS-QUICKSTART.md)** —
+  built-in/regex/model checks, hooks, scoped audit reads and optional security/SIEM adapters.
+- **[Safety test catalog](../docs/harness/GUARDRAILS-TESTING.md)** — what each suite
+  verifies, with local storage, process/provider and OpenShell qualification.
 - **[Binary footprint](../docs/harness/BINARY-FOOTPRINT.md)** — measured stripped
   release sizes and build settings.
 - **[GCP deployment progress](../docs/harness/OWS-GCP-TRIAL-PLAN.md)** — qualified
@@ -71,6 +75,8 @@ executable from that same checkout. Source manifests remain development packages
 - Native Rust tools, app-owned callbacks and explicitly registered MCP servers.
 - Agent teams with durable task/message boards; SQLite or PostgreSQL storage.
 - Optional OpenTelemetry export and artifact storage for server deployments.
+- Guardrails and blocking hooks; metadata-only compliance evidence, durable
+  observer delivery and optional HTTP security scanners/SIEM export.
 - App-owned authentication callbacks and proactive rotation of short-lived bearer
   tokens, without recreating sessions.
 

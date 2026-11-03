@@ -1324,6 +1324,10 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
             || call["name"] == crate::team_type_catalog::TOOL,
         "Not a coordination tool"
     );
+    if crate::safety::hold_internal_result(s, call) {
+        return Ok(());
+    }
+    let t = s.turn.as_mut().context("Missing turn")?;
     s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":result.to_string()}));
     t.queue.remove(0);
     if call["name"] == "team_wait_agent" {

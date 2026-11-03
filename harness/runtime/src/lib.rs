@@ -63,3 +63,7 @@ pub fn id(prefix: &str) -> String {
 }
 
 pub mod agent_team;
+
+pub use openworker_compliance as compliance;
+
+pub mod compliance_export;

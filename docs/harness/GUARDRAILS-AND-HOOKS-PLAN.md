@@ -191,6 +191,54 @@ sample counts, not only a pass percentage.
 - Reused existing Cargo target cache; no new Docker images or paid services.
   M2 runtime integration begins next. Binary-size deltas remain an M7 gate.
 
+### M2 in progress — runtime boundaries and staged internal results
+
+- M1 committed as `a1b40de3` and fast-forwarded/pushed to public
+  `openworker-harness-sdk`. Later changes remain in the implementation worktree.
+- Added session/turn safety configuration, guarded user admission and SDK run
+  outbox checks, output buffering/redaction, bounded regeneration from accepted
+  history, safe blocked-tool results, and checks before dispatch even in bypass.
+- Model-backed checks now use the separate `guardrail` accounting purpose and
+  suppress candidate bodies in content-enabled telemetry. Native tool progress
+  suppresses candidate payloads when result inspection is configured.
+- Transactional memory/team tools stage a content-free executed receipt; async
+  result inspection precedes canonical result history and public result events.
+  Recovery/cancellation must resolve that receipt without repeating the effect.
+- Seven focused runtime tests pass, including real SQLite memory-result staging
+  and restart reconciliation. Earlier runtime regression run passed 90 tests;
+  rerun after the newest transactional changes. PostgreSQL compile exposed a
+  borrowed-value mismatch in the legacy team path, corrected before rerun.
+- M2 is NOT complete: finish auxiliary/ingress coverage, protected context and
+  replay audit, output/unknown-error surfaces, observer delivery, policy binding,
+  and per-turn configuration. SDK callback transport and service admission are
+  still subsequent gates. No live Prisma requests or new Docker resources.
+- Available host disk remains about 37 GiB after cache reuse.
+
+### November 3 — runtime and managed callback checkpoint
+
+- Eight focused runtime tests pass. Per-turn policy now joins the atomic
+  SQLite/PostgreSQL turn receipt and idempotency check; it does not become the
+  next turn's policy. Child creation inherits the lead's applicable checks.
+- Added output checking for compaction and reviewer reasons, guarded tool-progress
+  suppression, and typed safety pauses distinct from approval. SDK run outboxes
+  receive sanitized admission text. Required callbacks use the reserved control
+  lane, owner-bound invocation IDs, deadlines and cancellation.
+- Two actual Rust SDK integration tests pass: embedded and managed subprocess
+  against a loopback-only Responses fixture. Both inspect input, output and
+  event/snapshot privacy with app replacement callbacks.
+- TypeScript factory test and real-child integration pass, including runtime
+  callback rebinding after child SIGKILL, unavailable-hook pause/resume, timeout
+  cancellation and per-turn scope. Fixed callback functions being cloned into
+  launch options; only registered callback references enter persisted config.
+- Reused the existing task-owned Node dependencies via a temporary symlink.
+  Do not commit that link. SDK integration tests require loopback permission;
+  no live provider, Prisma credentials or cloud resources were used.
+- Latest full runtime regression checkpoint: 91 tests passed. Repeat relevant
+  checks after subsequent edits; service/PostgreSQL qualification and audit/export
+  work remain unfinished. M2/M3 are not yet signed off or merged.
+- Disk now about 36 GiB free. Continue M4 with isolated PostgreSQL fixtures,
+  bounded artifacts and the same Cargo target cache.
+
 ## Source anchors for implementation
 
 - `harness/runtime/src/runtime.rs`: model requests/deltas, tool authorization,
@@ -208,3 +256,110 @@ sample counts, not only a pass percentage.
 
 These are implementation locations, not assertions that all guardrail boundaries
 are already instrumented there.
+
+### November 3 — enforcement, callback isolation and compliance checkpoint
+
+- Kept the approved mock-only Prisma scope. Added optional `security-adapters`
+  packaging and a selected-context/Prisma synchronous scanner implementation;
+  qualification is still in progress. No Prisma account, key or live scan used.
+- Nine focused runtime boundary tests pass, including a new before-model denial
+  case proving no provider attempt and no working-model budget consumption.
+  Protected transport errors are now generic rather than exporting raw tool
+  diagnostics; denied/ask-user results also pass selected result checks.
+- Two callback bridge tests pass: owner forgery and late replies reject,
+  cancellation clears the pending invocation, and the 64-call capacity fails
+  closed. Earlier Rust embedded/managed and TypeScript managed callback fixtures
+  passed; rerun the full matrix after the remaining changes.
+- SQLite compliance evidence is captured in the execution transaction. Its new
+  fault-injection/reopen test passes: evidence failure rolls back the execution
+  event; metadata pages exclude candidate payloads and stream deltas.
+- The real local PostgreSQL test passes in an isolated schema: durable metadata,
+  separate compliance-reader/compliance-auditor roles, session scope, denial of
+  transcript access to metadata-only readers, successful reads in the security
+  audit, evidence rollback, and reconnect. The schema was removed afterward.
+- Added local SDK compliance configuration/query methods and service REST query
+  routes. This does not yet qualify service admission/worker safety wiring,
+  retention, observer delivery or SIEM delivery; those remain implementation
+  work. No later milestone is marked complete on the basis of compilation.
+- Disk check: 36 GiB free before this checkpoint; shared build cache reused.
+
+### November 3 — observer and export implementation checkpoint
+
+- Four mock scanner tests pass against a local HTTP fixture. Covered Prisma
+  request shape, selected context, allow/block, unknown/malformed/mismatched
+  verdicts, 401/429/500/redirect rejection, timeout, cancellation and size bounds.
+  Contract references: [synchronous scan](https://pan.dev/prisma-airs/api/airuntimesecurity/scan/scan-sync-request/)
+  and [official use cases](https://pan.dev/prisma-airs/api/airuntimesecurity/usecases/).
+  This is mock qualification, not a vendor certification or live integration.
+- Added `beforeInput` hooks so external scanners can inspect user text before
+  admission. External adapters reject broad `beforeModel` context to avoid
+  implicitly uploading system instructions/history/private provider state.
+- Observer records now capture the hook version and metadata transactionally,
+  including turn-scoped hooks. An independent bounded dispatcher retries with
+  stable event IDs; shutdown cancels it. PostgreSQL acknowledgements are owner
+  fenced. Observer delivery has no authority to approve/block an agent action.
+- SIEM implementation now has separate per-session/sink durable checkpoints,
+  delivery leases, destination binding, retry timing and health. Retention cannot
+  delete unacknowledged records for registered sinks. HTTP export is an optional
+  `compliance-export` feature and uses operator-supplied credential references.
+  Local SQLite/PostgreSQL and SDK receiver-outage qualification is in progress.
+- Periodic disk check: 35 GiB free. No cloud resources or vendor credentials used.
+
+### November 3 — final enforcement and recovery qualification
+
+- Runtime unit suite: **99 passed**. Includes guarded streaming, blocked-output
+  regeneration/termination, tool denial in bypass, executed-but-withheld results,
+  internal-tool restart reconciliation, per-turn idempotency, observers, guard
+  model identity pinning, budget/approval/cancellation regressions and SQLite
+  evidence/backpressure tests. Core storage/protocol suite: **19 passed**.
+- Core checks: **12 engine**, **1 minimal-engine rejection**, **3 compliance
+  contracts**, **4 mock HTTP scanner** tests passed. Required policy is rejected
+  by a build without its capability. Full SDK/service strict Clippy passed.
+- Rust embedded/managed SDK: **6 guardrail provider-protocol cases**, **6 unchanged
+  tool-free cases**, **2 private callback isolation/capacity tests**, **2 mock
+  Prisma integration cases**, **1 SIEM receiver-outage test** passed. Real local
+  PostgreSQL embedded/managed SDK parity also passed.
+- TypeScript managed child: **7 tests passed**, covering all three provider wire
+  protocols, redaction, cancellation, unavailable-check resume, child restart,
+  callback re-registration and tool-free behavior. No real provider requests.
+- Local PostgreSQL: metadata/content authorization across two API nodes, input
+  blocking before durable submission, evidence rollback, reconnect, export
+  backpressure, observer retry/takeover and stale-owner rejection passed. Safety
+  retry is a durable control; pending cancellation wins. Found and fixed a retry
+  timestamp parameter type that the SQLite test could not expose.
+- Added schema compatibility checks: SQLite 7→8 preserves sessions; PostgreSQL
+  5→6 is an explicit coordinated upgrade. Old clients reject the new version and
+  PostgreSQL additionally fences stale-client execution writes. Migration refuses
+  live leases. No user session data was reset. Upgrade instructions are in the
+  QuickStart; this is not a rolling mixed-version upgrade.
+- Final real OpenShell run passed (**14.39 s**) against the existing local 0.1.3
+  gateway: remote read redacted, write blocked before dispatch in bypass, actual
+  ToolRunner events checked. Owned environment
+  `env_e7541493759947d88f90fb302556f565` and schema
+  `ow_safety_3f107ac71018403c9825135508387f94` were removed by the test.
+- Management UI: five route/escaping/auth tests passed; real two-node API plus
+  PostgreSQL browser qualification passed at desktop and mobile widths. Safety
+  findings are expandable metadata; accepted-content API is not proxied to the
+  browser. Screenshots were visually reviewed.
+- Final Linux Rust container matrix passed: six guardrail SDK cases, two mock
+  Prisma cases and one SIEM outage case, using cached ARM64 Linux tooling. The
+  Linux TypeScript rerun and stripped release-size measurement are finishing.
+- Disk remains approximately **29 GiB free**. Reused both build caches; no new
+  cloud resources, live Prisma calls, vendor credentials or paid model calls.
+
+### Final naming and Linux checkpoint
+
+- Qualified MCP tool selectors now resolve through their trusted registered
+  bindings. A rule cannot accidentally match another server's same short tool
+  name. Added a regression and reran the real remote boundary using the example
+  MCP server's qualified names (43.89 s, passed); the fixture removed its own
+  sandbox and schema. Earlier wrong-namespace fixture attempt failed as expected
+  and was cleaned up; it is not counted as qualification.
+- Final Linux runtime suite: **106 passed** (Linux-specific tests account for the
+  difference from macOS). Linux TypeScript managed-subprocess suite: **7 passed**.
+- Existing PostgreSQL authorization/control/ingress/operations/store/submission
+  regressions: **43 passed** after the schema change. These tests deliberately
+  identify administrative fixture SQL as schema-6-aware.
+- Both API-node qualification and desktop/mobile browser checks passed. The
+  task-owned gateway port-forward was stopped; existing demos/volumes and other
+  agents' processes were left alone.

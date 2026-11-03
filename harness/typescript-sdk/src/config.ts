@@ -97,6 +97,9 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   return {
     state_dir: options.stateDir,
     desktop: {
+      compliance: options.compliance ?? (options.complianceSinks?.length ? {} : undefined),
+      compliance_sinks: options.complianceSinks ?? [],
+      inherit_env: options.inheritEnv ?? [],
       mcp_servers: options.mcpServers ?? [],
       persist_sessions: options.sessions?.persist ?? true,
       session_dir: options.sessions?.directory,
@@ -174,7 +177,7 @@ export function agentWire(a: Agent, depth = 0): object {
 }
 export function environment(options: HarnessOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  const explicit = [...(options.inheritEnv ?? [])];
+  const explicit = [...(options.inheritEnv ?? []), ...(options.complianceSinks ?? []).map(s=>s.credentialEnv)];
   if (options.storage?.type === "postgres")
     explicit.push(options.storage.connectionEnv);
   for (const header of options.telemetry?.headers ?? [])
