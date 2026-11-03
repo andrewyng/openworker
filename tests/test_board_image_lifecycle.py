@@ -1,8 +1,12 @@
 """Board-owned copies survive capture/worktree cleanup, with bounded scoped ingestion."""
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+import hashlib
+import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -115,6 +119,47 @@ def test_concurrent_identical_uploads_dedupe_without_shared_temp_race(tmp_path):
     assert len(list(store.root.iterdir())) == 1
 
 
+def test_upload_dedupes_when_another_process_publishes_before_rename(tmp_path, monkeypatch):
+    """A winning publisher's open reader must not prevent a second upload."""
+    store = AttachmentStore(tmp_path / "attachments")
+    target = store.root / (hashlib.sha256(PNG).hexdigest() + ".png")
+    fsync = os.fsync
+    with ExitStack() as readers:
+        def publish_first(fd):
+            fsync(fd)
+            subprocess.run([
+                sys.executable, "-c",
+                "import sys; from coworker.teams.attachments import AttachmentStore; "
+                "AttachmentStore(sys.argv[1]).put(bytes.fromhex(sys.argv[2]), 'first.png')",
+                str(store.root), PNG.hex(),
+            ], check=True, capture_output=True)
+            readers.enter_context(target.open("rb"))
+
+        monkeypatch.setattr(os, "fsync", publish_first)
+        ref = store.put(PNG, "second.png")
+        assert stored_name(ref) == target.name
+        assert target.read_bytes() == PNG
+    assert list(store.root.iterdir()) == [target]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows rename refuses existing targets")
+def test_racing_corrupt_target_is_not_reported_as_success(tmp_path, monkeypatch):
+    store = AttachmentStore(tmp_path / "attachments")
+    target = store.root / (hashlib.sha256(PNG).hexdigest() + ".png")
+    corrupt = PNG[:-1] + bytes([PNG[-1] ^ 1])
+    fsync = os.fsync
+
+    def publish_corrupt(fd):
+        fsync(fd)
+        target.write_bytes(corrupt)
+
+    monkeypatch.setattr(os, "fsync", publish_corrupt)
+    with pytest.raises(BoardError, match="integrity"):
+        store.put(PNG, "proof.png")
+    assert target.read_bytes() == corrupt
+    assert list(store.root.iterdir()) == [target]
+
+
 def test_corrupt_existing_copy_is_not_reported_as_success(tmp_path):
     store = AttachmentStore(tmp_path / "attachments")
     ref = store.put(PNG, "proof.png")
@@ -152,6 +197,7 @@ def test_failed_atomic_publish_leaves_no_success_or_staging_file(tmp_path, monke
     def fail(*args):
         raise OSError("publish failed")
     monkeypatch.setattr(Path, "replace", fail)
+    monkeypatch.setattr(Path, "rename", fail)
     with pytest.raises(OSError, match="publish failed"):
         store.put(PNG, "proof.png")
     assert list(store.root.iterdir()) == []
