@@ -626,6 +626,27 @@ class RecordingStore:
             ).fetchone()
         return int(row["n"])
 
+    def worker_turns(self, lead_session_id: str, since_ms: int = 0) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """Team workers' turns woken by this lead (`woken_by.lead_session_id`, 1.2), started at
+        or after `since_ms`, each with its steps: what the lead's timeline shows as worker rows
+        (OB-7, derived on read, never copied into the lead's recording)."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM turns WHERE woken_by IS NOT NULL AND started_at >= ? "
+                "AND json_extract(woken_by, '$.lead_session_id') = ? ORDER BY started_at, turn_id",
+                (since_ms, lead_session_id),
+            ).fetchall()
+            ids = [r["turn_id"] for r in rows]
+            steps = self._conn.execute(
+                f"SELECT * FROM steps WHERE turn_id IN ({', '.join('?' * len(ids))}) ORDER BY seq",
+                ids,
+            ).fetchall() if ids else []
+        by_turn: dict[str, list[dict[str, Any]]] = {}
+        for s in steps:
+            by_turn.setdefault(s["turn_id"], []).append(_step_record(s))
+        return [(_turn_record(r), by_turn.get(r["turn_id"], [])) for r in rows]
+
     def load_recording(self, session_id: str) -> dict[str, Any]:
         """A session's recording as format 1.0 JSON: {"turns": [...], "steps": [...]}.
         Turns by (started_at, turn_id); each turn's steps by `seq`."""

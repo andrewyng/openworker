@@ -210,11 +210,12 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
     resume stopped mid-tools, a generator the surface abandoned), in the `finally`: then the
     status is `interrupted` if Stop was pressed, else `unknown`. The caller says who started
     the turn with `trigger=` (user, channel, schedule, team_wake; `unknown` if it does not
-    say). While recording, UI events also carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
+    say), and a team worker's caller who woke it with `woken_by=` (1.2). While recording, UI events also carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
 
     def deco(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
         @functools.wraps(gen_fn)
-        async def wrapper(self: "TurnEngine", *args: Any, trigger: str = "unknown", **kwargs: Any) -> AsyncIterator[Event]:
+        async def wrapper(self: "TurnEngine", *args: Any, trigger: str = "unknown",
+                          woken_by: Optional[dict[str, Any]] = None, **kwargs: Any) -> AsyncIterator[Event]:
             inner = gen_fn(self, *args, **kwargs)
             obs = getattr(self, "_obs", None)
             if obs is None or not obs.enabled:
@@ -229,7 +230,7 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
                 async for event in inner:
                     if event.type is EventType.TURN_START and not started:
                         started = True
-                        self._begin_recorded_turn(kind, trigger)
+                        self._begin_recorded_turn(kind, trigger, woken_by)
                     if started and obs.in_turn:
                         self._observe_event(event)
                     yield event
@@ -689,7 +690,8 @@ class TurnEngine:
     def recorder(self, value: Any) -> None:
         self._obs.recorder = value
 
-    def _begin_recorded_turn(self, kind: str, trigger: str) -> None:
+    def _begin_recorded_turn(self, kind: str, trigger: str,
+                             woken_by: Optional[dict[str, Any]] = None) -> None:
         """`turn_started` (E1, technical design §4). For `run` the turn opens with your
         message; for `resume`, with the assistant message whose calls are resumed; a `retry`
         opens with the first message it adds, so its start waits for that."""
@@ -712,6 +714,7 @@ class TurnEngine:
                 "attended": attended,
                 "reviewer": reviewer,
                 "max_iterations": self.max_iterations,
+                "woken_by": woken_by,
             },
             stamp=stamp,
             first_message_id=first,
@@ -853,6 +856,11 @@ class TurnEngine:
                     # flow: no stage decided it (recording-format: origin null).
                     attrs["decision"] = {"path": [], "origin": None}
                 data = event.data
+                created = (data.get("display") or {}).get("team_created") if data.get("name") == "propose_team" else None
+                if created and created.get("team_id"):
+                    # The team it created and its worker sessions: ids only (1.2, OB-7).
+                    attrs["team"] = {"team_id": str(created["team_id"]), "worker_session_ids": [
+                        str(w.get("session_id")) for w in created.get("workers") or [] if w.get("session_id")]}
                 if obs.step_for_call(call_id) is None:
                     attrs.update(self._call_facts(
                         str(data.get("name") or ""), self._call_args.get(call_id), ran=False,

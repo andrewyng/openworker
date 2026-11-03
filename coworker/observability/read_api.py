@@ -7,6 +7,7 @@ existing machine proxy for remote and cloud machines.
 - `step`: one step in full: content, the exchange rebuilt from its pieces, the transcript
   message it points at (cut at 4 KB), the audit rows with its call id, and its child steps.
 - `usage`: the session's token numbers for the pill and its popover, and context fill.
+- `worker_rows`: a team lead's turns, the worker turns each one woke (OB-7, derived on read).
 """
 
 from __future__ import annotations
@@ -34,6 +35,41 @@ def turns(recording: dict[str, Any]) -> list[dict[str, Any]]:
             **t,
             "buckets": calculator.buckets(recording, t, now=now),
             "usage": calculator.usage(recording, turn_id=t["turn_id"]),
+        })
+    return out
+
+
+def worker_rows(lead_turns: list[dict[str, Any]],
+                worker_turns: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+                names: Callable[[str], Optional[str]] = lambda session_id: None) -> dict[str, list[dict[str, Any]]]:
+    """Each lead turn's worker rows (phase-2 design §13.3): the worker turns its lead woke
+    that started inside it. One that started after the lead turn ended belongs to the lead's
+    next turn; one after the last lead turn ended waits for the next. The tokens are display
+    only: they are the worker's, in its pill and in TeamView, never in the lead's pill.
+    `names` gives a worker's name from the team record."""
+    def end(t: dict[str, Any]) -> float:
+        if t.get("duration_ms") is not None:
+            return t["started_at"] + t["duration_ms"]
+        # Still running: open-ended. Found open after a crash (no length): ends where it began.
+        return float("inf") if t.get("status") == "running" else t["started_at"]
+
+    ordered = sorted(lead_turns, key=lambda t: (t.get("started_at") or 0, t.get("turn_id") or ""))
+    out: dict[str, list[dict[str, Any]]] = {t["turn_id"]: [] for t in ordered}
+    for wt, steps in worker_turns:
+        at = wt.get("started_at") or 0
+        # The first lead turn not yet over when the worker turn started: the one it started
+        # in, or, if it started between two lead turns, the next one.
+        home = next((t for t in ordered if at < end(t)), None)
+        if home is None:
+            continue
+        woken = wt.get("woken_by") or {}
+        use = calculator.usage({"steps": steps}, turn_id=wt["turn_id"])
+        out[home["turn_id"]].append({
+            "session_id": wt["session_id"], "turn_id": wt["turn_id"], "seq": wt.get("seq"),
+            "name": names(wt["session_id"]), "started_at": at, "duration_ms": wt.get("duration_ms"),
+            "status": wt.get("status"), "tokens": use["pill"], "at_least": use["at_least"],
+            "team_id": woken.get("team_id"), "item_ids": list(woken.get("item_ids") or []),
+            "via": woken.get("via"),
         })
     return out
 
