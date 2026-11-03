@@ -2,6 +2,7 @@
 import {readFileSync,writeFileSync,mkdirSync,rmSync,existsSync} from 'node:fs';
 import {dirname,resolve,join,posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {renderCodeTabs} from './code-tabs.mjs';
 const site=resolve(dirname(fileURLToPath(import.meta.url)),'..'),root=resolve(site,'..');
 const pages=JSON.parse(readFileSync(join(site,'pages.json'),'utf8'));
 const output=join(site,'src/content/docs'),base=(process.env.OW_DOCS_BASE??'/docs/sdk').replace(/\/$/,'');
@@ -23,6 +24,7 @@ for(const page of pages) {
   if(!existsSync(join(root,absolute)))throw Error(`Broken link ${page.source} -> ${target}`);
   return `](${route.get(absolute)??(references.has(absolute)?base+'/'+references.get(absolute):'https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/'+absolute)}${anchor?'#'+anchor:''})`;
  });
+ raw=renderCodeTabs(raw,page.slug);
  writeFileSync(join(output,page.slug+'.md'),`---\ntitle: ${JSON.stringify(title[1])}\n---\n\n${raw}`);
 }
 console.log(`Prepared ${pages.length} SDK pages from repository Markdown`);

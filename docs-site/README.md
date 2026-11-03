@@ -19,3 +19,32 @@ in local preview and deployment; publication is a separate action.
 
 Adapted from the existing OpenWorker Astro/Starlight docs pipeline in
 `ocw-context/site-docs`. It does not require that private repository to build.
+
+## Language tabs in plain Markdown
+
+Wrap alternatives with HTML-comment markers and ordinary headings:
+
+~~~~markdown
+<!-- sdk-tabs -->
+
+### TypeScript
+
+```typescript
+const session = await agent.newSession();
+```
+
+### Rust
+
+```rust
+let session = agent.new_session().await?;
+```
+
+<!-- /sdk-tabs -->
+~~~~
+
+GitHub displays both labelled examples. The site turns them into accessible tabs,
+with a shared TypeScript/Rust selection across the page and keyboard navigation
+(arrow keys, Home and End). Without JavaScript both examples remain readable.
+Use `TypeScript / Electron` and `Rust / Tauri` for starter-command alternatives.
+The build rejects missing end markers, duplicate languages and unsupported labels.
+Fenced example content is preserved, including `example=desktop` test markers.
