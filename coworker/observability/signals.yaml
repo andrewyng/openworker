@@ -37,8 +37,9 @@
 #   golden      the scenarios that test it (phase-2/scenarios.md)
 #   source      where the check was asked for
 
-version: "0.3"
-draft: 2026-11-02
+version: "0.4"
+draft: 2026-11-03
+# 0.4: waited_unwatched also counts the wait's overlap with nobody_watching gaps (OB-14).
 # 0.3: ran_without_sandbox runs only where a sandbox is expected (found in the first live run).
 # 0.2: reviewer_allowed_send (TD2-20), sandbox_failed, the mock-review wording (M2-R1 to M2-R9),
 # waited_unwatched from inbox_at (V2-25). Goes with recording format 1.2.
@@ -405,18 +406,19 @@ checks:
     severity: warn
     applies: "always"
     fires: >-
-      A wait step of kind `approval`, `question` or `plan` with where = `inbox` that
-      waited at least `min_wait_ms` after it reached the Inbox: wait end minus `inbox_at`
-      (new; the step's start when it began in the Inbox). A card reaches the Inbox when
-      the turn started unattended or when the last viewer left the session
-      (`inbox.py` promote_to_inbox), so where = `inbox` is the recorded fact for "nobody
-      was watching". The wait's `attended` is not used: it is the Unattended toggle, not
-      whether a desktop is connected (V2-25). Q27.
+      A wait step of kind `approval`, `question` or `plan` that waited at least
+      `min_wait_ms` while nobody was watching. That time is the longer of two: for
+      where = `inbox`, wait end minus `inbox_at` (the step's start when it began in the
+      Inbox); and the wait's overlap with the turn's `nobody_watching` notices (1.2,
+      OB-14), which also covers a card left in the open session while the desktop was
+      closed. A card reaches the Inbox when the turn started unattended or when the last
+      viewer left the session (`inbox.py` promote_to_inbox). The wait's `attended` is not
+      used: it is the Unattended toggle, not whether a desktop is connected (V2-25). Q27.
     points_at: "the wait step"
     params:
       min_wait_ms: 900000
-    says: "{name} waited {wait} in the Inbox for an answer while nobody was at the app."
+    says: "{name} waited {wait} in the Inbox for an answer while nobody was at the app. (Without \"in the Inbox\" when the card stayed in the session.)"
     fine: "Nothing waited long for an answer while nobody was watching"
-    needs: [wait.inbox_at]
+    needs: [wait.inbox_at, notice.nobody_watching]
     golden: [S2-17, S2-17b, S2-17c]
     source: "across-features.md OB-14, Q27; validation V2-25"

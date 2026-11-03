@@ -3037,6 +3037,21 @@
     }
   },
   "steps": {
+    "gap": {
+      "offline_total": "Machine offline",
+      "nobody_total": "Nobody watching",
+      "from": "From",
+      "until": "Until",
+      "why": "Why",
+      "reason_closed": "the controller closed the link",
+      "reason_failed": "the link to the controller failed",
+      "reason_ping_timeout": "the controller stopped answering",
+      "cause_restart": "the app ended without closing (a crash or a kill) and started again",
+      "cause_stopped": "the app was closed while this turn ran",
+      "cause_unknown": "not known",
+      "skipped": "Time the machine slept",
+      "asleep_note": "Steps after this row are placed by the wall clock again."
+    },
     "sbx_stage": {
       "preparing": "Preparing",
       "download_image": "Download image",
@@ -3266,7 +3281,9 @@
       "auto_approved": "auto-approved",
       "sandbox_failed": "failed at {{stage}}",
       "restart_folders_changed": "folders",
-      "restart_runner_restarted": "runner came back"
+      "restart_runner_restarted": "runner came back",
+      "gap_skipped": "+{{t}}",
+      "not_recorded": "{{t}} not recorded"
     },
     "purpose": {
       "main": "main",
@@ -3313,7 +3330,12 @@
       "summary_failed": "Summary failed",
       "recording_gap": "Recording gap",
       "sandbox_restarted": "Sandbox restarted",
-      "sandbox_regranted": "Sandbox folders updated"
+      "sandbox_regranted": "Sandbox folders updated",
+      "controller_offline": "Machine offline",
+      "nobody_watching": "Nobody watching",
+      "clock_jump": "Machine asleep",
+      "recording_gap_restart": "App restarted",
+      "recording_gap_stopped": "App was closed"
     },
     "status": {
       "ok": "ok",

@@ -1,6 +1,6 @@
 {
  "format": "1.2",
- "signals_version": "0.3",
+ "signals_version": "0.4",
  "built": true,
  "scenarios": [
   {
@@ -316,6 +316,15 @@
    "should": "stay quiet",
    "also_fires": [],
    "fired": []
+  },
+  {
+   "id": "S2-17d",
+   "check": "waited_unwatched",
+   "should": "fire",
+   "also_fires": [],
+   "fired": [
+    "waited_unwatched"
+   ]
   }
  ]
 }

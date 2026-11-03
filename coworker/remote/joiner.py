@@ -475,6 +475,8 @@ async def run_joined(
     """
     import websockets
 
+    from ..observability import gaps
+
     identity = load_or_create(state)
     if app is None:
         app = _build_local_app(state)
@@ -498,6 +500,8 @@ async def run_joined(
                         welcome = await _handshake(ws, identity, name, token)
                         token = None  # single-use by design; reconnects sign the challenge
                         backoff = _BACKOFF_START
+                        # The link is back: running turns get the offline stretch (OB-14).
+                        gaps.link_back(state)
                         log(
                             f"[openworker] joined {controller} as "
                             f"'{welcome.get('name')}' (machine {welcome.get('machine_id')})"
@@ -515,12 +519,15 @@ async def run_joined(
                             ws, dispatcher, app, identity, exporter=exporter, state=state
                         )
                         log("[openworker] controller closed the connection")
+                        gaps.link_lost(state, "closed")
                 except JoinRejected as exc:
                     if exc.reason in _FATAL_REJECTS:
                         raise
                     log(f"[openworker] rejected ({exc.reason}); retrying")
+                    gaps.link_lost(state, "failed")
                 except (OSError, websockets.WebSocketException) as exc:
                     log(f"[openworker] connection failed: {exc}")
+                    gaps.link_lost(state, gaps.link_reason(exc))
                 if once:
                     return
                 log(f"[openworker] reconnecting in {backoff:.0f}s")

@@ -399,17 +399,36 @@ def c_ran_without_sandbox(turn, top, all_steps, p):
                            f"this turn ran {len(acts)} action(s) without it.")], ""
 
 
+def _overlap(start, end, spans):
+    """How much of [start, end) the spans cover, each moment once."""
+    total, cur = 0, start
+    for a, b in sorted(spans):
+        a, b = max(a, cur), min(b, end)
+        if b > a:
+            total += b - a
+            cur = b
+    return total
+
+
 def c_waited_unwatched(turn, top, all_steps, p):
+    # 0.4: besides the time after the card reached the Inbox, the wait's overlap with the
+    # turn's `nobody_watching` gaps (OB-14) counts: a card left in the open session while
+    # the desktop was closed.
+    unwatched = [(g["started_at"], g["started_at"] + g["duration_ms"]) for g in all_steps
+                 if g["kind"] == "notice" and g.get("name") == "nobody_watching" and g.get("duration_ms")]
     found = []
     for s in top:
         a = s["attrs"]
-        if s["kind"] != "wait" or a.get("kind") not in ("approval", "question", "plan") or a.get("where") != "inbox":
+        if s["kind"] != "wait" or a.get("kind") not in ("approval", "question", "plan"):
             continue
-        start = a.get("inbox_at") or s.get("started_at") or 0
-        end = (s.get("started_at") or 0) + (s.get("duration_ms") or 0)
-        if end - start >= p["min_wait_ms"]:
-            found.append(issue("waited_unwatched", s, f"waited {round((end - start) / 60000)} min in the "
-                               f"Inbox for an answer while nobody was at the app."))
+        began = s.get("started_at") or 0
+        end = began + (s.get("duration_ms") or 0)
+        alone = end - (a.get("inbox_at") or began) if a.get("where") == "inbox" else 0
+        alone = max(alone, _overlap(began, end, unwatched))
+        if alone >= p["min_wait_ms"]:
+            where = "in the Inbox " if a.get("where") == "inbox" else ""
+            found.append(issue("waited_unwatched", s, f"waited {round(alone / 60000)} min {where}for an answer "
+                               f"while nobody was at the app."))
     return ("fired" if found else "fine"), found, "Nothing waited long for an answer while nobody was watching"
 
 

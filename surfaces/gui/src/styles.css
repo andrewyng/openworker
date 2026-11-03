@@ -2487,6 +2487,8 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .k-ctx .steps-kind, .steps-kind.k-ctx, .k-ctx .steps-bar { background:var(--bar-ctx); }
 .k-sbx .steps-kind, .steps-kind.k-sbx, .k-sbx .steps-bar { background:var(--bar-sbx); }
 .steps-stage { cursor:default; }
+.k-gap .steps-kind, .steps-kind.k-gap { background:transparent; outline:1px dashed var(--faint); }
+.k-gap .steps-bar { background:repeating-linear-gradient(90deg, var(--line-strong) 0 2px, transparent 2px 5px); border:1px dashed var(--faint); top:1px; height:10px; }
 .steps-stage .steps-bar { opacity:.75; }
 .k-wait .steps-kind, .steps-kind.k-wait { background:var(--bar-wait); outline:1px dashed var(--faint); }
 .steps-track { position:relative; height:12px; background:repeating-linear-gradient(90deg, transparent 0 24.6%, var(--line) 24.6% 25%); }

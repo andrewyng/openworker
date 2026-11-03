@@ -456,6 +456,13 @@ def turn_end_ms(turn: dict[str, Any], steps: list[dict[str, Any]]) -> int:
     return max([turn.get("started_at") or 0] + ends)
 
 
+def _is_gap(step: dict[str, Any]) -> bool:
+    """A gap notice with a duration: its own span, not an event on the turn (1.2)."""
+    from .gaps import GAP_NOTICES
+
+    return step.get("kind") == "notice" and step.get("name") in GAP_NOTICES and bool(step.get("duration_ms"))
+
+
 def build_turn_spans(
     turn: dict[str, Any],
     steps: list[dict[str, Any]],
@@ -518,7 +525,7 @@ def build_turn_spans(
 
     first_user_text = last_reply_text = None
     for s in sorted(steps, key=lambda s: (depth(s), s.get("seq") or 0)):
-        if s.get("kind") == "notice" or (only is not None and s["step_id"] not in only):
+        if (s.get("kind") == "notice" and not _is_gap(s)) or (only is not None and s["step_id"] not in only):
             continue
         a = s.get("attrs") or {}
         attrs: dict[str, Any] = dict(common, **{
@@ -652,6 +659,11 @@ def build_turn_spans(
             for k in ("size_chars", "session_prompt_hash", "block_hash"):
                 if a.get(k) is not None:
                     attrs[f"openworker.context.{k}"] = a[k]
+        elif s["kind"] == "notice":  # a gap with a duration (1.2, tracing-spec §9)
+            name = f"openworker.gap.{s.get('name')}"
+            for k in ("reason", "skipped_ms"):
+                if a.get(k) is not None:
+                    attrs[f"openworker.gap.{k}"] = a[k]
         elif s["kind"] == "sandbox":
             name = "openworker.sandbox.setup"
             for k in ("provider", "trigger", "failed_stage"):
@@ -731,9 +743,9 @@ def build_turn_spans(
                 root_attrs["langfuse.trace.output"] = root_attrs["langfuse.observation.output"] = masker.clean(last_reply_text)
         events = [{"name": f"openworker.notice.{s.get('name')}", "at": s.get("started_at") or turn["started_at"],
                    "attrs": {"openworker.step.id": s["step_id"]}}
-                  for s in sorted(steps, key=lambda s: s.get("seq") or 0) if s.get("kind") == "notice"]
+                  for s in sorted(steps, key=lambda s: s.get("seq") or 0) if s.get("kind") == "notice" and not _is_gap(s)]
         spans.insert(0, {
-            "_mark": tid, "_notices": [s["step_id"] for s in steps if s.get("kind") == "notice"],
+            "_mark": tid, "_notices": [s["step_id"] for s in steps if s.get("kind") == "notice" and not _is_gap(s)],
             "trace_id": trace, "span_id": root_id, "parent_span_id": None,
             "name": "invoke_agent coworker", "kind": SPAN_INTERNAL, "start_ms": turn["started_at"],
             "end_ms": end_ms, "attrs": root_attrs, "events": events,

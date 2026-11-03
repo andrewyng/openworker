@@ -129,6 +129,7 @@ export function stepLabel(step: RecordedStep, t: T): string {
       return t("steps.row.sandbox_setup");
     case "notice":
       if (step.name === "sandbox_restarted" && a.how === "regrant") return t("steps.notice.sandbox_regranted");
+      if (step.name === "recording_gap" && (a.cause === "restart" || a.cause === "stopped")) return t(`steps.notice.recording_gap_${a.cause}`);
       return t(`steps.notice.${step.name}`, { defaultValue: step.name });
     default:
       return step.name;
@@ -167,6 +168,12 @@ export function stepFlags(step: RecordedStep, t: T): Flag[] {
     flags.push({ cls: "err", text: t("steps.flag.sandbox_failed", { stage: t(`steps.sbx_stage.${stage}`, { defaultValue: stage }).toLowerCase() }) });
   } else if (step.kind === "notice" && step.name === "sandbox_restarted") {
     if (a.reason) flags.push({ cls: "info", text: t(`steps.flag.restart_${a.reason}`, { defaultValue: a.reason }) });
+  } else if (step.kind === "notice" && (step.name === "controller_offline" || step.name === "nobody_watching")) {
+    if (step.duration_ms) flags.push({ cls: "info", text: `${clockTime(step.started_at)}–${clockTime(step.started_at + step.duration_ms)}` });
+  } else if (step.kind === "notice" && step.name === "clock_jump") {
+    flags.push({ cls: "info", text: t("steps.flag.gap_skipped", { t: formatDuration(a.skipped_ms ?? step.duration_ms) }) });
+  } else if (step.kind === "notice" && step.name === "recording_gap" && typeof a.until === "number") {
+    flags.push({ cls: "warn", text: t("steps.flag.not_recorded", { t: formatDuration(Math.max(0, a.until - step.started_at)) }) });
   } else if (["error", "denied", "interrupted", "skipped", "unknown"].includes(step.status)) {
     flags.push({ cls: "err", text: t(`steps.status.${step.status}`) });
   }
@@ -198,10 +205,29 @@ const KIND_CLASS: Record<string, string> = {
   sandbox: "sbx",
 };
 
-/** The class of a row: a sandbox restart notice is drawn in the sandbox colour (mock ob13). */
+const GAPS = ["controller_offline", "nobody_watching", "clock_jump"];
+
+/** A gap notice with a duration (OB-14): drawn as a dashed band, not a point. */
+function isGap(step: RecordedStep): boolean {
+  return step.kind === "notice" && GAPS.includes(step.name) && !!step.duration_ms;
+}
+
+/** The class of a row: a sandbox restart notice is drawn in the sandbox colour (mock ob13),
+ * a gap as a dashed band (mock ob14). */
 function kindClass(step: RecordedStep): string {
   if (step.kind === "notice" && step.name === "sandbox_restarted") return "sbx";
+  if (isGap(step)) return "gap";
   return KIND_CLASS[step.kind] || "ctx";
+}
+
+/** A moment as the clock on the wall shows it, "14:02". */
+function clockTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** How long the turn spent with the machine offline, or with nobody watching (mock ob14). */
+function gapTotal(steps: RecordedStep[], name: string): number {
+  return steps.filter((s) => s.kind === "notice" && s.name === name).reduce((n, s) => n + (s.duration_ms || 0), 0);
 }
 
 type SandboxStage = { name: string; started_at: number; duration_ms: number | null; status: string; uncertain?: boolean };
@@ -379,6 +405,12 @@ export function StepsPanel({
                 <Tile key={b} value={formatDuration(turn.buckets[b])} label={t(`steps.bucket.${b}`)} />
               ))}
               {turn.buckets.other_shown && <Tile value={formatDuration(turn.buckets.other)} label={t("steps.bucket.other")} />}
+              {gapTotal(steps, "controller_offline") > 0 && (
+                <Tile value={formatDuration(gapTotal(steps, "controller_offline"))} label={t("steps.gap.offline_total")} />
+              )}
+              {gapTotal(steps, "nobody_watching") > 0 && (
+                <Tile value={formatDuration(gapTotal(steps, "nobody_watching"))} label={t("steps.gap.nobody_total")} />
+              )}
             </div>
             {steps.some((s) => s.status === "unknown") && (
               <p className="steps-line" data-testid="steps-gap">
@@ -871,6 +903,16 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
               [t("steps.sbx.reason"), t(`steps.sbx.reason_${a.reason}`, { defaultValue: a.reason || "—" })],
               [t("steps.sbx.how"), t(`steps.sbx.how_${a.how}`, { defaultValue: a.how || "—" })]);
   }
+  if (isGap(d) || (d.kind === "notice" && d.name === "recording_gap")) {
+    const until = d.name === "recording_gap" ? a.until : d.started_at + (d.duration_ms || 0);
+    rows.splice(0, rows.length,
+      [t("steps.gap.from"), clockTime(d.started_at)],
+      [t("steps.gap.until"), typeof until === "number" ? clockTime(until) : "—"]);
+    if (d.name === "clock_jump") rows.push([t("steps.gap.skipped"), formatDuration(a.skipped_ms ?? d.duration_ms)]);
+    else rows.push([t("steps.detail.duration"), formatDuration(typeof until === "number" ? until - d.started_at : d.duration_ms)]);
+    if (a.reason) rows.push([t("steps.gap.why"), t(`steps.gap.reason_${a.reason}`, { defaultValue: a.reason })]);
+    if (a.cause) rows.push([t("steps.gap.why"), t(`steps.gap.cause_${a.cause}`, { defaultValue: a.cause })]);
+  }
   const sbxStages: SandboxStage[] = d.kind === "sandbox" && Array.isArray(a.stages) ? a.stages : [];
   const changed = d.kind === "notice" && d.name === "stamp_changed" ? stampChanges(a, t) : [];
   const showsContext = d.kind === "context" || (d.kind === "notice" && d.name === "context_changed");
@@ -895,6 +937,7 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
           ] as [string, React.ReactNode])} />
         </>
       )}
+      {d.kind === "notice" && d.name === "clock_jump" && <p className="steps-line">{t("steps.gap.asleep_note")}</p>}
       {d.kind === "sandbox" && a.error?.text && (
         <>
           <Sec label={t("steps.sbx.error_text")} />

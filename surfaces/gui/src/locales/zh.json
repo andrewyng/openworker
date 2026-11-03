@@ -2993,6 +2993,21 @@
     }
   },
   "steps": {
+    "gap": {
+      "offline_total": "机器离线",
+      "nobody_total": "无人查看",
+      "from": "开始",
+      "until": "结束",
+      "why": "原因",
+      "reason_closed": "控制端关闭了连接",
+      "reason_failed": "与控制端的连接失败",
+      "reason_ping_timeout": "控制端不再响应",
+      "cause_restart": "应用未正常关闭（崩溃或被终止）后再次启动",
+      "cause_stopped": "本回合运行时应用被关闭",
+      "cause_unknown": "未知",
+      "skipped": "机器休眠的时间",
+      "asleep_note": "此行之后的步骤重新按系统时钟排列。"
+    },
     "sbx_stage": {
       "preparing": "准备",
       "download_image": "下载镜像",
@@ -3217,7 +3232,9 @@
       "auto_approved": "已自动批准",
       "sandbox_failed": "在{{stage}}失败",
       "restart_folders_changed": "文件夹",
-      "restart_runner_restarted": "运行器已重启"
+      "restart_runner_restarted": "运行器已重启",
+      "gap_skipped": "+{{t}}",
+      "not_recorded": "{{t}} 未记录"
     },
     "purpose": {
       "main": "主要",
@@ -3264,7 +3281,12 @@
       "summary_failed": "摘要失败",
       "recording_gap": "记录缺口",
       "sandbox_restarted": "沙箱已重启",
-      "sandbox_regranted": "沙箱文件夹已更新"
+      "sandbox_regranted": "沙箱文件夹已更新",
+      "controller_offline": "机器离线",
+      "nobody_watching": "无人查看",
+      "clock_jump": "机器休眠",
+      "recording_gap_restart": "应用已重启",
+      "recording_gap_stopped": "应用已关闭"
     },
     "status": {
       "ok": "正常",

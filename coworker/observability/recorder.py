@@ -55,6 +55,9 @@ TURN_FIELDS = (
     "incomplete", "approval_mode", "attended", "reviewer", "stamp", "first_message_id",
     "last_message_id", "schema_version",
 )
+# A wall clock ahead of the turn's monotonic clock by more than this: the machine slept (OB-14).
+CLOCK_JUMP_MS = 5000
+
 # Format 1.2 turn fields: written only when known, so a 1.1 recording reads back unchanged.
 TURN_FIELDS_12 = ("max_iterations", "woken_by")
 STEP_FIELDS = (
@@ -90,6 +93,10 @@ class Turn:
     woken_by: Optional[dict[str, Any]] = None
     mono_start: Optional[int] = field(default=None, repr=False)  # not part of the record
     mono_end: Optional[int] = field(default=None, repr=False)
+    # Time the monotonic clock did not count (the machine slept; OB-14 clock_jump): added
+    # to every later moment, so step times follow the wall clock again (tracing-spec §7, 1.2).
+    shift_ms: int = field(default=0, repr=False)
+    last_ms: Optional[int] = field(default=None, repr=False)  # the latest moment placed
 
     @property
     def ended_at(self) -> Optional[int]:
@@ -285,8 +292,9 @@ class Recorder:
         if turn is None or turn.mono_end is not None:
             return
         turn.status, turn.last_message_id = ev["status"], ev.get("last_message_id")
+        self._anchor(turn.turn_id, ev["at_ms"], ev["mono_ms"])  # a sleep just before the end
         turn.mono_end = ev["mono_ms"]
-        turn.duration_ms = max(0, ev["mono_ms"] - turn.mono_start)
+        turn.duration_ms = max(0, ev["mono_ms"] - turn.mono_start + turn.shift_ms)
         # §7.4: anything of this turn still open is closed at the turn's end.
         for s in self.steps.values():
             if (s.turn_id == turn.turn_id and s.duration_ms is None and s.status == "running"
@@ -316,11 +324,26 @@ class Recorder:
             log.exception("recording: the Issues checks failed for a turn")
 
     def _anchor(self, turn_id: Optional[str], at_ms: int, mono_ms: int) -> int:
-        """§7.3: a step's start is its turn's start plus the monotonic time since then."""
+        """§7.3: a step's start is its turn's start plus the monotonic time since then. When
+        the wall clock has run ahead of that by more than 5 s, the machine slept: a
+        `clock_jump` notice covers the skipped time, and later moments follow the wall
+        clock again (1.2, TD2-14)."""
         t = self.turns.get(turn_id) if turn_id else None
         if t is None or t.mono_start is None:
             return at_ms
-        return t.started_at + (mono_ms - t.mono_start)
+        placed = t.started_at + (mono_ms - t.mono_start) + t.shift_ms
+        skipped = at_ms - placed
+        if skipped > CLOCK_JUMP_MS and t.mono_end is None:
+            last = t.last_ms if t.last_ms is not None else t.started_at
+            jump = Step(step_id=new_ulid(), turn_id=t.turn_id, session_id=t.session_id, kind="notice",
+                        name="clock_jump", started_at=last, duration_ms=skipped, status="ok",
+                        attrs={"skipped_ms": skipped})
+            self.steps[jump.step_id] = jump
+            self._write_step(jump)
+            t.shift_ms += skipped
+            placed = at_ms
+        t.last_ms = max(t.last_ms or 0, placed)
+        return placed
 
     def _step_started(self, ev: dict[str, Any]) -> None:
         if ev["step_id"] in self.steps:
@@ -360,6 +383,9 @@ class Recorder:
             return
         else:
             s.duration_ms = max(0, ev["mono_ms"] - s.mono_start)
+            turn = self.turns.get(s.turn_id) if s.turn_id else None
+            if turn is not None:
+                turn.last_ms = max(turn.last_ms or 0, s.started_at + s.duration_ms)
         s.status = ev.get("status", "ok")
         if "message_id" in ev:
             s.message_id = ev["message_id"]

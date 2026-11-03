@@ -198,6 +198,7 @@ class RecordingStore:
         self._pending_issues: dict[str, tuple[str, int]] = {}  # turn_id -> (json, seen)
         self._pending_steps: dict[str, dict[str, Any]] = {}
         self._pending_lock = threading.Lock()
+        self._owner = False  # this process called close_open_turns: it owns the data folder
         self._closed = False
         self._last_sweep = 0.0
         self._background = background
@@ -274,6 +275,26 @@ class RecordingStore:
             self.flush()
             self._closed = True
             self._conn.close()
+            if self._owner:
+                # A clean stop: a turn found open at the next start was cut by the app being
+                # stopped, not by a crash (recording_gap cause, OB-14).
+                self._marker("running").unlink(missing_ok=True)
+                try:
+                    self._marker("stopped").write_text(str(int(time.time() * 1000)), encoding="utf-8")
+                except OSError:
+                    pass
+
+    def _marker(self, name: str) -> Path:
+        return self.path.with_name(self.path.name + f".{name}")
+
+    def _last_stop(self) -> str:
+        """How the previous run of the app ended: `stopped` (it closed this store), `restart`
+        (it was running and never closed it: a crash or a kill) or `unknown` (no word)."""
+        if self._marker("stopped").exists():
+            return "stopped"
+        if self._marker("running").exists():
+            return "restart"
+        return "unknown"
 
     # -- exchange pieces (TD-17) --------------------------------------------------------------
     def put_piece(self, data: bytes) -> str:
@@ -306,6 +327,13 @@ class RecordingStore:
 
         with self._lock:
             self.flush()
+            cause, until = self._last_stop(), int(time.time() * 1000)
+            self._owner = True
+            self._marker("stopped").unlink(missing_ok=True)
+            try:
+                self._marker("running").write_text(str(until), encoding="utf-8")
+            except OSError:
+                pass
             open_turns = self._conn.execute(
                 "SELECT turn_id, session_id, started_at FROM turns WHERE status = 'running' OR status IS NULL"
             ).fetchall()
@@ -331,10 +359,12 @@ class RecordingStore:
                                                           if s["started_at"] is not None])
                     gap = {"step_id": new_ulid(), "kind": "notice", "name": "recording_gap", "started_at": last,
                            "duration_ms": 0, "call_index": None, "call_id": None, "shadow": 0}
+                    # 1.2: why the turn was found open, and the start that found it (OB-14).
                     self._conn.execute(
                         "INSERT INTO steps (step_id, turn_id, session_id, kind, name, started_at, duration_ms, "
                         "status, shadow, after_turn, attrs, content) VALUES (?, ?, ?, 'notice', 'recording_gap', ?, 0, "
-                        "'ok', 0, 0, '{}', '{}')", (gap["step_id"], tid, t["session_id"], last))
+                        "'ok', 0, 0, ?, '{}')",
+                        (gap["step_id"], tid, t["session_id"], last, json.dumps({"cause": cause, "until": until})))
                     ordered = sorted([dict(s) for s in steps] + [gap], key=lambda s: (
                         s["started_at"] or 0, 0 if s["duration_ms"] == 0 else 1, KIND_ORDER.get(s["kind"], 9),
                         s["call_index"] or 0, s["name"] or "", s["call_id"] or "", bool(s["shadow"])))

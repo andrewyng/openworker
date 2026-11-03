@@ -1056,6 +1056,8 @@ class SessionManager:
             engine.compaction_state = CompactionState.from_dict(record.compaction)
         engine.compaction_settings = self.compaction_settings
         self._engines[session_id] = engine
+        if not self._session_clients.get(session_id):
+            self._note_watching(session_id, False)  # built with no window open (a schedule, a wake)
         self.sync_worker_mode(session_id, engine)  # §11.6: approvals follow the lead
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
@@ -6274,7 +6276,10 @@ class SessionManager:
                 self.unregister_event_client(cb)
 
     def register_session_client(self, session_id: str, send_cb: Any) -> None:
+        first = not self._session_clients.get(session_id)
         self._session_clients.setdefault(session_id, set()).add(send_cb)
+        if first:
+            self._note_watching(session_id, True)
 
     def unregister_session_client(self, session_id: str, send_cb: Any) -> None:
         clients = self._session_clients.get(session_id)
@@ -6282,6 +6287,19 @@ class SessionManager:
             clients.discard(send_cb)
             if not clients:
                 self._session_clients.pop(session_id, None)
+                self._note_watching(session_id, False)
+
+    def _note_watching(self, session_id: str, watching: bool) -> None:
+        """The session's viewers went from none to one or from one to none (OB-14): while
+        none, its turns get a `nobody_watching` gap. A local window and a desktop reaching
+        this machine through the controller open the same socket, so both count."""
+        recording = getattr(self._engines.get(session_id), "_obs", None)
+        condition = getattr(recording, "condition", None)
+        if condition is not None:
+            try:
+                condition("nobody_watching", not watching)
+            except Exception:  # noqa: BLE001 - a recording never breaks a socket
+                logger.exception("observability: could not note who is watching %s", session_id)
 
     # -- session actor (spec §Fleet under the org) --------------------------------
     def note_session_actor(self, session_id: str, actor: str) -> None:

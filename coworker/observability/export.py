@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 from . import export_spans as spans_mod
-from .export_spans import Masker, build_turn_spans, encode_otlp, resource_attrs, switches_from
+from .export_spans import Masker, _is_gap, build_turn_spans, encode_otlp, resource_attrs, switches_from
 
 log = logging.getLogger(__name__)
 
@@ -376,7 +376,8 @@ class Exporter:
         ready = {s["step_id"] for s in steps
                  if s.get("status") not in (None, "running") and s["step_id"] not in marked}
         include_root = turn_id not in marked
-        late_notices = [s["step_id"] for s in steps if s.get("kind") == "notice" and s["step_id"] in ready]
+        late_notices = [s["step_id"] for s in steps if s.get("kind") == "notice" and s["step_id"] in ready
+                        and not _is_gap(s)]  # a gap is a span of its own (1.2)
         if not include_root and late_notices:
             # A notice is an event on the turn's span, which has gone already.
             self.store.mark_export(dest, [(n, turn_id) for n in late_notices], "skipped")

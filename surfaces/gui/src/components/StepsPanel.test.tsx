@@ -317,6 +317,49 @@ describe("Sandbox setup (OB-13)", () => {
   });
 });
 
+describe("Gaps (OB-14)", () => {
+  const gapTurn = { ...turn, duration_ms: 600_000, buckets: { ...turn.buckets, total: 600_000 } };
+  const gaps = [
+    step({ step_id: "m", kind: "model", name: "model", duration_ms: 5000, attrs: { purpose: "main" } }),
+    step({ step_id: "z", kind: "notice", name: "clock_jump", started_at: 6000, duration_ms: 23_000, attrs: { skipped_ms: 23_000 } }),
+    step({ step_id: "o", kind: "notice", name: "controller_offline", started_at: 30_000, duration_ms: 420_000, attrs: { reason: "ping_timeout" } }),
+    step({ step_id: "n", kind: "notice", name: "nobody_watching", started_at: 40_000, duration_ms: 300_000, attrs: {} }),
+    step({ step_id: "r", kind: "notice", name: "recording_gap", started_at: 500_000, duration_ms: 0, attrs: { cause: "restart", until: 740_000 } }),
+  ];
+
+  it("draws each gap as a band with its times, and totals offline and unwatched time", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([gapTurn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(gaps as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(5));
+    const rows = screen.getAllByTestId("steps-row");
+    const text = rows.map((r) => r.textContent || "");
+    expect(text[1]).toContain("Machine asleep");
+    expect(text[1]).toContain("+23s");
+    expect(text[2]).toContain("Machine offline");
+    expect(text[2]).toMatch(/\d{1,2}:\d{2}.*–.*\d{1,2}:\d{2}/);  // from–until, on the wall clock
+    expect(text[3]).toContain("Nobody watching");
+    expect(text[4]).toContain("App restarted");
+    expect(text[4]).toContain("4m not recorded");
+    expect(rows[2].className).toContain("k-gap");
+    expect(rows[4].className).not.toContain("k-gap");  // a point, not a band
+    const tiles = screen.getByTestId("steps-tiles").textContent || "";
+    expect(tiles).toContain("Machine offline");
+    expect(tiles).toContain("Nobody watching");
+  });
+
+  it("says why the machine was offline in the details", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([gapTurn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(gaps as any);
+    vi.mocked(getStepDetail).mockResolvedValue(gaps[2] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(5));
+    fireEvent.click(screen.getAllByTestId("steps-row")[2]);
+    await waitFor(() => expect(screen.getByTestId("steps-details").textContent).toContain("the controller stopped answering"));
+    expect(screen.getByTestId("steps-details").textContent).toContain("7m");
+  });
+});
+
 describe("formatDuration", () => {
   it("reads like the mock", () => {
     expect(formatDuration(100)).toBe("0.1s");

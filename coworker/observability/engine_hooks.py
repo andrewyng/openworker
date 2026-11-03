@@ -53,6 +53,13 @@ class TurnRecording:
         self._reserved: dict[str, dict[str, Any]] = {}  # summary steps written at their end (E4)
         self._tokens_after_for: Optional[str] = None  # a summary waiting for the next main call
         self._child_usage: dict[str, bool] = {}  # parent step -> its model call reported usage
+        # Conditions on now (OB-14): name -> (since ms, attrs). They outlive turns; each turn
+        # gets its own gap notice, cut at its start and end.
+        self._conditions: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._turn_started_ms = self._turn_started_mono = 0
+        from . import gaps
+
+        gaps.register(self)  # the recorder may be set later; conditions are kept meanwhile
 
     @property
     def enabled(self) -> bool:
@@ -97,6 +104,7 @@ class TurnRecording:
             self._reply_end = None
             self._waits.clear()
             ev = self._base("turn_started", self.turn_id, self._turn_session)
+            self._turn_started_ms, self._turn_started_mono = ev["at_ms"], ev["mono_ms"]
             ev.update({"kind": kind, "trigger": trigger, "first_message_id": first_message_id,
                        "attrs": copy.deepcopy(attrs), "stamp": copy.deepcopy(stamp)})
             if wait_for_first_message:
@@ -124,7 +132,12 @@ class TurnRecording:
                 self.recorder.emit(ev)
             self._tool_ends.clear()
             self._flush_reply(None)
-            ev = self._base("turn_ended", self.turn_id, self._turn_session)
+            end = self._base("turn_ended", self.turn_id, self._turn_session)
+            # Still on: cut at the turn's end, on the turn's own clock (its length is monotonic).
+            cut = self._turn_started_ms + (end["mono_ms"] - self._turn_started_mono)
+            for name, (since, attrs) in list(self._conditions.items()):
+                self._write_gap(name, since, cut, attrs)
+            ev = end
             ev.update({"status": status, "last_message_id": self._last_mid})
             return ev
 
@@ -134,6 +147,34 @@ class TurnRecording:
     @property
     def in_turn(self) -> bool:
         return self.turn_id is not None and not self._ended
+
+    # -- gaps (OB-14) ---------------------------------------------------------------------------
+    def condition(self, name: str, on: bool, *, at_ms: Optional[int] = None,
+                  attrs: Optional[dict[str, Any]] = None) -> None:
+        """A gap condition starts (`on`) or ends. When it ends during a turn, the turn gets a
+        notice lasting from the later of its start and the turn's start, until now."""
+        at = at_ms if at_ms is not None else now_ms()[0]
+        with self._lock:
+            if on:
+                self._conditions.setdefault(name, (at, dict(attrs or {})))
+                return
+            held = self._conditions.pop(name, None)
+            if held is None or not self.in_turn:
+                return
+            since, had = held
+            self._write_gap(name, since, at, {**had, **(attrs or {})})
+
+    def _write_gap(self, name: str, since: int, until: int, attrs: dict[str, Any]) -> None:
+        """One gap notice in the current turn, whole, from its end (under the lock)."""
+        start = max(since, self._turn_started_ms)
+        if self.turn_id is None or until <= start:
+            return
+        ev = self._base("step_ended", self.turn_id, self._turn_session)
+        ev.update({"at_ms": until, "step_id": new_ulid(), "status": "ok", "message_id": None,
+                   "attrs": copy.deepcopy(attrs), "content": {}, "kind": "notice", "name": name,
+                   "parent_step_id": None, "call_id": None, "call_index": None, "shadow": False,
+                   "after_turn": False, "started_at": start, "gap": True})
+        self._send(ev)
 
     def step_for_call(self, call_id: str) -> Optional[str]:
         """The tool step recorded for a call in this turn, if any."""
