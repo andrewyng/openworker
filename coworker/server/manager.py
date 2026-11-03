@@ -47,6 +47,7 @@ from ..observability import Recorder, RecordingStore
 from ..observability import read_api as recording_api
 from ..observability import signals as recording_signals
 from ..observability.export import ObservabilityExport
+from ..observability.engine_hooks import note_team
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
 from ..remote.audit_export import load_policy
 from ..config import load_config, workspace_allowed_commands
@@ -1343,6 +1344,8 @@ class SessionManager:
             return {"error": "this session does not lead a team"}
         handle = (worker or "").strip().lower()
         member = next((w for w in team.workers if w.actor == handle), None)
+        # Ids on the lead's `decide_worker_call` step (OB-7); nothing outside a recorded call.
+        note_team(team.team_id, worker_session_id=member.session_id if member else None)
         if member is None:
             return {"error": f"no worker named '{worker}' on this team"}
         item = self.inbox.get(call_id)
@@ -2872,6 +2875,20 @@ class SessionManager:
                 persona=agent.name,
                 session_id=session_id,
             )
+        def team_identity():
+            # Resolve live membership, never a model-supplied team/board id.
+            team = self.teams.for_lead_session(session_id)
+            if team is None:
+                member = self.teams.for_worker_session(session_id)
+                if member is not None and member[1].actor == actor.id:
+                    team = member[0]
+            return team.team_id if team is not None and team.space == space else ""
+
+        def worker_session(worker_actor: str) -> Optional[str]:
+            # The session of a worker on this session's team, for the step's ids (OB-7).
+            team = self.teams.get(team_identity())
+            return next((w.session_id for w in (team.workers if team else []) if w.actor == worker_actor), None)
+
         tools = board_tools(
             self.team_store,
             space=space,
@@ -2881,19 +2898,12 @@ class SessionManager:
             # added or revoked since this engine was built. No engine => no access.
             roots=lambda: getattr(self._engines.get(session_id), "roots", []),
             on_change=self.kick_team_tick,
+            team_id=team_identity,
+            worker_session=worker_session,
         ) + journal_tools(
             self.journal_store, actor=actor, space=space
         )
         from ..teams.artifacts import artifact_tools
-
-        def team_identity():
-            # Resolve live membership, never a model-supplied team/board id.
-            team = self.teams.for_lead_session(session_id)
-            if team is None:
-                member = self.teams.for_worker_session(session_id)
-                if member is not None and member[1].actor == actor.id:
-                    team = member[0]
-            return team.team_id if team is not None and team.space == space else ""
 
         tools += artifact_tools(self.team_store, self.attachment_store, space=space,
             actor=actor, roots=lambda: getattr(self._engines.get(session_id), "roots", []),
@@ -2922,6 +2932,7 @@ class SessionManager:
             team, handle, actor = manager._chat_identity(session_id, role)
             if team is None:
                 return {"error": "this session is not part of a team"}
+            note_team(team.team_id, item_id=record_on_item)
             if not team.chat_enabled or not team.chat_group:
                 return {"error": "team chat is not enabled for this team"}
             try:
@@ -3051,6 +3062,7 @@ class SessionManager:
             if team is None:
                 return {"error": "no team yet — propose one with propose_team first"}
             match = next((w for w in team.workers if w.actor == worker), None)
+            note_team(team.team_id, worker_session_id=match.session_id if match else None)
             if match is None:
                 return {
                     "error": f"no worker '{worker}' on this team",
@@ -3236,6 +3248,33 @@ class SessionManager:
                 " yours to verify."
             ),
         }
+
+    def _woken_by(self, session_id: str, source: Optional[dict[str, Any]], wake=None) -> Optional[dict[str, Any]]:
+        """A team worker's turn: who woke it (observability 1.2, OB-7). `via` is `steer` for the
+        lead's `steer_worker`, `timer` for a timer, `mention` for a wake made only of team-chat
+        lines, else `board`. `item_ids` are the items the wake's rows name. A lead's own turns
+        have none: nothing above the lead woke it."""
+        found = self.teams.for_worker_session(session_id)
+        if found is None:
+            return None
+        team = found[0]
+        source = source or {}
+        rows = list((source.get("board") or {}).get("rows") or [])
+        if source.get("connector") == "team":
+            via = "steer"
+        elif source.get("connector") == "board" and rows and all(r.get("kind") == "chat" for r in rows):
+            via = "mention"
+        elif source.get("connector") == "board":
+            via = "board"
+        else:
+            via = "timer" if wake is not None else "board"
+        item_ids: list[str] = []
+        for row in rows:
+            item = row.get("item")
+            if item is not None and str(item) not in item_ids:
+                item_ids.append(str(item))
+        return {"lead_session_id": team.lead_session, "team_id": team.team_id,
+                "item_ids": item_ids, "via": via}
 
     def kick_team_tick(self) -> None:
         """Nudge the wake plumbing from outside the turn loop — e.g. after an
@@ -6334,10 +6373,28 @@ class SessionManager:
         rec = self.recordings_store.load_recording(session_id)
         issues = self._recording_issues(session_id, rec)
         turns = recording_api.turns(rec)
+        workers = self._recording_worker_rows(session_id, turns)
         for t in turns:
             r = issues.get(t["turn_id"]) or {}
             t["issues"] = {"warn": int(r.get("warn") or 0), "info": int(r.get("info") or 0)}
+            if workers.get(t["turn_id"]):
+                t["workers"] = workers[t["turn_id"]]
         return {"turns": turns}
+
+    def _recording_worker_rows(self, session_id: str, turns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        """A team lead's worker rows (OB-7): its workers' turns that it woke, under the lead
+        turn each started in. The worker's name comes from the team record."""
+        if not turns:
+            return {}
+        found = self.recordings_store.worker_turns(session_id, since_ms=min(t["started_at"] for t in turns))
+        if not found:
+            return {}
+
+        def name(worker_session_id: str) -> Optional[str]:
+            member = self.teams.for_worker_session(worker_session_id)
+            return member[1].actor if member is not None else None
+
+        return recording_api.worker_rows(turns, found, names=name)
 
     def recording_turn_issues(self, session_id: str, turn_id: str) -> dict[str, Any]:
         """The Issues tab of one turn (OB-3): its issues, the checks that were fine, the ones
@@ -7398,16 +7455,20 @@ class SessionManager:
                     source = self._board_source(team, message, rows=activity["board_rows"])
                     source["board"]["check_in"] = True
             # Who started the turn (observability §4): board activity, a lead's steering and
-            # team timers wake a team; a session's own timer is a schedule; anything else came
-            # from a channel. Steering arrives as the `team` connector (`steer_worker`); it
-            # was recorded as `channel` (V2-30).
+            # team timers (a lead's or a worker's) wake a team; any other session's timer is a
+            # schedule; anything else came from a channel. Steering arrives as the `team`
+            # connector (`steer_worker`); it was recorded as `channel` (V2-30).
             if board_delivery or (source or {}).get("connector") == "team":
                 trigger = "team_wake"
             elif wake is not None:
-                trigger = "team_wake" if self.teams.for_lead_session(session_id) is not None else "schedule"
+                in_team = (self.teams.for_lead_session(session_id) is not None
+                           or self.teams.for_worker_session(session_id) is not None)
+                trigger = "team_wake" if in_team else "schedule"
             else:
                 trigger = "channel"
-            async for event in engine.run(message, source=source, activity=activity, trigger=trigger):
+            woken_by = self._woken_by(session_id, source, wake) if trigger == "team_wake" else None
+            async for event in engine.run(message, source=source, activity=activity, trigger=trigger,
+                                          woken_by=woken_by):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(

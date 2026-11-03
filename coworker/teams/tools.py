@@ -11,10 +11,11 @@ session) and passes it at construction — the model never self-reports provenan
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
 
+from ..observability.engine_hooks import note_team
 from .journal import JournalStore
 from .model import Actor, BoardError, Role
 from .proposals import WORK_PROPOSAL_SCHEMA, TEAM_PROPOSAL_SCHEMA, PROPOSAL_GUIDANCE
@@ -98,8 +99,12 @@ def board_tools(
     attachments=None,
     roots: Callable[[], list] = lambda: [],
     on_change: Callable[[], None] = lambda: None,
+    team_id: Callable[[], str] = lambda: "",
+    worker_session: Callable[[str], Optional[str]] = lambda actor: None,
 ) -> list:
     """The board verbs for one agent, pre-bound to its space and identity.
+    `team_id` and `worker_session` give the ids the recording puts on the call's step
+    (observability 1.2 `attrs.team`); they never change what a call does.
 
     Authority is enforced twice on purpose: the returned set is role-filtered
     (a worker never even sees `assign`), and the store re-checks every call —
@@ -110,6 +115,10 @@ def board_tools(
         if "error" not in result and notify:
             on_change()
         return mutation_receipt(result)
+
+    def recorded(item: Any = None, assignee: str = "") -> None:
+        note_team(team_id(), item_id=item,
+                  worker_session_id=worker_session(assignee) if assignee else None)
 
     def create_item(
         title: str,
@@ -135,6 +144,7 @@ def board_tools(
         )
         if "error" not in result:
             on_change()
+        recorded(result.get("id"))
         return item_snapshot(result)
 
     def list_items(state: str = "", assignee: str = "", after_item: int = 0, limit: int = 50) -> dict:
@@ -198,6 +208,7 @@ def board_tools(
         in_progress, blocked, or review (attach the blocker or a hand-off summary
         as `comment`, and artifact pointers — branch, report, session — as
         `refs`); done requires review verification first."""
+        recorded(item)
         return receipt(_call(
             store.transition,
             space,
@@ -216,6 +227,7 @@ def board_tools(
         wake the lead. Set needs_attention=True for an explicit question/decision;
         blockers use transition to blocked. Publish evidence first, then one
         concise transition to review with its artifact refs: that is the handoff."""
+        recorded(item)
         return receipt(_call(
             store.comment,
             space,
@@ -236,6 +248,7 @@ def board_tools(
     def assign(item: int, assignee: str) -> dict:
         """Assign a work item to a worker coworker. The item itself becomes the
         worker's assignment — write the description and criteria accordingly."""
+        recorded(item, assignee)
         return receipt(_call(store.assign, space, actor, item, assignee))
 
     def link(src: int, kind: str, dst: int) -> dict:

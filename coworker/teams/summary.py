@@ -38,6 +38,38 @@ def add_tokens(rows) -> dict:
     return {key: sum(row.get(key, 0) for row in rows) for key in KINDS}
 
 
+def recorded_usage(manager, session_id):
+    """A member's tokens from its recording, the way its pill counts them: every model call
+    the session made, helpers (explore) included, which the transcript does not hold (V2-29,
+    OB-7). None when nothing was recorded, so the transcript's numbers are used instead.
+    Returns (tokens by kind, usage points, partial, when the first recorded turn started in
+    epoch seconds): turns before it (before recording, or past "Keep for") are not in it."""
+    store = getattr(manager, "recordings_store", None)
+    if store is None:
+        return None
+    try:
+        rec = store.load_recording(session_id)
+    except Exception:  # noqa: BLE001 - TeamView never fails on a recording it cannot read
+        return None
+    if not rec.get("turns"):
+        return None
+    rows, points, partial = [], [], False
+    for step in rec.get("steps") or []:
+        a = step.get("attrs") or {}
+        if step.get("kind") != "model" or a.get("purpose") == "proxy" or a.get("error"):
+            continue
+        u = a.get("usage") or {}
+        if not u.get("reported"):
+            partial = True
+            continue
+        row = {"input": u.get("input_fresh"), "cache_read": u.get("cache_read"),
+               "output": u.get("output"), "cache_write": u.get("cache_write")}
+        rows.append(tokens(row))
+        points.append({"ts": (step.get("started_at") or 0) / 1000, "tokens": sum(rows[-1].values())})
+    first = min(t.get("started_at") or 0 for t in rec["turns"]) / 1000
+    return add_tokens(rows), points, partial, first
+
+
 def compact_usage_points(points, buckets=120):
     """Bound the optional chart payload, preserving every recorded token by role."""
     points = sorted(points, key=lambda p: p["ts"])
@@ -244,9 +276,18 @@ def make_summary(manager, team, now):
         total = add_tokens(
             usage or [tokens(u) for u in (record.usage if record else {}).values()]
         )
+        # The recording, when there is one: the same count as the session's pill.
+        # Messages from before the first recorded turn are counted from the transcript.
+        recorded = recorded_usage(manager, sid)
+        if recorded is not None:
+            older = [m for m in messages if m.get("role") == "assistant" and isinstance(m.get("usage"), dict)
+                     and stamp((m.get("timing") or {}).get("model_started") or m.get("ts")) < recorded[3]]
+            total = add_tokens([recorded[0], *(tokens(m["usage"]) for m in older)])
+            usage_points.extend({**point, "role": role} for point in recorded[1] if point["ts"])
         step = None
         for m in messages:
-            if m.get("role") == "assistant" and isinstance(m.get("usage"), dict):
+            if m.get("role") == "assistant" and isinstance(m.get("usage"), dict) and (
+                    recorded is None or stamp((m.get("timing") or {}).get("model_started") or m.get("ts")) < recorded[3]):
                 ts = stamp((m.get("timing") or {}).get("model_started") or m.get("ts"))
                 if ts:
                     usage_points.append(
@@ -281,7 +322,7 @@ def make_summary(manager, team, now):
                 "workspace": record.workspace if record else "",
                 "running": manager.is_running(sid),
                 "tokens": total,
-                "usage_partial": any(
+                "usage_partial": recorded[2] if recorded is not None else any(
                     m.get("role") == "assistant" and not m.get("usage")
                     for m in messages
                 ),

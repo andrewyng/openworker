@@ -21,6 +21,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from .calculator import step_total
 from .ids import new_ulid
 from .recorder import EVENT_V, Recorder, now_ms
 
@@ -53,6 +54,7 @@ class TurnRecording:
         self._reserved: dict[str, dict[str, Any]] = {}  # summary steps written at their end (E4)
         self._tokens_after_for: Optional[str] = None  # a summary waiting for the next main call
         self._child_usage: dict[str, bool] = {}  # parent step -> its model call reported usage
+        self._explore_calls: dict[str, int] = {}  # call_id -> 1st, 2nd… explore call of this turn (E6b)
 
     @property
     def enabled(self) -> bool:
@@ -96,6 +98,7 @@ class TurnRecording:
             self._tool_ends.clear()
             self._reply_end = None
             self._waits.clear()
+            self._explore_calls.clear()
             ev = self._base("turn_started", self.turn_id, self._turn_session)
             ev.update({"kind": kind, "trigger": trigger, "first_message_id": first_message_id,
                        "attrs": copy.deepcopy(attrs), "stamp": copy.deepcopy(stamp)})
@@ -159,6 +162,22 @@ class TurnRecording:
                     self._send(ev)
             elif message.get("role") == "assistant":
                 self._flush_reply(mid)
+                for tc in message.get("tool_calls") or []:
+                    if (tc.get("function") or {}).get("name") == "explore" and tc.get("id"):
+                        self._explore_calls.setdefault(tc["id"], len(self._explore_calls) + 1)
+
+    def helper_index(self, step_id: Optional[str]) -> int:
+        """The explore call's position among this turn's explore calls, in the order the model
+        listed them (E6b): two helpers run in parallel are Helper 1 and Helper 2 whichever
+        thread starts first."""
+        with self._lock:
+            call_id = (self._ident.get(step_id or "") or {}).get("call_id")
+            index = self._explore_calls.get(call_id or "")
+            if index is None:  # a call the transcript never listed: after the listed ones
+                index = len(self._explore_calls) + 1
+                if call_id:
+                    self._explore_calls[call_id] = index
+            return index
 
     # -- steps ----------------------------------------------------------------------------------
     def start_step(self, *, kind: str, name: str, call_id: Optional[str] = None,
@@ -408,6 +427,23 @@ def set_tool_run(run: Optional[ToolRun]) -> Optional[ToolRun]:
     return outer
 
 
+def note_team(team_id: Optional[str], *, item_id: Any = None, worker_session_id: Optional[str] = None,
+              worker_session_ids: Optional[list[str]] = None) -> None:
+    """`attrs.team` on the running team tool's step (1.2, OB-7): ids only, no text. A team
+    tool calls it while it runs; outside a recorded tool call it does nothing."""
+    run = current_tool_run()
+    if run is None or run.step_id is None or not team_id:
+        return
+    team: dict[str, Any] = {"team_id": str(team_id)}
+    if item_id is not None and item_id != "":
+        team["item_id"] = str(item_id)
+    if worker_session_id:
+        team["worker_session_id"] = str(worker_session_id)
+    if worker_session_ids is not None:
+        team["worker_session_ids"] = [str(s) for s in worker_session_ids]
+    run.recording.update_step(run.step_id, attrs={"team": team})
+
+
 class HelperRecording:
     """The recording of an explore helper's engine (§5.3, E6). Its steps go to the parent's
     recording, on the parent's turn, nested under the `explore` step. Its own turn events are
@@ -420,6 +456,27 @@ class HelperRecording:
     def __init__(self, parent: TurnRecording, parent_step_id: str, turn_id: Optional[str]) -> None:
         self.parent, self.parent_step_id = parent, parent_step_id
         self.turn_id = turn_id
+        self.index = parent.helper_index(parent_step_id)
+        self._lock = threading.Lock()
+        self._kinds: dict[str, str] = {}  # the helper's open steps: step_id -> kind
+        self.model_calls = self.tool_calls = self.tokens = 0
+
+    def _count(self, kind: str, attrs: Optional[dict[str, Any]]) -> None:
+        with self._lock:
+            if kind == "model":
+                self.model_calls += 1
+                self.tokens += step_total({"attrs": attrs or {}}) or 0
+            elif kind == "tool":
+                self.tool_calls += 1
+
+    def summary(self, engine_status: str) -> dict[str, Any]:
+        """`attrs.helper` for the explore step (1.2, E6b), for display only: the pill adds up
+        the helper's own model steps, never this."""
+        status = {"completed": "ok", "truncated": "ok", "max_iterations_exceeded": "step_limit",
+                  "interrupted": "interrupted"}.get(engine_status, "error")
+        with self._lock:
+            return {"index": self.index, "status": status, "model_calls": self.model_calls,
+                    "tool_calls": self.tool_calls, "tokens": self.tokens}
 
     @property
     def recorder(self) -> Any:
@@ -455,7 +512,11 @@ class HelperRecording:
         kw.setdefault("parent_step_id", None)
         kw["parent_step_id"] = kw["parent_step_id"] or self.parent_step_id
         kw["turn_id"] = self.turn_id
-        return self.parent.start_step(**kw)
+        step_id = self.parent.start_step(**kw)
+        if step_id is not None:
+            with self._lock:
+                self._kinds[step_id] = kw["kind"]
+        return step_id
 
     def end_step(self, step_id: Optional[str], **kw: Any) -> None:
         kw.pop("wait_for_tool_message", None)
@@ -463,6 +524,10 @@ class HelperRecording:
         attrs = kw.get("attrs")
         if attrs is not None and "decision" in attrs:
             attrs["decision"] = {"helper": True}
+        with self._lock:
+            kind = self._kinds.pop(step_id or "", None)
+        if kind is not None:
+            self._count(kind, attrs)
         self.parent.end_step(step_id, **kw)
 
     def instant_step(self, **kw: Any) -> None:
@@ -471,6 +536,10 @@ class HelperRecording:
             attrs["decision"] = {"helper": True}
         step_id = self.start_step(kind=kw["kind"], name=kw["name"], call_id=kw.get("call_id"),
                                   call_index=kw.get("call_index"))
+        with self._lock:
+            self._kinds.pop(step_id or "", None)
+        if step_id is not None:
+            self._count(kw["kind"], attrs)
         self.parent.end_step(step_id, status=kw["status"], attrs=attrs,
                              message_id=kw.get("message_id"))
 
