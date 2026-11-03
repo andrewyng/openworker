@@ -63,6 +63,7 @@ function makePs(
 ): ProviderSetupState {
   return {
     providers: [info],
+    loaded: true,
     ordered: [info],
     refreshProviders: async () => {},
     sel: info.name,

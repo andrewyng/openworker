@@ -102,6 +102,9 @@ export function relTime(epoch?: number | null, t?: TFunction): string | null {
 
 export interface ProviderSetupState {
   providers: ProviderInfo[];
+  // False until the first provider list arrives (it can take seconds while the server
+  // probes local model servers) — an empty list before then means "loading", not "none".
+  loaded: boolean;
   ordered: ProviderInfo[];
   refreshProviders: () => Promise<void>;
   sel: string | null;
@@ -132,6 +135,7 @@ export interface ProviderSetupState {
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -151,7 +155,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const refreshProviders = () =>
     getProviders()
       .then(setProviders)
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoaded(true));
   useEffect(() => {
     refreshProviders();
     return () => {
@@ -285,6 +290,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   return {
     providers,
+    loaded,
     // Alphabetical by display title (owner ruling 2026-08-21: a curated order reads
     // as vendor bias). The old providerRank curation stays only as the tiebreaker
     // for identical titles.
