@@ -59,6 +59,9 @@ const invokeStrict = async <T>(cmd: string, args?: Record<string, unknown>): Pro
   return (await tauri.core.invoke(cmd, args)) as T;
 };
 
+/** Native page zoom scales both content and the layout viewport. */
+export const setUIZoom = (factor: number) => invokeStrict<void>("set_ui_zoom", { factor });
+
 /** Open the native macOS folder picker (Tauri only). Returns the chosen path, or null. */
 export async function pickFolder(): Promise<string | null> {
   const path = await invoke<string>("pick_folder");

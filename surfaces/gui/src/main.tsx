@@ -4,6 +4,7 @@ import { App } from "./App";
 import { initCloudAuth, shouldGate } from "./cloudAuth";
 import { initTheme } from "./theme";
 import { initTextSize } from "./textSize";
+import { initZoom } from "./zoom";
 import { platformOS } from "./tauri";
 import { initI18n } from "./i18n";
 import "./tailwind.css";
@@ -11,6 +12,8 @@ import "./styles.css";
 
 initTheme();
 initTextSize();
+const disposeZoom = initZoom();
+if (import.meta.hot) import.meta.hot.dispose(disposeZoom);
 // Platform hook for CSS (html[data-platform="windows"] scrollbar styling etc.).
 document.documentElement.dataset.platform = platformOS();
 
