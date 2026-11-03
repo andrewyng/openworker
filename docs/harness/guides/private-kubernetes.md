@@ -1,0 +1,47 @@
+# Private Kubernetes cluster
+
+Run the OpenWorker service in a Kubernetes cluster you operate—on premises or in
+your own cloud network. Your application connects to the service API; workers run
+the agent loop, and NVIDIA OpenShell hosts sandboxed tool execution.
+
+```text
+Your application → OpenWorker API → Agent workers
+                         │                │
+                    PostgreSQL      OpenShell gateway
+                                          │
+                                    Tool sandboxes
+```
+
+## What you provide
+
+- An explicit kubeconfig/context and an installer with the reviewed cluster and
+  namespace permissions. Installing sandbox platform components needs more than
+  namespace-only access.
+- PostgreSQL, persistent storage, reachable image registries and the required
+  network/controller components for the selected OpenShell version.
+- Service/gateway TLS and scoped credentials delivered through Kubernetes Secrets
+  or your secret-management system. Agents do not receive cluster-administrator keys.
+- An authenticated route to the OpenWorker API. The Kubernetes management API can
+  remain private; the application does not need direct Kubernetes access.
+
+## Installation flow
+
+1. Validate the cluster, storage and network prerequisites.
+2. Choose an existing OpenShell gateway or an installer-owned, pinned gateway.
+3. Review the OpenWorker Helm values, images, database and secret references.
+4. Install the service, establish its first administrator and register RuntimeProfiles.
+5. Submit a test agent, inspect its progress and qualify recovery and cleanup.
+
+The `ows` installer plans and checks the OpenShell/OpenWorker installation together.
+An existing gateway keeps its original owner; selecting it does not authorize the
+installer to delete or reconfigure unrelated resources.
+
+**Qualification:** local kind/Kubernetes plus OpenShell has been exercised end to
+end. This is a reference for a private cluster, not certification of every
+Kubernetes distribution or network policy. The current local installer has fixture
+namespace/context constraints; do not treat its kind-only command as a generic
+production installer.
+
+Continue with the [local installation guide](../OWS-LOCAL-INSTALLATION.md),
+[deployment specification](../OWS-DEPLOYMENT-SPEC.md),
+[OpenShell integration](openshell.md) and [deployment options](deployment.md).

@@ -10,7 +10,9 @@ The code blocks for each language form one runnable program and are checked toge
 
 ## Start the harness
 
-TypeScript:
+<!-- sdk-tabs -->
+
+### TypeScript
 
 ```typescript example=desktop
 import { Harness } from "@openworker/harness";
@@ -19,8 +21,7 @@ const harness = await Harness.start({ appId: "game-builder", sandbox: "off" });
 try {
 ```
 
-<details>
-<summary>Rust</summary>
+### Rust
 
 ```rust example=desktop
 use futures_util::StreamExt;
@@ -32,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     let outcome = async {
 ```
 
-</details>
+<!-- /sdk-tabs -->
 
 This example uses explicit host execution (`sandbox: "off"`). Tool permissions
 still apply, but this setting does not isolate the host filesystem or network.
@@ -59,6 +60,10 @@ Register a provider separately from the agent. A desktop app can collect a key i
 its settings UI and call `setModelProvider` later. This example reads an environment
 variable and keeps the key in memory.
 
+<!-- sdk-tabs -->
+
+### TypeScript
+
 ```typescript example=desktop
   const modelId = process.env.OPENWORKER_MODEL;
   if (!modelId) throw new Error("Set OPENWORKER_MODEL to an exact model ID");
@@ -70,8 +75,7 @@ variable and keeps the key in memory.
   });
 ```
 
-<details>
-<summary>Rust</summary>
+### Rust
 
 ```rust example=desktop
         let model_id = std::env::var("OPENWORKER_MODEL")?;
@@ -83,7 +87,7 @@ variable and keeps the key in memory.
         ).await?;
 ```
 
-</details>
+<!-- /sdk-tabs -->
 
 <details>
 <summary>Use Ollama instead</summary>
@@ -101,6 +105,10 @@ support the capabilities your agent needs, including tools when you enable them.
 Give the agent a default model and an explicit tool list. A session can override
 the default model. Stream events into your UI and inspect the result for completion
 or a pending question/approval.
+
+<!-- sdk-tabs -->
+
+### TypeScript
 
 ```typescript example=desktop
   const builder = harness.createAgent({
@@ -122,8 +130,7 @@ or a pending question/approval.
 }
 ```
 
-<details>
-<summary>Rust</summary>
+### Rust
 
 ```rust example=desktop
         let builder = harness.create_agent(Agent::new("builder")
@@ -146,7 +153,7 @@ or a pending question/approval.
 }
 ```
 
-</details>
+<!-- /sdk-tabs -->
 
 <details>
 <summary>Custom tools and durable sessions</summary>
@@ -165,6 +172,10 @@ missing answer into consent. See [sessions and teams](sessions.md).
 
 Start with the packaged UI and build configuration:
 
+<!-- sdk-tabs -->
+
+### TypeScript / Electron
+
 ```sh
 npm create openworker@0.1.0-beta.1 my-game-app -- --template electron-game-builder
 cd my-game-app
@@ -173,8 +184,7 @@ npm run dev
 npm run package
 ```
 
-<details>
-<summary>Rust / Tauri starter</summary>
+### Rust / Tauri
 
 ```sh
 npm create openworker@0.1.0-beta.1 my-game-app -- --template tauri-game-builder
@@ -184,7 +194,7 @@ npm run dev
 npm run package
 ```
 
-</details>
+<!-- /sdk-tabs -->
 
 Run packaging on the target operating system. Desktop starters require Node
 22.12+ and npm 11+; Tauri additionally needs Rust and its platform build tools.

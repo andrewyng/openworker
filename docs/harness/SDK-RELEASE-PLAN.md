@@ -90,3 +90,23 @@ Branch: `feat/sdk-release-docs-20261103`, based on `caf461a9`.
 - Native artifacts for other OS/CPU targets and partner clean-machine acceptance
   remain the next release gates. No registry accounts, packages, tags or GitHub
   Releases were created. No hosted website was deployed.
+
+## Documentation navigation and language tabs — 2026-11-03
+
+- Added a Deploy navigation group with deployment options, private Kubernetes,
+  AWS, GCP and Azure. Each platform page distinguishes tested configurations from
+  outstanding live qualification; no new cloud support claims or resources added.
+- Added Safety & governance pages for NVIDIA OpenShell, guardrails and hooks,
+  agent alignment, and compliance/SIEM export. The OpenShell page explains the
+  trusted harness versus sandboxed ToolRunner boundary and host-tool exceptions.
+- Markdown `sdk-tabs` comments now group TypeScript/Rust examples into accessible
+  site tabs. GitHub and JavaScript-disabled readers retain both labelled examples.
+  Language choice follows all paired examples and persists across page navigation.
+- Production build passed: 19 indexed documentation pages. Three site/tab tests
+  and three release-layout/link tests passed. Extracted Rust and TypeScript desktop
+  programs are byte-identical to the previously compiled and executed programs.
+- Browser verification at the normal viewport confirmed the full navigation,
+  all four desktop groups switching together, and Left-arrow keyboard selection.
+  Capture: `/tmp/openworker-sdk-docs-deploy-tabs.jpg`.
+- Updated preview: http://127.0.0.1:4322/docs/sdk/desktop/ . No registry publication
+  or hosted-site deployment performed.

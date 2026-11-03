@@ -108,3 +108,21 @@ header.header { border-bottom: 1px solid var(--sl-color-hairline-light); }
 .sl-markdown-content summary { cursor: pointer; font-weight: 600; }
 .sl-markdown-content pre { border-radius: .65rem; }
 .sl-markdown-content table { font-size: .9rem; }
+
+/* Keep deployment and safety choices discoverable without hiding their groups. */
+@media (min-width: 50rem) {
+  .sidebar-content a { padding-block: .18em; }
+  .sidebar-content .top-level > li + li { margin-top: .55rem; }
+}
+/* GitHub keeps the headings; the site enhances alternatives into one code panel. */
+.sl-markdown-content .sdk-code-tabs { margin: 1.2rem 0; border: 1px solid var(--sl-color-hairline); border-radius: .7rem; overflow: hidden; background: #24292e; }
+.sdk-code-tabs [role='tablist']:not([hidden]) { display: flex; gap: .25rem; padding: .5rem .6rem; background: var(--sl-color-bg-nav); border-bottom: 1px solid var(--sl-color-hairline); }
+.sdk-code-tabs [role='tab'] { appearance: none; border: 0; border-radius: .4rem; background: transparent; color: var(--sl-color-text); font: inherit; font-size: .84rem; line-height: 1.5; padding: .35rem .7rem; cursor: pointer; margin: 0; }
+.sdk-code-tabs [role='tab'][aria-selected='true'] { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 600; }
+.sdk-code-tabs [role='tab']:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 1px; }
+.sdk-code-tabs [hidden] { display: none !important; }
+.sl-markdown-content .sdk-code-tabs [role='tabpanel'] { margin: 0; }
+.sdk-code-tabs[data-ready] .sdk-tab-fallback { display: none; }
+.sl-markdown-content .sdk-code-tabs .expressive-code { margin: 0; }
+.sdk-code-tabs .expressive-code pre { border: 0; border-radius: 0; box-shadow: none; }
+.sdk-code-tabs .expressive-code .frame { box-shadow: none; }

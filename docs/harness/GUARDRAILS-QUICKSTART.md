@@ -11,7 +11,9 @@ See the [contract](GUARDRAILS-AND-HOOKS.md), [API decisions](GUARDRAILS-TEXT-AND
 
 ## Start with two rules
 
-TypeScript:
+<!-- sdk-tabs -->
+
+### TypeScript
 
 ```typescript
 import { Harness, guard, hook } from "@openworker/harness";
@@ -35,7 +37,7 @@ const harness = await Harness.start({
 });
 ```
 
-Rust:
+### Rust
 
 ```rust,ignore
 use openworker_sdk::{agents::Harness, compliance, guardrails::*};
@@ -60,6 +62,8 @@ let harness = Harness::builder()
     .compliance(compliance::Config::default())
     .start().await?;
 ```
+
+<!-- /sdk-tabs -->
 
 Rule names and versions identify installed policy. Session/turn settings add
 checks; they cannot replace an inherited definition or increase its explicit
