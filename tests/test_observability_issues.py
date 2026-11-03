@@ -153,6 +153,44 @@ def test_a_recorded_turn_gives_its_issues(tmp_path):
     assert any(f["check"] == "step_limit" and "of 12" in f["text"] for f in res["fine"])
 
 
+def test_arguments_that_do_not_fit_the_tool_are_bad_arguments(tmp_path):
+    """Labelling (T11): a model gave replace_in_file a name it does not take. The call fails at
+    the call itself: the model's mistake, so made_up_tool, not "A tool failed"."""
+    d = _run(tmp_path, [
+        _call("c1", "read_file", {"pth": "a"}),             # a name the tool does not take
+        _call("c2", "read_file", {}),                       # the required one missing
+        _call("c3", "read_file", {"path": "a"}),            # fits
+        AssistantTurn(text="done"),
+    ])
+    tools = {s["call_id"]: s for s in d["steps"] if s["kind"] == "tool"}
+    assert tools["c1"]["status"] == "error" and tools["c1"]["attrs"]["error_kind"] == "bad_arguments"
+    assert tools["c2"]["attrs"]["error_kind"] == "bad_arguments"
+    assert tools["c3"]["attrs"]["error_kind"] is None
+    res = signals.check_turn(d["turns"][0], d["steps"])
+    found = [i for i in res["issues"] if i["check"] == "made_up_tool"]
+    assert len(found) == 2 and found[0]["text"] == "The model sent arguments that do not fit read_file."
+    assert "tool_failed" not in {i["check"] for i in res["issues"]}
+
+
+def test_a_tool_that_fails_by_itself_is_still_raised(tmp_path):
+    def broken(path: str) -> dict:
+        """Break.
+
+        Args:
+            path: anything
+        """
+        raise RuntimeError("disk on fire")
+
+    from coworker.engine import _args_fit
+    from coworker.tools import ToolRegistry as _R
+
+    reg = _R()
+    reg.register(broken, metadata=_Meta())
+    assert _args_fit(reg.get("broken"), {"path": "x"}) is True
+    assert _args_fit(reg.get("broken"), {"path": "x", "extra": 1}) is False
+    assert _args_fit(None, {"anything": 1}) is True  # nothing to check against
+
+
 # -- E8c: stored with the turn and served ------------------------------------------------------
 
 def test_issues_are_stored_at_turn_end_and_served(tmp_path):

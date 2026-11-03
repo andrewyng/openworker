@@ -341,6 +341,21 @@ def _settings_changed(verdict: Any) -> Any:
     return replace(verdict, verdict="unsure", reason=msg, **extra)
 
 
+def _args_fit(spec: Any, arguments: Any) -> bool:
+    """Whether the arguments fit the tool's own parameters: no name it lacks, no required
+    one missing. True when that cannot be told (no function, or one taking anything)."""
+    func = getattr(spec, "func", None)
+    if func is None or not isinstance(arguments, dict):
+        return True
+    try:
+        inspect.signature(func).bind(**arguments)
+    except TypeError:
+        return False
+    except ValueError:  # no signature to read
+        return True
+    return True
+
+
 class TurnEngine:
     def __init__(
         self,
@@ -2982,7 +2997,9 @@ class TurnEngine:
             if status != "error":
                 out["error_kind"] = None
             elif ran:
-                out["error_kind"] = "raised"
+                # Arguments the tool does not take, or a required one missing, fail at the call
+                # itself: the model's mistake, not the tool's (found by the labelling judge).
+                out["error_kind"] = "raised" if _args_fit(spec, arguments) else "bad_arguments"
             elif mangled:
                 out["error_kind"] = "bad_arguments"
             elif spec is None or reason.startswith("unknown tool"):

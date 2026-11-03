@@ -327,7 +327,7 @@ def c_made_up_tool(turn, top, all_steps, p):
         k = s["attrs"].get("error_kind") if s["kind"] == "tool" else None
         if s["kind"] == "tool" and s["status"] == "error" and k in ("unknown_tool", "bad_arguments"):
             text = (f"The model asked for a tool that does not exist: {s['name']}." if k == "unknown_tool"
-                    else f"The model sent arguments for {s['name']} that could not be read.")
+                    else f"The model sent arguments that do not fit {s['name']}.")
             found.append(issue("made_up_tool", s, text, kind=k))
     return ("fired" if found else "fine"), found, "No unknown tools or invalid arguments"
 
