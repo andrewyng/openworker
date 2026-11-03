@@ -4,8 +4,10 @@ Started November 1, authorized for full implementation November 2, 2026.
 Implementation branch: `feat/guardrails-hooks-20261102`, merging the original
 specification and canonical `openworker-harness-sdk` at `9dc33312` (including the
 DLAI tool-free fix). The [approved additions](GUARDRAILS-TEXT-AND-HOOKS-API.md)
-extend the original [contract](GUARDRAILS-AND-HOOKS.md). Public APIs remain under
-implementation until their milestones are qualified.
+extend the original [contract](GUARDRAILS-AND-HOOKS.md). All seven milestones are qualified as of November 3, 2026. Prisma AIRS is
+mock-qualified only; remote enterprise policy delivery remains future scope.
+The chronological entries below preserve intermediate failures and fixes; the
+completion record at the end is the final status.
 
 ## Milestones
 
@@ -363,3 +365,38 @@ are already instrumented there.
 - Both API-node qualification and desktop/mobile browser checks passed. The
   task-owned gateway port-forward was stopped; existing demos/volumes and other
   agents' processes were left alone.
+
+### M1–M7 completion — November 3
+
+- Implementation commit: `a0264edc`. All seven approved milestones are complete
+  within the agreed mock-Prisma scope. No live Prisma tenant qualification is
+  implied. Enterprise policy delivery, legal holds/immutable archives, and
+  additional live Windows/vendor testing remain separate work.
+- Added and passed an SDK HTTP/SSE privacy-model test for spelled identifiers:
+  the separate detector receives no tools, its exact fragment blocks admission,
+  and rejected text does not enter the turn/history. Final Rust safety file:
+  **7 passed**, plus the separately qualified PostgreSQL embedded/managed test.
+- Strict Clippy passed on the final runtime/SDK/service implementation. The
+  TypeScript compiler, native SDK fixtures, storage/API/control regressions,
+  real OpenShell boundary and browser UI qualification passed as recorded above.
+- Built stripped release SDK hosts for macOS ARM64 (Rust 1.96.0, thin LTO):
+  minimal **26,688,672 bytes / 25.452 MiB**, full **27,401,024 bytes / 26.132 MiB**.
+  Full includes guardrails, compliance, external scanners and SIEM delivery;
+  the measured optional-feature difference is **712,352 bytes / 0.679 MiB**.
+  Both passed `--help`. An additional actual minimal-host TypeScript test passed:
+  capabilities are false and required guardrails/compliance reject explicitly.
+  [Measurement evidence](evidence/guardrails-sdk-size-20261103.json) records hashes.
+- The standalone core-runtime baseline is not replaced by the combined SDK build;
+  Cargo feature unification can change that measurement. These are executable
+  sizes, not RSS, application-bundle size or an embedded-target guarantee.
+- Metadata expiry is enforced by queries; physical pruning is an explicit trusted
+  maintenance API. Session SIEM export is at-least-once and metadata-only;
+  global administrator/pre-session records use the existing security-audit API.
+  Local callbacks are not uploaded through REST: service checks are installed by
+  the operator on APIs/workers. These boundaries are stated in the QuickStart.
+- Final disk check: **29 GiB free**. Removed the two failed-test fixture schemas,
+  temporary TypeScript dependency symlink and task-owned gateway port-forward.
+  No other agent's artifacts, demo data, volumes or processes were removed.
+- Guides: [QuickStart](GUARDRAILS-QUICKSTART.md),
+  [grouped test catalog](GUARDRAILS-TESTING.md). Runnable qualification entry point:
+  `harness/tests/safety-qualification.sh fast|storage|cluster|ui`.

@@ -43,3 +43,37 @@ idle and active RSS with a representative model/tool workload. Startup-only RSS
 and compressed download size should be reported separately from executable size.
 
 [Machine-readable evidence and artifact hashes](evidence/binary-size-baseline-20261030.json).
+
+
+## Guardrails/compliance SDK comparison — November 3, 2026
+
+At implementation commit `a0264edc`, Rust 1.96.0, macOS ARM64, with the same
+checked-in stripped/thin-LTO release profile:
+
+| SDK host configuration | Bytes | MiB |
+|---|---:|---:|
+| Minimal (`--no-default-features`) | 26,688,672 | 25.452 |
+| Full (`--features security-adapters,compliance-export`, defaults enabled) | 27,401,024 | 26.132 |
+| Difference | 712,352 | 0.679 |
+
+This comparison isolates optional features on the **same source revision**. The
+increase since October 30 also includes intervening team/coding/runtime work and
+must not all be attributed to guardrails. Minimal builds reject required missing
+capabilities; an actual release-host TypeScript test verifies that behavior.
+Both artifacts passed their `--help` smoke check. These are uncompressed executable
+sizes, not memory use or application bundles.
+
+Reproduce the SDK comparison (record/copy the first artifact before the second):
+
+```sh
+cargo build --offline --locked --release --manifest-path harness/Cargo.toml \
+  -p openworker-sdk --bin openworker-harness --no-default-features
+cargo build --offline --locked --release --manifest-path harness/Cargo.toml \
+  -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
+```
+
+The standalone core runtime was not remeasured for this comparison. Continue to
+build it separately from the SDK when updating its baseline, to avoid Cargo
+feature unification changing what is included.
+
+[SDK measurement evidence and hashes](evidence/guardrails-sdk-size-20261103.json).
