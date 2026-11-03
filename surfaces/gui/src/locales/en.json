@@ -3543,7 +3543,7 @@
       "metadata_sub": "Always included while sending. No text from your sessions.",
       "metadata_locked": "Always included while sending",
       "messages": "Your messages and the AI's answers",
-      "messages_sub": "What you wrote and what the AI wrote back. Tool inputs and results inside the conversation stay out unless the next switch is on. Cut to 8 KB each; keys and tokens are masked.",
+      "messages_sub": "What you wrote and what the AI wrote back. Tool inputs and results inside the conversation stay out unless the next switch is on, though the AI's answers can repeat what a tool showed it. Cut to 8 KB each; keys and tokens are masked.",
       "tool_io": "Tool inputs and results",
       "tool_io_sub": "Commands, file contents, command output and connector data. With the switch above also on: the auto-approver's reasons and what it was shown, and summaries (they quote tool content).",
       "context": "Context added by OpenWorker",
