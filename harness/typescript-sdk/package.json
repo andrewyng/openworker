@@ -28,6 +28,7 @@
     "test": "npm run build && node --test test/config.test.mjs test/transport.test.mjs",
     "test:integration": "npm run build && node --test --test-concurrency=1 test/integration.test.mjs",
     "test:dynamic-agents": "npm run build && node --test --test-concurrency=1 test/dynamic-agents.test.mjs",
+    "test:tool-free": "npm run build && node --test --test-concurrency=1 test/tool-free.test.mjs",
     "test:openrouter-streaming": "npm run build && node --test test/openrouter-streaming.test.mjs",
     "test:provider-auth": "npm run build && node --test test/provider-auth.test.mjs",
     "prepack": "npm run build",

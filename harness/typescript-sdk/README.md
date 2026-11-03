@@ -56,6 +56,10 @@ const result = await run.result(); // Check interruptions; do not assume success
 await harness.shutdown();
 ```
 
+For a guide that must only return text, set `tools: []`, `planning: false`,
+`memory: false` and `scheduling: false`. No implicit `ask_user` or `read_history`
+tools are exposed. See [tool-free agents](../../docs/harness/TOOL-FREE-AGENTS.md).
+
 No-key local providers use `api: 'chat-completions'` and an explicit `baseUrl`,
 such as `http://127.0.0.1:11434/v1`. Configure the provider before creating a live
 session. Use the agent's `defaultModel`, or override `model` in `newSession()`.
