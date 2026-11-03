@@ -261,7 +261,7 @@ class _FakeReviewer:
         self._verdict = verdict
         self.asked: list[str] = []
 
-    async def review(self, *, request, history, tool_name, arguments, provenance=""):
+    async def review(self, *, request, history, tool_name, arguments, provenance="", facts=()):
         self.asked.append(tool_name)
         return reviewer_mod.Verdict(self._verdict, f"scripted {self._verdict}")
 

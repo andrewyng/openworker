@@ -22,17 +22,25 @@ when they exit or via `shell_task_kill`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 import aisuite as ai
 
-from ..sandbox.runner.executor import (  # noqa: F401  (re-exported: the executor moved)
+from ..sandbox.runner.executor import (
     _DEFAULT_TIMEOUT,
     _MAX_TIMEOUT,
-    Executor,
-    LocalExecutor as _StdlibLocalExecutor,
 )
+from ..sandbox.runner.executor import Executor as Executor
+from ..sandbox.runner.executor import LocalExecutor as _StdlibLocalExecutor
+
+_SIDECAR_ENV_VARS = ("COWORKER_API_TOKEN",)
+
+
+def _shell_base_env() -> dict[str, str]:
+    """The parent environment without OpenWorker's own API credential."""
+    return {k: v for k, v in os.environ.items() if k not in _SIDECAR_ENV_VARS}
 
 
 class LocalExecutor(_StdlibLocalExecutor):
@@ -47,7 +55,9 @@ class LocalExecutor(_StdlibLocalExecutor):
         from .. import toolchain
 
         extra = [*kwargs.pop("extra_path_dirs", ()), str(toolchain.bin_dir())]
-        super().__init__(cwd=cwd, extra_path_dirs=extra, **kwargs)
+        super().__init__(
+            cwd=cwd, base_env=_shell_base_env(), extra_path_dirs=extra, **kwargs
+        )
 
 
 _RUN_SHELL_SCHEMA = {
@@ -57,8 +67,10 @@ _RUN_SHELL_SCHEMA = {
         "description": (
             "Run a shell command in the persistent session (cwd and env persist across "
             "calls). Output longer than the limit keeps the END (where test/build verdicts "
-            "are). Set run_in_background for long-running processes like dev servers, then "
-            "poll with shell_task_output."
+            "are). Set run_in_background for processes you don't need to wait for, like dev "
+            "servers, and check them with shell_task_output. If your next step depends on "
+            "the process finishing, use shell_task_output with wait_seconds rather than "
+            "polling."
         ),
         "parameters": {
             "type": "object",
@@ -100,7 +112,10 @@ _TASK_OUTPUT_SCHEMA = {
         "name": "shell_task_output",
         "description": (
             "Read NEW output (since the last read) from a background task started with "
-            "run_shell run_in_background=true, plus its status and exit code."
+            "run_shell run_in_background=true, plus its status and exit code. By default "
+            "returns at once. Pass wait_seconds to block until the task exits or prints "
+            "something new, up to that many seconds - use it when your next step depends "
+            "on the task finishing, instead of calling this repeatedly."
         ),
         "parameters": {
             "type": "object",
@@ -108,7 +123,15 @@ _TASK_OUTPUT_SCHEMA = {
                 "task_id": {
                     "type": "string",
                     "description": "The task_id returned by run_shell.",
-                }
+                },
+                "wait_seconds": {
+                    "type": "integer",
+                    "description": (
+                        f"Wait up to this many seconds (max {int(_MAX_TIMEOUT)}) for the "
+                        "task to exit or print new output; returns as soon as either "
+                        "happens. Default 0: return immediately."
+                    ),
+                },
             },
             "required": ["task_id"],
         },
@@ -153,8 +176,11 @@ def shell_tools(executor: Executor) -> list:
             timeout = min(float(timeout_seconds), _MAX_TIMEOUT)
         return executor.run(command, timeout=timeout)
 
-    def shell_task_output(task_id: str) -> dict:
-        return executor.background_output(task_id)
+    def shell_task_output(task_id: str, wait_seconds: Optional[int] = None) -> dict:
+        wait = 0.0
+        if isinstance(wait_seconds, (int, float)) and wait_seconds > 0:
+            wait = min(float(wait_seconds), _MAX_TIMEOUT)
+        return executor.background_output(task_id, wait_seconds=wait)
 
     def shell_task_kill(task_id: str) -> dict:
         return executor.background_kill(task_id)

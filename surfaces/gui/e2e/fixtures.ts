@@ -49,6 +49,8 @@ const SETTINGS = {
   scratch_base: "~/OpenWorker",
   secrets_path: "/Users/test/.config/coworker/secrets.json",
   sessions_peek: 5,
+  // #611: live reasoning is collapsed to a quiet "Thinking…" line while a turn runs.
+  hide_reasoning_running: false,
   // Token savings (PDF attachments): 2-page limit keeps the composer threshold test's
   // fixture PDF small; the real default is 20.
   pdf_fallback: "text",
@@ -377,7 +379,11 @@ const PROVIDERS = [
   { name: "openai", title: "OpenAI", needs_key: true, fields: [{ key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["gpt-5.5"], key_set_at: "2026-06-12", last_used_at: Math.floor(Date.now() / 1000) - 7200 },
   // anthropic: configured but never used ("Not used yet").
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
+  // azure: the user's own resource — a REQUIRED endpoint field (plain row, not the custom-endpoint
+  // disclosure) ahead of the key; no suggested models (ids are deployment names).
+  { name: "azure", title: "Azure OpenAI", needs_key: true, blurb: "Your own Azure OpenAI or Foundry resource, through its v1 API — model ids are your deployment names.", fields: [{ key: "endpoint", label: "Endpoint", secret: false, required: true, help: "Your resource's endpoint, from Keys and Endpoint in the Azure portal or the Foundry portal. /openai/v1 is added automatically; Foundry (…services.ai.azure.com) and sovereign-cloud hosts work too.", placeholder: "https://<resource>.openai.azure.com" }, { key: "api_key", label: "Azure OpenAI API key", secret: true, required: true, help: "", placeholder: "" }], configured: false, values: {}, suggested_models: [], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
+
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
   // Ark uses two provider identities: BytePlus pay-as-you-go and Volcengine Agent Plan CN
   // have independent credentials, endpoints, and strict curated model lists.
@@ -1100,6 +1106,21 @@ export async function mockApi(page: import("@playwright/test").Page) {
     });
   });
 
+  // UX-058: the Web search section's per-test state (mirrors GET /v1/web-search).
+  const webSearch = {
+    provider: "duckduckgo",
+    fetch_via_provider: false,
+    providers: [
+      { name: "duckduckgo", display_name: "DuckDuckGo", key_mode: "none", key_url: "", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: false },
+      { name: "you", display_name: "You.com", key_mode: "optional", key_url: "https://you.com/platform", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: false },
+      { name: "tavily", display_name: "Tavily", key_mode: "required", key_url: "https://tavily.com", key_source: "store" as "store" | "env" | null, key_env: "", supports_fetch: true },
+      { name: "brave", display_name: "Brave Search", key_mode: "required", key_url: "https://brave.com/search/api", key_source: "env" as "store" | "env" | null, key_env: "BRAVE_API_KEY", supports_fetch: false },
+      { name: "serper", display_name: "Serper", key_mode: "required", key_url: "https://serper.dev", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: false },
+      { name: "exa", display_name: "Exa", key_mode: "required", key_url: "https://exa.ai", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: true },
+      { name: "firecrawl", display_name: "Firecrawl", key_mode: "required", key_url: "https://firecrawl.dev", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: true },
+    ],
+  };
+
   await page.route("**/v1/capabilities", (route) =>
     route.fulfill({
       status: 200,
@@ -1460,9 +1481,54 @@ export async function mockApi(page: import("@playwright/test").Page) {
 
     if (p.endsWith("/v1/health")) return json(HEALTH);
     if (p.endsWith("/v1/settings")) return json(SETTINGS);
+
+    // Settings ▸ Customization ▸ Web search (UX-058). Keys live per provider; "Test and
+    // save" fails for a key spelled "bad-*", the way the real server relays a 401.
+    const webSearchSnapshot = () => ({
+      provider: webSearch.provider,
+      fetch_via_provider: webSearch.fetch_via_provider,
+      providers: webSearch.providers.map((row) => ({ ...row, has_key: row.key_source !== null })),
+    });
+    const webSearchReply = (ok: boolean, error = "") =>
+      ok ? json({ ok: true, ...webSearchSnapshot() }) : json({ ok: false, error }, 400);
+    if (p.endsWith("/v1/web-search") && m === "GET") return json(webSearchSnapshot());
+    if (p.endsWith("/v1/web-search") && m === "POST") {
+      const name = String(req.postDataJSON()?.provider || "");
+      const row = webSearch.providers.find((r) => r.name === name);
+      if (!row) return webSearchReply(false, `unknown provider: ${name}`);
+      if (row.key_mode === "required" && row.key_source === null)
+        return webSearchReply(false, `${row.display_name} needs an API key before it can be chosen. Add one first.`);
+      webSearch.provider = name;
+      return webSearchReply(true);
+    }
+    const keyMatch = p.match(/\/v1\/web-search\/keys\/([\w-]+)$/);
+    if (keyMatch && (m === "PUT" || m === "DELETE")) {
+      const row = webSearch.providers.find((r) => r.name === keyMatch[1]);
+      if (!row) return webSearchReply(false, `unknown provider: ${keyMatch[1]}`);
+      if (m === "DELETE") {
+        row.key_source = null;
+        row.key_env = "";
+        if (webSearch.provider === row.name && row.key_mode === "required") webSearch.provider = "duckduckgo";
+        return webSearchReply(true);
+      }
+      const key = String(req.postDataJSON()?.api_key || "").trim();
+      if (!key) return webSearchReply(false, "api_key required");
+      if (key.startsWith("bad-")) return webSearchReply(false, "Client error '401 Unauthorized' for url 'https://api.example/search'");
+      row.key_source = "store";
+      row.key_env = "";
+      return webSearchReply(true);
+    }
+    if (p.endsWith("/v1/web-search/fetch-via-provider") && m === "POST") {
+      webSearch.fetch_via_provider = !!req.postDataJSON()?.enabled;
+      return webSearchReply(true);
+    }
     if (p.endsWith("/v1/settings/context-bar") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
       return json({ ok: true, context_bar: SETTINGS.context_bar });
+    }
+    if (p.endsWith("/v1/settings/hide-reasoning") && m === "POST") {
+      Object.assign(SETTINGS, req.postDataJSON());
+      return json({ ok: true, hide_reasoning_running: SETTINGS.hide_reasoning_running });
     }
     if (p.endsWith("/v1/settings/pdf") && m === "POST") {
       Object.assign(SETTINGS, req.postDataJSON());
@@ -1963,6 +2029,36 @@ export async function mockApi(page: import("@playwright/test").Page) {
         ? json({ ok: false, error: "Invalid API key." })
         : json({ ok: true });
     }
+    // a user-added OpenAI-compatible provider (backend create_custom_provider parity): the
+    // slug is checked, a built-in's name is refused, the card appears configured.
+    if (p.endsWith("/v1/providers/custom") && m === "POST") {
+      const b = req.postDataJSON();
+      const name = String(b.name || "").toLowerCase();
+      if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name))
+        return json({ ok: false, error: "Route prefix must start with a letter and use only lowercase letters, numbers, - or _." });
+      if (providers.some((x) => x.name === name)) return json({ ok: false, error: "That route prefix is already in use." });
+      providers.push({
+        name, title: String(b.title || name), needs_key: true, is_custom: true, kind: "api_key",
+        blurb: "Uses the standard OpenAI Chat Completions API. Add model IDs manually below.",
+        fields: [
+          { key: "api_key", label: `${b.title} API key`, secret: true, required: true, help: "", placeholder: "" },
+          { key: "base_url", label: "Endpoint", secret: false, required: true, help: "An HTTPS OpenAI-compatible API base URL ending in /v1. HTTP is allowed only for local gateways.", placeholder: "https://…/v1" },
+        ],
+        configured: true, values: { base_url: b.fields?.base_url }, suggested_models: [], recommended_model: null,
+        key_set_at: "2026-10-26", last_used_at: null,
+      });
+      return json({ ok: true, provider: name, recommended_model: null });
+    }
+    // a custom provider's "Fetch from server": what its GET /models lists.
+    if (/\/v1\/providers\/[^/]+\/models$/.test(p) && m === "GET") {
+      const name = p.split("/").slice(-2)[0];
+      const prov = providers.find((x) => x.name === name);
+      if (prov?.is_custom) {
+        const row = (id: string) => ({ model: `${name}:${id}`, name: id, size_bytes: null, tools: null, thinking: null, vision: null, remote: true, parameter_size: null, quantization: null, context_max: null, context: null, context_from: "server", fit: "cloud", recommendation: null });
+        return json({ provider: name, alive: true, models: [row("acme-large"), row("acme-small")] });
+      }
+      return json({ provider: name, models: [], error: "no local model list for this provider" });
+    }
     // save a provider key — flips `configured`, stamps key_set_at (backend set_provider parity).
     if (p.endsWith("/v1/providers") && m === "POST") {
       const b = req.postDataJSON();
@@ -1985,6 +2081,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const name = p.split("/").pop()!;
       const prov = providers.find((x) => x.name === name);
       if (!prov) return json({ ok: false, error: `unknown provider: ${name}` });
+      if (prov.is_custom) {
+        // Removing a custom provider removes the card itself (backend remove_provider parity).
+        providers.splice(providers.indexOf(prov), 1);
+        return json({ ok: true, provider: name });
+      }
       prov.configured = !prov.needs_key; // keyless (ollama) stays "configured"
       prov.key_set_at = null;
       return json({ ok: true, provider: name });

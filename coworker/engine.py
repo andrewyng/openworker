@@ -16,6 +16,7 @@ import logging
 from copy import deepcopy
 
 import asyncio
+import functools
 import json
 import time
 from dataclasses import dataclass, replace
@@ -24,7 +25,9 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+from . import plan_steps
 from . import provenance
+from . import review_facts
 from . import session_facts
 from . import toolchain as _toolchain
 from . import toolresult
@@ -61,6 +64,7 @@ _REVIEWER_PAUSED_TEXT = (
 )
 from .permissions import CLEARED_BY_MODE, Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
+from .risk import RiskClass, classify as _classify_risk
 from .providers.errors import friendly_model_error
 from .providers.openai_provider import looks_like_unparsed_tool_call, strip_dangling_tool_tag
 from .tools import ToolRegistry
@@ -90,13 +94,13 @@ class ApprovalOutcome(str, Enum):
     SUPERSEDED = "superseded"
 
 
-def _readonly_ok(arguments: dict) -> bool:
+def _readonly_ok(arguments: dict, shell: Optional[str] = "bash") -> bool:
     command = str((arguments or {}).get("command", "") or "")
     if not command:
         return False
     from .readonly import is_readonly_command
 
-    return is_readonly_command(command)
+    return is_readonly_command(command, shell=shell or "bash")
 
 
 @dataclass
@@ -119,6 +123,103 @@ Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
 
 async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
     return ApprovalOutcome.DENY
+
+
+# OPE-238: the approval origins that mean "ran without asking": auto-approve let the
+# action through with no card. A card the user answered, a standing rule or trust the
+# user set up, and the bypass modes are the user's own choice and are not listed.
+_UNASKED_ORIGINS = frozenset({"gate_tier", "reviewer"})
+# Every turn ends with exactly one of these; the summary goes just before it, so the
+# event that ends a turn stays the last one (the headless runner reads it that way).
+_TURN_ENDINGS = frozenset({EventType.TURN_END, EventType.INTERRUPTED, EventType.ERROR})
+
+
+def _summarizes_turn(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
+    """Wrap a turn generator (run / retry / resume) so that, when any action ran without
+    asking, one TURN_SUMMARY event lists them just before the turn ends.
+
+    An index, not a copy: tool call id, tool name, origin, status and the reviewer's
+    one-line reason. The arguments and results are already in the tool events and the
+    audit log, which can be filtered by the same call id."""
+
+    @functools.wraps(gen_fn)
+    async def wrapper(self: "TurnEngine", *args: Any, **kwargs: Any) -> AsyncIterator[Event]:
+        inner = gen_fn(self, *args, **kwargs)
+        unasked: list[dict[str, Any]] = []
+        try:
+            async for event in inner:
+                if event.type is EventType.TOOL_FINISHED:
+                    origin = event.data.get("approval_origin")
+                    if origin in _UNASKED_ORIGINS:
+                        unasked.append(
+                            {
+                                "tool_call_id": str(event.data.get("tool_call_id") or ""),
+                                "name": str(event.data.get("name") or ""),
+                                "origin": origin,
+                                # "change" or "read": only changes count as changes.
+                                "effect": str(event.data.get("approval_effect") or "change"),
+                                "status": str(event.data.get("status") or ""),
+                                **(
+                                    {"tier": str(event.data["approval_tier"])}
+                                    if event.data.get("approval_tier")
+                                    else {}
+                                ),
+                                **(
+                                    {"note": str(event.data["approval_note"])}
+                                    if event.data.get("approval_note")
+                                    else {}
+                                ),
+                                **(
+                                    {"exit_code": event.data["exit_code"]}
+                                    if "exit_code" in event.data
+                                    else {}
+                                ),
+                                **({"timed_out": True} if event.data.get("timed_out") else {}),
+                                **({"background": True} if event.data.get("background") else {}),
+                            }
+                        )
+                elif event.type in _TURN_ENDINGS and unasked:
+                    yield Event(EventType.TURN_SUMMARY, _summary_payload(unasked))
+                    unasked = []
+                yield event
+        finally:
+            # A surface that stops reading mid-turn closes this wrapper; close the turn
+            # itself too, at once, so its own cleanup (run grants) runs as before.
+            await inner.aclose()
+
+    return wrapper
+
+
+def _action_failed(action: dict[str, Any]) -> bool:
+    """A listed action that changed nothing: the call errored, the command exited
+    non-zero, or it timed out. A background start is neither done nor failed."""
+    if action.get("status") != "ok":
+        return True
+    if action.get("timed_out"):
+        return True
+    code = action.get("exit_code")
+    return isinstance(code, int) and code != 0
+
+
+def _summary_payload(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """`count` is what the header says: changes that ran without asking and worked.
+    Failed attempts and read-only actions are listed, and counted apart, so the
+    number means "things that changed state and that you did not approve"."""
+    changes = [a for a in actions if a.get("effect") != "read"]
+    failed = [a for a in changes if _action_failed(a)]
+    reads = [a for a in actions if a.get("effect") == "read"]
+    return {
+        "count": len(changes) - len(failed),
+        "failed": len(failed),
+        "reads": len(reads),
+        "actions": actions,
+    }
+def _settings_changed(verdict: Any) -> Any:
+    """An `unsure` because approval settings changed mid-review. The message is shown on the
+    card for every reviewer, including the decision models that otherwise give no reason."""
+    msg = "Approval settings changed during review; a human decision is required."
+    extra = {"card_reason": msg} if hasattr(verdict, "card_reason") else {}
+    return replace(verdict, verdict="unsure", reason=msg, **extra)
 
 
 class TurnEngine:
@@ -253,6 +354,15 @@ class TurnEngine:
         # into the tool message's `_display` sidecar, so the quiet provenance chips
         # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
         self._approval_origins: dict[str, dict[str, str]] = {}
+        # OPE-232: set once a shell command has been cleared in the batch being authorized.
+        # The batch runs only after every call is cleared, and the shell persists, so a
+        # later command's folder is unknown from then on (see `current_shell_cwd`).
+        self._shell_cleared_in_batch = False
+        # OPE-237 (flag `auto_approve_plan_approval`): in auto-approve, `propose_plan` takes
+        # a list of steps, and the steps the user approved are evidence for exactly those
+        # actions until the request ends (cleared with the run grants in `run`).
+        self.plan_approval: bool = False
+        self._approved_plan: list[plan_steps.PlanStep] = []
         # Shadow evaluation (spec Part 6 step 3): when True and a reviewer is attached, the
         # reviewer records what it WOULD have decided on each approval card while the human
         # still decides. Fire-and-forget — the card is never delayed, no decision is ever
@@ -298,6 +408,20 @@ class TurnEngine:
         # the card and in the reviewer's request. Runtime-only, like `_ask_replies`: a
         # restart costs context (more cards), never correctness.
         self._agent_files = provenance.SessionFiles(permissions.workspace_root)
+        # The inert-writes tier (OPE-233) may rewrite a file the agent itself wrote: only
+        # the agent's own bytes are lost. An injected lookup (tests) is left alone.
+        if getattr(permissions, "agent_wrote", None) is None:
+            permissions.agent_wrote = self._agent_files.wrote
+        # OPE-235: what each shell command is about to bring in from outside, keyed by tool
+        # call id from just before it runs until its result is recorded.
+        self._intake_plans: dict[str, Any] = {}
+        # The secrets floor (OPE-236) asks the same record whether the agent put a
+        # secret-looking value into a file it is now sending.
+        if getattr(permissions, "agent_file_has_secret", None) is None:
+            permissions.agent_file_has_secret = self._agent_files.carries_secret
+        # OPE-235: whether outside content (web, email, connectors, downloads) has entered
+        # the agent's context this session; one of the reviewer's computed facts.
+        self._external_read = False
         self._tool_result_max_bytes = (
             toolresult.DEFAULT_TOOL_RESULT_MAX_BYTES
             if tool_result_max_bytes is None
@@ -360,11 +484,11 @@ class TurnEngine:
             cancel_wait.cancel()
 
     async def _wait_tool(self, tool_call, coro, interrupted):
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         try:
             return await self._interruptible(coro, interrupted)
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.perf_counter() - clock) * 1000)
 
     def _timed_result(self, tool_call, result):
         message = _tool_result_message(tool_call, result)
@@ -379,6 +503,7 @@ class TurnEngine:
         self._steering.append((text, source, activity))
 
     # -- main loop --------------------------------------------------------------
+    @_summarizes_turn
     async def run(
         self,
         user_input: "str | list",
@@ -435,6 +560,7 @@ class TurnEngine:
         # finally below is the braces; an abandoned generator must not leak a
         # previous answer's "Allow for this request" into this one).
         self.permissions.clear_run_allowances()
+        self._approved_plan = []
         yield Event(EventType.TURN_START, data)
         try:
             async for event in self._start_sandbox():
@@ -447,6 +573,7 @@ class TurnEngine:
             # The run boundary IS the grant's expiry — normal finish, Stop, and
             # generator teardown (disconnect) all land here.
             self.permissions.clear_run_allowances()
+            self._approved_plan = []
 
     def switch_model(self, model: str) -> Optional[str]:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
@@ -462,9 +589,14 @@ class TurnEngine:
         # The reviewer judges with the session's own model (§1.5: "if it's trusted to
         # drive the agent, it's strong enough to review it"). Bound once at session build,
         # it would otherwise keep the OLD model for the rest of the session after a
-        # switch — silently reviewing with a model the user moved away from.
+        # switch — silently reviewing with a model the user moved away from. A
+        # decision-model reviewer (OpenAI Decisions, Jev) judges with its own service's
+        # model, which a session switch must not change (its `model` is read-only).
         if self.reviewer is not None:
-            self.reviewer.model = model
+            from .decision_reviewer import DecisionReviewer
+
+            if not isinstance(self.reviewer, DecisionReviewer):
+                self.reviewer.model = model
         if not had_history:
             return None
         from .providers.matrix import model_labels
@@ -513,6 +645,7 @@ class TurnEngine:
         notice.update({k: v for k, v in fields.items() if v is not None})
         self.messages.append(notice)
 
+    @_summarizes_turn
     async def retry(self) -> AsyncIterator[Event]:
         """Re-run the model loop after a provider error — no new user message; the failed
         turn's input is already the tail of history. Guarded on the tail being an error
@@ -551,6 +684,7 @@ class TurnEngine:
         info = workspace.describe()
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
 
+    @_summarizes_turn
     async def resume(self) -> AsyncIterator[Event]:
         """Continue a turn that was suspended at a prompt and persisted — durable resume after a
         restart (or engine eviction). Re-process the trailing assistant message's UNANSWERED
@@ -673,7 +807,7 @@ class TurnEngine:
                     reasoning="".join(streamed_reasoning) or None,
                 )
 
-            model_started, model_clock = time.time(), time.monotonic()
+            model_started, model_clock = time.time(), time.perf_counter()
             try:
                 async for chunk in self._astream():
                     if chunk.reasoning_delta:
@@ -750,7 +884,7 @@ class TurnEngine:
                     effort_setting=self.model_settings.get("reasoning_effort"),
                 )
             )
-            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.monotonic() - model_clock) * 1000}
+            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.perf_counter() - model_clock) * 1000}
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
@@ -1008,6 +1142,9 @@ class TurnEngine:
                 except Exception:
                     continue
         if state is not None:
+            # OPE-235: the summarizer read every message it summarized, so outside content
+            # there may survive in the summary; and the transcript below holds it verbatim.
+            state.carries_outside = self._outside_before(state.boundary_index, summarized=True)
             # OPE-186 change 3: keep the compacted turns readable. The verbatim transcript
             # up to the boundary goes to a file next to the spilled tool results, and the
             # compacted block tells the model where it is, so a detail the summary dropped
@@ -1025,6 +1162,8 @@ class TurnEngine:
                         errors="replace",
                     )
                     state.transcript_path = str(path)
+                    if any(m.get("_outside") for m in self.messages[: state.boundary_index]):
+                        self._agent_files.mark_outside(path)
                 except OSError:
                     pass
             self.compaction_state = state
@@ -1037,10 +1176,26 @@ class TurnEngine:
                 user_budget_tokens=user_budget,
             )
             if trimmed is not None:
+                # The trim drops its span without summarizing it; only an earlier summary
+                # (kept in the block) can still carry outside content.
+                trimmed.carries_outside = self._outside_before(trimmed.boundary_index, summarized=False)
                 self.compaction_state = trimmed
                 self._last_context_tokens = None
                 return "Context trimmed — oldest turns dropped (summary unavailable)"
         return None
+
+    def _outside_before(self, boundary: int, *, summarized: bool) -> bool:
+        """OPE-235: whether the compacted block for a new boundary carries outside content:
+        the earlier summary did, or this compaction summarized a message that brought some
+        in. Messages only trimmed away leave nothing behind (the block's mechanical parts
+        are the agent's own commands and the user's messages)."""
+        prior = self.compaction_state
+        if prior is not None and prior.carries_outside:
+            return True
+        if not summarized:
+            return False
+        start = prior.boundary_index if prior is not None else 0
+        return any(m.get("_outside") for m in self.messages[start:boundary])
 
     # -- helpers ----------------------------------------------------------------
     async def _astream(self):
@@ -1104,6 +1259,7 @@ class TurnEngine:
         # verdict physically cannot land on the wrong action). The loop below stays
         # sequential because approval cards are interactive and must reach the human one
         # at a time, in call order.
+        self._shell_cleared_in_batch = False
         await self._preconsult_reviewer(tool_calls)
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
@@ -1113,7 +1269,9 @@ class TurnEngine:
                 continue
             yield Event(
                 EventType.TOOL_PROPOSED,
-                {"name": tool_call.name, "arguments": tool_call.arguments},
+                # The id lets a surface pair this proposal with its own finished event
+                # (OPE-238): two same-named calls in one batch must not swap results.
+                {"name": tool_call.name, "arguments": tool_call.arguments, "tool_call_id": tool_call.id},
             )
             self._audit(tool_call, stage="proposed")
             if _is_mangled(tool_call):
@@ -1163,6 +1321,8 @@ class TurnEngine:
                     allowed = item
             if allowed:
                 cleared.append(tool_call)
+                if tool_call.name == "run_shell":
+                    self._shell_cleared_in_batch = True
 
         concurrent = (
             [tc for tc in cleared if self._parallel_safe(tc)]
@@ -1353,6 +1513,79 @@ class TurnEngine:
         )
         return match.render() if match else ""
 
+    def current_shell_cwd(self) -> Optional[str]:
+        """OPE-232 / OPE-234: the persistent shell's current folder, or None when it cannot be known
+        for the call being checked: no shell, or a shell command already cleared in this
+        batch may move it before this one runs."""
+        if self._shell_cleared_in_batch:
+            return None
+        executor = getattr(self, "executor", None)
+        cwd = getattr(executor, "cwd", None) if executor is not None else None
+        return str(cwd) if cwd else None
+
+    def _outside_in_context(self) -> bool:
+        """OPE-235: whether content from outside is still in what the agent is sent: a tool
+        result marked `_outside` after the compaction boundary, or a compacted summary that
+        was written from one. Outside text can carry instructions for as long as the agent
+        can see it, so the line lasts exactly that long."""
+        state = self.compaction_state
+        start = 0
+        if state is not None and 0 < state.boundary_index < len(self.messages):
+            if state.carries_outside:
+                return True
+            start = state.boundary_index
+        return any(m.get("_outside") for m in self.messages[start:])
+
+    def _shell_cwd(self) -> Optional[str]:
+        executor = getattr(self, "executor", None)
+        cwd = getattr(executor, "cwd", None) if executor is not None else None
+        return str(cwd) if cwd else None
+
+    def _facts_kw(
+        self, tool_call: ToolCall, request: str, history: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """OPE-235: what code can check about this call, as `{"facts": [...]}` for the
+        reviewer, or {} when there is nothing to say (so reviewers that predate facts keep
+        working). Fixed vocabulary (review_facts.py); a failure here never blocks a review."""
+        try:
+            from .permissions import write_paths
+            from .risk import WRITE_TOOLS
+
+            targets: list[Path] = []
+            if tool_call.name in WRITE_TOOLS:
+                paths, _located = write_paths(tool_call.name, tool_call.arguments or {})
+                targets = [self.permissions._candidate(p) for p in paths]
+            spec = self.registry.get(tool_call.name)
+            facts = review_facts.compute_facts(
+                tool_call.name,
+                tool_call.arguments or {},
+                user_texts=[request, *(str(h.get("text", "")) for h in history)],
+                external_read=self._outside_in_context(),
+                write_targets=targets,
+                metadata=spec.metadata if spec else None,
+                egress_host=self.permissions.egress_host,
+                cwd=self.permissions._shell_base(),
+            )
+        except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
+            facts = []
+        if self._approved_plan:
+            # OPE-237: one fixed line, matched by code; the plan's text never travels.
+            # Only when the action IS a step: an action outside the plan gets exactly
+            # the facts it would get without one (a "not in the plan" line made the
+            # reviewer refuse harmless extras, found live 26 Oct 2026).
+            if plan_steps.match_step(
+                self._approved_plan,
+                tool_call.name,
+                tool_call.arguments or {},
+                resolve=self.permissions._candidate,
+                egress_host=self.permissions.egress_host,
+                # A command's paths are judged from the shell's folder (OPE-232); when it
+                # cannot be known, no shell action is a step.
+                shell_base=self.permissions.shell_cwd,
+            ):
+                facts.append(review_facts.PLAN_STEP)
+        return {"facts": facts} if facts else {}
+
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
         """Fire one reviewer request per call that will escalate, all concurrently, and
         park the verdicts for `_authorize` to consume. One action per request — there is
@@ -1397,6 +1630,7 @@ class TurnEngine:
                     arguments=tc.arguments,
                     provenance=self._provenance(tc),
                     **({"action_context": context} if context else {}),
+                    **self._facts_kw(tc, request, history),
                 )
                 for tc in pending
             ]
@@ -1406,7 +1640,7 @@ class TurnEngine:
                     or self.reviewer_settings_epoch != settings_epoch
                     or not self._reviewer_active()
                     or (request, history, context) != self._review_inputs()):
-                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
+                verdict = _settings_changed(verdict)
             self._reviewer_verdicts[tc.id] = verdict
             self._reviewer_input_snapshots[tc.id] = (request, history, context)
 
@@ -1441,6 +1675,7 @@ class TurnEngine:
             arguments=tool_call.arguments,
             provenance=self._provenance(tool_call),
             **({"action_context": context} if context else {}),
+            **self._facts_kw(tool_call, request, history),
         )
         if (request, history, context) != self._review_inputs():
             from .reviewer import Verdict
@@ -1524,12 +1759,14 @@ class TurnEngine:
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
                     **({"action_context": context} if context else {}),
+                    **self._facts_kw(tool_call, request, history),
                 )
                 self._audit(
                     tool_call,
                     stage="reviewer_shadow",
                     status=verdict.verdict,
                     reason=verdict.reason,
+                    reviewer=getattr(self, "reviewer_choice", "session"),
                     call_id=tool_call.id,
                     tokens_in=verdict.tokens_in,
                     tokens_out=verdict.tokens_out,
@@ -1598,6 +1835,26 @@ class TurnEngine:
                     needs_user=True,
                     human_only=True,
                 )
+
+        # OPE-233: an Auto-Approve gate tier let this call run without the reviewer —
+        # recorded, never invisible (transcript chip + audit row), like every other
+        # cardless origin.
+        if allowed and decision.tier:
+            # OPE-234: a read-only command has its own origin. It changes nothing, so it
+            # is not one of the "changes made without asking" (OPE-238), and its chip
+            # says what kind of thing ran.
+            origin = "readonly_tier" if decision.tier == "readonly_command" else "gate_tier"
+            self._approval_origins[tool_call.id] = {"origin": origin, "note": reason}
+            self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
+        elif decision.tier and decision.tier_audit_only and decision.needs_user:
+            # Audit mode: the decision is unchanged; the record notes what the tier WOULD
+            # have done, so it can be measured before anyone switches it on.
+            self._audit(
+                tool_call,
+                stage="gate_tier_shadow",
+                status="would_allow",
+                reason=f"{decision.tier}: {decision.tier_note}",
+            )
 
         if allowed and decision.rule:
             # A task-scoped standing rule auto-allowed this call: audit the exact rule
@@ -1676,6 +1933,9 @@ class TurnEngine:
 
         consulted_live = False
         unsure_note = ""  # the reviewer's hesitation, when an unsure verdict raised the card
+        # The card's wording when the reviewer gives no reason (decision models, OPE-224):
+        # "reviewer_asks" for a judgment, "reviewer_unavailable" when it could not run.
+        unsure_silent_kind = ""
         if (
             not allowed
             and decision.needs_user
@@ -1694,22 +1954,27 @@ class TurnEngine:
             if (self.reviewer is not consulted_reviewer
                     or self.reviewer_settings_epoch != settings_epoch
                     or not self._reviewer_active()):
-                verdict = replace(verdict, verdict="unsure", reason="Approval settings changed during review; a human decision is required.")
+                verdict = _settings_changed(verdict)
             self._audit(
                 tool_call,
                 stage="reviewer_verdict",
                 status=verdict.verdict,
                 reason=verdict.reason,
+                reviewer=getattr(self, "reviewer_choice", "session"),
                 tokens_in=verdict.tokens_in,
                 tokens_out=verdict.tokens_out,
                 cache_read=verdict.cache_read,
                 cache_write=verdict.cache_write,
             )
+            # What the card may show. A decision-model verdict carries `card_reason` (empty:
+            # those reviewers give no explanation, owner ruling 2026-10-16); the session-model
+            # reviewer's one-line reason is shown as before. The audit keeps `reason` in full.
+            card_note = getattr(verdict, "card_reason", verdict.reason)
             if verdict.verdict == "allow":
                 allowed = True
                 self._reviewer_denials = 0  # streak semantics: any non-deny resets
                 self._approval_origins[tool_call.id] = {
-                    "origin": "reviewer", "note": verdict.reason
+                    "origin": "reviewer", **({"note": card_note} if card_note else {})
                 }
                 reason = f"allowed by reviewer: {verdict.reason}"
             elif verdict.verdict == "deny":
@@ -1730,7 +1995,7 @@ class TurnEngine:
                         "name": tool_call.name,
                         "status": "denied",
                         "reason": "blocked by the safety reviewer",
-                        "reviewer_reason": verdict.reason,
+                        **({"reviewer_reason": card_note} if card_note else {}),
                         "allow_anyway": True,
                         **({"reviewer_paused": _REVIEWER_PAUSED_TEXT} if tripped else {}),
                     },
@@ -1738,7 +2003,7 @@ class TurnEngine:
                 deny_msg = _tool_error_message(tool_call, self.reviewer_denial_message or AGENT_DENY_MESSAGE)
                 deny_msg["_display"] = {
                     "approval_origin": "reviewer_denied",
-                    "approval_note": verdict.reason,
+                    **({"approval_note": card_note} if card_note else {}),
                 }
                 self.messages.append(deny_msg)
                 self._audit(
@@ -1752,7 +2017,9 @@ class TurnEngine:
             # "unsure" falls through to today's card — the human decides.
             if verdict.verdict == "unsure":
                 self._reviewer_denials = 0  # streak semantics: any non-deny resets
-                unsure_note = verdict.reason
+                unsure_note = card_note
+                if not card_note:
+                    unsure_silent_kind = "reviewer_unavailable" if verdict.error else "reviewer_asks"
 
         if not allowed and decision.needs_user and self._nobody_answers_cards():
             # Attendance "auto": nobody can answer a card, and the mode did not allow
@@ -1778,6 +2045,7 @@ class TurnEngine:
             escalation = (
                 {"kind": "human_required", "reason": decision.reason} if decision.human_only else
                 {"kind": "reviewer_unsure", "reason": unsure_note} if unsure_note else
+                {"kind": unsure_silent_kind, "reason": ""} if unsure_silent_kind else
                 {"kind": "reviewer_unavailable", "reason": ""} if self.permissions.mode is Mode.AUTO_APPROVE else None
             )
             # Shadow evaluation: record what the reviewer would have said about this card.
@@ -1795,8 +2063,8 @@ class TurnEngine:
                     # An `unsure` verdict raised this card: the reviewer's one-line reason
                     # answers "why am I being asked?" in place (owner ask 2026-08-24).
                     **(
-                        {"reviewer_unsure": verdict.reason}
-                        if consulted_live and verdict.verdict == "unsure"
+                        {"reviewer_unsure": unsure_note}
+                        if consulted_live and verdict.verdict == "unsure" and unsure_note
                         else {}
                     ),
                     "category": getattr(metadata, "category", ""),
@@ -1825,7 +2093,7 @@ class TurnEngine:
                     ),
                     # True when this shell command classifies as read-only — the card
                     # offers "Allow read-only commands for this session" only then.
-                    "readonly_ok": _readonly_ok(tool_call.arguments),
+                    "readonly_ok": _readonly_ok(tool_call.arguments, self.permissions.shell_kind),
                     # OPE-136 finding 4: where an MCP call actually goes, stamped at
                     # registration (mcp/tools.py) from the server def — so the card's
                     # scope chip can say "leaves this computer → host" instead of the
@@ -1997,20 +2265,49 @@ class TurnEngine:
 
         if delegated:
             self._authorized_delegates[tool_call.id] = delegated
+        origin = self._approval_origins.get(tool_call.id)
+        if origin and origin.get("origin") in _UNASKED_ORIGINS:
+            # OPE-238: what the turn summary needs to count honestly: did this call
+            # change anything, and which tier (if any) let it through.
+            origin["effect"] = self._effect(tool_call, metadata, decision.tier)
+            if decision.tier:
+                origin["tier"] = decision.tier
         yield True
+
+    def _effect(self, tool_call: ToolCall, metadata: Any, tier: str) -> str:
+        """"change" or "read", from the risk class the permission engine already uses.
+        A shell command is a change unless the read-only classifier said otherwise;
+        connector and MCP calls that reached a cardless origin are writes or sends
+        (connector reads never gate); a web read is a read."""
+        if tier == "readonly_command":
+            return "read"
+        risk = _classify_risk(tool_call.name, metadata, self.permissions.risk_overrides)
+        if risk in (RiskClass.WRITE_LOCAL, RiskClass.EXEC, RiskClass.EXTERNAL):
+            return "change"
+        return "read"
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         try:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
             if delegated and delegated != self._delegated_context(tool_call):
                 return {"error": "The worker request or its permissions changed before execution. Request a fresh decision."}, "error"
+            try:
+                # OPE-235: note what a shell command will bring in before it runs, so the
+                # folders it adds to can be compared afterwards.
+                plan = self._agent_files.before(
+                    tool_call.name, tool_call.arguments, cwd=self._shell_cwd()
+                )
+                if plan is not None:
+                    self._intake_plans[tool_call.id] = plan
+            except Exception:  # noqa: BLE001 - bookkeeping never blocks a tool
+                pass
             return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.perf_counter() - clock) * 1000)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         spec = self.registry.get(tool_call.name)
@@ -2020,10 +2317,28 @@ class TurnEngine:
         ):
             self._yield_for_wake = True
         self._step += 1
+        plan = self._intake_plans.pop(tool_call.id, None)
+        outside = False
         if status == "ok":
+            # OPE-235: whether this result brings outside content into the agent's context
+            # (marked on its message below). Checked before recording, so reading a file
+            # that came from outside in an EARLIER call counts, not the download itself.
+            cwd = plan.cwd if plan is not None else self._shell_cwd()
+            try:
+                outside = (
+                    review_facts.is_external_read(
+                        tool_call.name, tool_call.arguments, spec.metadata if spec else None
+                    )
+                    or (plan is not None and plan.brings_outside_in)
+                    or self._agent_files.reads_outside(
+                        tool_call.name, tool_call.arguments, cwd=cwd
+                    )
+                )
+            except Exception:  # noqa: BLE001 - a fact, never a reason to fail a call
+                outside = True
             # Only successful calls: a write that raised left nothing on disk to run.
             self._agent_files.record(
-                tool_call.name, tool_call.arguments, result, step=self._step
+                tool_call.name, tool_call.arguments, result, step=self._step, cwd=cwd, plan=plan
             )
         # A `_display` key on a tool result is user-facing metadata the AGENT must
         # never see (e.g. how many gmail hits the privacy filters hid — a count
@@ -2035,16 +2350,21 @@ class TurnEngine:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
         origin = self._approval_origins.pop(tool_call.id, None)
+        # OPE-238: the facts the turn summary shows, kept with the result so a reload
+        # shows the same thing the live view did: whether the call failed, and for a
+        # shell command its exit status, time-out, or background start.
+        outcome = _call_outcome(tool_call, result, status)
         if origin:
             # Provenance survives reload via the same display-only sidecar as the privacy
             # counts (owner ruling 2026-08-24) — `_outbound_messages` strips it, so no
             # provider ever sees it.
             display = {
                 **(display or {}),
-                "approval_origin": origin.get("origin", ""),
-                **({"approval_note": origin["note"]} if origin.get("note") else {}),
-                **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+                **_origin_fields(origin),
+                **outcome,
             }
+        elif outcome:
+            display = {**(display or {}), **outcome}
         # OPE-186 change 1: what the model sees (and re-reads on every later turn) is
         # bounded here, once, for every tool. Provenance above recorded the full result.
         result = toolresult.bound_tool_result(
@@ -2057,6 +2377,13 @@ class TurnEngine:
         message = self._timed_result(tool_call, result)
         if display:
             message["_display"] = display
+        if outside:
+            message["_outside"] = True
+            # A result too large for the context was spilled to a file the agent may read
+            # back later: that file is outside content too.
+            if self._tool_result_spill_dir is not None:
+                for spilled in self._tool_result_spill_dir.glob(f"{self._step:04d}-*"):
+                    self._agent_files.mark_outside(spilled)
         self.messages.append(message)
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
@@ -2092,15 +2419,8 @@ class TurnEngine:
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
                 # (c) quiet provenance chip — same fields the `_display` sidecar persists.
-                **(
-                    {
-                        "approval_origin": origin.get("origin", ""),
-                        **({"approval_note": origin["note"]} if origin.get("note") else {}),
-                        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
-                    }
-                    if origin
-                    else {}
-                ),
+                **(_origin_fields(origin) if origin else {}),
+                **{k: v for k, v in outcome.items() if k != "status"},
             },
         )
 
@@ -2153,6 +2473,12 @@ class TurnEngine:
             **self.audit_context,
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
+            # Every row carries the tool call's own ID so an external sink can join a
+            # `started` to its matching `finished` when the same tool+arguments runs more
+            # than once in a turn. Stamped here, at the one common boundary, so a new call
+            # site can't forget it. `**event` spreads last: a call site that means
+            # something else by `call_id` still wins.
+            "call_id": tool_call.id,
             **event,
         }
         try:
@@ -2325,6 +2651,10 @@ class TurnEngine:
         approval flips the live PermissionEngine out of plan mode (the same session keeps
         going, with all its exploration context); rejection keeps plan mode and returns
         the user's feedback so the agent can revise."""
+        if self.permissions.mode is Mode.AUTO_APPROVE and self.plan_approval:
+            async for event in self._handle_step_plan(tool_call):
+                yield event
+            return
         args = tool_call.arguments or {}
         plan = str(args.get("plan", ""))
         if self.permissions.mode is not Mode.PLAN:
@@ -2383,6 +2713,82 @@ class TurnEngine:
             {
                 "name": tool_call.name,
                 "status": status,
+                "result_preview": _preview(result),
+            },
+        )
+
+    async def _handle_step_plan(self, tool_call: ToolCall) -> AsyncIterator[Event]:
+        """OPE-237: a plan in auto-approve. The user approves all of its steps or sends it
+        back; the mode never changes. Approved steps are kept (targets only, never the
+        summary) for `_facts_kw` to match later actions against, until the request ends."""
+        args = tool_call.arguments or {}
+        plan = str(args.get("plan", ""))
+        steps, dropped = plan_steps.normalize_steps(args.get("steps"))
+        if self._auto_answering():
+            result: dict[str, Any] = {
+                "approved": False,
+                "error": "No one is available to approve a plan. Carry on with the work; "
+                "each action is reviewed as usual.",
+            }
+        elif self.plan_approver is None:
+            result = {"approved": False, "error": "plan approval is not available here"}
+        elif not steps:
+            result = {
+                "approved": False,
+                "error": "list every action in `steps` (kind write / delete / run / send, its "
+                "target, and for send the destination), then propose again",
+                **({"dropped_steps": dropped} if dropped else {}),
+            }
+        else:
+            shown = [
+                {
+                    **step.as_dict(),
+                    "risky": plan_steps.step_is_risky(step, resolve=self.permissions._candidate)
+                    or (step.kind in ("write", "delete") and not self.permissions._under_writable_root(step.target)),
+                }
+                for step in steps
+            ]
+            yield Event(
+                EventType.PLAN_PROPOSED,
+                {"plan": plan, "steps": shown, "auto_approve": True, "tool_call_id": tool_call.id},
+            )
+            self._audit(tool_call, stage="plan_proposed")
+            decision = await self._wait_tool(
+                tool_call,
+                self.plan_approver({**args, "plan": plan, "steps": shown}, tool_call.id),
+                interrupted={"approved": False, "error": "interrupted by user"},
+            ) or {"approved": False, "error": "no response"}
+            if decision.get("approved"):
+                self._approved_plan = steps  # a later plan replaces an earlier one
+                result = {
+                    "approved": True,
+                    "steps": [step.as_dict() for step in steps],
+                    "note": "plan approved for this request: carry out exactly these steps; "
+                    "anything else is reviewed as usual",
+                    **({"dropped_steps": dropped} if dropped else {}),
+                }
+            else:
+                result = {
+                    "approved": False,
+                    **({"error": decision["error"]} if decision.get("error") else {}),
+                    "feedback": decision.get("feedback") or "the user rejected the plan",
+                }
+
+        status = "ok" if result.get("approved") else "denied"
+        self.messages.append(self._timed_result(tool_call, result))
+        self._audit(
+            tool_call,
+            stage="finished",
+            status=status,
+            result=result,
+            result_preview=_preview(result),
+        )
+        yield Event(
+            EventType.TOOL_FINISHED,
+            {
+                "name": tool_call.name,
+                "status": status,
+                "tool_call_id": tool_call.id,
                 "result_preview": _preview(result),
             },
         )
@@ -2730,8 +3136,10 @@ class TurnEngine:
         `ts` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
-        last user message. Never mutates `self.messages`, so neither the strip nor the block is
-        persisted/replayed.
+        last user message. A partial assistant turn abandoned by a turn that died mid-stream —
+        identified by the error/interrupted notice that follows it — is dropped too: display-only
+        like the notices, and rejected outright by several providers as the final message.
+        Never mutates `self.messages`, so none of this is persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
         # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
@@ -2744,6 +3152,7 @@ class TurnEngine:
             "_activity",
             "timing",
             "_display",
+            "_outside",
             "ts",
             "reasoning",
             "usage",
@@ -2769,6 +3178,35 @@ class TurnEngine:
                 expanded.append({"role": "assistant", "content": context})
             expanded.append(msg)
         source_messages = expanded
+        # A turn that dies mid-stream (provider error, interrupt) leaves its partial assistant
+        # message in the transcript — so the user can still see what streamed — followed by the
+        # notice saying why it stopped. That partial is display-only in the same sense the
+        # notices are: not a turn the model finished, and several providers reject it as the
+        # FINAL message. Gemini 400s ("Requests ending with a model turn are not supported"),
+        # Claude 4.6+ 400s ("does not support assistant message prefill"), and one ending in
+        # whitespace 400s on older Claude ("final assistant content cannot end with trailing
+        # whitespace"). `retry()` replays the same tail, so the session wedges for good.
+        # The trailing notice is what identifies it: a COMPLETED turn's assistant message looks
+        # identical but has no error/interrupted notice after it, and must be kept (its `extras`
+        # sidecar is replayed back to the owning provider). Trailing `tool_calls` mean a turn
+        # suspended awaiting durable resume (see `resume`), never an abandoned one. Consecutive
+        # failed retries stack one partial each, so walk back through the whole run.
+        abandoned: set[int] = set()
+        failed = False
+        for i in range(len(source_messages) - 1, -1, -1):
+            message = source_messages[i]
+            if message.get("role") == "notice":
+                failed = failed or message.get("kind") in ("error", "interrupted")
+                continue
+            if (
+                failed
+                and message.get("role") == "assistant"
+                and not message.get("tool_calls")
+            ):
+                abandoned.add(i)
+                failed = False  # that notice belongs to this partial
+                continue
+            break
         out = [
             (
                 # OPE-171: a length-truncated, action-free reply is replayed as a stub.
@@ -2778,8 +3216,8 @@ class TurnEngine:
                 if any(s in msg for s in _SIDECARS)
                 else msg
             )
-            for msg in source_messages
-            if msg.get("role") != "notice"
+            for i, msg in enumerate(source_messages)
+            if msg.get("role") != "notice" and i not in abandoned
         ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always
@@ -2981,6 +3419,36 @@ def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
         "content": content,
         "ts": time.time(),
     }
+
+
+def _origin_fields(origin: dict[str, Any]) -> dict[str, Any]:
+    """The approval-provenance fields, as the TOOL_FINISHED event and the persisted
+    `_display` sidecar both carry them."""
+    return {
+        "approval_origin": origin.get("origin", ""),
+        **({"approval_note": origin["note"]} if origin.get("note") else {}),
+        **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
+        **({"approval_tier": origin["tier"]} if origin.get("tier") else {}),
+        **({"approval_effect": origin["effect"]} if origin.get("effect") else {}),
+    }
+
+
+def _call_outcome(tool_call: ToolCall, result: Any, status: str) -> dict[str, Any]:
+    """What the turn summary needs beyond the 300-char preview (OPE-238): a non-ok
+    status, and for `run_shell` the exit code (None when unknown), whether it timed
+    out, and whether it was only started in the background."""
+    out: dict[str, Any] = {}
+    if status != "ok":
+        out["status"] = status
+    if tool_call.name == "run_shell" and isinstance(result, dict):
+        if result.get("task_id") and result.get("status") == "running":
+            out["background"] = True
+        elif "exit_code" in result:
+            code = result.get("exit_code")
+            out["exit_code"] = code if isinstance(code, int) and not isinstance(code, bool) else None
+            if result.get("timed_out"):
+                out["timed_out"] = True
+    return out
 
 
 def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:

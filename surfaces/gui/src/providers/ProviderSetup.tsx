@@ -28,25 +28,44 @@ const LOCAL_HELP: Record<string, { desc: string; link: string; url: string }> = 
   ollama: { desc: "provider.no_key_needed_desc", link: "provider.install_ollama", url: "https://ollama.com/download" },
   llamacpp: { desc: "provider.llamacpp_desc", link: "provider.install_llamacpp", url: "https://github.com/ggml-org/llama.cpp#quick-start" },
   vllm: { desc: "provider.vllm_desc", link: "provider.install_vllm", url: "https://docs.vllm.ai/en/latest/getting_started/installation/" },
+  lmstudio: { desc: "provider.lmstudio_desc", link: "provider.install_lmstudio", url: "https://lmstudio.ai/download" },
+  jan: { desc: "provider.jan_desc", link: "provider.install_jan", url: "https://docs.jan.ai/desktop/api-server" },
+  docker: { desc: "provider.docker_desc", link: "provider.install_docker", url: "https://docs.docker.com/ai/model-runner/" },
+  mlx: { desc: "provider.mlx_desc", link: "provider.install_mlx", url: "https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/SERVER.md" },
 };
 
 export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: string }> = {
   anthropic: { url: "https://console.anthropic.com/settings/keys", label: "console.anthropic.com" },
   openai: { url: "https://platform.openai.com/api-keys", label: "platform.openai.com" },
+  // The Azure portal's Azure OpenAI hub: pick the resource, then Keys and Endpoint.
+  azure: { url: "https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI", label: "portal.azure.com" },
+
   gemini: { url: "https://aistudio.google.com/apikey", label: "aistudio.google.com" },
   ark: { url: "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey", label: "console.byteplus.com" },
   "ark-agent-plan-cn": { url: "https://console.volcengine.com/ark/region:cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=agentPlan", label: "console.volcengine.com" },
   openrouter: { url: "https://openrouter.ai/keys", label: "openrouter.ai" },
+  orcarouter: { url: "https://www.orcarouter.ai/console", label: "orcarouter.ai" },
   bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console", labelKey: "misc.provider.bedrock_console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },
+  nebius: { url: "https://tokenfactory.nebius.com/project/api-keys", label: "tokenfactory.nebius.com" },
+  nvidia: { url: "https://build.nvidia.com/settings/api-keys", label: "build.nvidia.com" },
   zai: { url: "https://z.ai/manage-apikey/apikey-list", label: "z.ai" },
   kimi: { url: "https://platform.moonshot.ai/console/api-keys", label: "platform.moonshot.ai" },
   deepseek: { url: "https://platform.deepseek.com/api_keys", label: "platform.deepseek.com" },
   mistral: { url: "https://console.mistral.ai/api-keys", label: "console.mistral.ai" },
+  novita: { url: "https://novita.ai/settings/key-management", label: "novita.ai" },
   qwen: { url: "https://modelstudio.console.alibabacloud.com", label: "alibabacloud.com" },
   minimax: { url: "https://platform.minimax.io", label: "platform.minimax.io" },
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
+  sambanova: { url: "https://cloud.sambanova.ai/apis", label: "cloud.sambanova.ai" },
+  atlascloud: { url: "https://www.atlascloud.ai/console/api-keys", label: "atlascloud.ai" },
+  groq: { url: "https://console.groq.com/keys", label: "console.groq.com" },
+  upstage: { url: "https://console.upstage.ai/api-keys", label: "console.upstage.ai" },
+  cerebras: { url: "https://cloud.cerebras.ai", label: "cloud.cerebras.ai" },
+  huggingface: { url: "https://huggingface.co/settings/tokens", label: "huggingface.co" },
+  cohere: { url: "https://dashboard.cohere.com/api-keys", label: "dashboard.cohere.com" },
+  siliconflow: { url: "https://cloud.siliconflow.com", label: "cloud.siliconflow.com" },
 };
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
@@ -153,7 +172,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(!!draft && Object.values(draft).some(Boolean));
     setVerify({ state: "idle" });
-    setShowEndpoint(false);
+    // A custom provider cannot work without its endpoint, so keep that field
+    // visible instead of hiding it behind the built-ins' expert disclosure.
+    setShowEndpoint(!!p?.fields.find((f) => f.key === "base_url")?.required);
   };
 
   const backToGallery = () => {
@@ -171,14 +192,16 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const runTestAndSave = async (): Promise<boolean> => {
     if (!sel) return false;
     setVerify({ state: "testing" });
-    const res = await verifyProvider(sel, fields).catch(() => ({ ok: false, error: t("provider.err_unreachable") }));
+    const res: { ok: boolean; error?: string; warning?: string } = await verifyProvider(sel, fields).catch(
+      () => ({ ok: false, error: t("provider.err_unreachable") }),
+    );
     if (!res.ok) {
       setVerify({ state: "error", msg: res.error || t("provider.err_couldnt_verify") });
       return false;
     }
     if (dirty || !info?.configured) await setProvider(sel, fields).catch(() => {});
     if (!info?.needs_key) setKeylessOk((s) => new Set(s).add(sel));
-    setVerify({ state: "ok" });
+    setVerify({ state: "ok", msg: res.warning });
     setDirty(false);
     setDrafts((d) => ({ ...d, [sel]: {} }));
     await refreshProviders();
@@ -187,11 +210,15 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     // the timeout would fire its stale closure (dirty/fields from before the save) and
     // re-stash the just-saved key as a draft — the state-restore bug (owner catch
     // 2026-07-19). This return path clears the draft unconditionally.
-    backTimer.current = window.setTimeout(() => {
-      setDrafts((d) => ({ ...d, [sel]: {} }));
-      setSel(null);
-      setVerify({ state: "idle" });
-    }, 900);
+    // A catalog-less gateway is still usable, but its warning contains the next action;
+    // leave the form open instead of making it disappear after the usual success animation.
+    if (!res.warning) {
+      backTimer.current = window.setTimeout(() => {
+        setDrafts((d) => ({ ...d, [sel]: {} }));
+        setSel(null);
+        setVerify({ state: "idle" });
+      }, 900);
+    }
     return true;
   };
 
@@ -404,11 +431,13 @@ export function ProviderCards({
   tp,
   gridClass = "grid grid-cols-2 gap-2.5",
   lastUsed = false,
+  onAddCustom,
 }: {
   ps: ProviderSetupState;
   tp: string; // testid prefix ("ob" onboarding, "set" settings)
   gridClass?: string;
   lastUsed?: boolean;
+  onAddCustom?: () => void;
 }) {
   const card =
     "flex items-center gap-2.5 rounded-xl border border-line bg-panel px-3 py-2.5 text-left hover:border-lineStrong transition-colors";
@@ -429,6 +458,19 @@ export function ProviderCards({
           <span className="text-faint text-body">›</span>
         </button>
       ))}
+      {onAddCustom && (
+        <button
+          className={card + " border-dashed text-muted hover:text-ink"}
+          data-testid={`${tp}-provider-custom-add`}
+          onClick={onAddCustom}
+        >
+          <span className="rounded-lg border border-line grid place-items-center shrink-0 text-[20px]" style={{ width: 32, height: 32 }}>
+            +
+          </span>
+          <span className="min-w-0 flex-1 text-[13px] font-semibold">Custom provider</span>
+          <span className="text-faint text-[14px]">›</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -440,10 +482,18 @@ export function ProviderForm({
   ps,
   tp,
   footer,
+  status,
+  blurb,
+  guided,
 }: {
   ps: ProviderSetupState;
   tp: string;
   footer?: ReactNode;
+  // A guided setup (llama.cpp on a Mac, UX-057) replaces the status line, the blurb and
+  // the fields; the footer stays.
+  status?: ReactNode;
+  blurb?: string;
+  guided?: ReactNode;
 }) {
   const { t } = useTranslation();
   const { info, sel } = ps;
@@ -526,10 +576,11 @@ export function ProviderForm({
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
         <span className="min-w-0">
           <span className="block text-body font-semibold leading-tight">{info?.title}</span>
-          {info ? ps.statusFor(info) : null}
+          {status ?? (info ? ps.statusFor(info) : null)}
         </span>
       </div>
-      {info?.blurb && <p className="text-meta text-faint mt-1">{info.blurb}</p>}
+      {(blurb ?? info?.blurb) && <p className="text-meta text-faint mt-1">{blurb ?? info?.blurb}</p>}
+      {guided}
 
       {info?.auth === "oauth" &&
         (info.name === "openrouter-account" ? (
@@ -538,7 +589,7 @@ export function ProviderForm({
           <OAuthSignIn info={info} tp={tp} onChanged={ps.refreshProviders} />
         ))}
 
-      {fieldsAll
+      {!guided && fieldsAll
         .filter(
           (f) =>
             !f.show_when &&
@@ -632,7 +683,7 @@ export function ProviderForm({
           {t("provider.takes_a_minute")}
         </p>
       )}
-      {info && !info.needs_key && info.auth !== "oauth" && LOCAL_HELP[info.name] && (
+      {!guided && info && !info.needs_key && info.auth !== "oauth" && LOCAL_HELP[info.name] && (
         <p className="text-meta text-faint mt-2">
           {t(LOCAL_HELP[info.name].desc)}{" "}
           <button
@@ -649,7 +700,7 @@ export function ProviderForm({
           (owner calls 2026-07-18 + 2026-07-19). */}
       {(() => {
         const keyed = (info?.fields || []).some((x) => x.secret);
-        const ep = keyed ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
+        const ep = keyed && !guided ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
         if (!ep) return null;
         if (!ps.showEndpoint)
           return (
@@ -691,6 +742,7 @@ export function ProviderForm({
       {/* Error line: fixed height so failures never reflow the form. */}
       <div className="mt-3 min-h-[19px] text-ui">
         {ps.verify.state === "error" && <span className="text-warnInk">{ps.verify.msg}</span>}
+        {ps.verify.state === "ok" && ps.verify.msg && <span className="text-muted">{ps.verify.msg}</span>}
       </div>
       {info?.auth === "oauth" ? null : footer}
     </div>

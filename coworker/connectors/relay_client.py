@@ -230,6 +230,7 @@ class RelayHub:
 
 class SlackRelayAdapter(BasePlatformAdapter):
     platform = "slack"
+    supports_interactive = True  # Block Kit buttons via `send_interactive`, like the direct adapter
 
     def __init__(
         self,

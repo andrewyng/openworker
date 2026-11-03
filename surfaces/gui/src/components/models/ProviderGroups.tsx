@@ -22,7 +22,7 @@ export function providerKind(p: ProviderInfo): Kind {
  * answers (the setup state's `keylessOk`). */
 export function providerConnected(p: ProviderInfo, keylessOk: Set<string>): boolean {
   if (p.auth === "oauth") return !!p.signed_in;
-  if (!p.needs_key) return !!p.alive || keylessOk.has(p.name);
+  if (!p.needs_key) return !!p.alive || keylessOk.has(p.name) || p.managed?.phase === "running";
   return p.configured;
 }
 
@@ -39,10 +39,12 @@ export function ProviderGroups({
   ps,
   tp,
   models,
+  onAddCustom,
 }: {
   ps: ProviderSetupState;
   tp: string;
   models: string[]; // the picker's models, for the count on each card
+  onAddCustom?: () => void; // Settings: the permanent "Add an OpenAI-compatible provider" box, last in the API-keys group
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -68,14 +70,18 @@ export function ProviderGroups({
         <ProviderMark name={p.name} title={p.title} />
         <span className="min-w-0 flex-1">
           <span className={"block text-ui font-semibold leading-tight truncate" + (connected ? "" : " text-muted")}>{p.title}</span>
-          {connected && count > 0 ? (
+          {p.managed?.phase === "running" && p.managed.model ? (
+            <span className="block text-meta text-ok font-medium truncate">{t("llamacpp.card_running", { model: p.managed.model })}</span>
+          ) : p.managed && !connected && ["installing", "downloading", "loading", "checking"].includes(p.managed.phase) ? (
+            <span className="block text-meta text-muted truncate">{t(p.managed.phase === "installing" ? "llamacpp.status_installing" : "llamacpp.status_starting")}</span>
+          ) : connected && count > 0 ? (
             <span className="block text-meta text-ok font-medium truncate">
               {t(p.needs_key || p.auth === "oauth" ? "provider.connected_count" : "provider.running_count", { count })}
             </span>
           ) : connected && !p.needs_key && p.auth !== "oauth" ? (
             <span className="block text-meta text-ok font-medium truncate">{t("provider.running")}</span>
           ) : !connected && !p.needs_key && p.auth !== "oauth" && p.kind === "local" && p.name !== "ollama" ? (
-            <span className="block text-meta text-faint truncate">{t("provider.not_connected")}</span>
+            <span className="block text-meta text-faint truncate">{t(p.setup_here ? "llamacpp.card_not_set_up" : "provider.not_connected")}</span>
           ) : (
             ps.statusFor(p, { lastUsed: true })
           )}
@@ -110,6 +116,21 @@ export function ProviderGroups({
             {/* A long group (API keys) shows two rows, then a "Show N more" line expands it in place. */}
             <div className="grid grid-cols-2 xl:grid-cols-3 gap-3" data-testid={`provider-grid-${kind}`}>
               {(expanded.has(kind) || q ? cards : cards.slice(0, FOLD)).map(cardFor)}
+              {/* The add box stays whatever the fold or the search shows: saving it makes a
+                  new card named by the user, and the box remains for the next one. */}
+              {kind === "api_key" && onAddCustom && (
+                <button
+                  className={card + " border-dashed bg-transparent text-muted hover:text-ink"}
+                  data-testid={`${tp}-provider-custom-add`}
+                  onClick={onAddCustom}
+                >
+                  <span className="rounded-lg border border-line grid place-items-center shrink-0 text-[20px]" style={{ width: 32, height: 32 }}>
+                    +
+                  </span>
+                  <span className="min-w-0 flex-1 text-ui font-semibold">{t("manage.custom_provider_card")}</span>
+                  <span className="text-faint text-body">›</span>
+                </button>
+              )}
             </div>
             {!q && cards.length > FOLD && (
               <button
