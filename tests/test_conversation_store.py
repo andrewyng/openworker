@@ -7,6 +7,8 @@ write or read escape the conversations/ directory.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from coworker.conversations import ConversationStore, is_safe_session_id
@@ -78,3 +80,33 @@ def test_round_trip_with_valid_id_still_works(tmp_path):
     assert loaded is not None
     assert loaded.messages[0]["content"] == "hello"
     assert (tmp_path / "state" / "conversations" / "abc123def456.jsonl").is_file()
+
+
+def test_backfill_skips_unsafe_stored_id_and_migrates_valid_history(tmp_path):
+    store = ConversationStore(tmp_path)
+    messages = [{"role": "user", "content": "legacy history"}]
+    inline = json.dumps(messages)
+    with store._conn:
+        store._conn.executemany(
+            "INSERT INTO sessions (session_id, messages) VALUES (?, ?)",
+            [("../escape", inline), ("valid", inline)],
+        )
+    store.close()
+
+    outside = tmp_path / "escape.jsonl"
+    outside.write_bytes(b"untouched")
+    for _ in range(2):
+        store = ConversationStore(tmp_path)
+        try:
+            valid = store.load("valid")
+            assert valid is not None
+            assert valid.messages == messages
+            assert valid.title == "legacy history"
+            assert (tmp_path / "conversations" / "valid.jsonl").is_file()
+            row = store._conn.execute(
+                "SELECT messages FROM sessions WHERE session_id = '../escape'"
+            ).fetchone()
+            assert row["messages"] == inline
+            assert outside.read_bytes() == b"untouched"
+        finally:
+            store.close()
