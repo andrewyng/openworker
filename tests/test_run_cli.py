@@ -58,7 +58,11 @@ def _run(tmp_path: Path, script: list[dict], *extra: str, machine: Path | None =
 
 
 def _session_folders(machine: Path, ws: Path) -> list[Path]:
-    base = machine / "sessions" / workspace_folder_name(ws.resolve())
+    from coworker.headless.runner import session_folder
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("COWORKER_STATE_DIR", str(machine))
+        base = session_folder(ws.resolve(), "0123456789ab").parent
     return sorted(p for p in base.iterdir()) if base.is_dir() else []
 
 
@@ -86,6 +90,48 @@ def test_the_workspace_folder_name_is_the_path_with_dashes() -> None:
     assert workspace_folder_name(Path("/Users/me/src/my app")) == "-Users-me-src-my-app"
     long = workspace_folder_name(Path("/" + "/".join(["folder"] * 60)))
     assert len(long) < 200 and long != workspace_folder_name(Path("/" + "/".join(["folder"] * 61)))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
+@pytest.mark.parametrize("non_bmp", [False, True])
+def test_windows_session_path_leaves_room_for_generated_records(tmp_path, monkeypatch, non_bmp):
+    from coworker.headless.runner import session_folder
+    from coworker.toolresult import bound_tool_result
+
+    # A long state root also defeats a fixed workspace-name cap of 64 characters.
+    state = tmp_path / ("😀" * 8 if non_bmp else "s" * max(1, 115 - len(str(tmp_path)) - 1))
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    workspace = tmp_path / ("w" * 80) / ("x" * 40)
+    run = session_folder(workspace, "0123456789ab")
+    run.mkdir(parents=True)
+    spill_dir = run / "tool-output"
+    result = bound_tool_result(
+        {"k" * 30: "data" * 10000}, max_bytes=1000,
+        tool_name="t" * 40, step=1, spill_dir=spill_dir,
+    )
+    assert list(spill_dir.glob("*.txt")), result
+    other = session_folder(workspace.with_name("y" * 40), "0123456789ab")
+    assert run.parent != other.parent
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
+def test_windows_session_path_rejects_a_state_root_without_room(tmp_path, monkeypatch):
+    from coworker.headless.runner import UsageError, session_folder
+
+    state = tmp_path / ("s" * 160)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    with pytest.raises(UsageError, match="--out"):
+        session_folder(tmp_path / "workspace", "0123456789ab")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows MAX_PATH budget")
+def test_windows_session_path_preserves_an_existing_name_that_fits(monkeypatch):
+    from coworker.headless.runner import session_folder
+
+    state = Path("C:/") / ("s" * 127)
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(state))
+    workspace = Path("C:/w")
+    assert session_folder(workspace, "0123456789ab") == state / "sessions" / workspace_folder_name(workspace) / "0123456789ab"
 
 
 def test_this_computers_settings_are_read_and_not_changed(tmp_path: Path) -> None:
