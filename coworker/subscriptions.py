@@ -18,12 +18,15 @@ to conflates the two directions.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,8 +46,14 @@ class SubscriptionStore:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._subs = [Subscription(**raw) for raw in data.get("subscriptions", [])]
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self._subs = [Subscription(**raw) for raw in data.get("subscriptions", [])]
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup (#204).
+                logger.warning(
+                    "subscriptions file at %s is unreadable; starting empty", self.path
+                )
 
     def _save(self) -> None:
         if not self.path:
