@@ -67,3 +67,26 @@ Branch: `feat/sdk-release-docs-20261103`, based on `caf461a9`.
   six target artifact jobs and partner clean-machine acceptance, signing review,
   actual registry dry-run/publication and post-publication install verification.
   The current local artifacts are a rehearsal, not a registry release.
+
+## Completion checkpoint
+
+- Implementation and docs committed as `e9aa2373`; clean-commit macOS ARM64
+  candidate prepared in `.sdk-release-macos-final/archives`. Release metadata says
+  `dirty: false`, identifies that commit and explicitly says `not-published`.
+- Final npm smoke installs the client, platform host and starter tarballs into a
+  new directory outside the checkout, compiles the exact TypeScript guide, creates
+  a registry-mode app and streams a completed fixture response. Passed.
+- Final nine `.crate` archives were extracted into a separate consumer; the exact
+  Rust guide compiled and ran. Both final Rust/TypeScript guide programs streamed
+  completed responses against the local fixture. No repo path dependencies used.
+- Documentation pipeline test passed for both `/docs/sdk` and a versioned base;
+  source Markdown is unchanged by generation. Architecture HTML is served as a
+  local reference instead of opening source code on GitHub. Production build and
+  nine release/starter/layout tests passed. Manual CI now includes package-consumer
+  smoke and documentation checks; it does not publish.
+- Registry-source manifests are intentionally private on the npm side; the release
+  preparer creates publishable tarball manifests. crates.io manifests are ready
+  with exact internal versions. Publishing either remains an explicit owner action.
+- Native artifacts for other OS/CPU targets and partner clean-machine acceptance
+  remain the next release gates. No registry accounts, packages, tags or GitHub
+  Releases were created. No hosted website was deployed.
