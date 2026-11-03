@@ -29,7 +29,9 @@ ABOUT: dict[str, str] = {
     "events. Multiple Google accounts connect side by side.",
     "browser": "A built-in browser agents drive to read pages and act on "
     "websites — separate from your personal browser, with actions subject to "
-    "approval.",
+    "approval. On macOS it needs a one-time setup: run `curl -fsSL "
+    "https://raw.githubusercontent.com/andrewyng/openworker/main/packaging/"
+    "setup-browser-macos.sh | bash` in Terminal.",
     "github": "Work with issues, pull requests, repository files, and CI "
     "status. One click installs the OpenWorker GitHub App on the repositories "
     "you pick; mention the agent on an issue or PR and it answers from your "
