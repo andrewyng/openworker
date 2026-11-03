@@ -1,0 +1,110 @@
+/* Docs theme: the OpenWorker app's light/dark tokens (surfaces/gui
+   src/styles.css) + consumer.html typography (Hanken Grotesk / IBM Plex
+   Mono). Subtle and modern: sans headings at modest sizes, hairline rules,
+   soft rounded surfaces. */
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400..800;1,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --sl-font: 'Hanken Grotesk', -apple-system, system-ui, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* light — app light theme */
+  --sl-color-accent-low: #e9f0fd;
+  --sl-color-accent: #2563eb;
+  --sl-color-accent-high: #1d4ed8;
+  --sl-color-bg: #fbfbfd;
+  --sl-color-bg-nav: #fbfbfd;
+  --sl-color-bg-sidebar: #fbfbfd;
+  --sl-color-hairline: #e8eaed;
+  --sl-color-hairline-light: #eff1f3;
+  --sl-color-text: #33383f;
+  --sl-color-white: #17191c;
+
+  --ow-card-shadow: 0 1px 2px rgba(20, 30, 60, 0.04), 0 14px 36px -20px rgba(20, 30, 60, 0.16);
+
+  /* modest heading scale (OpenAI-docs sized) */
+  --sl-text-h1: 1.875rem;
+  --sl-text-h2: 1.3rem;
+  --sl-text-h3: 1.075rem;
+  --sl-text-h4: 1rem;
+}
+
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #1c2a44;
+  --sl-color-accent: #4c8dff;
+  --sl-color-accent-high: #bcd4ff;
+  --sl-color-bg: #131417;
+  --sl-color-bg-nav: #131417;
+  --sl-color-bg-sidebar: #131417;
+  --sl-color-hairline: #2a2d33;
+  --sl-color-hairline-light: #202329;
+  --sl-color-text: #c3c8cf;
+  --sl-color-white: #e6e8eb;
+
+  --ow-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 36px -20px rgba(0, 0, 0, 0.5);
+}
+
+/* Headings: the body face, heavier, tight. */
+h1, h2, h3, h4 {
+  font-family: var(--sl-font);
+  letter-spacing: -0.015em;
+}
+h1 { font-weight: 700; }
+h2 { font-weight: 650; margin-top: 2.2em; }
+h3 { font-weight: 650; }
+.site-title {
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  font-size: 1.125rem;
+}
+
+/* Landing hero stays a step larger than page titles, still restrained. */
+.hero h1 { font-size: clamp(2rem, 3.5vw, 2.5rem); font-weight: 700; }
+
+/* Reading comfort — compact but airy. */
+.sl-markdown-content {
+  font-size: 0.9875rem;
+  line-height: 1.7;
+}
+.sl-markdown-content code { font-size: 0.86em; }
+
+/* Quieter chrome: hairline under the header, calm sidebar text. */
+header.header { border-bottom: 1px solid var(--sl-color-hairline-light); }
+.sidebar-content { font-size: 0.9rem; }
+.right-sidebar { border-inline-start: 1px solid var(--sl-color-hairline-light); }
+.right-sidebar-panel { font-size: 0.85rem; }
+
+/* Soft, rounded surfaces. */
+.sl-markdown-content pre,
+.starlight-aside,
+.card {
+  border-radius: 12px;
+}
+.card {
+  box-shadow: var(--ow-card-shadow);
+  border-color: var(--sl-color-hairline);
+}
+.starlight-aside { border-inline-start-width: 3px; }
+
+/* Sidebar: rounded, quiet current-page pill (app accent-soft). */
+.sidebar-content a { border-radius: 8px; }
+[aria-current='page'],
+[aria-current='page']:hover {
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-accent-high);
+  font-weight: 600;
+}
+
+/* Tables: hairline rows only. */
+.sl-markdown-content table { border-collapse: collapse; }
+.sl-markdown-content td,
+.sl-markdown-content th {
+  border: 0;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+/* SDK guide: compact examples and restrained progressive disclosure. */
+.sl-markdown-content details { border: 1px solid var(--sl-color-hairline); border-radius: .65rem; padding: .8rem 1rem; margin: 1rem 0; }
+.sl-markdown-content summary { cursor: pointer; font-weight: 600; }
+.sl-markdown-content pre { border-radius: .65rem; }
+.sl-markdown-content table { font-size: .9rem; }

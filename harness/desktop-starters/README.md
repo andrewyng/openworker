@@ -1,11 +1,12 @@
 # Desktop app starters
 
-Source-checkout scaffolder for the new OpenWorker desktop SDK. No public npm
-package has been published by this implementation.
+Desktop scaffolder with registry dependencies by default and an explicit source
+checkout mode. Candidate: `create-openworker@0.1.0-beta.1`; registry publication is
+a separate release step. See the [installation guide](../../docs/harness/guides/installation.md).
 
 ```sh
 node harness/desktop-starters/create.mjs /absolute/path/arcade \
-  --template electron-game-builder
+  --template electron-game-builder --sdk-root /absolute/path/to/harness
 # Or: --template tauri-game-builder
 cd /absolute/path/arcade
 npm install

@@ -1,3 +1,4 @@
+import { installedRuntime } from "./runtime-package.js";
 import { isAbsolute, dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,6 +28,7 @@ export function resolveOptions(
     process.platform === "win32"
       ? "openworker-harness.exe"
       : "openworker-harness";
+  let packaged = false;
   const executable =
     options.executable ??
     process.env.OPENWORKER_EXECUTABLE ??
@@ -35,7 +37,8 @@ export function resolveOptions(
       join(entry, filename),
       join(entry, "bin", filename),
       join(entry, "..", "bin", filename),
-    ].find((p): p is string => !!p && existsSync(p));
+    ].find((p): p is string => !!p && existsSync(p)) ??
+    (() => { const path = installedRuntime(); packaged = !!path; return path; })();
   if (!executable)
     throw new HarnessError(
       "InvalidInput",
@@ -69,6 +72,7 @@ export function resolveOptions(
   return {
     ...options,
     executable,
+    packagedRuntime: packaged,
     stateDir:
       options.stateDir ?? join(homedir(), ".openworker", appId!, "state"),
   };

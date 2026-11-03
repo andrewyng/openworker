@@ -84,6 +84,14 @@ async fn initialize(
         stop,
     )
     .await?;
+    if info["sdk_version"]
+        .as_str()
+        .is_some_and(|v| v != env!("CARGO_PKG_VERSION"))
+    {
+        return Err(Error::Setup(
+            "SDK and harness release versions differ".into(),
+        ));
+    }
     if info["protocol_version"] != openworker_runtime::PROTOCOL_VERSION {
         return Err(Error::Setup("Harness protocol version mismatch".into()));
     }

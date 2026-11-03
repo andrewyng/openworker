@@ -205,7 +205,7 @@ cargo build --release --locked -p openworker-sdk --bin openworker-harness
 npm --prefix typescript-sdk ci
 npm --prefix typescript-sdk run build
 cd ..
-node harness/desktop-starters/create.mjs ../my-arcade --template electron-game-builder
+node harness/desktop-starters/create.mjs ../my-arcade --template electron-game-builder --sdk-root ./harness
 cd ../my-arcade
 npm install
 npm run dev
@@ -217,7 +217,7 @@ cargo build --release --locked -p openworker-sdk --bin openworker-harness
 npm --prefix typescript-sdk ci
 npm --prefix typescript-sdk run build
 cd ..
-node harness/desktop-starters/create.mjs ../my-rust-arcade --template tauri-game-builder
+node harness/desktop-starters/create.mjs ../my-rust-arcade --template tauri-game-builder --sdk-root ./harness
 cd ../my-rust-arcade
 npm install
 npm run dev

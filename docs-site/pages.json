@@ -1,0 +1,14 @@
+[
+ {"source":"docs/harness/guides/index.md","slug":"index"},
+ {"source":"docs/harness/guides/installation.md","slug":"installation"},
+ {"source":"docs/harness/guides/desktop.md","slug":"desktop"},
+ {"source":"docs/harness/guides/server.md","slug":"server"},
+ {"source":"docs/harness/guides/providers.md","slug":"providers"},
+ {"source":"docs/harness/guides/tools.md","slug":"tools"},
+ {"source":"docs/harness/guides/sessions.md","slug":"sessions"},
+ {"source":"docs/harness/GUARDRAILS-QUICKSTART.md","slug":"guardrails"},
+ {"source":"docs/harness/guides/deployment.md","slug":"deployment"},
+ {"source":"docs/harness/guides/observability.md","slug":"observability"},
+ {"source":"docs/harness/SDK-RELEASE-CONTRACT.md","slug":"releases"},
+ {"source":"docs/harness/guides/troubleshooting.md","slug":"troubleshooting"}
+]

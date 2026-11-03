@@ -5,11 +5,11 @@ use serde_json::{json, Value};
 use std::sync::LazyLock;
 
 pub static REFERENCE: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../tests/contracts/compaction.json"))
+    serde_json::from_str(include_str!("contracts/compaction.json"))
         .expect("reviewed policy fixture")
 });
 pub static DEVIATIONS: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../tests/contracts/known-deviations.json"))
+    serde_json::from_str(include_str!("contracts/known-deviations.json"))
         .expect("reviewed deviations")
 });
 

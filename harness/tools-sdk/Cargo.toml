@@ -1,6 +1,10 @@
 [package]
+readme = "README.md"
+repository = "https://github.com/andrewyng/openworker"
+description = "OpenWorker tools for durable agent applications"
+publish = ["crates-io"]
 name = "openworker-tools"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

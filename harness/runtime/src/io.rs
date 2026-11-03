@@ -34,7 +34,9 @@ impl Fd {
         if flags < 0 || unsafe { libc::fcntl(copy, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(Self(AsyncFd::new(Owned { file, flags })?))
+        // SAFETY: Owned keeps this File open with an invariant descriptor until
+        // AsyncFd drops it; no API exposes ownership or replaces the File.
+        Ok(Self(unsafe { AsyncFd::register(Owned { file, flags }) }?))
     }
     pub async fn read(&self, max: usize) -> std::io::Result<Vec<u8>> {
         loop {

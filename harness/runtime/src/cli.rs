@@ -510,7 +510,10 @@ async fn read_answer() -> Result<String> {
             self.file.as_raw_fd()
         }
     }
-    let input = tokio::io::unix::AsyncFd::new(Input { file, flags })?;
+    // SAFETY: Input owns the duplicated File for the registration lifetime and
+    // never closes/replaces its descriptor while the AsyncFd exists.
+    let input = unsafe { tokio::io::unix::AsyncFd::register(Input { file, flags }) }
+        .map_err(std::io::Error::from)?;
     let mut bytes = vec![];
     loop {
         let mut ready = input.readable().await?;

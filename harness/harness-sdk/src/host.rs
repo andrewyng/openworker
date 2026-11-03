@@ -1012,6 +1012,7 @@ impl Host {
         }
         let mut result = Box::pin(self.dispatch_locked(method, p)).await?;
         if method == "initialize" {
+            result["sdk_version"] = json!(env!("CARGO_PKG_VERSION"));
             if let Some(c) = result
                 .get_mut("capabilities")
                 .and_then(Value::as_object_mut)

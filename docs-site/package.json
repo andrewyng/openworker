@@ -1,0 +1,16 @@
+{
+  "name": "openworker-docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare-content": "node scripts/prepare.mjs",
+    "dev": "npm run prepare-content && astro dev",
+    "build": "npm run prepare-content && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.36.0",
+    "astro": "^5.6.0",
+    "yaml": "^2.4.0"
+  }
+}

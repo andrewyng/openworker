@@ -1288,3 +1288,6 @@ export class AgentTeam {
     });
   }
 }
+
+export { resolveRuntimeExecutable } from "./runtime-package.js";
+export { SDK_VERSION } from "./version.js";

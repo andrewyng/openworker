@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-artifacts"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1843,7 +1843,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-compliance"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-guardrails"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-runtime"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1936,7 +1936,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-sdk"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-security-adapters"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "openworker-guardrails",
@@ -2026,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-store-postgres"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "native-tls",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-telemetry"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-tools"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -2167,9 +2167,9 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "portable-atomic"
-version = "1.15.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "postgres"
@@ -3145,9 +3145,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
@@ -3932,9 +3932,9 @@ dependencies = [
 
 [[package]]
 name = "yoke-derive"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78"
+checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",

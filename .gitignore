@@ -14,7 +14,7 @@ dist/
 # Rust harness build caches, package dependencies and local deployment state
 /harness/target/
 /harness/test-output/
-/harness/**/node_modules/
+/harness/**/node_modules
 /.ow-aws/
 /.ow-stack/
 /.ow-helm/
@@ -28,3 +28,6 @@ dist/
 
 # Local service qualification state contains generated credentials.
 /.ow-service*/
+
+# Local SDK release artifacts
+/.sdk-release*/

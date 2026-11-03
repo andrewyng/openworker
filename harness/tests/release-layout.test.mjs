@@ -19,7 +19,7 @@ test('workspace members exist and legacy apps are not release dependencies',()=>
   assert.ok(members.includes('examples/device-tools'));
   assert.ok(members.includes('examples/computer-tools'));
   const fixture=readFileSync(join(root,'harness/runtime/src/compaction.rs'),'utf8');
-  assert.ok(fixture.includes('../../tests/contracts/compaction.json'));
+  assert.ok(fixture.includes('contracts/compaction.json'));
 });
 test('published Markdown documentation has no dangling relative links',()=>{
   const missing=[];

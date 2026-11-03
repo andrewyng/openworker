@@ -1,7 +1,9 @@
 # OpenWorker Harness SDK (development API)
 
-One Rust client, two deployment backends, the same native engine. This workspace
-crate is not yet published or a stable SDK compatibility promise. It is distinct
+Registry candidate: **0.1.0-beta.1**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+
+One Rust client, two deployment backends, the same native engine. This is a beta
+crate with an explicit SDK/runtime compatibility contract. It is distinct
 from `openworker-tools`, which defines partner-owned tools.
 
 For service coding teams, see [isolated coding teams](../../docs/harness/ISOLATED-CODING-TEAMS.md)
