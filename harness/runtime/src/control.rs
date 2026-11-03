@@ -22,6 +22,7 @@ pub enum Action {
         binding: Binding,
     },
     Cancel,
+    ResumeSafety,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +91,9 @@ impl Command {
         match &self.action {
             Action::Response { interaction_id, .. } => format!("response:{interaction_id}"),
             Action::Cancel => format!("cancel:{}", self.turn_id),
+            // A later unavailable check in the same turn may need another retry.
+            // The request key deduplicates one retry, not every future pause.
+            Action::ResumeSafety => format!("safety_resume:{}", self.request_id),
         }
     }
     /// Saved-state validation only. The owner must additionally use the runtime's
@@ -102,6 +106,10 @@ impl Command {
         let t = s.turn.as_ref().context("Control turn missing")?;
         if t.id != self.turn_id {
             bail!("Stale control turn");
+        }
+        if matches!(self.action, Action::ResumeSafety) && (s.closed || t.status != "waiting_safety")
+        {
+            bail!("No paused safety check");
         }
         if let Action::Response {
             interaction_id,

@@ -29,6 +29,8 @@ impl std::error::Error for Error {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
+    ComplianceReader,
+    ComplianceAuditor,
     Observer,
     Operator,
     Administrator,
@@ -70,6 +72,10 @@ pub(crate) struct Context {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    Identify,
+    ComplianceExport,
+    ComplianceRead,
+    ComplianceContent,
     Read,
     Create,
     Submit,
@@ -83,6 +89,10 @@ pub enum Action {
 impl Action {
     fn name(self) -> &'static str {
         match self {
+            Self::Identify => "identity.read",
+            Self::ComplianceExport => "compliance.export",
+            Self::ComplianceRead => "compliance.read",
+            Self::ComplianceContent => "compliance.content.read",
             Self::Read => "read",
             Self::Create => "session.create",
             Self::Submit => "turn.submit",
@@ -113,7 +123,16 @@ fn token_hash(token: &str) -> Result<String> {
 impl Role {
     pub fn permits(self, action: Action) -> bool {
         match action {
-            Action::Read => true,
+            Action::Identify => true,
+            Action::ComplianceExport => matches!(self, Self::Administrator),
+            Action::Read => !matches!(self, Self::ComplianceReader | Self::ComplianceAuditor),
+            Action::ComplianceRead => matches!(
+                self,
+                Self::Administrator | Self::ComplianceReader | Self::ComplianceAuditor
+            ),
+            Action::ComplianceContent => {
+                matches!(self, Self::Administrator | Self::ComplianceAuditor)
+            }
             Action::Create | Action::Submit | Action::Control | Action::Artifact => {
                 matches!(self, Self::Operator | Self::Administrator)
             }
@@ -156,7 +175,10 @@ impl Spec {
                 Error::Invalid
             );
         }
-        if self.role == Role::Observer {
+        if matches!(
+            self.role,
+            Role::Observer | Role::ComplianceReader | Role::ComplianceAuditor
+        ) {
             ensure!(self.environments.is_empty(), Error::Invalid);
         }
         Ok(())

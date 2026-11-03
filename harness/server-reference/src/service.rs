@@ -49,9 +49,16 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
-        ("GET", ["", "v1", "capabilities"])
-        | ("GET", ["", "v1", "auth", "me"])
-        | ("GET", ["", "v1", "agents", _])
+        ("GET", ["", "v1", "compliance", "sessions", _, "activities" | "delivery"]) => {
+            Some(Action::ComplianceRead)
+        }
+        ("GET", ["", "v1", "compliance", "sessions", _, "content"]) => {
+            Some(Action::ComplianceContent)
+        }
+        ("GET", ["", "v1", "capabilities"]) | ("GET", ["", "v1", "auth", "me"]) => {
+            Some(Action::Identify)
+        }
+        ("GET", ["", "v1", "agents", _])
         | ("GET", ["", "v1", "releases" | "profiles" | "sessions"])
         | ("GET", ["", "v1", "sessions", _, "events", "page"]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions" | "submissions"]) => Some(Action::Submit),
@@ -135,6 +142,18 @@ pub(crate) fn router() -> Router<App> {
             post(crate::authorization::revoke),
         )
         .route("/v1/audit", get(crate::authorization::audit))
+        .route(
+            "/v1/compliance/sessions/:sid/activities",
+            get(compliance_activities),
+        )
+        .route(
+            "/v1/compliance/sessions/:sid/content",
+            get(compliance_content),
+        )
+        .route(
+            "/v1/compliance/sessions/:sid/delivery",
+            get(compliance_delivery),
+        )
         .route("/v1/agents/:id", get(agent))
         .route("/v1/worker-pools", get(pools))
         .route("/v1/worker-pools/:id/scale", post(scale_pool))
@@ -193,7 +212,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -291,10 +310,12 @@ async fn send(
     headers: HeaderMap,
     Json(body): Json<Send>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let submission_id = key(&app, &headers, &format!("turn:{sid}"))?;
+    let text = crate::service_safety::inspect(&app, Some(&sid), &submission_id, &body.text).await?;
     let r = app.store.submit_service_turn(TurnSubmission {
         session_id: sid.clone(),
-        submission_id: key(&app, &headers, &format!("turn:{sid}"))?,
-        text: body.text,
+        submission_id,
+        text,
         limits: body.limits,
     })?;
     Ok((
@@ -323,6 +344,7 @@ async fn control(
     Json(body): Json<Control>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let id = key(&app, &headers, &format!("control:{sid}"))?;
+    let action = crate::service_safety::inspect_control(&app, &sid, &id, body.action).await?;
     let record = app
         .store
         .submit_control(openworker_runtime::control::Command {
@@ -330,7 +352,7 @@ async fn control(
             request_id: id,
             turn_id: body.run_id,
             actor: app.actor.clone(),
-            action: body.action,
+            action,
         })?;
     Ok((StatusCode::ACCEPTED, Json(json!(record))))
 }
@@ -513,4 +535,28 @@ async fn event_page(
     check(after >= 0, SubmissionError::InvalidRequest)?;
     let events = app.store.read_events(&sid, after)?;
     Ok(Json(json!({"events":events,"after":after})))
+}
+
+async fn compliance_activities(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+    Query(q): Query<openworker_runtime::compliance::Query>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.compliance_page(&sid, q)?))
+}
+async fn compliance_content(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+    Query(q): Query<EventPage>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        app.store.compliance_content(&sid, q.after.unwrap_or(0))?,
+    ))
+}
+
+async fn compliance_delivery(
+    Extension(app): Extension<App>,
+    Path(sid): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.compliance_delivery_health(&sid)?))
 }

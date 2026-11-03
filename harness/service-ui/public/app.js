@@ -1,5 +1,7 @@
+import {renderCompliance} from "./compliance.js";
 import { mountObservability } from "./observability.js";
 let disposeObservability = null;
+let safetyActivity = null;
 const paths = {
   overview: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
   agents: "M8 4V2m8 2V2M5 7h14v13H5zM9 12h.01M15 12h.01M9 16h6M2 11v5m20-5v5",
@@ -67,7 +69,7 @@ let sessions = [],
   eventCursor = 0,
   pending = null,
   formHandler = null;
-const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
+const terminal = new Set(["completed", "failed", "cancelled", "interrupted", "truncated", "blocked"]);
 const role = () => auth?.identity.role;
 const can = {
   run: () => ["administrator", "operator"].includes(role()),
@@ -118,6 +120,7 @@ function loggedOut(message = "") {
   sessions = [];
   events = [];
   snapshot = null;
+  safetyActivity = null;
   releases = [];
   profiles = [];
   pools = [];
@@ -423,6 +426,7 @@ function renderTrace() {
     : empty("No recorded events yet.");
 }
 function sessionContent() {
+  if(sessionTab==="Safety")return renderCompliance(safetyActivity);
   const s = snapshot;
   return sessionTab === "Trace"
     ? renderTrace()
@@ -436,6 +440,7 @@ function paintSessionContent() {
     (el) => el.dataset.event,
   );
   root.innerHTML = sessionContent();
+  const note=$("#event-note");if(note)note.hidden=sessionTab==="Safety";
   for (const id of opened) {
     const el = root.querySelector(`details[data-event="${id}"]`);
     if (el) el.open = true;
@@ -444,7 +449,7 @@ function paintSessionContent() {
 function sessionPage() {
   const s = snapshot.session,
     t = snapshot.turn;
-  return `<div class="detail-heading"><a class="back" href="#sessions">${icon("back")}Sessions</a><div class="session-title-row"><h1>${esc(s.name || s.id)}</h1><div class="heading-actions">${can.run() && !s.closed ? btn("Send message", "send") + (t && !terminal.has(t.status) ? (cancelRequested() ? '<span class="small-note">Cancellation requested</span>' : btn("Cancel run", "cancel")) : "") : ""}${btn("Refresh", "refresh")}</div></div><div class="session-meta">${status(s.closed ? "closed" : t?.status || "idle")}<span class="mono">${esc(s.id)}</span><span id="stream-state">Connecting…</span></div><div class="tabs">${["Trace", "Result", "Events"].map((t) => `<button class="tab ${t === sessionTab ? "active" : ""}" data-tab="${t}">${t}</button>`).join("")}</div></div><div class="detail-layout"><section><div id="interactions">${interactions()}</div><div id="trace-content">${sessionContent()}</div><p class="small-note" id="event-note">Showing up to 500 recent events.</p></section><aside class="detail-side"><div><h3>Session</h3>${[
+  return `<div class="detail-heading"><a class="back" href="#sessions">${icon("back")}Sessions</a><div class="session-title-row"><h1>${esc(s.name || s.id)}</h1><div class="heading-actions">${can.run() && !s.closed ? btn("Send message", "send") + (t?.status==="waiting_safety" ? btn("Retry checks","resume-safety",true) : "") + (t && !terminal.has(t.status) ? (cancelRequested() ? '<span class="small-note">Cancellation requested</span>' : btn("Cancel run", "cancel")) : "") : ""}${btn("Refresh", "refresh")}</div></div><div class="session-meta">${status(s.closed ? "closed" : t?.status || "idle")}<span class="mono">${esc(s.id)}</span><span id="stream-state">Connecting…</span></div><div class="tabs">${["Trace", "Result", "Events", ...(s.compliance && role()==="administrator" ? ["Safety"] : [])].map((t) => `<button class="tab ${t === sessionTab ? "active" : ""}" data-tab="${t}">${t}</button>`).join("")}</div></div><div class="detail-layout"><section><div id="interactions">${interactions()}</div><div id="trace-content">${sessionContent()}</div><p class="small-note" id="event-note">Showing up to 500 recent events.</p></section><aside class="detail-side"><div><h3>Session</h3>${[
     ["Agent", snapshot.service?.releaseId || s.coworker],
     ["Model", s.model_selection?.model || s.model],
     ["Runtime profile", snapshot.service?.runtimeProfile || "—"],
@@ -593,6 +598,7 @@ async function render() {
               : {};
       html = settings(value);
     } else if (page === "sessions" && id) {
+      safetyActivity=null;
       snapshot = await api("/v1/sessions/" + id);
       eventCursor = Math.max(0, snapshot.cursor - 500);
       const result = await api(
@@ -616,7 +622,7 @@ async function render() {
     if (v !== version) return;
     main.innerHTML = html;
     $("#connection-label").textContent = "Connected";
-    if (page === "sessions" && id) connectStream(id, v);
+    if (page === "sessions" && id) {connectStream(id, v);if(sessionTab==="Safety")await loadSafety();}
   } catch (e) {
     if (v !== version || !auth) return;
     $("#connection-label").textContent = "Unavailable";
@@ -679,6 +685,8 @@ async function controls(action, { sid, runId }) {
   );
 }
 async function act(action) {
+  if(action==="resume-safety")return controls({kind:"resume_safety"},{sid:snapshot.session.id,runId:snapshot.turn.id});
+  if(action==="more-safety")return loadSafety(true);
   const [kind, ...rest] = action.split(":"),
     id = rest.join(":");
   if (kind === "refresh") return render();
@@ -958,6 +966,7 @@ document.addEventListener("click", async (e) => {
       for (const b of document.querySelectorAll("[data-tab]"))
         b.classList.toggle("active", b === tab);
       paintSessionContent();
+      if(sessionTab==="Safety")await loadSafety();
       return;
     }
     const t = e.target.closest("[data-settings-tab]");
@@ -1065,3 +1074,15 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+
+async function loadSafety(more=false){
+  const sid=snapshot.session.id,v=version;
+  const after=more?safetyActivity?.nextAfter??0:0;
+  try {
+    const [page,health]=await Promise.all([api(`/v1/compliance/sessions/${sid}/activities?after=${after}&limit=100`),api(`/v1/compliance/sessions/${sid}/delivery`)]);
+    if(version!==v||snapshot?.session.id!==sid)return;
+    const prior=more?safetyActivity?.activities??[]:[];
+    safetyActivity={...page,activities:[...prior,...page.activities],sinks:health.sinks};
+  }catch{if(version!==v||snapshot?.session.id!==sid)return;safetyActivity={error:"Safety activity is unavailable for this credential."};}
+  if(sessionTab==="Safety")paintSessionContent();
+}

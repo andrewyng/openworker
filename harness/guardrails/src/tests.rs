@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn context(text: &str, phase: Phase) -> Context {
     Context {
+        call_id: None,
         evaluation_id: "evaluation-1".into(),
         session_id: "session-1".into(),
         turn_id: Some("turn-1".into()),
@@ -403,4 +404,27 @@ async fn unchanged_callback_replacement_cannot_release_a_detected_secret() {
     )
     .await;
     assert!(matches!(e.block,Some(Decision::Block{code,..})if code=="SANITIZATION_INCOMPLETE"));
+}
+
+#[tokio::test]
+async fn callback_block_feedback_cannot_echo_matched_content_or_reason_code() {
+    let registry = registered(|c| {
+        Ok(Decision::Block {
+            code: c.text.clone(),
+            feedback_to_model: format!("Blocked because {}", c.text),
+        })
+    });
+    let config = config(vec![Rule::regex(
+        "secret",
+        "SECRET_[A-Z]+",
+        Action::Callback {
+            handler: handler_ref(),
+        },
+    )]);
+    let result = evaluate(&config, &registry, "SECRET_SENTINEL").await;
+    let decision = serde_json::to_string(&result.block).unwrap();
+    assert!(!decision.contains("SECRET_SENTINEL"));
+    assert!(!serde_json::to_string(&result.findings)
+        .unwrap()
+        .contains("SECRET_SENTINEL"));
 }

@@ -50,7 +50,12 @@ impl Store {
         )?;
         tx.execute(
             "INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",
-            params![sid, tid, "tool_finished", data.to_string()],
+            params![
+                sid,
+                tid,
+                "tool_finished",
+                crate::safety::public_internal_event(&s, data.clone()).to_string()
+            ],
         )?;
         let event = Event {
             event_id: tx.last_insert_rowid(),

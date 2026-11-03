@@ -35,12 +35,23 @@ impl CallbackTransport {
     pub async fn send(&self, method: &str, params: Value) -> Result<()> {
         if !matches!(
             method,
-            "application/result" | "application/progress" | "provider/auth/result"
+            "application/result"
+                | "application/progress"
+                | "provider/auth/result"
+                | "safety/result"
         ) {
             return Err(Error::InvalidInput("Unsupported callback control".into()));
         }
         match self {
             Self::Host(host) => {
+                if method == "safety/result" {
+                    host.upgrade()
+                        .ok_or(Error::Closed)?
+                        .safety_callbacks
+                        .respond(params)
+                        .map_err(|_| Error::Remote("Safety callback rejected".into()))?;
+                    return Ok(());
+                }
                 if method == "provider/auth/result" {
                     host.upgrade()
                         .ok_or(Error::Closed)?
@@ -144,6 +155,19 @@ impl Backend {
                 Error::Setup("Database credential environment variable missing".into())
             })?;
             command.env(connection_env, value);
+        }
+        for name in config.host.desktop.inherit_env.iter().chain(
+            config
+                .host
+                .desktop
+                .compliance_sinks
+                .iter()
+                .map(|s| &s.credential_env),
+        ) {
+            let value = std::env::var_os(name).ok_or_else(|| {
+                Error::Setup("Declared host environment reference unavailable".into())
+            })?;
+            command.env(name, value);
         }
         // Telemetry credentials are referenced by variable name only.
         for header in config.host.telemetry.iter().flat_map(|t| &t.headers) {

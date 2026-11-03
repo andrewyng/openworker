@@ -32,6 +32,12 @@ pub struct Interaction {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_safety_result: Option<Value>,
+    #[serde(default)]
+    pub safety: crate::safety::Config,
+    #[serde(default)]
+    pub safety_retries: u32,
     #[serde(default)]
     pub budget: crate::budget::State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,6 +72,12 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub safety_models: std::collections::BTreeMap<String, crate::connections::Selection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compliance: Option<crate::compliance::Config>,
+    #[serde(default)]
+    pub safety: crate::safety::Config,
     #[serde(default)]
     pub agent_team: Option<crate::agent_team::Membership>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,6 +187,43 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    fn pending_observers(&self, _sid: &str) -> Result<Vec<Value>> {
+        Ok(vec![])
+    }
+    fn settle_observer(&mut self, _sid: &str, _receipt: &Value, _success: bool) -> Result<()> {
+        bail!("Observer delivery unsupported")
+    }
+    fn compliance_sessions(&self, after: &str) -> Result<Vec<Session>> {
+        let mut s = self.list_metadata()?;
+        s.retain(|s| s.compliance.is_some() && s.id.as_str() > after);
+        s.sort_by(|a, b| a.id.cmp(&b.id));
+        s.truncate(100);
+        Ok(s)
+    }
+    fn claim_compliance_export(
+        &mut self,
+        _sid: &str,
+        _sink: &str,
+        _binding: &str,
+        _token: &str,
+    ) -> Result<Option<crate::compliance::delivery::Batch>> {
+        bail!("Compliance export unavailable")
+    }
+    fn settle_compliance_export(
+        &mut self,
+        _sid: &str,
+        _sink: &str,
+        _token: &str,
+        _success: bool,
+    ) -> Result<()> {
+        bail!("Compliance export unavailable")
+    }
+    fn compliance_delivery_health(&self, _sid: &str) -> Result<Value> {
+        bail!("Compliance export unavailable")
+    }
+    fn compliance_page(&self, _sid: &str, _query: crate::compliance::Query) -> Result<Value> {
+        bail!("Compliance query unsupported by storage adapter")
+    }
     fn supports_agent_teams(&self) -> bool {
         false
     }
@@ -316,6 +365,20 @@ pub trait StateStore: Send {
         );
         self.accept(sid, key, text)
     }
+    fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        anyhow::ensure!(
+            safety.is_none(),
+            "Storage adapter does not support turn safety overrides"
+        );
+        self.accept_with_limits(sid, key, text, limits)
+    }
     fn cursor(&self, sid: &str) -> Result<i64>;
     fn has_submission(&self, sid: &str, key: &str) -> Result<bool>;
     fn events(&self, sid: &str, after: i64) -> Result<Vec<Event>>;
@@ -335,12 +398,16 @@ pub struct Store {
 mod sqlite_agent_team;
 #[path = "sqlite_assistant.rs"]
 mod sqlite_assistant;
+#[path = "sqlite_compliance.rs"]
+mod sqlite_compliance;
+#[path = "sqlite_observers.rs"]
+mod sqlite_observers;
 #[path = "sqlite_teams.rs"]
 mod sqlite_teams;
 pub fn terminal(s: &str) -> bool {
     matches!(
         s,
-        "completed" | "failed" | "cancelled" | "interrupted" | "truncated"
+        "completed" | "failed" | "cancelled" | "interrupted" | "truncated" | "blocked"
     )
 }
 
@@ -356,7 +423,7 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
-            if version != 7 && !(version == 0 && tables == 0) {
+            if !(matches!(version, 7 | 8) || version == 0 && tables == 0) {
                 bail!("Incompatible runtime state schema {version}; use a fresh state directory. M1 migration is intentionally unsupported; existing data was not reset.");
             }
         }
@@ -385,11 +452,13 @@ impl Store {
             CREATE TABLE IF NOT EXISTS submissions(session_id TEXT, submission_id TEXT, text TEXT, turn_id TEXT, PRIMARY KEY(session_id,submission_id));
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL, turn_id TEXT,kind TEXT NOT NULL,data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS session_events ON events(session_id,id);
-            PRAGMA user_version=7;
+            PRAGMA user_version=8;
             COMMIT;")?;
         sqlite_teams::migrate(&db)?;
         sqlite_assistant::migrate(&db)?;
         sqlite_agent_team::migrate(&db)?;
+        sqlite_compliance::initialize(&db)?;
+        sqlite_observers::initialize(&db)?;
         Ok(Self { db, _lock: lock })
     }
     pub fn get(&self, id: &str) -> Result<Session> {
@@ -503,7 +572,14 @@ impl Store {
     pub fn append_event(&mut self, sid: &str, kind: &str, data: Value) -> Result<Event> {
         let s = self.metadata(sid)?;
         sqlite_teams::check(&self.db, &s, kind)?;
-        let tid = s.turn.map(|t| t.id);
+        let tid = s
+            .turn
+            .filter(|t| {
+                !(kind == "safety_evaluation"
+                    && data["phase"] == "userInput"
+                    && terminal(&t.status))
+            })
+            .map(|t| t.id);
         self.db.execute(
             "INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",
             params![sid, tid, kind, data.to_string()],
@@ -686,6 +762,20 @@ impl Store {
         text: &str,
         limits: Option<crate::budget::Limits>,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_safety(sid, key, text, limits, None)
+    }
+    pub fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        if let Some(config) = &safety {
+            config.validate()?;
+        }
+
         if let Some(l) = &limits {
             l.validate()?;
         }
@@ -697,7 +787,8 @@ impl Store {
         );
         if let Ok((old, tid)) = existing {
             let requested:Option<crate::budget::Limits>=self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",[&tid],|r|r.get::<_,String>(0)).optional()?.map(|raw|->Result<_>{Ok(serde_json::from_str::<Value>(&raw)?["limits"].clone())}).transpose()?.map(serde_json::from_value).transpose()?.flatten();
-            if old != text || requested != limits {
+            let requested_safety:Option<crate::safety::Config>=self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",[&tid],|r|r.get::<_,String>(0)).optional()?.map(|raw|->Result<_>{Ok(serde_json::from_str::<Value>(&raw)?["safety"].clone())}).transpose()?.filter(|v|!v.is_null()).map(serde_json::from_value).transpose()?;
+            if old != text || requested != limits || requested_safety != safety {
                 bail!("Submission ID reused with different text");
             }
             if s.turn.as_ref().is_some_and(|t| t.id == tid) {
@@ -707,6 +798,9 @@ impl Store {
             let event: Value = serde_json::from_str(&raw)?;
             // Return the original durable identity without altering current session state.
             s.turn = Some(Turn {
+                pending_safety_result: None,
+                safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
+                safety_retries: 0,
                 budget: crate::budget::State::new(s.package.limits.as_ref(), limits.clone())?,
                 observation: None,
                 id: tid,
@@ -734,6 +828,7 @@ impl Store {
         if let Some((next, _)) = self.team_next(sid)? {
             anyhow::ensure!(next == key, "Queued team work must be consumed first");
         }
+        crate::safety::reconcile_pending_result(&mut s);
         // Reconcile unresolved provider calls from an interrupted/failed run, without executing them.
         if let Some(t) = &s.turn {
             for c in &t.queue {
@@ -761,6 +856,9 @@ impl Store {
             member.waiting = None;
         }
         s.turn = Some(Turn {
+            pending_safety_result: None,
+            safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
+            safety_retries: 0,
             budget: crate::budget::State::new(s.package.limits.as_ref(), limits.clone())?,
             observation: None,
             id: crate::id("t"),
@@ -793,7 +891,7 @@ impl Store {
                 sid,
                 tid,
                 "turn_accepted",
-                json!({"limits":limits}).to_string()
+                json!({"limits":limits,"safety":safety}).to_string()
             ],
         )?;
         let e = Event {
@@ -801,7 +899,7 @@ impl Store {
             session_id: sid.into(),
             turn_id: Some(tid),
             kind: "turn_accepted".into(),
-            data: json!({"limits":limits}),
+            data: json!({"limits":limits,"safety":safety}),
         };
         tx.commit()?;
         Ok((s, true, Some(e)))
@@ -865,6 +963,9 @@ impl Store {
                         "interrupted"
                     }
                     .into();
+                    if let Some(receipt) = t.pending_safety_result.take() {
+                        s.history.push(json!({"type":"function_call_output","call_id":receipt["call_id"],"output":json!({"executed":true,"outputBlocked":true,"code":"INSPECTION_INTERRUPTED","message":"The internal operation completed, but its result was not released before restart. Do not repeat the action."}).to_string()}));
+                    }
                     // Match the PostgreSQL recovery contract. Delivery loss is
                     // not proof of failure: a started call without a durable
                     // result becomes model-visible unknown, never replayable.
@@ -898,6 +999,36 @@ impl Store {
 }
 
 impl StateStore for Store {
+    fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
+        Store::pending_observers(self, sid)
+    }
+    fn settle_observer(&mut self, sid: &str, receipt: &Value, success: bool) -> Result<()> {
+        Store::settle_observer(self, sid, receipt, success)
+    }
+    fn claim_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        binding: &str,
+        token: &str,
+    ) -> Result<Option<crate::compliance::delivery::Batch>> {
+        Store::claim_compliance_export(self, sid, sink, binding, token)
+    }
+    fn settle_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        token: &str,
+        success: bool,
+    ) -> Result<()> {
+        Store::settle_compliance_export(self, sid, sink, token, success)
+    }
+    fn compliance_delivery_health(&self, sid: &str) -> Result<Value> {
+        Store::compliance_delivery_health(self, sid)
+    }
+    fn compliance_page(&self, sid: &str, query: crate::compliance::Query) -> Result<Value> {
+        Store::compliance_page(self, sid, query)
+    }
     fn supports_agent_teams(&self) -> bool {
         true
     }
@@ -1026,6 +1157,16 @@ impl StateStore for Store {
         limits: Option<crate::budget::Limits>,
     ) -> Result<(Session, bool, Option<Event>)> {
         Store::accept_with_limits(self, sid, key, text, limits)
+    }
+    fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        Store::accept_with_safety(self, sid, key, text, limits, safety)
     }
     fn cursor(&self, sid: &str) -> Result<i64> {
         Store::cursor(self, sid)

@@ -43,6 +43,8 @@ pub struct Interruption {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum InterruptionKind {
+    /// Required check unavailable. Restore its handler/service, then resume_safety.
+    Safety { code: String },
     /// A tool call awaiting approval. `tool` is the model-facing alias
     /// (`provider__tool`); `category` is the engine's effect classification.
     Approval {
@@ -59,7 +61,11 @@ pub enum InterruptionKind {
 impl Interruption {
     fn from_wire(v: &Value) -> Option<Self> {
         let s = |k: &str| v[k].as_str().map(str::to_owned);
-        let kind = if v["kind"] == "approval" {
+        let kind = if v["kind"] == "safety" {
+            InterruptionKind::Safety {
+                code: s("code").unwrap_or_else(|| "GUARDRAIL_UNAVAILABLE".into()),
+            }
+        } else if v["kind"] == "approval" {
             InterruptionKind::Approval {
                 tool: s("tool").unwrap_or_default(),
                 arguments: v["arguments"].clone(),
@@ -310,6 +316,46 @@ impl Run {
 }
 
 impl Session {
+    /// Metadata only: text, tool arguments/results and credentials are omitted.
+    pub async fn compliance_delivery_health(&self) -> Result<serde_json::Value> {
+        self.client
+            .request(
+                "compliance/delivery-health",
+                json!({"session_id":self.id()}),
+            )
+            .await
+    }
+    pub async fn compliance_activity(
+        &self,
+        query: crate::compliance::Query,
+    ) -> Result<serde_json::Value> {
+        let mut p =
+            serde_json::to_value(query).map_err(|e| crate::Error::InvalidInput(e.to_string()))?;
+        p["session_id"] = json!(self.id());
+        self.client.request("compliance/read", p).await
+    }
+    pub async fn resume_safety(&self) -> Result<()> {
+        self.client
+            .request("safety/resume", json!({"session_id":self.id()}))
+            .await?;
+        Ok(())
+    }
+    pub async fn send_with_options(&self, text: &str, options: crate::TurnOptions) -> Result<Run> {
+        let id = options
+            .submission_id
+            .unwrap_or_else(|| openworker_runtime::id("sub"));
+        if options.safety.is_some() && self.client.info()["capabilities"]["guardrails"] != true {
+            return Err(Error::Setup(
+                "This harness build does not support guardrails".into(),
+            ));
+        }
+        let started=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety})).await?;
+        Ok(Run {
+            session: self.clone(),
+            submission: id,
+            cursors: started["cursors"].as_object().cloned().unwrap_or_default(),
+        })
+    }
     pub async fn send(&self, input: impl Into<SessionInput>) -> Result<Run> {
         let input = input.into();
         if let SessionInput::Message { text } = &input {

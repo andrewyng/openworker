@@ -694,6 +694,10 @@ impl Session {
             submission_id: submission.into(),
         })
     }
+    pub async fn resume_safety(&self, run: &str, key: Option<&str>) -> Result<Value> {
+        self.control(run, json!({"kind":"resume_safety"}), key)
+            .await
+    }
     pub async fn control(&self, run: &str, action: Value, key: Option<&str>) -> Result<Value> {
         let generated = openworker_runtime::id("idem");
         self.service
@@ -750,7 +754,7 @@ impl Run {
                     let end = event.kind == "turn_completed" ||
                         (event.kind == "turn_recovered" && matches!(event.data["status"].as_str(),
                             Some("failed" | "cancelled" | "interrupted" | "truncated")));
-                    let check = event.kind == "interaction_required";
+                    let check = matches!(event.kind.as_str(),"interaction_required"|"safety_waiting");
                     yield event;
                     if end { break; }
                     if check && run.snapshot().await?.status == "interrupted" { break; }

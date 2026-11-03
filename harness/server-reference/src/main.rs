@@ -306,6 +306,18 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             .await?;
         }
         Command::Api { node, listen } => {
+            if !config.recovery_read_only {
+                anyhow::ensure!(
+                    config.compliance_sinks.is_empty() || config.compliance.is_some(),
+                    "Enable compliance before export"
+                );
+                openworker_runtime::compliance_export::start(
+                    std::sync::Arc::new(std::sync::Mutex::new(Box::new(store.clone()))),
+                    config.compliance_sinks.clone(),
+                    stop.child_token(),
+                )?;
+            }
+
             if let Some(options) = &config.operational_metrics {
                 options.validate()?;
                 anyhow::ensure!(

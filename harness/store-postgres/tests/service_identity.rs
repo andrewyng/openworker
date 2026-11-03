@@ -16,8 +16,11 @@ fn persisted_binding_cannot_change_and_restore_verification_does_not_write() {
     assert!(store.bind_service("other", "namespace").is_err());
     assert!(store.bind_service("cluster", "other").is_err());
     let mut db = postgres::Client::connect(&config.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", config.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        config.schema
+    ))
+    .unwrap();
     db.batch_execute("CREATE FUNCTION reject_identity_writes() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'read-only fixture'; END $$; CREATE TRIGGER reject_identity_writes BEFORE INSERT OR UPDATE ON service_identity FOR EACH ROW EXECUTE FUNCTION reject_identity_writes()").unwrap();
     assert!(store.bind_service("cluster", "namespace").is_err());
     // A database error poisons the connection by design; restoration opens a

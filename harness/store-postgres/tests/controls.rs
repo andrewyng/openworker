@@ -53,8 +53,11 @@ fn fixture() -> (Config, PostgresStore, Command) {
 }
 fn admin(c: &Config) -> postgres::Client {
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     db
 }
 fn applied(owner: &mut PostgresStore, c: &Command) -> anyhow::Result<()> {
@@ -429,4 +432,66 @@ fn takeover_preserves_pending_decision_and_rejects_old_owner() {
     assert!(new
         .append_event("s_ctl", "tool_started", Value::Null)
         .is_err());
+}
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn safety_resume_is_durable_scoped_and_does_not_override_cancellation() {
+    let (config, mut owner, mut command) = fixture();
+    let api = PostgresStore::open(config.clone()).unwrap();
+    let mut s = owner.get("s_ctl").unwrap();
+    s.interactions.clear();
+    s.turn.as_mut().unwrap().queue.clear();
+    s.turn.as_mut().unwrap().status = "waiting_safety".into();
+    owner
+        .save(
+            &s,
+            "safety_waiting",
+            json!({"code":"GUARDRAIL_UNAVAILABLE"}),
+        )
+        .unwrap();
+    let result = api.service_run("s_ctl", "turn").unwrap();
+    assert_eq!(result["status"], "interrupted");
+    assert_eq!(result["interruptions"][0]["kind"], "safety");
+    command.action = Action::ResumeSafety;
+    command.request_id = "resume-one".into();
+    api.submit_control(command.clone()).unwrap();
+    let mut s = owner.get("s_ctl").unwrap();
+    s.turn.as_mut().unwrap().status = "accepted".into();
+    owner
+        .save(
+            &s,
+            "safety_resumed",
+            json!({"control_request_id":command.request_id,"actor":command.actor}),
+        )
+        .unwrap();
+    assert_eq!(
+        api.control_receipt("s_ctl", "resume-one").unwrap().status,
+        Status::Applied
+    );
+    let mut s = owner.get("s_ctl").unwrap();
+    s.turn.as_mut().unwrap().status = "waiting_safety".into();
+    owner.save(&s, "safety_waiting", json!({})).unwrap();
+    command.request_id = "resume-two".into();
+    api.submit_control(command.clone()).unwrap();
+    let mut cancel = command.clone();
+    cancel.request_id = "cancel-priority".into();
+    cancel.action = Action::Cancel;
+    api.submit_control(cancel).unwrap();
+    let mut s = owner.get("s_ctl").unwrap();
+    s.turn.as_mut().unwrap().status = "accepted".into();
+    assert!(owner
+        .save(
+            &s,
+            "safety_resumed",
+            json!({"control_request_id":command.request_id,"actor":command.actor})
+        )
+        .is_err());
+    assert_eq!(
+        api.control_receipt("s_ctl", "resume-two").unwrap().status,
+        Status::Pending
+    );
+    admin(&config)
+        .batch_execute(&format!("DROP SCHEMA {} CASCADE", config.schema))
+        .unwrap();
 }

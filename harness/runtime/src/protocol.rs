@@ -68,7 +68,8 @@ pub async fn serve_endpoint(rt: impl Endpoint + 'static) -> Result<()> {
                             if let Some(
                                 method @ ("application/result"
                                 | "application/progress"
-                                | "provider/auth/result"),
+                                | "provider/auth/result"
+                                | "safety/result"),
                             ) = v["method"].as_str()
                             {
                                 let _ =

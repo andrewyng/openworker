@@ -465,20 +465,26 @@ impl Store {
             "INSERT INTO team_commands VALUES(?,?,?,?)",
             params![id, key, call.to_string(), output.to_string()],
         )?;
-        s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
-        s.turn.as_mut().unwrap().queue.remove(0);
+        if !crate::safety::hold_internal_result(&mut s, call) {
+            s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
+            s.turn.as_mut().unwrap().queue.remove(0);
+        }
         Self::append_history(&tx, &s)?;
         tx.execute(
             "UPDATE sessions SET data=? WHERE id=?",
             params![serde_json::to_string(&s)?, sid],
         )?;
-        let event = record(
+        let mut event = record(
             &tx,
             sid,
             Some(tid),
             "tool_finished",
-            json!({"name":name,"call_id":call["call_id"],"result":output,"execution_kind":"internal","team_id":id,"enforcement":"team-role-and-session-scope"}),
+            crate::safety::public_internal_event(
+                &s,
+                json!({"name":name,"call_id":call["call_id"],"result":output,"execution_kind":"internal","team_id":id,"enforcement":"team-role-and-session-scope"}),
+            ),
         )?;
+        event.data["result"] = output;
         tx.commit()?;
         Ok(event)
     }

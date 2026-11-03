@@ -207,6 +207,7 @@ pub enum Operation {
     QuestionWait,
     Tool,
     Policy,
+    SafetyCheck,
     Environment,
     Storage,
     Worker,
@@ -240,7 +241,7 @@ impl Operation {
             Self::Model => "generation",
             Self::Turn => "agent",
             Self::Tool => "tool",
-            Self::Policy => "guardrail",
+            Self::Policy | Self::SafetyCheck => "guardrail",
             Self::ModelStarted
             | Self::ApprovalRequested
             | Self::ApprovalResolved
@@ -268,6 +269,7 @@ impl Operation {
             Self::QuestionWait => "question.wait",
             Self::Tool => "tool.execute",
             Self::Policy => "policy.review",
+            Self::SafetyCheck => "safety.check",
             Self::Environment => "environment.operation",
             Self::Storage => "storage.call",
             Self::Worker => "worker.activation",

@@ -301,6 +301,11 @@ pub fn finish(
         }
         Err(e) => json!({"isError":true,"message":e.to_string()}),
     };
+    if crate::safety::hold_internal_result(s, call) {
+        return Ok(
+            json!({"name":call["name"],"call_id":call["call_id"],"result":output,"execution_kind":"internal","enforcement":"application-scoped-durable-state"}),
+        );
+    }
     s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":output.to_string()}));
     let t = s.turn.as_mut().unwrap();
     t.queue.remove(0);

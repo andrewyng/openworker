@@ -1,5 +1,5 @@
 [workspace]
-members = ["guardrails", "runtime", "git-broker", "artifacts", "telemetry", "observability", "tools-sdk", "harness-sdk", "store-postgres", "server-reference", "service-cli", "examples/notification-tools", "examples/device-tools", "examples/computer-tools", "examples/native-tools-runtime"]
+members = ["security-adapters", "compliance", "guardrails", "runtime", "git-broker", "artifacts", "telemetry", "observability", "tools-sdk", "harness-sdk", "store-postgres", "server-reference", "service-cli", "examples/notification-tools", "examples/device-tools", "examples/computer-tools", "examples/native-tools-runtime"]
 resolver = "2"
 
 [workspace.package]

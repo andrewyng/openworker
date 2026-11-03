@@ -39,6 +39,8 @@ export class Transport {
   >();
   private applicationRegistrations: unknown[] = [];
   private providerAuthRegistrations = new Map<string, unknown>();
+  private safetyRegistrations = new Map<string, unknown>();
+  rememberSafetyRegistration(key:string,value:unknown,method="safety/register"):void{this.safetyRegistrations.set(key,{method,value:structuredClone(value)});}
   rememberProviderAuth(name: string, value: unknown): void {
     this.providerAuthRegistrations.set(name, structuredClone(value));
   }
@@ -64,6 +66,7 @@ export class Transport {
         "application/result",
         "application/progress",
         "provider/auth/result",
+        "safety/result",
       ].includes(method)
     )
       throw new HarnessError("InvalidInput", "Unsupported callback control");
@@ -143,12 +146,14 @@ export class Transport {
       throw new HarnessError("InvalidInput", "Invalid bounded restart policy");
     }
   }
-  static async start(options: HarnessOptions): Promise<Transport> {
+  static async start(options: HarnessOptions, safety?: unknown): Promise<Transport> {
     const resolved = resolveOptions(options);
     // Provider credentials never belong in persisted launch configuration.
     delete resolved.modelProviders;
     const transport = new Transport(structuredClone(resolved));
-    const config = JSON.stringify(hostConfig(resolved));
+    const launch=hostConfig(resolved) as {desktop:Record<string,unknown>};
+    if(safety!==undefined)launch.desktop.safety=safety;
+    const config = JSON.stringify(launch);
     environment(resolved); // Reject missing declarations before spawning.
     transport.directory = await mkdtemp(join(tmpdir(), "openworker-ts-"));
     transport.configPath = join(transport.directory, "host.json");
@@ -365,6 +370,7 @@ export class Transport {
     this.info = info;
     for (const registration of this.applicationRegistrations)
       await this.call("application/register", registration);
+    for (const registration of this.safetyRegistrations.values()){const r=registration as {method:string;value:unknown};await this.call(r.method,r.value);}
     for (const registration of this.providerAuthRegistrations.values())
       await this.call("provider/auth/register", registration);
     initialized = true;

@@ -721,6 +721,7 @@ export class ServiceSession {
     );
     return new ServiceRun(this.service, this.ref, r.submissionId, r.runId);
   }
+  async resumeSafety(runId:string,idempotencyKey?:string):Promise<any>{return this.control(runId,{kind:"resume_safety"},{idempotencyKey});}
   async resumeRun(submissionId: string): Promise<ServiceRun> {
     const r = await this.service.json(
       "GET",
@@ -788,6 +789,7 @@ export class ServiceRun {
           "approval_requested",
           "question_requested",
           "interaction_required",
+          "safety_waiting",
         ].includes(event.type)
       ) {
         if ((await this.snapshot()).status === "interrupted") return;

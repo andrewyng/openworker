@@ -10,6 +10,9 @@ use serde_json::{json, Value};
 
 fn session() -> Session {
     Session {
+        safety_models: Default::default(),
+        compliance: None,
+        safety: Default::default(),
         agent_team: None,
         environment: None,
         managed_workspace: None,
@@ -435,4 +438,25 @@ fn resilience_recovery_distinguishes_unstarted_and_already_completed_calls() {
             .iter()
             .any(|v| v.to_string().contains("tool_outcome_unknown")));
     }
+}
+
+#[test]
+fn safety_schema_upgrade_preserves_existing_sessions_and_fences_old_readers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path()).unwrap();
+    let s = session();
+    store.save(&s, "session_created", json!({})).unwrap();
+    drop(store);
+    let path = dir.path().join("runtime.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("PRAGMA user_version=7;").unwrap();
+    drop(db);
+    let store = Store::open(dir.path()).unwrap();
+    assert_eq!(store.get(&s.id).unwrap().id, s.id);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 8); // The old runtime accepts only 7.
+    assert_eq!(store.events(&s.id, 0).unwrap().len(), 1);
 }

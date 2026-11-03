@@ -262,7 +262,7 @@ pub(crate) async fn admit(
 pub(crate) async fn admit_kind(
     app: App,
     headers: HeaderMap,
-    input: Admission,
+    mut input: Admission,
     kind: &str,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let release = app.store.catalog_get("release", &input.agent)?;
@@ -302,13 +302,14 @@ pub(crate) async fn admit_kind(
     let p: Profile =
         serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
     let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
-    let op = app.store.service_admit(
-        &crate::service::key(&app, &headers, kind)?,
-        input,
-        release,
-        profile,
-        spec,
-    )?;
+    let request = crate::service::key(&app, &headers, kind)?;
+    if let Some(text) = &input.initial_message {
+        input.initial_message =
+            Some(crate::service_safety::inspect(&app, None, &request, text).await?);
+    }
+    let op = app
+        .store
+        .service_admit(&request, input, release, profile, spec)?;
     Ok((
         if op.status == "complete" {
             StatusCode::OK

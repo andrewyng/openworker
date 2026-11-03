@@ -107,7 +107,7 @@ impl Database {
               pending AS (SELECT i->>'kind' AS kind FROM s CROSS JOIN LATERAL jsonb_array_elements(s.data->'interactions') i
                 WHERE s.state IN ('waiting','recoverable') AND i->>'response' IS NULL AND i->>'turn_id'=s.data->'turn'->>'id')
               SELECT (SELECT count(*) FROM s),
-                (SELECT count(*) FROM s WHERE state NOT IN ('idle','waiting','recoverable','completed','failed','cancelled','interrupted','truncated')),
+                (SELECT count(*) FROM s WHERE state NOT IN ('idle','waiting','recoverable','completed','failed','cancelled','interrupted','truncated','blocked')),
                 (SELECT count(*) FROM submissions q JOIN s ON s.id=q.session_id WHERE q.status='queued'),
                 (SELECT count(*) FROM controls c JOIN s ON s.id=c.session_id WHERE c.status='pending'),
                 (SELECT count(*) FROM pending WHERE kind='approval'),(SELECT count(*) FROM pending WHERE kind='question')", &[&digest])?;

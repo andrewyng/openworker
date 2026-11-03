@@ -44,7 +44,7 @@ pub(crate) fn before_event(
     verify(tx, &s.id)?;
     if matches!(
         kind,
-        "tool_started" | "model_request" | "interaction_resolved"
+        "tool_started" | "model_request" | "interaction_resolved" | "safety_resumed"
     ) && cancel_pending(tx, s)?
     {
         bail!("Cancellation intent pending; new work refused");
@@ -64,7 +64,10 @@ pub(crate) fn before_event(
     let Some(key) = data["control_request_id"].as_str() else {
         return Ok(());
     };
-    if !matches!(kind, "interaction_resolved" | "turn_cancelling") {
+    if !matches!(
+        kind,
+        "interaction_resolved" | "turn_cancelling" | "safety_resumed"
+    ) {
         return Ok(());
     }
     let saved = record(
@@ -102,6 +105,11 @@ pub(crate) fn before_event(
                 || i.resource_policy_digest != binding.resource_policy_digest
             {
                 bail!("Control application mismatch");
+            }
+        }
+        Action::ResumeSafety => {
+            if kind != "safety_resumed" || t.status != "accepted" {
+                bail!("Safety resume mismatch");
             }
         }
         Action::Cancel => {
@@ -162,10 +170,11 @@ impl Database {
         {
             return Err(crate::SubmissionError::ControlConflict.into());
         }
+        if matches!(command.action,Action::ResumeSafety) && tx.query_one("SELECT EXISTS(SELECT 1 FROM controls WHERE session_id=$1 AND turn_id=$2 AND status='pending' AND command->'action'->>'kind'='resume_safety')",&[&s.id,&command.turn_id])?.get::<_,bool>(0){return Err(crate::SubmissionError::ControlConflict.into());}
         command
             .check_saved(&s)
             .map_err(|_| crate::SubmissionError::ControlConflict)?;
-        if matches!(command.action, Action::Response { .. }) && cancel_pending(&mut tx, &s)? {
+        if !matches!(command.action, Action::Cancel) && cancel_pending(&mut tx, &s)? {
             return Err(crate::SubmissionError::ControlConflict.into());
         }
         let count: i64 = tx

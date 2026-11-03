@@ -36,6 +36,7 @@ pub(crate) fn validate_id(value: &str, limit: usize) -> Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubmissionStatus {
+    Blocked,
     Queued,
     Started,
     Completed,

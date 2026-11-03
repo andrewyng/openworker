@@ -30,6 +30,18 @@ mod service_team_workspaces;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub security_scanners: Vec<serde_json::Value>,
+    #[serde(skip)]
+    scanner_bindings: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>,
+    #[serde(default)]
+    pub safety: openworker_runtime::safety::Config,
+    #[serde(skip)]
+    pub safety_handlers: std::sync::Arc<openworker_runtime::safety::Registry>,
+    #[serde(default)]
+    pub compliance: Option<openworker_runtime::compliance::Config>,
+    #[serde(default)]
+    pub compliance_sinks: Vec<openworker_runtime::compliance_export::Sink>,
     /// Build-time partner tools. Descriptors are pinned; functions are never
     /// loaded from configuration files or supplied by an agent.
     #[serde(skip)]
@@ -245,6 +257,9 @@ impl Config {
             Some(Box::new(store)),
             telemetry,
         )?;
+        self.install_security_scanners()?;
+        Runtime::configure_safety(&mut rt, self.safety.clone(), self.safety_handlers.clone())?;
+        Runtime::configure_compliance(&mut rt, self.compliance.clone())?;
         if !self.recovery_read_only {
             anyhow::ensure!(
                 self.model_connections.len() <= 16,
@@ -262,7 +277,8 @@ impl Config {
                             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'),
                     "Invalid or duplicate model connection"
                 );
-                if load_credentials {
+                let guard_connection=self.safety.guardrails.user_input.iter().any(|r|matches!(&r.detector,openworker_runtime::safety::Detector::Model{model,..} if model.connection==connection.id));
+                if load_credentials || guard_connection {
                     let key = std::env::var(&connection.key_env)
                         .context("Configured model credential environment variable missing")?;
                     rt.connections.register_host(
@@ -322,5 +338,51 @@ mod recovery_tests {
         );
         #[cfg(not(windows))]
         assert!(c.provider().is_err());
+    }
+}
+
+mod service_safety;
+
+impl Config {
+    fn install_security_scanners(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.security_scanners.len() <= 16,
+            "Too many security scanners"
+        );
+        #[cfg(not(feature = "security-adapters"))]
+        {
+            let _ = &self.scanner_bindings;
+            anyhow::ensure!(
+                self.security_scanners.is_empty(),
+                "Security adapters not included in this build"
+            );
+        }
+        #[cfg(feature = "security-adapters")]
+        {
+            let mut bound = self.scanner_bindings.lock().unwrap();
+            for registration in &self.security_scanners {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Registration {
+                    handler: openworker_runtime::safety::HandlerRef,
+                    config: openworker_security_adapters::Config,
+                }
+                let registration: Registration = serde_json::from_value(registration.clone())?;
+                registration.handler.validate()?;
+                let key = serde_json::to_string(&registration.handler)?;
+                let binding =
+                    openworker_runtime::bundle::digest(&serde_json::to_vec(&registration.config)?);
+                if let Some(existing) = bound.get(&key) {
+                    anyhow::ensure!(existing == &binding, "Security adapter binding changed");
+                    continue;
+                }
+                let scanner =
+                    openworker_security_adapters::Scanner::from_environment(registration.config)?;
+                self.safety_handlers
+                    .register(registration.handler, std::sync::Arc::new(scanner))?;
+                bound.insert(key, binding);
+            }
+        }
+        Ok(())
     }
 }

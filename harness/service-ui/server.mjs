@@ -33,7 +33,7 @@ function endpoint(raw, allowInternalHttp = false) {
 export function allowed(method, path) {
   // Search text is URL encoded; path IDs remain strictly unencoded. This is
   // deliberately not a generic proxy or an arbitrary query passthrough.
-  if (method === "GET" && allowedRecording(path)) return true;
+  if (method === "GET" && (allowedRecording(path)||allowedCompliance(path))) return true;
   if (!/^\/v1\/[A-Za-z0-9_@./?=&-]+$/.test(path) || path.includes(".."))
     return false;
   const u = new URL(path, "http://local");
@@ -86,6 +86,14 @@ export function allowed(method, path) {
       new RegExp(`^/v1/environments/${id}/delete$`).test(p) ||
       new RegExp(`^/v1/sessions/${id}/(turns|controls|close)$`).test(p))
   );
+}
+function allowedCompliance(path){
+ if(path.length>1000||path.includes("#"))return false;
+ const u=new URL(path,"http://local");
+ if(u.pathname+u.search!==path||!new RegExp(`^/v1/compliance/sessions/${id}/(activities|delivery)$`).test(u.pathname))return false;
+ if(u.pathname.endsWith("/delivery"))return !u.search;
+ const keys=new Set();for(const [k,v] of u.searchParams){if(keys.has(k))return false;keys.add(k);if(k==="after"&&/^\d{1,15}$/.test(v))continue;if(k==="limit"&&/^[1-9]\d{0,2}$/.test(v)&&Number(v)<=500)continue;return false;}
+ return true;
 }
 function allowedRecording(path) {
   if (path.length > 4000 || path.includes("#")) return false;
@@ -475,6 +483,7 @@ export async function start(config) {
         "/": ["index.html", "text/html"],
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
+        "/compliance.js": ["compliance.js", "text/javascript"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],

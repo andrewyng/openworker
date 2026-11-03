@@ -28,8 +28,11 @@ fn fixture() -> (Config, PostgresStore, PostgresStore) {
 }
 fn sql(c: &Config) -> postgres::Client {
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     db
 }
 fn issue(admin: &PostgresStore, key: &str, principal: &str, role: Role, scope: Scope) -> String {

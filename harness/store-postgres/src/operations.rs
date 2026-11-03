@@ -28,7 +28,7 @@ impl Database {
         let r=self.client.query_one("WITH current_sessions AS MATERIALIZED (
           SELECT id,data,COALESCE(data->'turn'->>'status','idle') AS state FROM sessions WHERE NOT (data->>'closed')::boolean
         ), active AS MATERIALIZED (
-          SELECT * FROM current_sessions WHERE state NOT IN ('idle','waiting','recoverable','completed','failed','cancelled','interrupted','truncated')
+          SELECT * FROM current_sessions WHERE state NOT IN ('idle','waiting','recoverable','completed','failed','cancelled','interrupted','truncated','blocked')
         ), waiting AS (
           SELECT i->>'kind' AS kind FROM current_sessions s CROSS JOIN LATERAL jsonb_array_elements(s.data->'interactions') i
           WHERE s.state IN ('waiting','recoverable') AND i->>'response' IS NULL AND i->>'turn_id'=s.data->'turn'->>'id'

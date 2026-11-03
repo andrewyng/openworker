@@ -32,8 +32,11 @@ fn postgres_atomic_memory_rollback() {
     let args = json!({"summary":"Fact","content":"must roll back"});
     let (tid, call) = contract::prepare(&mut s, "a", "memory_remember", &args);
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     db.batch_execute("CREATE FUNCTION reject_memory_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$; CREATE TRIGGER reject_memory_event BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION reject_memory_event();").unwrap();
     assert!(s.assistant_call("a", &tid, &call, &args).is_err());
     assert_eq!(
@@ -114,7 +117,7 @@ fn fenced_owner_cannot_mutate_memory() {
     let args = json!({"summary":"fenced","content":"must not commit"});
     let (tid, call) = contract::prepare(&mut old, "a", "memory_remember", &args);
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog; UPDATE sessions SET expires=clock_timestamp()-interval '1 second' WHERE id='a'", c.schema)).unwrap();
+    db.batch_execute(&format!("SET ow.runtime_schema='6'; SET search_path={},pg_catalog; UPDATE sessions SET expires=clock_timestamp()-interval '1 second' WHERE id='a'", c.schema)).unwrap();
     let mut next = PostgresStore::open(c).unwrap();
     next.claim("a").unwrap();
     assert!(old.assistant_call("a", &tid, &call, &args).is_err());

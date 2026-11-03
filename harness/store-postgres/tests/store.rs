@@ -22,8 +22,11 @@ fn session(id: &str) -> Session {
 }
 fn admin(c: &Config) -> postgres::Client {
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET search_path={},pg_catalog", c.schema))
-        .unwrap();
+    db.batch_execute(&format!(
+        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        c.schema
+    ))
+    .unwrap();
     db
 }
 fn expire(c: &Config, sid: &str) {

@@ -24,6 +24,24 @@ pub struct HarnessBuilder {
 }
 
 impl HarnessBuilder {
+    pub fn inherit_env(mut self, name: impl Into<String>) -> Self {
+        self.desktop.inherit_env.push(name.into());
+        self
+    }
+
+    pub fn compliance_sink(mut self, sink: openworker_runtime::compliance_export::Sink) -> Self {
+        self.desktop.compliance.get_or_insert_with(Default::default);
+        self.desktop.compliance_sinks.push(sink);
+        self
+    }
+    pub fn compliance(mut self, config: openworker_runtime::compliance::Config) -> Self {
+        self.desktop.compliance = Some(config);
+        self
+    }
+    pub fn safety(mut self, config: crate::guardrails::Config) -> Self {
+        self.desktop.safety = config;
+        self
+    }
     pub fn model_provider(mut self, provider: crate::ModelProvider) -> Self {
         self.providers.push(provider);
         self
@@ -205,6 +223,7 @@ pub struct Harness {
     agents: Vec<String>,
     application_tools: std::sync::Arc<crate::application_tools::ApplicationTools>,
     provider_auth: std::sync::Arc<crate::provider_callbacks::ClientAuth>,
+    safety_callbacks: std::sync::Arc<crate::safety_callbacks::ClientSafety>,
 }
 
 impl Harness {
@@ -262,16 +281,41 @@ impl Harness {
             .collect();
         let application_tools = crate::application_tools::ApplicationTools::new(&client);
         let provider_auth = crate::provider_callbacks::ClientAuth::new(&client);
+        let safety_callbacks = crate::safety_callbacks::ClientSafety::new(&client);
         Ok(Self {
             client,
             agents,
             application_tools,
             provider_auth,
+            safety_callbacks,
         })
     }
     /// The underlying protocol client, for anything this layer does not wrap.
     pub fn client(&self) -> &HarnessClient {
         &self.client
+    }
+    #[cfg(feature = "security-adapters")]
+    pub async fn register_security_adapter(
+        &self,
+        reference: crate::guardrails::HandlerRef,
+        config: crate::security_adapters::Config,
+    ) -> Result<()> {
+        let mut wire = json!({"handler":reference,"config":config});
+        self.client
+            .request("safety/register-adapter", wire.clone())
+            .await?;
+        wire["_method"] = json!("safety/register-adapter");
+        self.client.inner.registrations.lock().unwrap().push(wire);
+        Ok(())
+    }
+    pub async fn register_safety_handler(
+        &self,
+        reference: crate::guardrails::HandlerRef,
+        handler: std::sync::Arc<dyn crate::guardrails::Handler>,
+    ) -> Result<()> {
+        self.safety_callbacks
+            .register(&self.client, reference, handler)
+            .await
     }
     pub async fn register_tools(
         &self,
@@ -367,6 +411,7 @@ impl Harness {
     /// Deterministic cleanup. Await before dropping your Tokio runtime.
     pub async fn shutdown(&self) -> Result<()> {
         self.provider_auth.stop();
+        self.safety_callbacks.stop();
         self.application_tools.stop();
         self.client.shutdown().await
     }

@@ -4,10 +4,13 @@ pub use agent_team::WorkspaceJob;
 mod artifacts;
 mod assistant;
 pub mod auth;
+mod compliance;
 mod controls;
 mod db;
 mod environments;
 mod ingress;
+mod input_safety;
+mod observers;
 mod operations;
 pub mod pools;
 pub mod run_query;
@@ -532,6 +535,54 @@ fn sanitize(e: anyhow::Error) -> anyhow::Error {
 }
 
 impl StateStore for PostgresStore {
+    fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
+        let sid = sid.to_owned();
+        self.call(move |db| db.pending_observers(&sid))
+    }
+    fn settle_observer(&mut self, sid: &str, receipt: &Value, success: bool) -> Result<()> {
+        let sid = sid.to_owned();
+        let receipt = receipt.clone();
+        self.call(move |db| db.settle_observer(&sid, &receipt, success))
+    }
+    fn compliance_sessions(&self, after: &str) -> Result<Vec<Session>> {
+        let after = after.to_owned();
+        self.call(move |db| db.compliance_sessions(&after))
+    }
+    fn claim_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        binding: &str,
+        token: &str,
+    ) -> Result<Option<openworker_runtime::compliance::delivery::Batch>> {
+        let (sid, sink, binding, token) = (
+            sid.to_owned(),
+            sink.to_owned(),
+            binding.to_owned(),
+            token.to_owned(),
+        );
+        self.call(move |db| db.claim_compliance_export(&sid, &sink, &binding, &token))
+    }
+    fn settle_compliance_export(
+        &mut self,
+        sid: &str,
+        sink: &str,
+        token: &str,
+        success: bool,
+    ) -> Result<()> {
+        let (sid, sink, token) = (sid.to_owned(), sink.to_owned(), token.to_owned());
+        self.call(move |db| db.settle_compliance_export(&sid, &sink, &token, success))
+    }
+    fn compliance_delivery_health(&self, sid: &str) -> Result<Value> {
+        PostgresStore::compliance_delivery_health(self, sid)
+    }
+    fn compliance_page(
+        &self,
+        sid: &str,
+        q: openworker_runtime::compliance::Query,
+    ) -> Result<Value> {
+        PostgresStore::compliance_page(self, sid, q)
+    }
     fn supports_agent_teams(&self) -> bool {
         true
     }
@@ -727,6 +778,17 @@ impl StateStore for PostgresStore {
     ) -> Result<(Session, bool, Option<Event>)> {
         let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
         self.call(move |d| d.accept_with_limits(&sid, &key, &text, limits))
+    }
+    fn accept_with_safety(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        safety: Option<openworker_runtime::safety::Config>,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
+        self.call(move |d| d.accept_with_safety(&sid, &key, &text, limits, safety))
     }
     fn cursor(&self, sid: &str) -> Result<i64> {
         let sid = sid.to_owned();
