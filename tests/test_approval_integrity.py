@@ -105,13 +105,15 @@ def test_provider_change_clears_web_search_session_grant(manager):
     eng = NS(permissions=NS(session_allow_tools={"web_search", "run_shell_x"}))
     manager._engines["s15"] = eng
     before = manager.get_web_search()["provider"]
-    other = next(p for p in manager.get_web_search()["providers"] if p != before)
+    # You.com works without a key, so it can be chosen on a fresh machine.
+    other = next(p["name"] for p in manager.get_web_search()["providers"] if p["name"] != before and p["key_mode"] != "required")
     assert manager.set_web_search(other)["ok"]
     assert "web_search" not in eng.permissions.session_allow_tools
     assert "run_shell_x" in eng.permissions.session_allow_tools  # only the search grant dies
-    # Re-setting the SAME provider (e.g. adding a key) leaves grants alone.
+    # Re-setting the SAME provider leaves grants alone; so does the fetch switch.
     eng.permissions.session_allow_tools.add("web_search")
-    assert manager.set_web_search(other, api_key="k")["ok"]
+    assert manager.set_web_search(other)["ok"]
+    assert manager.set_fetch_via_provider(True)["ok"]
     assert "web_search" in eng.permissions.session_allow_tools
 
 

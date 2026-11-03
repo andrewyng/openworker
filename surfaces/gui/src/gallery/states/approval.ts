@@ -79,6 +79,18 @@ export const approvalStates: CardState[] = [
     },
   },
   {
+    id: "web-fetch-via-provider",
+    title: "Web fetch through the search service",
+    note: "Settings ▸ Customization sends fetches through the search service (Exa, Firecrawl or Tavily). The card names it, since that service sees the page address.",
+    payload: {
+      name: "web_fetch",
+      arguments: { url: "https://docs.stripe.com/api/invoices/object" },
+      reason: "Check the invoice object's PDF field",
+      category: "network",
+      fetch_provider: "exa",
+    },
+  },
+  {
     id: "site-off-the-allowed-sites",
     title: "A site that is not on the allowed sites",
     note: "The session is sandboxed with \"Only the sites you allow\" and the page is on a site outside the list. The card says so and offers to add the site to the machine's list (OPE-219). In Bypass the call is refused with no card.",

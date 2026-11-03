@@ -21,7 +21,7 @@ in the Inbox, or supplied by the engine. That is the *attendance* setting.
 
 ### Mode (approving)
 
-| Mode | Routine tool calls | The safety checks (run a downloaded file, write outside the workspace, edit git hooks / CI / settings files, grant authority that outlives the session) |
+| Mode | Routine tool calls | The safety checks (run a downloaded file, write outside the workspace, edit git hooks / CI / settings files, grant authority that outlives the session, send a secret-looking file or value off the machine) |
 |---|---|---|
 | `ask` | asks | asks |
 | `auto-approve` | the reviewer decides; anything it is unsure about asks | asks |
@@ -130,6 +130,7 @@ terminal and installed by rule otherwise.
 | `--isolated` | read nothing from this computer; see below |
 | `--reasoning-effort` | `low` … `max`, sent to the provider; unset = provider default, recorded |
 | `--max-output-tokens`, `--max-iterations`, `--timeout-seconds` | ceilings; `--timeout-seconds 0` when an outer runner enforces its own |
+| `--no-web-tools` | never offer `web_search` / `web_fetch`; for sealed evaluation runs and air-gapped work (a firewall only refuses the call, this removes the tool, and `summary.json` records `web_tools: false`) |
 | `--tool-result-max-bytes` | bound each tool result (default 10,000; 0 = off); full text spilled under `out/tool-output/` |
 | `--provider-order` | OpenRouter only: pin the upstream host, no fallback |
 | `--trajectory-atif PATH` | also write the trajectory here |
@@ -170,6 +171,16 @@ record states it.
 | `model_calls.jsonl` | one line per model call: stop reason, usage, ceiling, effort, host |
 | `provider_errors.log` | full cause chains of failed model calls, credentials redacted |
 | `audit.db` | OpenWorker's audit log for the session |
+
+A turn in which auto-approve let actions run with no approval card (a safe-change tier or a
+reviewer "allow") ends with a `turn_summary` event in `events.jsonl`, just before the event
+that ends the turn. Its `count` is the number of changes that ran and worked; `failed` counts
+the attempts that errored, exited non-zero or timed out, and `reads` the read-only actions
+(a read-only command tier, a web read). `actions` lists each one with its tool call id, tool,
+origin, effect (`change` or `read`), status, the tier that let it through when one did, and
+for a shell command its `exit_code`, `timed_out` or `background` flag. The audit log can be
+filtered by the same call id (`/v1/audit?call_id=…`). `tool_proposed` and `tool_finished`
+events carry the same `tool_call_id`.
 
 The trajectory and the exit code are the stable contract.
 

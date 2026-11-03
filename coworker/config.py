@@ -87,9 +87,28 @@ class Config:
     # gates (zero false-allows; ≥30% fewer prompts) get measured on real sessions. Costs
     # one model call per card while on. Off by default; user-global only.
     auto_approve_shadow: bool = False
+    # Auto-Approve gate tier (OPE-233): an inert, reversible write inside the session's
+    # folders runs without a reviewer call. "off" (default) | "audit" (record what it
+    # would have allowed, change nothing) | "on". User-global only: a cloned repo must
+    # not be able to hand itself a looser gate.
+    auto_approve_inert_writes: str = "off"
+    # Auto-Approve plan approval (OPE-237): the agent can propose a plan as a list of
+    # steps; once the user approves it, each later action that is exactly one of the
+    # steps reaches the reviewer with that fact, for the rest of the request. Off by
+    # default. User-global only, like the gate tier above.
+    auto_approve_plan_approval: bool = False
+    # Auto-Approve read-only command tier (OPE-234), macOS / Linux only: "off" (default),
+    # "audit" or "on". User-global only, like the gate tier above.
+    auto_approve_readonly_commands: str = "off"
+    # Which reviewer Auto-Approve uses (OPE-224): "session" (the session's own model, the
+    # default), "openai-decisions" or "jev". User-global only, like the flags above.
+    auto_approve_reviewer: str = "session"
     host: str = "127.0.0.1"
     port: int = 8765
-    # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
+    # Web search provider: "duckduckgo" (keyless default) | "you" (keyless, optional key)
+    # | "tavily" | "brave" | "serper" | "exa" | "firecrawl" (the keyed ones need a key).
+    # Settings ▸ Customization writes the choice (and the keys) to the secret store's
+    # `web_search:default` profile, which wins over this value.
     web_search_provider: str = "duckduckgo"
     # OpenWorker Cloud (sign-in + managed connectors). Config, never constants:
     # dev/staging/BYO-VPC deployments point these at their own instances.
@@ -155,6 +174,10 @@ _FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "auto_approve_inert_writes",
+    "auto_approve_plan_approval",
+    "auto_approve_readonly_commands",
+    "auto_approve_reviewer",
     "host",
     "port",
     "web_search_provider",
@@ -181,6 +204,10 @@ _GLOBAL_ONLY_FIELDS = {
     "allowed_domains",
     "auto_approve",
     "auto_approve_shadow",
+    "auto_approve_inert_writes",
+    "auto_approve_plan_approval",
+    "auto_approve_readonly_commands",
+    "auto_approve_reviewer",
 }
 _WORKSPACE_FIELDS = _FIELDS - _GLOBAL_ONLY_FIELDS
 

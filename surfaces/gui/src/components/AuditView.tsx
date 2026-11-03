@@ -10,26 +10,31 @@ const CARD = "rounded-xl2 border border-line bg-panel";
 const INPUT = "px-3 py-1.5 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent";
 const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0";
 
-export function AuditView() {
+// `callId` (OPE-238): opened from the "changes made without asking" summary — show that one
+// tool call's rows, with the filter visible and clearable.
+export function AuditView({ callId }: { callId?: string } = {}) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [sessionFilter, setSessionFilter] = useState("");
   const [connectorFilter, setConnectorFilter] = useState("");
   const [toolFilter, setToolFilter] = useState("");
+  const [callFilter, setCallFilter] = useState(callId || "");
   const { t } = useTranslation();
 
-  const refresh = () =>
+  const refresh = (call = callFilter) =>
     getAudit({
       limit: 150,
       session_id: sessionFilter.trim() || undefined,
       connector: connectorFilter.trim() || undefined,
       tool: toolFilter.trim() || undefined,
+      call_id: call || undefined,
     })
       .then(setEvents)
       .catch(() => setEvents([]));
 
   useEffect(() => {
-    refresh();
-  }, []);
+    setCallFilter(callId || "");
+    refresh(callId || "");
+  }, [callId]);
 
   return (
     <main className="flex-1 min-w-0 flex bg-paper">
@@ -44,10 +49,25 @@ export function AuditView() {
             <input className={INPUT} placeholder={t("audit.placeholder_session")} value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} />
             <input className={INPUT} placeholder={t("audit.placeholder_connector")} value={connectorFilter} onChange={(e) => setConnectorFilter(e.target.value)} />
             <input className={INPUT} placeholder={t("audit.placeholder_tool")} value={toolFilter} onChange={(e) => setToolFilter(e.target.value)} />
-            <button className={BTN_ACCENT} onClick={refresh}>
+            <button className={BTN_ACCENT} onClick={() => refresh()}>
               {t("audit.filter")}
             </button>
           </div>
+          {callFilter && (
+            <div className="flex items-center gap-2 mb-4 text-meta text-muted" data-testid="audit-call-filter">
+              <span>{t("audit.call_filter", { id: callFilter })}</span>
+              <button
+                className="text-label text-faint hover:text-muted cursor-pointer"
+                data-testid="audit-call-filter-clear"
+                onClick={() => {
+                  setCallFilter("");
+                  refresh("");
+                }}
+              >
+                {t("audit.call_filter_clear")}
+              </button>
+            </div>
+          )}
 
           {events.length === 0 ? (
             <div className={CARD + " p-4 text-ui text-muted"}>{t("audit.no_events")}</div>

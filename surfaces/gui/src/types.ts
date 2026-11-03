@@ -17,6 +17,7 @@ export type EventType =
   | "tool_started"
   | "tool_finished"
   | "iteration_end"
+  | "turn_summary"
   | "turn_end"
   | "error"
   | "input_rejected"
@@ -33,6 +34,14 @@ export type EventType =
   // falling back to its startup screen while the backend was busy.
   | "sandbox_preparing"
   | "sandbox_ready";
+
+export interface PlanStepView {
+  kind: string;
+  target: string;
+  destination?: string;
+  note?: string;
+  risky: boolean;
+}
 
 export interface WsEvent {
   type: EventType;
@@ -164,7 +173,12 @@ export type Item =
   // `approvalOrigin` = why the call ran without a card: "reviewer" (auto-approved by the
   // Auto-Approve reviewer; `approvalNote` carries its one-line reason) or "bypass"
   // (bypass-approvals mode). Rendered as a quiet debugging chip, deliberately subtle.
-  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string }
+  // `callId` = the tool call's id (OPE-238: links the item to its audit rows, and pairs the
+  // proposed event with its own finished event). `effect` ("change" | "read") and `tier` come
+  // with a cardless origin and decide whether the auto-approved summary counts the call.
+  // `exitCode` / `timedOut` / `background` are a shell command's outcome, read from the
+  // result itself rather than the truncated preview.
+  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string; callId?: string; effect?: string; tier?: string; exitCode?: number | null; timedOut?: boolean; background?: boolean }
   | {
       kind: "approval";
       toolCallId?: string;
@@ -178,6 +192,10 @@ export type Item =
       // web_search only (§1.9): the LIVE configured provider name, resolved server-side
       // when the card was raised — the grant description names the actual destination.
       searchProvider?: string;
+      // web_fetch only: the search service the page is read through, when Settings ▸
+      // Customization sends fetches through it (it sees the page address). Absent = this
+      // machine fetches the page.
+      fetchProvider?: string;
       // OPE-219: the host the sandbox's allowed-sites wall stopped. The card says so and
       // offers "Always allow <host>", which adds it to Settings ▸ Sandbox ▸ allowed sites.
       siteWall?: string;
@@ -226,6 +244,10 @@ export type Item =
   | {
       kind: "planreq";
       plan: string;
+      // OPE-237: a plan proposed in auto-approve lists its steps; the card shows them,
+      // marks the risky ones, and offers approve-all or send-back (no mode choice).
+      steps?: PlanStepView[];
+      autoApprove?: boolean;
       resolved?: "approved" | "rejected";
     }
   | {
