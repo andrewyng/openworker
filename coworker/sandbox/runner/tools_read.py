@@ -9,6 +9,7 @@ empty (OPE-203). Both read-only, scoped to the session's folders.
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -116,6 +117,24 @@ def read_file(
     if not target.is_file():
         return {"error": f"not a file: {path}"}
 
+    shown_path = str(target.relative_to(home)) if home == root else str(target)
+    image_info = _inspect_image(target)
+    if image_info is not None:
+        dims = (
+            f", {image_info['width']}x{image_info['height']}"
+            if "width" in image_info and "height" in image_info
+            else ""
+        )
+        return {
+            "path": shown_path,
+            "binary": True,
+            **image_info,
+            "error": (
+                f"binary image ({image_info['mime']}{dims}, {image_info['bytes']} bytes) — "
+                "read_file is for text files; inspect or process image bytes with local tools or scripts"
+            ),
+        }
+
     selected: list[str] = []
     total = 0
     try:
@@ -133,7 +152,7 @@ def read_file(
 
     end = start + len(selected) - 1 if selected else start - 1
     result: dict[str, Any] = {
-        "path": str(target.relative_to(home)) if home == root else str(target),
+        "path": shown_path,
         "start_line": start,
         "end_line": end,
         "total_lines": total,
@@ -145,3 +164,71 @@ def read_file(
             f"call again with start_line={end + 1} to continue"
         )
     return result
+
+
+def _inspect_image(target: Path) -> Optional[dict[str, Any]]:
+    try:
+        size = target.stat().st_size
+        with open(target, "rb") as fh:
+            head = fh.read(65536)
+    except OSError:
+        return None
+    if (
+        len(head) >= 24
+        and head.startswith(b"\x89PNG\r\n\x1a\n")
+        and head[12:16] == b"IHDR"
+    ):
+        width, height = struct.unpack(">II", head[16:24])
+        return {"mime": "image/png", "width": width, "height": height, "bytes": size}
+    if len(head) >= 10 and head.startswith((b"GIF87a", b"GIF89a")):
+        width, height = struct.unpack("<HH", head[6:10])
+        return {"mime": "image/gif", "width": width, "height": height, "bytes": size}
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        info: dict[str, Any] = {"mime": "image/webp", "bytes": size}
+        if len(head) >= 30 and head[12:16] == b"VP8X":
+            info["width"] = 1 + int.from_bytes(head[24:27], "little")
+            info["height"] = 1 + int.from_bytes(head[27:30], "little")
+        elif len(head) >= 25 and head[12:16] == b"VP8L" and head[20] == 0x2F:
+            bits = int.from_bytes(head[21:25], "little")
+            info["width"] = (bits & 0x3FFF) + 1
+            info["height"] = ((bits >> 14) & 0x3FFF) + 1
+        elif (
+            len(head) >= 30
+            and head[12:16] == b"VP8 "
+            and head[23:26] == b"\x9d\x01\x2a"
+        ):
+            w, h = struct.unpack("<HH", head[26:30])
+            info["width"] = w & 0x3FFF
+            info["height"] = h & 0x3FFF
+        return info
+    if len(head) >= 4 and head.startswith(b"\xff\xd8\xff"):
+        info = {"mime": "image/jpeg", "bytes": size}
+        pos = 2
+        while pos + 4 <= len(head):
+            if head[pos] != 0xFF:
+                break
+            while pos < len(head) and head[pos] == 0xFF:
+                pos += 1
+            if pos >= len(head):
+                break
+            marker = head[pos]
+            pos += 1
+            if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                continue
+            if pos + 2 > len(head):
+                break
+            seg_len = struct.unpack(">H", head[pos : pos + 2])[0]
+            if seg_len < 2 or pos + seg_len > len(head):
+                break
+            if (
+                0xC0 <= marker <= 0xCF
+                and marker not in (0xC4, 0xC8, 0xCC)
+                and seg_len >= 7
+            ):
+                h, w = struct.unpack(">HH", head[pos + 3 : pos + 7])
+                info["width"] = w
+                info["height"] = h
+                break
+            pos += seg_len
+        return info
+    return None
