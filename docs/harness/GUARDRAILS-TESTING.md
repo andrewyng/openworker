@@ -143,7 +143,8 @@ on macOS and Linux; reuse caches and record disk checks.
 must not be silently required by a lightweight build. A JavaScript runtime flag
 cannot shrink a native binary already shipped with an app.
 
-**Source:** `harness/service-ui/test/compliance.test.mjs`,
+**Source:** `harness/typescript-sdk/test/minimal-safety.test.mjs`,
+`harness/service-ui/test/compliance.test.mjs`,
 `harness/service-ui/test/compliance-live.mjs`, and qualification evidence in the
 ledger. This work does not claim new live Windows qualification.
 
@@ -181,3 +182,8 @@ The SDK also has a separate HTTP/SSE privacy-model fixture that returns an exact
 spelled-out identifier span. It verifies the configured detector model is called
 without tools, blocks before turn admission and does not store the rejected
 identifier. This tests the model integration contract, not real-model accuracy.
+
+To qualify an actual minimal release host (in addition to the crate-level
+no-engine test), set `OW_TS_MINIMAL_HOST` to its absolute executable path and run
+`node --test test/minimal-safety.test.mjs` from `harness/typescript-sdk`. This test
+requires no model key and proves required checks are rejected instead of skipped.

@@ -14,7 +14,7 @@ case "$level" in
     cargo check --offline -p openworker-sdk --no-default-features
     target=$(cargo metadata --offline --format-version=1 --no-deps | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).target_directory));')
     export OW_TS_TEST_HOST="$target/debug/sdk-test-host"
-    (cd typescript-sdk && npm run build && node --test test/safety.test.mjs test/tool-free.test.mjs)
+    (cd typescript-sdk && npm run build && node --test test/safety.test.mjs test/tool-free.test.mjs test/minimal-safety.test.mjs)
     (cd service-ui && node --test test/compliance.test.mjs test/server.test.mjs)
     ;;
   storage)

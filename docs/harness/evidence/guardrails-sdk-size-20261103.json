@@ -1,0 +1,33 @@
+{
+  "date": "2026-11-03",
+  "sourceCommit": "a0264edceb7579c2b1775898ddcea384887730a8",
+  "target": "aarch64-apple-darwin",
+  "rust": "1.96.0",
+  "release": {
+    "lto": "thin",
+    "strip": true
+  },
+  "artifacts": [
+    {
+      "profile": "minimal",
+      "executable": "openworker-harness",
+      "bytes": 26688672,
+      "mib": 25.452,
+      "sha256": "dd85964fc8fa30a822eb16ec6b17ab3a760c49c0fcfb95697e807f2deb89ccde"
+    },
+    {
+      "profile": "full",
+      "executable": "openworker-harness",
+      "bytes": 27401024,
+      "mib": 26.132,
+      "sha256": "191304dbbe8324bfca1a9beba66626db693feac66bbd8297f8e01e133c460de1"
+    }
+  ],
+  "deltaBytes": 712352,
+  "notes": [
+    "Native executable size, not RSS, application bundle or model weights.",
+    "Full SDK: default guardrails/compliance plus security-adapters and compliance-export.",
+    "Minimal SDK: no default features. Required missing capabilities reject; TypeScript release-host test passed.",
+    "The SDK was measured with its runtime dependency; standalone core-runtime measurement is not updated here."
+  ]
+}
