@@ -304,28 +304,35 @@ function TaskDetail({
   // while mark-seen advances the stored one (badge clears; highlights survive).
   const [seenMark, setSeenMark] = useState<number | null>(null);
 
-  const refresh = () =>
+  const refresh = (isCurrent = () => true) =>
     getAutomation(id)
       .then((d) => {
+        if (!isCurrent()) return false;
         if (!d.task) {
           // Deleted (or a stale reopen target): "Loading…" forever is a trap —
           // fall back to the overview (owner-hit 2026-07-20).
           onBack();
-          return;
+          return false;
         }
         setTask(d.task);
         setRuns(d.runs || []);
         setSeenMark((cur) => (cur === null ? d.task?.seen_runs_at ?? 0 : cur));
+        return true;
+      })
+      .catch(() => false);
+  useEffect(() => {
+    let current = true;
+    setSeenMark(null);
+    // Capture the pre-open seen mark before the server advances it, or a fast
+    // POST can make the GET hide every "new" pill. Discard stale loads as well
+    // (navigation and StrictMode cleanup must not mark an unread detail seen).
+    refresh(() => current)
+      .then((loaded) => {
+        if (!loaded || !current) return;
+        return markAutomationSeen(id).then(() => announceAutomationsChanged());
       })
       .catch(() => {});
-  useEffect(() => {
-    setSeenMark(null);
-    refresh();
-    // Opening the detail IS reading it: advance the seen mark and nudge the
-    // sidebar so the badge clears immediately (UX-023).
-    markAutomationSeen(id)
-      .then(() => announceAutomationsChanged())
-      .catch(() => {});
+    return () => { current = false; };
   }, [id]);
 
   if (!task)

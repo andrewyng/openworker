@@ -112,10 +112,18 @@ class WakeStore:
         return w
 
     def add_completion(self, session_id: str, job_id: str, *, note: str = "") -> Wake:
-        w = Wake(
-            uuid.uuid4().hex, session_id, KIND_COMPLETION, job_id=job_id, note=note
-        )
+        """One outstanding wake per job, including a due wake waiting for an idle turn."""
         with self._lock:
+            for old in self._wakes.values():
+                if (old.session_id == session_id and old.kind == KIND_COMPLETION
+                        and old.job_id == job_id and old.state in (STATE_PENDING, STATE_DUE)):
+                    if note and note != old.note:
+                        old.note = note
+                        self._save()
+                    return old
+            w = Wake(
+                uuid.uuid4().hex, session_id, KIND_COMPLETION, job_id=job_id, note=note
+            )
             self._wakes[w.id] = w
             self._save()
         return w
@@ -148,11 +156,35 @@ class WakeStore:
                 out.append(w)
         return out
 
-    def complete_job(self, job_id: str) -> list[Wake]:
-        """Mark completion wakes for ``job_id`` as due (the job exited). Returns them."""
+    def complete_job(self, job_id: str, *, session_id: Optional[str] = None) -> list[Wake]:
+        """Mark completion wakes for ``job_id`` as due (the job exited). Returns them.
+        The scheduler supplies the owning session; legacy task ids such as ``bg-1`` can
+        occur in more than one session."""
         return self._mark_due(
             lambda w: w.kind == KIND_COMPLETION and w.job_id == job_id
+            and (session_id is None or w.session_id == session_id)
         )
+
+    def has_completion(self, session_id: str, job_id: str) -> bool:
+        """Whether this job was already watched, even if its wake was delivered or retired."""
+        with self._lock:
+            return any(w.session_id == session_id and w.kind == KIND_COMPLETION
+                       and w.job_id == job_id for w in self._wakes.values())
+
+    def retire_job(self, session_id: str, job_id: str, *, reason: str = "the agent saw the job finish") -> None:
+        """Drop an outstanding completion wake without waking: the agent already saw the job end
+        (it read the final output or killed it), so a wake would only repeat that."""
+        with self._lock:
+            changed = False
+            for w in self._wakes.values():
+                if (w.session_id == session_id and w.kind == KIND_COMPLETION
+                        and w.job_id == job_id and w.state in (STATE_PENDING, STATE_DUE)):
+                    w.state = STATE_CANCELLED
+                    w.cancellation_reason = reason
+                    w.context_delivered = True
+                    changed = True
+            if changed:
+                self._save()
 
     def fire_event(self, event_key: str) -> list[Wake]:
         """Mark on-event wakes for ``event_key`` as due (a connector/webhook fired). Returns them."""
@@ -270,7 +302,10 @@ def selfwake_tools(store: WakeStore, session_id: str) -> list:
         return {"ok": True, "wake_id": w.id, "fire_at": w.fire_at, "next": _END_TURN_HINT}
 
     def wake_on(job_id: str, note: str = "") -> dict:
-        """Suspend and wake this session when a backgrounded job (`job_id`) completes."""
+        """Suspend and wake this session when a backgrounded job (`job_id`, e.g. the
+        `task_id` from run_shell run_in_background) completes. A background task still
+        running when your turn ends is watched this way automatically; call this to attach
+        a note saying what to do next."""
         w = store.add_completion(session_id, job_id, note=note)
         return {"ok": True, "wake_id": w.id, "job_id": job_id}
 

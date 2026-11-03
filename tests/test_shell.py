@@ -244,6 +244,38 @@ def test_background_task_kill(executor):
     assert res["status"] == "exited"
 
 
+def test_background_tasks_lists_status_and_whether_the_exit_was_read(executor):
+    # The scheduler polls this to wake a session when its task exits; it must not
+    # consume output the agent has not read yet.
+    assert executor.background_tasks() == []
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": QUICK_ECHO, "run_in_background": True})
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        [listed] = executor.background_tasks()
+        if listed["status"] == "exited" and listed["output_drained"]:
+            break
+        time.sleep(0.1)
+    assert listed["task_id"] == started["task_id"]
+    assert listed["status"] == "exited" and listed["exit_code"] == 0
+    assert listed["output_drained"] is True
+    assert listed["seen"] is False
+    acc, res = _poll_output(reg, started["task_id"], until_status="exited")
+    assert "quick_done" in acc  # listing did not eat the output
+    assert executor.background_tasks()[0]["seen"] is True
+
+
+def test_background_kill_counts_as_seen(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute("run_shell", {"command": ECHO_THEN_SLEEP, "run_in_background": True})
+    _poll_output(reg, started["task_id"])
+    reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+    [listed] = executor.background_tasks()
+    assert listed["status"] == "exited" and listed["seen"] is True
+
+
 DELAYED_ECHO = (
     "Start-Sleep -Seconds 1; Write-Output later_line" if _WIN else "sleep 1; echo later_line"
 )
@@ -252,13 +284,14 @@ DELAYED_ECHO = (
 def test_background_wait_returns_as_soon_as_the_task_exits(executor):
     reg = ToolRegistry()
     reg.register_all(shell_tools(executor))
-    started = reg.execute("run_shell", {"command": QUICK_ECHO, "run_in_background": True})
+    # Use a silent command so a line of output cannot wake the reader before exit.
+    started = reg.execute("run_shell", {"command": EXIT_OK, "run_in_background": True})
     t0 = time.monotonic()
     res = reg.execute("shell_task_output", {"task_id": started["task_id"], "wait_seconds": 10})
     elapsed = time.monotonic() - t0
-    # Asked for up to 10 s; got the exit (and its last line) well before that.
+    # Asked for up to 10 s; got the exit well before that.
     assert res["status"] == "exited" and res["exit_code"] == 0, res
-    assert "quick_done" in res["output"], res
+    assert executor.background_tasks()[0]["seen"] is True
     assert elapsed < 5, elapsed
     assert res["waited_seconds"] <= 5
 
@@ -330,3 +363,52 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+def test_background_task_ids_are_unique_across_shell_recreation(tmp_path):
+    first = LocalExecutor(cwd=tmp_path)
+    second = LocalExecutor(cwd=tmp_path)
+    try:
+        old = first.run_background(QUICK_ECHO)
+        new = second.run_background(QUICK_ECHO)
+        assert old["task_id"] != new["task_id"]
+    finally:
+        first.close()
+        second.close()
+
+
+def test_background_exit_is_unseen_until_final_output_is_drained(tmp_path):
+    from types import SimpleNamespace
+
+    class Task:
+        command = "build"
+        proc = SimpleNamespace(poll=lambda: 0)
+        exit_seen = False
+        reading = True
+        output = "first chunk"
+
+        def drain(self, timeout):
+            pass  # The reader can outlive the bounded join.
+
+        def reader_alive(self):
+            return self.reading
+
+        def read_new(self):
+            output, self.output = self.output, ""
+            return output
+
+    ex = LocalExecutor(cwd=tmp_path)
+    task = Task()
+    ex._bg_tasks["bg-test"] = task
+    try:
+        assert ex.background_tasks()[0]["output_drained"] is False
+        assert ex.background_output("bg-test")["output"] == "first chunk"
+        assert ex.background_tasks()[0]["seen"] is False
+        task.reading, task.output = False, "final result"
+        assert ex.background_tasks()[0]["output_drained"] is True
+        assert ex.background_tasks()[0]["seen"] is False
+        assert ex.background_output("bg-test")["output"] == "final result"
+        assert ex.background_tasks()[0]["seen"] is True
+    finally:
+        ex._bg_tasks.clear()
+        ex.close()
