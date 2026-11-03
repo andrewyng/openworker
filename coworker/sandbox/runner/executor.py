@@ -395,6 +395,14 @@ class LocalExecutor(Executor):
             if task.proc.poll() is not None or task.has_new() or self._abort.is_set():
                 break
             time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+        if task.proc.poll() is None and task.has_new():
+            # A one-shot command prints its last line just before it exits, so waking on
+            # that output used to report "running" for a task that was already done and
+            # force the caller to poll again. Give the exit a short grace window (inside
+            # the caller's deadline) so the same call returns the exit status too.
+            grace_deadline = min(deadline, time.monotonic() + 0.25)
+            while time.monotonic() < grace_deadline and task.proc.poll() is None:
+                time.sleep(0.02)
         if task.proc.poll() is not None:
             task.drain(0.5)
         output = task.read_new()

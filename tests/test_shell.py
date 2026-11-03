@@ -8,6 +8,7 @@ exit codes, timeout-and-recover, truncation) is identical across both.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 
 import pytest
@@ -330,3 +331,68 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+def test_background_output_reports_exit_that_follows_the_last_output(monkeypatch):
+    """A one-shot command prints its last line just before it exits. Waking on that
+    output must not report "running" for a task that is already done, or the caller
+    has to poll again after asking to be told when it finished.
+
+    The interleaving is forced here (output visible, exit a few ms later) because the
+    real race only shows up on a loaded machine.
+    """
+    from coworker.sandbox.runner import executor as executor_module
+
+    class _LateExitProc:
+        """poll() keeps returning None until the grace window lets the exit land."""
+
+        def __init__(self):
+            self.exited = False
+            threading.Timer(0.05, lambda: setattr(self, "exited", True)).start()
+
+        def poll(self):
+            return 0 if self.exited else None
+
+        def kill(self):
+            self.exited = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    class _OneShotTask:
+        def __init__(self):
+            self.proc = _LateExitProc()
+            self._pending = True
+
+        def has_new(self):
+            return self._pending
+
+        def read_new(self):
+            self._pending = False
+            return "quick_done"
+
+        def drain(self, seconds):
+            return None
+
+    class _HarnessExecutor(executor_module.LocalExecutor):
+        max_output_chars = 100_000
+
+        def __init__(self):
+            self._abort = threading.Event()
+            self._bg_tasks = {}
+
+        def background_output(self, task_id, wait_seconds=0):
+            return executor_module.LocalExecutor.background_output(
+                self, task_id, wait_seconds
+            )
+
+    harness = _HarnessExecutor()
+    harness._bg_tasks["bg-1"] = _OneShotTask()
+
+    started = time.monotonic()
+    res = harness.background_output("bg-1", wait_seconds=10)
+    elapsed = time.monotonic() - started
+
+    assert res["status"] == "exited", res
+    assert res["exit_code"] == 0, res
+    assert elapsed < 5, elapsed
