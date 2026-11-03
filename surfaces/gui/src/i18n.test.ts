@@ -2,6 +2,7 @@ import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import zh from "./locales/zh.json";
+import zhTW from "./locales/zh-TW.json";
 
 interface LocaleTree {
   [key: string]: string | LocaleTree;
@@ -58,9 +59,9 @@ function placeholders(value: string) {
 }
 
 const flatEn = flatten(en);
-const flatZh = flatten(zh);
 
-describe("locale contracts", () => {
+describe.each([["zh", zh], ["zh-TW", zhTW]] as const)("locale contracts: %s", (language, locale) => {
+  const flatZh = flatten(locale);
   it("keeps English and Chinese key sets in parity", () => {
     // Chinese has a single plural category, so `*_one` variants exist only in English.
     const missingInZh = Object.keys(flatEn).filter((key) => !key.endsWith("_one") && !(key in flatZh));
@@ -86,8 +87,8 @@ describe("locale contracts", () => {
   it("fully interpolates important Chinese runtime strings", async () => {
     const instance = createInstance();
     await instance.init({
-      resources: { zh: { translation: zh } },
-      lng: "zh",
+      resources: { [language]: { translation: locale } },
+      lng: language,
       fallbackLng: false,
       interpolation: { escapeValue: false },
     });
