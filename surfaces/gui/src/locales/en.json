@@ -3037,6 +3037,32 @@
     }
   },
   "steps": {
+    "sbx_stage": {
+      "preparing": "Preparing",
+      "download_image": "Download image",
+      "copy_logins": "Copy logins",
+      "create": "Create",
+      "connect": "Connect",
+      "verify": "Verify",
+      "ready": "Wait until ready",
+      "image_maybe": "image pulled?"
+    },
+    "sbx": {
+      "provider": "Sandbox",
+      "trigger": "Started",
+      "trigger_turn_start": "at the turn's start",
+      "trigger_first_tool": "on first use",
+      "failed": "The sandbox could not start at {{stage}} ({{type}}). The turn ended; Retry tries again.",
+      "error_text": "What the sandbox said",
+      "stages": "Stages",
+      "reason": "Why",
+      "how": "What happened",
+      "reason_folders_changed": "the session's folders changed",
+      "reason_runner_restarted": "the runner came back as a new instance",
+      "how_restart": "a new sandbox; shells and variables started again",
+      "how_regrant": "folder grants changed in place; shells kept",
+      "image_note": "The image may have been downloaded inside Create; the provider cannot say how long that took."
+    },
     "issues": {
       "tab": "Issues",
       "tab_n": "Issues · {{n}}",
@@ -3184,7 +3210,8 @@
       "model": "Model",
       "auto_approver": "Auto-approver",
       "summary": "Summary",
-      "other": "Other"
+      "other": "Other",
+      "sandbox": "Sandbox setup"
     },
     "checks_line_one": "Auto-approve: {{count}} check · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked · {{time}} · {{reviewer}}",
     "checks_line_other": "Auto-approve: {{count}} checks · {{allowed}} allowed · {{asked}} asked you · {{blocked}} blocked · {{time}} · {{reviewer}}",
@@ -3221,7 +3248,8 @@
       "summary": "Summary",
       "trim": "Trim",
       "wait_inbox": "Waiting · parked in Inbox",
-      "shadow": "Shadow check"
+      "shadow": "Shadow check",
+      "sandbox_setup": "Sandbox setup"
     },
     "would": {
       "allow": "would have allowed",
@@ -3235,7 +3263,10 @@
       "no_usage": "no usage",
       "exit": "exit {{code}}",
       "blocked": "blocked by sandbox",
-      "auto_approved": "auto-approved"
+      "auto_approved": "auto-approved",
+      "sandbox_failed": "failed at {{stage}}",
+      "restart_folders_changed": "folders",
+      "restart_runner_restarted": "runner came back"
     },
     "purpose": {
       "main": "main",
@@ -3280,7 +3311,9 @@
       "context_changed": "Context changed",
       "stamp_changed": "Settings changed",
       "summary_failed": "Summary failed",
-      "recording_gap": "Recording gap"
+      "recording_gap": "Recording gap",
+      "sandbox_restarted": "Sandbox restarted",
+      "sandbox_regranted": "Sandbox folders updated"
     },
     "status": {
       "ok": "ok",

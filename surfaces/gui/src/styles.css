@@ -2430,8 +2430,8 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 /* Observability Phase 1 (UX-059 OB-1, OB-2, OB-11, OB-4): the Steps panel in the right rail,
    styled as the UX-059 mock (docs/ux-improvements/mocks/UX-059-observability-desktop.html).
    The step colours are the mock's --bar-* tokens, light and dark. */
-:root { --bar-model:#2563eb; --bar-tool:#0f766e; --bar-wait:#d8dce1; --bar-review:#7c3aed; --bar-sum:#92400e; --bar-ctx:#6f7680; --bar-write:#f59e0b; }
-html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3a3e46; --bar-review:#a78bfa; --bar-sum:#e8b04b; --bar-ctx:#9aa1ab; --bar-write:#f59e0b; }
+:root { --bar-model:#2563eb; --bar-tool:#0f766e; --bar-wait:#d8dce1; --bar-review:#7c3aed; --bar-sum:#92400e; --bar-ctx:#6f7680; --bar-write:#f59e0b; --bar-sbx:var(--ok); }
+html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3a3e46; --bar-review:#a78bfa; --bar-sum:#e8b04b; --bar-ctx:#9aa1ab; --bar-write:#f59e0b; --bar-sbx:var(--ok); }
 .team-view.steps-panel { background:var(--panel); font-size:var(--fs-ui); line-height:1.45; container-type:inline-size; }
 /* A step's details open beside the list: the rail widens to hold both (mock: list + 520px). */
 .main:has(.steps-panel.inspecting) { --artifact-rail-w:min(78vw, 1180px); }
@@ -2485,6 +2485,9 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .k-review .steps-kind, .steps-kind.k-review, .k-review .steps-bar { background:var(--bar-review); }
 .k-sum .steps-kind, .steps-kind.k-sum, .k-sum .steps-bar { background:var(--bar-sum); }
 .k-ctx .steps-kind, .steps-kind.k-ctx, .k-ctx .steps-bar { background:var(--bar-ctx); }
+.k-sbx .steps-kind, .steps-kind.k-sbx, .k-sbx .steps-bar { background:var(--bar-sbx); }
+.steps-stage { cursor:default; }
+.steps-stage .steps-bar { opacity:.75; }
 .k-wait .steps-kind, .steps-kind.k-wait { background:var(--bar-wait); outline:1px dashed var(--faint); }
 .steps-track { position:relative; height:12px; background:repeating-linear-gradient(90deg, transparent 0 24.6%, var(--line) 24.6% 25%); }
 .steps-bar { position:absolute; top:2px; height:8px; min-width:3px; border-radius:3px; background:var(--bar-ctx); }

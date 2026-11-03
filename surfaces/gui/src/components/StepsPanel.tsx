@@ -5,7 +5,7 @@
 // §12); `refreshKey` moves when live step events or a turn's end arrive, so the panel follows a
 // running turn.
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getRecordedTurns,
@@ -23,7 +23,7 @@ import { formatTokens } from "../usage";
 
 type T = (k: string, o?: any) => string;
 
-const BUCKETS = ["waiting", "tools", "model", "auto_approver", "summary"] as const;
+const BUCKETS = ["waiting", "tools", "model", "auto_approver", "summary", "sandbox"] as const;
 
 /** 0.1s, 3.4s, 41s, 2m 14s: the panel's one duration format. */
 export function formatDuration(ms: number | null | undefined): string {
@@ -125,7 +125,10 @@ export function stepLabel(step: RecordedStep, t: T): string {
       const arrow = before != null && after != null ? ` · ${formatTokens(before)}→${formatTokens(after)}` : "";
       return (step.name === "trim" ? t("steps.row.trim") : t("steps.row.summary")) + arrow;
     }
+    case "sandbox":
+      return t("steps.row.sandbox_setup");
     case "notice":
+      if (step.name === "sandbox_restarted" && a.how === "regrant") return t("steps.notice.sandbox_regranted");
       return t(`steps.notice.${step.name}`, { defaultValue: step.name });
     default:
       return step.name;
@@ -159,6 +162,11 @@ export function stepFlags(step: RecordedStep, t: T): Flag[] {
     if (a.decision?.origin === "reviewer") flags.push({ cls: "info", text: t("steps.flag.auto_approved") });
   } else if (step.kind === "auto_approver") {
     if (step.status === "interrupted") flags.push({ cls: "err", text: t("steps.status.interrupted") });
+  } else if (step.kind === "sandbox" && step.status === "error") {
+    const stage = a.failed_stage || "preparing";
+    flags.push({ cls: "err", text: t("steps.flag.sandbox_failed", { stage: t(`steps.sbx_stage.${stage}`, { defaultValue: stage }).toLowerCase() }) });
+  } else if (step.kind === "notice" && step.name === "sandbox_restarted") {
+    if (a.reason) flags.push({ cls: "info", text: t(`steps.flag.restart_${a.reason}`, { defaultValue: a.reason }) });
   } else if (["error", "denied", "interrupted", "skipped", "unknown"].includes(step.status)) {
     flags.push({ cls: "err", text: t(`steps.status.${step.status}`) });
   }
@@ -187,7 +195,46 @@ function nest(steps: RecordedStep[]): { step: RecordedStep; depth: number }[] {
 
 const KIND_CLASS: Record<string, string> = {
   context: "ctx", model: "model", tool: "tool", wait: "wait", auto_approver: "review", summary: "sum", notice: "ctx",
+  sandbox: "sbx",
 };
+
+/** The class of a row: a sandbox restart notice is drawn in the sandbox colour (mock ob13). */
+function kindClass(step: RecordedStep): string {
+  if (step.kind === "notice" && step.name === "sandbox_restarted") return "sbx";
+  return KIND_CLASS[step.kind] || "ctx";
+}
+
+type SandboxStage = { name: string; started_at: number; duration_ms: number | null; status: string; uncertain?: boolean };
+
+/** A sandbox setup step's stages as rows under it, in the order run (OB-13). An image pull
+ * the provider cannot time is not a row of its own: it is said on the Create row. */
+function StageRows({ step, depth, turn, total }: { step: RecordedStep; depth: number; turn: RecordedTurn; total: number }) {
+  const { t } = useTranslation();
+  const stages: SandboxStage[] = Array.isArray(step.attrs?.stages) ? step.attrs.stages : [];
+  const pulled = stages.some((s) => s.name === "download_image" && s.uncertain);
+  return (
+    <>
+      {stages.filter((s) => !(s.name === "download_image" && s.uncertain)).map((s, i) => {
+        const left = Math.min(100, Math.max(0, ((s.started_at - turn.started_at) / total) * 100));
+        const width = s.duration_ms ? Math.min(100 - left, (s.duration_ms / total) * 100) : 0;
+        const name = t(`steps.sbx_stage.${s.name}`, { defaultValue: s.name }) + (s.name === "create" && pulled ? ` · ${t("steps.sbx_stage.image_maybe")}` : "");
+        return (
+          <div key={`${s.name}-${i}`} className="steps-row steps-stage k-sbx" data-testid="steps-stage">
+            <span className="steps-label" style={{ paddingLeft: (depth + 1) * 16 }}>
+              <span className="steps-kind" />
+              <span className="steps-name">{name}</span>
+              {s.status === "error" && <span className="steps-badge err">{t("steps.status.error")}</span>}
+            </span>
+            <span className="steps-track">
+              <span className="steps-bar" style={{ left: `${left}%`, width: width ? `${width}%` : undefined }} />
+            </span>
+            <span className="steps-time">{formatDuration(s.duration_ms)}</span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 export function StepsPanel({
   sessionId,
@@ -290,17 +337,19 @@ export function StepsPanel({
         <span className="steps-axis-time">{t("steps.axis.time")}</span>
       </div>
       {rows.map(({ step, depth }) => (
-        <StepRow
-          key={step.step_id}
-          step={step}
-          depth={depth}
-          turn={turn}
-          total={total}
-          label={stepLabel(step, t)}
-          selected={selected === step.step_id}
-          issue={flagged.has(step.step_id)}
-          onSelect={() => setSelected(selected === step.step_id ? null : step.step_id)}
-        />
+        <Fragment key={step.step_id}>
+          <StepRow
+            step={step}
+            depth={depth}
+            turn={turn}
+            total={total}
+            label={stepLabel(step, t)}
+            selected={selected === step.step_id}
+            issue={flagged.has(step.step_id)}
+            onSelect={() => setSelected(selected === step.step_id ? null : step.step_id)}
+          />
+          {step.kind === "sandbox" && <StageRows step={step} depth={depth} turn={turn} total={total} />}
+        </Fragment>
       ))}
     </div>
   );
@@ -412,7 +461,7 @@ function StepRow({ step, depth, turn, total, label, selected, issue, onSelect }:
   const { t } = useTranslation();
   const left = Math.min(100, Math.max(0, ((step.started_at - turn.started_at) / total) * 100));
   const width = step.duration_ms ? Math.min(100 - left, (step.duration_ms / total) * 100) : 0;
-  const kind = KIND_CLASS[step.kind] || "ctx";
+  const kind = kindClass(step);
   return (
     <button
       className={`steps-row k-${kind}` + (selected ? " selected" : "") + (step.shadow ? " shadow" : "")}
@@ -655,7 +704,7 @@ function statusPill(d: any, t: T): { cls: string; text: string } {
 
 function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTurn; steps: RecordedStep[]; sessionId: string; t: T }) {
   const a = d.attrs || {};
-  const kind = KIND_CLASS[d.kind] || "ctx";
+  const kind = kindClass(d);
   const started = clock(d.started_at - turn.started_at);
   const ctxStep = steps.find((s) => s.kind === "context");
   const exchanges = (d.exchange_rebuilt || []) as any[];
@@ -813,12 +862,45 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
               [t("steps.detail.tokens_after"), a.tokens_after == null ? "—" : formatTokens(a.tokens_after)]);
   }
   if (d.kind === "context") rows.push([t("steps.detail.session_prompt"), <span className="steps-mono">{a.session_prompt_hash || "—"}</span>]);
+  if (d.kind === "sandbox") {
+    rows.push([t("steps.sbx.provider"), a.provider || "—"],
+              [t("steps.sbx.trigger"), t(`steps.sbx.trigger_${a.trigger}`, { defaultValue: a.trigger || "—" })]);
+  }
+  if (d.kind === "notice" && d.name === "sandbox_restarted") {
+    rows.push([t("steps.sbx.provider"), a.provider || "—"],
+              [t("steps.sbx.reason"), t(`steps.sbx.reason_${a.reason}`, { defaultValue: a.reason || "—" })],
+              [t("steps.sbx.how"), t(`steps.sbx.how_${a.how}`, { defaultValue: a.how || "—" })]);
+  }
+  const sbxStages: SandboxStage[] = d.kind === "sandbox" && Array.isArray(a.stages) ? a.stages : [];
   const changed = d.kind === "notice" && d.name === "stamp_changed" ? stampChanges(a, t) : [];
   const showsContext = d.kind === "context" || (d.kind === "notice" && d.name === "context_changed");
   return (
     <>
       <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} />{stepLabel(d, t)}<span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
+      {d.kind === "sandbox" && d.status === "error" && (
+        <div className="steps-callout err" data-testid="steps-sandbox-failed">
+          {t("steps.sbx.failed", {
+            stage: t(`steps.sbx_stage.${a.failed_stage || "preparing"}`, { defaultValue: a.failed_stage || "preparing" }).toLowerCase(),
+            type: a.error?.type || "error",
+          })}
+        </div>
+      )}
       <Kv rows={rows} />
+      {sbxStages.length > 0 && (
+        <>
+          <Sec label={t("steps.sbx.stages")} />
+          <Kv rows={sbxStages.map((s) => [
+            t(`steps.sbx_stage.${s.name}`, { defaultValue: s.name }),
+            s.uncertain ? t("steps.sbx.image_note") : `${formatDuration(s.duration_ms)}${s.status === "error" ? ` · ${t("steps.status.error")}` : ""}`,
+          ] as [string, React.ReactNode])} />
+        </>
+      )}
+      {d.kind === "sandbox" && a.error?.text && (
+        <>
+          <Sec label={t("steps.sbx.error_text")} />
+          <div className="steps-box">{a.error.text}</div>
+        </>
+      )}
       {changed.length > 0 && (
         <>
           <Sec label={t("steps.insp.changed")} />

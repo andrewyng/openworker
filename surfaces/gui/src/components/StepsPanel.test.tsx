@@ -267,6 +267,56 @@ describe("StepsPanel", () => {
   });
 });
 
+describe("Sandbox setup (OB-13)", () => {
+  const setupTurn = { ...turn, buckets: { ...turn.buckets, sandbox: 4000, other: 0, other_shown: false } };
+  const stages = [
+    { name: "preparing", started_at: 1000, duration_ms: 100, status: "ok" },
+    { name: "copy_logins", started_at: 1100, duration_ms: 100, status: "ok" },
+    { name: "create", started_at: 1200, duration_ms: 3000, status: "ok" },
+    { name: "download_image", started_at: 1200, duration_ms: null, status: "ok", uncertain: true },
+    { name: "connect", started_at: 4200, duration_ms: 400, status: "ok" },
+    { name: "verify", started_at: 4600, duration_ms: 400, status: "error" },
+  ];
+  const setup = step({ step_id: "sb", kind: "sandbox", name: "setup", duration_ms: 4000, status: "error",
+                       attrs: { provider: "seatbelt", stages, failed_stage: "verify", trigger: "turn_start",
+                                error: { type: "SeatbeltUnavailable", text: "the home folder was listable from inside" } } });
+  const restart = step({ step_id: "rs", kind: "notice", name: "sandbox_restarted", started_at: 6000, duration_ms: 0,
+                         attrs: { provider: "seatbelt", reason: "folders_changed", how: "restart" } });
+
+  it("draws the setup row with its stages, its own total and the restart row", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([setupTurn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([setup, restart] as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(2));
+    expect(screen.getByTestId("steps-tiles").textContent).toContain("Sandbox setup");
+    const [row, notice] = screen.getAllByTestId("steps-row").map((r) => r.textContent || "");
+    expect(row).toContain("Sandbox setup");
+    expect(row).toContain("failed at verify");
+    expect(notice).toContain("Sandbox restarted");
+    expect(notice).toContain("folders");
+    const stageRows = screen.getAllByTestId("steps-stage").map((r) => r.textContent || "");
+    // The pull OpenShell cannot time is said on the Create row, not as a row of its own.
+    expect(stageRows).toHaveLength(5);
+    expect(stageRows[2]).toContain("Create · image pulled?");
+    expect(stageRows[4]).toContain("Verify");
+    expect(stageRows[4]).toContain("error");
+  });
+
+  it("says in the details which stage failed and what the sandbox said", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([setupTurn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([setup] as any);
+    vi.mocked(getStepDetail).mockResolvedValue(setup as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(1));
+    fireEvent.click(screen.getAllByTestId("steps-row")[0]);
+    const failed = await screen.findByTestId("steps-sandbox-failed");
+    expect(failed.textContent).toContain("could not start at verify (SeatbeltUnavailable)");
+    const details = screen.getByTestId("steps-details").textContent || "";
+    expect(details).toContain("at the turn's start");
+    expect(details).toContain("the home folder was listable from inside");
+  });
+});
+
 describe("formatDuration", () => {
   it("reads like the mock", () => {
     expect(formatDuration(100)).toBe("0.1s");

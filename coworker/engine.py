@@ -16,6 +16,7 @@ import logging
 from copy import deepcopy
 
 import asyncio
+import inspect
 import functools
 import json
 import time
@@ -1114,7 +1115,10 @@ class TurnEngine:
         provider = str(getattr(getattr(workspace, "provider", None), "name", "") or "sandbox")
         yield Event(EventType.SANDBOX_PREPARING, {"provider": provider})
         try:
-            await asyncio.to_thread(start)
+            if "trigger" in inspect.signature(start).parameters:
+                await asyncio.to_thread(start, "turn_start")
+            else:
+                await asyncio.to_thread(start)
         except Exception as exc:
             text = f"The {provider} sandbox could not start: {exc}"
             self._append_notice("error", text)
@@ -1123,6 +1127,34 @@ class TurnEngine:
         info = workspace.describe()
         self._note_stamp()  # the runner's version is known only now (V2-28)
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
+
+    def on_sandbox(self, event: str, data: dict[str, Any]) -> None:
+        """What the sandbox workspace tells the recording (observability OB-13): its start as a
+        `sandbox` setup step with its stages, and a restart as a `sandbox_restarted` notice.
+        Called from the thread that starts or restarts the sandbox; outside a turn nothing is
+        written."""
+        obs = self._obs
+        if not obs.enabled or not obs.in_turn:
+            return
+        provider = str(getattr(getattr(getattr(self, "sandbox_workspace", None), "provider", None), "name", "") or "sandbox")
+        if event == "setup_started":
+            self._sandbox_setup_step = obs.start_step(
+                kind="sandbox", name="setup",
+                attrs={"provider": provider, "stages": [], "failed_stage": None, "trigger": data.get("trigger") or "turn_start"},
+            )
+        elif event == "setup_ended":
+            step_id, self._sandbox_setup_step = getattr(self, "_sandbox_setup_step", None), None
+            log = data.get("log")
+            if step_id is None or log is None:
+                return
+            failed = data.get("error") is not None
+            obs.end_step(step_id, status="error" if failed else "ok",
+                         attrs=log.attrs(provider, data.get("trigger") or "turn_start"))
+            if not failed and data.get("trigger") == "first_tool":
+                self._note_stamp()  # the runner's version, as after a start at the turn's start
+        elif event == "restarted":
+            obs.instant_step(kind="notice", name="sandbox_restarted", status="ok",
+                             attrs={"provider": provider, "reason": data.get("reason"), "how": data.get("how")})
 
     @_records_turn("resume")
     @_summarizes_turn
@@ -2970,6 +3002,15 @@ class TurnEngine:
             logger.exception("observability: could not record a tool call's facts")
         return out
 
+    @staticmethod
+    def _sandbox_notice_id(text: Any) -> Optional[str]:
+        """`restart` or `regrant` for the sandbox notice a command's result carries, else None."""
+        if not isinstance(text, str) or not text:
+            return None
+        from .sandbox.workspace import REGRANT_NOTICE, RESTART_NOTICE
+
+        return "restart" if text == RESTART_NOTICE else "regrant" if text == REGRANT_NOTICE else None
+
     def _sandbox_facts(self, result: Any) -> Optional[dict[str, Any]]:
         """Per-call sandbox facts (observability E13, §9.3): whether this sandbox can report
         blocked sites now, and how many connections it refused during the call. None when
@@ -2978,10 +3019,13 @@ class TurnEngine:
         if ws is None or not hasattr(ws, "reports_blocked"):
             return None
         blocked = result.get("_blocked") if isinstance(result, dict) else None
+        told = result.get("sandbox_notice") if isinstance(result, dict) else None
         return {
             "blocked_known": bool(getattr(ws, "reports_blocked", False)),
             "blocked_count": sum(int(b.get("count") or 0) for b in blocked or []),
-            "notice": None,
+            # The restart the agent was told of with this result (OB-13): the same short id
+            # as the `sandbox_restarted` notice's `how`.
+            "notice": self._sandbox_notice_id(told),
         }
 
     def _execute_call(self, tool_call: ToolCall) -> tuple[Any, str]:

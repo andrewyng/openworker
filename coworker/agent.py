@@ -776,6 +776,8 @@ def build_engine(
     if executor is not None:
         engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
+    if sandbox_workspace is not None and hasattr(sandbox_workspace, "observer"):
+        sandbox_workspace.observer = engine.on_sandbox  # setup step and restarts (OB-13)
     # Whether this machine has a sandbox switched on (stamp.sandbox.expected, format 1.2), for
     # the "ran without the sandbox" check: the setting, whatever this session ended up using.
     engine.sandbox_expected = _sandbox_provider_name(config.sandbox_provider) != "direct"

@@ -47,6 +47,7 @@ KIND_ORDER = {
     "wait": 4,
     "tool": 5,
     "notice": 6,
+    "sandbox": 7,  # 1.2; it never shares a start with the others in practice
 }
 
 TURN_FIELDS = (
@@ -145,6 +146,9 @@ def fill_unended(kind: str, attrs: dict[str, Any]) -> dict[str, Any]:
     elif kind == "summary":
         for key in ("tokens_before", "model_step_id"):
             attrs.setdefault(key, None)
+    elif kind == "sandbox":
+        attrs.setdefault("stages", [])
+        attrs.setdefault("failed_stage", None)
     return attrs
 
 

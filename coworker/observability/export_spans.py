@@ -654,6 +654,18 @@ def build_turn_spans(
                     attrs[f"openworker.context.{k}"] = a[k]
         elif s["kind"] == "sandbox":
             name = "openworker.sandbox.setup"
+            for k in ("provider", "trigger", "failed_stage"):
+                if a.get(k) is not None:
+                    attrs[f"openworker.sandbox.{k}"] = a[k]
+            # One event per stage (tracing-spec §9); the error's text stays on this machine.
+            for st in a.get("stages") or []:
+                ev_attrs = {"openworker.sandbox.stage.status": st.get("status") or "ok"}
+                if st.get("duration_ms") is not None:
+                    ev_attrs["openworker.sandbox.stage.duration_ms"] = st["duration_ms"]
+                if st.get("uncertain"):
+                    ev_attrs["openworker.sandbox.stage.uncertain"] = True
+                events.append({"name": f"openworker.sandbox.stage.{st.get('name')}",
+                               "at": st.get("started_at") or s.get("started_at") or turn["started_at"], "attrs": ev_attrs})
         else:
             name = f"openworker.{s['kind']}"
 

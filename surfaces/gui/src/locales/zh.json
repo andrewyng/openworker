@@ -2993,6 +2993,32 @@
     }
   },
   "steps": {
+    "sbx_stage": {
+      "preparing": "准备",
+      "download_image": "下载镜像",
+      "copy_logins": "复制登录信息",
+      "create": "创建",
+      "connect": "连接",
+      "verify": "验证",
+      "ready": "等待就绪",
+      "image_maybe": "可能拉取了镜像"
+    },
+    "sbx": {
+      "provider": "沙箱",
+      "trigger": "启动于",
+      "trigger_turn_start": "回合开始时",
+      "trigger_first_tool": "首次使用时",
+      "failed": "沙箱在{{stage}}阶段无法启动（{{type}}）。本回合已结束；重试会再次尝试。",
+      "error_text": "沙箱返回的信息",
+      "stages": "阶段",
+      "reason": "原因",
+      "how": "发生了什么",
+      "reason_folders_changed": "会话的文件夹已变化",
+      "reason_runner_restarted": "运行器作为新实例重新连接",
+      "how_restart": "新的沙箱；终端和变量重新开始",
+      "how_regrant": "就地更改了文件夹授权；终端保留",
+      "image_note": "镜像可能在“创建”阶段下载；提供方无法说明用了多长时间。"
+    },
     "issues": {
       "tab": "问题",
       "tab_n": "问题 · {{n}}",
@@ -3136,7 +3162,8 @@
       "model": "模型",
       "auto_approver": "自动审批",
       "summary": "摘要",
-      "other": "其他"
+      "other": "其他",
+      "sandbox": "沙箱启动"
     },
     "checks_line_other": "自动审批：{{count}} 次检查 · {{allowed}} 次允许 · {{asked}} 次询问你 · {{blocked}} 次阻止 · {{time}} · {{reviewer}}",
     "unknown_line_one": "{{count}} 个步骤在 OpenWorker 停止时仍在运行，其用时未知。",
@@ -3172,7 +3199,8 @@
       "summary": "摘要",
       "trim": "裁剪",
       "wait_inbox": "等待 · 已放入收件箱",
-      "shadow": "影子检查"
+      "shadow": "影子检查",
+      "sandbox_setup": "沙箱启动"
     },
     "would": {
       "allow": "本会允许",
@@ -3186,7 +3214,10 @@
       "no_usage": "未报告用量",
       "exit": "退出码 {{code}}",
       "blocked": "被沙箱阻止",
-      "auto_approved": "已自动批准"
+      "auto_approved": "已自动批准",
+      "sandbox_failed": "在{{stage}}失败",
+      "restart_folders_changed": "文件夹",
+      "restart_runner_restarted": "运行器已重启"
     },
     "purpose": {
       "main": "主要",
@@ -3231,7 +3262,9 @@
       "context_changed": "上下文已变化",
       "stamp_changed": "设置已变化",
       "summary_failed": "摘要失败",
-      "recording_gap": "记录缺口"
+      "recording_gap": "记录缺口",
+      "sandbox_restarted": "沙箱已重启",
+      "sandbox_regranted": "沙箱文件夹已更新"
     },
     "status": {
       "ok": "正常",

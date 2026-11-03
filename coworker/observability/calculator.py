@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-BUCKET_ORDER = ["waiting", "tools", "model", "auto_approver", "summary"]
+BUCKET_ORDER = ["waiting", "tools", "model", "auto_approver", "summary", "sandbox"]
 
 
 # -- tokens (§6.3) -------------------------------------------------------------------------------
@@ -126,12 +126,15 @@ def _bucket_of(step: dict[str, Any]) -> Optional[str]:
         return "auto_approver"
     if kind == "summary":
         return "summary"
+    if kind == "sandbox":
+        return "sandbox"  # 1.2: sandbox setup, its own total so a first download is not "Other"
     return None
 
 
 def buckets(recording: dict[str, Any], turn: dict[str, Any], now: Optional[int] = None) -> dict[str, Any]:
     """Where the turn's time went: each bucket is the union of its steps' time, overlaps go
-    to the first bucket in the order waiting, tools, model, auto-approver, summary; Other is
+    to the first bucket in the order waiting, tools, model, auto-approver, summary, sandbox
+    setup (1.2, present only when the turn has one); Other is
     the rest, shown when it is 1% of the total or more (M-R5)."""
     start = turn["started_at"]
     # Steps found open when the app started have no time (status unknown): not counted (TD-12).
@@ -155,6 +158,8 @@ def buckets(recording: dict[str, Any], turn: dict[str, Any], now: Optional[int] 
         own = _subtract(raw[b], taken)
         out[b] = _length(own)
         taken = _merge(taken + own)
+    if not any(s.get("kind") == "sandbox" for s in steps):
+        del out["sandbox"]  # 1.1 recordings read back with the same buckets as before
     total = end_of_turn - start
     out["total"] = total
     out["other"] = total - _length(taken)
