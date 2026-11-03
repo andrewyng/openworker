@@ -19,6 +19,9 @@ export async function sendSessionEvent(page: Page, obj: unknown): Promise<void> 
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
 export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
+  // The app must be past boot (its event listener mounted, the StrictMode remount done)
+  // before a push can land; the fixed top nav is the first thing the booted shell renders.
+  await page.getByRole("button", { name: /New session/i }).first().waitFor();
   for (let i = 0; i < 50 && !eventSockets.get(page); i++) await page.waitForTimeout(100);
   const ws = eventSockets.get(page);
   if (!ws) throw new Error("the app never opened /ws/events");
@@ -693,6 +696,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // App-wide event stream: register the socket so sendAppEvent can push into it.
   await page.routeWebSocket(/\/ws\/events$/, (ws) => {
     eventSockets.set(page, ws);
+    // React StrictMode (dev server) mounts the app twice: the first socket closes at once and
+    // a second opens. Forget a closed socket so sendAppEvent never pushes into a dead one.
+    ws.onClose(() => {
+      if (eventSockets.get(page) === ws) eventSockets.delete(page);
+    });
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
