@@ -33,6 +33,7 @@ pub mod provider_auth;
 pub mod resource_policy;
 pub mod runner;
 pub mod runtime;
+pub mod safety;
 #[cfg(not(windows))]
 pub mod sandbox;
 #[cfg(windows)]

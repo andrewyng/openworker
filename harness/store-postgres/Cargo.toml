@@ -22,7 +22,7 @@ required-features = ["test-support"]
 
 [dependencies]
 openworker-artifacts = { path = "../artifacts" }
-openworker-runtime = { path = "../runtime" }
+openworker-runtime = { path = "../runtime", default-features = false }
 openworker-tools = { path = "../tools-sdk", optional = true }
 anyhow = "1"
 postgres = { version = "0.19", features = ["with-serde_json-1"] }

@@ -1859,6 +1859,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "openworker-guardrails"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "openworker-tools",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "openworker-observability"
 version = "0.1.0"
 dependencies = [
@@ -1889,6 +1903,7 @@ dependencies = [
  "ignore",
  "jsonschema",
  "libc",
+ "openworker-guardrails",
  "openworker-telemetry",
  "openworker-tools",
  "prost 0.13.5",
