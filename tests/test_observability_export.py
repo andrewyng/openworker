@@ -55,10 +55,10 @@ def _usage(i: int = 100, o: int = 10) -> dict:
 
 
 def _model(sid, tid, step_id, seq, at, purpose, exchange, *, parent=None, call_id=None, after_turn=False, status="ok",
-           model="anthropic:claude-EXPORTED-zq81", **attrs):
+           model="anthropic:model-EXPORTED-zq81", **attrs):
     a = {"model": model, "provider": "anthropic", "purpose": purpose, "stream": False,
          "finish_reason": "end_turn", "tools_offered": 1, "usage": _usage(),
-         "provider_facts": {"cost_reported": 98765.4321, "served_model": "claude-x"}}
+         "provider_facts": {"cost_reported": 98765.4321, "served_model": "model-x"}}
     a.update(attrs)
     return {"step_id": step_id, "turn_id": tid, "session_id": sid, "parent_step_id": parent, "seq": seq,
             "kind": "model", "name": "model", "started_at": at, "duration_ms": 400, "status": status,
@@ -72,27 +72,27 @@ def plant_turn(store: RecordingStore, sid: str = "sess-1", tid: str = "turn-1", 
             "<system-context>CTX-PLANT-folders C:\\Users\\PLANT-home</system-context>")
     system = "SYSTEM-PLANT-instructions"
     tools = [{"name": "run_shell", "description": "TOOLDEF-PLANT", "input_schema": {"type": "object"}}]
-    m1 = _exchange(store, {"model": "claude-x", "system": system, "tools": tools,
+    m1 = _exchange(store, {"model": "model-x", "system": system, "tools": tools,
                            "messages": [{"role": "user", "content": user}]},
                    _reply({"type": "thinking", "thinking": "THINK-PLANT-reasoning"},
                           {"type": "text", "text": "ASSIST-PLANT-a1"},
                           {"type": "tool_use", "id": "c1", "name": "run_shell", "input": {"command": "ARGS-PLANT-cmd"}},
                           stop="tool_use"))
-    rv = _exchange(store, {"model": "claude-x", "system": "You review actions.",
+    rv = _exchange(store, {"model": "model-x", "system": "You review actions.",
                            "messages": [{"role": "user", "content": "REVIEWER-IN-PLANT run_shell ARGS-PLANT-cmd"}]},
                    _reply({"type": "text", "text": "REVIEWER-OUT-PLANT allow"}))
-    m2 = _exchange(store, {"model": "claude-x", "system": system, "tools": tools, "messages": [
+    m2 = _exchange(store, {"model": "model-x", "system": system, "tools": tools, "messages": [
         {"role": "user", "content": user},
         {"role": "assistant", "content": [{"type": "tool_use", "id": "c1", "name": "run_shell",
                                            "input": {"command": "ARGS-PLANT-cmd"}}]},
         {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "RESULT-PLANT-out"}]}]},
         _reply({"type": "text", "text": "ASSIST-PLANT-a2 final"}))
-    sm = _exchange(store, {"model": "claude-x", "messages": [
+    sm = _exchange(store, {"model": "model-x", "messages": [
         {"role": "user", "content": "SUMMARY-IN-PLANT summarise RESULT-PLANT-out"}]},
         _reply({"type": "text", "text": "SUMMARY-OUT-PLANT"}))
-    ti = _exchange(store, {"model": "claude-x", "messages": [{"role": "user", "content": "TITLE-IN-PLANT"}]},
+    ti = _exchange(store, {"model": "model-x", "messages": [{"role": "user", "content": "TITLE-IN-PLANT"}]},
                    _reply({"type": "text", "text": "TITLE-OUT-PLANT"}))
-    failed = _exchange(store, {"model": "claude-x", "messages": [{"role": "user", "content": user}]}, {})
+    failed = _exchange(store, {"model": "model-x", "messages": [{"role": "user", "content": user}]}, {})
     store.write_turn({
         "turn_id": tid, "session_id": sid, "seq": 1, "kind": "run", "trigger": "user", "started_at": at,
         "duration_ms": 9000, "status": "completed", "approval_mode": "ask", "attended": True,
@@ -105,7 +105,7 @@ def plant_turn(store: RecordingStore, sid: str = "sess-1", tid: str = "turn-1", 
         _model(sid, tid, f"{tid}-m1", 2, at + 10, "main", m1),
         {"step_id": f"{tid}-aa", "kind": "auto_approver", "name": "run_shell", "seq": 3, "started_at": at + 500,
          "duration_ms": 300, "status": "ok", "call_id": "c1",
-         "attrs": {"mode": "live", "result": "allow", "reviewer": {"kind": "session_model", "model": "anthropic:claude-x"}},
+         "attrs": {"mode": "live", "result": "allow", "reviewer": {"kind": "session_model", "model": "anthropic:model-x"}},
          "content": {"reason": "REVIEWER-REASON-PLANT", "questions": [{"name": "QUESTIONS-PLANT"}]}},
         _model(sid, tid, f"{tid}-rm", 4, at + 510, "auto_approver", rv, parent=f"{tid}-aa", call_id="c1"),
         {"step_id": f"{tid}-w", "kind": "wait", "name": "approval", "seq": 5, "started_at": at + 900,
@@ -190,7 +190,7 @@ def test_metadata_only_export_carries_no_content(tmp_path, dest):
     sent = cap.text()
     assert len(cap.spans()) == 12  # the turn and 11 steps; the notice is an event on the turn
     # The positive control: a value planted in an exported field is found by the same search.
-    assert "claude-EXPORTED-zq81" in sent
+    assert "model-EXPORTED-zq81" in sent
     # Nothing planted in content is.
     assert "PLANT" not in sent
     assert "98765" not in sent  # provider-reported cost (R5)
@@ -198,7 +198,7 @@ def test_metadata_only_export_carries_no_content(tmp_path, dest):
     # Metadata is there: names, kinds, counts, the verdict, the notice.
     spans = cap.spans()
     names = {s["name"] for s in spans}
-    assert {"invoke_agent coworker", "openworker.context.build", "chat claude-EXPORTED-zq81",
+    assert {"invoke_agent coworker", "openworker.context.build", "chat model-EXPORTED-zq81",
             "openworker.policy.review run_shell", "openworker.approval.wait", "execute_tool run_shell",
             "openworker.compaction"} <= names
     review = next(s for s in spans if s["name"] == "openworker.policy.review run_shell")
@@ -402,12 +402,14 @@ def test_each_step_is_sent_once_and_the_marks_survive_a_restart(tmp_path, otlp):
     # A restart: a new store on the same file, a new exporter.
     store = RecordingStore(db, background=False)
     assert ex.Exporter(store, _cfg(otlp.url)).flush_once() == 0
+    # The status's "last sent" survives the restart: it comes from the marks.
+    assert store.export_counts("otlp:" + otlp.url)["last_at"]
     ids = otlp.span_ids()
     assert len(ids) == len(set(ids)) == 24
     # A step that ends after its turn was sent (a late title call) is sent alone, once.
     store.write_step({"step_id": "turn-1-late", "turn_id": "turn-1", "session_id": "sess-1", "seq": 13,
                       "kind": "model", "name": "model", "started_at": T0 + 9500, "duration_ms": 100, "status": "ok",
-                      "after_turn": True, "attrs": {"model": "anthropic:claude-x", "purpose": "title", "usage": _usage()}})
+                      "after_turn": True, "attrs": {"model": "anthropic:model-x", "purpose": "title", "usage": _usage()}})
     store.flush()
     assert ex.Exporter(store, _cfg(otlp.url)).flush_once() == 1
     assert len(otlp.span_ids()) == 25

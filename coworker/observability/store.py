@@ -523,8 +523,11 @@ class RecordingStore:
             row = self._conn.execute(
                 "SELECT failed, dropped FROM export_counters WHERE destination = ?", (destination,)
             ).fetchone()
+            last = self._conn.execute(
+                "SELECT MAX(at) AS at FROM export_marks WHERE destination = ? AND state = 'sent'", (destination,)
+            ).fetchone()["at"]
         return {"sent": int(sent), "dropped": int(dropped) + (int(row["dropped"]) if row else 0),
-                "failed": int(row["failed"]) if row else 0}
+                "failed": int(row["failed"]) if row else 0, "last_at": last}
 
     def load_turn(self, turn_id: str) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
         """One turn and its steps (by `seq`), content included."""

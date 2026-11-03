@@ -651,7 +651,10 @@ class ObservabilityExport:
         state = ex.state
         if state == "sending" and self.managed is not None:
             state = "managed"
-        return {"state": state, "last_sent_at": ex.last_sent_at, "sent": counts["sent"], "sent_today": today,
+        # After a restart the exporter has sent nothing yet, but the marks say when the last
+        # step went: "nothing sent yet" beside "21 steps sent today" contradicted itself.
+        last = ex.last_sent_at or (counts["last_at"] / 1000 if counts.get("last_at") else None)
+        return {"state": state, "last_sent_at": last, "sent": counts["sent"], "sent_today": today,
                 "failed": counts["failed"], "dropped": counts["dropped"], "last_error": ex.last_error,
                 "destination": dest.public()}
 
