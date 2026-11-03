@@ -11,9 +11,12 @@ path = "src/main.rs"
 
 # Fault-injection fixtures are opt-in and excluded from shipped builds.
 [features]
+default = ["guardrails"]
+guardrails = ["openworker-guardrails/engine"]
 test-fixtures = []
 
 [dependencies]
+openworker-guardrails = { path = "../guardrails", default-features = false }
 openworker-telemetry = { path = "../telemetry" }
 openworker-tools = { path = "../tools-sdk" }
 anyhow = "1"

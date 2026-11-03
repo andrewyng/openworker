@@ -1,6 +1,10 @@
 # Alignment, guardrails and hooks
 
-Draft specification, November 1, 2026. **The APIs below are proposed, not shipped.**
+Specification started November 1, updated November 2, 2026. The user authorized
+the combined text-guardrail/hook design and full implementation on November 2.
+**Implementation is in progress; examples are not a shipped API until qualified.**
+The [approved additions](GUARDRAILS-TEXT-AND-HOOKS-API.md) supersede this draft's
+earlier decision-only/observer-only restrictions.
 The [implementation plan](GUARDRAILS-AND-HOOKS-PLAN.md) identifies the sequence and
 qualification gates. Existing resource policy and approvals remain authoritative.
 
@@ -16,7 +20,8 @@ every task. A model's explanation is not evidence that its action is authorized.
 | Task alignment | Is this action justified by the user's request? | Separate action reviewer; allow/deny/unsure; uncertainty returns to a human |
 | Access policy | What can this instance reach? | App/operator resource ceilings, scoped tools and OpenShell execution policy |
 | Guardrails | Does this request, action or content violate application rules? | Add registered checks at explicit runtime boundaries |
-| Hooks | How does the application observe what happens? | Add a typed convenience API over versioned lifecycle events |
+| Hooks | Should a protected step proceed, or how should the app observe it? | Registered immutable blocking checks plus observational lifecycle callbacks |
+| Compliance | Can an authorized investigator reconstruct what happened? | Durable activity evidence, controlled queries and reliable SIEM export |
 
 Guardrails can be deterministic or call a trusted policy service/model. They are
 additional checks, not proof of general alignment or complete prompt-injection
@@ -69,9 +74,10 @@ Allow Once or Allow Always. Trusted application/operator remediation is separate
 
 Required checks run in every approval mode, including bypass. Optional advisory
 checks only emit findings; they do not secretly veto execution. Application
-configuration must distinguish these roles explicitly. No handler can change
-tool arguments, messages, grants, policy, model selection or approval state in v1.
-Content redaction/transformation requires a later explicit contract.
+configuration must distinguish these roles explicitly. Blocking hooks cannot
+change the inspected candidate, grants, policy, model selection or approval
+state. Text guardrails can transform content under the
+[approved replacement and final-validation contract](GUARDRAILS-TEXT-AND-HOOKS-API.md).
 
 Blocking a tool action normally returns a bounded policy error to the model with
 `executed=false`, so it can propose an allowed alternative within the existing
@@ -83,12 +89,17 @@ Required-check unavailability is a distinct waiting reason in session state,
 separate from approval or an agent question. Re-evaluate after trusted remediation
 using fresh context/bindings; an approval answer cannot stand in for a check reply.
 
-### Hook: an observation
+### Hook: blocking checks and observations
+
+The approved API includes `beforeModel`, `beforeTool`, `afterTool` and
+`beforeOutput` blocking checks. They inspect immutable final candidates and return
+allow/block; they cannot rewrite content after guardrail validation. The following
+observer contract applies specifically to `onEvent`.
 
 An observer consumes immutable typed lifecycle events. Hook failure emits a
 bounded diagnostic but does not fail or approve the agent action. Hooks do not
 return decisions and have no veto authority. An application that needs to prevent
-an effect must use a guardrail or existing policy/approval interface.
+an effect must use a blocking hook, guardrail or existing policy/approval interface.
 
 Use stable event IDs and replay cursors. Delivery can repeat after reconnect or
 restart; applications must deduplicate externally visible side effects. The
@@ -233,9 +244,11 @@ finding is distinct from reviewer denial, human approval and OS-enforced denial.
 
 ## Initial scope and review points
 
-Start with decision-only checks and observers. No model-authored policy, arbitrary
-inline executable remote configuration, content rewriting, automatic remediation,
-cross-tenant checks or exactly-once observer-side effects.
+The [approved API](GUARDRAILS-TEXT-AND-HOOKS-API.md) includes text sanitization,
+blocking hooks, compliance evidence/export and optional lightweight packaging.
+Enterprise policy download is recorded there as a separate future milestone.
+No model-authored policy, arbitrary inline executable remote configuration,
+automatic remediation, cross-tenant checks or exactly-once observer-side effects.
 
 The consequential proposed defaults are: required checks survive bypass and
 session grants; technical failures pause safely; mandatory blocks are not human

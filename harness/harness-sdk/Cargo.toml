@@ -7,6 +7,8 @@ license.workspace = true
 publish = false
 
 [features]
+default = ["guardrails"]
+guardrails = ["openworker-runtime/guardrails"]
 test-support = []
 
 [[bin]]
@@ -19,7 +21,7 @@ anyhow = "1"
 fs2 = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 openworker-store-postgres = { path = "../store-postgres" }
-openworker-runtime = { path = "../runtime" }
+openworker-runtime = { path = "../runtime", default-features = false }
 openworker-telemetry = { path = "../telemetry", features = ["otlp"] }
 openworker-tools = { path = "../tools-sdk" }
 serde = { version = "1", features = ["derive"] }

@@ -1,19 +1,23 @@
 # Guardrails and hooks: implementation sequence and ledger
 
-November 1, 2026. Feature: `feat/guardrails-hooks-spec-20261101`, based on
-`openworker-harness-sdk` at `673e5d62`. The
-[draft contract](GUARDRAILS-AND-HOOKS.md) precedes implementation. This plan does
-not claim the proposed public APIs already exist.
+Started November 1, authorized for full implementation November 2, 2026.
+Implementation branch: `feat/guardrails-hooks-20261102`, merging the original
+specification and canonical `openworker-harness-sdk` at `9dc33312` (including the
+DLAI tool-free fix). The [approved additions](GUARDRAILS-TEXT-AND-HOOKS-API.md)
+extend the original [contract](GUARDRAILS-AND-HOOKS.md). Public APIs remain under
+implementation until their milestones are qualified.
 
 ## Milestones
 
 | Milestone | Deliverable | Independent verification |
 |---|---|---|
-| S1 — core decisions and tool gate | Versioned registry/configuration, required/advisory distinction, pinned bindings, bounded async checks at runtime tool authorization/dispatch, durable findings | Deterministic tests prove no execution on block/error/timeout, exact-action binding, unchanged approval behavior and coverage of native/MCP/host/team paths |
-| S2 — model/result/output boundaries | beforeModel and afterTool checks, bounded guarded-output delivery, content-safe event/history/export paths, purpose-aware auxiliary requests | Scripted-provider tests prove no blocked outbound request, no unchecked bytes through any supported public channel, and no rerun/rollback of an already-executed tool |
-| S3 — SDKs and process placement | Typed Rust/TypeScript guardrails and observers, owner-bound managed callback transport, registration restoration and capability negotiation | Rust embedded/managed plus TypeScript managed parity; disconnected/stale/late callbacks, saturated queues and callback deadlock tests |
-| S4 — service and recovery | Operator-installed worker registry, authorized release/profile references, SQLite/PostgreSQL contract, leases/epochs and restart handling, management findings/OTel | Two-node PostgreSQL fixture kills an owner mid-check and before dispatch; another worker cannot reuse a stale decision or leak held output; reconnect/replay stays gated |
-| S5 — evaluation and launch evidence | Versioned adversarial scenarios, reviewer evaluation set, measured errors/latency/cost, SDK recipes and honest public capability matrix | Repeatable deterministic suite plus separately authorized live-model runs; evidence identifies source revision, model/config, platform, samples and limits |
+| M1 — core engine and optional packaging | Bounded built-in/regex/model checks, redaction/custom actions, immutable hooks and capability reporting; optional components | Detector and failure tests; minimal/full compile matrix; explicit unsupported-capability rejection |
+| M2 — runtime enforcement | All input/model/tool/output boundaries, buffered guarded streaming, bounded regeneration and safe history/export | Sentinel leak tests, actual dispatch counts, no replay after completed effects, approval/bypass invariants |
+| M3 — Rust and TypeScript APIs | Harness/session/turn configuration, embedded and private-stdio callbacks, restart binding | Embedded/managed parity, cancellation/timeouts, stale replies, tool-free regression suite |
+| M4 — compliance journal and API | Durable actor/policy/decision/outcome evidence, scoped paginated queries and retention | SQLite/PostgreSQL parity, administrative authorization, worker recovery and audit durability |
+| M5 — external security integration | Common adapter and mock-qualified Prisma AIRS adapter, selected context and secret references | Local mock allows/blocks/errors/timeouts/malformed replies; scan correlation and egress constraints. Live Prisma qualification explicitly excluded |
+| M6 — SIEM delivery | Durable export backlog, stable IDs/checkpoints, retries, backpressure and health | Receiver outage/restart/duplicates/full backlog; export never replays tools or provider work |
+| M7 — full qualification and guides | SDK/provider/storage/recovery matrix, compact management findings, QuickStart/test catalog and size measurements | Local end-to-end tests and minimal/full size/resource evidence; honest qualified-capability matrix |
 
 Implement common runtime decisions first. Do not bolt enforcement only onto one
 SDK or make capabilities depend on SQLite versus PostgreSQL. Merge independently
@@ -85,6 +89,107 @@ sample counts, not only a pass percentage.
   Specification and proposal review precede S1 implementation.
 - GCP live qualification remains independently waiting for login refresh. This
   task neither increases its US$100 budget nor authorizes Azure provisioning.
+
+### November 2 — implementation authorized
+
+- User approved built-in/regex/model checks for user input, model text and selected
+  tool results; custom replacement callbacks; blocking/observational hooks;
+  ordering; safe feedback; bounded regeneration; separate safety introspection.
+- Final option name is `blockedOutputOptions`, not `blockedOutput`.
+- Rebased the work by merging canonical tool-free-agent fix `9dc33312`; preserve
+  that partner regression matrix throughout this implementation.
+- Host disk has about 23 GiB free. Reuse the task-owned tool-free test caches;
+  avoid duplicate toolchain/container downloads. No other agent's artifacts are
+  removed. No GCP/Azure or paid model calls in this checkpoint.
+- Starting S1 core rules and decision/transform tests. Later milestones remain
+  authorized; do not mark them complete merely because the core types compile.
+
+### November 2 — core checks and compliance research checkpoint
+
+- Added the shared bounded detector/transform engine and typed hook registry.
+  Ten targeted runtime tests pass locally: wire names/options, invalid regex and
+  bounds, overlapping Unicode spans, Luhn/masking, common/custom secrets,
+  callback replacement and final-content recheck, missing/error/panic/timeout/
+  cancelled callbacks, exact model fragments, immutable blocking hooks,
+  observer isolation, inheritance and exact tool selectors. Runtime enforcement,
+  SDK wiring and service qualification are still outstanding; this is not a
+  shipped guardrails feature.
+- User requested a discussion of Anthropic's Compliance API before further
+  implementation. Paused runtime changes for official-source research; no
+  Anthropic admin keys requested, accounts enabled or remote data retrieved.
+- [Compliance API](https://platform.claude.com/docs/en/manage-claude/compliance-api)
+  is an after-the-fact activity/content retrieval API. Enterprise app content and
+  Console activity coverage differ. The
+  [coverage FAQ](https://platform.claude.com/docs/en/manage-claude/compliance-faq)
+  explicitly excludes prompt/response content from ordinary API-key workloads.
+  OpenWorker's direct model calls and local/native/MCP effects therefore require
+  their own evidence; calling Claude does not export our session transcript into
+  Anthropic's Compliance API.
+- [Setup](https://platform.claude.com/docs/en/manage-claude/compliance-api-access)
+  uses separate scoped compliance/admin keys, not inference keys. An optional
+  Anthropic collector belongs outside the agent loop with operator-owned secrets.
+  It can correlate provider-side account activity with our evidence in a SIEM;
+  it is not a prerequisite for the guardrails feature.
+- [Inference hooks](https://platform.claude.com/docs/en/manage-claude/inference-hooks)
+  are a separate inline allow/deny feature for Claude Enterprise governed apps.
+  Current documentation excludes Claude Platform API organizations, Bedrock and
+  Google Cloud, and does not support rewriting/redaction. Keep OpenWorker's
+  provider-independent inline guardrails and hook API.
+- Compliance design recommendations pending discussion: preserve authoritative
+  decision records separately from lossy observability queues; correlate trusted
+  actor/session/turn/call/provider request IDs and pinned rule versions; expose
+  authorized cursor-based evidence export and audit the readers/exporters too;
+  configure metadata/content retention independently; add protected retention and
+  legal-hold workflows only under an explicit contract. Database append-only
+  conventions alone are not tamper-proof evidence against a privileged database
+  administrator. Immutable archives/signatures would be separate work.
+
+### November 2 — compliance scope, optional packaging and future policy delivery
+
+- User clarified that OpenWorker must provide its own compliance activity API,
+  structured context for external security services, and reliable SIEM export.
+  Accepted the proposed separation of inline enforcement, durable evidence and
+  export. Updated the approved API document with this contract and reconciled
+  the older decision-only/observer-only prose in the original specification.
+- Make optional components selectable at build time as well as runtime so that
+  a disabled integration does not unnecessarily enlarge a minimal SDK/runtime.
+  TypeScript managed distributions need an appropriately minimal native binary;
+  JS configuration alone does not shrink it. Measure size/resource deltas and
+  test minimal/full builds before advertising packaging capabilities.
+- Installation options belong to the trusted developer/operator. Required active
+  policy cannot be disabled by sessions, turns, agents or bypass. Reject builds
+  that cannot satisfy required policy, rather than silently skipping checks.
+- Record authenticated enterprise policy download/refresh as a future, separate
+  milestone. Policy may select required checks, compliance and SIEM settings;
+  future design must cover identity/authenticity/versioning, installed capability
+  validation, atomic activation, offline/expiry behavior and auditability.
+  No policy server/client, external service connection or runtime implementation
+  was added for this discussion checkpoint.
+
+### November 2 — seven milestones approved
+
+- User approved M1–M7 together, with no per-milestone approval pauses.
+- Prisma AIRS credentials are unavailable. Build and test against a local mock;
+  live vendor qualification is explicitly outside these seven milestones and is
+  not a blocker for completion. Label adapter evidence as mock qualification.
+- Docker cache cleanup reclaimed 14.13 GB; available host space is now about
+  37 GiB. Preserve existing Docker volumes/running environments and check space
+  between significant builds. Reuse task-owned Cargo caches.
+- Enterprise policy download remains deferred. Continue implementation now.
+
+### M1 checkpoint — optional engine qualified
+
+- Extracted `openworker-guardrails` with an optional `engine` feature. Runtime
+  and SDK expose `guardrails` features; storage/auxiliary crates no longer force
+  the runtime's default features into an SDK minimal build.
+- Eleven engine tests and one no-engine capability-rejection test pass. Fixed an
+  edge case where a callback returned unchanged detected text: final validation
+  now runs after every replacement, including a no-op replacement.
+- `cargo check -p openworker-sdk` passes both with defaults and with
+  `--no-default-features`; guardrail crate strict Clippy passes. These are engine
+  and packaging checks, not proof that runtime boundaries already enforce checks.
+- Reused existing Cargo target cache; no new Docker images or paid services.
+  M2 runtime integration begins next. Binary-size deltas remain an M7 gate.
 
 ## Source anchors for implementation
 
