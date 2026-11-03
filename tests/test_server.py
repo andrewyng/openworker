@@ -870,6 +870,8 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         )
         assert not after.allowed and after.needs_user
 
+    # Release the session shell's working directory before moving the project.
+    manager.delete_session("trust")
     manager.workspace_trust.set_trusted(proj, True)
     proj.rename(tmp_path / "moved-project")
     assert client.post(
