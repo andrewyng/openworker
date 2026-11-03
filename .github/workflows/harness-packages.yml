@@ -71,6 +71,7 @@ jobs:
         with:
           node-version: 22
       - run: npm --prefix docs-site ci
+      - run: npm --prefix docs-site test
       - run: npm --prefix docs-site run build
       - uses: actions/upload-artifact@v4
         with:
