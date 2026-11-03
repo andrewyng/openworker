@@ -88,6 +88,22 @@ def test_the_workspace_folder_name_is_the_path_with_dashes() -> None:
     assert len(long) < 200 and long != workspace_folder_name(Path("/" + "/".join(["folder"] * 61)))
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+@pytest.mark.parametrize("explicit_stdin", [False, True])
+def test_piped_prompt_matches_prompt_file_newlines(tmp_path, monkeypatch, newline, explicit_stdin):
+    import io
+
+    from coworker.headless.runner import _read_prompt
+
+    data = f"First line.{newline}Second line.{newline}".encode("utf-8")
+    prompt_file = tmp_path / "task.txt"
+    prompt_file.write_bytes(data)
+    expected = _read_prompt(parse_args(["--prompt-file", str(prompt_file)]))
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(data), encoding="utf-8"))
+    args = parse_args(["--prompt-file", "-"] if explicit_stdin else [])
+    assert _read_prompt(args) == expected == "First line.\nSecond line.\n"
+
+
 def test_this_computers_settings_are_read_and_not_changed(tmp_path: Path) -> None:
     machine = tmp_path / "machine"
     machine.mkdir()
