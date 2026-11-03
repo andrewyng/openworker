@@ -200,6 +200,8 @@ class SQLiteMemoryStore(MemoryStore):
         workspace: Optional[str] = None,
     ) -> list[MemoryItem]:
         """Search memories using FTS5 full-text index with fallback to LIKE matching."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a non-negative integer")
         if not query or not query.strip():
             return []
         if not getattr(self, "_fts_enabled", False):
