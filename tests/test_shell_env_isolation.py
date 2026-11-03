@@ -17,11 +17,35 @@ def _stdout(result) -> str:
     return str(result.get("output") or result.get("stdout") or "")
 
 
+def _echo_env(name: str) -> str:
+    variable = f"$env:{name}" if os.name == "nt" else f"${name}"
+    return f'echo "[{variable}]"'
+
+
+def _list_env() -> str:
+    if os.name == "nt":
+        return 'Get-ChildItem Env: | ForEach-Object { "$($_.Name)=$($_.Value)" }'
+    return "env"
+
+
+def test_environment_probes_detect_an_inherited_token(monkeypatch, tmp_path):
+    """The absence checks below must fail if the shell filter ever stops working."""
+    monkeypatch.setenv("COWORKER_API_TOKEN", "SIDECAR-SECRET")
+    ex = RunnerLocalExecutor(cwd=str(tmp_path))
+    try:
+        echoed = _stdout(ex.run(_echo_env("COWORKER_API_TOKEN"), timeout=20))
+        listed = _stdout(ex.run(_list_env(), timeout=20))
+    finally:
+        ex.close()
+    assert "[SIDECAR-SECRET]" in echoed
+    assert "COWORKER_API_TOKEN=SIDECAR-SECRET" in listed
+
+
 def test_sidecar_token_is_not_in_the_shell_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("COWORKER_API_TOKEN", "SIDECAR-SECRET")
     ex = LocalExecutor(cwd=str(tmp_path))
     try:
-        out = _stdout(ex.run('echo "[$COWORKER_API_TOKEN]"', timeout=20))
+        out = _stdout(ex.run(_echo_env("COWORKER_API_TOKEN"), timeout=20))
     finally:
         ex.close()
     assert "SIDECAR-SECRET" not in out
@@ -33,7 +57,7 @@ def test_env_listing_does_not_reveal_the_token(monkeypatch, tmp_path):
     monkeypatch.setenv("COWORKER_API_TOKEN", "SIDECAR-SECRET")
     ex = LocalExecutor(cwd=str(tmp_path))
     try:
-        out = _stdout(ex.run("env", timeout=20))
+        out = _stdout(ex.run(_list_env(), timeout=20))
     finally:
         ex.close()
     assert "SIDECAR-SECRET" not in out
@@ -46,7 +70,7 @@ def test_the_users_own_keys_are_still_available(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-user-key")
     ex = LocalExecutor(cwd=str(tmp_path))
     try:
-        out = _stdout(ex.run('echo "[$OPENAI_API_KEY]"', timeout=20))
+        out = _stdout(ex.run(_echo_env("OPENAI_API_KEY"), timeout=20))
     finally:
         ex.close()
     assert "sk-user-key" in out
@@ -64,7 +88,7 @@ def test_explicit_env_overrides_still_apply(tmp_path):
     """The `env=` constructor argument is unchanged."""
     ex = LocalExecutor(cwd=str(tmp_path), env={"OW_TEST_MARKER": "present"})
     try:
-        out = _stdout(ex.run('echo "[$OW_TEST_MARKER]"', timeout=20))
+        out = _stdout(ex.run(_echo_env("OW_TEST_MARKER"), timeout=20))
     finally:
         ex.close()
     assert "present" in out
@@ -75,7 +99,7 @@ def test_sandbox_runner_still_inherits_its_parent_environment(monkeypatch, tmp_p
     monkeypatch.setenv("OW_TEST_MARKER", "inherited")
     ex = RunnerLocalExecutor(cwd=str(tmp_path))
     try:
-        out = _stdout(ex.run('echo "[$OW_TEST_MARKER]"', timeout=20))
+        out = _stdout(ex.run(_echo_env("OW_TEST_MARKER"), timeout=20))
     finally:
         ex.close()
     assert "[inherited]" in out
