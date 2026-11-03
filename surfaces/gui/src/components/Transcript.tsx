@@ -8,6 +8,7 @@ import { TeamUpdateLine, TeamCreatedLine, foldTeamUpdates } from "./TeamUpdateLi
 import type { MessageSource } from "../api";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { UnaskedSummary, unaskedTools } from "./UnaskedSummary";
 
 // Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
 // threshold with a more…/less… toggle. Normal typed messages never see the control; the
@@ -191,6 +192,8 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
     origin !== "reviewer" &&
     origin !== "bypass" &&
     origin !== "run_grant" &&
+    origin !== "gate_tier" &&
+    origin !== "readonly_tier" &&
     !TRUST_ORIGINS.has(origin ?? "")
   )
     return null;
@@ -209,7 +212,11 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
                 ? t("transcript.approval.trusted_generic_title")
                 : origin === "run_grant"
                   ? t("transcript.approval.run_grant_title")
-                  : t("transcript.approval.bypass_title")
+                  : origin === "gate_tier"
+                    ? t("transcript.approval.gate_tier_title")
+                    : origin === "readonly_tier"
+                      ? t("transcript.approval.readonly_tier_title")
+                      : t("transcript.approval.bypass_title")
       }
     >
       {origin === "reviewer"
@@ -222,7 +229,11 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
               ? t("transcript.approval.trusted_generic")
               : origin === "run_grant"
                 ? t("transcript.approval.run_grant")
-                : t("transcript.approval.bypassed")}
+                : origin === "gate_tier"
+                  ? t("transcript.approval.gate_tier")
+                  : origin === "readonly_tier"
+                    ? t("transcript.approval.readonly_tier")
+                    : t("transcript.approval.bypassed")}
     </span>
   );
 }
@@ -473,6 +484,9 @@ interface Props {
   onUndoMemory?: (id: number, previous?: string) => void;
   // §8.4 "Allow anyway" on a reviewer-denied tool: one-shot exact-action override.
   onAllowAnyway?: (name: string, args: any) => void;
+  // OPE-238: open Activity on one tool call's audit rows (from the "changes made without
+  // asking" summary). Without it the summary shows no audit links.
+  onOpenAudit?: (callId: string) => void;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -532,14 +546,26 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit }: Props) {
   const { t } = useTranslation();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
   // stay inside. A run with no activity at all is just bubbles (unchanged chat behavior).
-  const blocks: Array<{ turn: TurnItem[]; live?: boolean } | { item: Item; i: number; sources?: MessageSource[]; steps?: Item[] }> = [];
+  const blocks: Array<
+    | { turn: TurnItem[]; live?: boolean }
+    | { unasked: ToolItem[] }
+    | { item: Item; i: number; sources?: MessageSource[]; steps?: Item[] }
+  > = [];
   let run: TurnItem[] = [];
+  // OPE-238: what ran auto-approved in the turn so far. A notice inside a turn (compaction,
+  // continuation, a saved memory) breaks the step group but not the turn: the block is
+  // emitted once, after the answer, when the next user message arrives or the turn is over.
+  let pendingUnasked: ToolItem[] = [];
+  const emitUnasked = () => {
+    if (pendingUnasked.length) blocks.push({ unasked: pendingUnasked });
+    pendingUnasked = [];
+  };
   const flush = (live = false) => {
     if (!run.length) return;
     const turn = [...run];
@@ -554,6 +580,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
     if (turn.some((it) => it.kind !== "assistant")) blocks.push({ turn, live });
     else turn.forEach((t) => blocks.push({ item: t, i: -1 }));
     answers.forEach((a) => blocks.push({ item: a, i: -1 }));
+    if (!live) pendingUnasked.push(...unaskedTools(turn));
   };
   foldTeamUpdates(items).forEach(({ item, sources, steps }) => {
     const i = items.indexOf(item);
@@ -569,15 +596,19 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
       return;
     } else {
       flush();
+      if (item.kind === "user" || item.kind === "connector") emitUnasked();
       blocks.push({ item, i, sources, steps });
     }
   });
   flush(!!running);
+  if (!running) emitUnasked();
 
   const lastTurnIndex = blocks.reduce((acc, b, i) => ("turn" in b ? i : acc), -1);
   return (
     <div className="transcript">
       {blocks.map((block, bi) => {
+        if ("unasked" in block)
+          return <UnaskedSummary tools={block.unasked} onOpenAudit={onOpenAudit} key={bi} />;
         if ("turn" in block)
           return (
             <TurnGroup

@@ -29,7 +29,8 @@ _lock = threading.Lock()
 
 
 def native_base(base_url: Optional[str]) -> str:
-    base = (base_url or "http://localhost:11434").strip().rstrip("/")
+    # The same default as `registry.DEFAULT_OLLAMA_URL` (127.0.0.1, OPE-229).
+    base = (base_url or "http://127.0.0.1:11434").strip().rstrip("/")
     return base[: -len("/v1")] if base.endswith("/v1") else base
 
 

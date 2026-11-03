@@ -10,6 +10,9 @@ const server = (name: string, title: string) => ({
 for (const [name, title, says, link] of [
   ["llamacpp", "llama.cpp", "llama-server", "Install llama.cpp"],
   ["vllm", "vLLM", "NVIDIA GPU", "Install vLLM"],
+  ["jan", "Jan", "Local API Server", "Set up Jan's API server"],
+  ["docker", "Docker Model Runner", "docker model pull", "Set up Docker Model Runner"],
+  ["mlx", "mlx-lm", "--port 8081", "Set up mlx-lm"],
 ] as const) {
   test(`${title}: its own help line, not Ollama's`, async ({ page }) => {
     await page.route("**/v1/providers", (route) => route.fulfill({ json: [server(name, title)] }));

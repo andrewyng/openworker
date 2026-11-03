@@ -173,3 +173,74 @@ def test_turn_start_titles_before_the_turn_completes(tmp_path):
         assert mgr._autotitle_attempts[sid] == 1
 
     asyncio.run(go())
+
+
+async def test_title_call_pins_the_opener_language(tmp_path):
+    # With no language pinned in the titling instruction, an English system prompt
+    # ("4-5 word title") biases the model toward English titles even for non-English
+    # sessions. The prompt must tell the model to match the opener's language.
+    mgr, provider = _mgr(tmp_path, [_text("好的")], ["日本行程规划"])
+    await _turn(mgr, "lang1", "帮我规划一下日本的旅行")
+
+    system = provider.title_calls[0][0]["content"]
+    assert "same language as the user's opening message" in system
+
+
+async def test_non_english_opener_keeps_non_english_title(tmp_path):
+    # End to end: a CJK title survives the sanitizer (whitespace collapse and quote
+    # strip don't touch CJK) and the 80-char absurdity cap, and is stored verbatim.
+    mgr, _ = _mgr(tmp_path, [_text("好的，我来帮你安排")], ["日本行程规划"])
+    await _turn(mgr, "lang2", "帮我规划一下日本的旅行")
+    assert mgr.session_store.load("lang2").title == "日本行程规划"
+
+
+async def test_non_english_small_talk_still_hits_the_sentinel(tmp_path):
+    # The sentinel is a fixed English token regardless of the session's language;
+    # normalization must keep catching it after the prompt rewording.
+    mgr, provider = _mgr(
+        tmp_path,
+        [_text("你好呀"), _text("在的")],
+        ["small-talk", "季度汇报整理"],
+    )
+    await _turn(mgr, "lang3", "你好")
+    assert mgr.session_store.title_state("lang3")["auto_title"] is None
+
+    await _turn(mgr, "lang3", "帮我整理季度汇报")
+    assert len(provider.title_calls) == 2
+    assert mgr.session_store.load("lang3").title == "季度汇报整理"
+
+
+class _SettingsRecorder(TitleAwareProvider):
+    def __init__(self, chat_turns, titles):
+        super().__init__(chat_turns, titles)
+        self.title_settings: list[dict] = []
+
+    def complete(self, *, model, messages, tools=None, **settings):
+        if messages and "title chat sessions" in str(messages[0].get("content", "")):
+            self.title_settings.append(dict(settings))
+        return super().complete(model=model, messages=messages, tools=tools, **settings)
+
+
+async def test_a_model_that_cannot_turn_reasoning_off_still_gets_a_title(tmp_path):
+    # OPE-201: an endpoint whose reasoning is mandatory refuses effort "none" (OpenRouter
+    # GLM 5.3 answers 400). The title is asked once more without the effort, with room for
+    # the reasoning the model spends first.
+    refused = RuntimeError("Error code: 400 - {'error': {'message': 'Reasoning is mandatory for "
+                           "this endpoint and cannot be disabled.', 'code': 400}}")
+    provider = _SettingsRecorder([_text("sure")], [refused, "Release Notes Draft"])
+    mgr = SessionManager(workspace=tmp_path, provider=provider)
+    await _turn(mgr, "s20", "draft the release notes")
+
+    first, second = provider.title_settings
+    assert first["reasoning_effort"] == "none" and first["max_tokens"] == 64
+    assert "reasoning_effort" not in second
+    assert second["max_tokens"] == SessionManager._AUTOTITLE_REASONING_MAX_TOKENS
+    assert mgr.session_store.title_state("s20")["auto_title"] == "Release Notes Draft"
+
+
+async def test_other_title_failures_are_not_retried(tmp_path):
+    provider = _SettingsRecorder([_text("ok")], [RuntimeError("model down"), "Never Used"])
+    mgr = SessionManager(workspace=tmp_path, provider=provider)
+    await _turn(mgr, "s21", "summarize this doc")
+    assert len(provider.title_settings) == 1
+    assert mgr.session_store.title_state("s21")["auto_title"] is None

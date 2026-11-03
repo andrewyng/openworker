@@ -247,7 +247,11 @@
       "trusted_generic": "allowed by standing trust",
       "trusted_generic_title": "a standing trust setting (a per-tool rule, or the server's don't-ask flag) waived the card; mode gates, the reviewer, and the audit trail still applied",
       "run_grant": "allowed for this request",
-      "run_grant_title": "you chose 'Allow for this request' earlier in this answer — this call ran without a card. Its full arguments are in this transcript and the audit log; the grant expired when the answer finished"
+      "run_grant_title": "you chose 'Allow for this request' earlier in this answer — this call ran without a card. Its full arguments are in this transcript and the audit log; the grant expired when the answer finished",
+      "gate_tier": "safe change, no card",
+      "gate_tier_title": "Auto-approve let this run without the reviewer: an inert file (a document or image, not code or config) inside your folders that can be undone — a new file, a file unchanged in git, or one the agent wrote earlier. Its full arguments are in this transcript and the audit log",
+      "readonly_tier": "read-only, no card",
+      "readonly_tier_title": "Auto-approve let this run without the reviewer: a command that only reads files inside your folders (macOS / Linux). It changed nothing. Its full arguments are in this transcript and the audit log"
     },
     "step": {
       "raw": "raw",
@@ -286,6 +290,35 @@
       "undone_forgotten": "Okay — forgotten.",
       "undone_restored": "Okay — put back the way it was.",
       "undo": "Undo"
+    },
+    "unasked": {
+      "summary": "{{count}} changes auto-approved",
+      "summary_one": "{{count}} change auto-approved",
+      "summary_none": "No changes auto-approved",
+      "failed_count": "{{count}} failed",
+      "read_count": "{{count}} read-only",
+      "read_tail": "{{count}} read-only actions ran auto-approved · not counted as changes",
+      "read_tail_one": "{{count}} read-only action ran auto-approved · not counted as changes",
+      "show_all": "Show all {{count}}",
+      "edits": "{{count}} edits",
+      "edits_one": "{{count}} edit",
+      "failed": "failed",
+      "timed_out": "timed out",
+      "background": "started in the background",
+      "by_tier": "safe change",
+      "by_reviewer": "reviewer",
+      "group_files": "Files",
+      "group_commands": "Commands",
+      "group_other": "Other actions",
+      "exit": "exit {{code}}",
+      "audit": "audit log",
+      "more_lines": "… {{count}} more lines",
+      "more_lines_one": "… {{count}} more line",
+      "created": "Created",
+      "edited": "Edited",
+      "deleted": "Deleted",
+      "moved": "Moved",
+      "moved_to": "to"
     }
   },
   "rail": {
@@ -356,7 +389,8 @@
       "personas": "Coworkers",
       "context": "Context optimization",
       "skills": "Skills",
-      "memory": "Memory"
+      "memory": "Memory",
+      "customization": "Customization"
     },
     "general_title": "General",
     "general_sub": "How OpenWorker looks and behaves on this machine.",
@@ -462,7 +496,9 @@
     "personas_desc": "Coworkers are agents specialized for a particular role or task. They come equipped with the tools and skills to be successful in that role. Enabling a coworker lets you pick it when starting a conversation.",
     "composer_section": "Composer",
     "context_bar_title": "Show the context ring on the model pill",
-    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way."
+    "context_bar_desc": "A small ring showing how full the model’s context window is. The pill’s tooltip states the figures either way.",
+    "hide_reasoning_title": "Hide thinking while I work",
+    "hide_reasoning_desc": "Collapse the fast-scrolling reasoning trace to a quiet “Thinking…” line while a turn runs. The full reasoning still appears after the turn finishes."
   },
   "cloud": {
     "check_browser": "Check your browser…",
@@ -521,7 +557,8 @@
       "talk_anytime": "Talk to it anytime.",
       "ask_status": "Ask for a status",
       "status_prompt": "Quick status check, please — what's moving, what's blocked, and does anything need me?"
-    }
+    },
+    "thinking_hidden": "Thinking…"
   },
   "run_banner": {
     "scheduled_run": "Scheduled run",
@@ -723,6 +760,7 @@
     "save_skill_footer": "Approving adds it to your skills on this computer — usable in every conversation from then on.",
     "search_note": "Queries go to your configured search provider.",
     "search_note_current": "Queries go to your configured search provider (currently: {{provider}}).",
+    "fetch_note_current": "The page is fetched by your search service, {{provider}}, which sees its address.",
     "reviewer_unsure": "reviewer wasn’t sure: {{note}}",
     "site_wall_note": "{{host}} is not on your allowed sites.",
     "network": {
@@ -730,7 +768,8 @@
       "blocked_now": "The sandbox blocked this site a moment ago.",
       "blocked_minutes_one": "The sandbox blocked this site {{count}} minute ago.",
       "blocked_minutes_other": "The sandbox blocked this site {{count}} minutes ago."
-    }
+    },
+    "escalation_reviewer_asks": "Auto-approve wants you to decide this one."
   },
   "search": {
     "placeholder": "Search chats",
@@ -917,7 +956,9 @@
     "fallback_tool": "tool",
     "fallback_event": "event",
     "session": "session",
-    "resource": "resource: {{value}}"
+    "resource": "resource: {{value}}",
+    "call_filter": "Showing one tool call: {{id}}",
+    "call_filter_clear": "Show all"
   },
   "plan": {
     "proposed": "The agent proposed a plan",
@@ -926,7 +967,15 @@
     "send_feedback": "Send feedback",
     "request_changes": "Request changes",
     "approve_ask": "Approve — ask per step",
-    "approve_and_run": "Approve & run"
+    "approve_and_run": "Approve & run",
+    "approve": "Approve",
+    "steps_note": "Approving lets these exact steps run without a card, for this request only. Anything else is still reviewed, and safety checks still ask you.",
+    "risky": "risky",
+    "kind_write": "Write",
+    "kind_delete": "Delete",
+    "kind_run": "Run",
+    "kind_send": "Send",
+    "to": "to"
   },
   "dirreq": {
     "requesting_access": "The agent is requesting access to a folder",
@@ -1321,6 +1370,8 @@
     "mcp_waiting_browser": "waiting for browser…",
     "models": "Models",
     "models_help": "Ticked models show in the composer's picker; the black badge marks the default for new sessions.",
+    "azure_deployment_help": "On Azure the model id is your deployment name — add each deployment you want to use, as named in the Azure or Foundry portal.",
+
     "one_click_coming": "One-click sign-in is coming soon — connect manually below for now:",
     "optional": "(optional)",
     "or_connect_manually": "or connect manually:",
@@ -1342,6 +1393,27 @@
     "remove_from_picker": "Remove from the picker",
     "remove_key": "Remove key…",
     "remove_key_confirm": "Remove the {{title}} key from this computer?",
+    "remove_provider": "Remove provider…",
+    "remove_provider_confirm": "Remove the {{title}} provider and its key from this computer?",
+    "custom_provider_card": "Add an OpenAI-compatible provider",
+    "custom_add_title": "Add an OpenAI-compatible provider",
+    "custom_add_desc": "Any server that speaks the OpenAI chat API with a Bearer key — a gateway, a proxy, a vendor not listed here. HTTPS, except on localhost or a private address. You add its model ids next.",
+    "custom_name_label": "Name",
+    "custom_name_placeholder": "Acme Gateway",
+    "custom_route_label": "Route prefix",
+    "custom_route_hint": "Models are selected as {{prefix}}:<model-id>. Set it before the first save; a built-in provider's name cannot be used.",
+    "custom_endpoint_label": "Endpoint",
+    "custom_endpoint_help": "The base URL, usually ending in /v1.",
+    "custom_key_label": "API key",
+    "custom_add_btn": "Add provider",
+    "custom_adding": "Adding…",
+    "custom_cancel": "Cancel",
+    "custom_add_failed": "Couldn't add the provider.",
+    "custom_models_help": "Type the model ids your server accepts, or fetch its list. Ticked models show in the composer's picker.",
+    "custom_fetch_models": "Fetch from server",
+    "custom_fetching": "Fetching…",
+    "custom_fetched_count": "{{count}} models listed — tick the ones you want.",
+    "custom_fetched_none": "The server listed no models.",
     "signin_unlocks": "Sign-in unlocks the one-click {{title}} connect — or connect manually below.",
     "tool_asks_approval": "{{name}} · {{kind}} · asks approval",
     "tools_exposed": "Tools exposed to OpenWorker",
@@ -1390,6 +1462,7 @@
     "local_models_loading": "Asking the server which models it has…",
     "local_models_failed": "Couldn't reach the server to list its models.",
     "local_models_failed_ollama": "Couldn't reach Ollama to list its models.",
+    "settings_failed": "Couldn't reach the server to load settings — make sure OpenWorker is running.",
     "retry": "Retry"
   },
   "models": {
@@ -1616,7 +1689,15 @@
     "llamacpp_desc": "No API key needed unless your llama-server was started with one.",
     "install_llamacpp": "Install llama.cpp",
     "vllm_desc": "vLLM runs on Linux with an NVIDIA GPU. A key is needed only if the server was started with one.",
-    "install_vllm": "Install vLLM"
+    "install_vllm": "Install vLLM",
+    "lmstudio_desc": "The LM Studio app serves the models you downloaded there. A key is needed only if you turned one on in the app.",
+    "install_lmstudio": "Install LM Studio",
+    "jan_desc": "The Jan app serves the models you downloaded there once its local API server is on (Settings ▸ Local API Server ▸ Start Server). A key is needed only if you set one there.",
+    "install_jan": "Set up Jan's API server",
+    "docker_desc": "Docker Desktop serves models you pulled with `docker model pull hf.co/<repo>:<quant>`. Turn on Model Runner and its TCP access in Docker Desktop ▸ Settings ▸ AI. No key needed.",
+    "install_docker": "Set up Docker Model Runner",
+    "mlx_desc": "mlx-lm runs on Apple silicon: `pip install mlx-lm`, then `mlx_lm.server --model <repo>`. It uses port 8080 like llama.cpp — if you run both, start one on another port, e.g. `mlx_lm.server --port 8081`.",
+    "install_mlx": "Set up mlx-lm"
   },
   "workspace_trust": {
     "title": "Trust this workspace’s commands?",
@@ -2406,9 +2487,31 @@
     "auto_approve": {
       "title": "Auto-approve (experimental)",
       "enable": "Enable Auto-approve mode",
-      "enable_desc": "Adds an <em>Auto-approve</em> option to the mode picker. In that mode, your session model reviews each action that would normally need approval and clears the routine ones; anything doubtful still asks you. It can never allow something the rules block. One extra model call per check, billed to your usage.",
-      "shadow_title": "Shadow evaluation <faint>(for measuring)</faint>",
-      "shadow_desc": "On any mode, the reviewer records what it <em>would</em> have decided next to your own choice — without changing anything. Lets you see how it would behave before trusting it. Also costs one model call per approval."
+      "enable_desc": "Adds an <em>Auto-approve</em> option to the mode picker. In that mode, the reviewer you choose below checks each action that would normally need approval and clears the routine ones; anything doubtful still asks you. It can never allow something the rules block. One extra model call per check, billed to your usage.",
+      "shadow_title": "Shadow evaluation",
+      "shadow_desc": "On any mode, the reviewer records what it <em>would</em> have decided next to your own choice — without changing anything. Lets you see how it would behave before trusting it. Also costs one model call per approval.",
+      "reviewer_title": "Reviewer",
+      "reviewer_session": "Session’s own model (default)",
+      "reviewer_session_desc": "The model running the session reviews each action and says why when it asks you.",
+      "reviewer_decisions": "OpenAI Decisions",
+      "reviewer_decisions_desc": "A fast decision model from OpenAI. Uses your OpenAI API key.",
+      "reviewer_jev": "TypeSafe Jev",
+      "reviewer_jev_desc": "A fast decision model from TypeSafe. Needs a TypeSafe API key.",
+      "reviewer_no_reasons": "Decisions and Jev aren’t chat models, so the approval card won’t explain why it asks.",
+      "reviewer_key_set": "API key added.",
+      "reviewer_key_save": "Save key",
+      "reviewer_key_placeholder_decisions": "OpenAI API key",
+      "reviewer_key_placeholder_jev": "TypeSafe API key",
+      "reviewer_key_failed": "Couldn’t save the key.",
+      "shadow_summary_title": "Shadow results · last {{days}} days, all sessions, {{reviewer}}",
+      "shadow_summary_matched": "Matched your own decision {{matched}} of {{decided}} times.",
+      "shadow_summary_empty": "Nothing recorded yet. Keep working as usual; each approval card you answer is recorded.",
+      "shadow_export": "Export full results",
+      "shadow_export_saved": "Saved at {{time}} to {{path}}",
+      "shadow_export_failed": "Couldn’t export the results.",
+      "shadow_summary_counts_one": "{{count}} check: would have run {{run}} · asked you {{asked}} · stopped {{stopped}}",
+      "shadow_summary_counts_other": "{{count}} checks: would have run {{run}} · asked you {{asked}} · stopped {{stopped}}",
+      "shadow_exporting": "Exporting…"
     },
     "sandbox": {
       "title": "Sandbox",
@@ -2838,5 +2941,99 @@
     "next": "Next",
     "add": "Add",
     "save": "Save"
+  },
+  "llamacpp": {
+    "blurb": "Runs open models on this Mac. OpenWorker can set it up and keep it running for you.",
+    "loading": "Checking this Mac…",
+    "load_failed": "Couldn't read the llama.cpp setup.",
+    "status_installing": "Installing…",
+    "status_starting": "Starting…",
+    "status_installed": "Installed · {{version}}",
+    "status_running": "✓ Running · 1 model",
+    "card_running": "✓ Running · {{model}}",
+    "card_not_set_up": "Not set up · Set up on this Mac",
+    "step_get": "Get llama.cpp",
+    "step_pick": "Pick a model",
+    "step_start": "Start it",
+    "installed_sum": "{{version}}, Homebrew",
+    "not_installed": "llama.cpp is not installed. OpenWorker installs it with Homebrew:",
+    "install": "Install",
+    "install_hint": "About 30 MB. You can watch the output.",
+    "no_brew": "llama.cpp installs with Homebrew, which is not on this Mac. Install Homebrew first:",
+    "cancel": "Cancel",
+    "copy": "Copy",
+    "copied": "Copied",
+    "suggested": "Suggested for this Mac",
+    "on_this_mac": "Already on this Mac",
+    "not_downloaded": "Recommended, not downloaded yet",
+    "pull_sub": "{{size}} · {{fit}} · in Ollama, then it shows above",
+    "none_fit": "None of the suggested models fits this Mac's memory.",
+    "from_ollama": "From Ollama · nothing to download",
+    "downloaded": "Downloaded",
+    "license": "Licence: {{name}}",
+    "choose_file": "Choose a GGUF file…",
+    "choose_file_sub": "A model file you downloaded yourself",
+    "change": "Change",
+    "feature_thinking": "thinking",
+    "feature_tools": "tools",
+    "feature_reasoning": "reasoning levels",
+    "cache_where": "Models download to llama.cpp's own cache,",
+    "free": "{{size}} free",
+    "download_and_start": "Download and start",
+    "start": "Start",
+    "download_starting": "Starting the download…",
+    "downloading": "Downloading · {{done}} of {{total}}",
+    "verifying": "Verifying the download…",
+    "rate_limited": "Hugging Face is rate-limiting downloads, retrying in {{seconds}}s",
+    "note_unverified": "Hugging Face's API couldn't be reached, so this download's checksum was not checked.",
+    "minutes_left_one": "about {{count}} min left",
+    "minutes_left_other": "about {{count}} min left",
+    "check_download": "Download the model",
+    "check_load": "Load the model",
+    "check_answers": "Check that it answers",
+    "check_tools": "Check that it calls a tool",
+    "leave_ok": "You can leave this page; it keeps going.",
+    "switch_model": "Switch model",
+    "stop": "Stop",
+    "no_tools": "It answers, but it did not call a tool when asked. Coworkers use tools on every task, so pick a larger model for real work.",
+    "context": "Context",
+    "address": "Address",
+    "model_file": "Model file",
+    "autostart": "Start with OpenWorker",
+    "autostart_off": "Off: it runs only after you press Start. It always stops when OpenWorker quits.",
+    "autostart_on": "On: it starts when OpenWorker opens. It always stops when OpenWorker quits.",
+    "own_server": "Already run llama-server yourself?",
+    "connect_instead": "Connect to it instead",
+    "setup_here": "Set up llama.cpp on this Mac instead"
+  },
+  "customization": {
+    "title": "Customization",
+    "lead": "Pick the services OpenWorker uses behind its tools. Each choice applies to new sessions on this machine.",
+    "lead_machine": "Pick the services OpenWorker uses behind its tools on {{name}}. Each choice applies to new sessions there.",
+    "websearch": {
+      "title": "Web search",
+      "desc": "Used by the web_search tool. Keys are kept in this machine's secret store; each service keeps its own, so switching back costs nothing.",
+      "status_duckduckgo": "No key. Rate-limited, fine for occasional searches.",
+      "status_you": "Works without a key, with a daily limit. A key lifts it.",
+      "key_saved": "Key saved",
+      "key_env": "Key from environment {{var}}",
+      "in_use": "In use",
+      "add_key": "Add key",
+      "update_key": "Update key",
+      "cancel": "Cancel",
+      "key_placeholder": "{{name}} API key",
+      "test_and_save": "Test and save",
+      "testing": "Testing…",
+      "checked_hint": "Checked with one search.",
+      "get_key": "Get a key ↗",
+      "remove_key": "Remove key",
+      "footnote": "A service with no key can't be chosen until one is added. The agent's approval card names the service in use.",
+      "load_failed": "Couldn't load the web search settings.",
+      "failed": "That didn't work. Try again."
+    },
+    "fetch": {
+      "row": "Also fetch pages through {{name}}",
+      "caution": "{{name}} then sees the address of every page the agent opens."
+    }
   }
 }

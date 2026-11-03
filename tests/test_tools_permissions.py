@@ -118,6 +118,22 @@ def test_session_allow_command_sticks(tmp_path):
     assert eng.evaluate("run_shell", {"command": "make build"}, None).allowed
 
 
+def test_session_allow_tool_does_not_bypass_shell_command_scoping(tmp_path):
+    """A name-only session grant for run_shell must not bypass the command
+    allowlist — the tool-level shortcut is excluded for exec-risk tools so
+    that command-level scoping (_command_allowed / session_allow_commands)
+    still runs. Regression test for issue #296."""
+    eng = PermissionEngine(workspace_root=tmp_path, allowed_commands=["ls"])
+    # Grant run_shell at the tool level for this session.
+    eng.allow_tool_for_session("run_shell")
+    # An allowed command still works.
+    assert eng.evaluate("run_shell", {"command": "ls"}, None).allowed
+    # A disallowed command must still ask, even though the tool itself
+    # was granted for the session.
+    d = eng.evaluate("run_shell", {"command": "rm -rf /"}, None)
+    assert not d.allowed and d.needs_user
+
+
 def test_custom_mode_auto_allows_configured_tools(tmp_path):
     reg = _registry(tmp_path)
     eng = PermissionEngine(

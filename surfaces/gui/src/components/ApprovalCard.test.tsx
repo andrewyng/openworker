@@ -620,6 +620,18 @@ describe("ApprovalCard — §1.9 egress cards", () => {
     expect(screen.getByText(/leaves this computer → your search provider/)).toBeTruthy();
   });
 
+  it("web_fetch names the search service that reads the page, when one does", () => {
+    render(<ApprovalCard item={fetchApproval()} onApprove={vi.fn()} />);
+    expect(screen.queryByTestId("approval-fetch-provider")).toBeNull(); // this machine fetches
+    cleanup();
+    render(<ApprovalCard item={fetchApproval({ fetchProvider: "exa" })} onApprove={vi.fn()} />);
+    expect(screen.getByTestId("approval-fetch-provider").textContent).toBe(
+      "The page is fetched by your search service, exa, which sees its address.",
+    );
+    // The page's own host still names the destination for the domain-shaped grant.
+    expect(screen.getByText(/leaves this computer → bbc\.com/)).toBeTruthy();
+  });
+
   it("Auto-Approve fall-through cards hide every session 'always' (§1.5: grants don't skip the reviewer)", () => {
     render(<ApprovalCard item={fetchApproval()} onApprove={vi.fn()} autoApprove />);
     expect(screen.queryByText(/for this session/)).toBeNull();
