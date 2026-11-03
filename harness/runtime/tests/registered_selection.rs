@@ -111,3 +111,23 @@ fn legacy_tool_scoping_remains_v2() {
         openworker_runtime::resource_policy::Placement::Sandbox
     );
 }
+
+#[test]
+fn empty_registered_selection_is_a_tool_free_bundle() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("coworker")).unwrap();
+    std::fs::write(
+        root.path().join("coworker/manifest.md"),
+        "---\nid: guide\nname: Guide\n---\nAnswer from supplied context only.",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("tools.json"),
+        r#"{"version":3,"tools":[]}"#,
+    )
+    .unwrap();
+    let b = Bundle::load_with_registry(root.path(), &registry("1")).unwrap();
+    assert!(b.tools.bindings.is_empty());
+    assert!(b.tools.servers.is_empty());
+    assert!(!b.manifest.memory && !b.manifest.planning && !b.manifest.scheduling);
+}

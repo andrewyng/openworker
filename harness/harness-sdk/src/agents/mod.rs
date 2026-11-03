@@ -216,6 +216,8 @@ impl Agent {
         self
     }
     /// Add one qualified tool (`provider.tool`) from the harness tool registry.
+    /// With no selected tools or enabled tool-bearing capabilities, the agent
+    /// is text-only and receives no implicit question/history tools.
     pub fn tool(mut self, name: impl Into<String>) -> Self {
         self.tools.push(name.into());
         self
@@ -325,13 +327,8 @@ impl Agent {
         if self.instructions.trim().is_empty() {
             return bad(format!("Agent {} needs instructions", self.id));
         }
-        if (self.tools.is_empty() && !self.memory && !self.scheduling && !self.planning)
-            || self.tools.len() > 64
-        {
-            return bad(format!(
-                "Agent {} needs at most 64 tools and at least one tool or an enabled planning, memory or scheduling capability",
-                self.id
-            ));
+        if self.tools.len() > 64 {
+            return bad(format!("Agent {} supports at most 64 tools", self.id));
         }
         let mut seen = BTreeSet::new();
         for tool in &self.tools {
@@ -391,5 +388,17 @@ impl Agent {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tool_free_tests {
+    use super::*;
+    #[test]
+    fn tool_free_agent_validates_without_enabling_capabilities() {
+        let agent = Agent::new("guide").instructions("Answer from supplied context only.");
+        agent.validate(false).unwrap();
+        assert!(agent.tools.is_empty());
+        assert!(!agent.memory && !agent.planning && !agent.scheduling);
     }
 }
