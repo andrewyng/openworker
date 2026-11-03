@@ -201,6 +201,7 @@ export type McpServer =
   | { name: string; transport: "streamable-http"; url: string }
   | { name: string; transport: "stdio"; program: string; args?: string[] };
 export type ResolvedHarnessOptions = HarnessOptions & {
+  packagedRuntime?: boolean;
   executable: string;
   stateDir: string;
 };

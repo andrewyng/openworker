@@ -20,7 +20,7 @@ const name =
     ? "openworker-harness.exe"
     : "openworker-harness";
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-if (config.template === "electron-game-builder") {
+if (config.sdkRoot && config.template === "electron-game-builder") {
   try {
     await access(
       join(config.sdkRoot, "typescript-sdk", "node_modules", "typescript"),
@@ -39,6 +39,10 @@ if (config.template === "electron-game-builder") {
   });
 }
 let source = config.runtime;
+if (!source && !config.sdkRoot) {
+  const { resolveRuntimeExecutable } = await import("@openworker/harness");
+  source = resolveRuntimeExecutable();
+}
 if (!source) {
   execFileSync(
     "cargo",

@@ -10,7 +10,7 @@ root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root))
 from coworker import compaction as c
 
-fixture = json.loads((root / "harness/tests/contracts/compaction.json").read_text())
+fixture = json.loads((root / "harness/runtime/src/contracts/compaction.json").read_text())
 assert fixture["schema_version"] == 1
 assert fixture["prompts"] == {"system": c.SUMMARY_SYSTEM_PROMPT,
                              "tail": c.SUMMARY_TAIL_INSTRUCTION,
@@ -33,7 +33,7 @@ for case in fixture["cases"]:
         raise AssertionError(f"Unknown fixture: {op}")
     assert actual == case["expected"], (case, actual)
 print(f"PASS: {len(fixture['cases'])} shared Python policy cases and exact prompts")
-deviations = json.loads((root / "harness/tests/contracts/known-deviations.json").read_text())
+deviations = json.loads((root / "harness/runtime/src/contracts/known-deviations.json").read_text())
 with contextlib.redirect_stdout(io.StringIO()):
     evidence = runpy.run_path(str(root / "docs/harness/probes/python_parity_review.py"))["result"]
 actual = {

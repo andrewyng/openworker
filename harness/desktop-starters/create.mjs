@@ -28,8 +28,9 @@ try {
 } catch (e) {
   if (e.code !== "ENOENT") throw e;
 }
-const sdkRoot = resolve(flags["--sdk-root"] ?? join(here, ".."));
-await access(join(sdkRoot, "harness-sdk", "Cargo.toml"));
+const sdkRoot = flags["--sdk-root"] ? resolve(flags["--sdk-root"]) : null;
+if (sdkRoot) await access(join(sdkRoot, "harness-sdk", "Cargo.toml"));
+const version = JSON.parse(await readFile(join(here,"package.json"),"utf8")).version;
 const appId = basename(destination)
   .replace(/[^a-zA-Z0-9_-]/g, "-")
   .slice(0, 60);
@@ -45,7 +46,8 @@ pkg.engines = { node: ">=22.12.0", npm: ">=11" };
 pkg.packageManager = "npm@11.21.1";
 if (template === "electron-game-builder")
   pkg.dependencies["@openworker/harness"] =
-    "file:" + join(sdkRoot, "typescript-sdk");
+    sdkRoot ? "file:" + join(sdkRoot, "typescript-sdk") : version;
+if (template === "tauri-game-builder" && !sdkRoot) pkg.devDependencies["@openworker/harness"] = version;
 await writeFile(
   join(destination, "package.json"),
   JSON.stringify(pkg, null, 2) + "\n",
@@ -80,10 +82,7 @@ if (template === "tauri-game-builder") {
   );
   await writeFile(
     join(destination, "src-tauri", "Cargo.toml"),
-    cargo.replace(
-      '"__SDK_PATH__"',
-      JSON.stringify(join(sdkRoot, "harness-sdk").replaceAll("\\", "/")),
-    ),
+    sdkRoot ? cargo.replace('"__SDK_PATH__"', JSON.stringify(join(sdkRoot,"harness-sdk").replaceAll("\\","/"))) : cargo.replace('openworker-sdk = { path = "__SDK_PATH__" }', `openworker-sdk = "=${version}"`),
   );
   const config = JSON.parse(
     await readFile(join(destination, "src-tauri", "tauri.conf.json"), "utf8"),

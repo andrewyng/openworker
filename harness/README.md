@@ -1,5 +1,7 @@
 # OpenWorker Harness
 
+Start with the [SDK guides](../docs/harness/guides/index.md) or run the [local documentation site](../docs-site/README.md).
+
 Build your product and user experience. Let OpenWorker run the agents.
 
 OpenWorker Harness is a Rust agent runtime with Rust and TypeScript SDKs. It
@@ -30,9 +32,9 @@ executable from that same checkout. Source manifests remain development packages
 
 ## Start here
 
-- **[Desktop QuickStart](../docs/harness/QUICKSTART.md)** — build a Windows or Mac
+- **[Desktop QuickStart](../docs/harness/guides/desktop.md)** — build a Windows or Mac
   app with TypeScript/Electron or Rust/Tauri.
-- **[Visual QuickStart](../docs/harness/DESKTOP-QUICKSTART.html)** — open the local
+- **[Documentation site](../docs-site/README.md)** — build the local
   HTML file in a browser for tabbed Rust/TypeScript examples.
 - **[Arcade Studio](examples/arcade/README.md)** — the flagship integration:
   a game library, cloud/local model settings, guided creation, streamed activity,

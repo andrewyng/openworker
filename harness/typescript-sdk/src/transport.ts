@@ -1,3 +1,4 @@
+import { validateRuntimeVersion } from "./runtime-package.js";
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -362,6 +363,7 @@ export class Transport {
         "Runtime does not support protocol 0.1 agent runs",
       );
     }
+    try { validateRuntimeVersion(info, this.options.packagedRuntime); } catch (error) { child.kill("SIGKILL"); throw error; }
     if (failed || this.closed)
       throw new HarnessError(
         "Unavailable",

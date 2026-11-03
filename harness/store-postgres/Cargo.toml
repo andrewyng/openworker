@@ -1,10 +1,13 @@
 [package]
+readme = "README.md"
+repository = "https://github.com/andrewyng/openworker"
+description = "OpenWorker store-postgres for durable agent applications"
 name = "openworker-store-postgres"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+publish = ["crates-io"]
 
 [features]
 compliance = ["openworker-runtime/compliance"]
@@ -23,9 +26,9 @@ path = "tests/support/recovery.rs"
 required-features = ["test-support"]
 
 [dependencies]
-openworker-artifacts = { path = "../artifacts" }
-openworker-runtime = { path = "../runtime", default-features = false }
-openworker-tools = { path = "../tools-sdk", optional = true }
+openworker-artifacts = { version = "=0.1.0-beta.1", path = "../artifacts" }
+openworker-runtime = { version = "=0.1.0-beta.1", path = "../runtime", default-features = false }
+openworker-tools = { version = "=0.1.0-beta.1", path = "../tools-sdk", optional = true }
 anyhow = "1"
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 postgres-native-tls = "0.5"

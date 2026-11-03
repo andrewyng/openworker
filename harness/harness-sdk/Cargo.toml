@@ -1,10 +1,13 @@
 [package]
+readme = "README.md"
+repository = "https://github.com/andrewyng/openworker"
+description = "OpenWorker sdk for durable agent applications"
 name = "openworker-sdk"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+publish = ["crates-io"]
 
 [features]
 default = ["guardrails", "compliance"]
@@ -19,15 +22,15 @@ name = "openworker-harness"
 path = "src/main.rs"
 
 [dependencies]
-openworker-security-adapters = { path = "../security-adapters", optional = true }
+openworker-security-adapters = { version = "=0.1.0-beta.1", path = "../security-adapters", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 anyhow = "1"
 fs2 = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
-openworker-store-postgres = { path = "../store-postgres" }
-openworker-runtime = { path = "../runtime", default-features = false }
-openworker-telemetry = { path = "../telemetry", features = ["otlp"] }
-openworker-tools = { path = "../tools-sdk" }
+openworker-store-postgres = { version = "=0.1.0-beta.1", path = "../store-postgres" }
+openworker-runtime = { version = "=0.1.0-beta.1", path = "../runtime", default-features = false }
+openworker-telemetry = { version = "=0.1.0-beta.1", path = "../telemetry", features = ["otlp"] }
+openworker-tools = { version = "=0.1.0-beta.1", path = "../tools-sdk" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

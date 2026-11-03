@@ -1,7 +1,8 @@
 # OpenWorker TypeScript Harness SDK
 
-Development API, Node.js 20+, ESM. Source/tarball distribution; **not yet
-published to npm**. The Rust host owns model/tool execution, policy, persistence,
+Registry candidate: **0.1.0-beta.1**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+
+Beta API, Node.js 20+, ESM. Registry-ready source/tarball distribution. The Rust host owns model/tool execution, policy, persistence,
 agent teams and run semantics. This package owns typed APIs and a managed private
 stdio connection. No browser runtime, native Node binding, REST server, or Python
 dependency. Python/Desktop remains separate.

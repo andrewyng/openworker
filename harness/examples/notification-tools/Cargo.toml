@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "notification-tools"
 version = "0.1.0"
 edition.workspace = true
