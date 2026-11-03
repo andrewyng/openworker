@@ -229,7 +229,8 @@ def test_a_command_card_offers_once_this_session_and_no() -> None:
         keys = _Keys(typed)
         got = asyncio.run(keys.terminal(cwd=home / "src" / "project").approve(_request("run_shell", {"command": "npm install"})))
         assert got is outcome
-        assert "Approval needed: run a command\n  npm install\n  in ~/src/project\n" in keys.printed
+        location = os.path.join("~", "src", "project")
+        assert f"Approval needed: run a command\n  npm install\n  in {location}\n" in keys.printed
         assert "[y] yes, once   [s] yes, for this session   [n] no" in keys.printed
         assert "requires approval" not in keys.printed  # the engine's filler reason is not shown
 
@@ -319,7 +320,8 @@ def test_a_folder_request_is_asked_and_yes_gives_the_folder(tmp_path: Path) -> N
     keys = _Keys("y")
     got = asyncio.run(terminal(keys).directory(dict(request)))
     assert got == {"granted": True, "path": str(exports.resolve()), "writable": True}
-    assert f"The coworker asks for a folder to read and write: {exports}" in keys.printed
+    shown_path = Path("~") / exports.relative_to(Path.home()) if exports.is_relative_to(Path.home()) else exports
+    assert f"The coworker asks for a folder to read and write: {shown_path}" in keys.printed
     assert "Reason: the report reads last month's exports" in keys.printed
     assert "[y] yes   [r] yes, read only   [n] no   or type another folder" in keys.printed
 
@@ -509,7 +511,8 @@ FOLDER_THEN_WRITE = [
 
 
 def _folder_script(exports: Path) -> list[dict]:
-    return json.loads(json.dumps(FOLDER_THEN_WRITE).replace("EXPORTS", str(exports)))
+    escaped = json.dumps(str(exports))[1:-1]
+    return json.loads(json.dumps(FOLDER_THEN_WRITE).replace("EXPORTS", escaped))
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="needs a pseudo-terminal")

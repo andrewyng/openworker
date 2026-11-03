@@ -626,6 +626,11 @@ def test_set_provider_auto_adds_recommended_when_pulled(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
+    # This test supplies a pulled model, so also supply the live Ollama that serves it.
+    # Otherwise an ambient provider key keeps the current default and the picker
+    # correctly hides the unreachable Ollama model.
+    monkeypatch.setattr(mgr, "_ollama_alive", lambda: True)
+    monkeypatch.setattr(mgr, "_ollama_models", lambda: [])
     monkeypatch.setattr(  # pretend the recommended model is pulled
         mgr,
         "_suggested_models",
