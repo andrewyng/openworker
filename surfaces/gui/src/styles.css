@@ -640,7 +640,7 @@ button.btn.danger { color: var(--accent); }
 /* The model picker shares the composer's single control row with the send/stop action. When an
    artifact panel narrows that column, let the model label truncate instead of pushing the action
    outside the composer (issue #208). */
-.composer .dd { min-width: 0; flex: 0 1 240px; }
+.composer .dd { min-width: 0; flex: 0 1 auto; max-width: 240px; }
 .composer .dd .pill { max-width: 100%; }
 
 /* dropdown popover */
