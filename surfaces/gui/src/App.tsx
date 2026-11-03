@@ -119,6 +119,7 @@ import { TeamRequestCard } from "./components/TeamRequestCard";
 import { WorkItemsCard } from "./components/WorkItemsCard";
 import { TeamChatView } from "./components/TeamChatView";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
+import { shouldStartWindowDrag } from "./windowDrag";
 
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
@@ -247,6 +248,9 @@ export function App() {
   // Settings: show the composer's context-window fill bar. OFF by default (owner ask),
   // so an older backend without the field also shows the session total.
   const [contextBar, setContextBar] = useState(false);
+  // #611: when on, the live reasoning stream is collapsed to a quiet indicator while a
+  // turn runs; the finalized reasoning still appears after. Loaded from Settings.
+  const [hideReasoningRunning, setHideReasoningRunning] = useState(false);
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
@@ -366,6 +370,8 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // OPE-238: Activity opened on one tool call's audit rows (unset = all activity).
+  const [auditCallId, setAuditCallId] = useState<string | undefined>(undefined);
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -791,6 +797,7 @@ export function App() {
         setModelConfig(s.model_config || {});
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
+        setHideReasoningRunning(s.hide_reasoning_running === true);
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
@@ -979,7 +986,7 @@ export function App() {
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
-            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
+            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…", ...(d.tool_call_id ? { callId: String(d.tool_call_id) } : {}) },
           ]);
           break;
         case "permission_required":
@@ -1046,18 +1053,20 @@ export function App() {
             setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);
           }
           setItems((p) =>
-            updateLastTool(
-              p,
-              d.name,
-              d.status,
-              d.result_preview || d.reason,
-              d.display?.hidden_by_filters,
-              d.standing_rule,
-              d.reviewer_reason,
-              d.allow_anyway,
-              d.approval_origin,
-              d.approval_note,
-            ),
+            updateLastTool(p, d.name, d.status, d.result_preview || d.reason, {
+              hidden: d.display?.hidden_by_filters,
+              standingRule: d.standing_rule,
+              reviewerReason: d.reviewer_reason,
+              allowAnyway: d.allow_anyway,
+              approvalOrigin: d.approval_origin,
+              approvalNote: d.approval_note,
+              callId: d.tool_call_id,
+              effect: d.approval_effect,
+              tier: d.approval_tier,
+              ...("exit_code" in d ? { exitCode: d.exit_code } : {}),
+              timedOut: d.timed_out,
+              background: d.background,
+            }),
           );
           // §8.4 breaker: the reviewer paused itself for the rest of the turn — say so
           // where the user is looking (persisted server-side for reloads) and on the
@@ -1884,7 +1893,7 @@ export function App() {
     overlay && (macosMajor() >= 26 || new URLSearchParams(window.location.search).get("overlay") === "26");
   const overlayClass = overlay ? " tauri-overlay" + (lightsHigh ? " macos-26" : "") : "";
   const beginWindowDrag = (event: PointerEvent) => {
-    if (!desktop || event.button !== 0) return;
+    if (!desktop || !shouldStartWindowDrag(event)) return;
     startWindowDrag();
   };
 
@@ -2065,7 +2074,10 @@ export function App() {
           setSurface("scheduled");
         }}
         onOpenIntegrations={() => openSettings("connectors")}
-        onOpenAudit={() => setSurface("audit")}
+        onOpenAudit={() => {
+          setAuditCallId(undefined);
+          setSurface("audit");
+        }}
         onOpenInbox={() => setSurface("inbox")}
         scheduledActive={surface === "scheduled"}
         integrationsActive={surface === "settings" && settingsTab === "connectors"}
@@ -2115,7 +2127,7 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView />
+        <AuditView callId={auditCallId} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
@@ -2310,6 +2322,11 @@ export function App() {
                     onRetry={retry}
                     onOpenConnectors={() => openSettings("connectors")}
                     onAllowAnyway={allowAnyway}
+                    onOpenAudit={(callId) => {
+                      // OPE-238: an item of "changes made without asking" → its audit rows.
+                      setAuditCallId(callId);
+                      setSurface("audit");
+                    }}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
@@ -2319,10 +2336,19 @@ export function App() {
                   {/* Live thinking (reasoning models): a quiet collapsed block that streams the
                       trace for anyone who expands it; folds into the answer's disclosure when
                       the message finalizes. */}
-                  {running && reasoningStream && !streaming && (
-                    <div className="transcript">
-                      <ThinkingBlock text={reasoningStream} live />
-                    </div>
+                  {running &&
+                    reasoningStream &&
+                    !streaming &&
+                    !hideReasoningRunning && (
+                      <div className="transcript">
+                        <ThinkingBlock text={reasoningStream} live />
+                      </div>
+                    )}
+                  {/* #611: "Hide thinking while running" collapses the fast-scrolling live trace
+                      to a quiet one-line indicator — the finalized reasoning still appears in the
+                      assistant item after the turn, so no signal is lost. */}
+                  {running && reasoningStream && !streaming && hideReasoningRunning && (
+                    <WaitingForAgent label={t("app.thinking_hidden")} />
                   )}
                   {/* OPE-206: the sandbox for this session is being built (a container, its
                       runner, its mounts). Not a turn, so `running` is false; the row says so. */}
@@ -2697,35 +2723,61 @@ function WaitingForAgent({ label }: { label?: string }) {
   );
 }
 
-function updateLastTool(
+// Pairs a finished event with its pending tool item. By call id when the engine gave one
+// (OPE-238: two same-named calls in one batch finish in call order, and matching the LAST
+// pending item by name handed each one the other's result, exit code and audit link);
+// otherwise the last pending item with that name, as before.
+export function updateLastTool(
   items: Item[],
   name: string,
   status: string,
-  preview?: string,
-  hidden?: number,
-  standingRule?: string,
-  reviewerReason?: string,
-  allowAnyway?: boolean,
-  approvalOrigin?: string,
-  approvalNote?: string,
+  preview: string | undefined,
+  fields: {
+    hidden?: number;
+    standingRule?: string;
+    reviewerReason?: string;
+    allowAnyway?: boolean;
+    approvalOrigin?: string;
+    approvalNote?: string;
+    callId?: string;
+    effect?: string;
+    tier?: string;
+    exitCode?: number | null;
+    timedOut?: boolean;
+    background?: boolean;
+  } = {},
 ): Item[] {
   const copy = [...items];
-  for (let i = copy.length - 1; i >= 0; i--) {
-    const it = copy[i];
-    if (it.kind === "tool" && it.name === name && it.status === "…") {
-      copy[i] = {
-        ...it,
-        status,
-        preview,
-        ...(hidden ? { hidden } : {}),
-        ...(standingRule ? { standingRule } : {}),
-        ...(reviewerReason ? { reviewerReason } : {}),
-        ...(allowAnyway ? { allowAnyway } : {}),
-        ...(approvalOrigin ? { approvalOrigin } : {}),
-        ...(approvalNote ? { approvalNote } : {}),
-      };
-      break;
+  const { hidden, standingRule, reviewerReason, allowAnyway, approvalOrigin, approvalNote, callId, effect, tier, timedOut, background } = fields;
+  let at = -1;
+  if (callId) at = copy.findIndex((it) => it.kind === "tool" && it.callId === callId && it.status === "…");
+  if (at < 0)
+    for (let i = copy.length - 1; i >= 0; i--) {
+      const it = copy[i];
+      if (it.kind === "tool" && it.name === name && it.status === "…") {
+        at = i;
+        break;
+      }
     }
+  if (at >= 0) {
+    const it = copy[at] as Extract<Item, { kind: "tool" }>;
+    copy[at] = {
+      ...it,
+      status,
+      preview,
+      ...(hidden ? { hidden } : {}),
+      ...(standingRule ? { standingRule } : {}),
+      ...(reviewerReason ? { reviewerReason } : {}),
+      ...(allowAnyway ? { allowAnyway } : {}),
+      ...(approvalOrigin ? { approvalOrigin } : {}),
+      ...(approvalNote ? { approvalNote } : {}),
+      ...(callId ? { callId } : {}),
+      ...(effect ? { effect } : {}),
+      ...(tier ? { tier } : {}),
+      ...("exitCode" in fields ? { exitCode: fields.exitCode } : {}),
+      ...(timedOut ? { timedOut } : {}),
+      ...(background ? { background } : {}),
+    };
   }
   return copy;
 }

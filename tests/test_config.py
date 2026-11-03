@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import assert_user_only
+
 from coworker.config import load_config
 
 
@@ -77,7 +79,7 @@ def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     assert canonical == str(real.resolve())
     assert store.is_trusted(real)
     assert store.list() == [str(real.resolve())]
-    assert (store.path.stat().st_mode & 0o777) == 0o600
+    assert_user_only(store.path)
 
     store.set_trusted(real, False)
     assert not store.is_trusted(alias)
@@ -142,3 +144,27 @@ def test_cloud_endpoints_default_to_production():
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"
     assert cfg.cloud_relay_ws_url.startswith("wss://")
+
+
+def test_inert_writes_tier_is_user_global_only(tmp_path):
+    # OPE-233: a cloned repo must not be able to switch on a looser Auto-Approve gate.
+    g = tmp_path / "global.toml"
+    g.write_text('auto_approve_inert_writes = "audit"\n')
+    ws = tmp_path / "ws"
+    (ws / ".coworker").mkdir(parents=True)
+    (ws / ".coworker" / "config.toml").write_text('auto_approve_inert_writes = "on"\n')
+
+    assert load_config(ws, global_path=g).auto_approve_inert_writes == "audit"
+    assert load_config(ws, global_path=tmp_path / "none.toml").auto_approve_inert_writes == "off"
+
+
+def test_plan_approval_is_user_global_only(tmp_path):
+    # OPE-237: a cloned repo must not be able to switch on plan approval as reviewer evidence.
+    g = tmp_path / "global.toml"
+    ws = tmp_path / "ws"
+    (ws / ".coworker").mkdir(parents=True)
+    (ws / ".coworker" / "config.toml").write_text("auto_approve_plan_approval = true\n")
+
+    assert load_config(ws, global_path=tmp_path / "none.toml").auto_approve_plan_approval is False
+    g.write_text("auto_approve_plan_approval = true\n")
+    assert load_config(ws, global_path=g).auto_approve_plan_approval is True

@@ -45,7 +45,9 @@ it; if you can't verify, say so plainly. Don't repeat a failing command — if s
 attempts, step back, reconsider, and surface the blocker.
 - Pass a short `description` with each command (shown in approval prompts), and raise \
 `timeout_seconds` for slow builds/tests. For long-running processes (dev servers, watchers), \
-set `run_in_background` and poll `shell_task_output`; stop them with `shell_task_kill`.
+set `run_in_background` and check them with `shell_task_output` (pass `wait_seconds` when \
+your next step depends on the process finishing, rather than polling); stop them with \
+`shell_task_kill`.
 
 Plan multi-step work:
 - For anything beyond a few steps, maintain a task list with `todo_write`: keep exactly one \

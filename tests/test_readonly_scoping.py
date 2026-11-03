@@ -18,11 +18,13 @@ from coworker.readonly import is_readonly_command, read_targets
 
 @pytest.fixture()
 def session(tmp_path):
-    """A session whose granted root is `repo/`, with the grant already clicked."""
+    """A session whose granted root is `repo/`, with the grant already clicked. The commands
+    below are bash commands, so the shell is bash on every platform (OPE-232: PowerShell
+    has its own list)."""
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
     (root / "build.log").write_text("boom", encoding="utf-8")
-    engine = PermissionEngine(workspace_root=root, mode=Mode.INTERACTIVE)
+    engine = PermissionEngine(workspace_root=root, mode=Mode.INTERACTIVE, shell_kind="bash")
     engine.allow_readonly_for_session()
     return engine
 
@@ -62,10 +64,27 @@ def test_reads_inside_the_granted_folder_still_run_unprompted(session, command):
         "grep -r AWS_SECRET /",
         "find / -name id_rsa",
         "head -n 5 ~/.aws/credentials",
+        # find's global options must not hide the starting point from the root check:
+        # before, these returned no targets and the grant waved them through.
+        "find -L /etc -name shadow",
+        "find -H ~/.ssh -type f",
+        "find -P ~/.aws -name credentials",
+        "find -D search ~/.aws",
+        "find -O3 /etc -name shadow",
     ],
 )
 def test_reads_outside_every_root_now_ask(session, command):
-    assert not runs(session, command), command
+    assert not runs(session, command)
+
+
+def test_find_with_a_global_option_inside_the_root_still_runs(session):
+    # The scoping must not undo the convenience: the prefixed form over an in-scope path
+    # keeps auto-running, exactly like the unprefixed one.
+    assert runs(session, "find -H . -name '*.py'")
+    assert runs(session, "find -D search src")
+    # OPE-232: -L follows symbolic links met during the walk, which the folder check
+    # cannot see, so it asks.
+    assert not runs(session, "find -L . -name '*.py'")
 
 
 def test_openworkers_own_secrets_are_no_longer_readable(session):
@@ -109,6 +128,7 @@ def test_a_second_granted_root_is_in_scope(tmp_path):
         workspace_root=repo,
         mode=Mode.INTERACTIVE,
         roots=[RootDir(path=repo, writable=True), RootDir(path=notes, writable=False)],
+        shell_kind="bash",
     )
     engine.allow_readonly_for_session()
     # Reading needs read access, not write access.
@@ -150,6 +170,17 @@ def test_without_the_grant_nothing_changes(tmp_path):
         ("jq .foo data.json", ["data.json"]),  # the filter is not a file
         ("find /tmp -name x", ["/tmp"]),  # predicates end the path list
         ("nl a.txt | sed -n 2p", ["a.txt"]),
+        # find's global options precede the starting points and must not end the path
+        # list: `find -L /etc …` reads /etc just like the unprefixed form.
+        ("find -L /tmp -name x", ["/tmp"]),
+        ("find -H /tmp -type f", ["/tmp"]),
+        ("find -P /tmp -type f", ["/tmp"]),
+        ("find -D search /tmp", ["/tmp"]),  # -D takes a value
+        ("find -O3 /tmp -name x", ["/tmp"]),
+        ("find -E /tmp -regex x", ["/tmp"]),  # BSD global options
+        ("find -f /tmp -name x", ["/tmp"]),  # BSD -f carries the starting point
+        ("find -L /tmp /var -name x", ["/tmp", "/var"]),
+        ("find -L -name x", []),  # no starting point: find defaults to `.`
     ],
 )
 def test_read_targets_names_the_files_and_not_the_arguments(command, expected):

@@ -626,6 +626,13 @@ export function ApprovalCard({
             : t("approval.search_note")}
         </div>
       )}
+      {/* web_fetch through the search service (Settings ▸ Customization): the card names
+          the service that reads the page, since it sees the address. */}
+      {item.name === "web_fetch" && item.fetchProvider && (
+        <div className="approval-with" data-testid="approval-fetch-provider">
+          {t("approval.fetch_note_current", { provider: item.fetchProvider })}
+        </div>
+      )}
       {/* MCP arguments (OPE-136 finding 5): everything the call carries, expandable —
           for a stranger's tool the arguments are the only evidence there is. */}
       {item.name.startsWith("mcp__") && item.args && Object.keys(item.args).length > 0 && (

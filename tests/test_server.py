@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+from conftest import assert_user_only
 from fastapi.testclient import TestClient
 
 from coworker.providers import (
@@ -536,7 +537,7 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
         assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
         assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
-        assert (path.stat().st_mode & 0o777) == 0o600
+        assert_user_only(path)
     finally:
         path.unlink(missing_ok=True)
         os.environ.pop("COWORKER_API_TOKEN", None)
@@ -572,6 +573,40 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
     messages = client.get("/v1/sessions/flaky/messages").json()["messages"]
     assert messages[-1]["role"] == "assistant" and messages[-1]["content"] == "recovered"
     assert sum(1 for m in messages if m["role"] == "user") == 1
+
+
+def test_ws_turn_crash_broadcasts_error_event(tmp_path):
+    """An exception escaping engine.run() (not a provider error the engine converts into an
+    error event) must surface as an error event + turn_done — not die silently as an
+    unretrieved task exception with only a bare turn_done (#367)."""
+    import asyncio
+
+    from coworker.engine import Event
+
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    engine = manager.get_engine("boom", workspace=tmp_path)
+    assert engine is not None
+
+    async def exploding_run(*args, **kwargs):
+        raise RuntimeError("engine blew up")
+        yield  # pragma: no cover - makes this an async generator
+
+    engine.run = exploding_run  # type: ignore[method-assign]
+    client = TestClient(create_app(manager))
+    with client.websocket_connect("/ws/session/boom") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_json({"type": "user_message", "text": "hello"})
+        types, errors = [], []
+        while True:
+            event = ws.receive_json()
+            types.append(event["type"])
+            if event["type"] == "error":
+                errors.append(event["data"].get("error"))
+            if event["type"] == "turn_done":
+                break
+        assert len(errors) == 1 and "engine blew up" in errors[0]
+        assert "turn_done" in types
+        assert "assistant_message" not in types  # the crashed turn produced no reply
 
 
 # -- origin gate (local-API hardening): a browser page on a foreign origin must not be able to
@@ -765,6 +800,13 @@ def test_ws_browser_tool_audit_round_trip(tmp_path):
         r["tool"] == "browser_close" and r["stage"] == "approval_resolved" for r in rows
     )
     assert any(r["tool"] == "browser_close" and r["stage"] == "finished" for r in rows)
+
+    # OPE-238: one tool call's rows, by its id (the GUI's "changes made without asking"
+    # summary links each item this way).
+    call_id = next(r["call_id"] for r in rows if r["stage"] == "finished")
+    one = client.get("/v1/audit", params={"call_id": call_id}).json()["events"]
+    assert one and {r["call_id"] for r in one} == {call_id}
+    assert client.get("/v1/audit", params={"call_id": "no-such-call"}).json()["events"] == []
 
 
 def test_open_and_recent_workspaces(tmp_path):
@@ -1088,6 +1130,32 @@ def test_provider_set_and_remove_roundtrip(tmp_path):
     assert not prov["zai"]["key_set_at"]
 
     assert not client.delete("/v1/providers/nope").json()["ok"]
+
+
+def test_custom_provider_rest_create_and_delete(tmp_path, monkeypatch):
+    """The public Settings API creates a separately-routed custom provider."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
+    client = TestClient(create_app(manager))
+
+    created = client.post(
+        "/v1/providers/custom",
+        json={
+            "name": "acme",
+            "title": "Acme Gateway",
+            "fields": {
+                "api_key": "acme-test",
+                "base_url": "https://llm.acme.example/v1",
+            },
+        },
+    ).json()
+    assert created == {"ok": True, "provider": "acme", "recommended_model": None}
+    provider = {p["name"]: p for p in client.get("/v1/providers").json()}["acme"]
+    assert provider["is_custom"] is True and provider["values"]["base_url"].endswith("/v1")
+    assert "acme-test" not in str(provider)
+
+    assert client.delete("/v1/providers/acme").json()["ok"] is True
+    assert "acme" not in {p["name"] for p in client.get("/v1/providers").json()}
 
 
 def test_always_allow_grants_survive_restart(tmp_path):

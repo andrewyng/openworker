@@ -16,9 +16,9 @@ where the vendor spec wasn't re-checked stay ``None`` — the meter simply hides
 showing a made-up denominator. Values entered 2026-07-28 from vendor docs; verify alongside
 the id refresh.
 
-Resellers: Together + Fireworks + OpenRouter. TODO: add Groq entries here AND its
-descriptor in ``registry.py`` once the current provider surface is tested — deliberately
-deferred to bound how much needs verifying at once.
+Resellers: Together + Fireworks + OpenRouter + Nebius + OrcaRouter + NVIDIA NIM
++ Groq (landed 2026-10-25, after the deferral of 2026-07-04) + Cerebras, Hugging Face
+Inference Providers and SiliconFlow (2026-10-26).
 """
 
 from __future__ import annotations
@@ -187,19 +187,79 @@ MATRIX: dict[str, ModelEntry] = {
     # GLM-5.2 shipped with a 1M window (docs.z.ai, read 2026-09-08: "1M" context,
     # 128K output); the 128,000 here was stale and compacted it at 102,400 (OPE-170).
     "zai:glm-5.2": ModelEntry("GLM-5.2 · Z AI", _AGENTIC, 1_000_000),
+    # DeepSeek's native API exposes the full 1M context for both V4 variants
+    # (verified against the official model table 2026-08-10).
     "deepseek:deepseek-v4-flash": ModelEntry(
-        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Flash · DeepSeek", _AGENTIC, 1_000_000
     ),
     "deepseek:deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · DeepSeek", _AGENTIC, 1_000_000
     ),
     "kimi:kimi-k2.6": ModelEntry("Kimi K2.6 · Moonshot", _AGENTIC, 256_000),
     "minimax:MiniMax-M2.5": ModelEntry("MiniMax M2.5 · MiniMax"),
     "qwen:qwen3-max": ModelEntry("Qwen3 Max · Alibaba", _AGENTIC, 256_000),
+    # Qwen3.8 Max: multimodal (text/image/video/document) per Alibaba's model card, unlike
+    # the text-only Qwen3 Max above — needs its own entry so the qwen prefix heuristic in
+    # capabilities.py (vision=False for the whole family) doesn't strip images client-side
+    # (owner report 2026-08-02). PDF unverified over the compat surface, same caveat as
+    # Muse Spark, so it falls back via pdf_support.py too. Model Studio lists the GA id
+    # `qwen3.8-max` with a 1,000,000 context window (read 2026-10-17); the earlier
+    # `qwen3.8-max-preview` id is no longer listed.
+    "qwen:qwen3.8-max": ModelEntry(
+        "Qwen3.8 Max · Alibaba",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
     "xai:grok-4.3": ModelEntry("Grok 4.3 · xAI", _AGENTIC, 256_000),
     "mistral:mistral-large-latest": ModelEntry(
         "Mistral Large · Mistral", _AGENTIC, 128_000
     ),
+    # Upstage serves its Solar line under aliases that track the newest version
+    # (console.upstage.ai/docs/models/solar-pro-4 and /solar-mini-4, read 2026-10-25: "512K
+    # context length", 128K output, tool calling listed). solar-open2 stopped serving on
+    # 2026-08-12 and solar-pro3 retires 2026-10-30 (docs/models/history).
+    "upstage:solar-pro4": ModelEntry("Solar Pro 4 · Upstage", _AGENTIC, 512_000),
+    "upstage:solar-mini4": ModelEntry("Solar Mini 4 · Upstage", _AGENTIC, 512_000),
+    # -- Cerebras / Hugging Face / Cohere / SiliconFlow (added 2026-10-26) --------
+    # Cerebras: inference-docs.cerebras.ai/models/openai-oss — "Tool Calling" listed,
+    # "65k tokens (free tier), 131k tokens (paid)"; the paid window is stored.
+    "cerebras:gpt-oss-120b": ModelEntry("GPT-OSS 120B · via Cerebras", _AGENTIC, 131_072),
+    # Hugging Face Inference Providers: router.huggingface.co/v1/models (public listing)
+    # reports supports_tools=true and context_length 1048576 for GLM-5.2 at its providers.
+    "huggingface:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Hugging Face", _AGENTIC, 1_048_576),
+    # Cohere: docs.cohere.com/docs/models lists command-a-plus-05-2026 at 128k; the
+    # tool-use guide and the Compatibility API docs use this id in their examples.
+    "cohere:command-a-plus-05-2026": ModelEntry("Command A+ · Cohere", _AGENTIC, 128_000),
+    # SiliconFlow: siliconflow.com/blog/glm-5-2-api-guide — id zai-org/GLM-5.2, "1M-token
+    # context window" (pricing table: 1049K); tool calling among the listed workflows.
+    "siliconflow:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via SiliconFlow", _AGENTIC, 1_048_576),
+    # -- SambaNova ---------------------------------------------------------------
+    # SambaCloud's OpenAI-compatible API; ids and windows are the `context_length` values
+    # api.sambanova.ai/v1/models reports (keyless, read 2026-10-25). The two 128k rows are
+    # the production tier on docs.sambanova.ai/docs/en/models/sambacloud-models; MiniMax
+    # M3.1 Flash is what the catalogue serves today in place of the M2.7/M3 previews.
+    "sambanova:Meta-Llama-3.3-70B-Instruct": ModelEntry(
+        "Llama 3.3 70B · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:DeepSeek-V3.1": ModelEntry(
+        "DeepSeek V3.1 · SambaNova", _AGENTIC, 131_072
+    ),
+    "sambanova:MiniMax-M3.1-Flash": ModelEntry(
+        "MiniMax M3.1 Flash · SambaNova", _AGENTIC, 1_048_576
+    ),
+    # Atlas Cloud fronts open-weight models under each lab's namespace. Id and window
+    # from api.atlascloud.ai/v1/models (keyless, read 2026-10-25: `context_length`
+    # 1,048,576, `supported_features` lists tools); the earlier openai/gpt-4.1-mini row is
+    # not in its catalogue any more.
+    "atlascloud:zai-org/glm-5.2": ModelEntry(
+        "GLM-5.2 · via Atlas Cloud", _AGENTIC, 1_048_576
+    ),
+    # Novita fronts open-weight models under each lab's namespace. Id and window from
+    # api.novita.ai/openai/v1/models (keyless, read 2026-10-25: `context_size` 1,048,576,
+    # `features` lists function-calling).
+    "novita:zai-org/glm-5.2": ModelEntry("GLM-5.2 · via Novita", _AGENTIC, 1_048_576),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     # Together windows below are the `context_length` values its /v1/models catalog
@@ -223,6 +283,7 @@ MATRIX: dict[str, ModelEntry] = {
         "Kimi K2.6 · via Together", _AGENTIC, 262_144
     ),
     "together:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
+        # Together's serverless deployment exposes 512K, not the model-level 1M.
         "DeepSeek V4 Pro · via Together", _AGENTIC, 512_000
     ),
     "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": ModelEntry(
@@ -235,14 +296,18 @@ MATRIX: dict[str, ModelEntry] = {
     "fireworks:accounts/fireworks/models/kimi-k2p6": ModelEntry(
         "Kimi K2.6 · via Fireworks", _AGENTIC, 256_000
     ),
+    # fireworks.ai/models/fireworks/deepseek-v4-pro lists "1040k tokens" (read 2026-10-17),
+    # a little under the model-level 1M.
     "fireworks:accounts/fireworks/models/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via Fireworks", _AGENTIC, 1_040_000
     ),
     "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic": ModelEntry(
         "Llama 4 Maverick · via Fireworks", _AGENTIC, 1_000_000
     ),
     # OpenRouter slugs are lowercase `<lab>/<model>` (checked against their catalog
-    # 2026-07-25); same labs as above, one key for all of them.
+    # 2026-07-25); same labs as above, one key for all of them. Kimi K2.6 and Llama 4
+    # Maverick declare image input (architecture.input_modalities, 2026-08-09); PDFs
+    # unverified over the compat surface, like Kimi K3 below.
     # openrouter.ai/z-ai/glm-5.2: 1,048,576 context, 163,840 completion (read 2026-09-08).
     "openrouter:z-ai/glm-5.2": ModelEntry(
         "GLM-5.2 · via OpenRouter", _AGENTIC, 1_048_576
@@ -258,13 +323,21 @@ MATRIX: dict[str, ModelEntry] = {
         1_048_576,
     ),
     "openrouter:moonshotai/kimi-k2.6": ModelEntry(
-        "Kimi K2.6 · via OpenRouter", _AGENTIC, 256_000
+        "Kimi K2.6 · via OpenRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        256_000,
     ),
     "openrouter:deepseek/deepseek-v4-pro": ModelEntry(
-        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 128_000
+        "DeepSeek V4 Pro · via OpenRouter", _AGENTIC, 1_048_576
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
-        "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
+        "Llama 4 Maverick · via OpenRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
     ),
     # NVIDIA Nemotron via OpenRouter (openrouter.ai/api/v1/models/<id>/endpoints, read
     # 2026-10-01). Paid endpoints only; the `:free` variants are left out on purpose (they
@@ -292,10 +365,52 @@ MATRIX: dict[str, ModelEntry] = {
     "openrouter:stealth/ox-alpha": ModelEntry(
         "Ox Alpha · via OpenRouter", _AGENTIC, 1_048_576
     ),
+    # OrcaRouter: the same vendor namespaces, one key for all of them. Ids, windows and
+    # tool support from api.orcarouter.ai/v1/models (keyless, read 2026-10-25:
+    # `context_length` 1,000,000 and 1,048,576; both list `tools`; Sonnet 5 declares
+    # image input, PDFs unverified over the compat surface).
+    "orcarouter:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via OrcaRouter",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "orcarouter:deepseek/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via OrcaRouter", _AGENTIC, 1_048_576
+    ),
+    # NVIDIA NIM — NVIDIA's own `vendor/model` namespace, so its models repeat the word in
+    # the routed id. Ids from integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25;
+    # the earlier llama-3.3-nemotron-super-49b, z-ai/glm-5.2 and deepseek-v4-pro ids are
+    # no longer listed). Windows from the build.nvidia.com model pages the same day, which
+    # list "1M" context for all three. Text-only; tool calling as on the OpenRouter and
+    # Bedrock rows for the same models.
+    "nvidia:nvidia/nemotron-3-super-120b-a12b": ModelEntry(
+        "Nemotron 3 Super · via NVIDIA", _AGENTIC, 1_000_000
+    ),
+    "nvidia:nvidia/nemotron-3-ultra-550b-a55b": ModelEntry(
+        "Nemotron 3 Ultra · via NVIDIA", _AGENTIC, 1_000_000
+    ),
+    "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b": ModelEntry(
+        "Nemotron 3.5 Lightning · via NVIDIA", _AGENTIC, 1_000_000
+    ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
     # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
     # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
+    # Claude 5 generation: ids from the AWS model cards (docs.aws.amazon.com/bedrock/
+    # latest/userguide/model-card-anthropic-claude-{fable-5,opus-5,sonnet-5}.html, read
+    # 2026-10-25). AWS publishes these without a `-v<n>:<m>` suffix; 1M context, image
+    # input, tool use — same as the native `anthropic:` rows above.
+    "bedrock:claude/anthropic.claude-fable-5": ModelEntry(
+        "Claude Fable 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/anthropic.claude-opus-5": ModelEntry(
+        "Claude Opus 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
+    "bedrock:claude/anthropic.claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
+    ),
     "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
         "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
@@ -338,6 +453,35 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "vertex:openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": ModelEntry(
         "Qwen3 Coder · Vertex AI", _AGENTIC, 256_000
+    ),
+    # Nebius Token Factory keeps each lab's own namespace, like Together. Ids and windows
+    # from its public catalogue (tokenfactory.nebius.com/api/public/models_info, read
+    # 2026-10-25: `max_model_len` 1,048,576 for both; function_calling listed).
+    "nebius:zai-org/GLM-5.2": ModelEntry("GLM-5.2 · via Nebius", _AGENTIC, 1_048_576),
+    "nebius:deepseek-ai/DeepSeek-V4-Pro": ModelEntry(
+        "DeepSeek V4 Pro · via Nebius", _AGENTIC, 1_048_576
+    ),
+    # -- Groq (LPU inference) ---------------------------------------------------
+    # Groq keeps its own short ids. Rows and windows from console.groq.com/docs/models
+    # (production table, read 2026-10-25: 131,072 context each; the earlier Maverick,
+    # R1-distill and QwQ ids are no longer listed). console.groq.com/docs/tool-use (same
+    # day): all three take tools; only Llama 3.3 does parallel tool use.
+    "groq:llama-3.3-70b-versatile": ModelEntry(
+        "Llama 3.3 70B Versatile · via Groq", _AGENTIC, 131_072
+    ),
+    "groq:openai/gpt-oss-120b": ModelEntry(
+        "GPT-OSS 120B · via Groq",
+        ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        ),
+        131_072,
+    ),
+    "groq:openai/gpt-oss-20b": ModelEntry(
+        "GPT-OSS 20B · via Groq",
+        ModelCapabilities(
+            tools=True, vision=False, parallel_tool_calls=False, streaming=True
+        ),
+        131_072,
     ),
 }
 

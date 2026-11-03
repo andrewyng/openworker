@@ -236,6 +236,28 @@ def test_begin_managed_connect_requires_sign_in(secrets, config):
     out = cloud.begin_managed_connect(secrets, config, "gmail")
     assert not out["ok"]
     assert "not signed in" in out["error"]
+    assert out["signed_in"] is False
+
+
+def test_begin_managed_connect_reports_signed_out_on_expired_unrefreshable_session(
+    secrets, config
+):
+    """GitHub issue #658 ("Add to Slack" dead-ends on "not signed in"): the GUI
+    polls /v1/cloud/status every 5s and only checks `access_token` presence
+    (cloud.status), so a stored-but-expired session with no refresh_token still
+    reads signed_in=True there — the button stays live. begin_managed_connect is
+    the flow's actual authority: it calls fresh_access_token, which returns None
+    for exactly this profile, so this is where the rejection has to happen and
+    where the GUI's recovery-into-sign-in depends on `signed_in: False` being set
+    (not just `ok: False`, whose text a UI shouldn't have to pattern-match)."""
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "expires": time.time() - 10},  # no refresh_token
+    )
+    assert cloud.status(secrets)["signed_in"] is True  # the stale, misleading read
+
+    out = cloud.begin_managed_connect(secrets, config, "slack")
+    assert out == {"ok": False, "error": "not signed in", "signed_in": False}
 
 
 def test_managed_profile_is_field_compatible_with_manual(secrets):
@@ -441,6 +463,44 @@ def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch
         "persona_family",
         "workspace_kind",
     }
+
+
+def test_gallery_install_event_sends_nothing_when_opted_out(secrets, config, monkeypatch):
+    """The install event must respect the telemetry toggle — it fired regardless of it
+    before #398, so a user who turned telemetry off was still POSTed to on install."""
+    _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, False)
+
+    def boom(*a, **k):
+        raise AssertionError("opted-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_sends_nothing_signed_out(secrets, config, monkeypatch):
+    _signed_in_marker = secrets.get(cloud.CLOUD_AUTH_PROFILE)
+    assert _signed_in_marker is None  # start signed out
+
+    def boom(*a, **k):
+        raise AssertionError("signed-out users must send no gallery install telemetry")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    cloud.gallery_install_event(secrets, config, "sales")
+
+
+def test_gallery_install_event_posts_when_enabled(secrets, config, monkeypatch):
+    _signed_in(secrets)
+    sent = {}
+
+    def fake_post(url, **kwargs):
+        sent["url"] = url
+        sent["body"] = kwargs["json"]
+        return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    cloud.gallery_install_event(secrets, config, "sales")
+    assert sent["url"] == "https://cloud.test/v1/personas/gallery/sales/install-events"
 
 
 # --- gallery solo page ------------------------------------------------------
