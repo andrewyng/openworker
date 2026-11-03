@@ -149,7 +149,12 @@ def test_logs_on_macos_without_a_service_log_explains(tmp_path, capsys):
     assert "service install" in capsys.readouterr().err
 
 
-def test_macos_service_install_writes_a_launchd_agent(tmp_path, monkeypatch, capsys):
+@pytest.fixture
+def _fake_uid(monkeypatch):
+    monkeypatch.setattr(joiner.os, "getuid", lambda: 501, raising=False)
+
+
+def test_macos_service_install_writes_a_launchd_agent(tmp_path, monkeypatch, capsys, _fake_uid):
     state = _joined(tmp_path, "mac mini")
     calls: list[tuple] = []
     monkeypatch.setattr(joiner, "_launchctl", lambda *a: calls.append(a) or True)
@@ -164,7 +169,7 @@ def test_macos_service_install_writes_a_launchd_agent(tmp_path, monkeypatch, cap
     assert data["EnvironmentVariables"]["PATH"]  # launchd's own PATH is too bare for a coworker
     assert data["RunAtLoad"] is True and data["KeepAlive"] is True
     assert data["StandardOutPath"] == str(state / "logs" / "machine.log")
-    assert any(c[0] == "bootstrap" and c[-1] == str(plist_path) for c in calls)
+    assert ("bootstrap", "gui/501", str(plist_path)) in calls
     assert "openworker machine logs -f" in capsys.readouterr().out
 
     # list shows it with its state dir; uninstall unloads and removes it.
@@ -177,7 +182,7 @@ def test_macos_service_install_writes_a_launchd_agent(tmp_path, monkeypatch, cap
     assert any(c[0] == "bootout" for c in calls)
 
 
-def test_macos_service_install_refuses_a_twin_on_the_same_state_dir(tmp_path, monkeypatch, capsys):
+def test_macos_service_install_refuses_a_twin_on_the_same_state_dir(tmp_path, monkeypatch, capsys, _fake_uid):
     state = _joined(tmp_path, "mini")
     monkeypatch.setattr(joiner, "_launchctl", lambda *a: True)
     agent_dir = tmp_path / "Library" / "LaunchAgents"
@@ -196,7 +201,7 @@ def test_macos_service_install_refuses_a_twin_on_the_same_state_dir(tmp_path, mo
     assert (agent_dir / "com.openworker.machine.mini.plist").exists()
 
 
-def test_service_needs_a_joined_machine_and_a_supported_platform(tmp_path, capsys):
+def test_service_needs_a_joined_machine_and_a_supported_platform(tmp_path, capsys, _fake_uid):
     args = argparse.Namespace(service_command="install", force=False)
     assert joiner._cmd_service(tmp_path, args, platform="darwin", home=tmp_path) == 2
     assert "openworker join <link>" in capsys.readouterr().err
