@@ -7,18 +7,29 @@
 
 import anthropic from "./logos/anthropic.svg";
 import openai from "./logos/openai.svg";
+// Azure: a simplified "A" mark drawn in-house in Azure blues (no vendored asset).
+import azure from "./logos/azure.svg";
+
 import gemini from "./logos/gemini.svg";
 import byteplus from "./logos/byteplus.svg";
 import volcengine from "./logos/volcengine.svg";
 import ollama from "./logos/ollama.svg";
-// llama.cpp: selfhst/icons (CC BY 4.0); vLLM: homarr-labs/dashboard-icons (Apache 2.0).
+// llama.cpp: selfhst/icons (CC BY 4.0); vLLM: homarr-labs/dashboard-icons (Apache 2.0);
+// LM Studio: lobe-icons (MIT).
 import llamacpp from "./logos/llamacpp.svg";
 import vllm from "./logos/vllm.svg";
+import lmstudio from "./logos/lmstudio.svg";
 import bedrock from "./logos/bedrock.svg";
 import vertex from "./logos/vertex.svg";
 import openrouter from "./logos/openrouter.svg";
+import orcarouter from "./logos/orcarouter.svg";
 import fireworks from "./logos/fireworks.svg";
 import together from "./logos/together.svg";
+import nvidia from "./logos/nvidia.svg";
+import sambanova from "./logos/sambanova.svg";
+import atlascloud from "./logos/atlascloud.svg";
+import novita from "./logos/novita.svg";
+import groq from "./logos/groq.svg";
 import zai from "./logos/zai.svg";
 import kimi from "./logos/kimi.svg";
 import deepseek from "./logos/deepseek.svg";
@@ -27,6 +38,8 @@ import qwen from "./logos/qwen.svg";
 import minimax from "./logos/minimax.svg";
 import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
+import nebius from "./logos/nebius.svg";
+import upstage from "./logos/upstage.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -34,20 +47,30 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   // The subscription provider wears the same vendor mark — it's the same models,
   // different billing (owner call 2026-08-21: no bare-letter monogram).
   "openai-codex": openai,
+  azure,
   gemini,
+
   ark: byteplus,
   "ark-agent-plan-cn": volcengine,
   meta,
   ollama,
   llamacpp,
   vllm,
+  lmstudio,
   bedrock,
   vertex,
   openrouter,
   // Same mark for the signed-in OpenRouter provider: same models, billed to the account.
   "openrouter-account": openrouter,
+  orcarouter,
   fireworks,
   together,
+  nebius,
+  nvidia,
+  sambanova,
+  atlascloud,
+  novita,
+  groq,
   zai,
   kimi,
   deepseek,
@@ -55,18 +78,27 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   qwen,
   minimax,
   xai,
+  upstage,
 };
 
 export const PROVIDER_ORDER = [
   "anthropic",
   "openai",
+  "azure",
   "gemini",
   "ark",
+
   "ark-agent-plan-cn",
   "meta",
   "ollama",
   "llamacpp",
   "vllm",
+  "lmstudio",
+  // Jan, Docker Model Runner and mlx-lm carry no mark yet: the gallery shows the
+  // neutral monogram (see ProviderMark).
+  "jan",
+  "docker",
+  "mlx",
   "bedrock",
   "vertex",
   "openrouter",
@@ -80,6 +112,19 @@ export const PROVIDER_ORDER = [
   "qwen",
   "minimax",
   "xai",
+  "nebius",
+  "orcarouter",
+  "nvidia",
+  "sambanova",
+  "atlascloud",
+  "novita",
+  "groq",
+  "upstage",
+  // No vendored marks yet for these four: the gallery shows the neutral monogram.
+  "cerebras",
+  "huggingface",
+  "cohere",
+  "siliconflow",
 ];
 
 export function providerRank(name: string): number {

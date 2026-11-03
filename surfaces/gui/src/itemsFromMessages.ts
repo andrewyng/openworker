@@ -19,7 +19,10 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
   // Approval provenance (owner ruling 2026-08-24): who cleared (or refused) the call —
   // "reviewer"/"bypass"/"user"/"reviewer_denied" — persisted in the same sidecar so the
   // quiet chips survive reload.
-  const approvalMeta: Record<string, { origin: string; note?: string; grant?: string }> = {};
+  const approvalMeta: Record<string, { origin: string; note?: string; grant?: string; effect?: string; tier?: string }> = {};
+  // OPE-238: the call's outcome, persisted with the result so a reload shows what the live
+  // view showed: a failed status, and a shell command's exit code / time-out / background start.
+  const outcomes: Record<string, { status?: string; exitCode?: number | null; timedOut?: boolean; background?: boolean }> = {};
   for (const m of messages || []) {
     if (m.role === "tool" && m.tool_call_id) {
       results[m.tool_call_id] =
@@ -31,6 +34,16 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           origin: String(m._display.approval_origin),
           ...(m._display.approval_note ? { note: String(m._display.approval_note) } : {}),
           ...(m._display.approval_grant ? { grant: String(m._display.approval_grant) } : {}),
+          ...(m._display.approval_effect ? { effect: String(m._display.approval_effect) } : {}),
+          ...(m._display.approval_tier ? { tier: String(m._display.approval_tier) } : {}),
+        };
+      const d = m._display && typeof m._display === "object" ? (m._display as any) : null;
+      if (d && (d.status || "exit_code" in d || d.timed_out || d.background))
+        outcomes[m.tool_call_id] = {
+          ...(d.status ? { status: String(d.status) } : {}),
+          ...("exit_code" in d ? { exitCode: typeof d.exit_code === "number" ? d.exit_code : null } : {}),
+          ...(d.timed_out ? { timedOut: true } : {}),
+          ...(d.background ? { background: true } : {}),
         };
     }
   }
@@ -67,17 +80,25 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         const preview = results[tc.id];
         const hidden = hiddenCounts[tc.id];
         const meta = approvalMeta[tc.id];
-        // A denial (by the reviewer or the user) must not replay as a green step.
+        const outcome = outcomes[tc.id] || {};
+        // A denial (by the reviewer or the user) must not replay as a green step — and a
+        // call that failed must not either (it changed nothing).
         const denied = meta && (meta.origin === "reviewer_denied" || meta.grant === "deny");
         items.push({
           kind: "tool",
           id: tc.id,
+          ...(tc.id ? { callId: tc.id } : {}),
           name: tc.function?.name,
           args,
-          status: denied ? "denied" : "ok",
+          status: denied ? "denied" : outcome.status || "ok",
           preview,
+          ...("exitCode" in outcome ? { exitCode: outcome.exitCode } : {}),
+          ...(outcome.timedOut ? { timedOut: true } : {}),
+          ...(outcome.background ? { background: true } : {}),
           ...(hidden ? { hidden } : {}),
           ...(meta ? { approvalOrigin: meta.origin } : {}),
+          ...(meta?.effect ? { effect: meta.effect } : {}),
+          ...(meta?.tier ? { tier: meta.tier } : {}),
           ...(meta?.note
             ? meta.origin === "reviewer_denied"
               ? { reviewerReason: meta.note }

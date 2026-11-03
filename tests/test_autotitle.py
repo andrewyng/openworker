@@ -208,3 +208,39 @@ async def test_non_english_small_talk_still_hits_the_sentinel(tmp_path):
     await _turn(mgr, "lang3", "帮我整理季度汇报")
     assert len(provider.title_calls) == 2
     assert mgr.session_store.load("lang3").title == "季度汇报整理"
+
+
+class _SettingsRecorder(TitleAwareProvider):
+    def __init__(self, chat_turns, titles):
+        super().__init__(chat_turns, titles)
+        self.title_settings: list[dict] = []
+
+    def complete(self, *, model, messages, tools=None, **settings):
+        if messages and "title chat sessions" in str(messages[0].get("content", "")):
+            self.title_settings.append(dict(settings))
+        return super().complete(model=model, messages=messages, tools=tools, **settings)
+
+
+async def test_a_model_that_cannot_turn_reasoning_off_still_gets_a_title(tmp_path):
+    # OPE-201: an endpoint whose reasoning is mandatory refuses effort "none" (OpenRouter
+    # GLM 5.3 answers 400). The title is asked once more without the effort, with room for
+    # the reasoning the model spends first.
+    refused = RuntimeError("Error code: 400 - {'error': {'message': 'Reasoning is mandatory for "
+                           "this endpoint and cannot be disabled.', 'code': 400}}")
+    provider = _SettingsRecorder([_text("sure")], [refused, "Release Notes Draft"])
+    mgr = SessionManager(workspace=tmp_path, provider=provider)
+    await _turn(mgr, "s20", "draft the release notes")
+
+    first, second = provider.title_settings
+    assert first["reasoning_effort"] == "none" and first["max_tokens"] == 64
+    assert "reasoning_effort" not in second
+    assert second["max_tokens"] == SessionManager._AUTOTITLE_REASONING_MAX_TOKENS
+    assert mgr.session_store.title_state("s20")["auto_title"] == "Release Notes Draft"
+
+
+async def test_other_title_failures_are_not_retried(tmp_path):
+    provider = _SettingsRecorder([_text("ok")], [RuntimeError("model down"), "Never Used"])
+    mgr = SessionManager(workspace=tmp_path, provider=provider)
+    await _turn(mgr, "s21", "summarize this doc")
+    assert len(provider.title_settings) == 1
+    assert mgr.session_store.title_state("s21")["auto_title"] is None

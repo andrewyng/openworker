@@ -93,3 +93,32 @@ test("the subscription provider signs in from the browser flow, no key form", as
   await page.getByTestId("set-back").click();
   await expect(card).toContainText("Sign in with your plan");
 });
+
+test("Azure OpenAI: the endpoint is a plain required field, saved with the key", async ({
+  page,
+}) => {
+  // The Azure card (issue #457) replaces the old trick of pasting an Azure /openai/v1 URL
+  // into the OpenAI card's custom endpoint. Its endpoint is a first-class required field,
+  // rendered as an ordinary row — not behind the "Custom endpoint" disclosure.
+  await openModels(page);
+  await page.getByTestId("set-provider-azure").click();
+  await expect(page.getByTestId("set-field-endpoint")).toBeVisible();
+  await expect(page.getByTestId("set-endpoint-link")).toHaveCount(0);
+  await expect(page.getByText("model ids are your deployment names")).toBeVisible();
+  await expect(page.getByText("portal.azure.com")).toBeVisible();
+
+  await page.getByTestId("set-field-endpoint").fill("https://contoso.openai.azure.com");
+  await page.getByTestId("set-field-api_key").fill("azure-key-1234");
+  await page.getByTestId("set-test").click();
+  await expect(page.getByTestId("set-saved-pill")).toContainText("Tested & saved");
+  await expect(page.getByTestId("set-provider-azure")).toContainText("✓ Connected", {
+    timeout: 5_000,
+  });
+
+  // Reopened: the endpoint is served back from the stored values, the key never is, and
+  // the models section says what an Azure model id is.
+  await page.getByTestId("set-provider-azure").click();
+  await expect(page.getByTestId("set-field-endpoint")).toHaveValue("https://contoso.openai.azure.com");
+  await expect(page.getByTestId("set-field-api_key")).toHaveValue("");
+  await expect(page.getByTestId("set-azure-deployment-note")).toContainText("deployment name");
+});

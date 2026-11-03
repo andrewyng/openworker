@@ -295,6 +295,9 @@ def build_engine(
     # are user-global, preserving the "a repo can't enable this" invariant.
     auto_approve: Optional[bool] = None,
     auto_approve_shadow: Optional[bool] = None,
+    # Which reviewer (OPE-224): "session" | "openai-decisions" | "jev". None means the
+    # config.toml value.
+    auto_approve_reviewer: Optional[str] = None,
     # Persona-carried skill folders (OPE-58): the bundle's skills/ dir joins the loader so
     # its skills are readable by load_skill, not just listed by the filter.
     extra_skill_dirs: Optional[list[str | Path]] = None,
@@ -442,7 +445,7 @@ def build_engine(
     # unless the caller withheld them (`openworker run --no-web-tools`).
     if web_tools:
         registry.register(make_web_search_tool(secrets))
-        registry.register(make_web_fetch_tool())
+        registry.register(make_web_fetch_tool(secrets))
     # ask_user: the universal human-in-the-loop Q&A primitive (every agent; engine-intercepted).
     if question_asker is not None:
         registry.register(ask_user_tool())
@@ -602,6 +605,8 @@ def build_engine(
         risk_overrides=override_store.resolver(),
         trust_overrides=override_store.trusted,
         grant_trust=override_store.set_trust,
+        inert_writes=str(config.auto_approve_inert_writes),
+        readonly_commands=str(config.auto_approve_readonly_commands),
     )
     # The plan-mode exit door — mutually exclusive with the board's decomposition
     # gate, DERIVED from the team trait (owner call 2026-08-16): a lead never
@@ -610,7 +615,7 @@ def build_engine(
     # mode). Solo/worker personas keep propose_plan as always (mode can flip
     # mid-session; the engine rejects the call outside plan mode).
     if agent.team != "lead":
-        registry.register(propose_plan_tool())
+        registry.register(propose_plan_tool(steps=bool(config.auto_approve_plan_approval)))
 
     # The lead's gates: propose_work_items (decomposition → items on approval, any
     # mode) and propose_team (staffing → pre-spawn on approval).
@@ -750,7 +755,14 @@ def build_engine(
         )
     if _compaction_overrides:
         engine.compaction_settings = lambda: dict(_compaction_overrides)
+    # OPE-237: in auto-approve, an approved plan's steps become reviewer evidence.
+    engine.plan_approval = bool(config.auto_approve_plan_approval)
     engine.executor = executor  # type: ignore[attr-defined]
+    # OPE-232 / OPE-234: the read-only session grant and the auto-approve read-only tier
+    # judge paths from the persistent shell's current folder, not the workspace folder it
+    # may have moved away from.
+    if executor is not None:
+        engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
     # OPE-219: a sandboxed session with "Only the sites you allow" holds its web tools to
     # the same list as its commands. They run in this process, outside the sandbox, so the
@@ -815,6 +827,13 @@ def build_engine(
             from .web import provider_name
 
             return {"search_provider": provider_name(secrets)}
+        if tool_name == "web_fetch":
+            # Same rule for web_fetch: when the page goes through the search service
+            # (Settings ▸ Customization), the card names it.
+            from .web import fetch_provider_name
+
+            via = fetch_provider_name(secrets)
+            return {"fetch_provider": via} if via else {}
         return {}
 
     engine.approval_extras = _approval_extras
@@ -848,13 +867,20 @@ def build_engine(
     )
     engine.reviewer_enabled = bool(live_on)
     if live_on or shadow_on:
-        from .reviewer import Reviewer
+        from .decision_reviewer import make_auto_reviewer, normalize_reviewer_choice
 
-        engine.reviewer = Reviewer(
+        choice = normalize_reviewer_choice(
+            auto_approve_reviewer
+            if auto_approve_reviewer is not None
+            else getattr(config, "auto_approve_reviewer", "session")
+        )
+        engine.reviewer = make_auto_reviewer(
+            choice,
             provider=provider,
             model=model,
             known_world=engine.session_facts.world.render() + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(engine.runtime_facts),
         )
+        engine.reviewer_choice = choice
         # Shadow evaluation (Part 6 step 3): with only the shadow flag on, the reviewer is
         # attached but the LIVE path stays off unless the live feature flag is also on
         # and the session is in Mode.AUTO_APPROVE. Shadow verdicts never clear actions.

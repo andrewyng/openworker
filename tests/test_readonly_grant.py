@@ -24,7 +24,7 @@ ACCEPT = [
     "git -C /tmp/repo log -1",
     "git branch --show-current",
     "git stash list",
-    "git config --get user.name",
+    "git rev-parse HEAD",
     "git remote -v",
     "jq '.results | length' /tmp/report.json",
     "find . -name '*.py'",
@@ -135,7 +135,7 @@ def test_classifier_rejects(cmd):
 
 
 def test_engine_grant_gates_on_classifier(tmp_path):
-    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.INTERACTIVE)
+    eng = PermissionEngine(workspace_root=tmp_path, mode=Mode.INTERACTIVE, shell_kind="bash")
 
     class Meta:
         category = "shell"
