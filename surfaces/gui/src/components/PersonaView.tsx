@@ -30,6 +30,7 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { Toggle } from "./Toggle";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
+import { PersonaDoing } from "./PersonaDoing";
 
 const SEC_H = "text-label text-faint font-medium";
 const TAG_CORE =
@@ -352,6 +353,9 @@ export function PersonaView({
               </div>
             </section>
           )}
+
+          {/* Phase 3 OB-15: how each version of this coworker has been doing */}
+          <PersonaDoing personaId={personaId} machineId={mid} secClass={SEC_H} />
 
           {/* defaults footer */}
           <section className="flex flex-wrap gap-x-8 gap-y-2 text-ui">

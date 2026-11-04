@@ -93,6 +93,7 @@ import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
+import { useSessionFooters } from "./components/TurnFooter";
 import { InboxView } from "./components/InboxView";
 import {
   approvalItemFromPayload,
@@ -420,7 +421,10 @@ export function App() {
   const [stepsOpen, setStepsOpen] = useState(false);
   const [stepsKey, setStepsKey] = useState(0);
   // A turn's answer opened the panel: the answer's time picks the turn (unix seconds).
-  const [stepsAt, setStepsAt] = useState<{ ts?: number; n: number } | null>(null);
+  const [stepsAt, setStepsAt] = useState<{ ts?: number; turnId?: string; n: number } | null>(null);
+  // OB-5 (Phase 3): the footers under each answer, read again when a turn ends.
+  const [footKey, setFootKey] = useState(0);
+  const [footers, setFooter] = useSessionFooters(sessionId, footKey);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
   const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
@@ -1173,6 +1177,7 @@ export function App() {
         case "turn_done":
           setRunning(false);
           setStepsKey((k) => k + 1);
+          setFootKey((k) => k + 1);
           setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
@@ -1658,6 +1663,20 @@ export function App() {
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
+  // Phase 3: open one recorded turn's Steps, in its own session (Usage's heaviest turns,
+  // TeamView's events and evidence, an automation run's Steps).
+  const openTurnSteps = (sid: string, turnId: string) => {
+    const w = sessions.find((x) => x.session_id === sid);
+    const open = () => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    };
+    if (sid === sessionId) return open();
+    if (!w) return;
+    void selectSession(w.session_id, w.workspace, w.agent).then(open);
+  };
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
@@ -1854,6 +1873,18 @@ export function App() {
     setSurface("session");
     setShowGate(false);
     selectSession(sessionId, ws, ag);
+  };
+  // OB-18: a run's Steps, at its first turn.
+  const openRunSteps = (sid: string, turnId: string, ws: string, ag: string, task?: { id: string; title: string }) => {
+    setRunContext(task ?? null);
+    setSurface("session");
+    setShowGate(false);
+    void selectSession(sid, ws, ag).then(() => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    });
   };
   const runTaskNow = async (taskId: string, title?: string) => {
     const r = await runAutomation(taskId);
@@ -2107,6 +2138,7 @@ export function App() {
       {surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
+          onOpenRunSteps={openRunSteps}
           onRunNow={runTaskNow}
           initialOpenId={scheduledOpenId}
         />
@@ -2144,7 +2176,7 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView callId={auditCallId} />
+        <AuditView callId={auditCallId} onOpenTurn={openTurnSteps} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
@@ -2362,8 +2394,11 @@ export function App() {
                       setSurface("audit");
                     }}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
-                    onOpenSteps={agent !== "chat" ? (ts) => {
-                      setStepsAt((prev) => ({ ts, n: (prev?.n || 0) + 1 }));
+                    footers={agent !== "chat" ? footers : null}
+                    footerSessionId={sessionId || undefined}
+                    onFooterChange={setFooter}
+                    onOpenSteps={agent !== "chat" ? (ts, turnId) => {
+                      setStepsAt((prev) => ({ ts, turnId, n: (prev?.n || 0) + 1 }));
                       setStepsOpen(true);
                       setTeamViewOpen(false);
                       setRailHidden(false);
@@ -2644,7 +2679,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} openAt={stepsAt} onClose={() => setStepsOpen(false)} onOpenSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} openAt={stepsAt} onClose={() => setStepsOpen(false)} onOpenSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} onOpenSteps={openTurnSteps} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}

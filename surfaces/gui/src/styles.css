@@ -2601,3 +2601,67 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .steps-fine-toggle{align-self:flex-start;background:none;border:0;padding:4px 0;color:var(--faint);font-size:12px;font-weight:600;cursor:pointer}
 .steps-fine{font-size:12px;line-height:1.85;color:var(--muted)}
 
+
+/* -- Observability Phase 3 (UX-059 ob5, ob8, ob15 to ob18): Usage, footer, coworker history,
+   team wakes and events, coverage, run health. Colours are the app's tokens, so both themes
+   follow. ------------------------------------------------------------------------------------ */
+.p3-tabs { display:inline-flex; gap:2px; padding:2px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.p3-tabs button, .p3-seg button { padding:4px 12px; border-radius:6px; font-size:var(--fs-ui); color:var(--muted); background:none; border:0; cursor:pointer; }
+.p3-tabs button[aria-selected="true"], .p3-seg button[aria-pressed="true"] { background:var(--paper); color:var(--ink); box-shadow:0 0 0 1px var(--line); }
+.p3-seg { display:inline-flex; gap:2px; padding:2px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.p3-tiles { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+@media (max-width: 760px) { .p3-tiles { grid-template-columns:repeat(2, minmax(0,1fr)); } .p3-two { grid-template-columns:1fr; } }
+.p3-kpi { border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:10px 12px; display:flex; flex-direction:column; gap:2px; min-width:0; }
+.p3-kpi span { font-size:var(--fs-meta); color:var(--muted); }
+.p3-kpi b { font-size:22px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+.p3-kpi em { font-style:normal; font-size:var(--fs-label); color:var(--faint); }
+.p3-two { display:grid; grid-template-columns:3fr 2fr; gap:12px; }
+.p3-card { padding:12px 14px; min-width:0; }
+.p3-h { font-weight:500; font-size:var(--fs-ui); color:var(--ink); }
+.p3-bars { display:flex; align-items:flex-end; gap:3px; height:120px; margin-top:10px; border-bottom:1px solid var(--line); }
+.p3-bar { flex:1; height:100%; display:flex; flex-direction:column-reverse; min-width:2px; }
+.p3-bar i { display:block; width:100%; }
+.p3-bar i:last-child { border-radius:3px 3px 0 0; }
+.p3-xl { display:flex; gap:3px; margin-top:3px; }
+.p3-xl span { flex:1; text-align:center; font-size:10px; color:var(--faint); white-space:nowrap; overflow:hidden; }
+.p3-legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:8px; font-size:var(--fs-meta); color:var(--muted); }
+.p3-legend i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+.p3-s-main { background:var(--accent); }
+.p3-s-summary { background:var(--bar-sum); }
+.p3-s-auto_approver { background:var(--bar-review); }
+.p3-s-title { background:var(--bar-tool); }
+.p3-s-other { background:var(--bar-ctx); }
+.p3-t { width:100%; border-collapse:collapse; font-size:var(--fs-meta); margin-top:6px; }
+.p3-t th { text-align:left; font-weight:400; color:var(--faint); padding:4px 6px; border-bottom:1px solid var(--line); }
+.p3-t td { padding:5px 6px; border-bottom:1px solid var(--line); color:var(--ink); vertical-align:top; }
+.p3-t tr:last-child td { border-bottom:0; }
+.p3-t .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.p3-trunc { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.p3-link { color:var(--accent); background:none; border:0; padding:0; cursor:pointer; font-size:inherit; }
+.p3-link:hover { text-decoration:underline; }
+.p3-chip { display:inline-block; font-size:var(--fs-label); line-height:1.5; border-radius:5px; padding:0 6px; background:var(--paper); color:var(--muted); }
+.p3-chip.ok { background:var(--ok-soft); color:var(--ok); }
+.p3-chip.warn { background:var(--warn-soft); color:var(--warn-ink); }
+.p3-chip.err { background:var(--danger-soft); color:var(--danger); }
+.p3-callout { border-radius:9px; padding:8px 12px; font-size:var(--fs-meta); margin:8px 0; }
+.p3-callout.err { background:var(--danger-soft); color:var(--danger); }
+.p3-event { display:flex; align-items:center; gap:8px; width:100%; background:none; border:0; padding:3px 0; font-size:var(--fs-meta); color:var(--ink); cursor:pointer; }
+.p3-event:disabled { cursor:default; }
+.p3-event:not(:disabled):hover span:nth-child(2) { text-decoration:underline; }
+.p3-diff { font-family:var(--mono); font-size:var(--fs-label); white-space:pre-wrap; background:var(--paper); border:1px solid var(--line); border-radius:6px; padding:6px 8px; max-height:260px; overflow:auto; color:var(--muted); }
+/* the turn footer: always under the last answer, on hover for older ones (Q9) */
+.turnfoot-wrap { margin-top:2px; }
+.turnfoot-wrap:not(.last) .turnfoot { opacity:0; transition:opacity .15s; }
+.group:hover .turnfoot-wrap .turnfoot, .turnfoot-wrap:focus-within .turnfoot { opacity:1; }
+.turnfoot { display:flex; align-items:center; flex-wrap:wrap; gap:4px; font-size:var(--fs-label); color:var(--faint); }
+.turnfoot .sep { margin:0 2px; color:var(--faint); }
+.turnfoot .c-review { color:var(--bar-review); }
+.turnfoot .thumb { background:none; border:0; padding:0 2px; cursor:pointer; filter:grayscale(1); opacity:.6; font-size:12px; }
+.turnfoot .thumb.sel, .turnfoot .thumb:hover { filter:none; opacity:1; }
+.p3-ratecard { margin-top:8px; max-width:520px; border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:12px 14px; font-size:var(--fs-meta); color:var(--ink); }
+.p3-pill { border:1px solid var(--line); border-radius:999px; padding:2px 10px; background:var(--paper); color:var(--muted); cursor:pointer; font-size:var(--fs-meta); }
+.p3-pill.on { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+.p3-note { width:100%; border:1px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink); padding:6px 8px; font-family:var(--sans); font-size:var(--fs-meta); outline:none; resize:vertical; }
+.p3-note:focus { border-color:var(--accent); }
+.sched-run-health { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; padding:0 2px 8px; font-size:var(--fs-meta); }
+.steps-turn-wake { margin-left:6px; font-size:var(--fs-meta); }

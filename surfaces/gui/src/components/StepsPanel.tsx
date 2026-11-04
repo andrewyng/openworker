@@ -22,10 +22,20 @@ import {
   type TurnIssues,
 } from "../api";
 import { formatTokens } from "../usage";
+import { wakeKey } from "../obs3";
 
 type T = (k: string, o?: any) => string;
 
 const BUCKETS = ["waiting", "tools", "model", "auto_approver", "summary", "sandbox"] as const;
+
+/** Why a turn started (OB-17, format 1.3), for the turn picker: "woke: review batch". Nothing
+ * for a turn you started, or one recorded before 1.3. */
+export function wakeLine(turn: RecordedTurn, t: T): string | null {
+  const reason = turn.wake?.reason;
+  if (!reason || reason === "user" || reason === "unknown") return null;
+  const key = wakeKey(turn.wake);
+  return key ? t("p3.wake.woke", { reason: t(key) }) : null;
+}
 
 /** 0.1s, 3.4s, 41s, 2m 14s: the panel's one duration format. */
 export function formatDuration(ms: number | null | undefined): string {
@@ -360,7 +370,7 @@ export function StepsPanel({
   // A worker row's "Open worker session" (OB-7).
   onOpenSession?: (sessionId: string) => void;
   // Opened from a turn's answer: its time (unix seconds) picks the turn that produced it.
-  openAt?: { ts?: number; n: number } | null;
+  openAt?: { ts?: number; turnId?: string; n: number } | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -397,7 +407,17 @@ export function StepsPanel({
   // An answer's Steps link: the first turn that had not ended before that answer (the turns
   // before it all ended earlier). The answer's time is in whole seconds, hence the second's slack.
   useEffect(() => {
-    if (!openAt || !turns || !turns.length || openAt.ts == null) return;
+    if (!openAt || !turns || !turns.length) return;
+    if (openAt.turnId) {
+      // A known turn (the OB-5 footer, Usage's heaviest turns, a team event).
+      const found = turns.findIndex((tn) => tn.turn_id === openAt.turnId);
+      if (found >= 0) {
+        setTurnIdx(found);
+        setTab("timeline");
+        return;
+      }
+    }
+    if (openAt.ts == null) return;
     const at = openAt.ts * 1000 - 1000;
     const idx = turns.findIndex((tn) => tn.duration_ms == null || tn.started_at + tn.duration_ms >= at);
     setTurnIdx(idx < 0 ? turns.length - 1 : idx);
@@ -451,6 +471,7 @@ export function StepsPanel({
       <button aria-label={t("steps.prev_turn")} disabled={turnIdx <= 0} onClick={() => setTurnIdx(turnIdx - 1)}>‹</button>
       <span data-testid="steps-turn"><Help text={H(t, "turn")}>{t("steps.turn_of", { n: turnIdx + 1, total: turns.length })}</Help></span>
       <button aria-label={t("steps.next_turn")} disabled={turnIdx >= turns.length - 1} onClick={() => setTurnIdx(turnIdx + 1)}>›</button>
+      {turn && wakeLine(turn, t) && <span className="steps-turn-wake text-faint" data-testid="steps-turn-wake">· {wakeLine(turn, t)}</span>}
     </span>
   );
 

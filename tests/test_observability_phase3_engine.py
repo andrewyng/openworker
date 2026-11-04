@@ -339,3 +339,35 @@ def test_turns_recorded_before_the_ledger_are_filled_in(tmp_path):
     [row] = store.usage_turns(0, 2**62)
     assert row["total"] == 11 and store.turns_without_usage() == []
     manager.observability.close()
+
+
+def test_a_wake_that_was_not_delivered_is_given_back_to_the_cap(tmp_path):
+    from coworker.teams.registry import TeamRegistry, TeamWorker
+
+    reg = TeamRegistry(tmp_path / "teams.json")
+    team = reg.create(space="sp", lead_session="lead-s", lead_actor="lead-1",
+                      workers=[TeamWorker(actor="w", persona="appsec-worker", session_id="w-s")])
+    assert all(reg.count_wake(team.team_id, cap=2) for _ in range(2))
+    assert reg.count_wake(team.team_id, cap=2) is False
+    reg.refund_wake(team.team_id)  # TD3-22: counted only once delivered
+    assert reg.count_wake(team.team_id, cap=2) is True
+
+
+def test_the_wake_cap_event_wakes_nobody_and_deferrals_are_recorded(tmp_path):
+    from coworker.teams.registry import TeamWorker
+
+    manager = SessionManager(workspace=tmp_path, provider=_Scripted([]))
+    team = manager.teams.create(space=str(tmp_path), lead_session="lead-s", lead_actor="lead-1",
+                                workers=[TeamWorker(actor="w", persona="appsec-worker", session_id="w-s")])
+    manager._note_held("lead-s", "cap")
+    manager._note_wake_cap(team)
+    manager._note_wake_cap(team)  # once per hour
+    caps = [e for e in manager.team_store.events(team.space) if e["kind"] == "wake_cap_reached"]
+    assert len(caps) == 1 and caps[0]["payload"]["held"] == ["lead-s"]
+    assert manager._actionable_team_events(team, caps, actor="lead-1", is_lead=True) == []
+    wake = manager._turn_wake("lead-s", source={"connector": "board"}, trigger="team_wake",
+                              rows=[{"kind": "moved", "to": "review", "item": 3}])
+    assert wake["reason"] == "review" and wake["deferred"]["by"] == "cap" and wake["deferred"]["ms"] >= 0
+    assert wake["board_seq"] == caps[0]["seq"]
+    assert manager._team_stamp("w-s") == {"team_id": team.team_id, "role": "worker"}
+    manager.observability.close()

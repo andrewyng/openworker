@@ -9,6 +9,8 @@ import type { MessageSource } from "../api";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
 import { UnaskedSummary, unaskedTools } from "./UnaskedSummary";
+import { TurnFooterLine, type FootersState } from "./TurnFooter";
+import { turnForAnswer, type TurnFooter as TurnFooterData } from "../obs3";
 
 // Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
 // threshold with a more…/less… toggle. Normal typed messages never see the control; the
@@ -498,8 +500,13 @@ interface Props {
   // OPE-238: open Activity on one tool call's audit rows (from the "changes made without
   // asking" summary). Without it the summary shows no audit links.
   onOpenAudit?: (callId: string) => void;
-  // UX-059 OB-1: open the Steps panel at the turn that ended with this answer (its time).
-  onOpenSteps?: (ts?: number) => void;
+  // UX-059 OB-1: open the Steps panel at the turn that ended with this answer (its time),
+  // or at a given recorded turn (the OB-5 footer knows it).
+  onOpenSteps?: (ts?: number, turnId?: string) => void;
+  // OB-5 (Phase 3): the session's turn footers; with them each answer gets its footer line.
+  footers?: FootersState | null;
+  footerSessionId?: string;
+  onFooterChange?: (f: TurnFooterData) => void;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -559,7 +566,7 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit, onOpenSteps }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit, onOpenSteps, footers, footerSessionId, onFooterChange }: Props) {
   const { t } = useTranslation();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -617,6 +624,31 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
   if (!running) emitUnasked();
 
   const lastTurnIndex = blocks.reduce((acc, b, i) => ("turn" in b ? i : acc), -1);
+  // OB-5: an answer that ends its turn (no answer bubble follows it) carries the turn's footer.
+  const isAnswer = (b: (typeof blocks)[number] | undefined) =>
+    !!b && "item" in b && b.item.kind === "assistant" && !!b.item.text;
+  const answerEnds: number[] = [];
+  blocks.forEach((b, i) => {
+    if (isAnswer(b) && !isAnswer(blocks[i + 1])) answerEnds.push(i);
+  });
+  const footerFor = (bi: number, item: Extract<Item, { kind: "assistant" }>) => {
+    if (!footers || !footerSessionId || running && bi === answerEnds[answerEnds.length - 1]) return null;
+    const idx = answerEnds.indexOf(bi);
+    if (idx < 0) return null;
+    const f = turnForAnswer(footers.turns, item.ts, idx, item.mid);
+    if (!f) return null;
+    return (
+      <TurnFooterLine
+        sessionId={footerSessionId}
+        footer={f}
+        recording={footers.recording}
+        last={idx === answerEnds.length - 1}
+        defaultWhere={footers.where}
+        onChange={onFooterChange}
+        onOpenSteps={onOpenSteps ? () => onOpenSteps(item.ts, f.turn_id) : undefined}
+      />
+    );
+  };
   return (
     <div className="transcript">
       {blocks.map((block, bi) => {
@@ -680,6 +712,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" onOpenSteps={onOpenSteps} />
+                {footerFor(bi, item)}
               </div>
             );
           case "dirreq":

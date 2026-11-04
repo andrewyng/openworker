@@ -2771,6 +2771,26 @@ class SessionManager:
                 if c is not None:
                     cov[str(item["id"])] = c
             out["coverage"] = cov
+            by_session = {team.lead_session: team.lead_actor, **{w.session_id: w.actor for w in team.workers}}
+            for it in out.get("items") or []:
+                c = cov.get(str(it.get("id")))
+                if c is None:
+                    continue
+                # The shape the item card reads (OB-16): scans by name and area, each with
+                # its turn and step, and the findings with their evidence links.
+                it["coverage"] = {
+                    "promised": c["promised"], "issues": c["issues"], "fine": c["fine"], "report": c["report"],
+                    "scans": [{"scanner": sc["scanner"]["name"], "area": sc["area"], "exit_code": sc["exit_code"],
+                               "ok": not sc["failed"], "found_something": sc["found_something"],
+                               "session_id": sc["session_id"], "turn_id": sc["turn_id"], "turn_seq": sc["turn_seq"],
+                               "step_seq": sc["seq"], "step_id": sc["step_id"],
+                               "result_sha256": sc["result_sha256"], "actor": by_session.get(sc["session_id"])}
+                              for sc in c["scans"]]}
+                fix = c.get("fix") or {}
+                it["findings"] = [{"id": f["seq"], "severity": f.get("severity"), "evidence": f.get("evidence") or [],
+                                   "step_call_id": f.get("step_call_id"), "session_id": f.get("session_id"),
+                                   "author": f.get("author"), "fixed_by": fix.get("fixed_by"),
+                                   "verified_by": fix.get("verified_by")} for f in c["findings"]]
         except Exception:  # noqa: BLE001 - the split never hides the rest of the summary
             logger.exception("could not work out team %s wakes", team_id)
             out.setdefault("wakes", [])
@@ -7033,7 +7053,7 @@ class SessionManager:
             cards = {(s.get("attrs") or {}).get("for_call_id") for s in steps if s.get("kind") == "wait"
                      and (s.get("attrs") or {}).get("kind") == "approval" and (s.get("attrs") or {}).get("for_call_id")}
             out.append({"turn_id": t["turn_id"], "seq": t.get("seq"), "status": t.get("status"),
-                        "first_message_id": t.get("first_message_id"), "last_message_id": t.get("last_message_id"),
+                        "started_at": t.get("started_at"), "first_message_id": t.get("first_message_id"), "last_message_id": t.get("last_message_id"),
                         "duration_ms": t.get("duration_ms"), "active_ms": n["active_ms"], "total": n["total"],
                         "at_least": n["at_least"], "warn": n["warn"], "auto_approved": len(n["auto_approved"]),
                         "asked": len(cards), "live_checks": len(n["checks"]),

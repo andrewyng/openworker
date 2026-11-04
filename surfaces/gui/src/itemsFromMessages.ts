@@ -69,6 +69,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           text: m.content || "",
           ...(typeof m.ts === "number" ? { ts: m.ts } : {}),
           ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+          ...(typeof (m as any).mid === "string" ? { mid: (m as any).mid } : {}),
         });
       for (const tc of m.tool_calls || []) {
         let args: any = {};

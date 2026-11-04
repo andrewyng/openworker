@@ -30,6 +30,8 @@ export interface TeamTask extends BoardItem {
   timing?: Timing | null;
   timing_partial?: boolean;
   usage_partial?: boolean;
+  coverage?: TaskCoverage | null;
+  findings?: TaskFinding[];
 }
 export interface TeamWorker {
   usage_partial?: boolean;
@@ -68,6 +70,77 @@ export interface TeamSummary {
   median_answer_s?: number | null;
   usage_points: { ts: number; role: string; tokens: number }[];
   generated_at: number;
+  // OB-17 (Phase 3): why each team turn started, from the member sessions' recordings (their
+  // total equals their pills), and the team events that used to be silent. Absent on older engines.
+  wakes?: TeamWake[];
+  events?: TeamEvent[];
+  wake_explained?: { turns: number; explained: number };
+}
+
+export interface TeamWake {
+  reason: string;
+  wakes: number;
+  total: number;
+  cache_read: number;
+  input: number;
+  at_least?: boolean;
+  by_role: Record<string, { wakes: number; total: number }>;
+}
+
+export interface TeamEvent {
+  kind: "wake_capped" | "deferred" | "watchdog_nudged" | "lead_polling" | "same_approval_twice"
+    | "reviewed_before_prereq" | "wake_cap_reached" | string;
+  severity: "warn" | "info";
+  at: number | null;
+  who?: string;
+  session_id?: string;
+  turn_id?: string | null;
+  seq?: number | null;
+  deferred_ms?: number | null;
+  by?: string;
+  count?: number;
+  item_ids?: string[];
+  tool?: string;
+  first_by?: string;
+  again_by?: string;
+  item?: number;
+  prerequisite?: number;
+  to?: string;
+  hour?: string;
+  held?: string[];
+  board_seq?: number;
+}
+
+// OB-16 (Phase 3): a security task's coverage and its findings' evidence, when the engine
+// gives them on the summary's items. Absent: nothing is shown.
+export interface CoverageScan {
+  scanner: string;
+  area: string;
+  exit_code: number | null;
+  ok: boolean;
+  found_something?: boolean;
+  session_id?: string;
+  turn_id?: string;
+  turn_seq?: number | null;
+  step_seq?: number | null;
+  step_id?: string;
+  actor?: string;
+}
+export interface TaskCoverage {
+  promised: string[];
+  scans: CoverageScan[];
+  issues: { check: string; text: string; facts?: Record<string, any> }[];
+  fine?: { check: string; text: string }[];
+  not_checked?: boolean;
+}
+export interface TaskFinding {
+  id: number | string;
+  severity?: string;
+  title?: string;
+  evidence?: { session_id: string; call_id: string }[];
+  step_call_id?: string | null;
+  fixed_by?: string | null;
+  verified_by?: string | null;
 }
 export const tokenTotal = (u: TokenKinds) =>
   u.input + u.output + u.cache_read + u.cache_write;

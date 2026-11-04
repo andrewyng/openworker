@@ -10,6 +10,7 @@ import {
   toolResponseMessage,
 } from "./cardPayloads";
 import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
+import type { DayBoundary, FeedbackWhere, RollupGroup, TurnFeedback, TurnFooter } from "./obs3";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -3076,6 +3077,26 @@ export interface AutomationRun {
   artifacts: string[];
   error: string | null;
   trigger: string;
+  // OB-18 (Phase 3): from the run's own recorded turns. Absent on older engines.
+  turns?: number;
+  total?: number | null;
+  at_least?: boolean;
+  active_ms?: number | null;
+  duration_ms?: number | null;
+  warn?: number | null;
+  checks?: string[];
+  check_titles?: string[];
+  health?: "ok" | "failed" | "skipped" | "did_not_finish" | "unknown";
+  first_turn_id?: string | null;
+  first_turn_seq?: number | null;
+}
+
+export interface FailedInARow {
+  count: number;
+  last_error: string | null;
+  run_id?: string;
+  session_id?: string;
+  turn_id?: string | null;
 }
 
 export async function getAutomations(): Promise<Automation[]> {
@@ -3145,7 +3166,7 @@ export async function createAutomation(payload: {
   return res.json();
 }
 
-export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[] }> {
+export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
   const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
   return res.json();
 }
@@ -4504,6 +4525,10 @@ export interface RecordedTurn {
   issues?: { warn: number; info: number };
   // OB-7: team workers' turns this (lead) turn woke, worked out on read. Display only.
   workers?: RecordedWorkerRow[];
+  // Format 1.3 (OB-17): why the turn started; absent before 1.3.
+  wake?: { reason?: string; kinds?: string[]; item_ids?: string[]; board_seq?: number | null; batched?: number | null;
+    deferred?: { by: string; ms: number } | null; by?: string | null } | null;
+  automation?: { task_id: string; run_id: string; trigger: string } | null;
 }
 
 // One worker turn under a lead's turn (OB-7). `tokens` are the worker's own, never the lead's.
@@ -4591,4 +4616,169 @@ export async function getTurnIssues(sessionId: string, turnId: string): Promise<
 /** Opening a session's Issues clears its amber ring in the sidebar (TD2-4). */
 export async function markIssuesSeen(sessionId: string): Promise<void> {
   await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/issues/seen`, { method: "POST" });
+}
+
+// -- Observability Phase 3: rollups over many turns (technical-design.md §4) -------------------
+// Every rollup goes to the machine that ran the work; the desktop sends its own local day
+// boundaries (TD3-2). Tokens only.
+
+export interface UsageRollup {
+  groups: RollupGroup[];
+  no_turn: { calls: number; total: number };
+  not_checked: number;
+  kept_from: number | null;
+  turns?: number;
+  deleted_session_turns?: number;
+  names?: Record<string, string>;
+  automations?: Record<string, string>;
+  machine?: { kind?: string; id?: string | null; name?: string };
+  // E28: a remote machine's last answer, served by the desktop while the machine is offline.
+  cached?: { as_of: number } | null;
+}
+
+export async function getUsageRollup(
+  q: { from: number; to: number; days?: DayBoundary[]; group?: string; persona_id?: string },
+  machineId?: string | null,
+): Promise<UsageRollup> {
+  const p = new URLSearchParams({ from: String(q.from), to: String(q.to), group: q.group || "all" });
+  if (q.days?.length) p.set("days", JSON.stringify(q.days));
+  if (q.persona_id) p.set("persona_id", q.persona_id);
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/rollup?${p}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface HeavyTurn {
+  turn_id: string;
+  session_id: string;
+  title: string | null;
+  seq: number | null;
+  session_deleted: boolean;
+  persona_id: string | null;
+  model_ids: string[];
+  total: number;
+  at_least: boolean;
+  active_ms: number | null;
+  status: string;
+  found_open: boolean;
+  warn: number | null;
+  checks: string[];
+  started_at: number;
+  run_id?: string | null;
+  task_id?: string | null;
+}
+
+export async function getHeaviestTurns(from: number, to: number, machineId?: string | null, limit = 20): Promise<{ turns: HeavyTurn[]; names?: Record<string, string> }> {
+  const p = new URLSearchParams({ from: String(from), to: String(to), order: "tokens", limit: String(limit) });
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/turns?${p}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface ApproverCounts {
+  checks: number;
+  allowed: number;
+  asked: number;
+  blocked: number;
+  could_not_run: number;
+  median_ms: number | null;
+}
+export interface ApproverStrip extends ApproverCounts {
+  overridden: number;
+  tokens: number;
+  shadow_checks: number;
+  by_reviewer: (ApproverCounts & { kind: string })[];
+  shown: boolean;
+}
+
+export async function getApproverStrip(from: number, to: number, machineId?: string | null): Promise<ApproverStrip> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/approver?from=${from}&to=${to}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// OB-5: the numbers under each answer, and its rating.
+export async function getSessionFooters(sessionId: string): Promise<{ turns: TurnFooter[]; recording: boolean; where?: FeedbackWhere }> {
+  return recordingGet(sessionId, "/footers");
+}
+
+export async function putTurnFeedback(
+  sessionId: string,
+  turnId: string,
+  body: { rating: "up" | "down" | null; reasons?: string[]; note?: string },
+): Promise<{ feedback: TurnFeedback | null; where: FeedbackWhere; error?: string }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/feedback`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// OB-15: "How it's been doing", one row per coworker version, on the machine it lives on.
+export interface VersionFileChange {
+  path: string;
+  kind: "added" | "removed" | "edited";
+  lines?: number;
+  skill?: string;
+  from_version?: string | null;
+  to_version?: string | null;
+}
+export interface DoingRow {
+  fp: string | null;
+  current: boolean;
+  unknown_version: boolean;
+  first_seen: number | null;
+  last_seen: number | null;
+  before_kept: boolean;
+  runs: number;
+  automation_runs: number;
+  turns: number;
+  checked: number;
+  with_warn: number;
+  not_checked: number;
+  median_tokens: number | null;
+  at_least: boolean;
+  approvals_per_run: number | null;
+  up: number;
+  down: number;
+  too_few: boolean;
+  models: string[];
+  changed: { from: string; files: VersionFileChange[] } | null;
+  model_line?: { kind: "unchanged" | "changed" | "several"; models?: string[]; from?: string; to?: string };
+}
+export interface PersonaDoing {
+  persona_id: string;
+  kept_from: number | null;
+  min_runs: number;
+  rows: DoingRow[];
+  total: number;
+  runs: number;
+}
+
+export async function getPersonaDoing(personaId: string, machineId?: string | null, days = 30): Promise<PersonaDoing> {
+  const res = await fetch(`${engineBase(machineId)}/v1/personas/${encodeURIComponent(personaId)}/doing?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getPersonaVersionDiff(
+  personaId: string, from: string, to: string, machineId?: string | null,
+): Promise<{ files: (VersionFileChange & { diff: string })[]; error?: string }> {
+  const p = new URLSearchParams({ from, to });
+  const res = await fetch(`${engineBase(machineId)}/v1/personas/${encodeURIComponent(personaId)}/versions/diff?${p}`);
+  return res.json();
+}
+
+/** A recorded step by its tool call id (an evidence link, OB-16): the session's turns are
+ * searched newest first. Null when the call was not recorded. */
+export async function findStepByCall(sessionId: string, callId: string): Promise<{ step: RecordedStep; turn: RecordedTurn } | null> {
+  const turns = await getRecordedTurns(sessionId);
+  for (const turn of [...turns].reverse()) {
+    const steps = await getTurnSteps(sessionId, turn.turn_id);
+    const step = steps.find((s) => s.call_id === callId && s.kind === "tool");
+    if (step) return { step, turn };
+  }
+  return null;
 }

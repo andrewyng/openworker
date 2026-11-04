@@ -168,7 +168,8 @@ export type Item =
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
   | { kind: "teamcreated"; teamId: string; workers: { actor: string; persona: string }[]; ts?: number }
-  | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
+  // `mid`: the message id (observability links a turn footer to its answer by it, OB-5).
+  | { kind: "assistant"; text: string; ts?: number; reasoning?: string; mid?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").
