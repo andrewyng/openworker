@@ -1,5 +1,5 @@
 {
- "signals_version": "0.5",
+ "signals_version": "0.6",
  "warn": 1,
  "fired": {
   "model_failed": [
@@ -26,6 +26,8 @@
   "reviewer_could_not_run",
   "reviewer_paused",
   "sandbox_failed",
-  "shadow_disagreed"
+  "shadow_disagreed",
+  "wake_capped",
+  "watchdog_nudged"
  ]
 }

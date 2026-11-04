@@ -644,6 +644,13 @@ class ConversationStore:
             ).fetchone()
         return None if row is None else _display_title(row)
 
+    def agent_of(self, session_id: str) -> Optional[str]:
+        """The session's coworker id (`sessions.agent`), or None when it has no row. The
+        usage ledger's stand-in for turns recorded before `stamp.persona_id` (Phase 3)."""
+        with self._lock:
+            row = self._conn.execute("SELECT agent FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return None if row is None else row["agent"]
+
     def title_state(self, session_id: str) -> Optional[dict]:
         """The auto-title guard inputs: whether the user renamed and whether a generated
         title already exists. None when the session has no row yet."""

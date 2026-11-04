@@ -1,5 +1,5 @@
 {
- "signals_version": "0.5",
+ "signals_version": "0.6",
  "warn": 0,
  "fired": {
   "shadow_disagreed": [
@@ -26,6 +26,8 @@
   "ran_without_sandbox",
   "reviewer_allowed_send",
   "reviewer_paused",
-  "sandbox_failed"
+  "sandbox_failed",
+  "wake_capped",
+  "watchdog_nudged"
  ]
 }

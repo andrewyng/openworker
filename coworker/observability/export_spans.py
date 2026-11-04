@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable, Optional
 from . import calculator
 from .capture import is_auxiliary, parse_events, rebuild_request, wire_of_url
 
-ATTRIBUTES_VERSION = "1.2"
+ATTRIBUTES_VERSION = "1.3"
 SCHEMA = f"openworker/{ATTRIBUTES_VERSION}"
 SERVICE_NAME = "openworker-desktop"
 SCOPE_NAME = "openworker.observability"
@@ -724,6 +724,23 @@ def build_turn_spans(
             "openworker.usage.unreported_calls": usage["unreported_calls"],
             "openworker.usage.failed_calls": usage["failed_calls"],
             "openworker.usage.context_limit_calls": usage["overflow_calls"]})
+        # 1.3 (E25b, TD3-25): the coworker and its version, why the turn started, and the
+        # automation run. gen_ai.agent.name keeps its 1.0 value (FO-149).
+        stamp = turn.get("stamp") or {}
+        wake = turn.get("wake") or {}
+        auto = turn.get("automation") or {}
+        team = stamp.get("team") or {}
+        for key, value in (("openworker.persona.id", stamp.get("persona_id")),
+                           ("openworker.persona.fp", stamp.get("persona_fp")),
+                           ("openworker.team.role", team.get("role")),
+                           ("openworker.wake.reason", wake.get("reason")),
+                           ("openworker.automation.task_id", auto.get("task_id")),
+                           ("openworker.automation.run_id", auto.get("run_id")),
+                           ("openworker.automation.trigger", auto.get("trigger"))):
+            if value:
+                root_attrs[key] = value
+        if team.get("team_id"):
+            root_attrs.setdefault("openworker.team.id", team["team_id"])
         woken = turn.get("woken_by") or {}
         if isinstance(woken, dict):
             if woken.get("team_id"):
@@ -752,6 +769,45 @@ def build_turn_spans(
             "error": turn.get("status") if turn.get("status") == "error" else None,
         })
     return spans
+
+
+# -- feedback (1.3, E27b, TD3-10) ---------------------------------------------------------------
+FEEDBACK_SCORE = "user_feedback"
+
+
+def feedback_id(turn_id: str) -> str:
+    """The fixed id of a turn's rating, so a changed rating replaces the score (or span)."""
+    return _hex(f"feedback|{turn_id}", 32)
+
+
+def feedback_span(fb: dict[str, Any], *, sw: dict[str, bool], masker: Masker) -> dict[str, Any]:
+    """OTLP: one small span `openworker.feedback` in the turn's trace, under its root span,
+    with the fixed id. The note only with "Your messages and the AI's answers" on (TD3-11),
+    masked and cut (rule R4)."""
+    at = fb.get("changed_at") or fb["rated_at"]
+    attrs: dict[str, Any] = {"openworker.feedback.rating": fb["rating"],
+                             "openworker.turn.id": fb["turn_id"], "openworker.session.id": fb["session_id"]}
+    if fb.get("reasons"):
+        attrs["openworker.feedback.reasons"] = list(fb["reasons"])
+    note = (fb.get("content") or {}).get("note")
+    if note and sw.get("prompts"):
+        attrs["openworker.feedback.note"] = cut(masker.clean(note))
+    return {"trace_id": trace_id(fb["turn_id"]), "span_id": feedback_id(fb["turn_id"])[:16],
+            "parent_span_id": root_span_id(fb["turn_id"]), "name": "openworker.feedback",
+            "kind": SPAN_INTERNAL, "start_ms": at, "end_ms": at, "attrs": attrs, "events": [], "error": None}
+
+
+def langfuse_score(fb: dict[str, Any], *, sw: dict[str, bool], masker: Masker) -> dict[str, Any]:
+    """Langfuse: a score through its scores API, `user_feedback` = 1 or -1 on the turn's
+    trace, with a fixed id so a changed rating replaces it. Reasons in metadata; the note as
+    the comment, only with capture.prompts on (TD3-11)."""
+    body: dict[str, Any] = {"id": feedback_id(fb["turn_id"]), "traceId": trace_id(fb["turn_id"]),
+                            "name": FEEDBACK_SCORE, "value": 1 if fb["rating"] == "up" else -1,
+                            "dataType": "NUMERIC", "metadata": {"reasons": list(fb.get("reasons") or [])}}
+    note = (fb.get("content") or {}).get("note")
+    if note and sw.get("prompts"):
+        body["comment"] = cut(masker.clean(note))
+    return body
 
 
 # -- the made-up test recording (E9c) ------------------------------------------------------------

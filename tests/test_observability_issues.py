@@ -1,7 +1,7 @@
 """Observability Phase 2, OB-3: the Issues checks (E8b) and the 1.2 fields they read (E8a).
 
 The scenarios in `tests/corpora/observability/golden-phase2/` are the shared test of the checks:
-a copy of ocw-context docs/observability/golden/phase2 (signals.yaml 0.2, recording format 1.2).
+a copy of ocw-context docs/observability/golden/phase2 (signals.yaml 0.6, recording format 1.2).
 Every recording must give exactly its expected issues, and the hash vectors must hash the same,
 in this engine and in the Rust harness."""
 
@@ -37,7 +37,12 @@ def _expected(rec: dict) -> dict:
 
 def test_the_shipped_signals_file_is_the_golden_tests_version():
     assert signals.version() == INDEX["signals_version"]
-    assert set(signals.signals()["checks"]) <= set(signals.CHECKS)
+    from coworker.observability import scopes
+
+    known = set(signals.CHECKS) | set(scopes.SERIES_CHECKS) | set(scopes.TASK_CHECKS)
+    assert set(signals.signals()["checks"]) <= known
+    for cid, check in signals.signals()["checks"].items():
+        assert (signals.scope_of(check) == "turn") == (cid in signals.CHECKS), cid
 
 
 @pytest.mark.parametrize("sid", [s["id"] for s in INDEX["scenarios"]])

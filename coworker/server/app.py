@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager
@@ -879,6 +880,73 @@ def create_app(manager: SessionManager) -> FastAPI:
     def observability_status(day_start_ms: Optional[int] = None) -> dict[str, Any]:
         # "Today" is the viewer's day: the desktop sends when it began (Phase 3 TD3-2, V3-18).
         return manager.observability.status(day_start_ms=day_start_ms)
+
+    # -- Phase 3 (design §4): rollups over many turns. Days are the viewer's: the desktop
+    # sends its own local day boundaries as epoch ms (TD3-2). Tokens only, never prices.
+    def _period(from_: Optional[int], to: Optional[int], days: Optional[str]) -> tuple[int, int, list]:
+        from ..observability.rollups import parse_days
+
+        parsed = parse_days(days) if days else []
+        start = int(from_) if from_ is not None else (parsed[0][1] if parsed else 0)
+        end = int(to) if to is not None else (parsed[-1][2] if parsed else int(time.time() * 1000) + 1)
+        if end <= start:
+            raise ValueError("`to` must be after `from`")
+        return start, end, parsed
+
+    @app.get("/v1/observability/rollup")
+    def observability_rollup(request: Request, to: Optional[int] = None, days: Optional[str] = None,
+                             group: str = "all", persona_id: Optional[str] = None,
+                             team_id: Optional[str] = None, task_id: Optional[str] = None):
+        try:
+            start, end, parsed = _period(request.query_params.get("from"), to, days)
+            groups = [g for g in group.split(",") if g] or ["all"]
+            if "day" in groups and not parsed:
+                raise ValueError("grouping by day needs `days`")
+            where = {k: v for k, v in (("persona_id", persona_id), ("team_id", team_id), ("task_id", task_id)) if v}
+            return manager.usage_rollup(start=start, end=end, group=groups, days=parsed, where=where)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/v1/observability/turns")
+    def observability_heaviest(request: Request, to: Optional[int] = None, order: str = "tokens", limit: int = 20):
+        if order != "tokens":
+            return JSONResponse({"error": "order must be tokens"}, status_code=400)
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_heaviest(start=start, end=end, limit=limit)
+
+    @app.get("/v1/observability/approver")
+    def observability_approver(request: Request, to: Optional[int] = None):
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_approver(start=start, end=end)
+
+    @app.get("/v1/personas/{persona_id}/doing")
+    def persona_doing(persona_id: str, days: int = 30, to: Optional[int] = None) -> dict[str, Any]:
+        return manager.persona_doing(persona_id, days=days, end=to)
+
+    @app.get("/v1/personas/{persona_id}/versions/diff")
+    def persona_version_diff(request: Request, persona_id: str, to: str = ""):
+        result = manager.persona_version_diff(persona_id, request.query_params.get("from") or "", to)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
+
+    # OB-5: the footer numbers under each answer, and the turn's rating.
+    @app.get("/v1/sessions/{session_id}/footers")
+    def session_footers(session_id: str) -> dict[str, Any]:
+        return manager.session_footers(session_id)
+
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/feedback")
+    def turn_feedback(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.turn_feedback(session_id, turn_id)
+
+    @app.put("/v1/sessions/{session_id}/turns/{turn_id}/feedback")
+    def turn_feedback_put(session_id: str, turn_id: str, body: dict):
+        code, answer = manager.put_turn_feedback(session_id, turn_id, body or {})
+        return JSONResponse(answer, status_code=code)
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
@@ -3281,12 +3349,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                             },
                         )
                         return
+                # 1.3 (E18a, E26a): why the turn started, the team member it belongs to, and
+                # for a manual automation run's first turn, the run it is.
+                facts = manager.user_turn_facts(session_id)
                 events = (
-                    engine.retry(trigger="user")
+                    engine.retry(trigger="user", **facts)
                     if retry
                     else engine.run(content, display=display,
                                     activity=manager.prepare_activity(session_id, "user activity"),
-                                    trigger="user")
+                                    trigger="user", **facts)
                 )
                 async for event in events:
                     data = event.data

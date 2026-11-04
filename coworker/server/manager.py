@@ -46,6 +46,9 @@ from ..audit import AuditStore
 from ..observability import Recorder, RecordingStore
 from ..observability import read_api as recording_api
 from ..observability import signals as recording_signals
+from ..observability import rollups as recording_rollups
+from ..observability import stamps as _obs_stamps
+from ..observability import usage_api
 from ..observability.export import ObservabilityExport
 from ..observability.engine_hooks import note_team
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
@@ -398,6 +401,8 @@ class SessionManager:
         self._live_loop: Optional[asyncio.AbstractEventLoop] = None
         self.recorder.add_listener(self._forward_recording_event)
         self.session_store = ConversationStore(base)
+        # Phase 3: the usage ledger's stand-in coworker id for turns recorded before 1.3.
+        self.recordings_store.persona_of = self.session_store.agent_of
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
@@ -511,6 +516,10 @@ class SessionManager:
         self._team_inflight: set[str] = set()
         self._team_batch_deadlines: dict[str, float] = {}
         self._team_batch_handles: dict[str, Any] = {}
+        # Observability 1.3 (E18c): team deliveries held back, by session: (why, since), and
+        # the hour each team's wake cap was last recorded on its board.
+        self._team_held: dict[str, tuple[str, float]] = {}
+        self._team_cap_noted: dict[str, str] = {}
         self._activity_acknowledged: set[str] = set()
         # Lead-session last-turn timestamps for the check-in backstop (monotonic-ish
         # wall clock; restart resets the clock rather than firing a wake storm).
@@ -1034,6 +1043,7 @@ class SessionManager:
         # Observability (E1): this engine's turns and steps go to the server's recorder,
         # unless recording is off on this machine (OB-6): then new engines record nothing.
         engine.recorder = self.recorder if self.observability.settings.record else None
+        self._note_persona_version(engine)
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
@@ -2036,8 +2046,14 @@ class SessionManager:
         if engine is None or not hasattr(engine, "resume"):
             return
         self.mark_running(item.session_id)
+        # 1.3 (E18a): the resume is an answered card. Who answered: a lead's decision is
+        # recorded as `lead:...`/`agent:...`, a person's as their name or nothing.
+        current = self.inbox.get(item.id) if getattr(item, "id", None) else None
+        by_raw = str(getattr(current or item, "resolved_by", "") or "")
+        by = "lead" if by_raw.startswith(("lead", "agent")) else "user"
         try:
-            async for _event in engine.resume(trigger="user"):
+            async for _event in engine.resume(trigger="user", team=self._team_stamp(item.session_id), wake={
+                    "reason": "answer", "by": by, "board_seq": self._board_seq(item.session_id)}):
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -2723,7 +2739,36 @@ class SessionManager:
             return {"error": "team not found"}
         if self._board_space(team.lead_session) != team.space:
             return {"error": "the lead's board binding has changed"}
-        return make_summary(self, team, time.time())
+        out = make_summary(self, team, time.time())
+        # Phase 3 (OB-17, E19c): why each team turn started, from the ledger of every member
+        # session (its total equals their pills), and the team events that used to be silent.
+        try:
+            members = {w.actor: w.session_id for w in team.workers}
+            sids = [team.lead_session, *members.values()]
+            out["wakes"] = usage_api.team_wakes(self.recordings_store, sids)
+            from ..teams.summary import all_events
+
+            board = list(all_events(self.team_store, team.space))
+            links = []
+            for item in self.team_store.list_items(team.space, self._user_actor()):
+                for link in item.get("links") or []:
+                    if link.get("kind") == "blocked_by" and link.get("item") is not None:
+                        links.append((int(link["item"]), int(item["id"])))
+            out["events"] = usage_api.team_events(self.recordings_store, lead_session=team.lead_session,
+                                                  worker_sessions=members, board_events=board, links=links)
+            out["wake_explained"] = self._wake_explained(sids)
+        except Exception:  # noqa: BLE001 - the split never hides the rest of the summary
+            logger.exception("could not work out team %s wakes", team_id)
+            out.setdefault("wakes", [])
+            out.setdefault("events", [])
+        return out
+
+    def _wake_explained(self, session_ids: list[str]) -> dict[str, int]:
+        """The 95% gate on a real team (V3-08): team turns, and those whose wake is known."""
+        rows = self.recordings_store.team_turns(session_ids)
+        team_rows = [t for t in rows if (t.get("stamp") or {}).get("team")]
+        known = sum(1 for t in team_rows if (t.get("wake") or {}).get("reason") not in (None, "unknown"))
+        return {"turns": len(team_rows), "explained": known}
 
     def session_board(self, session_id: str) -> dict[str, Any]:
         """The session's board: items grouped by the workspace-keyed space. Empty
@@ -3278,6 +3323,119 @@ class SessionManager:
         return {"lead_session_id": team.lead_session, "team_id": team.team_id,
                 "item_ids": item_ids, "via": via}
 
+    # -- observability 1.3: why a turn started (OB-17, Phase 3 §11.3) --------------------------
+    # One reason per turn, the first of this order when a wake carries several kinds of
+    # board row (TD3-18); every kind is kept in `kinds`.
+    WAKE_PRIORITY = ("blocker", "worker_waiting", "review", "assigned", "prereq_done", "board", "mention")
+
+    def _team_stamp(self, session_id: str) -> Optional[dict[str, Any]]:
+        """`stamp.team` (1.3, E18b): the team and role of a member's session, else None."""
+        team = self.teams.for_lead_session(session_id)
+        if team is not None:
+            return {"team_id": team.team_id, "role": "lead"}
+        found = self.teams.for_worker_session(session_id)
+        if found is not None:
+            return {"team_id": found[0].team_id, "role": "worker"}
+        return None
+
+    def _board_seq(self, session_id: str) -> Optional[int]:
+        """The team board's sequence number (its watermark) now; None outside a team."""
+        team = self.teams.for_lead_session(session_id)
+        if team is None:
+            found = self.teams.for_worker_session(session_id)
+            team = found[0] if found is not None else None
+        if team is None:
+            return None
+        try:
+            with self.team_store._lock:
+                row = self.team_store._conn.execute(
+                    "SELECT watermark FROM team_meta WHERE space = ?", (team.space,)).fetchone()
+            return int(row[0]) if row is not None else 0
+        except Exception:  # noqa: BLE001 - a recording fact never breaks a delivery
+            return None
+
+    @classmethod
+    def _wake_from_rows(cls, rows: list[dict[str, Any]], *, is_lead: bool) -> tuple[str, list[str], list[str]]:
+        """(reason, kinds, item_ids) of a board delivery's rows (TD3-18)."""
+        kinds: list[str] = []
+        items: list[str] = []
+        reasons: set[str] = set()
+        for r in rows:
+            k = r.get("kind")
+            if k and k not in kinds:
+                kinds.append(k)
+            if r.get("item") is not None and str(r["item"]) not in items:
+                items.append(str(r["item"]))
+            if k == "moved":
+                to = r.get("to")
+                reasons.add("blocker" if to == "blocked" else "review" if to == "review"
+                            else "prereq_done" if to == "done" and not is_lead else "board")
+            elif k == "waiting":
+                reasons.add("worker_waiting")
+            elif k in ("assigned", "claimed"):
+                reasons.add("assigned")
+            elif k == "chat":
+                reasons.add("mention")
+            elif k:
+                reasons.add("board")
+        reason = next((r for r in cls.WAKE_PRIORITY if r in reasons), "unknown")
+        if reasons == {"mention"}:
+            reason = "mention"
+        return reason, [k for k in kinds if k in ("assigned", "moved", "filed", "claimed", "waiting", "comment", "chat")], items
+
+    def _note_held(self, session_id: str, by: str) -> None:
+        """A team delivery held back (cap, busy, batch window, stopped): the time it was first
+        held, so the turn that finally runs says how long it waited (`wake.deferred`, E18c)."""
+        self._team_held.setdefault(session_id, (by, time.time()))
+
+    def _turn_wake(self, session_id: str, *, source: Optional[dict[str, Any]], wake=None,
+                   trigger: str, rows: Optional[list[dict[str, Any]]] = None,
+                   wake_info: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """`turn.wake` (1.3, E18a) for a delivered turn."""
+        info = dict(wake_info or {})
+        is_lead = self.teams.for_lead_session(session_id) is not None
+        kinds: list[str] = []
+        items: list[str] = [str(x) for x in info.get("item_ids") or []]
+        if info.get("reason"):
+            reason = info["reason"]
+        elif (source or {}).get("connector") == "team":
+            reason = "steer"
+        elif (source or {}).get("connector") == "board" and rows:
+            reason, kinds, row_items = self._wake_from_rows(rows, is_lead=is_lead)
+            items = items or row_items
+        elif wake is not None:
+            reason = "timer" if getattr(wake, "kind", None) == "timer" else "wake_on"
+        elif (source or {}).get("connector") == "board":
+            reason = "board"
+        elif trigger == "schedule":
+            reason = "schedule"
+        else:
+            reason = "channel"
+        held = self._team_held.pop(session_id, None)
+        deferred = info.get("deferred")
+        if deferred is None and held is not None:
+            deferred = {"by": held[0], "ms": max(0, int((time.time() - held[1]) * 1000))}
+        return {"reason": reason, "kinds": kinds, "item_ids": items,
+                "board_seq": self._board_seq(session_id), "batched": info.get("batched"),
+                "deferred": deferred, "by": info.get("by")}
+
+    def _note_wake_cap(self, team) -> None:
+        """The first time a team hits its wake cap in an hour: one board event,
+        `wake_cap_reached`, that wakes nobody (E18c, TD3-19, TD3-22)."""
+        from datetime import datetime, timezone
+
+        hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+        if self._team_cap_noted.get(team.team_id) == hour:
+            return
+        self._team_cap_noted[team.team_id] = hour
+        held = sorted(sid for sid, (by, _t) in self._team_held.items() if by == "cap")
+        try:
+            self.team_store.append_event(
+                team.space, "wake_cap_reached", self._user_actor(),
+                payload={"hour": hour, "count": self.TEAM_WAKE_CAP_PER_HOUR, "held": held})
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record the wake cap for team %s", team.team_id)
+
     def kick_team_tick(self) -> None:
         """Nudge the wake plumbing from outside the turn loop — e.g. after an
         external board client writes through the `/v1/board` API, so a review or a
@@ -3370,7 +3528,8 @@ class SessionManager:
         async def _deliver() -> None:
             try:
                 accepted = await self.deliver_to_session(
-                    sid, message, source=self._board_source(team, message)
+                    sid, message, source=self._board_source(team, message),
+                    wake_info={"reason": "watchdog", "item_ids": [str(x[0]) for x in stalled]},
                 )
                 if accepted:
                     self._team_watchdog_alerted[sid] = stalled
@@ -3443,6 +3602,7 @@ class SessionManager:
             if page["has_more"]:
                 self.kick_team_tick()
             return 0
+        batched_before = session_id in self._team_batch_deadlines
         if is_lead:
             deadline = self._team_batch_deadlines.setdefault(session_id, time.monotonic() + self.TEAM_BATCH_SECONDS)
             urgent = any(r.get("needs_attention") or r.get("kind") in ("waiting", "assigned")
@@ -3455,19 +3615,28 @@ class SessionManager:
                         self._team_batch_handles.pop(session_id, None)
                         asyncio.create_task(self.team_tick())
                     self._team_batch_handles[session_id] = loop.call_later(max(0, deadline - time.monotonic()), flush)
+                self._note_held(session_id, "batch")
                 return 0
         if self.is_running(session_id) or session_id in self._team_inflight:
+            self._note_held(session_id, "busy")
             return 0  # it will drain on its next turn end / next tick
         if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
             logger.warning("team %s paused for budget this hour", team.team_id)
+            self._team_held[session_id] = ("cap", self._team_held.get(session_id, ("cap", time.time()))[1])
+            self._note_wake_cap(team)
             return 0
         self._clear_team_batch(session_id)
         self._team_inflight.add(session_id)
         source = self._board_source(team, message, rows=rows)
+        # 1.3: rows the 2 s review window gathered (a lead whose batch window ran first).
+        wake_info = {"batched": len(rows)} if is_lead and batched_before else {}
 
         async def _deliver() -> None:
             try:
-                await self.deliver_to_session(session_id, message, source=source)
+                accepted = await self.deliver_to_session(session_id, message, source=source, wake_info=wake_info)
+                if not accepted:
+                    # TD3-22: a wake counts against the cap only once it is delivered.
+                    self.teams.refund_wake(team.team_id)
                 # Cursors are acknowledged with the persisted incoming turn, not
                 # after model completion. A user turn can consume this batch first.
             finally:
@@ -6466,6 +6635,138 @@ class SessionManager:
     def recording_usage(self, session_id: str) -> dict[str, Any]:
         return recording_api.usage(self.recordings_store.load_recording(session_id), session_id)
 
+    # -- observability Phase 3: rollups over many turns (E24b, E24c, E26b, E27a) ---------------
+    def usage_names(self) -> dict[str, str]:
+        """Coworker names by id, for the Usage page: the installed coworkers, else the name
+        kept with the coworker's last seen version (a deleted or renamed one, M3-R1)."""
+        names: dict[str, str] = {}
+        for v in self.recordings_store.persona_versions():
+            if v.get("name"):
+                names[v["persona_id"]] = v["name"]
+        try:
+            for entry in self.personas.list_all():
+                pid = entry.get("id")
+                if pid:
+                    names[pid] = entry.get("name") or pid
+        except Exception:  # noqa: BLE001
+            logger.exception("could not list coworkers for the Usage page")
+        return names
+
+    def usage_rollup(self, *, start: int, end: int, group: list[str], days: list,
+                     where: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        out = usage_api.rollup(self.recordings_store, start=start, end=end, group=group, days=days, where=where)
+        out["names"] = self.usage_names()
+        out["machine"] = _obs_stamps.machine_stamp()
+        tasks = {t.id: t.title for t in self.task_store.list()}
+        out["automations"] = tasks
+        return out
+
+    def usage_heaviest(self, *, start: int, end: int, limit: int = 20) -> dict[str, Any]:
+        out = usage_api.heaviest(self.recordings_store, start=start, end=end, limit=limit,
+                                 title_of=self.session_store.display_title)
+        out["names"] = self.usage_names()
+        return out
+
+    def usage_approver(self, *, start: int, end: int) -> dict[str, Any]:
+        return usage_api.approver(self.recordings_store, start=start, end=end)
+
+    def current_persona_fp(self, persona_id: str) -> Optional[str]:
+        """The coworker's fingerprint now, worked out as the session build does (E16)."""
+        entry = self.personas.get(persona_id)
+        manifest = entry.manifest if entry else None
+        if manifest is None:
+            return None
+        try:
+            skill_dir = self.persona_skill_scope(persona_id)[0]
+            return _obs_stamps.persona_fingerprint(persona_id, manifest.system_prompt,
+                                                   [skill_dir] if skill_dir is not None else [])
+        except Exception:  # noqa: BLE001
+            return None
+
+    def persona_doing(self, persona_id: str, *, days: int = 30, end: Optional[int] = None) -> dict[str, Any]:
+        """OB-15: "How it's been doing", one row per fingerprint, this machine only."""
+        end = int(time.time() * 1000) if end is None else int(end)
+        start = end - max(1, min(int(days), 90)) * 24 * 60 * 60 * 1000
+        return usage_api.persona_doing(self.recordings_store, persona_id, start=start, end=end,
+                                       current_fp=self.current_persona_fp(persona_id))
+
+    def persona_version_diff(self, persona_id: str, fp_from: str, fp_to: str) -> dict[str, Any]:
+        return usage_api.version_diff(self.recordings_store, persona_id, fp_from, fp_to)
+
+    FEEDBACK_REASONS = ("wrong_answer", "too_slow", "did_unasked", "did_not_finish", "other")
+
+    def turn_feedback(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        fb = self.recordings_store.get_feedback(turn_id)
+        if fb is not None and fb.get("session_id") != session_id:
+            fb = None
+        return {"feedback": fb, "where": self.observability.feedback_destination(note=bool(fb and fb["content"]["note"]))}
+
+    def put_turn_feedback(self, session_id: str, turn_id: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """OB-5 (E27a): store a turn's rating on this machine, replacing any earlier one. The
+        auto-approved tool steps of the turn at this moment go with it (the "did something I
+        didn't ask" link to the auto-approver). A rating with `rating: null` is removed."""
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None or loaded[0].get("session_id") != session_id:
+            return 404, {"error": "no such turn"}
+        rating = body.get("rating")
+        if rating is None:
+            self.recordings_store.delete_feedback(turn_id)
+            return 200, {"feedback": None, "where": self.observability.feedback_destination(note=False)}
+        if rating not in ("up", "down"):
+            return 400, {"error": "rating must be up or down"}
+        reasons = [r for r in dict.fromkeys(body.get("reasons") or []) if r in self.FEEDBACK_REASONS]
+        if len(reasons) != len(list(dict.fromkeys(body.get("reasons") or []))):
+            return 400, {"error": f"reasons must be among {list(self.FEEDBACK_REASONS)}"}
+        note = body.get("note")
+        note = str(note).strip()[:4000] if note else None
+        auto = [s["step_id"] for s in loaded[1] if s.get("kind") == "tool" and s.get("parent_step_id") is None
+                and ((s.get("attrs") or {}).get("decision") or {}).get("origin") == "reviewer"]
+        fb = self.recordings_store.put_feedback({"turn_id": turn_id, "session_id": session_id, "rating": rating,
+                                                 "reasons": reasons, "note": note or None, "auto_approved": auto})
+        self.observability.wake()
+        return 200, {"feedback": fb, "where": self.observability.feedback_destination(note=bool(note))}
+
+    def turn_footer(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        """OB-5: the numbers under an answer, from the turn's own steps: time, tokens ("this
+        turn"), warnings, auto-approved steps and approval cards shown (by `for_call_id`)."""
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None or loaded[0].get("session_id") != session_id:
+            return {"turn": None}
+        turn, steps = loaded
+        n = recording_rollups.turn_numbers(turn, steps, self.recordings_store.read_turn_issues(turn_id))
+        cards = {(s.get("attrs") or {}).get("for_call_id") for s in steps if s.get("kind") == "wait"
+                 and (s.get("attrs") or {}).get("kind") == "approval" and (s.get("attrs") or {}).get("for_call_id")}
+        return {"turn": {"turn_id": turn_id, "seq": turn.get("seq"), "status": turn.get("status"),
+                         "duration_ms": turn.get("duration_ms"), "active_ms": n["active_ms"],
+                         "total": n["total"], "at_least": n["at_least"], "warn": n["warn"],
+                         "auto_approved": len(n["auto_approved"]), "asked": len(cards),
+                         "live_checks": len(n["checks"])},
+                "feedback": self.recordings_store.get_feedback(turn_id),
+                "recording": bool(self.observability.settings.record)}
+
+    def session_footers(self, session_id: str) -> dict[str, Any]:
+        """Every turn's footer numbers in one call, for the chat view (OB-5)."""
+        rec = self.recordings_store.load_recording(session_id)
+        issues = self.recordings_store.read_issues(session_id)
+        fbs = {f["turn_id"]: f for f in self.recordings_store.session_feedback(session_id)}
+        steps_of: dict[str, list] = {}
+        for s in rec.get("steps") or []:
+            steps_of.setdefault(s.get("turn_id"), []).append(s)
+        out = []
+        for t in rec.get("turns") or []:
+            steps = steps_of.get(t["turn_id"], [])
+            n = recording_rollups.turn_numbers(t, steps, issues.get(t["turn_id"]))
+            cards = {(s.get("attrs") or {}).get("for_call_id") for s in steps if s.get("kind") == "wait"
+                     and (s.get("attrs") or {}).get("kind") == "approval" and (s.get("attrs") or {}).get("for_call_id")}
+            out.append({"turn_id": t["turn_id"], "seq": t.get("seq"), "status": t.get("status"),
+                        "first_message_id": t.get("first_message_id"), "last_message_id": t.get("last_message_id"),
+                        "duration_ms": t.get("duration_ms"), "active_ms": n["active_ms"], "total": n["total"],
+                        "at_least": n["at_least"], "warn": n["warn"], "auto_approved": len(n["auto_approved"]),
+                        "asked": len(cards), "live_checks": len(n["checks"]),
+                        "wake": t.get("wake"), "feedback": fbs.get(t["turn_id"])})
+        return {"turns": out, "recording": bool(self.observability.settings.record),
+                "where": self.observability.feedback_destination(note=False)}
+
     # -- observability: export and its settings (OB-6, phase-2 design §10) ------------------
     def _export_on_turn_end(self, event: dict[str, Any]) -> None:
         """A turn ended: the exporter sends soon. A late step (the session title) goes with
@@ -6488,11 +6789,13 @@ class SessionManager:
                 rec, s["step_id"], get_piece=self.recordings_store.get_piece, messages=messages,
                 audit_rows=lambda call_id: self.audit_store.list(session_id=session_id, call_id=call_id))}
         return {
-            "format": "openworker-recording", "version": "1.2", "session_id": session_id,
+            "format": "openworker-recording", "version": "1.3", "session_id": session_id,
             "exported_at": int(time.time() * 1000),
             "turns": recording_api.turns(rec),
             "steps": {t["turn_id"]: recording_api.turn_steps(rec, t["turn_id"]) for t in rec.get("turns") or []},
             "details": details,
+            # 1.3: the ratings of its turns, the note in content (recording-format §3.12).
+            "feedback": self.recordings_store.session_feedback(session_id),
         }
 
     def _forward_recording_event(self, event: dict[str, Any]) -> None:
@@ -7203,6 +7506,7 @@ class SessionManager:
         # Observability (E1): this engine's turns and steps go to the server's recorder,
         # unless recording is off on this machine (OB-6): then new engines record nothing.
         engine.recorder = self.recorder if self.observability.settings.record else None
+        self._note_persona_version(engine)
         engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         self._seed_task_permissions(engine, task)
         return engine
@@ -7435,7 +7739,8 @@ class SessionManager:
         await self.deliver_to_session(wake.session_id, message, wake=wake)
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None
+        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None,
+        wake_info: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -7451,6 +7756,7 @@ class SessionManager:
         if wake is not None and wake not in self.wakes.pending(session_id):
             return False  # user/board activity won the scheduled-task race
         if board_delivery and session_id in self.wakes.stopped_sessions:
+            self._note_held(session_id, "stopped")
             return False
         if board_delivery and not self._pending_board_context(session_id)[0]:
             # Backstop messages are not feed deliveries.
@@ -7458,6 +7764,8 @@ class SessionManager:
                 return False
         if not self.try_mark_running(session_id):
             if board_delivery or wake is not None:
+                if board_delivery:
+                    self._note_held(session_id, "busy")
                 return False  # defer; never inject routine wakes into a running turn
             activity = self.prepare_activity(session_id, "user activity")
             engine.queue_steering(message, source, activity)
@@ -7488,8 +7796,11 @@ class SessionManager:
             else:
                 trigger = "channel"
             woken_by = self._woken_by(session_id, source, wake) if trigger == "team_wake" else None
+            turn_wake = self._turn_wake(session_id, source=source, wake=wake, trigger=trigger,
+                                        rows=activity.get("board_rows") or (source or {}).get("board", {}).get("rows"),
+                                        wake_info=wake_info)
             async for event in engine.run(message, source=source, activity=activity, trigger=trigger,
-                                          woken_by=woken_by):
+                                          woken_by=woken_by, wake=turn_wake, team=self._team_stamp(session_id)):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -8064,7 +8375,12 @@ class SessionManager:
                 "scheduled tasks.\n\n"
                 f"{task.instructions}"
             )
-            async for _event in engine.run(opening, trigger="schedule"):
+            # 1.3 (E26a): the run's own trigger (`catch_up` was recorded as `schedule`
+            # before), on the run's own turn and as its wake reason.
+            run_trigger = "catch_up" if trigger in ("catchup", "catch_up") else "schedule"
+            async for _event in engine.run(opening, trigger="schedule", wake={"reason": run_trigger},
+                                           automation={"task_id": task.id, "run_id": run.run_id,
+                                                       "trigger": run_trigger}):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
@@ -8160,10 +8476,18 @@ class SessionManager:
         task = self.task_store.get(task_id)
         if task is None:
             return {"error": "not found"}
-        return {
-            "task": task.public(),
-            "runs": [r.to_dict() for r in self.task_store.runs(task_id)],
-        }
+        runs = [r.to_dict() for r in self.task_store.runs(task_id)]
+        # Phase 3 (OB-18, E26b): each run's tokens, time and issues from its own turns, its
+        # health, and the "failed N runs in a row" banner.
+        try:
+            titles = {cid: c.get("title", cid) for cid, c in (recording_signals.signals().get("checks") or {}).items()}
+            health = usage_api.automation_runs(self.recordings_store, task_id, runs,
+                                               now_ms=int(time.time() * 1000), titles=titles)
+            runs, banner = health["runs"], health["failed_in_a_row"]
+        except Exception:  # noqa: BLE001
+            logger.exception("could not work out run health of %s", task_id)
+            banner = None
+        return {"task": task.public(), "runs": runs, "failed_in_a_row": banner}
 
     def create_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create an automation directly from the GUI (the "New automation" / template flow).
@@ -8273,6 +8597,35 @@ class SessionManager:
                 f"or modify any scheduled tasks.\n\n{task.instructions}"
             ),
         }
+
+    def _note_persona_version(self, engine: TurnEngine) -> None:
+        """Keep this coworker version the first time its fingerprint is seen (E25c): name,
+        file list and file copies, for OB-15's "What changed" and "Show diff". Local only."""
+        pid, fp = getattr(engine, "persona_id", None), getattr(engine, "persona_fp", None)
+        if not pid or not fp or not self.observability.settings.record:
+            return
+        try:
+            self.recordings_store.note_persona_version(
+                pid, fp, getattr(engine, "persona_title", None), getattr(engine, "persona_files", None) or {})
+        except Exception:  # noqa: BLE001 - a version note never breaks a session build
+            logger.exception("could not note coworker version %s/%s", pid, fp)
+
+    def user_turn_facts(self, session_id: str) -> dict[str, Any]:
+        """What a turn typed or sent by a person records besides `trigger: user` (1.3): the team
+        stamp of a team member's session, and for the first turn of a manual automation run,
+        `automation` with trigger `manual` and wake reason `manual` (E26a). A follow-up
+        typed into a run's session later carries neither (TD3-23)."""
+        facts: dict[str, Any] = {"team": self._team_stamp(session_id)}
+        if session_id.startswith("__run__"):
+            try:
+                run = self.task_store.find_run(session_id[len("__run__"):])
+                if (run is not None and run.trigger == "manual" and run.status == "running"
+                        and self.recordings_store.turn_count(session_id) == 0):
+                    facts["automation"] = {"task_id": run.task_id, "run_id": run.run_id, "trigger": "manual"}
+                    facts["wake"] = {"reason": "manual"}
+            except Exception:  # noqa: BLE001 - a recording fact never blocks a turn
+                logger.exception("could not tell whether %s is a manual run", session_id)
+        return facts
 
     def _finish_manual_run(self, session_id: str) -> None:
         """Close the manual run whose session this is, once its turn ended (P3-3). The desktop

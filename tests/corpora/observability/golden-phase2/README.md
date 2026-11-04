@@ -1,6 +1,6 @@
 # Golden test, Phase 2
 
-*Written 2026-11-02 with [recording-format.md](../../recording-format.md) 1.2 and [signals.yaml](../../signals.yaml) 0.3; rebuilt 2026-11-03 for signals 0.4 (S2-17d added) and 0.5. Made by `phase-2/lab/make_golden2.py`, checked by `phase-2/lab/check_golden2.py`.*
+*Written 2026-11-02 with [recording-format.md](../../recording-format.md) 1.2 and [signals.yaml](../../signals.yaml) 0.3; rebuilt 2026-11-03 for signals 0.4 (S2-17d added) and 0.5, and 2026-11-04 for 0.6: only the version and two new turn checks (`wake_capped`, `watchdog_nudged`) under `not_checked` changed, because a 1.2 recording has no `wake`. The recordings are unchanged and valid under 1.3. Made by `phase-2/lab/make_golden2.py`, checked by `phase-2/lab/check_golden2.py`.*
 
 ## What it is
 

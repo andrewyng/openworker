@@ -334,7 +334,7 @@ def test_token_numbers_follow_the_verified_rules(tmp_path):
     aa = [s for s in spans if _attr(s, "openworker.step.id") == "turn-1-aa"][0]
     assert rm["parentSpanId"] == aa["spanId"] and aa["parentSpanId"] == root["spanId"]
     resource = cap.bodies[0]["resourceSpans"][0]["resource"]["attributes"]
-    assert {"key": "openworker.export.schema", "value": {"stringValue": "openworker/1.2"}} in resource
+    assert {"key": "openworker.export.schema", "value": {"stringValue": "openworker/1.3"}} in resource
     assert not any(a["key"] == "host.name" for a in resource)  # the machine name: names switch only
 
 

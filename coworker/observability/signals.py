@@ -449,6 +449,39 @@ def c_waited_unwatched(turn, top, all_steps, p):
     return ("fired" if found else "fine"), found, "Nothing waited long for an answer while nobody was watching"
 
 
+def _team_wake(turn):
+    """The 1.3 facts the team checks read; None when the turn is not a team turn with a wake."""
+    wake = turn.get("wake")
+    team = (turn.get("stamp") or {}).get("team")
+    return (wake, team) if wake and team else None
+
+
+def c_wake_capped(turn, top, all_steps, p):  # signals 0.6 (OB-17)
+    tw = _team_wake(turn)
+    if tw is None:
+        return "not_checked", [], "Not a team turn with its wake recorded"
+    d = tw[0].get("deferred") or {}
+    if d.get("by") == "cap":
+        first = top[0] if top else None
+        minutes = round((d.get("ms") or 0) / 60000)
+        return "fired", [issue("wake_capped", first, f"The team reached its wake cap ({p.get('cap_per_hour', 60)} this hour). "
+                               f"This wake waited {minutes} min before it was delivered.",
+                               deferred_ms=d.get("ms"), minutes=minutes, cap_per_hour=p.get("cap_per_hour", 60))], ""
+    return "fine", [], "Not held back by the wake cap"
+
+
+def c_watchdog_nudged(turn, top, all_steps, p):  # signals 0.6 (OB-17)
+    tw = _team_wake(turn)
+    if tw is None:
+        return "not_checked", [], "Not a team turn with its wake recorded"
+    if tw[0].get("reason") == "watchdog":
+        first = top[0] if top else None
+        ids = [str(x) for x in tw[0].get("item_ids") or []]
+        return "fired", [issue("watchdog_nudged", first, f"The watchdog woke the {tw[1].get('role')}: items "
+                               f"{', '.join(ids)} were idle for 10 minutes.", item_ids=ids, role=tw[1].get("role"))], ""
+    return "fine", [], "Not a watchdog wake"
+
+
 CHECKS = {
     "repeated_step": c_repeated_step, "off_plan": c_off_plan, "refused": c_refused,
     "overridden": c_overridden, "reviewer_could_not_run": c_reviewer_could_not_run,
@@ -458,7 +491,14 @@ CHECKS = {
     "cut_off": c_cut_off, "step_limit": c_step_limit, "made_up_tool": c_made_up_tool,
     "context_full": c_context_full, "blocked_by_sandbox": c_blocked_by_sandbox, "sandbox_failed": c_sandbox_failed,
     "ran_without_sandbox": c_ran_without_sandbox, "waited_unwatched": c_waited_unwatched,
+    "wake_capped": c_wake_capped, "watchdog_nudged": c_watchdog_nudged,
 }
+
+
+def scope_of(check: dict, spec: Optional[dict] = None) -> str:
+    """A check's scope (signals 0.6): `turn`, `series` or `task`; `turn` when it does not say."""
+    spec = spec or signals()
+    return str(check.get("scope") or spec.get("default_scope") or "turn")
 
 
 def check_turn(turn: dict, steps: list[dict], spec: Optional[dict] = None) -> dict:
@@ -470,6 +510,8 @@ def check_turn(turn: dict, steps: list[dict], spec: Optional[dict] = None) -> di
     out: dict[str, Any] = {"signals_version": str(spec.get("version")), "issues": [], "fine": [],
                            "not_checked": []}
     for cid, check in spec["checks"].items():
+        if scope_of(check, spec) != "turn":
+            continue  # series and task checks run over more than one turn (`scopes.py`)
         fn = CHECKS.get(cid)
         if fn is None:
             continue  # a check this app version does not know yet: left out, never guessed

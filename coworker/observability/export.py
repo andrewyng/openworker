@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 SETTINGS_FILE = "observability.json"
 PROFILE = "observability-export"
 LANGFUSE_PATH = "/api/public/otel/v1/traces"
+LANGFUSE_SCORES_PATH = "/api/public/scores"  # 1.3: ratings (E27b, TD3-10)
 KINDS = ("off", "langfuse", "otlp")
 RETENTION_CHOICES = (7, 30, 90)
 MAX_HEADERS = 8
@@ -353,7 +354,7 @@ class Exporter:
         while not self._stop.is_set():
             queue = [t for t in self.store.export_queue(dest, cfg.since_ms, limit=50) if t not in done]
             if not queue:
-                return sent
+                return sent + self._flush_feedback(sw, masker)
             pending: list[tuple[dict[str, Any], list[tuple[str, str]]]] = []
             for tid in queue:
                 built = self._turn_spans(tid, sw, masker)
@@ -363,7 +364,51 @@ class Exporter:
             for i in range(0, len(pending), self.batch_spans):
                 sent += self._send(pending[i:i + self.batch_spans])
             if not pending:
-                return sent
+                return sent + self._flush_feedback(sw, masker)
+        return sent
+
+    # -- ratings (1.3, E27b) ---------------------------------------------------------------------
+    @staticmethod
+    def _feedback_mark(fb: dict[str, Any]) -> str:
+        """A rating's sent mark: per version of it, so a changed rating goes again (and, by
+        its fixed id, replaces the score or span sent before)."""
+        return f"feedback|{fb['turn_id']}|{fb.get('changed_at') or fb['rated_at']}"
+
+    def _flush_feedback(self, sw: dict[str, bool], masker: Masker) -> int:
+        """Send the ratings given or changed since the destination was chosen and not sent
+        yet: a Langfuse score, or an `openworker.feedback` span (TD3-10). Older ratings are
+        not sent (as for turns, TD2-12)."""
+        cfg = self.config
+        dest = cfg.destination.key
+        rows = getattr(self.store, "feedback_since", None)
+        if rows is None:
+            return 0
+        todo = [fb for fb in rows(cfg.since_ms, limit=100)
+                if self._feedback_mark(fb) not in self.store.export_marked(dest, fb["turn_id"])]
+        sent = 0
+        for fb in todo:
+            mark = [(self._feedback_mark(fb), fb["turn_id"])]
+            if cfg.destination.kind == "langfuse":
+                body = json.dumps(spans_mod.langfuse_score(fb, sw=sw, masker=masker), ensure_ascii=False).encode("utf-8")
+                url = cfg.destination.host.rstrip("/") + LANGFUSE_SCORES_PATH
+                status, text = self.post(url, body, {"Content-Type": "application/json", **cfg.headers}, TIMEOUT_SECONDS)
+            else:
+                turn = self.store.load_turn(fb["turn_id"])
+                machine = (((turn[0].get("stamp") or {}) if turn else {}).get("machine") or {})
+                resource = resource_attrs(app_version=str(machine.get("app_version") or ""))
+                body = json.dumps(encode_otlp([(resource, [spans_mod.feedback_span(fb, sw=sw, masker=masker)])]),
+                                  ensure_ascii=False).encode("utf-8")
+                status, text = self.post(cfg.destination.endpoint, body,
+                                         {"Content-Type": "application/json", **cfg.headers}, TIMEOUT_SECONDS)
+            if 200 <= status < 300:
+                self.store.mark_export(dest, mark, "sent")
+                self.last_sent_at = time.time()
+                sent += 1
+                continue
+            self._raise_for(status, text)
+            self.store.mark_export(dest, mark, "dropped")
+            self.last_error = _reason(status, text)
+        return sent
 
     def _turn_spans(self, turn_id: str, sw: dict[str, bool], masker: Masker) -> list[tuple[dict[str, Any], list[tuple[str, str]]]]:
         cfg = self.config
@@ -495,6 +540,17 @@ class ObservabilityExport:
         """Masking (R4): every value in the secret store, and credential-looking env vars."""
         data = self.secrets._read() if self.secrets is not None and hasattr(self.secrets, "_read") else {}
         return spans_mod.store_secret_values(data) + spans_mod.env_secret_values()
+
+    def feedback_destination(self, *, note: bool) -> dict[str, Any]:
+        """Where a rating goes, from the settings in force now: the rating card's last line
+        (§8.3). Always this machine; also the export destination when export is on; with the
+        note only when "Your messages and the AI's answers" is on (TD3-11)."""
+        dest, include = self.effective()
+        sending = dest.kind != "off" and bool(self.settings.record)
+        return {"local": True, "export": dest.kind if sending else None,
+                "managed": self.managed is not None and sending,
+                "by": self.managed.by if self.managed is not None and sending else None,
+                "with_note": bool(note and sending and switches_from(include).get("prompts"))}
 
     def content_notice(self) -> Optional[str]:
         """When the company's policy sends content: what goes where, for each new session."""

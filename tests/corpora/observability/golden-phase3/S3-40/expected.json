@@ -1,0 +1,12 @@
+{
+ "scan_missing": [
+  {
+   "area": "secrets"
+  }
+ ],
+ "no_findings_without_scan": [
+  {
+   "area": "secrets"
+  }
+ ]
+}

@@ -6,12 +6,20 @@
 # the same issues in both. The numbers in a rule ("3 times", "80%") are settings here, not
 # code.
 #
-# Status: DRAFT 0.2 (2026-11-02), Phase 2 design. Not frozen. It freezes at the end of the
-# Phase 2 design (phased-plan.md section 3), after validation on real recordings
-# (phase-2/validation-report.md).
+# Status: DRAFT 0.6 (2026-11-04). Not frozen. The Phase 2 checks freeze when the labelling
+# gate is closed (phase-2 TD2-21). The Phase 3 checks (scope series and task) freeze after
+# they are run on real team, security and automation sessions (phase-3/validation-report.md).
 #
-# How a check works (phase-2/technical-design.md section 2).
-# - A check is a pure function of one finished turn: the turn record and its steps, as
+# How a check works (phase-2/technical-design.md section 2; scopes: phase-3/technical-design.md
+# section 5).
+# - Every check has a `scope` (default `turn`, below). Whatever its scope, a check is a pure
+#   function of its input, so both engines give the same answer:
+#     turn    one finished turn (every Phase 2 check)
+#     series  the ordered turns of one session, or the ordered runs of one automation
+#     task    every turn of one task (a board item in a team, or the session otherwise), with
+#             the board and journal facts about it
+#   An engine running the per-turn checks at turn end runs only scope `turn` there.
+# - A turn check is a pure function of one finished turn: the turn record and its steps, as
 #   recording-format.md defines them, plus the step fields this file adds (`needs`). It
 #   reads `attrs` only, never `content`, so the same issues come out of a recording whose
 #   text was left out (export with metadata only).
@@ -24,6 +32,8 @@
 #   issues are listed but count nowhere.
 #
 # How to read an entry.
+#   scope       turn | series | task (default turn, 0.6)
+#   input       for series and task checks: what the check is given
 #   title       the issue's name on the tab
 #   severity    warn | info
 #   applies     when the check runs at all (else not_checked)
@@ -37,8 +47,15 @@
 #   golden      the scenarios that test it (phase-2/scenarios.md)
 #   source      where the check was asked for
 
-version: "0.5"
-draft: 2026-11-03
+version: "0.6"
+draft: 2026-11-04
+# 0.6: Phase 3 (phase-3/technical-design.md §5, §10 to §12; decisions TD3-15 to TD3-24, ruled
+# 2026-11-04). A `scope` on every check (default turn). New checks: wake_capped and
+# watchdog_nudged (turn); lead_polling and failed_in_a_row (series); scan_missing,
+# scanner_failed, no_findings_without_scan, finding_without_evidence, self_verified,
+# reviewed_before_prereq and same_approval_twice (task). The `scanners` list. Goes with
+# recording format 1.3. The header's status line corrected (it said 0.2; V3-21). Wording of the
+# coverage checks from the Phase 3 mock review (area words, M3-R11).
 # 0.5: bad_arguments also covers arguments that do not fit the tool (a name it lacks, a required one
 # missing), recorded as such by the engine; its words say so (labelling judge, T11).
 # 0.4: waited_unwatched also counts the wait's overlap with nobody_watching gaps (OB-14).
@@ -51,6 +68,8 @@ draft: 2026-11-03
 #     tool calls belong to the helper (OB-7 nests them; their checks come with OB-7)
 #   - shadow steps, except in shadow_disagreed
 #   - steps with after_turn = true (the session title runs after the answer)
+default_scope: turn
+
 scope:
   top_level_only: true
   skip_shadow: true
@@ -424,3 +443,215 @@ checks:
     needs: [wait.inbox_at, notice.nobody_watching]
     golden: [S2-17, S2-17b, S2-17c]
     source: "across-features.md OB-14, Q27; validation V2-25"
+
+  # -- 0.6: Phase 3. Teams (OB-17). -----------------------------------------------------------
+
+  wake_capped:
+    title: "Team paused at the wake cap"
+    severity: warn
+    scope: turn
+    applies: "a team member's turn with `wake` recorded (stamp.team and turn.wake, 1.3)"
+    fires: "The turn's `wake.deferred.by` is `cap`: the delivery that started it was held back by the team's wake cap."
+    points_at: "the turn's first step"
+    params:
+      cap_per_hour: 60
+    says: "The team reached its wake cap ({cap_per_hour} this hour). This wake waited {deferred} before it was delivered."
+    fine: "Not held back by the wake cap"
+    needs: [turn.wake, stamp.team]
+    golden: [S3-50]
+    source: "across-features.md OB-17; phase-3 §11.4; validation V3-08"
+
+  watchdog_nudged:
+    title: "The watchdog nudged the lead"
+    severity: info
+    scope: turn
+    applies: "a team member's turn with `wake` recorded"
+    fires: "The turn's `wake.reason` is `watchdog`: work on the board was idle for 10 minutes."
+    points_at: "the turn's first step"
+    params: {}
+    says: "The watchdog woke {role}: items {item_ids} were idle for 10 minutes."
+    fine: "Not a watchdog wake"
+    needs: [turn.wake, stamp.team]
+    golden: [S3-55]
+    source: "across-features.md OB-17; phase-3 §11.4"
+
+  lead_polling:
+    title: "Lead polling"
+    severity: warn
+    scope: series
+    input: "the lead session's turns in order (the series ends at each new turn)"
+    applies: "a team lead's session with `wake` recorded"
+    fires: >-
+      `min_run` or more turns in a row with `wake.reason` `timer` and the same
+      `wake.board_seq`: the lead woke on its own timer again and again with no board change
+      in between (TD3-20). One issue per run.
+    points_at: "the first step of the last turn of the run"
+    params:
+      min_run: 3
+    says: "The lead woke on its timer {count} times with no board change."
+    fine: "The lead did not poll the board"
+    needs: [turn.wake]
+    golden: [S3-50]
+    source: "across-features.md OB-17"
+
+  reviewed_before_prereq:
+    title: "Reviewed before its prerequisite was done"
+    severity: warn
+    scope: task
+    input: "the board's item_transitioned events in sequence order, and its blocks links"
+    applies: "a team task with a prerequisite (a blocks link)"
+    fires: "An item moved to `review` or `done` while an item that blocks it was not `done`."
+    points_at: "the step of the transition (the transition tool step), else the item's card"
+    params: {}
+    says: "Item #{item} went to {to} before its prerequisite #{prerequisite} was done."
+    fine: "No item was reviewed before its prerequisites were done"
+    needs: []
+    golden: [S3-54, S3-54c]
+    source: "across-features.md OB-17"
+
+  same_approval_twice:
+    title: "Same approval asked twice"
+    severity: warn
+    scope: task
+    input: "the team's approval cards in order: each wait step of kind approval with its tool step's name and args_hash, and its session"
+    applies: "a team"
+    fires: >-
+      An approval card whose tool step has the same `name` and `args_hash` as an earlier card
+      of the same team that was approved. One issue per repeated card.
+    points_at: "the later wait step"
+    params: {}
+    says: "Same approval asked twice: {name} ({first_by}, then {again_by})."
+    fine: "No approval was asked twice"
+    needs: [tool.args_hash]
+    golden: [S3-53]
+    source: "across-features.md OB-17"
+
+  # -- 0.6: Phase 3. Security coverage (OB-16). ------------------------------------------------
+  # These run on tasks of coworkers whose manifest declares `coverage` (stamp.persona_coverage,
+  # TD3-24). A scan is a tool step whose `scanner.action` is `scan` (the `scanners` list, below).
+
+  scan_missing:
+    title: "A promised scan did not run"
+    severity: warn
+    scope: task
+    input: "every turn of the task, with stamp.persona_coverage"
+    applies: "a task of a coworker that declares coverage"
+    fires: >-
+      An area in `persona_coverage` has no successful scan step in the task. A scan is
+      successful when it exits 0, or with one of its scanner's `findings_exit` codes.
+    points_at: "the hand-off step (the transition to review), else the task's last step"
+    params: {}
+    says: "{scanner_for_area} did not run: {area_word} scan skipped."
+    fine: "Every promised scan ran ({areas})"
+    needs: [tool.scanner, stamp.persona_coverage]
+    golden: [S3-40, S3-41, S3-44]
+    source: "across-features.md OB-16"
+
+  scanner_failed:
+    title: "A scanner failed"
+    severity: warn
+    scope: task
+    input: "every turn of the task"
+    applies: "a task with at least one scan step"
+    fires: "A scan step exited non-zero with a code that is not in its scanner's `findings_exit` list."
+    points_at: "the failed scan step"
+    params: {}
+    says: "{scanner} failed with exit code {exit_code}."
+    fine: "No scanner failed"
+    needs: [tool.scanner]
+    golden: [S3-41, S3-44]
+    source: "across-features.md OB-16"
+
+  no_findings_without_scan:
+    title: "\"No findings\" without a scan"
+    severity: warn
+    scope: task
+    input: "every turn of the task, and its coverage report ({area: {ran, findings}})"
+    applies: "a task whose hand-off carries a coverage report"
+    fires: "The coverage report says an area ran with 0 findings, but the task has no successful scan of that area."
+    points_at: "the hand-off step"
+    params: {}
+    says: "The report says no {area_word} problems were found, but no {area_word} scan ran. It should say we could not look, not that nothing is there."
+    fine: "Every \"no findings\" has a scan behind it"
+    needs: [tool.scanner]
+    golden: [S3-40]
+    source: "across-features.md OB-16"
+
+  finding_without_evidence:
+    title: "A finding has no evidence step"
+    severity: warn
+    scope: task
+    input: "the task's journal findings, each with its severity and evidence links"
+    applies: "a task with findings"
+    fires: "A finding of severity critical or high has no evidence link to a recorded step."
+    points_at: "the finding (journal_append) step"
+    params:
+      severities: [critical, high]
+    says: "Finding #{finding} ({severity}) has no evidence step."
+    fine: "Every high finding has an evidence step"
+    needs: []
+    golden: [S3-42]
+    source: "across-features.md OB-16"
+
+  self_verified:
+    title: "A fix was verified by its own author"
+    severity: warn
+    scope: task
+    input: "the board's verifies links and item_assigned and item_transitioned events"
+    applies: "a fix item that another item verifies"
+    fires: "The item that verifies a fix was done by the same worker that did the fix."
+    points_at: "the verifying item's hand-off step"
+    params: {}
+    says: "The fix for #{item} was verified by the worker that made it."
+    fine: "No fix was verified by its own author"
+    needs: []
+    golden: [S3-42, S3-44]
+    source: "across-features.md OB-16"
+
+  # -- 0.6: Phase 3. Automations (OB-18). ------------------------------------------------------
+
+  failed_in_a_row:
+    title: "Failed runs in a row"
+    severity: warn
+    scope: series
+    input: "one automation's runs in start order, each with its health (TD3-21)"
+    applies: "an automation with at least `min_run` runs that were not skipped"
+    fires: >-
+      The last `min_run` runs that were not skipped all failed. A run failed when its run
+      record says error; or its own turn (turn.automation) ended error, unknown or
+      max_iterations_exceeded; or a warning of `tool_failed` (not recovered), `model_failed`
+      or `sandbox_failed` fired on that turn; or it still says running 10 minutes after its
+      turn ended.
+    points_at: "the first step of the last failed run's turn"
+    params:
+      min_run: 3
+      stuck_after_ms: 600000
+    says: "Failed {count} runs in a row. Last error: {last_error}"
+    fine: "The last runs did not all fail"
+    needs: [turn.automation]
+    golden: [S3-60, S3-61, S3-61b, S3-62]
+    source: "across-features.md OB-18"
+
+# -- 0.6: how a scan is recognised (OB-16, TD3-16). ------------------------------------------
+# The engine sets a run_shell step's `scanner` from the command, by this rule only:
+#   1. split the command into parts at &&, ||, ; and |;
+#   2. in each part, drop `lead_ins` and any NAME=value words at the start, and a leading
+#      python -m (or python3 -m, py -m); compare the last path piece of the next word, without
+#      .exe, case-insensitively;
+#   3. the first part whose word is a scanner's `word` (and `then`, when given) names it;
+#   4. `action` is `version` when one of the next two words is in `probe_words`, else `scan`.
+# So `grep -r semgrep docs` is not a scan, and `semgrep --version` is a probe.
+# `findings_exit`: exit codes that mean "found something", not a failure.
+scanners:
+  # the words an area is shown with in issue texts (M3-R11)
+  area_words: {code: code, secrets: secret, deps: dependency, iac: infrastructure}
+  lead_ins: [sudo, npx, uvx, pipx, run, exec, env, time]
+  probe_words: ["--version", version, "-v", "--help"]
+  list:
+    semgrep: {word: semgrep, area: code, findings_exit: [1]}
+    gitleaks: {word: gitleaks, area: secrets, findings_exit: [1]}
+    osv-scanner: {word: osv-scanner, area: deps, findings_exit: [1]}
+    npm-audit: {word: npm, then: audit, area: deps, findings_exit: [1]}
+    pip-audit: {word: pip-audit, area: deps, findings_exit: [1]}
+    trivy: {word: trivy, area: deps, findings_exit: []}
+    checkov: {word: checkov, area: iac, findings_exit: [1]}

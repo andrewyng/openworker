@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:openworker:observability:recording-format:1.2",
-  "title": "OpenWorker observability recording format 1.0",
-  "description": "Turns, steps, recording events and exchange pieces, as defined in recording-format.md (version 1.0, frozen 2026-10-31). Field names are those of phase-1/technical-design.md (Draft 5). Validate a recording file against #/$defs/recording, one recording event against #/$defs/event, one line of an exchange piece store against #/$defs/piece, one live message against #/$defs/live_message. Wherever a field may be null, its description says what null means.",
+  "$id": "urn:openworker:observability:recording-format:1.3",
+  "title": "OpenWorker observability recording format 1.3",
+  "description": "Turns, steps, recording events and exchange pieces, as defined in recording-format.md (version 1.3; 1.0 frozen 2026-10-31, 1.2 added the Phase 2 fields, 1.3 the Phase 3 fields). Field names are those of phase-1/technical-design.md (Draft 5). Validate a recording file against #/$defs/recording, one recording event against #/$defs/event, one line of an exchange piece store against #/$defs/piece, one live message against #/$defs/live_message. Wherever a field may be null, its description says what null means.",
   "$ref": "#/$defs/recording",
   "$defs": {
 
@@ -28,7 +28,8 @@
       "additionalProperties": false,
       "properties": {
         "turns": {"type": "array", "items": {"$ref": "#/$defs/turn"}},
-        "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}}
+        "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+        "feedback": {"type": "array", "items": {"$ref": "#/$defs/feedback"}, "description": "1.3. The ratings of the file's turns (OB-5). Absent = none, or the file was written before 1.3."}
       }
     },
 
@@ -82,7 +83,11 @@
             "expected": {"type": "boolean", "description": "1.2. This machine has a sandbox switched on in Settings, whatever this session used."}
           }
         },
-        "persona_fp": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "Coworker fingerprint: first 6 hex characters of the section 9.4 hash. The session record keeps the same value."}
+        "persona_fp": {"type": "string", "pattern": "^[0-9a-f]{6}$", "description": "Coworker fingerprint: first 6 hex characters of the section 9.4 hash. The session record keeps the same value."},
+        "persona_id": {"type": "string", "minLength": 1, "description": "1.3. The coworker's id (its manifest id), next to persona_fp, so the recording alone says which coworker ran."},
+        "persona_coverage": {"type": "array", "items": {"enum": ["code", "secrets", "deps", "iac"]}, "description": "1.3. The scan areas the coworker's manifest promises (its coverage list). Absent = it promises none, and the coverage checks do not run."},
+        "team": {"type": "object", "additionalProperties": false, "required": ["team_id", "role"], "description": "1.3. A team member's turn: the team and the member's role. Absent = not a team session.",
+          "properties": {"team_id": {"type": "string"}, "role": {"enum": ["lead", "worker"]}}}
       }
     },
 
@@ -111,7 +116,9 @@
         "last_message_id": {"$ref": "#/$defs/id_or_null", "description": "mid of the last message appended before the turn ended. null = no message was appended."},
         "schema_version": {"const": 1, "description": "The record layout version: 1 for every 1.x version of this format. It goes up only when old readers cannot read the new shape."},
         "max_iterations": {"type": ["integer", "null"], "minimum": 1, "description": "1.2. The step limit in force for this turn. null or absent = not recorded (before 1.2)."},
-        "woken_by": {"$ref": "#/$defs/woken_by"}
+        "woken_by": {"$ref": "#/$defs/woken_by"},
+        "wake": {"$ref": "#/$defs/wake"},
+        "automation": {"$ref": "#/$defs/automation"}
       }
     },
 
@@ -385,6 +392,9 @@
         "team": {"type": "object", "additionalProperties": false, "required": ["team_id"], "description": "1.2. Team tools only: ids, no text.",
           "properties": {"team_id": {"type": "string"}, "item_id": {"type": ["string", "null"]}, "worker_session_id": {"type": ["string", "null"]},
             "worker_session_ids": {"type": "array", "items": {"type": "string"}, "description": "propose_team only: the sessions it created."}}},
+        "scanner": {"type": ["object", "null"], "additionalProperties": false, "required": ["name", "action"], "description": "1.3. run_shell only: the security scanner the command runs, by the fixed word rule of signals.yaml (scanners). null = a shell command that runs no scanner. Absent = not a shell step, or not recorded.",
+          "properties": {"name": {"enum": ["semgrep", "gitleaks", "osv-scanner", "npm-audit", "pip-audit", "trivy", "checkov"]}, "action": {"enum": ["scan", "version"]}}},
+        "result_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}], "description": "1.3. SHA-256 of the raw result, for evidence (OB-16). null = the call never ran."},
         "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}
       }
     },
@@ -533,6 +543,31 @@
     "woken_by": {"type": ["object", "null"], "additionalProperties": false, "description": "1.2. A team worker's turn: who woke it. null or absent = not a worker turn, or not recorded.",
       "properties": {"lead_session_id": {"type": "string"}, "team_id": {"type": "string"}, "item_ids": {"type": "array", "items": {"type": "string"}},
         "via": {"enum": ["board", "steer", "mention", "timer"]}}},
+    "wake": {"type": ["object", "null"], "additionalProperties": false, "required": ["reason"], "description": "1.3. Why the turn started (OB-17). On every turn. null or absent = not recorded (before 1.3).",
+      "properties": {
+        "reason": {"enum": ["user", "answer", "assigned", "review", "blocker", "prereq_done", "worker_waiting", "board", "mention", "steer", "timer", "wake_on", "watchdog", "schedule", "catch_up", "manual", "channel", "unknown"],
+                   "description": "One reason. When a wake carried several kinds of board row, the first in the order blocker, worker_waiting, review, assigned, prereq_done, board, mention."},
+        "kinds": {"type": "array", "items": {"enum": ["assigned", "moved", "filed", "claimed", "waiting", "comment", "chat"]}, "description": "Every kind of board row the wake carried. Empty = none."},
+        "item_ids": {"type": "array", "items": {"type": "string"}, "description": "The board items involved. Empty = none."},
+        "board_seq": {"type": ["integer", "null"], "minimum": 0, "description": "The board's sequence number (watermark) when the turn started. null = not a team turn."},
+        "batched": {"type": ["integer", "null"], "minimum": 1, "description": "Rows gathered by the review window. null = not batched."},
+        "deferred": {"type": ["object", "null"], "additionalProperties": false, "required": ["by", "ms"], "description": "Why and how long the delivery was held back before this turn. null = not held back.",
+          "properties": {"by": {"enum": ["cap", "busy", "batch", "stopped"]}, "ms": {"$ref": "#/$defs/count"}}},
+        "by": {"enum": ["user", "lead", null], "description": "reason answer only: who answered the card. null = not an answer, or not known."}}},
+    "automation": {"type": ["object", "null"], "additionalProperties": false, "required": ["task_id", "run_id", "trigger"], "description": "1.3. A turn an automation run started itself (OB-18). null or absent = not an automation run's own turn (a follow-up typed into the run's session has none).",
+      "properties": {"task_id": {"type": "string"}, "run_id": {"type": "string"}, "trigger": {"enum": ["schedule", "catch_up", "manual"]}}},
+    "feedback": {"type": "object", "additionalProperties": false, "required": ["turn_id", "session_id", "rating", "reasons", "auto_approved", "rated_at", "content"], "description": "1.3. One rating of one turn (OB-5). The note is the person's own text, so it is in content.",
+      "properties": {
+        "turn_id": {"$ref": "#/$defs/id"},
+        "session_id": {"$ref": "#/$defs/id"},
+        "rating": {"enum": ["up", "down"]},
+        "reasons": {"type": "array", "items": {"enum": ["wrong_answer", "too_slow", "did_unasked", "did_not_finish", "other"]}},
+        "auto_approved": {"type": "array", "items": {"type": "string"}, "description": "The step ids of the turn's auto-approved tool steps when it was rated. Empty = none."},
+        "rated_at": {"$ref": "#/$defs/epoch_ms"},
+        "changed_at": {"type": ["integer", "null"], "minimum": 0, "description": "Epoch ms of the last change. null = never changed."},
+        "content": {"$ref": "#/$defs/feedback_content"}}},
+    "feedback_content": {"type": "object", "additionalProperties": false,
+      "properties": {"note": {"type": ["string", "null"], "description": "The person's note. null or absent = none."}}},
     "no_content": {"type": "object", "additionalProperties": false, "maxProperties": 0},
 
     "live_message": {

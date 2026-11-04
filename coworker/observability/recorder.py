@@ -60,6 +60,8 @@ CLOCK_JUMP_MS = 5000
 
 # Format 1.2 turn fields: written only when known, so a 1.1 recording reads back unchanged.
 TURN_FIELDS_12 = ("max_iterations", "woken_by")
+# Format 1.3 turn fields (Phase 3): `wake` on every turn, `automation` on a run's own turns.
+TURN_FIELDS_13 = ("wake", "automation")
 STEP_FIELDS = (
     "step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at",
     "duration_ms", "status", "call_id", "call_index", "message_id", "shadow", "after_turn",
@@ -91,6 +93,8 @@ class Turn:
     schema_version: int = SCHEMA_VERSION
     max_iterations: Optional[int] = None
     woken_by: Optional[dict[str, Any]] = None
+    wake: Optional[dict[str, Any]] = None
+    automation: Optional[dict[str, Any]] = None
     mono_start: Optional[int] = field(default=None, repr=False)  # not part of the record
     mono_end: Optional[int] = field(default=None, repr=False)
     # Time the monotonic clock did not count (the machine slept; OB-14 clock_jump): added
@@ -104,7 +108,8 @@ class Turn:
 
     def record(self) -> dict[str, Any]:
         out = {k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS}
-        out.update({k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS_12 if getattr(self, k) is not None})
+        out.update({k: copy.deepcopy(getattr(self, k)) for k in TURN_FIELDS_12 + TURN_FIELDS_13
+                    if getattr(self, k) is not None})
         return out
 
 
@@ -163,6 +168,28 @@ def _merge_top(into: dict[str, Any], new: Optional[dict[str, Any]]) -> None:
     """step_updated / step_ended merge: each top-level key replaces the same key."""
     for k, v in (new or {}).items():
         into[k] = copy.deepcopy(v)
+
+
+WAKE_REASONS = (
+    "user", "answer", "assigned", "review", "blocker", "prereq_done", "worker_waiting", "board", "mention",
+    "steer", "timer", "wake_on", "watchdog", "schedule", "catch_up", "manual", "channel", "unknown",
+)
+
+
+def _wake_record(wake: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """`turn.wake` (1.3) with every field, an unknown reason read as `unknown`."""
+    if not wake:
+        return None
+    reason = wake.get("reason")
+    return {
+        "reason": reason if reason in WAKE_REASONS else "unknown",
+        "kinds": list(wake.get("kinds") or []),
+        "item_ids": [str(x) for x in wake.get("item_ids") or []],
+        "board_seq": wake.get("board_seq"),
+        "batched": wake.get("batched"),
+        "deferred": copy.deepcopy(wake.get("deferred")) or None,
+        "by": wake.get("by"),
+    }
 
 
 def short_hash(text: str) -> str:
@@ -283,6 +310,7 @@ class Recorder:
             stamp=copy.deepcopy(ev.get("stamp") or {}),
             first_message_id=ev.get("first_message_id"), mono_start=ev["mono_ms"],
             max_iterations=a.get("max_iterations"), woken_by=copy.deepcopy(a.get("woken_by")),
+            wake=_wake_record(a.get("wake")), automation=copy.deepcopy(a.get("automation")) or None,
         )
         self.turns[turn.turn_id] = turn
         self._write_turn(turn)
@@ -400,6 +428,9 @@ class Recorder:
             for x in self.steps.values():
                 if x.turn_id == turn.turn_id:
                     self._write_step(x)
+            if self.store is not None:
+                # A late step (the title call after the answer) counts in its turn (S3-03).
+                self.store.refresh_usage(turn.turn_id)
         else:
             self._write_step(s)
             if turn is None and self.store is not None:

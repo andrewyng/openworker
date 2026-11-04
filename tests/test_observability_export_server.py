@@ -137,7 +137,7 @@ def test_the_recording_file_holds_the_whole_session(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert 'attachment; filename="recording-s9.json"' == r.headers["content-disposition"]
     data = r.json()
-    assert data["session_id"] == "s9" and data["version"] == "1.2"
+    assert data["session_id"] == "s9" and data["version"] == "1.3"
     [turn] = data["turns"]
     steps = data["steps"][turn["turn_id"]]
     assert steps and all(s["step_id"] in data["details"] for s in steps)

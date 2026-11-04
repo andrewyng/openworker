@@ -134,3 +134,24 @@ def persona_fingerprint(persona_id: str, manifest: str | bytes, skill_dirs: Iter
         for f in sorted((p for p in d.rglob("*") if p.is_file()), key=lambda p: p.relative_to(d).as_posix()):
             h.update(f.relative_to(d).as_posix().encode("utf-8") + b"\n" + f.read_bytes())
     return h.hexdigest()[:6]
+
+
+def persona_files(manifest: str | bytes, skill_dirs: Iterable[Path] = (), *, max_bytes: int = 2_000_000) -> dict[str, bytes]:
+    """The files a fingerprint covers (`persona_fingerprint`), by path: the manifest text as
+    `manifest.md`, and each skill file as `skills/<dir>/<relative path>`. What the machine
+    keeps per coworker version for "What changed" and "Show diff" (Phase 3 E25c, TD3-13).
+    Stops adding files past `max_bytes`, so a coworker with large assets cannot fill the disk."""
+    data = manifest.encode("utf-8") if isinstance(manifest, str) else manifest
+    out: dict[str, bytes] = {"manifest.md": data}
+    used = len(data)
+    for d in skill_dirs:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        for f in sorted((p for p in d.rglob("*") if p.is_file()), key=lambda p: p.relative_to(d).as_posix()):
+            b = f.read_bytes()
+            if used + len(b) > max_bytes:
+                return out
+            out[f"skills/{f.relative_to(d).as_posix()}"] = b
+            used += len(b)
+    return out

@@ -18,6 +18,7 @@ from copy import deepcopy
 import asyncio
 import inspect
 import functools
+import hashlib
 import json
 import time
 from dataclasses import dataclass, replace
@@ -39,6 +40,7 @@ from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
 from .observability.recorder import short_hash as _short_hash
 from .observability import stamps as _stamps
 from .observability.canonical import short_hash as _args_hash, text_hash as _text_hash
+from .observability.scopes import scanner_of as _scanner_of
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
@@ -210,12 +212,18 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
     resume stopped mid-tools, a generator the surface abandoned), in the `finally`: then the
     status is `interrupted` if Stop was pressed, else `unknown`. The caller says who started
     the turn with `trigger=` (user, channel, schedule, team_wake; `unknown` if it does not
-    say), and a team worker's caller who woke it with `woken_by=` (1.2). While recording, UI events also carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
+    say), and a team worker's caller who woke it with `woken_by=` (1.2). Format 1.3: the
+    caller says why the turn started with `wake=` (`turn.wake`), an automation run's own
+    turn with `automation=`, and a team member's `team=` (`stamp.team`); with no `wake=`, the
+    reason follows the trigger (user, channel, schedule). While recording, UI events also
+    carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
 
     def deco(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
         @functools.wraps(gen_fn)
         async def wrapper(self: "TurnEngine", *args: Any, trigger: str = "unknown",
-                          woken_by: Optional[dict[str, Any]] = None, **kwargs: Any) -> AsyncIterator[Event]:
+                          woken_by: Optional[dict[str, Any]] = None, wake: Optional[dict[str, Any]] = None,
+                          automation: Optional[dict[str, Any]] = None, team: Optional[dict[str, Any]] = None,
+                          **kwargs: Any) -> AsyncIterator[Event]:
             inner = gen_fn(self, *args, **kwargs)
             obs = getattr(self, "_obs", None)
             if obs is None or not obs.enabled:
@@ -230,7 +238,8 @@ def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], 
                 async for event in inner:
                     if event.type is EventType.TURN_START and not started:
                         started = True
-                        self._begin_recorded_turn(kind, trigger, woken_by)
+                        self._begin_recorded_turn(kind, trigger, woken_by, wake=wake,
+                                                  automation=automation, team=team)
                     if started and obs.in_turn:
                         self._observe_event(event)
                     yield event
@@ -255,6 +264,16 @@ _WAIT_KINDS = {
     "request_tool": "tool_install",
     "request_directory": "directory",
 }
+
+
+def _result_sha256(result: Any) -> Optional[str]:
+    """SHA-256 of a tool's raw result, as the bytes `result_bytes` counts (1.3)."""
+    try:
+        data = (result.encode("utf-8") if isinstance(result, str)
+                else json.dumps(result, default=str, ensure_ascii=False).encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    return hashlib.sha256(data).hexdigest()
 
 
 def _accepts_view(reviewer: Any) -> bool:
@@ -594,6 +613,9 @@ class TurnEngine:
         # The coworker fingerprint and the session-start context facts, set by the session
         # build (observability E16, E5); and this turn's context block, to spot a change.
         self.persona_fp: Optional[str] = None
+        # 1.3: which coworker ran (E25a) and the scan areas its manifest promises (E17c).
+        self.persona_id: Optional[str] = None
+        self.persona_coverage: list[str] = []
         self.context_facts: dict[str, Any] = {}
         self._last_context_block = ""
         self._turn_context_hash: Optional[str] = None
@@ -706,7 +728,10 @@ class TurnEngine:
         self._obs.recorder = value
 
     def _begin_recorded_turn(self, kind: str, trigger: str,
-                             woken_by: Optional[dict[str, Any]] = None) -> None:
+                             woken_by: Optional[dict[str, Any]] = None, *,
+                             wake: Optional[dict[str, Any]] = None,
+                             automation: Optional[dict[str, Any]] = None,
+                             team: Optional[dict[str, Any]] = None) -> None:
         """`turn_started` (E1, technical design §4). For `run` the turn opens with your
         message; for `resume`, with the assistant message whose calls are resumed; a `retry`
         opens with the first message it adds, so its start waits for that."""
@@ -721,6 +746,11 @@ class TurnEngine:
             )
         attended, reviewer = self._attended_now(), self._reviewer_facts()
         stamp = self._turn_stamp()
+        if team and team.get("team_id") and team.get("role") in ("lead", "worker"):
+            stamp["team"] = {"team_id": str(team["team_id"]), "role": team["role"]}  # 1.3, E18b
+        if wake is None:
+            # 1.3 (E18a): with no word from the caller, the reason follows the trigger.
+            wake = {"reason": {"user": "user", "channel": "channel", "schedule": "schedule"}.get(trigger, "unknown")}
         turn_id = self._obs.begin_turn(
             kind=kind,
             trigger=trigger,
@@ -730,6 +760,8 @@ class TurnEngine:
                 "reviewer": reviewer,
                 "max_iterations": self.max_iterations,
                 "woken_by": woken_by,
+                "wake": wake,
+                "automation": automation,
             },
             stamp=stamp,
             first_message_id=first,
@@ -804,6 +836,10 @@ class TurnEngine:
                 stamp["sandbox"] = sandbox
             if self.persona_fp:
                 stamp["persona_fp"] = self.persona_fp
+            if self.persona_id:
+                stamp["persona_id"] = self.persona_id  # 1.3, E25a
+            if self.persona_coverage:
+                stamp["persona_coverage"] = list(self.persona_coverage)  # 1.3, E17c
         except Exception:  # noqa: BLE001 - a stamp never breaks a turn
             logger.exception("observability: could not stamp the turn")
         return stamp
@@ -3032,6 +3068,12 @@ class TurnEngine:
                     (risk or self._risk_class(name)) == "egress"
                     or (isinstance(command, str) and review_facts.shell_reaches_network(command))
                 )
+            if name == "run_shell":
+                # 1.3 (E17b): the scanner this command runs, by the signals.yaml word rule.
+                command = arguments.get("command") if isinstance(arguments, dict) else None
+                out["scanner"] = _scanner_of(command) if isinstance(command, str) else None
+            # 1.3 (E17b): the full SHA-256 of the raw result, the evidence card's "output sha256".
+            out["result_sha256"] = _result_sha256(result) if ran else None
             if name == "todo_write" and isinstance(arguments, dict):
                 entries = arguments.get("todos", arguments.get("items")) or []
                 items = []

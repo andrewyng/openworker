@@ -27,7 +27,7 @@ import weakref
 import zlib
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional
 
 log = logging.getLogger(__name__)
 
@@ -71,12 +71,43 @@ CREATE TABLE IF NOT EXISTS export_marks (
 CREATE INDEX IF NOT EXISTS export_marks_turn ON export_marks(turn_id);
 CREATE TABLE IF NOT EXISTS export_counters (
   destination TEXT PRIMARY KEY, failed INTEGER NOT NULL DEFAULT 0, dropped INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS turn_usage (
+  turn_id TEXT NOT NULL, purpose TEXT, model TEXT, first INTEGER NOT NULL DEFAULT 0,
+  session_id TEXT, session_deleted INTEGER NOT NULL DEFAULT 0, started_at INTEGER, trigger TEXT,
+  wake_reason TEXT, persona_id TEXT, persona_fp TEXT, machine TEXT, team_id TEXT, team_role TEXT,
+  task_id TEXT, run_id TEXT, automation_trigger TEXT, status TEXT, duration_ms INTEGER,
+  waiting_ms INTEGER NOT NULL DEFAULT 0,
+  input_fresh INTEGER NOT NULL DEFAULT 0, cache_read INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
+  reasoning INTEGER NOT NULL DEFAULT 0, cache_read_known_input INTEGER NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0, unreported INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0, over_limit INTEGER NOT NULL DEFAULT 0,
+  warn INTEGER, info INTEGER, warn_checks TEXT, approvals INTEGER NOT NULL DEFAULT 0,
+  auto_approved INTEGER NOT NULL DEFAULT 0, live_checks INTEGER NOT NULL DEFAULT 0,
+  rating TEXT, signals_version TEXT, updated_at INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS turn_usage_key ON turn_usage(turn_id, COALESCE(purpose, ''), COALESCE(model, ''));
+CREATE INDEX IF NOT EXISTS turn_usage_started ON turn_usage(started_at);
+CREATE INDEX IF NOT EXISTS turn_usage_session ON turn_usage(session_id);
+CREATE INDEX IF NOT EXISTS turn_usage_persona ON turn_usage(persona_id, started_at);
+CREATE TABLE IF NOT EXISTS feedback (
+  turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, rating TEXT NOT NULL, reasons TEXT NOT NULL,
+  note TEXT, auto_approved TEXT NOT NULL, rated_at INTEGER NOT NULL, changed_at INTEGER);
+CREATE INDEX IF NOT EXISTS feedback_session ON feedback(session_id);
+CREATE TABLE IF NOT EXISTS persona_versions (
+  persona_id TEXT NOT NULL, fp TEXT NOT NULL, name TEXT, first_seen INTEGER NOT NULL, files TEXT NOT NULL,
+  PRIMARY KEY (persona_id, fp));
+CREATE TABLE IF NOT EXISTS persona_files (
+  persona_id TEXT NOT NULL, fp TEXT NOT NULL, path TEXT NOT NULL, data BLOB NOT NULL,
+  PRIMARY KEY (persona_id, fp, path));
 """
+# Phase 3 (TD3-5): the usage ledger holds counts only, so it is kept 90 days, whatever
+# "Keep for" says, and through a session's delete (TD3-3).
+LEDGER_DAYS = 90
 
 _TURN_COLUMNS = (
     "turn_id", "session_id", "seq", "kind", "trigger", "started_at", "duration_ms", "status",
     "incomplete", "approval_mode", "attended", "reviewer", "stamp", "first_message_id",
-    "last_message_id", "schema_version", "max_iterations", "woken_by",
+    "last_message_id", "schema_version", "max_iterations", "woken_by", "wake", "automation",
 )
 # Columns added after the first release of the store: an existing recordings.db gets them
 # here (CREATE TABLE IF NOT EXISTS does not add columns). `issues` and `issues_seen` hold the
@@ -86,6 +117,8 @@ _ADDED_COLUMNS = (
     ("turns", "woken_by", "TEXT"),
     ("turns", "issues", "TEXT"),
     ("turns", "issues_seen", "INTEGER DEFAULT 0"),
+    ("turns", "wake", "TEXT"),  # 1.3
+    ("turns", "automation", "TEXT"),  # 1.3
 )
 _STEP_COLUMNS = (
     "step_id", "turn_id", "session_id", "parent_step_id", "seq", "kind", "name", "started_at",
@@ -128,6 +161,7 @@ def _turn_row(t: dict[str, Any]) -> tuple:
         t.get("approval_mode"), _bool(t.get("attended")), _js(t.get("reviewer")),
         _js(t.get("stamp") or {}), t.get("first_message_id"), t.get("last_message_id"),
         t.get("schema_version", 1), t.get("max_iterations"), _js(t.get("woken_by")),
+        _js(t.get("wake")), _js(t.get("automation")),
     )
 
 
@@ -200,6 +234,7 @@ class RecordingStore:
         self._pending_turns: dict[str, dict[str, Any]] = {}
         self._pending_issues: dict[str, tuple[str, int]] = {}  # turn_id -> (json, seen)
         self._pending_steps: dict[str, dict[str, Any]] = {}
+        self._pending_refresh: set[str] = set()  # turns whose ledger rows to work out again
         self._pending_lock = threading.Lock()
         self._owner = False  # this process called close_open_turns: it owns the data folder
         self._closed = False
@@ -238,7 +273,9 @@ class RecordingStore:
                 turns, self._pending_turns = self._pending_turns, {}
                 steps, self._pending_steps = self._pending_steps, {}
                 issues, self._pending_issues = self._pending_issues, {}
-            if not turns and not steps and not issues:
+                refresh, self._pending_refresh = self._pending_refresh, set()
+            refresh |= set(issues)
+            if not turns and not steps and not issues and not refresh:
                 return
             try:
                 with self._conn:
@@ -255,6 +292,9 @@ class RecordingStore:
                                 "INSERT OR IGNORE INTO step_pieces (step_id, sha256) VALUES (?, ?)",
                                 [(s["step_id"], r) for r in refs],
                             )
+                    # Phase 3: the ledger rows of turns that ended or changed, from what was
+                    # just written (the turn, its steps and its Issues result).
+                    self._refresh_usage(refresh)
             except Exception:
                 log.exception("recordings: write failed (%d turns, %d steps)", len(turns), len(steps))
 
@@ -263,10 +303,11 @@ class RecordingStore:
         if self._closed:
             return
         self.flush()
-        if self.retention_days is not None and time.time() - self._last_sweep >= SWEEP_EVERY_S:
+        if time.time() - self._last_sweep >= SWEEP_EVERY_S:
             self._last_sweep = time.time()
             try:
                 self.sweep()
+                self.sweep_ledger()
             except Exception:
                 log.exception("recordings: retention sweep failed")
 
@@ -379,6 +420,7 @@ class RecordingStore:
     # -- deleting -----------------------------------------------------------------------------
     def delete_session(self, session_id: str) -> None:
         """The session-delete cascade (§11): its turns, steps and the pieces only they used."""
+        self.flush()  # the ledger rows of its turns are worked out before the steps go
         with self._lock, self._conn:
             with self._pending_lock:
                 self._pending_turns = {
@@ -389,6 +431,10 @@ class RecordingStore:
                     k: v for k, v in self._pending_steps.items()
                     if v.get("session_id") != session_id
                 }
+            # Phase 3 (TD3-3): the content-free ledger rows stay, marked deleted; the ratings
+            # (whose note is the person's own text) go, their count stays on the ledger row.
+            self._conn.execute("UPDATE turn_usage SET session_deleted = 1 WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM feedback WHERE session_id = ?", (session_id,))
             self._conn.execute(
                 "DELETE FROM step_pieces WHERE step_id IN "
                 "(SELECT step_id FROM steps WHERE session_id = ?)",
@@ -662,6 +708,337 @@ class RecordingStore:
                 out[r["session_id"]] = out.get(r["session_id"], 0) + warn
         return out
 
+    # -- the usage ledger (Phase 3, E24a; attributes.yaml Part 3) -------------------------------
+    # One row per turn x purpose x model, content-free, worked out from the stored turn, its
+    # steps and its Issues result whenever one of them changes. The rollups read it; the Steps
+    # panel keeps reading the steps. `persona_of(session_id)` stands in for `stamp.persona_id`
+    # on turns recorded before 1.3 (the session's coworker, from coworker.db).
+    persona_of: Optional[Any] = None
+
+    def refresh_usage(self, turn_id: str) -> None:
+        """Work out a turn's ledger rows again at the next write (turn end, a late step)."""
+        with self._pending_lock:
+            self._pending_refresh.add(turn_id)
+        if self._background:
+            _writer.wake()
+
+    def _refresh_usage(self, turn_ids: Iterable[str]) -> None:
+        """Inside the writer's transaction: replace each finished turn's ledger rows."""
+        from .rollups import LEDGER_COLUMNS, ledger_rows
+
+        now = int(time.time() * 1000)
+        for tid in turn_ids:
+            t = self._conn.execute("SELECT * FROM turns WHERE turn_id = ?", (tid,)).fetchone()
+            if t is None or t["status"] in (None, "running"):
+                continue
+            steps = [_step_record(r) for r in self._conn.execute(
+                "SELECT * FROM steps WHERE turn_id = ? AND kind IN ('model', 'wait', 'auto_approver', 'tool')",
+                (tid,))]
+            try:
+                issues = json.loads(t["issues"]) if t["issues"] else None
+            except ValueError:
+                issues = None
+            prior = self._conn.execute(
+                "SELECT rating, session_deleted, persona_id FROM turn_usage WHERE turn_id = ? AND first = 1",
+                (tid,)).fetchone()
+            fb = self._conn.execute("SELECT rating FROM feedback WHERE turn_id = ?", (tid,)).fetchone()
+            persona = prior["persona_id"] if prior is not None else None
+            if persona is None and self.persona_of is not None:
+                try:
+                    persona = self.persona_of(t["session_id"])
+                except Exception:  # noqa: BLE001 - a stand-in never breaks the write
+                    persona = None
+            rating = fb["rating"] if fb is not None else (prior["rating"] if prior is not None else None)
+            rows = ledger_rows(_turn_record(t), steps, issues, persona_id=persona, rating=rating, now_ms=now)
+            if prior is not None and prior["session_deleted"]:
+                for r in rows:
+                    r["session_deleted"] = 1
+            self._conn.execute("DELETE FROM turn_usage WHERE turn_id = ?", (tid,))
+            self._conn.executemany(
+                f"INSERT INTO turn_usage ({', '.join(LEDGER_COLUMNS)}) "
+                f"VALUES ({', '.join('?' * len(LEDGER_COLUMNS))})",
+                [tuple(r.get(c) for c in LEDGER_COLUMNS) for r in rows])
+
+    def sweep_ledger(self, *, now_ms: Optional[int] = None) -> int:
+        """Ledger rows older than 90 days go (TD3-5), whatever "Keep for" says."""
+        now = int(time.time() * 1000) if now_ms is None else now_ms
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM turn_usage WHERE started_at < ?",
+                                     (now - LEDGER_DAYS * 24 * 60 * 60 * 1000,))
+        return cur.rowcount
+
+    def turns_without_usage(self, limit: int = 200) -> list[str]:
+        """Finished turns with no ledger rows (recorded before Phase 3): the background job
+        fills them in batches (TD3-8)."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT t.turn_id FROM turns t WHERE t.status IS NOT NULL AND t.status != 'running' "
+                "AND NOT EXISTS (SELECT 1 FROM turn_usage u WHERE u.turn_id = t.turn_id) "
+                "ORDER BY t.started_at LIMIT ?", (limit,)).fetchall()
+        return [r["turn_id"] for r in rows]
+
+    @staticmethod
+    def _filters(where: Optional[dict[str, Any]], allowed: set[str], alias: str = "") -> Optional[tuple[str, list]]:
+        """Equal-to (or IN, for a list) filters on ledger columns. None: an empty list, so no row."""
+        clauses, params = "", []
+        for k, v in (where or {}).items():
+            if k not in allowed:
+                raise ValueError(f"cannot filter on {k!r}")
+            if isinstance(v, (list, tuple, set)):
+                v = list(v)
+                if not v:
+                    return None
+                clauses += f" AND {alias}{k} IN ({', '.join('?' * len(v))})"
+                params += v
+            elif v is None:
+                clauses += f" AND {alias}{k} IS NULL"
+            else:
+                clauses += f" AND {alias}{k} = ?"
+                params.append(v)
+        return clauses, params
+
+    _FILTERABLE = {"persona_id", "persona_fp", "team_id", "task_id", "run_id", "session_id", "machine"}
+
+    def usage_rollup(self, group: list[str], start: int, end: int, *, days: Optional[list] = None,
+                     where: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+        """One GROUP BY over the ledger: the turns that started in [start, end), grouped.
+        `days`: the viewer's [label, start, end) boundaries (TD3-2); `where`: filters on
+        ledger columns (persona_id, team_id, task_id, run_id, session_id, machine)."""
+        from .rollups import ROLLUP_FIELDS, day_params, rollup_sql
+
+        f = self._filters(where, self._FILTERABLE, "u.")
+        if f is None:
+            return []
+        sql, n = rollup_sql(group, days=days, where=f[0])
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(sql, [*day_params(days), start, end, *f[1]]).fetchall()
+        out = []
+        for r in rows:
+            vals = list(r)
+            out.append({"key": dict(zip(group or ["all"], vals[:n])),
+                        **{k: int(v or 0) for k, v in zip(ROLLUP_FIELDS, vals[n:])}})
+        return out
+
+    _SUMMED = ("input_fresh", "cache_read", "cache_write", "output", "reasoning", "cache_read_known_input",
+               "calls", "unreported", "failed", "over_limit")
+
+    def usage_turns(self, start: int, end: int, *, where: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+        """Each turn of the period as one dict (its rows summed), oldest first: what the
+        medians, heaviest turns, coworker runs and automation runs read."""
+        f = self._filters(where, self._FILTERABLE)
+        if f is None:
+            return []
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM turn_usage WHERE started_at >= ? AND started_at < ?" + f[0] +
+                " ORDER BY started_at, turn_id, first DESC", [start, end, *f[1]]).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            d = out.get(r["turn_id"])
+            if d is None:
+                d = out[r["turn_id"]] = {k: r[k] for k in r.keys() if k not in ("purpose", "model", "first")}
+                d["warn_checks"] = json.loads(d["warn_checks"] or "[]")
+                d["total"], d["models"], d["by_purpose"] = 0, [], {}
+                for k in self._SUMMED:
+                    d[k] = 0
+            for k in self._SUMMED:
+                d[k] += r[k] or 0
+            tot = (r["input_fresh"] or 0) + (r["cache_read"] or 0) + (r["cache_write"] or 0) + (r["output"] or 0)
+            d["total"] += tot
+            if r["purpose"] is not None:
+                d["by_purpose"][r["purpose"]] = d["by_purpose"].get(r["purpose"], 0) + tot
+            if r["model"] and r["model"] not in d["models"] and (r["calls"] or r["unreported"]):
+                d["models"].append(r["model"])
+        for d in out.values():
+            d["at_least"] = d["unreported"] > 0
+            d["active_ms"] = None if d["duration_ms"] is None else d["duration_ms"] - (d["waiting_ms"] or 0)
+        return list(out.values())
+
+    def usage_kept_from(self) -> Optional[int]:
+        """The oldest ledger row's start: how far back the numbers go."""
+        self.flush()
+        with self._lock:
+            row = self._conn.execute("SELECT MIN(started_at) AS m FROM turn_usage").fetchone()
+        return row["m"]
+
+    def approver_steps(self, start: int, end: int) -> list[dict[str, Any]]:
+        """The auto-approver checks, and the tool steps a person let through anyway, of turns
+        that started in the period (the Auto-approve strip, section 7.3). Steps, not the ledger:
+        the strip reads Phase 1 fields that only steps hold."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT s.kind, s.shadow, s.duration_ms, s.attrs, s.parent_step_id FROM steps s "
+                "JOIN turns t ON t.turn_id = s.turn_id WHERE t.started_at >= ? AND t.started_at < ? "
+                "AND (s.kind = 'auto_approver' OR (s.kind = 'tool' AND s.attrs LIKE '%allow_anyway%'))",
+                (start, end)).fetchall()
+        return [{"kind": r["kind"], "shadow": bool(r["shadow"]), "duration_ms": r["duration_ms"],
+                 "parent_step_id": r["parent_step_id"], "attrs": json.loads(r["attrs"] or "{}")} for r in rows]
+
+    def outside_calls_between(self, start: int, end: int) -> dict[str, int]:
+        """Model steps with no turn (proxy calls) in [start, end): in no pill, so outside the
+        Usage page's total, on their own line (TD3-4)."""
+        self.flush()
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT COUNT(*) AS n, SUM(COALESCE(input_fresh,0)+COALESCE(cache_read,0)+COALESCE(cache_write,0)"
+                "+COALESCE(output,0)) AS tok FROM steps WHERE turn_id IS NULL AND kind = 'model' "
+                "AND usage_reported = 1 AND started_at >= ? AND started_at < ?", (start, end)).fetchone()
+        return {"calls": int(r["n"] or 0), "total": int(r["tok"] or 0)}
+
+    def turn_seqs(self, turn_ids: list[str]) -> dict[str, int]:
+        """Each turn's number in its session ("turn 4"), for turns the store still has."""
+        if not turn_ids:
+            return {}
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT turn_id, seq FROM turns WHERE turn_id IN ({', '.join('?' * len(turn_ids))})",
+                list(turn_ids)).fetchall()
+        return {r["turn_id"]: r["seq"] for r in rows}
+
+    def team_turns(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        """The member sessions' turns, oldest first, with `wake` (1.3): what TeamView's event
+        list and the lead-polling series read."""
+        if not session_ids:
+            return []
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT turn_id, session_id, seq, started_at, duration_ms, status, wake, stamp FROM turns "
+                f"WHERE session_id IN ({', '.join('?' * len(session_ids))}) ORDER BY started_at, turn_id",
+                list(session_ids)).fetchall()
+        return [{"turn_id": r["turn_id"], "session_id": r["session_id"], "seq": r["seq"],
+                 "started_at": r["started_at"], "duration_ms": r["duration_ms"], "status": r["status"],
+                 "wake": json.loads(r["wake"]) if r["wake"] else None,
+                 "stamp": json.loads(r["stamp"] or "{}")} for r in rows]
+
+    def team_approval_cards(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        """The members' approval cards in order: each wait step of kind approval with its
+        tool step's name and args_hash (`same_approval_twice`, signals 0.6)."""
+        if not session_ids:
+            return []
+        self.flush()
+        marks = ", ".join("?" * len(session_ids))
+        with self._lock:
+            waits = self._conn.execute(
+                "SELECT s.step_id, s.turn_id, s.session_id, s.started_at, s.attrs, t.seq FROM steps s "
+                "JOIN turns t ON t.turn_id = s.turn_id "
+                f"WHERE s.kind = 'wait' AND s.session_id IN ({marks}) ORDER BY s.started_at, s.step_id",
+                list(session_ids)).fetchall()
+            tools = {(r["session_id"], r["call_id"]): r for r in self._conn.execute(
+                "SELECT session_id, call_id, name, attrs FROM steps "
+                f"WHERE kind = 'tool' AND session_id IN ({marks})", list(session_ids)).fetchall()}
+        out = []
+        for w in waits:
+            a = json.loads(w["attrs"] or "{}")
+            if a.get("kind") != "approval":
+                continue
+            tool = tools.get((w["session_id"], a.get("for_call_id")))
+            if tool is None:
+                continue
+            out.append({"tool": tool["name"], "args_hash": json.loads(tool["attrs"] or "{}").get("args_hash"),
+                        "session": w["session_id"], "outcome": a.get("outcome"), "turn_id": w["turn_id"],
+                        "seq": w["seq"], "at": w["started_at"],
+                        "step": {"step_id": w["step_id"], "turn_id": w["turn_id"]}})
+        return out
+
+    def read_turn_issues(self, turn_id: str) -> Optional[dict[str, Any]]:
+        """One turn's stored Issues result with `seen`, or None."""
+        self.flush()
+        with self._lock:
+            r = self._conn.execute("SELECT issues, issues_seen FROM turns WHERE turn_id = ?", (turn_id,)).fetchone()
+        if r is None or not r["issues"]:
+            return None
+        try:
+            return {**json.loads(r["issues"]), "seen": bool(r["issues_seen"])}
+        except ValueError:
+            return None
+
+    # -- feedback (Phase 3, E27a) ----------------------------------------------------------------
+    def put_feedback(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Store (or replace) a turn's rating. Changing a rating replaces the row; `rated_at`
+        stays the first rating's time and `changed_at` says when it last changed."""
+        now = int(time.time() * 1000)
+        with self._lock, self._conn:
+            old = self._conn.execute("SELECT rated_at FROM feedback WHERE turn_id = ?", (row["turn_id"],)).fetchone()
+            rated_at = old["rated_at"] if old is not None else now
+            changed = now if old is not None else None
+            self._conn.execute(
+                "INSERT OR REPLACE INTO feedback (turn_id, session_id, rating, reasons, note, auto_approved, "
+                "rated_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (row["turn_id"], row["session_id"], row["rating"], json.dumps(list(row.get("reasons") or [])),
+                 row.get("note"), json.dumps(list(row.get("auto_approved") or [])), rated_at, changed))
+            self._conn.execute("UPDATE turn_usage SET rating = ? WHERE turn_id = ?", (row["rating"], row["turn_id"]))
+        return self.get_feedback(row["turn_id"]) or {}
+
+    def get_feedback(self, turn_id: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            r = self._conn.execute("SELECT * FROM feedback WHERE turn_id = ?", (turn_id,)).fetchone()
+        return None if r is None else _feedback_record(r)
+
+    def delete_feedback(self, turn_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM feedback WHERE turn_id = ?", (turn_id,))
+            self._conn.execute("UPDATE turn_usage SET rating = NULL WHERE turn_id = ?", (turn_id,))
+
+    def session_feedback(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM feedback WHERE session_id = ? ORDER BY rated_at",
+                                      (session_id,)).fetchall()
+        return [_feedback_record(r) for r in rows]
+
+    def feedback_since(self, since_ms: int, limit: int = 100) -> list[dict[str, Any]]:
+        """Ratings given or changed at or after `since_ms`, oldest change first: the
+        exporter's queue (E27b)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM feedback WHERE COALESCE(changed_at, rated_at) >= ? "
+                "ORDER BY COALESCE(changed_at, rated_at) LIMIT ?", (since_ms, limit)).fetchall()
+        return [_feedback_record(r) for r in rows]
+
+    # -- coworker versions (Phase 3, E25c) -------------------------------------------------------
+    def note_persona_version(self, persona_id: str, fp: str, name: Optional[str],
+                             files: dict[str, bytes]) -> bool:
+        """Keep a coworker version the first time its fingerprint is seen: its name, each
+        file's sha256 and line count, and a copy of the files for "Show diff" (TD3-13). Kept
+        locally only, never exported. Returns whether it was new. A later sighting only
+        updates the name, so the Usage page names a renamed coworker by its latest name."""
+        with self._lock, self._conn:
+            have = self._conn.execute("SELECT 1 FROM persona_versions WHERE persona_id = ? AND fp = ?",
+                                      (persona_id, fp)).fetchone()
+            if have is not None:
+                if name:
+                    self._conn.execute("UPDATE persona_versions SET name = ? WHERE persona_id = ? AND fp = ?",
+                                       (name, persona_id, fp))
+                return False
+            meta = {path: {"sha256": sha256(data).hexdigest(), "lines": _line_count(data)}
+                    for path, data in files.items()}
+            self._conn.execute(
+                "INSERT INTO persona_versions (persona_id, fp, name, first_seen, files) VALUES (?, ?, ?, ?, ?)",
+                (persona_id, fp, name, int(time.time() * 1000), json.dumps(meta, sort_keys=True)))
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO persona_files (persona_id, fp, path, data) VALUES (?, ?, ?, ?)",
+                [(persona_id, fp, path, zlib.compress(data)) for path, data in files.items()])
+        return True
+
+    def persona_versions(self, persona_id: Optional[str] = None) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM persona_versions" + (" WHERE persona_id = ?" if persona_id else "")
+                + " ORDER BY first_seen", (persona_id,) if persona_id else ()).fetchall()
+        return [{"persona_id": r["persona_id"], "fp": r["fp"], "name": r["name"], "first_seen": r["first_seen"],
+                 "files": json.loads(r["files"])} for r in rows]
+
+    def persona_file(self, persona_id: str, fp: str, path: str) -> Optional[bytes]:
+        with self._lock:
+            r = self._conn.execute("SELECT data FROM persona_files WHERE persona_id = ? AND fp = ? AND path = ?",
+                                   (persona_id, fp, path)).fetchone()
+        return None if r is None else zlib.decompress(r["data"])
+
     # -- reading ------------------------------------------------------------------------------
     def turn_count(self, session_id: str) -> int:
         with self._lock:
@@ -766,11 +1143,23 @@ def _turn_record(r: sqlite3.Row) -> dict[str, Any]:
     # Format 1.2 fields are left out when not recorded, so a 1.1 turn reads back unchanged.
     if d.get("max_iterations") is None:
         d.pop("max_iterations", None)
-    if d.get("woken_by") is None:
-        d.pop("woken_by", None)
-    else:
-        d["woken_by"] = json.loads(d["woken_by"])
+    for key in ("woken_by", "wake", "automation"):  # 1.2 and 1.3: absent when not recorded
+        if d.get(key) is None:
+            d.pop(key, None)
+        else:
+            d[key] = json.loads(d[key])
     return d
+
+
+def _line_count(data: bytes) -> int:
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def _feedback_record(r: sqlite3.Row) -> dict[str, Any]:
+    """A feedback row as recording-format 1.3 `feedback` (the note in `content`)."""
+    return {"turn_id": r["turn_id"], "session_id": r["session_id"], "rating": r["rating"],
+            "reasons": json.loads(r["reasons"] or "[]"), "auto_approved": json.loads(r["auto_approved"] or "[]"),
+            "rated_at": r["rated_at"], "changed_at": r["changed_at"], "content": {"note": r["note"]}}
 
 
 def _step_record(r: sqlite3.Row) -> dict[str, Any]:

@@ -911,6 +911,17 @@ def build_engine(
         )
     except Exception:  # noqa: BLE001
         engine.persona_fp = None
+    # 1.3: which coworker this is (E25a) and the scans it promises (E17c); the files its
+    # fingerprint covers, so the machine can keep this version for "What changed" (E25c).
+    engine.persona_id = agent.name
+    engine.persona_title = getattr(agent, "title", None) or agent.name
+    engine.persona_coverage = list(getattr(agent, "coverage", ()) or ())
+    try:
+        from .observability.stamps import persona_files
+
+        engine.persona_files = persona_files(agent.system_prompt, [Path(d) for d in (extra_skill_dirs or [])])
+    except Exception:  # noqa: BLE001
+        engine.persona_files = {}
     engine.context_facts = {
         "memories": [getattr(m, "id", None) for m in (_remembered or [])],
         "memory_mode": _memory_mode,
