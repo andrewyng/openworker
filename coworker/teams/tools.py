@@ -73,7 +73,8 @@ _CREATE_ITEM_SCHEMA = {
             " assigned). `criteria` is the acceptance criteria — what gets verified"
             " before the item can be done; required. `parent` links it under"
             " another item; `case` names its journal case (children inherit the"
-            " parent's case by default)."
+            " parent's case by default). `verifies` names the item whose fix this"
+            " one re-checks: give it to a different worker than the one who fixed it."
         ),
         "parameters": {
             "type": "object",
@@ -83,6 +84,7 @@ _CREATE_ITEM_SCHEMA = {
                 "description": {"type": "string"},
                 "parent": {"type": "integer"},
                 "case": {"type": "string"},
+                "verifies": {"type": "integer"},
             },
             "required": ["title", "criteria"],
         },
@@ -126,6 +128,7 @@ def board_tools(
         description: str = "",
         parent: Optional[int] = None,
         case: str = "",
+        verifies: Optional[int] = None,
     ) -> dict:
         """Create a work item (open, unassigned — work starts when it is
         assigned). `criteria` is the acceptance criteria — what gets verified
@@ -141,6 +144,7 @@ def board_tools(
             description=description,
             parent=parent,
             case=case or None,
+            verifies=verifies,
         )
         if "error" not in result:
             on_change()
@@ -202,12 +206,16 @@ def board_tools(
                                                 "authority": "intent_not_access_grants"}
 
     def transition(
-        item: int, to: str, comment: str = "", refs: Optional[list] = None
+        item: int, to: str, comment: str = "", refs: Optional[list] = None,
+        coverage: Optional[dict] = None,
     ) -> dict:
         """Move a work item to a new state. Workers move their own item to
         in_progress, blocked, or review (attach the blocker or a hand-off summary
         as `comment`, and artifact pointers — branch, report, session — as
-        `refs`); done requires review verification first."""
+        `refs`); done requires review verification first. When handing off a
+        security task, `coverage` reports each area you were to scan:
+        {"secrets": {"ran": false, "findings": 0, "reason": "gitleaks not installed"}},
+        areas code, secrets, deps, iac. Say ran: false when a scan could not run."""
         recorded(item)
         return receipt(_call(
             store.transition,
@@ -218,6 +226,7 @@ def board_tools(
             comment=comment,
             refs=[str(ref) for ref in refs or []],
             taint=taint(),
+            coverage=coverage,
         ))
 
     def comment(item: int, body: str, refs: Optional[list] = None, needs_attention: bool = False) -> dict:
@@ -292,7 +301,12 @@ def journal_tools(
     actor: Actor,
     space: str = "",
     taint: Callable[[], bool] = lambda: False,
+    scan_evidence: Callable[[Optional[int]], list] = lambda item: [],
 ) -> list:
+    """`scan_evidence(item)` gives the default evidence of a finding (observability Phase 3,
+    TD3-15): the scan steps of this session since the item was assigned, as
+    `[{session_id, call_id}]`. It never changes what is written, only the pointer kept."""
+
     def journal_append(
         case: str,
         body: str,
@@ -300,13 +314,34 @@ def journal_tools(
         item: Optional[int] = None,
         entities: Optional[list] = None,
         refs: Optional[list] = None,
+        severity: str = "",
+        evidence: Optional[list] = None,
     ) -> dict:
         """Append an entry to a journal case as you work: kind is finding,
         evidence, decision, note (any observation), or raw (a capture like a log
         excerpt — for large captures, save the full output to a file and journal
         an excerpt that references it). `entities` are the concrete things it is
         about (file paths, resource names, CVE ids) — they power later recall;
-        `refs` are pointers (file:line, commit, url)."""
+        `refs` are pointers (file:line, commit, url). For a finding, `severity` is
+        critical, high, medium, low or info, and `evidence` lists the tool call ids
+        whose output shows it (the scan that found it); when you leave it out, the
+        scans you ran on this task are linked."""
+        from ..observability.engine_hooks import current_tool_run
+
+        run = current_tool_run()
+        here = getattr(run, "call_id", None)
+        sev = (severity or "").strip().lower() or None
+        if sev is not None and sev not in ("critical", "high", "medium", "low", "info"):
+            return {"error": "severity must be critical, high, medium, low or info"}
+        links = None
+        if kind == "finding":
+            if evidence:
+                links = [{"session_id": actor.session_id or "", "call_id": str(c)} for c in evidence if c]
+            else:
+                try:
+                    links = list(scan_evidence(item))
+                except Exception:  # noqa: BLE001 - a pointer never blocks the entry
+                    links = []
         return _call(
             journal.append,
             actor,
@@ -318,6 +353,9 @@ def journal_tools(
             entities=[str(entity) for entity in entities or []],
             refs=[str(ref) for ref in refs or []],
             taint=taint(),
+            severity=sev,
+            step_call_id=here,
+            evidence=links,
         )
 
     def journal_read(

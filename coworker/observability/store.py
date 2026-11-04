@@ -946,6 +946,31 @@ class RecordingStore:
                         "step": {"step_id": w["step_id"], "turn_id": w["turn_id"]}})
         return out
 
+    def scan_steps(self, session_ids: Any, *, since_ms: int = 0) -> list[dict[str, Any]]:
+        """Tool steps whose `scanner.action` is `scan` (1.3), of one or more sessions, oldest
+        first: what a finding's evidence and the coverage checks read."""
+        ids = [session_ids] if isinstance(session_ids, str) else list(session_ids)
+        if not ids:
+            return []
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT s.step_id, s.turn_id, s.session_id, s.call_id, s.seq, s.started_at, s.status, s.attrs, "
+                "t.seq AS turn_seq FROM steps s LEFT JOIN turns t ON t.turn_id = s.turn_id "
+                f"WHERE s.kind = 'tool' AND s.session_id IN ({', '.join('?' * len(ids))}) AND s.started_at >= ? "
+                "AND s.attrs LIKE '%\"scanner\": {%' ORDER BY s.started_at, s.step_id", [*ids, since_ms]).fetchall()
+        out = []
+        for r in rows:
+            a = json.loads(r["attrs"] or "{}")
+            sc = a.get("scanner") or {}
+            if sc.get("action") != "scan":
+                continue
+            out.append({"step_id": r["step_id"], "turn_id": r["turn_id"], "session_id": r["session_id"],
+                        "call_id": r["call_id"], "seq": r["seq"], "turn_seq": r["turn_seq"],
+                        "started_at": r["started_at"], "status": r["status"], "scanner": sc,
+                        "exit_code": a.get("exit_code"), "result_sha256": a.get("result_sha256")})
+        return out
+
     def read_turn_issues(self, turn_id: str) -> Optional[dict[str, Any]]:
         """One turn's stored Issues result with `seen`, or None."""
         self.flush()

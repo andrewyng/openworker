@@ -2999,7 +2999,7 @@ class TurnEngine:
         )
         # A tool that starts its own work (the explore helper, E6) records it under this step.
         outer = set_tool_run(ToolRun(step_id=step_id, turn_id=self._obs.turn_id,
-                                     view=self.provider, recording=self._obs))
+                                     view=self.provider, recording=self._obs, call_id=tool_call.id))
         try:
             result, status = self._execute_call(tool_call)
         finally:

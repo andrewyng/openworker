@@ -21,7 +21,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
 
 from .. import model_config as _model_config
@@ -49,6 +49,7 @@ from ..observability import signals as recording_signals
 from ..observability import rollups as recording_rollups
 from ..observability import stamps as _obs_stamps
 from ..observability import usage_api
+from ..observability import scopes as _obs_scopes
 from ..observability.export import ObservabilityExport
 from ..observability.engine_hooks import note_team
 from ..observability.provider_view import RecordingProvider, tag as tag_provider
@@ -448,6 +449,11 @@ class SessionManager:
         )
         self.observability.apply_policy(load_policy(self.secrets.path.parent))
         self.recorder.add_listener(self._export_on_turn_end)
+        # Phase 3: the series and task checks, off the turn's own thread, one at a time.
+        import concurrent.futures
+
+        self._scope_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="obs-scopes")
+        self.recorder.add_listener(self._scopes_on_turn_end)
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
         # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
@@ -2757,6 +2763,14 @@ class SessionManager:
             out["events"] = usage_api.team_events(self.recordings_store, lead_session=team.lead_session,
                                                   worker_sessions=members, board_events=board, links=links)
             out["wake_explained"] = self._wake_explained(sids)
+            # OB-16: "Coverage for this task" on each item a coworker that declares coverage
+            # worked on, with its findings' evidence links.
+            cov = {}
+            for item in self.team_store.list_items(team.space, self._user_actor()):
+                c = self.item_coverage(team, item, board)
+                if c is not None:
+                    cov[str(item["id"])] = c
+            out["coverage"] = cov
         except Exception:  # noqa: BLE001 - the split never hides the rest of the summary
             logger.exception("could not work out team %s wakes", team_id)
             out.setdefault("wakes", [])
@@ -2948,7 +2962,9 @@ class SessionManager:
             team_id=team_identity,
             worker_session=worker_session,
         ) + journal_tools(
-            self.journal_store, actor=actor, space=space
+            self.journal_store, actor=actor, space=space,
+            scan_evidence=lambda item, _sid=session_id, _space=space, _actor=actor.id:
+                self._scan_evidence(_sid, _space, _actor, item),
         )
         from ..teams.artifacts import artifact_tools
 
@@ -6614,6 +6630,14 @@ class SessionManager:
                 out[t["turn_id"]] = have
                 continue
             result = recording_signals.check_turn(t, steps_of.get(t["turn_id"], []))
+            if have is not None:
+                # Series and task results are worked out at turn end over more than this
+                # turn; a re-check of the turn alone keeps them (Phase 3).
+                kept = [i for i in have.get("issues") or [] if i.get("check") in self.SCOPE_CHECKS]
+                if kept:
+                    result["issues"] += kept
+                    result["warn"] = sum(1 for i in result["issues"] if i.get("severity") == "warn")
+                    result["info"] = sum(1 for i in result["issues"] if i.get("severity") == "info")
             seen = True if have is None else bool(have.get("seen"))
             self.recordings_store.write_issues(t["turn_id"], result, seen=seen)
             out[t["turn_id"]] = {**result, "seen": seen}
@@ -6634,6 +6658,256 @@ class SessionManager:
 
     def recording_usage(self, session_id: str) -> dict[str, Any]:
         return recording_api.usage(self.recordings_store.load_recording(session_id), session_id)
+
+    # -- observability Phase 3: series and task checks (TD3-17, E17e, E18d, E26d) --------------
+    # They are pure functions (`observability.scopes`) of more than one turn. At each turn's
+    # end the series or task the turn belongs to is worked out again, and every result is
+    # stored with the turn whose step it points at, as Phase 2's are, replacing what that
+    # series or task said before. So the amber dot and the Issues tab carry them.
+    SCOPE_CHECKS = frozenset(_obs_scopes.SERIES_CHECKS + _obs_scopes.TASK_CHECKS)
+
+    def _scopes_on_turn_end(self, event: dict[str, Any]) -> None:
+        if event.get("type") != "turn_ended":
+            return
+        tid = event.get("turn_id")
+        sid = event.get("session_id")
+        if not tid or not sid:
+            return
+        try:
+            self._scope_pool.submit(self.run_scope_checks, sid, tid)
+        except RuntimeError:
+            pass  # shutting down
+
+    def run_scope_checks(self, session_id: str, turn_id: str) -> None:
+        """The series and task checks for the series or task this turn belongs to."""
+        try:
+            store = self.recordings_store
+            store.flush()
+            loaded = store.load_turn(turn_id)
+            if loaded is None:
+                return
+            turn, _steps = loaded
+            stamp = turn.get("stamp") or {}
+            team = stamp.get("team") or {}
+            if team.get("role") == "lead":
+                self._scope_lead_polling(session_id)
+            if team.get("team_id"):
+                self._scope_team_tasks(team["team_id"])
+            if turn.get("automation"):
+                self._scope_failed_in_a_row(turn["automation"]["task_id"])
+            if stamp.get("persona_coverage") and not team:
+                self._scope_solo_coverage(session_id, list(stamp["persona_coverage"]))
+        except Exception:  # noqa: BLE001 - a check never breaks anything else
+            logger.exception("series and task checks failed for %s", turn_id)
+
+    def _store_scope_issues(self, turn_ids: Iterable[str], found: dict[str, list[dict[str, Any]]],
+                            checks: Iterable[str]) -> None:
+        """Replace, on each of `turn_ids`, the issues of `checks` with what `found` says."""
+        checks = set(checks)
+        store = self.recordings_store
+        for tid in dict.fromkeys(list(turn_ids) + list(found)):
+            have = store.read_turn_issues(tid)
+            if have is None:
+                continue  # never checked yet: the re-check will store it with these
+            seen = bool(have.pop("seen", False))
+            keep = [i for i in have.get("issues") or [] if i.get("check") not in checks]
+            new = found.get(tid, [])
+            old = [i for i in have.get("issues") or [] if i.get("check") in checks]
+            if [(i["check"], i.get("text")) for i in old] == [(i["check"], i.get("text")) for i in new]:
+                continue
+            result = {**have, "issues": keep + [{k: v for k, v in i.items() if k != "turn_id"} for i in new]}
+            result["warn"] = sum(1 for i in result["issues"] if i.get("severity") == "warn")
+            result["info"] = sum(1 for i in result["issues"] if i.get("severity") == "info")
+            fine = [f for f in result.get("fine") or [] if f.get("check") not in checks]
+            result["fine"] = fine
+            added = {(i["check"], i.get("text")) for i in new} - {(i["check"], i.get("text")) for i in old}
+            store.write_issues(tid, result, seen=seen and not added)
+
+    def _first_step(self, turn_id: str) -> Optional[dict[str, Any]]:
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None:
+            return None
+        top = [s for s in loaded[1] if s.get("parent_step_id") is None and not s.get("shadow")]
+        return {**top[0], "turn_id": turn_id} if top else {"step_id": None, "seq": None, "turn_id": turn_id}
+
+    def _last_step(self, turn_id: str) -> Optional[dict[str, Any]]:
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None:
+            return None
+        top = [s for s in loaded[1] if s.get("parent_step_id") is None and not s.get("shadow")
+               and not s.get("after_turn")]
+        return {**top[-1], "turn_id": turn_id} if top else {"step_id": None, "seq": None, "turn_id": turn_id}
+
+    def _scope_lead_polling(self, lead_session: str) -> None:
+        rows = self.recordings_store.team_turns([lead_session])
+        series = [{"id": t["turn_id"], "wake": t.get("wake")} for t in rows if t["status"] not in (None, "running")]
+        found: dict[str, list] = {}
+        for i in _obs_scopes.lead_polling_issues(series, {t["id"]: self._first_step(t["id"]) for t in series[-60:]}):
+            found.setdefault(i["turn_id"] or i["facts"]["to"], []).append(i)
+        self._store_scope_issues([t["id"] for t in series], found, ["lead_polling"])
+
+    def _scope_failed_in_a_row(self, task_id: str) -> None:
+        detail = self.get_automation(task_id)
+        banner = detail.get("failed_in_a_row")
+        runs = detail.get("runs") or []
+        turn_ids = [r["first_turn_id"] for r in runs if r.get("first_turn_id")]
+        found: dict[str, list] = {}
+        if banner and banner.get("turn_id"):
+            series = [{"health": "failed" if r["health"] in ("failed", "did_not_finish") else r["health"],
+                       "error": r.get("error") or (r.get("check_titles") or [None])[0]}
+                      for r in sorted(runs, key=lambda x: x.get("started_at") or 0)]
+            issue = _obs_scopes.failed_in_a_row_issue(series, self._first_step(banner["turn_id"]))
+            if issue is not None:
+                found[banner["turn_id"]] = [issue]
+        self._store_scope_issues(turn_ids, found, ["failed_in_a_row"])
+
+    def _scope_solo_coverage(self, session_id: str, promised: list[str]) -> None:
+        """A coworker working alone: its task is the session. Only the scan checks apply (no
+        board, no report, no journal), on the session's last turn."""
+        rows = self.recordings_store.team_turns([session_id])
+        done = [t for t in rows if t["status"] not in (None, "running")]
+        if not done:
+            return
+        last = done[-1]["turn_id"]
+        scans = self.recordings_store.scan_steps(session_id)
+        task = {"promised": promised, "steps": [{"id": s["step_id"], "scanner": s["scanner"],
+                                                  "exit_code": s["exit_code"]} for s in scans]}
+        by_id = {s["step_id"]: s for s in scans}
+        issues = [i for i in _obs_scopes.coverage_issues(task, handoff=self._last_step(last), steps_by_id=by_id)
+                  if i["check"] in ("scan_missing", "scanner_failed")]
+        found: dict[str, list] = {}
+        for i in issues:
+            found.setdefault(i.get("turn_id") or last, []).append(i)
+        self._store_scope_issues([t["turn_id"] for t in done], found, ["scan_missing", "scanner_failed"])
+
+    def item_coverage(self, team, item: dict[str, Any], events: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """"Coverage for this task" (OB-16, §10): a board item of a worker that declares
+        coverage, its scans across the item's sessions, the hand-off's report, its findings
+        with their evidence, and the fix it verifies. None when nobody on it promised a scan."""
+        by_actor = {w.actor: w.session_id for w in team.workers}
+        by_actor[team.lead_actor] = team.lead_session
+        mine = [e for e in events if e.get("item_id") == item["id"]]
+        assignees = [str((e.get("payload") or {}).get("assignee") or "") for e in mine if e["kind"] == "item_assigned"]
+        sessions = [by_actor[a] for a in dict.fromkeys(assignees) if a in by_actor]
+        if item.get("assignee") in by_actor and by_actor[item["assignee"]] not in sessions:
+            sessions.append(by_actor[item["assignee"]])
+        if not sessions:
+            return None
+        promised: list[str] = []
+        for t in self.recordings_store.team_turns(sessions):
+            for a in (t.get("stamp") or {}).get("persona_coverage") or []:
+                if a not in promised:
+                    promised.append(a)
+        if not promised:
+            return None
+        since = min([usage_api._ts_ms(e.get("ts")) or 0 for e in mine if e["kind"] == "item_assigned"] or [0])
+        scans = self.recordings_store.scan_steps(sessions, since_ms=since)
+        handoffs = [e for e in mine if e["kind"] == "item_transitioned" and (e.get("payload") or {}).get("to") in ("review", "done")]
+        report = next(((e.get("payload") or {}).get("coverage") for e in reversed(handoffs)
+                       if (e.get("payload") or {}).get("coverage")), None)
+        findings = self._item_findings(item["id"], team.space)
+        fix = None
+        verifies = [l for l in item.get("links") or [] if l.get("kind") == "verifies"]
+        if verifies:
+            target = verifies[0]["item"]
+            fixed_by = next((e["actor"] for e in reversed(events) if e.get("item_id") == target
+                             and e["kind"] == "item_transitioned" and (e.get("payload") or {}).get("to") == "review"), None)
+            verified_by = next((e["actor"] for e in reversed(handoffs)), item.get("assignee"))
+            fix = {"item": target, "fixed_by": fixed_by, "verified_by": verified_by}
+        task = {"promised": promised, "report": report, "fix": fix,
+                "findings": [{"id": f["seq"], "severity": f.get("severity"), "evidence": f.get("evidence")} for f in findings],
+                "steps": [{"id": s["step_id"], "scanner": s["scanner"], "exit_code": s["exit_code"]} for s in scans]}
+        handoff = None
+        if handoffs:
+            h = handoffs[-1]
+            sid = by_actor.get(h["actor"])
+            handoff = self._handoff_step(sid, usage_api._ts_ms(h.get("ts"))) if sid else None
+        issues = _obs_scopes.coverage_issues(task, handoff=handoff, steps_by_id={s["step_id"]: s for s in scans})
+        fine = _obs_scopes.coverage_fine(task)
+        fired = {i["check"] for i in issues}
+        lst = (recording_signals.signals().get("scanners") or {}).get("list") or {}
+        return {
+            "item": item["id"], "promised": promised, "report": report, "handed_off": bool(handoffs),
+            "scans": [{**s, "area": (lst.get(s["scanner"]["name"]) or {}).get("area"),
+                       "found_something": s["exit_code"] not in (0, None)
+                       and s["exit_code"] in ((lst.get(s["scanner"]["name"]) or {}).get("findings_exit") or []),
+                       "failed": s["exit_code"] not in (0, None)
+                       and s["exit_code"] not in ((lst.get(s["scanner"]["name"]) or {}).get("findings_exit") or [])}
+                      for s in scans],
+            "findings": findings, "fix": fix, "issues": issues,
+            "fine": [{"check": c, "text": t} for c, t in fine.items() if c not in fired],
+        }
+
+    def _item_findings(self, item_id: int, space: str) -> list[dict[str, Any]]:
+        """The journal findings about an item, with the step that wrote each and its evidence
+        links (E17a). Read-only, by item and space; the hash chain is not touched."""
+        js = self.journal_store
+        with js._lock:
+            rows = js._conn.execute(
+                "SELECT * FROM journal_entries WHERE item_id = ? AND space = ? AND kind = 'finding' ORDER BY seq",
+                (item_id, space)).fetchall()
+        from ..teams.journal import _row_to_entry
+
+        out = []
+        for r in rows:
+            e = _row_to_entry(r)
+            out.append({"seq": e["seq"], "case": e.get("case_id"), "author": e.get("author"),
+                        "session_id": e.get("session_id"), "severity": e.get("severity"),
+                        "entities": e.get("entities") or [], "step_call_id": e.get("step_call_id"),
+                        "evidence": e.get("evidence"), "ts": e.get("ts")})
+        return out
+
+    def _handoff_step(self, session_id: str, at_ms: Optional[int]) -> Optional[dict[str, Any]]:
+        """The `transition` tool step that handed the item off: the last one of the session at
+        or before the board event's time."""
+        rec = self.recordings_store.load_recording(session_id)
+        steps = [s for s in rec.get("steps") or [] if s.get("kind") == "tool" and s.get("name") == "transition"
+                 and (at_ms is None or (s.get("started_at") or 0) <= at_ms + 1000)]
+        if not steps:
+            return None
+        s = steps[-1]
+        return {"step_id": s["step_id"], "seq": s.get("seq"), "turn_id": s.get("turn_id")}
+
+    def _scope_team_tasks(self, team_id: str) -> None:
+        """A team's task checks: coverage of each handed-off item of a worker that declares
+        coverage, the same approval asked twice, and items reviewed before a prerequisite."""
+        team = self.teams.get(team_id)
+        if team is None:
+            return
+        from ..teams.summary import all_events
+
+        events = list(all_events(self.team_store, team.space))
+        sids = [team.lead_session, *(w.session_id for w in team.workers)]
+        found: dict[str, list] = {}
+        for item in self.team_store.list_items(team.space, self._user_actor()):
+            cov = self.item_coverage(team, item, events)
+            if cov is None or not cov["handed_off"]:
+                continue
+            for i in cov["issues"]:
+                if i.get("turn_id"):
+                    found.setdefault(i["turn_id"], []).append(i)
+        cards = self.recordings_store.team_approval_cards(sids)
+        for i in _obs_scopes.same_approval_issues(cards):
+            if i.get("turn_id"):
+                found.setdefault(i["turn_id"], []).append(i)
+        links = []
+        for item in self.team_store.list_items(team.space, self._user_actor()):
+            for link in item.get("links") or []:
+                if link.get("kind") == "blocked_by":
+                    links.append((int(link["item"]), int(item["id"])))
+        transitions = [{"seq": e["seq"], "item": e.get("item_id"), "to": (e.get("payload") or {}).get("to"),
+                        "actor": e.get("actor"), "ts": e.get("ts")} for e in events if e["kind"] == "item_transitioned"]
+        by_actor = {w.actor: w.session_id for w in team.workers}
+        by_actor[team.lead_actor] = team.lead_session
+        for i in _obs_scopes.reviewed_before_prereq_issues(transitions, links):
+            e = next((x for x in transitions if x["seq"] == i["facts"]["at_seq"]), None)
+            sid = by_actor.get(e["actor"]) if e else None
+            step = self._handoff_step(sid, usage_api._ts_ms(e["ts"])) if sid else None
+            if step and step.get("turn_id"):
+                i.update({"step_id": step["step_id"], "step_seq": step["seq"], "turn_id": step["turn_id"]})
+                found.setdefault(step["turn_id"], []).append(i)
+        turn_ids = [t["turn_id"] for t in self.recordings_store.team_turns(sids)]
+        self._store_scope_issues(turn_ids, found, list(_obs_scopes.TASK_CHECKS))
 
     # -- observability Phase 3: rollups over many turns (E24b, E24c, E26b, E27a) ---------------
     def usage_names(self) -> dict[str, str]:
@@ -8598,6 +8872,25 @@ class SessionManager:
             ),
         }
 
+    def _scan_evidence(self, session_id: str, space: str, actor_id: str, item: Optional[int]) -> list[dict[str, str]]:
+        """A finding's default evidence (E17a, TD3-15): the successful-or-findings scan steps of
+        the same session, run since the item was assigned to this actor (or, with no item, in
+        the session), as `[{session_id, call_id}]`. Built differently from the design: every
+        scan since assignment, not only those whose area matches the finding's entities
+        (entities are free text; matching them to an area would be a guess)."""
+        since = 0
+        if item is not None and space:
+            try:
+                for e in self.team_store.events(space, item_id=int(item)):
+                    if e["kind"] == "item_assigned" and (e.get("payload") or {}).get("assignee") == actor_id:
+                        since = usage_api._ts_ms(e.get("ts")) or since
+            except Exception:  # noqa: BLE001
+                since = 0
+        out = []
+        for s in self.recordings_store.scan_steps(session_id, since_ms=since):
+            out.append({"session_id": session_id, "call_id": s["call_id"]})
+        return out
+
     def _note_persona_version(self, engine: TurnEngine) -> None:
         """Keep this coworker version the first time its fingerprint is seen (E25c): name,
         file list and file copies, for OB-15's "What changed" and "Show diff". Local only."""
@@ -8676,11 +8969,29 @@ class SessionManager:
                 logger.exception("could not re-check issues of %s", sid)
         return len(sids)
 
+    def backfill_usage(self, batch: int = 200) -> int:
+        """Ledger rows for finished turns recorded before Phase 3 (TD3-8): worked out from their
+        steps, in batches, so the Usage page's numbers reach back as far as the recordings do.
+        Returns how many turns were filled."""
+        done, last = 0, None
+        while True:
+            ids = self.recordings_store.turns_without_usage(limit=batch)
+            if not ids or ids == last:
+                return done  # nothing left, or a batch that cannot be written (logged)
+            last = ids
+            for tid in ids:
+                self.recordings_store.refresh_usage(tid)
+            self.recordings_store.flush()
+            done += len(ids)
+            if len(ids) < batch:
+                return done
+            time.sleep(0.05)
+
     def start_background_checks(self) -> threading.Thread:
         """At start, after the open turns are closed: close stale manual runs and re-check
         Issues, in a background thread so the app is usable at once (P3-3, P3-4)."""
         def work() -> None:
-            for job in (self.finish_stale_manual_runs, self.recheck_issues):
+            for job in (self.finish_stale_manual_runs, self.recheck_issues, self.backfill_usage):
                 try:
                     job()
                 except Exception:  # noqa: BLE001

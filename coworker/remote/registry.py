@@ -51,6 +51,21 @@ class MachinesRegistry:
             # Tier-2 snapshot (remote-home-design.md data path): the last-known
             # session-LIST METADATA per machine — what keeps an offline machine's
             # sessions greyed-but-visible instead of vanished.
+            # Observability Phase 3 (E28, TD3-6): the last Usage rollup each machine answered,
+            # per grouping, so an offline machine still shows its numbers on the Usage page,
+            # labelled "as of". Counts only (the ledger is content-free).
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS machine_rollups (
+                    machine_id TEXT NOT NULL,
+                    grouping TEXT NOT NULL,
+                    query TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (machine_id, grouping)
+                )
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS machine_sessions (
@@ -273,6 +288,25 @@ class MachinesRegistry:
                 (machine_id,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def save_rollup(self, machine_id: str, grouping: str, query: str, payload: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO machine_rollups (machine_id, grouping, query, payload, updated_at)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, grouping) DO UPDATE SET"
+                " query = excluded.query, payload = excluded.payload, updated_at = excluded.updated_at",
+                (machine_id, grouping, query, payload, time.time()),
+            )
+            self._conn.commit()
+
+    def last_rollup(self, machine_id: str, grouping: str) -> Optional[dict]:
+        """The machine's last Usage rollup for this grouping: {payload, query, updated_at}."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload, query, updated_at FROM machine_rollups WHERE machine_id = ? AND grouping = ?",
+                (machine_id, grouping),
+            ).fetchone()
+            return dict(row) if row else None
 
     def save_sessions_snapshot(self, machine_id: str, payload: str) -> None:
         with self._lock:

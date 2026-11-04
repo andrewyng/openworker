@@ -453,8 +453,11 @@ class ToolRun:
     provider view and recording. Published for the tool's thread by `_execute_sync`."""
 
     def __init__(self, *, step_id: Optional[str], turn_id: Optional[str], view: Any,
-                 recording: "TurnRecording") -> None:
+                 recording: "TurnRecording", call_id: Optional[str] = None) -> None:
         self.step_id, self.turn_id, self.view, self.recording = step_id, turn_id, view, recording
+        # 1.3 (E17a): the tool call's id, which exists whether or not recording is on: the
+        # link a journal entry keeps to the step that wrote it.
+        self.call_id = call_id
 
 
 def current_tool_run() -> Optional[ToolRun]:

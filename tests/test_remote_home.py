@@ -2499,3 +2499,44 @@ async def test_browser_sealed_managed_grant_lands_on_the_box(tmp_path):
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+async def test_offline_machine_serves_its_last_usage_rollup_as_of(tmp_path):
+    """Observability Phase 3 (E28, TD3-6): the desktop keeps each machine's last Usage rollup
+    per grouping; while the machine is offline the proxy answers with it, labelled `cached`
+    with the time it was fetched, never as live numbers."""
+    async with _Server(_controller(tmp_path)) as server:
+        join_url = await _arm(server.base)
+        _, token = parse_join_url(join_url)
+        state = tmp_path / "rollup-state"
+        state.mkdir()
+        box_manager = SessionManager(data_dir=tmp_path / "rollup-data")
+        task = asyncio.create_task(
+            run_joined(state=state, controller=server.base, name="usage-box", token=token,
+                       app=create_app(box_manager), once=True, log=lambda *_: None)
+        )
+        machines = await _wait_connected(server.base)
+        mid = machines[0]["id"]
+        async with httpx.AsyncClient() as client:
+            live = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                    params={"group": "all", "from": 0})
+            assert live.status_code == 200 and "cached" not in live.json()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            deadline = asyncio.get_running_loop().time() + 5
+            while True:
+                listing = await client.get(f"{server.base}/v1/machines")
+                if not any(m["connected"] for m in listing.json()["machines"]):
+                    break
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.05)
+            off = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                   params={"group": "all", "from": 0})
+            assert off.status_code == 200
+            body = off.json()
+            assert body["cached"]["as_of"] > 0 and body["groups"] == live.json()["groups"]
+            # another grouping was never fetched: no copy, the machine is just offline
+            none = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                    params={"group": "day"})
+            assert none.status_code == 503
