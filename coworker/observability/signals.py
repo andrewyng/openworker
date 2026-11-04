@@ -53,8 +53,10 @@ def purpose(step: dict) -> Optional[str]:
 
 
 def issue(check: str, step: Optional[dict], text: str, **facts: Any) -> dict:
+    # `words`: the facts hold every value of the sentence, so the screen can say it in the
+    # reader's language (TD2-3); `text` stays the English sentence for everything else.
     return {"check": check, "step_seq": step["seq"] if step else None,
-            "step_id": step["step_id"] if step else None, "text": text, **facts}
+            "step_id": step["step_id"] if step else None, "text": text, "words": 1, **facts}
 
 
 # -- the checks --------------------------------------------------------------------------------
@@ -77,7 +79,7 @@ def c_repeated_step(turn, top, all_steps, p):
             found.append(issue("repeated_step", run[-1],
                                f"{run[0]['name']} was called {len(run)} times in a row with the "
                                f"same arguments. That cost {extra:,} extra tokens.",
-                               count=len(run), extra_tokens=extra))
+                               count=len(run), extra_tokens=extra, name=run[0]["name"]))
 
     for s in tools:
         a = s["attrs"]
@@ -89,7 +91,8 @@ def c_repeated_step(turn, top, all_steps, p):
         close()
         run = [] if breaks else [s]
     close()
-    return ("fired" if found else "fine"), found, f"No step repeated {p['min_run']} times in a row"
+    return ("fired" if found else "fine"), found, (f"No step repeated {p['min_run']} times in a row",
+                                                    {"min_run": p["min_run"]})
 
 
 def c_off_plan(turn, top, all_steps, p):
@@ -108,7 +111,7 @@ def c_off_plan(turn, top, all_steps, p):
         dropped = len(vanished) - len(added) if prev else 0
         if dropped > 0:
             found.append(issue("off_plan", w, f"A plan step was dropped before it was done "
-                               f"({dropped} of {len(prev)}).", kind="dropped", dropped=dropped))
+                               f"({dropped} of {len(prev)}).", kind="dropped", dropped=dropped, of=len(prev)))
         prev = {i["h"]: i["s"] for i in items}
     # (b) acting after everything was marked done
     for idx, w in enumerate(writes):
@@ -124,12 +127,12 @@ def c_off_plan(turn, top, all_steps, p):
                     and s["status"] not in ("denied", "skipped")):
                 if not later_adds:
                     found.append(issue("off_plan", s, f"It kept acting after it marked every plan "
-                                       f"step done: {s['name']}.", kind="after_done"))
+                                       f"step done: {s['name']}.", kind="after_done", name=s["name"]))
                 break
     last = writes[-1]["attrs"]["plan"]["items"]
     done = sum(1 for i in last if i["s"] == "done")
     return ("fired" if found else "fine"), found, \
-        f"No plan step was dropped ({done} of {len(last)} done)"
+        (f"No plan step was dropped ({done} of {len(last)} done)", {"done": done, "items": len(last)})
 
 
 _REFUSED = {
@@ -147,7 +150,7 @@ def c_refused(turn, top, all_steps, p):
         # origin null: no stage decided (stopped, superseded), so nobody refused it (V2-07).
         if s["kind"] == "tool" and s["status"] == "denied" and origin:
             text = _REFUSED.get(origin, "{name} was refused.").format(name=s["name"])
-            found.append(issue("refused", s, text, by=origin))
+            found.append(issue("refused", s, text, by=origin, name=s["name"]))
     return ("fired" if found else "fine"), found, "No actions were refused by you, a rule or the auto-approver"
 
 
@@ -170,7 +173,7 @@ def _call_name(all_steps, call_id):
 def c_overridden(turn, top, all_steps, p):
     if not _reviewer_on(turn, live_only=True):
         return "not_checked", [], ""
-    found = [issue("overridden", s, f"The auto-approver blocked {s['name']} and you used Allow anyway.")
+    found = [issue("overridden", s, f"The auto-approver blocked {s['name']} and you used Allow anyway.", name=s["name"])
              for s in top if s["kind"] == "tool"
              and any(x.get("stage") == "grant" and x.get("outcome") == "allow_anyway"
                      for x in (s["attrs"].get("decision") or {}).get("path", []))]
@@ -182,17 +185,21 @@ def c_reviewer_could_not_run(turn, top, all_steps, p):
         return "not_checked", [], ""
     checks = _checks(all_steps)
     found = [issue("reviewer_could_not_run", s, f"The auto-approver could not check "
-                   f"{_call_name(all_steps, s.get('call_id'))}, so it was shown to you instead.")
+                   f"{_call_name(all_steps, s.get('call_id'))}, so it was shown to you instead.",
+                   name=_call_name(all_steps, s.get("call_id")))
              for s in checks if s["attrs"].get("result") == "could_not_run"]
     live = [s for s in checks if not s.get("shadow")]
     n = lambda k: f"{k} action" + ("" if k == 1 else "s")  # noqa: E731
     if live:  # the verdicts, so "allowed everything" does not read as just "ran" (M2-R1)
         res = [s["attrs"].get("result") for s in live]
+        asked = sum(r in ("unsure", "context_changed", "could_not_run") for r in res)
         fine = (f"Auto-approver checked {n(len(live))}: {res.count('allow')} allowed, "
-                f"{sum(r in ('unsure', 'context_changed', 'could_not_run') for r in res)} asked you, "
-                f"{res.count('deny')} blocked; none failed to run")
+                f"{asked} asked you, {res.count('deny')} blocked; none failed to run",
+                {"variant": "live", "count": len(live), "allowed": res.count("allow"), "asked": asked,
+                 "blocked": res.count("deny")})
     else:  # a shadow-only turn (M2-R5)
-        fine = f"Shadow reviewer checked {n(len(checks))}; none failed to run"
+        fine = (f"Shadow reviewer checked {n(len(checks))}; none failed to run",
+                {"variant": "shadow", "count": len(checks)})
     return ("fired" if found else "fine"), found, fine
 
 
@@ -206,14 +213,14 @@ def c_reviewer_paused(turn, top, all_steps, p):
         return "fine", [], "Auto-approver was never paused"
     denials = max([(s["attrs"].get("breaker") or {}).get("denials_in_row") or 0 for s in tripped] or [0])
     return "fired", [issue("reviewer_paused", at, f"The auto-approver paused after {denials} "
-                           f"refusals in a row. Later actions were shown to you.")], ""
+                           f"refusals in a row. Later actions were shown to you.", denials=denials)], ""
 
 
 def c_reviewer_allowed_send(turn, top, all_steps, p):
     if not _reviewer_on(turn, live_only=True):
         return "not_checked", [], ""
     found = [issue("reviewer_allowed_send", s, f"The auto-approver allowed {s['name']} without asking you. "
-                   f"It sends data off the machine.")
+                   f"It sends data off the machine.", name=s["name"])
              for s in top if s["kind"] == "tool" and s["status"] == "ok"
              and (s["attrs"].get("risk_class") == "egress" or s["attrs"].get("reaches_network"))
              and (s["attrs"].get("decision") or {}).get("origin") == "reviewer"]
@@ -226,10 +233,11 @@ def c_shadow_disagreed(turn, top, all_steps, p):
     shadow = _checks(all_steps, shadow=True)
     compared = [s for s in shadow if s["attrs"].get("matched_user") is not None]
     found = [issue("shadow_disagreed", s, f"The shadow reviewer would have said "
-                   f"{s['attrs'].get('result')} on {_call_name(all_steps, s.get('call_id'))}.")
+                   f"{s['attrs'].get('result')} on {_call_name(all_steps, s.get('call_id'))}.",
+                   result=s["attrs"].get("result"), name=_call_name(all_steps, s.get("call_id")))
              for s in compared if s["attrs"].get("matched_user") is False]
     return ("fired" if found else "fine"), found, \
-        f"The shadow reviewer agreed with you on {len(compared)} of {len(compared)} actions"
+        (f"The shadow reviewer agreed with you on {len(compared)} of {len(compared)} actions", {"count": len(compared)})
 
 
 def c_tool_failed(turn, top, all_steps, p):
@@ -251,7 +259,8 @@ def c_tool_failed(turn, top, all_steps, p):
         exit_part = f" with exit code {a['exit_code']}" if a.get("exit_code") not in (None, 0) else ""
         rec = f" A later {s['name']} in this turn worked." if recovered else ""
         found.append(issue("tool_failed", s, f"{s['name']} failed{exit_part}.{rec}",
-                           recovered=recovered, how=("exit" if exit_part else
+                           recovered=recovered, name=s["name"], exit_code=a.get("exit_code") if exit_part else None,
+                           how=("exit" if exit_part else
                                                     "result_error" if a.get("result_error") else "raised")))
     return ("fired" if found else "fine"), found, "No tool failed"
 
@@ -269,7 +278,7 @@ def c_model_failed(turn, top, all_steps, p):
             continue
         tail = " The turn stopped here." if turn["status"] == "error" else ""
         found.append(issue("model_failed", s, f"The model call failed ({err}).{tail}",
-                           purpose=purpose(s), error_type=err))
+                           purpose=purpose(s), error_type=err, stopped=turn["status"] == "error"))
     return ("fired" if found else "fine"), found, "No model call failed"
 
 
@@ -317,8 +326,8 @@ def c_step_limit(turn, top, all_steps, p):
     if turn["status"] == "max_iterations_exceeded" or n:
         return "fired", [issue("step_limit", n, f"The turn stopped after {iterations} steps, the limit.",
                                iterations=iterations)], ""
-    return "fine", [], (f"Stayed under the step limit ({iterations} of {cap})" if cap
-                        else f"Stayed under the step limit ({iterations} steps)")
+    return "fine", [], ((f"Stayed under the step limit ({iterations} of {cap})", {"iterations": iterations, "cap": cap})
+                        if cap else (f"Stayed under the step limit ({iterations} steps)", {"iterations": iterations}))
 
 
 def c_made_up_tool(turn, top, all_steps, p):
@@ -328,7 +337,7 @@ def c_made_up_tool(turn, top, all_steps, p):
         if s["kind"] == "tool" and s["status"] == "error" and k in ("unknown_tool", "bad_arguments"):
             text = (f"The model asked for a tool that does not exist: {s['name']}." if k == "unknown_tool"
                     else f"The model sent arguments that do not fit {s['name']}.")
-            found.append(issue("made_up_tool", s, text, kind=k))
+            found.append(issue("made_up_tool", s, text, kind=k, name=s["name"]))
     return ("fired" if found else "fine"), found, "No unknown tools or invalid arguments"
 
 
@@ -354,11 +363,12 @@ def c_context_full(turn, top, all_steps, p):
             max_fill = max(max_fill, fill)
             if fill >= p["hard_fill"]:
                 found.append(issue("context_full", s, f"The context was {round(fill * 100)}% full on this call.",
-                                   kind="hard_fill", fill=round(fill, 3)))
+                                   kind="hard_fill", fill=round(fill, 3), pct=round(fill * 100)))
     normal = sum(1 for s in summaries if s["attrs"].get("reason") == "threshold" and s["name"] != "trim")
     part = f"; summarised {normal} time(s) at the normal point" if normal else ""
     return ("fired" if found else "fine"), found, \
-        f"Context had room (at most {max(1, round(max_fill * 100))}% of the window){part}"  # M2-R7
+        (f"Context had room (at most {max(1, round(max_fill * 100))}% of the window){part}",  # M2-R7
+         {"pct": max(1, round(max_fill * 100)), "normal": normal})
 
 
 def c_blocked_by_sandbox(turn, top, all_steps, p):
@@ -367,7 +377,9 @@ def c_blocked_by_sandbox(turn, top, all_steps, p):
         return "not_checked", [], ""
     found = [issue("blocked_by_sandbox", s, f"The sandbox blocked {s['attrs']['sandbox']['blocked_count']} "
                    f"network request(s) during {s['name']}"
-                   + (f", which exited with code {s['attrs']['exit_code']}." if s["attrs"].get("exit_code") not in (None, 0) else "."))
+                   + (f", which exited with code {s['attrs']['exit_code']}." if s["attrs"].get("exit_code") not in (None, 0) else "."),
+                   count=s["attrs"]["sandbox"]["blocked_count"], name=s["name"],
+                   exit_code=s["attrs"].get("exit_code") if s["attrs"].get("exit_code") not in (None, 0) else None)
              for s in top if s["kind"] == "tool" and (s["attrs"].get("sandbox") or {}).get("blocked_known")
              and ((s["attrs"].get("sandbox") or {}).get("blocked_count") or 0) > 0]
     return ("fired" if found else "fine"), found, "The sandbox blocked nothing"
@@ -378,9 +390,13 @@ def c_sandbox_failed(turn, top, all_steps, p):
     if not setups:
         return "not_checked", [], ""
     found = [issue("sandbox_failed", s, f"The sandbox could not start at {s['attrs'].get('failed_stage')}: "
-                   f"{(s['attrs'].get('error') or {}).get('type')}.") for s in setups if s["status"] == "error"]
+                   f"{(s['attrs'].get('error') or {}).get('type')}.",
+                   stage=s["attrs"].get("failed_stage"), type=(s["attrs"].get("error") or {}).get("type"))
+             for s in setups if s["status"] == "error"]
     s0 = setups[0]
-    return ("fired" if found else "fine"), found,         f"The sandbox started ({s0['attrs'].get('provider')}, {round((s0.get('duration_ms') or 0) / 1000)} s)"
+    seconds = round((s0.get("duration_ms") or 0) / 1000)
+    return ("fired" if found else "fine"), found, \
+        (f"The sandbox started ({s0['attrs'].get('provider')}, {seconds} s)", {"provider": s0["attrs"].get("provider"), "seconds": seconds})
 
 
 def c_ran_without_sandbox(turn, top, all_steps, p):
@@ -396,7 +412,7 @@ def c_ran_without_sandbox(turn, top, all_steps, p):
     if not acts:
         return "fine", [], "Ran inside the sandbox"
     return "fired", [issue("ran_without_sandbox", acts[0], f"This machine has a sandbox switched on, but "
-                           f"this turn ran {len(acts)} action(s) without it.")], ""
+                           f"this turn ran {len(acts)} action(s) without it.", count=len(acts))], ""
 
 
 def _overlap(start, end, spans):
@@ -428,7 +444,8 @@ def c_waited_unwatched(turn, top, all_steps, p):
         if alone >= p["min_wait_ms"]:
             where = "in the Inbox " if a.get("where") == "inbox" else ""
             found.append(issue("waited_unwatched", s, f"waited {round(alone / 60000)} min {where}for an answer "
-                               f"while nobody was at the app."))
+                               f"while nobody was at the app.", minutes=round(alone / 60000),
+                               inbox=a.get("where") == "inbox"))
     return ("fired" if found else "fine"), found, "Nothing waited long for an answer while nobody was watching"
 
 
@@ -468,7 +485,11 @@ def check_turn(turn: dict, steps: list[dict], spec: Optional[dict] = None) -> di
             })
         if state == "fired":
             continue
-        (out["fine"] if state == "fine" else out["not_checked"]).append({"check": cid, "text": fine})
+        fine_facts: dict[str, Any] = {}
+        if isinstance(fine, tuple):
+            fine, fine_facts = fine
+        (out["fine"] if state == "fine" else out["not_checked"]).append(
+            {"check": cid, "text": fine, "facts": {"words": 1, **fine_facts}})
     out["warn"] = sum(1 for i in out["issues"] if i["severity"] == "warn")
     out["info"] = sum(1 for i in out["issues"] if i["severity"] == "info")
     return out

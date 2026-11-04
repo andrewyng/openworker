@@ -559,6 +559,27 @@ class RecordingStore:
         return {"sent": int(sent), "dropped": int(dropped) + (int(row["dropped"]) if row else 0),
                 "failed": int(row["failed"]) if row else 0, "last_at": last}
 
+    def outside_calls(self, *, since_ms: int = 0) -> dict[str, int]:
+        """Model calls made outside any session (purpose `proxy`: through this machine's
+        model address, for example by a remote machine) since `since_ms`, and their tokens.
+        No session's Steps or Usage shows them (fix list F-4)."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT attrs FROM steps WHERE kind = 'model' AND turn_id IS NULL AND started_at >= ?",
+                (since_ms,),
+            ).fetchall()
+        calls = tokens = 0
+        for r in rows:
+            a = json.loads(r["attrs"] or "{}")
+            if a.get("purpose") != "proxy":
+                continue
+            calls += 1
+            u = a.get("usage") or {}
+            if u.get("reported"):
+                tokens += sum(int(u.get(k) or 0) for k in ("input_fresh", "cache_read", "cache_write", "output"))
+        return {"calls": calls, "tokens": tokens}
+
     def load_turn(self, turn_id: str) -> Optional[tuple[dict[str, Any], list[dict[str, Any]]]]:
         """One turn and its steps (by `seq`), content included."""
         self.flush()

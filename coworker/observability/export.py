@@ -643,10 +643,14 @@ class ObservabilityExport:
     def status(self) -> dict[str, Any]:
         dest, _ = self.effective()
         ex = self.exporter
+        midnight = time.mktime(time.localtime(self.clock())[:3] + (0, 0, 0, 0, 0, -1)) * 1000
+        try:
+            outside = self.store.outside_calls(since_ms=int(midnight))
+        except Exception:  # noqa: BLE001 - the status never fails on this line
+            outside = {"calls": 0, "tokens": 0}
         if dest.kind == "off" or ex is None:
             return {"state": "off", "last_sent_at": None, "sent": 0, "sent_today": 0, "failed": 0,
-                    "dropped": 0, "last_error": "", "destination": dest.public()}
-        midnight = time.mktime(time.localtime(self.clock())[:3] + (0, 0, 0, 0, 0, -1)) * 1000
+                    "dropped": 0, "last_error": "", "destination": dest.public(), "outside_today": outside}
         counts = self.store.export_counts(dest.key)
         today = self.store.export_counts(dest.key, since_ms=int(midnight))["sent"]
         state = ex.state
@@ -657,7 +661,7 @@ class ObservabilityExport:
         last = ex.last_sent_at or (counts["last_at"] / 1000 if counts.get("last_at") else None)
         return {"state": state, "last_sent_at": last, "sent": counts["sent"], "sent_today": today,
                 "failed": counts["failed"], "dropped": counts["dropped"], "last_error": ex.last_error,
-                "destination": dest.public()}
+                "destination": dest.public(), "outside_today": outside}
 
     # -- the test recording (E9c) ---------------------------------------------------------------------
     def send_test(self) -> dict[str, Any]:

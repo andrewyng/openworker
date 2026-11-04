@@ -530,9 +530,8 @@ def build_engine(
     # The user's own standing instructions, read once here: like the memories below,
     # they're session-stable knowledge. Edits apply to NEW conversations (the Settings
     # copy says exactly that), never mid-conversation.
-    rules_block = format_user_rules(
-        (user_rules() if callable(user_rules) else user_rules) or ""
-    )
+    _rules_text = (user_rules() if callable(user_rules) else user_rules) or ""
+    rules_block = format_user_rules(_rules_text)
     if rules_block:
         instructions = f"{instructions}\n\n{rules_block}"
 
@@ -915,7 +914,9 @@ def build_engine(
     engine.context_facts = {
         "memories": [getattr(m, "id", None) for m in (_remembered or [])],
         "memory_mode": _memory_mode,
-        "rules": len([ln for ln in (rules_block or "").splitlines() if ln.strip().startswith("-")]),
+        # Each non-empty line of your instructions is one rule, with or without a dash
+        # (fix list F-5: only "-" lines were counted, so plain lines recorded 0).
+        "rules": len([ln for ln in _rules_text.splitlines() if ln.strip()]),
         "agents_md": _agents_md_count,
     }
     engine.audit_context = {

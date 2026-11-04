@@ -1051,6 +1051,10 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         _drain(ws)
         ws.send_json({"type": "set_model", "model": "kimi:kimi-k2.6"})
         changed = ws.receive_json()
+        while changed["type"] == "step":
+            # Live Steps updates go out in 100 ms batches, so one can land after
+            # turn_done (observability; fix list C-1). They are not part of this test.
+            changed = ws.receive_json()
         assert changed["type"] == "model_changed"
         assert changed["data"]["model"] == "kimi:kimi-k2.6"
         assert "Kimi" in changed["data"]["text"]

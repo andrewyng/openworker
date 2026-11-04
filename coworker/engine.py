@@ -808,6 +808,19 @@ class TurnEngine:
             logger.exception("observability: could not stamp the turn")
         return stamp
 
+    def _sandbox_note_added(self) -> bool:
+        """Whether this turn's context holds the sandbox's own note: the agent's context
+        adds `sandbox_workspace.context()` when it returns text. A workspace with no
+        sandbox has no such text, so no note (fix list F-1: it was true whenever the
+        workspace could describe itself, which the no-sandbox one can)."""
+        context = getattr(getattr(self, "sandbox_workspace", None), "context", None)
+        if not callable(context):
+            return False
+        try:
+            return bool(context())
+        except Exception:  # noqa: BLE001 - a recording never breaks a turn
+            return False
+
     def _note_context(self) -> None:
         """The context step at the turn's first model call, and a `context_changed` notice
         when the per-turn block changes later in the turn (observability E5, §5.6)."""
@@ -824,7 +837,7 @@ class TurnEngine:
         per_turn = {
             "mode_note": self.permissions.mode.value if self.permissions.mode in (Mode.PLAN, Mode.DISCUSS) else None,
             "folders": len(getattr(self.permissions, "roots", None) or []),
-            "sandbox_note": getattr(getattr(self, "sandbox_workspace", None), "describe", None) is not None,
+            "sandbox_note": self._sandbox_note_added(),
             "skills_menu": len(skills),
             "skills_hash": _short_hash(",".join(skills)) if skills else None,
         }
