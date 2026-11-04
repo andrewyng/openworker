@@ -1,5 +1,5 @@
 // Plain Markdown in the repo is authoritative. Generated frontmatter/links are site-only.
-import {readFileSync,writeFileSync,mkdirSync,rmSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,rmSync,existsSync,copyFileSync} from 'node:fs';
 import {dirname,resolve,join,posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {renderCodeTabs} from './code-tabs.mjs';
@@ -13,6 +13,11 @@ for(const [source,destination] of references) {
  const html=readFileSync(join(root,source),'utf8').replace('href="OPENWORKER-SERVICE.md"','href="https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/OPENWORKER-SERVICE.md"');
  writeFileSync(join(site,'public',destination),html);
 }
+const images=new Map(['code-atlas','pdf-notes'].map(name=>[
+ `docs/harness/guides/images/${name}.png`, `examples/${name}.png`
+]));
+mkdirSync(join(site,'public/examples'),{recursive:true});
+for(const [source,destination] of images) copyFileSync(join(root,source),join(site,'public',destination));
 writeSources(root,join(site,'public'));
 const route=new Map(pages.map(p=>[p.source,`${base}/${p.slug==='index'?'':p.slug+'/'}`]));
 rmSync(output,{recursive:true,force:true});mkdirSync(output,{recursive:true});
@@ -24,7 +29,7 @@ for(const page of pages) {
   if(/^(?:[a-z]+:|\/|#)/i.test(target))return full;
   const [file,anchor]=target.split('#');const absolute=posix.normalize(posix.join(posix.dirname(page.source),file));
   if(!existsSync(join(root,absolute)))throw Error(`Broken link ${page.source} -> ${target}`);
-  return `](${route.get(absolute)??(references.has(absolute)?base+'/'+references.get(absolute):'https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/'+absolute)}${anchor?'#'+anchor:''})`;
+  return `](${route.get(absolute)??(references.has(absolute)?base+'/'+references.get(absolute):images.has(absolute)?base+'/'+images.get(absolute):'https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/'+absolute)}${anchor?'#'+anchor:''})`;
  });
  raw=renderSourceButton(renderCodeTabs(raw,page.slug),base);
  writeFileSync(join(output,page.slug+'.md'),`---\ntitle: ${JSON.stringify(title[1])}\n---\n\n${raw}`);
