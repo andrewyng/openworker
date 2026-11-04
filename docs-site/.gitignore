@@ -3,3 +3,4 @@ dist/
 .astro/
 src/content/docs/
 public/reference/
+public/examples/

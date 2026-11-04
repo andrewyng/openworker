@@ -48,3 +48,16 @@ with a shared TypeScript/Rust selection across the page and keyboard navigation
 Use `TypeScript / Electron` and `Rust / Tauri` for starter-command alternatives.
 The build rejects missing end markers, duplicate languages and unsupported labels.
 Fenced example content is preserved, including `example=desktop` test markers.
+
+## Example source drawer
+
+`<!-- sdk-source: desktop -->` or `<!-- sdk-source: web -->` adds a source button
+to a Markdown guide. An accessible dialog opens on click or keyboard activation,
+with file navigation, copying and Escape to close. It does not open on hover.
+
+The build reads the explicit allowlist in `scripts/source-examples.mjs` from
+`harness/examples/quickstart/` and generates static JSON. There is no second copy
+of the example source to maintain, directory scanning, or runtime file access.
+New source files must be added deliberately to the manifest. Generated JSON and
+content are ignored by Git. Links to the complete examples remain usable on GitHub
+and with JavaScript disabled.

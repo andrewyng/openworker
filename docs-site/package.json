@@ -7,7 +7,7 @@
     "dev": "npm run prepare-content && astro dev",
     "build": "npm run prepare-content && astro build",
     "preview": "astro preview",
-    "test": "node --test scripts/site.test.mjs scripts/code-tabs.test.mjs"
+    "test": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.36.0",
