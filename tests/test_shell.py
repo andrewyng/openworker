@@ -179,6 +179,18 @@ def test_powershell_multi_line_keeps_exit_codes_and_state(executor):
     assert used["output"].split() == ["from-function", "7"]
 
 
+@pytest.mark.skipif(not _WIN, reason="PowerShell's $LASTEXITCODE")
+def test_powershell_failed_cmdlet_does_not_report_an_earlier_programs_code(executor, tmp_path):
+    missing = str(tmp_path / "missing.invalid")
+    assert executor.run("cmd /c exit 3")["exit_code"] == 3
+    # Used to say 3: `$LASTEXITCODE` still held the earlier call's native program.
+    assert executor.run(f"Get-Item '{missing}'")["exit_code"] == 1
+    assert executor.run("Write-Output ok")["exit_code"] == 0
+    assert executor.run(f"Get-Item '{missing}'")["exit_code"] == 1
+    # A native program in the same command still gives its own code.
+    assert executor.run(f"Get-Item '{missing}'; cmd /c exit 6")["exit_code"] == 6
+
+
 def test_timeout_kills_command(executor):
     start = time.monotonic()
     result = executor.run(SLEEP_5, timeout=1)

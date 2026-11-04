@@ -382,7 +382,13 @@ class LocalExecutor(Executor):
         parses (the caller runs it), else the finished result: exit code 1 and PowerShell's
         own error text, the same text and code `powershell -Command` gives. The command
         travels as base64, so no quoting in it can break the check line; the check's
-        variables are removed again so the session never sees them."""
+        variables are removed again so the session never sees them.
+
+        When the command parses, the same line also clears `$LASTEXITCODE`, so the trailer
+        reads only a native program that ran in THIS command. Before, a failing cmdlet
+        reported the code of a native program from an earlier call (`cmd /c exit 3`, then
+        a failed `Get-Item`, said 3). Like bash, where the trailer's `printf` resets `$?`,
+        a later call no longer sees the previous call's code; each result carries its own."""
         assert self._proc.stdin is not None
         encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
         self._proc.stdin.write(
@@ -390,7 +396,8 @@ class LocalExecutor(Executor):
             f"'{encoded}'));$__cwErr=$null;"
             "$null=[Management.Automation.Language.Parser]::ParseInput("
             "$__cwSrc,[ref]$null,[ref]$__cwErr);$__cwN=@($__cwErr).Count;"
-            "if($__cwN){(New-Object Management.Automation.ParseException (,$__cwErr)).Message};"
+            "if($__cwN){(New-Object Management.Automation.ParseException (,$__cwErr)).Message}"
+            "else{$global:LASTEXITCODE=$null};"
             "Remove-Variable __cwSrc,__cwErr -ErrorAction Ignore;"
             f'"`n{self._parse_marker} $__cwN";Remove-Variable __cwN -ErrorAction Ignore\n'
         )
@@ -505,7 +512,9 @@ class LocalExecutor(Executor):
         command, so it must run as its own statement right after it."""
         if self._is_windows:
             # PowerShell: `$?` is the success bool; `$LASTEXITCODE` is the exit code of the
-            # last native program. Success → 0; else the program's code, falling back to 1.
+            # last native program in this command (cleared before it, see
+            # `_powershell_parse_check`). Success → 0; else the program's code, falling back
+            # to 1.
             return (
                 f'"`n{self._marker} '
                 f"$(if ($?) {{0}} else {{ if ($LASTEXITCODE) {{$LASTEXITCODE}} else {{1}} }}) "
