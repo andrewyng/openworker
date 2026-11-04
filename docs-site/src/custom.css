@@ -148,3 +148,26 @@ header.header { border-bottom: 1px solid var(--sl-color-hairline-light); }
 .source-status { margin:0; padding:0 24px; font-size:12px; color:#4a5565; }
 .source-status:not(:empty) { padding:10px 24px; }
 @media (max-width:700px) { .source-body { grid-template-columns:160px minmax(0,1fr); } }
+
+/* One outer surface owns the corners; terminal chrome must not sit above a pill. */
+.sl-markdown-content .expressive-code .frame { border-radius: .65rem; overflow: hidden; box-shadow: none; }
+.sl-markdown-content .expressive-code .frame pre { border-radius: 0; }
+.sl-markdown-content .sdk-code-tabs .expressive-code .frame { border-radius: 0; }
+
+/* Install commands: a quiet, single surface with an independent agent selector. */
+.sl-markdown-content .sdk-install-tabs { background: #f4f5f7; border-color: #e0e3e8; margin-block: .9rem; }
+.sdk-install-tabs [role='tablist']:not([hidden]) { background: #f4f5f7; border-bottom: 0; padding: .45rem .5rem 0; gap: .15rem; }
+.sdk-install-tabs [role='tab'] { font-size: .8rem; color: #646b76; padding: .3rem .65rem; }
+.sdk-install-tabs [role='tab'][aria-selected='true'] { background: #fff; color: #20252c; box-shadow: 0 1px 3px #14203312; }
+.sl-markdown-content .sdk-install-tabs .expressive-code pre { background: transparent; padding-block: 1rem; color: #303742; }
+.sdk-install-tabs .expressive-code code, .sdk-install-tabs .expressive-code code span { color: inherit !important; }
+.sdk-install-tabs .expressive-code { --ec-frm-tooltipSuccessBg: #334155; --ec-frm-inlBtnFg: #555f6e; --ec-frm-inlBtnBg: #fff; --ec-frm-inlBtnBrd: #ccd1da; }
+.sdk-install-tabs .expressive-code .copy button { opacity: 1; }
+:root[data-theme='dark'] .sdk-install-tabs, :root[data-theme='dark'] .sdk-install-tabs [role='tablist']:not([hidden]) { background: #20242b; border-color: #343a44; }
+:root[data-theme='dark'] .sdk-install-tabs [role='tab'] { color: #a9b0ba; }
+:root[data-theme='dark'] .sdk-install-tabs [role='tab'][aria-selected='true'] { color: #f3f4f6; background: #363d48; }
+:root[data-theme='dark'] .sl-markdown-content .sdk-install-tabs .expressive-code pre { color: #e0e4eb; }
+.sdk-install-tabs .expressive-code .copy button { background: transparent; color: #646b76; }
+.sdk-install-tabs .expressive-code .copy button::before { border: 1px solid currentColor; opacity: .2; }
+.sdk-install-tabs .expressive-code .copy button::after { background-color: currentColor; }
+:root[data-theme='dark'] .sdk-install-tabs .expressive-code .copy button { color: #b7bfcb; }
