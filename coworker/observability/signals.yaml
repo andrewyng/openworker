@@ -647,6 +647,20 @@ scanners:
   area_words: {code: code, secrets: secret, deps: dependency, iac: infrastructure}
   lead_ins: [sudo, npx, uvx, pipx, run, exec, env, time]
   probe_words: ["--version", version, "-v", "--help"]
+  # A scanner that is not installed did not scan (P3B-1, found in review 2026-11-04; local to
+  # this copy until the shared file takes it, see the Phase 3 build notes). PowerShell exits 1
+  # for a command it does not know, the same code most scanners use for "found something", so
+  # the exit code alone cannot tell them apart. When recording a shell step whose command names
+  # a scanner, the engine records `scanner: null` (no scan ran) when:
+  #   - the command exited with one of `exit` (127: sh "command not found"; 9009: cmd.exe), or
+  #   - a line of its output names the scanner's word and holds one of `phrases` (case-insensitive).
+  # The checks then read it as a scan that never ran: scan_missing fires, scanner_failed and
+  # the coverage list do not count it.
+  not_found:
+    exit: [127, 9009]
+    # a line must also name the scanner's word (or the word with _ for -, as python -m prints it)
+    phrases: ["is not recognized as", "command not found", ": not found", "commandnotfoundexception",
+              "no module named", "could not determine executable to run"]
   list:
     semgrep: {word: semgrep, area: code, findings_exit: [1]}
     gitleaks: {word: gitleaks, area: secrets, findings_exit: [1]}

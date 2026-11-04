@@ -390,3 +390,59 @@ def test_a_turn_on_a_new_event_loop_is_not_read_as_stopped(tmp_path):
     models = [s for s in d["steps"] if s["kind"] == "model"]
     assert len(models) == 2 and all(s["turn_id"] for s in models)
     assert {s["turn_id"] for s in models} == {t["turn_id"] for t in d["turns"]}
+
+
+POWERSHELL_NOT_FOUND = (
+    "semgrep : The term 'semgrep' is not recognized as the name of a cmdlet, function, script file, or operable\n"
+    "program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.\n"
+    "    + CategoryInfo          : ObjectNotFound: (semgrep:String) [], CommandNotFoundException\n")
+
+
+@pytest.mark.parametrize("name,code,output,missing", [
+    ("semgrep", 1, POWERSHELL_NOT_FOUND, True),                                       # Windows PowerShell
+    ("gitleaks", 1, "'gitleaks' is not recognized as an internal or external command,", True),  # cmd.exe
+    ("gitleaks", 127, "bash: gitleaks: command not found", True),                     # sh
+    ("gitleaks", 127, "", True),                                                      # the code alone
+    ("trivy", 9009, "", True),                                                        # cmd.exe's code
+    ("pip-audit", 1, "/usr/bin/python3: No module named pip_audit", True),            # python -m
+    ("semgrep", 1, "Ran 312 rules on 40 files: 25 findings.", False),                 # found something
+    ("gitleaks", 1, "leaks found: 2", False),
+    ("semgrep", 2, "semgrep: error: invalid configuration", False),                   # a real failure
+    ("semgrep", 1, "warning: rule 'x' not found in registry", False),                 # names no scanner word with the phrase
+])
+def test_a_scanner_that_is_not_installed_did_not_scan(name, code, output, missing):
+    assert scopes.scanner_not_found({"name": name, "action": "scan"}, code, output) is missing
+
+
+def test_a_missing_scanner_on_windows_reads_as_a_scan_that_did_not_run(tmp_path):
+    """P3B-1: PowerShell exits 1 for an unknown command, the same as semgrep's "found something".
+    The step records no scanner, so "A promised scan did not run" fires instead of nothing."""
+    registry = ToolRegistry()
+
+    def run_shell(command: str) -> dict:
+        """Run a shell command.
+
+        Args:
+            command: the command
+        """
+        return {"exit_code": 1, "output": POWERSHELL_NOT_FOUND}
+
+    registry.register(run_shell, metadata=_Meta())
+    engine = TurnEngine(provider=_Scripted([_call("c1", "run_shell", {"command": "semgrep scan --config auto"}),
+                                            AssistantTurn(text="done", usage=TokenUsage(input=10, output=2))]),
+                        registry=registry,
+                        permissions=PermissionEngine(workspace_root=tmp_path, mode=Mode.BYPASS_APPROVALS),
+                        model="openai:model-x", instructions="test", max_iterations=12)
+    engine.audit_context = {"session_id": "sess_p3b1"}
+    rec = Recorder()
+    engine.recorder = rec
+
+    async def go():
+        return [ev async for ev in engine.run("scan", trigger="user")]
+
+    asyncio.run(go())
+    [step] = [s for s in rec.as_dict()["steps"] if s["kind"] == "tool"]
+    assert step["attrs"]["scanner"] is None and step["attrs"]["exit_code"] == 1
+    fired = scopes.coverage_checks({"promised": ["code"], "steps": [
+        {"id": step["step_id"], "scanner": step["attrs"]["scanner"], "exit_code": step["attrs"]["exit_code"]}]})
+    assert fired == {"scan_missing": [{"area": "code"}]}

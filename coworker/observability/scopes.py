@@ -59,6 +59,27 @@ def scanner_of(command: str) -> Optional[dict[str, str]]:
     return None
 
 
+def scanner_not_found(scanner: Optional[dict], exit_code: Any, output: Any) -> bool:
+    """Whether a shell step that names a scanner only showed the scanner is not installed
+    (signals.yaml `scanners.not_found`, P3B-1): a not-found exit code, or a line of the output
+    that names the scanner's word with a not-found phrase. Then the engine records no scan."""
+    if not scanner:
+        return False
+    rule = _scanners().get("not_found") or {}
+    if exit_code in (rule.get("exit") or []):
+        return True
+    if not isinstance(output, str) or not output:
+        return False
+    sc = (_scanners().get("list") or {}).get(scanner.get("name")) or {}
+    word = str(sc.get("word") or scanner.get("name") or "").lower()
+    words = {word, word.replace("-", "_")} - {""}
+    phrases = [str(p).lower() for p in rule.get("phrases") or []]
+    for line in output.lower().splitlines():
+        if any(w in line for w in words) and any(p in line for p in phrases):
+            return True
+    return False
+
+
 def area_word(area: str) -> str:
     return (_scanners().get("area_words") or {}).get(area, area)
 
