@@ -509,6 +509,13 @@ async def run_joined(
                         if on_welcome is not None:
                             on_welcome(welcome)
                             on_welcome = None
+                        # Turns are stamped with the id the controller knows this machine by.
+                        try:
+                            from ..observability.stamps import note_joined
+
+                            note_joined(controller, str(welcome.get("machine_id") or ""), welcome.get("name"))
+                        except Exception:  # noqa: BLE001 - a stamp never breaks the link
+                            pass
                         if exporter is None:
                             exporter = _build_exporter(state, app, welcome)
                         # The welcome may carry the org policy (hosted controllers);

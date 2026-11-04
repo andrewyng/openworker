@@ -113,6 +113,14 @@ export function TeamEvents({ events, t, onOpenSteps, onOpenBoard }: {
 
 // -- OB-16 ---------------------------------------------------------------------------------------
 
+/** Whether a scanner's non-zero exit means "found something": its own codes from signals.yaml
+ * (`findings_exit`), as the engine sends them. With no codes for it, it is a failure. */
+export function foundSomething(scanner: string | undefined, code: number | null | undefined,
+                               codes?: Record<string, number[]>): boolean {
+  if (!scanner || code == null || code === 0) return false;
+  return (codes?.[scanner] || []).includes(code);
+}
+
 /** "exit 1 (found something)" when the scanner's code means it found something (M3-R9). */
 export function exitText(s: { exit_code: number | null; found_something?: boolean }, t: T): string {
   if (s.exit_code == null) return t("p3.cov.no_exit");
@@ -186,7 +194,7 @@ export function EvidenceBlock({ finding, t, onOpenStep }: { finding: TaskFinding
               <div className="flex-1 min-w-0">
                 <b className="font-medium">{t("p3.ev2.found_by", { turn: turn.seq, step: step.seq ?? "?" })}</b>
                 <div className="font-mono text-muted">
-                  {[sc || step.name, a.exit_code != null ? exitText({ exit_code: a.exit_code, found_something: a.exit_code === 1 && !!sc }, t) : null,
+                  {[sc || step.name, a.exit_code != null ? exitText({ exit_code: a.exit_code, found_something: foundSomething(sc, a.exit_code, finding.findings_exit) }, t) : null,
                     a.result_sha256 ? `output sha256:${String(a.result_sha256).slice(0, 4)}…${String(a.result_sha256).slice(-2)}` : null,
                     step.duration_ms != null ? formatDuration(step.duration_ms) : null].filter(Boolean).join(" · ")}
                 </div>

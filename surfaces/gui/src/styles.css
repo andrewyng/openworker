@@ -2609,6 +2609,7 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-tabs button, .p3-seg button { padding:4px 12px; border-radius:6px; font-size:var(--fs-ui); color:var(--muted); background:none; border:0; cursor:pointer; }
 .p3-tabs button[aria-selected="true"], .p3-seg button[aria-pressed="true"] { background:var(--paper); color:var(--ink); box-shadow:0 0 0 1px var(--line); }
 .p3-seg { display:inline-flex; gap:2px; padding:2px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.p3-select { padding:4px 8px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink); font-size:var(--fs-ui); }
 .p3-tiles { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:10px; margin-bottom:12px; }
 @media (max-width: 760px) { .p3-tiles { grid-template-columns:repeat(2, minmax(0,1fr)); } .p3-two { grid-template-columns:1fr; } }
 .p3-kpi { border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:10px 12px; display:flex; flex-direction:column; gap:2px; min-width:0; }

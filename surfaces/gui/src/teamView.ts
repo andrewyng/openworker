@@ -141,6 +141,8 @@ export interface TaskFinding {
   step_call_id?: string | null;
   fixed_by?: string | null;
   verified_by?: string | null;
+  // each scanner's "found something" exit codes (signals.yaml `scanners`)
+  findings_exit?: Record<string, number[]>;
 }
 export const tokenTotal = (u: TokenKinds) =>
   u.input + u.output + u.cache_read + u.cache_write;

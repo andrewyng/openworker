@@ -2540,3 +2540,29 @@ async def test_offline_machine_serves_its_last_usage_rollup_as_of(tmp_path):
             none = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
                                     params={"group": "day"})
             assert none.status_code == 503
+
+
+async def test_a_joined_machine_stamps_its_turns_with_the_controllers_id(tmp_path, monkeypatch):
+    """Phase 3 V3-17: the machine id on a joined machine's turns (`stamp.machine.id`) is the id
+    the controller lists it under, so the Usage page's machine rows line up with Machines."""
+    from coworker.observability import stamps
+
+    monkeypatch.setattr(stamps, "_machine", {"kind": "this_machine", "id": None, "name": "box", "app_version": "1"})
+    async with _Server(_controller(tmp_path)) as server:
+        join_url = await _arm(server.base)
+        _, token = parse_join_url(join_url)
+        state = tmp_path / "id-state"
+        state.mkdir()
+        task = asyncio.create_task(
+            run_joined(state=state, controller=server.base, name="id-box", token=token,
+                       app=_box_app(tmp_path, "id-data"), once=True, log=lambda *_: None)
+        )
+        try:
+            machines = await _wait_connected(server.base)
+            stamp = stamps.machine_stamp()
+            assert stamp["id"] == machines[0]["id"]
+            assert stamp["kind"] == "own_machine"
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

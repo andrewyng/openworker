@@ -2772,6 +2772,8 @@ class SessionManager:
                     cov[str(item["id"])] = c
             out["coverage"] = cov
             by_session = {team.lead_session: team.lead_actor, **{w.session_id: w.actor for w in team.workers}}
+            codes = {name: list(sc.get("findings_exit") or []) for name, sc in
+                     ((recording_signals.signals().get("scanners") or {}).get("list") or {}).items()}
             for it in out.get("items") or []:
                 c = cov.get(str(it.get("id")))
                 if c is None:
@@ -2790,7 +2792,10 @@ class SessionManager:
                 it["findings"] = [{"id": f["seq"], "severity": f.get("severity"), "evidence": f.get("evidence") or [],
                                    "step_call_id": f.get("step_call_id"), "session_id": f.get("session_id"),
                                    "author": f.get("author"), "fixed_by": fix.get("fixed_by"),
-                                   "verified_by": fix.get("verified_by")} for f in c["findings"]]
+                                   "verified_by": fix.get("verified_by"),
+                                   # each scanner's "found something" exit codes (signals.yaml),
+                                   # so the card words a non-zero exit right (M3-R9)
+                                   "findings_exit": codes} for f in c["findings"]]
         except Exception:  # noqa: BLE001 - the split never hides the rest of the summary
             logger.exception("could not work out team %s wakes", team_id)
             out.setdefault("wakes", [])
@@ -6955,14 +6960,15 @@ class SessionManager:
         out["automations"] = tasks
         return out
 
-    def usage_heaviest(self, *, start: int, end: int, limit: int = 20) -> dict[str, Any]:
+    def usage_heaviest(self, *, start: int, end: int, limit: int = 20,
+                       persona_id: Optional[str] = None) -> dict[str, Any]:
         out = usage_api.heaviest(self.recordings_store, start=start, end=end, limit=limit,
-                                 title_of=self.session_store.display_title)
+                                 title_of=self.session_store.display_title, persona_id=persona_id)
         out["names"] = self.usage_names()
         return out
 
-    def usage_approver(self, *, start: int, end: int) -> dict[str, Any]:
-        return usage_api.approver(self.recordings_store, start=start, end=end)
+    def usage_approver(self, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
+        return usage_api.approver(self.recordings_store, start=start, end=end, persona_id=persona_id)
 
     def current_persona_fp(self, persona_id: str) -> Optional[str]:
         """The coworker's fingerprint now, worked out as the session build does (E16)."""

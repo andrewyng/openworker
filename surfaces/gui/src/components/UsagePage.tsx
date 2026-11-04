@@ -52,23 +52,37 @@ export interface UsageData {
   machines: MachineRow[];
 }
 
+/** The coworkers of the period for the picker: each id once, by its name (M3-R1), A to Z. */
+export function coworkerChoices(r: UsageRollup | null | undefined): { id: string; name: string }[] {
+  const names = r?.names || {};
+  const ids = new Set<string>();
+  for (const g of r?.groups || []) {
+    const id = g.key.persona_id as string | null;
+    if (id) ids.add(id);
+  }
+  return [...ids].map((id) => ({ id, name: names[id] || id })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 const sumAll = (r: UsageRollup | null | undefined): RollupGroup | null =>
   r && r.groups.length ? r.groups[0] : null;
 
 /** Everything the page shows, for one period: one call per grouping, each to the machine
  * that ran the work. Remote machines answer through the controller's proxy. */
-export async function loadUsage(period: Period, now = new Date()): Promise<UsageData> {
+export async function loadUsage(period: Period, now = new Date(), personaId: string | null = null): Promise<UsageData> {
   const days = localDays(period, now);
   const from = days[0][1];
   const to = days[days.length - 1][2];
   const prevDays = previousDays(days);
+  // One coworker, when picked: every number on the page narrows to its turns. The By
+  // coworker table keeps listing all of them, so the picker always has its choices.
+  const who = personaId ? { persona_id: personaId } : {};
   const [total, prev, dayPurpose, coworkers, heavy, approver, fleet] = await Promise.all([
-    getUsageRollup({ from, to, group: "all" }),
-    getUsageRollup({ from: prevDays[0][1], to: prevDays[prevDays.length - 1][2], group: "all" }).catch(() => null),
-    getUsageRollup({ from, to, days, group: "day,purpose" }),
+    getUsageRollup({ from, to, group: "all", ...who }),
+    getUsageRollup({ from: prevDays[0][1], to: prevDays[prevDays.length - 1][2], group: "all", ...who }).catch(() => null),
+    getUsageRollup({ from, to, days, group: "day,purpose", ...who }),
     getUsageRollup({ from, to, group: "persona_id,task_id" }),
-    getHeaviestTurns(from, to).then((r) => r.turns).catch(() => [] as HeavyTurn[]),
-    getApproverStrip(from, to).catch(() => null),
+    getHeaviestTurns(from, to, null, 20, personaId).then((r) => r.turns).catch(() => [] as HeavyTurn[]),
+    getApproverStrip(from, to, null, personaId).catch(() => null),
     getMachines().then((r) => r.machines || []).catch(() => [] as Machine[]),
   ]);
   const here = sumAll(total);
@@ -78,7 +92,7 @@ export async function loadUsage(period: Period, now = new Date()): Promise<Usage
   const remote = await Promise.all(
     fleet.map(async (m): Promise<MachineRow> => {
       try {
-        const r = await getUsageRollup({ from, to, group: "all" }, m.id);
+        const r = await getUsageRollup({ from, to, group: "all", ...who }, m.id);
         const g = sumAll(r);
         return {
           id: m.id, name: m.name, total: g?.total ?? 0, at_least: (g?.unreported ?? 0) > 0,
@@ -95,19 +109,21 @@ export async function loadUsage(period: Period, now = new Date()): Promise<Usage
 export function UsagePage({ onOpenTurn }: { onOpenTurn?: (sessionId: string, turnId: string) => void }) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>("7d");
+  const [persona, setPersona] = useState<string | null>(null);
   const [data, setData] = useState<UsageData | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     let live = true;
     setError(false);
-    loadUsage(period)
+    loadUsage(period, new Date(), persona)
       .then((d) => live && setData(d))
       .catch(() => live && setError(true));
     return () => {
       live = false;
     };
-  }, [period]);
+  }, [period, persona]);
+  const choices = data ? coworkerChoices(data.coworkers) : [];
 
   return (
     <div data-testid="usage-page">
@@ -119,6 +135,19 @@ export function UsagePage({ onOpenTurn }: { onOpenTurn?: (sessionId: string, tur
             </button>
           ))}
         </div>
+        <select
+          className="p3-select"
+          data-testid="usage-coworker"
+          aria-label={t("p3.usage.coworker_filter")}
+          value={persona || ""}
+          onChange={(e) => setPersona(e.target.value || null)}
+        >
+          <option value="">{t("p3.usage.all_coworkers")}</option>
+          {choices.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+          {persona && !choices.some((c) => c.id === persona) && <option value={persona}>{persona}</option>}
+        </select>
       </div>
       {error ? (
         <div className={CARD + " p-4 text-ui text-muted"}>{t("p3.usage.load_error")}</div>

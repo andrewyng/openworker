@@ -64,11 +64,13 @@ def rollup(store: Any, *, start: int, end: int, group: list[str], days: Optional
 
 
 def heaviest(store: Any, *, start: int, end: int, limit: int = 20,
-             title_of: Optional[Callable[[str], Optional[str]]] = None) -> dict[str, Any]:
+             title_of: Optional[Callable[[str], Optional[str]]] = None,
+             persona_id: Optional[str] = None) -> dict[str, Any]:
     """`GET /v1/observability/turns?order=tokens`: the heaviest turns of the period. Each names
     its turn (`seq`, M3-R2), says when it was found open after a crash (M3-R3), and lists its
     warning checks. A deleted session's turn has no title and no link."""
-    turns = sorted(store.usage_turns(start, end), key=lambda t: (-t["total"], t["started_at"]))[: max(1, min(limit, 100))]
+    where = {"persona_id": persona_id} if persona_id else None
+    turns = sorted(store.usage_turns(start, end, where=where), key=lambda t: (-t["total"], t["started_at"]))[: max(1, min(limit, 100))]
     seqs = store.turn_seqs([t["turn_id"] for t in turns]) if turns else {}
     out = []
     for t in turns:
@@ -91,12 +93,12 @@ def heaviest(store: Any, *, start: int, end: int, limit: int = 20,
 ASKED = ("unsure", "context_changed", "could_not_run")
 
 
-def approver(store: Any, *, start: int, end: int) -> dict[str, Any]:
+def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
     """`GET /v1/observability/approver`: the Auto-approve strip (§7.3). Live checks by result
     (asked you includes could-not-run: the card falls back to asking), overridden tool
     steps, the median check time, and the checks' tokens with shadow checks included, as
     the pill counts them. One line per reviewer kind used in the period."""
-    steps = store.approver_steps(start, end)
+    steps = store.approver_steps(start, end, persona_id=persona_id)
     live = [s for s in steps if s["kind"] == "auto_approver" and not s["shadow"] and s["parent_step_id"] is None]
     shadow = [s for s in steps if s["kind"] == "auto_approver" and s["shadow"]]
     overridden = sum(1 for s in steps if s["kind"] == "tool" and any(
@@ -112,7 +114,8 @@ def approver(store: Any, *, start: int, end: int) -> dict[str, Any]:
     by_kind: dict[str, list] = {}
     for s in live:
         by_kind.setdefault((s["attrs"].get("reviewer") or {}).get("kind") or "unknown", []).append(s)
-    tokens = sum(g["total"] for g in store.usage_rollup(["purpose"], start, end)
+    tokens = sum(g["total"] for g in store.usage_rollup(["purpose"], start, end,
+                                                        where={"persona_id": persona_id} if persona_id else None)
                  if g["key"]["purpose"] == "auto_approver")
     return {**counts(live), "overridden": overridden, "tokens": tokens, "shadow_checks": len(shadow),
             "by_reviewer": [{"kind": k, **counts(v)} for k, v in sorted(by_kind.items())],

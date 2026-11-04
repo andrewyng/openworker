@@ -177,7 +177,14 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId, onOpenRunSte
               onClick={() => setOpenId(task.id)}
             >
               <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-ui font-semibold truncate">{task.title}</span>
+                <span className="text-ui font-semibold truncate">
+                  {task.title}
+                  {task.machine_name && (
+                    <span className="text-meta text-muted font-normal" data-testid="automation-machine">
+                      {" · "}{t("p3.runs.on_machine", { name: task.machine_name })}
+                    </span>
+                  )}
+                </span>
                 <button
                   className="sched-card-del"
                   title={t("automations.delete_title")}

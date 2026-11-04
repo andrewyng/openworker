@@ -3064,6 +3064,9 @@ export interface Automation {
   // without asking. `entry` is the raw record entry — the revoke handle; `target` is
   // null for legacy name-only entries.
   always_allowed: { entry: string; tool: string; target: string | null }[];
+  // Phase 3 (E26c): a joined machine's automation, listed beside this machine's.
+  machine_id?: string | null;
+  machine_name?: string;
 }
 
 export interface AutomationRun {
@@ -3099,9 +3102,43 @@ export interface FailedInARow {
   turn_id?: string | null;
 }
 
+// Phase 3 (E26c, V3-16): automations live on the machine that runs them. The list joins this
+// machine's with each joined machine's (through the controller's proxy), and every
+// automation call goes to the machine its task came from, as sessions do.
+const automationMachines = new Map<string, string>();
+const automationBase = (id: string): string => engineBase(automationMachines.get(id) ?? null);
+export function machineOfAutomation(id: string): string | null {
+  return automationMachines.get(id) ?? null;
+}
+
+async function machineAutomations(m: Machine): Promise<Automation[]> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 4000); // an offline machine must not hold the list
+  try {
+    const res = await fetch(`${engineBase(m.id)}/v1/automations`, { signal: ctl.signal });
+    if (!res.ok) return [];
+    const tasks: Automation[] = (await res.json()).tasks ?? [];
+    return tasks.map((t) => ({ ...t, machine_id: m.id, machine_name: m.name }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getAutomations(): Promise<Automation[]> {
   const res = await fetch(`${httpBase()}/v1/automations`);
-  return (await res.json()).tasks ?? [];
+  const local: Automation[] = (await res.json()).tasks ?? [];
+  let machines: Machine[] = [];
+  try {
+    machines = ((await getMachines()).machines || []).filter((m) => m.connected);
+  } catch {
+    machines = [];
+  }
+  const remote = (await Promise.all(machines.map(machineAutomations))).flat();
+  for (const t of local) automationMachines.delete(t.id);
+  for (const t of remote) if (t.machine_id) automationMachines.set(t.id, t.machine_id);
+  return [...local, ...remote];
 }
 
 // Fired after any automation mutation the sidebar should reflect immediately
@@ -3144,7 +3181,7 @@ export function connectEvents(
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${httpBase()}/v1/automations/${id}/seen`, { method: "POST" });
+  const res = await fetch(`${automationBase(id)}/v1/automations/${id}/seen`, { method: "POST" });
   return res.json();
 }
 
@@ -3167,12 +3204,17 @@ export async function createAutomation(payload: {
 }
 
 export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
-  return res.json();
+  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`);
+  const body = await res.json();
+  // A remote automation's run sessions live on its machine: route them there.
+  const mid = automationMachines.get(id) ?? null;
+  for (const r of body.runs || []) if (r.session_id) registerSessionMachine(r.session_id, mid);
+  if (body.task && mid) body.task = { ...body.task, machine_id: mid };
+  return body;
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
@@ -3181,7 +3223,7 @@ export async function updateAutomation(id: string, changes: Record<string, any>)
 }
 
 export async function deleteAutomation(id: string) {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
   return res.json();
 }
 
@@ -3197,14 +3239,16 @@ export interface PreparedRun {
 
 /** Prepare a live manual run: returns the session to open + the opening prompt to send. */
 export async function runAutomation(id: string): Promise<PreparedRun> {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
-  return res.json();
+  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
+  const body = await res.json();
+  if (body?.session_id) registerSessionMachine(body.session_id, automationMachines.get(id) ?? null);
+  return body;
 }
 
 /** Mark a manual run complete after its first turn finished. */
 export async function finalizeAutomationRun(id: string, runId: string) {
   const res = await fetch(
-    `${httpBase()}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
+    `${automationBase(id)}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
     { method: "POST" },
   );
   return res.json();
@@ -4668,8 +4712,10 @@ export interface HeavyTurn {
   task_id?: string | null;
 }
 
-export async function getHeaviestTurns(from: number, to: number, machineId?: string | null, limit = 20): Promise<{ turns: HeavyTurn[]; names?: Record<string, string> }> {
+export async function getHeaviestTurns(from: number, to: number, machineId?: string | null, limit = 20,
+                                       personaId?: string | null): Promise<{ turns: HeavyTurn[]; names?: Record<string, string> }> {
   const p = new URLSearchParams({ from: String(from), to: String(to), order: "tokens", limit: String(limit) });
+  if (personaId) p.set("persona_id", personaId);
   const res = await fetch(`${engineBase(machineId)}/v1/observability/turns?${p}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -4691,8 +4737,10 @@ export interface ApproverStrip extends ApproverCounts {
   shown: boolean;
 }
 
-export async function getApproverStrip(from: number, to: number, machineId?: string | null): Promise<ApproverStrip> {
-  const res = await fetch(`${engineBase(machineId)}/v1/observability/approver?from=${from}&to=${to}`);
+export async function getApproverStrip(from: number, to: number, machineId?: string | null,
+                                       personaId?: string | null): Promise<ApproverStrip> {
+  const who = personaId ? `&persona_id=${encodeURIComponent(personaId)}` : "";
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/approver?from=${from}&to=${to}${who}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

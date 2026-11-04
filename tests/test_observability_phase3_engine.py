@@ -371,3 +371,21 @@ def test_the_wake_cap_event_wakes_nobody_and_deferrals_are_recorded(tmp_path):
     assert wake["board_seq"] == caps[0]["seq"]
     assert manager._team_stamp("w-s") == {"team_id": team.team_id, "role": "worker"}
     manager.observability.close()
+
+
+def test_a_turn_on_a_new_event_loop_is_not_read_as_stopped(tmp_path):
+    """Two turns of one engine on two event loops (each test-client socket has its own): the
+    second turn's answer and its model call stay in that turn (gate 1)."""
+    engine, rec = _engine(tmp_path, [AssistantTurn(text="one", usage=TokenUsage(input=10, output=2)),
+                                     AssistantTurn(text="two", usage=TokenUsage(input=10, output=3))])
+
+    async def go(text):
+        return [ev async for ev in engine.run(text, trigger="user")]
+
+    asyncio.run(go("first"))
+    asyncio.run(go("second"))
+    d = rec.as_dict()
+    assert [m.get("content") for m in engine.messages if m.get("role") == "assistant"] == ["one", "two"]
+    models = [s for s in d["steps"] if s["kind"] == "model"]
+    assert len(models) == 2 and all(s["turn_id"] for s in models)
+    assert {s["turn_id"] for s in models} == {t["turn_id"] for t in d["turns"]}

@@ -642,6 +642,21 @@ class TurnEngine:
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
+    def _reset_cancel(self) -> None:
+        """A new turn starts not stopped. The Stop flag is an asyncio.Event, which belongs to
+        the event loop that first waited on it; a turn running on another loop (each test
+        client socket has its own) could not wait on the old one: the wait failed at once,
+        the stream was read as stopped, and the turn ended with an empty answer while its
+        model call went on outside it. So a turn on a new loop gets a new flag."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and getattr(self._cancel, "_loop", None) not in (None, loop):
+            self._cancel = asyncio.Event()
+        else:
+            self._cancel.clear()
+
     def request_interrupt(self) -> None:
         """Stop the turn as soon as possible, from ANY state: mid-stream (the producer
         thread drops the stream between chunks), mid-tool (interrupt hooks kill the
@@ -1050,7 +1065,7 @@ class TurnEngine:
         if activity:
             message["_activity"] = activity
         self._add_message(message)
-        self._cancel.clear()
+        self._reset_cancel()
         if not self._dangerous_warned:
             if self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS:
                 # Once per engine: the name is the warning, and the transcript keeps it.
@@ -1171,7 +1186,7 @@ class TurnEngine:
         is the intended recovery path (owner-hit 2026-07-23)."""
         if not self._tail_is_retriable_error():
             return
-        self._cancel.clear()
+        self._reset_cancel()
         yield Event(EventType.TURN_START, {"input": ""})
         async for event in self._start_sandbox():
             yield event
@@ -1244,7 +1259,7 @@ class TurnEngine:
         pending = self._unanswered_trailing_tool_calls()
         if not pending:
             return
-        self._cancel.clear()
+        self._reset_cancel()
         self._yield_for_wake = False
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):

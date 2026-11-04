@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "i18next";
 import type { TeamWake } from "../teamView";
-import { CoverageBlock, eventText, exitText, TeamEvents, WakeSplit } from "./TeamPhase3";
+import { CoverageBlock, eventText, exitText, foundSomething, TeamEvents, WakeSplit } from "./TeamPhase3";
 
 afterEach(cleanup);
 const t = i18n.t.bind(i18n) as any;
@@ -61,5 +61,17 @@ describe("CoverageBlock", () => {
     expect(text).toContain("Maya turn 3, step 9");
     expect(text).toContain("no secret scan ran");
     expect(text).toContain("no secret problems were found");
+  });
+});
+
+describe("foundSomething", () => {
+  it("reads each scanner's own codes: gitleaks exit 1 found something, trivy exit 1 failed (M3-R9)", () => {
+    const codes = { gitleaks: [1], "npm-audit": [1], trivy: [] };
+    expect(foundSomething("gitleaks", 1, codes)).toBe(true);
+    expect(foundSomething("trivy", 1, codes)).toBe(false);
+    expect(foundSomething("gitleaks", 126, codes)).toBe(false);
+    expect(foundSomething("gitleaks", 0, codes)).toBe(false);
+    expect(foundSomething(undefined, 1, codes)).toBe(false);
+    expect(foundSomething("gitleaks", 1, undefined)).toBe(false);
   });
 });

@@ -3908,6 +3908,8 @@
   },
   "p3": {
     "usage": {
+      "all_coworkers": "All coworkers",
+      "coworker_filter": "Show one coworker",
       "tab_log": "Log",
       "tab_usage": "Usage",
       "sub": "Tokens your coworkers used, by day, coworker and machine. Waiting for you is never counted as work.",
@@ -4131,6 +4133,7 @@
       "self_verified": "Verified by {{who}}, the worker that made the fix"
     },
     "runs": {
+      "on_machine": "on {{name}}",
       "failed_in_a_row_one": "Failed {{count}} run in a row.",
       "failed_in_a_row_other": "Failed {{count}} runs in a row.",
       "last_error": "Last error: {{error}}",

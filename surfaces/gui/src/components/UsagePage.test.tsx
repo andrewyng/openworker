@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "i18next";
-import { ApproverStripView, coworkerTable, UsageBody, type UsageData } from "./UsagePage";
+import { ApproverStripView, coworkerChoices, coworkerTable, loadUsage, UsageBody, type UsageData } from "./UsagePage";
 import type { UsageRollup } from "../api";
 
 afterEach(cleanup);
@@ -97,5 +97,33 @@ describe("ApproverStripView", () => {
     expect(text).toContain("incl. 2 shadow checks");
     expect(text).toContain("Auto-approve");
     expect(text).not.toContain("Safety reviewer");
+  });
+});
+
+describe("one coworker", () => {
+  it("lists each coworker of the period once, by name", () => {
+    const r = rollup([group({ persona_id: "sec", task_id: null }, 5), group({ persona_id: "sec", task_id: "t1" }, 1),
+      group({ persona_id: "cowork", task_id: null }, 3), group({ persona_id: null, task_id: null }, 1)],
+      { names: { sec: "Security Coworker", cowork: "OpenWorker" } });
+    expect(coworkerChoices(r)).toEqual([{ id: "cowork", name: "OpenWorker" }, { id: "sec", name: "Security Coworker" }]);
+  });
+
+  it("narrows every call but the coworker list to the picked coworker", async () => {
+    const urls: string[] = [];
+    const fetchMock = vi.fn(async (u: string) => {
+      urls.push(String(u));
+      const body = String(u).includes("/machines") ? { machines: [] } : String(u).includes("/turns") ? { turns: [] }
+        : String(u).includes("/approver") ? { shown: false } : { groups: [], no_turn: { calls: 0, total: 0 }, not_checked: 0, kept_from: null };
+      return { ok: true, json: async () => body } as any;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await loadUsage("7d", new Date(2026, 10, 4, 12), "sec");
+    vi.unstubAllGlobals();
+    const usage = urls.filter((u) => u.includes("/observability/"));
+    const narrowed = usage.filter((u) => u.includes("persona_id=sec"));
+    const list = usage.filter((u) => u.includes("group=persona_id%2Ctask_id"));
+    expect(list).toHaveLength(1);
+    expect(list[0]).not.toContain("persona_id=sec");
+    expect(narrowed).toHaveLength(usage.length - 1);
   });
 });

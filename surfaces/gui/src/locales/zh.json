@@ -3851,6 +3851,8 @@
   },
   "p3": {
     "usage": {
+      "all_coworkers": "所有同事",
+      "coworker_filter": "只看一个同事",
       "tab_log": "日志",
       "tab_usage": "用量",
       "sub": "同事们用了多少令牌,按天、同事和机器分。等你回复的时间从不算作工作。",
@@ -4065,6 +4067,7 @@
       "self_verified": "由 {{who}} 验证,也就是修复者本人"
     },
     "runs": {
+      "on_machine": "在 {{name}} 上",
       "failed_in_a_row_other": "连续 {{count}} 次运行失败。",
       "last_error": "最近的错误:{{error}}",
       "unknown_error": "未知",

@@ -59,14 +59,18 @@ def test_a_user_turn_records_wake_and_persona_and_validates_as_1_3(tmp_path):
 
 
 def test_the_ledger_equals_the_pill_and_the_endpoints_add_up(tmp_path):
-    # One turn per session: two turns sent back to back over the test client sometimes record
-    # the second turn's end before its model call (seen on the base branch too; a Phase 1
-    # finding in the build notes), which would leave that call outside every turn.
+    # Two turns back to back in one session: each test-client socket runs on its own event
+    # loop, which once left the second turn's model call outside its turn (gate 1 broke).
     manager, client = _app(tmp_path)
-    _turn(client, "s1")
+    for _ in range(3):
+        _turn(client, "s1")
+        _turn(client, "s1", "again")
     _turn(client, "s2")
     _turn(client, "s3")
     pills = {sid: client.get(f"/v1/sessions/{sid}/usage").json()["pill"] for sid in ("s1", "s2", "s3")}
+    stray = manager.recordings_store._conn.execute(
+        "SELECT COUNT(*) FROM steps WHERE kind = 'model' AND turn_id IS NULL").fetchone()[0]
+    assert stray == 0
     t0 = min(t["started_at"] for t in manager.recordings_store.usage_turns(0, 2**62)) - 1000
     days = _days(t0, 2)
     r = client.get("/v1/observability/rollup", params={"from": t0, "to": t0 + 2 * DAY, "days": days,
@@ -75,14 +79,14 @@ def test_the_ledger_equals_the_pill_and_the_endpoints_add_up(tmp_path):
     assert by_session == pills
     total = client.get("/v1/observability/rollup", params={"from": t0, "to": t0 + 2 * DAY}).json()
     assert total["groups"][0]["total"] == sum(pills.values())
-    assert total["groups"][0]["turns"] == 3 and total["not_checked"] == 0
+    assert total["groups"][0]["turns"] == 8 and total["not_checked"] == 0
     assert total["kept_from"] is not None and total["no_turn"] == {"calls": 0, "total": 0}
     # day x purpose adds up to the day, and the days to the total (gate 1)
     dp = client.get("/v1/observability/rollup", params={"days": days, "group": "day,purpose"}).json()
     assert sum(g["total"] for g in dp["groups"]) == sum(pills.values())
     heavy = client.get("/v1/observability/turns", params={"from": t0, "to": t0 + 2 * DAY}).json()["turns"]
     assert [t["total"] for t in heavy] == sorted((t["total"] for t in heavy), reverse=True)
-    assert {t["seq"] for t in heavy} == {1} and len(heavy) == 3
+    assert sorted(t["seq"] for t in heavy if t["session_id"] == "s1") == [1, 2, 3, 4, 5, 6]
     assert client.get("/v1/observability/approver", params={"from": t0, "to": t0 + DAY}).json()["shown"] is False
     assert client.get("/v1/observability/rollup", params={"group": "day"}).status_code == 400
 
@@ -138,3 +142,16 @@ def test_the_coworker_page_rows_split_by_fingerprint(tmp_path):
     # the version was kept with its name and files
     versions = manager.recordings_store.persona_versions(pid)
     assert versions and versions[0]["fp"] == row["fp"] and "manifest.md" in versions[0]["files"]
+
+
+def test_the_usage_endpoints_narrow_to_one_coworker(tmp_path):
+    manager, client = _app(tmp_path)
+    _turn(client, "s1")
+    pid = manager.session_store.agent_of("s1")
+    params = {"from": 0}
+    mine = client.get("/v1/observability/rollup", params={**params, "persona_id": pid}).json()
+    other = client.get("/v1/observability/rollup", params={**params, "persona_id": "nobody"}).json()
+    assert mine["groups"][0]["turns"] == 1 and other["groups"] == []
+    assert len(client.get("/v1/observability/turns", params={**params, "persona_id": pid}).json()["turns"]) == 1
+    assert client.get("/v1/observability/turns", params={**params, "persona_id": "nobody"}).json()["turns"] == []
+    assert client.get("/v1/observability/approver", params={**params, "persona_id": "nobody"}).json()["checks"] == 0

@@ -864,7 +864,7 @@ class RecordingStore:
             row = self._conn.execute("SELECT MIN(started_at) AS m FROM turn_usage").fetchone()
         return row["m"]
 
-    def approver_steps(self, start: int, end: int) -> list[dict[str, Any]]:
+    def approver_steps(self, start: int, end: int, *, persona_id: Optional[str] = None) -> list[dict[str, Any]]:
         """The auto-approver checks, and the tool steps a person let through anyway, of turns
         that started in the period (the Auto-approve strip, section 7.3). Steps, not the ledger:
         the strip reads Phase 1 fields that only steps hold."""
@@ -873,8 +873,11 @@ class RecordingStore:
             rows = self._conn.execute(
                 "SELECT s.kind, s.shadow, s.duration_ms, s.attrs, s.parent_step_id FROM steps s "
                 "JOIN turns t ON t.turn_id = s.turn_id WHERE t.started_at >= ? AND t.started_at < ? "
-                "AND (s.kind = 'auto_approver' OR (s.kind = 'tool' AND s.attrs LIKE '%allow_anyway%'))",
-                (start, end)).fetchall()
+                "AND (s.kind = 'auto_approver' OR (s.kind = 'tool' AND s.attrs LIKE '%allow_anyway%'))"
+                # one coworker: by the ledger's coworker id, which stands in for 1.2 turns
+                + (" AND EXISTS (SELECT 1 FROM turn_usage u WHERE u.turn_id = t.turn_id AND u.persona_id = ?)"
+                   if persona_id else ""),
+                (start, end, persona_id) if persona_id else (start, end)).fetchall()
         return [{"kind": r["kind"], "shadow": bool(r["shadow"]), "duration_ms": r["duration_ms"],
                  "parent_step_id": r["parent_step_id"], "attrs": json.loads(r["attrs"] or "{}")} for r in rows]
 

@@ -38,6 +38,18 @@ def app_version_or_unknown() -> str:
     return "unknown" if (not v or v == "0.0.0") else v
 
 
+def note_joined(controller: str, machine_id: str, name: Optional[str] = None) -> None:
+    """The controller welcomed this machine: from now on its turns are stamped with the id the
+    controller knows it by (`machines.id`), whatever was read before. So the Usage page's
+    machine rows match the controller's list (Phase 3 V3-17), even for a process that stamped
+    turns before it joined, or one whose state folder is not the default."""
+    global _machine
+    stamp = machine_stamp()
+    with _machine_lock:
+        _machine = {**stamp, "kind": machine_kind(controller), "id": machine_id or None,
+                    "name": name or stamp.get("name")}
+
+
 def machine_stamp() -> dict[str, Any]:
     """Where this server runs: read once per process."""
     global _machine
