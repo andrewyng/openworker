@@ -97,3 +97,19 @@ The original comparison routes remain outside navigation and the search/sitemap:
 `/docs/sdk/previews/desktop/apple/` and `/docs/sdk/previews/desktop/notion/`.
 Studio was selected and applied to all SDK guides; Editorial remains a reference.
 The previews share the same content, tabs and source explorer.
+
+## Read-only source workspace
+
+The source drawer uses a collapsible, keyboard-navigable folder tree and a
+CodeMirror 6 viewer. The editor is dynamically imported only when the drawer
+opens; language support is loaded on demand. It provides syntax highlighting,
+line numbers, folding, find-in-file, selectable text and a wrapping toggle.
+Copying uses the exact manifest content, not the rendered/virtualized DOM.
+
+`src/lib/source-tree.mjs` owns hierarchy/filtering/language selection;
+`src/scripts/source-editor.ts` owns read-only editor configuration;
+`src/scripts/source-explorer.ts` owns interaction/lifecycle. Editor views are
+destroyed when the dialog closes. A plain-text fallback remains if a viewer chunk
+cannot load. The source allowlist remains authoritative; no repository scanning
+or server-side file access is added. CodeMirror is a docs dependency, not a Rust
+SDK or runtime dependency.

@@ -1,8 +1,25 @@
 ---
 const {title="Example source"}=Astro.props;
+import '../styles/source-explorer.css';
 ---
- <dialog id="example-source-drawer" aria-labelledby="example-source-title">
-  <header class="source-header"><div><span class="source-label">EXAMPLE SOURCE</span><h2 id="example-source-title">{title}</h2></div><button type="button" data-source-close aria-label="Close source code">×</button></header>
-  <div class="source-body"><nav aria-label="Example files" data-source-files></nav><section class="source-view" aria-label="Selected source file"><div class="source-toolbar"><span data-source-path></span><button type="button" data-source-copy>Copy</button></div><pre tabindex="0"><code data-source-content></code></pre></section></div>
-  <p class="source-status" role="status" data-source-status></p>
- </dialog>
+<dialog id="example-source-drawer" aria-labelledby="example-source-title">
+ <header class="source-header">
+  <div class="source-identity"><span class="source-project-icon" aria-hidden="true">〈/〉</span><div><h2 id="example-source-title">{title}</h2><span class="source-label">Example source</span></div></div>
+  <button class="source-close" type="button" data-source-close aria-label="Close source code"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 10"/></svg></button>
+ </header>
+ <div class="source-body">
+  <aside class="source-sidebar" aria-label="Project files">
+   <div class="source-tree-heading"><span>Files</span><span data-source-count></span></div>
+   <label class="source-filter"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input type="search" placeholder="Find a file…" aria-label="Find an example file"/></label>
+   <div role="tree" aria-label="Example files" data-source-files></div>
+   <p class="source-no-files" hidden>No matching files.</p>
+  </aside>
+  <section class="source-view" aria-label="Selected source file">
+   <div class="source-toolbar"><div class="source-breadcrumb" data-source-path></div><div class="source-actions"><button type="button" data-source-wrap aria-pressed="true" disabled>Wrap</button><button type="button" data-source-find disabled>Find</button><button type="button" data-source-copy disabled>Copy</button></div></div>
+   <div class="source-editor" data-source-editor></div>
+   <pre class="source-fallback" hidden tabindex="0"><code data-source-content></code></pre>
+   <footer class="source-file-meta"><span data-source-meta></span><span>Read only</span></footer>
+  </section>
+ </div>
+ <p class="source-status" role="status" data-source-status></p>
+</dialog>
