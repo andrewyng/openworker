@@ -15,7 +15,7 @@ Choose a code directory, review the selected files and stream a guide to its pur
 
 ## The basic flow
 
-Start the harness → configure a model → create an agent → start a session → stream a run.
+Start the harness in your app → configure a model → create an agent → start a session → stream a run.
 
 | Concept | What it does in your app |
 | --- | --- |
@@ -24,7 +24,9 @@ Start the harness → configure a model → create an agent → start a session 
 | Session | Keeps the conversation for one code summary. |
 | Run | Processes a message and produces events plus a final result. |
 
-Your desktop app owns the window and directory picker. The TypeScript SDK manages a Rust child process; a Rust app can embed the harness.
+Your desktop app owns the window and directory picker. TypeScript starts the
+harness as a managed Rust child process. Rust can run it in-process. In either
+case, your application manages its lifecycle.
 The app supplies the source text, so this example's agent needs no tools.
 
 ## Build with your coding agent
@@ -73,11 +75,12 @@ complete application files.
 
 <!-- sdk-source: desktop -->
 
-## Start the harness
+## Start the harness in your app
 
-The complete UI uses Electron and the TypeScript SDK. The Rust tab shows the same
-agent lifecycle for an application embedding the harness; its runnable native
-counterpart is also included in the examples directory.
+The complete UI uses Electron and the TypeScript SDK, which starts a managed
+Rust child process. The Rust tab starts an in-process harness. Your application
+manages the harness lifecycle in either case; both runnable examples are included
+in the examples directory.
 
 <!-- sdk-tabs -->
 
