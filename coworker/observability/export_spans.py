@@ -805,8 +805,9 @@ def langfuse_score(fb: dict[str, Any], *, sw: dict[str, bool], masker: Masker) -
                             "name": FEEDBACK_SCORE, "value": 1 if fb["rating"] == "up" else -1,
                             "dataType": "NUMERIC", "metadata": {"reasons": list(fb.get("reasons") or [])}}
     note = (fb.get("content") or {}).get("note")
-    if note and sw.get("prompts"):
-        body["comment"] = cut(masker.clean(note))
+    # Always sent, empty when there is no note to send: Langfuse merges a score sent again
+    # under the same id, so a left-out comment would keep an earlier rating's note there.
+    body["comment"] = cut(masker.clean(note)) if note and sw.get("prompts") else ""
     return body
 
 

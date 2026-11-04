@@ -291,7 +291,8 @@ def test_ratings_go_out_as_a_langfuse_score_and_an_otlp_span(tmp_path):
             assert fb[0][0] == "http://lf.test/api/public/scores"
             assert body["name"] == "user_feedback" and body["value"] == -1
             assert body["id"] == spans.feedback_id("T1") and body["traceId"] == spans.trace_id("T1")
-            assert body["metadata"] == {"reasons": ["did_unasked"]} and "comment" not in body
+            # the note stays out without capture.prompts, and an empty comment replaces an earlier one
+            assert body["metadata"] == {"reasons": ["did_unasked"]} and body["comment"] == ""
         else:
             span = fb[0][1]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
             attrs = {a["key"]: a["value"] for a in span["attributes"]}
