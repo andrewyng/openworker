@@ -12,6 +12,7 @@
   "dependencies": {
     "@astrojs/starlight": "^0.36.0",
     "astro": "^5.6.0",
-    "yaml": "^2.4.0"
+    "yaml": "^2.4.0",
+    "@astrojs/markdown-remark": "6.3.11"
   }
 }

@@ -67,3 +67,22 @@ For skill-install commands, use `<!-- sdk-install-tabs -->` with `### Codex` and
 as a compact, neutral command panel. Set `frame="none"` on the shell fences to
 omit decorative terminal title bars. The coding-agent selection is independent
 of the TypeScript/Rust selection; both alternatives stay readable on GitHub.
+
+## Desktop design previews (not rolled out)
+
+Two isolated routes render the same prepared Desktop Markdown with custom Astro
+layouts, without importing or modifying the Starlight theme:
+
+- `/docs/sdk/previews/desktop/apple/` — Studio: soft blue introduction, stronger hierarchy and light code surfaces.
+- `/docs/sdk/previews/desktop/notion/` — Editorial: white canvas, compact navigation and a restrained article layout.
+
+`src/lib/desktop-preview.mjs` reads the generated Markdown, separates its first
+sentence into the page header, and renders the rest with light syntax highlighting.
+The guide source, tested SDK programs and existing docs routes stay unchanged.
+`src/layouts/DesktopPreview.astro` supplies the two visual treatments. Shared
+language/installer tabs and the source explorer retain their existing behavior;
+preview-only code copying, navigation filtering and section tracking live in
+`src/scripts/desktop-preview.ts`. The preview pages are marked noindex.
+
+These routes are for design review. Do not roll either layout across the docs
+until a direction is selected. Build with the normal `npm run build` command.
