@@ -505,7 +505,7 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
     # elsewhere, not an artefact of this test.
     from types import SimpleNamespace
 
-    from coworker.permissions import SECRET_EGRESS_REASON, Mode, PermissionEngine
+    from coworker.permissions import SECRET_EGRESS_REASON, UPLOAD_EGRESS_REASON, Mode, PermissionEngine
     from coworker.roots import RootDir
 
     # OPE-236: these legacy rows send a secret-looking file or value off the machine, so
@@ -519,6 +519,11 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
         "inject-001", "inject-002", "inject-008", "inject-014", "inject-016",
     }
     seen_floored: set[str] = set()
+    # Round-2 F-5: these legacy rows send a local file to a host the row's user never
+    # granted, so Auto-Approve gives them to a person before the reviewer. Same rules as
+    # above: still run by the reviewer eval, left out of the score, exact both ways.
+    floored_by_uploads = {"danger-008", "danger-014", "danger-024", "danger-028"}
+    seen_uploads: set[str] = set()
 
     meta = SimpleNamespace(requires_approval=True, category="", risk_level="high")
     for name in ev.CORPORA:
@@ -532,6 +537,7 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
                 mode=Mode.AUTO_APPROVE,
                 roots=roots,
             )
+            ev.apply_row_grants(engine, r)  # hosts and plan steps the row's user granted
             d = engine.evaluate(r.action["tool"], r.action.get("arguments", {}), meta)
             if name != "reviewer_actions" and d.human_only and d.reason == SECRET_EGRESS_REASON:
                 assert r.id in floored_by_secrets, f"{r.id}: newly caught by the secrets floor"
@@ -540,7 +546,12 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
                 # lists it (OPE-116), like every other row production never routes.
                 assert not ev.reviewer_eligible(r)[0], r.id
                 continue
-            routed = not d.allowed and d.needs_user and not d.human_only
+            if name != "reviewer_actions" and d.human_only and d.reason == UPLOAD_EGRESS_REASON:
+                assert r.id in floored_by_uploads, f"{r.id}: newly caught by the upload floor"
+                seen_uploads.add(r.id)
+                assert not ev.reviewer_eligible(r)[0], r.id
+                continue
+            routed =not d.allowed and d.needs_user and not d.human_only
             # The harness's own eligibility check must agree with the engine, row for row —
             # it is what keeps unroutable rows out of the score.
             assert ev.reviewer_eligible(r)[0] == routed, r.id
@@ -556,6 +567,9 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
             )
     assert seen_floored == floored_by_secrets, (
         f"no longer caught by the secrets floor: {sorted(floored_by_secrets - seen_floored)}"
+    )
+    assert seen_uploads == floored_by_uploads, (
+        f"no longer caught by the upload floor: {sorted(floored_by_uploads - seen_uploads)}"
     )
 
 
@@ -640,8 +654,9 @@ def test_phase1_families_are_present_and_scored_not_excluded():
         assert len(fam) >= floor, tag
         for r in fam:
             ok, why = ev.reviewer_eligible(r)
-            if "secrets-floor" in r.tags:
-                # OPE-236 sends it to a person first: left out of the score, by design.
+            if "secrets-floor" in r.tags or "upload-floor" in r.tags:
+                # OPE-236 (secrets) and round-2 F-5 (local data to a host nobody granted)
+                # send it to a person first: left out of the score, by design.
                 assert not ok, r.id
                 continue
             assert ok, f"{r.id}: production routes it elsewhere ({why}); the row measures nothing"

