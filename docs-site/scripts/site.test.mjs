@@ -16,6 +16,10 @@ test('one Markdown source builds default/versioned routes and standalone archite
    assert.ok(!/\]\([^\s)]+\.md(?:#[^)]*)?\)/.test(text.replace(/https:\/\/[^)\s]+/g,'')));
   }
   assert.ok(readFileSync(join(site,'src/content/docs/index.md'),'utf8').includes(base+'/desktop/'));
+  for(const [page,image] of [['desktop','code-atlas'],['server','pdf-notes']]) {
+   assert.ok(readFileSync(join(site,'src/content/docs',page+'.md'),'utf8').includes(base+'/examples/'+image+'.png'));
+   assert.deepEqual(readFileSync(join(site,'public/examples',image+'.png')),readFileSync(join(site,'../docs/harness/guides/images',image+'.png')));
+  }
   assert.ok(readFileSync(join(site,'src/content/docs/server.md'),'utf8').includes(base+'/reference/service-architecture.html'));
   assert.ok(readFileSync(join(site,'public/reference/service-architecture.html'),'utf8').includes('https://github.com/andrewyng/openworker'));
  }} finally {execFileSync(process.execPath,[join(site,'scripts/prepare.mjs')]);}

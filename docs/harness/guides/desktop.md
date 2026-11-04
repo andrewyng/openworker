@@ -1,12 +1,75 @@
 # Build a desktop app that explains a codebase
 
-**Code Atlas** lets a user choose a directory, inspect the selected file list and
-stream a summary of the codebase. The app reads a bounded source snapshot; the
-agent explains its purpose, layout and entry points with file references.
+Learn OpenWorker by building **Code Atlas**, a working desktop app.
+We'll walk through the important SDK calls, from creating an agent to streaming
+its responses and packaging your application. Follow the snippets yourself, or
+use the OpenWorker skill to build it with Codex or Claude Code.
 
-Install the complete example with `cd harness/examples/quickstart && npm run setup`
-from a checkout; then run `npm run desktop`. See the [example README](../../../harness/examples/quickstart/README.md)
-for model environment variables and the matching runtime executable.
+## What you'll build
+
+Choose a code directory, review the selected files and stream a guide to its purpose, structure and entry points. The complete example includes the UI, input handling and agent integration.
+
+![Code Atlas example with test data](images/code-atlas.png)
+
+*Example UI, shown with deterministic test data.*
+
+## The basic flow
+
+Start the harness → configure a model → create an agent → start a session → stream a run.
+
+| Concept | What it does in your app |
+| --- | --- |
+| Harness | Manages the agent loop, provider connections and session storage. |
+| Agent | Defines instructions, available tools and a default model. |
+| Session | Keeps the conversation for one code summary. |
+| Run | Processes a message and produces events plus a final result. |
+
+Your desktop app owns the window and directory picker. The TypeScript SDK manages a Rust child process; a Rust app can embed the harness.
+The app supplies the source text, so this example's agent needs no tools.
+
+## Build with your coding agent
+
+Install the shared [OpenWorker app-building skill](../../../skills/README.md),
+then paste this prompt into Codex or Claude Code in your app project:
+
+```text
+Use the openworker-apps skill to build a desktop app that summarizes a
+selected code directory. Start from Code Atlas and explain the SDK calls as
+you build. Run the relevant tests and prepare a local package.
+```
+
+<details><summary>Install the skill for this project</summary>
+
+From an OpenWorker checkout, choose the command for your coding agent. Replace
+`/path/to/your-app` with an existing app directory; quote paths containing spaces.
+
+**Codex**
+
+```sh
+node skills/install.mjs --agent codex --project /path/to/your-app
+```
+
+**Claude Code**
+
+```sh
+node skills/install.mjs --agent claude --project /path/to/your-app
+```
+
+Open a new coding-agent session in that project. The installer copies the same
+skill and its two track references into the tool's project skills directory.
+It doesn't change global settings or overwrite an existing skill. See the
+[skill installation guide](../../../skills/README.md) for manual installation
+and invocation details.
+
+</details>
+
+Prefer to work directly? Install the complete example with
+`cd harness/examples/quickstart && npm run setup` from the checkout, then run
+`npm run desktop` with the model and runtime settings in the
+[example README](../../../harness/examples/quickstart/README.md).
+
+The walkthrough below highlights the SDK calls. Use the source drawer for the
+complete application files.
 
 <!-- sdk-source: desktop -->
 
@@ -187,3 +250,9 @@ when your product needs them. Packaging and pre-publication setup details are in
 [the example README](../../../harness/examples/quickstart/README.md).
 
 </details>
+
+## Make it yours
+
+Try a different summary format, add follow-up questions to the same directory
+session, or offer a local model in your settings UI. Add tools only when the app
+needs the agent to take actions rather than explain supplied content.

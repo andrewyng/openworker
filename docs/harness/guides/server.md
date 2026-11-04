@@ -1,12 +1,75 @@
 # Build a web app that answers questions about a PDF
 
-**PDF Notes** lets a user upload a PDF and ask questions about it. The browser
-streams each answer as it arrives. The server extracts page-numbered text and
-creates a separate agent session for each document.
+Learn OpenWorker by building **PDF Notes**, a working web app.
+We'll walk through the important SDK calls, from creating an agent to streaming
+its responses and deploying your application. Follow the snippets yourself, or
+use the OpenWorker skill to build it with Codex or Claude Code.
 
-Install the complete example with `cd harness/examples/quickstart && npm run setup`
-from a checkout; then run `npm run web`. Set the model/key/runtime environment
-variables described in [the example README](../../../harness/examples/quickstart/README.md).
+## What you'll build
+
+Upload a PDF, ask questions and stream answers with page references. Follow-up questions stay in the same document session. The complete example includes the UI, input handling and agent integration.
+
+![PDF Notes example with test data](images/pdf-notes.png)
+
+*Example UI, shown with deterministic test data.*
+
+## The basic flow
+
+Start the harness → configure a model → create an agent → start a session → stream a run.
+
+| Concept | What it does in your app |
+| --- | --- |
+| Harness | Manages the agent loop, provider connections and session storage. |
+| Agent | Defines instructions, available tools and a default model. |
+| Session | Keeps the conversation for one uploaded document. |
+| Run | Processes a message and produces events plus a final result. |
+
+Your browser UI calls your application server. The server uses the SDK and manages a Rust harness subprocess in the same container.
+The app supplies the source text, so this example's agent needs no tools.
+
+## Build with your coding agent
+
+Install the shared [OpenWorker app-building skill](../../../skills/README.md),
+then paste this prompt into Codex or Claude Code in your app project:
+
+```text
+Use the openworker-apps skill to build a web app where I can upload a PDF
+and ask questions with page references. Start from PDF Notes, explain the
+agent and session code, and prepare container deployment files.
+```
+
+<details><summary>Install the skill for this project</summary>
+
+From an OpenWorker checkout, choose the command for your coding agent. Replace
+`/path/to/your-app` with an existing app directory; quote paths containing spaces.
+
+**Codex**
+
+```sh
+node skills/install.mjs --agent codex --project /path/to/your-app
+```
+
+**Claude Code**
+
+```sh
+node skills/install.mjs --agent claude --project /path/to/your-app
+```
+
+Open a new coding-agent session in that project. The installer copies the same
+skill and its two track references into the tool's project skills directory.
+It doesn't change global settings or overwrite an existing skill. See the
+[skill installation guide](../../../skills/README.md) for manual installation
+and invocation details.
+
+</details>
+
+Prefer to work directly? Install the complete example with
+`cd harness/examples/quickstart && npm run setup` from the checkout, then run
+`npm run web` with the model and runtime settings in the
+[example README](../../../harness/examples/quickstart/README.md).
+
+The walkthrough below highlights the SDK calls. Use the source drawer for the
+complete application files.
 
 <!-- sdk-source: web -->
 
@@ -130,3 +193,9 @@ in the application container; it does not require a separate service cluster.
 For shared workers, PostgreSQL recovery or independently scaled tool environments,
 see [deployment options](deployment.md) and the
 [service architecture scenarios](../SERVICE-ARCHITECTURE.html).
+
+## Make it yours
+
+Try an answer outline, clickable page references or a local model. Before sharing
+one deployment among multiple users, add login, document ownership checks and
+retention controls; the reference app deliberately starts with one user per instance.
