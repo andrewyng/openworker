@@ -99,7 +99,7 @@ from ..providers import (
     verify_provider_key,
 )
 from ..providers.local_server import LOCAL_SERVERS
-from ..providers.registry import CUSTOM_PROVIDERS_PROFILE
+from ..providers.registry import CUSTOM_PROVIDERS_PROFILE, DEFAULT_OLLAMA_URL
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
 from ..teams import Actor as TeamActor
@@ -4756,7 +4756,7 @@ class SessionManager:
         if cached and now - cached[0] < 30:
             return cached[1]
         profile = self.secrets.get("provider:ollama") or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
+        base = (profile.get("base_url") or DEFAULT_OLLAMA_URL).strip().rstrip("/")
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         try:
@@ -4771,7 +4771,7 @@ class SessionManager:
     def _ollama_models(self) -> list[str]:
         """Live list of models pulled into the configured Ollama server (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama is
-        unreachable — best-effort, never raises. No stored profile → the default localhost
+        unreachable — best-effort, never raises. No stored profile → the default 127.0.0.1
         endpoint, same as `_ollama_alive` (keyless Ollama needs no saved form)."""
         from ..providers import ollama_facts
 
@@ -8421,6 +8421,9 @@ class SessionManager:
     # instruction ("4-5 word title") yields English titles for Chinese/Japanese/…
     # sessions. Same-language also relaxes the word count to a length that is natural
     # for the opener's script (CJK titles are a few characters, not 4-5 "words").
+    # A title asked again without an effort setting (OPE-201): room for the reasoning a
+    # model that cannot turn it off spends before the few words of the title.
+    _AUTOTITLE_REASONING_MAX_TOKENS = 1024
     _AUTOTITLE_PROMPT = (
         "You title chat sessions. Given the user's opening message(s) — and, when "
         "present, the assistant's first reply for context — reply with ONLY a short "
@@ -8523,31 +8526,51 @@ class SessionManager:
         fallback stays; the small-talk sentinel leaves auto_title unset so the turn-2
         retry can run."""
         try:
-            turn = await asyncio.to_thread(
-                tag_provider(engine.provider, purpose="title", turn=turn_id).complete,
-                model=engine.model,
-                messages=[
-                    {"role": "system", "content": self._AUTOTITLE_PROMPT},
-                    {
-                        "role": "user",
-                        "content": "\n\n".join(openers)
-                        + (
-                            f"\n\n[the assistant's first reply]\n{assistant}"
-                            if assistant
-                            else ""
-                        ),
-                    },
-                ],
-                temperature=0.2,
-                # Reasoning-routed models spend hidden tokens BEFORE emitting text; a
-                # tight cap plus default effort yields an empty completion and a silent
-                # no-op. Effort "none" means "no thinking": every provider's effort
-                # mapper handles it (OpenAI-vocabulary endpoints get it on the wire,
-                # Anthropic omits the field; see effort.NO_EFFORT), and 64 leaves
-                # headroom either way.
-                max_tokens=64,
-                reasoning_effort="none",
-            )
+            messages = [
+                {"role": "system", "content": self._AUTOTITLE_PROMPT},
+                {
+                    "role": "user",
+                    "content": "\n\n".join(openers)
+                    + (
+                        f"\n\n[the assistant's first reply]\n{assistant}"
+                        if assistant
+                        else ""
+                    ),
+                },
+            ]
+            # Tagged so the recording files these calls under "title" (observability).
+            titler = tag_provider(engine.provider, purpose="title", turn=turn_id)
+            try:
+                turn = await asyncio.to_thread(
+                    titler.complete,
+                    model=engine.model,
+                    messages=messages,
+                    temperature=0.2,
+                    # Reasoning-routed models spend hidden tokens BEFORE emitting text; a
+                    # tight cap plus default effort yields an empty completion and a silent
+                    # no-op. Effort "none" means "no thinking": every provider's effort
+                    # mapper handles it (OpenAI-vocabulary endpoints get it on the wire,
+                    # Anthropic omits the field; see effort.NO_EFFORT), and 64 leaves
+                    # headroom either way.
+                    max_tokens=64,
+                    reasoning_effort="none",
+                )
+            except Exception as exc:
+                # OPE-201: some endpoints cannot turn reasoning off and refuse "none"
+                # (OpenRouter GLM 5.3: 400 "Reasoning is mandatory for this endpoint and
+                # cannot be disabled"). Ask once more with the model's own effort, and
+                # room for the reasoning it spends before the few words of the title.
+                text = str(exc).lower()
+                if "reasoning" not in text and "effort" not in text:
+                    raise
+                logger.info("autotitle for %s: retrying without reasoning effort (%s)", session_id, exc)
+                turn = await asyncio.to_thread(
+                    titler.complete,
+                    model=engine.model,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=self._AUTOTITLE_REASONING_MAX_TOKENS,
+                )
             raw = (getattr(turn, "text", None) or "").strip()
             # Sanitize: surrounding quotes off, whitespace collapsed, capped at 60.
             title = " ".join(raw.strip("\"'“”‘’`").split())

@@ -52,12 +52,24 @@ def test_base_url_omitted_when_none(monkeypatch):
 
 # -- ollama URL normalization ---------------------------------------------------
 def test_normalize_ollama_url():
-    assert _normalize_ollama_url(None) == "http://localhost:11434/v1"
+    # The default is 127.0.0.1 (OPE-229); an address the user typed is kept as typed.
+    assert _normalize_ollama_url(None) == "http://127.0.0.1:11434/v1"
     assert (
         _normalize_ollama_url("http://localhost:11434") == "http://localhost:11434/v1"
     )
     assert _normalize_ollama_url("http://h:1/v1/") == "http://h:1/v1"
-    assert _normalize_ollama_url("  ") == "http://localhost:11434/v1"
+    assert _normalize_ollama_url("  ") == "http://127.0.0.1:11434/v1"
+
+
+def test_ollama_defaults_never_use_localhost():
+    """OPE-229: on Windows `localhost` tries ::1 first and every new Ollama connection
+    waits about 2 s. Every built-in default must be 127.0.0.1."""
+    from coworker.providers import ollama_facts
+    from coworker.providers.registry import DEFAULT_OLLAMA_URL
+
+    assert DEFAULT_OLLAMA_URL == "http://127.0.0.1:11434"
+    assert ollama_facts.native_base(None) == "http://127.0.0.1:11434"
+    assert ollama_facts.native_base("http://localhost:11434/v1") == "http://localhost:11434"
 
 
 def test_build_ollama_client_uses_base_url(monkeypatch):

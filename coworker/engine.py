@@ -651,7 +651,7 @@ class TurnEngine:
             cancel_wait.cancel()
 
     async def _wait_tool(self, tool_call, coro, interrupted, kind: Optional[str] = None):
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         # Observability E20: a wait step from the moment the card is shown to the answer, so
         # a slow answer is never mistaken for a slow agent (§5.4).
         kind = kind or _WAIT_KINDS.get(tool_call.name, "approval")
@@ -675,7 +675,7 @@ class TurnEngine:
             failed = True
             raise
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.perf_counter() - clock) * 1000)
             self._obs.end_wait(tool_call.id)
             if step_id is not None:
                 who = ""
@@ -1066,9 +1066,14 @@ class TurnEngine:
         # The reviewer judges with the session's own model (§1.5: "if it's trusted to
         # drive the agent, it's strong enough to review it"). Bound once at session build,
         # it would otherwise keep the OLD model for the rest of the session after a
-        # switch — silently reviewing with a model the user moved away from.
+        # switch — silently reviewing with a model the user moved away from. A
+        # decision-model reviewer (OpenAI Decisions, Jev) judges with its own service's
+        # model, which a session switch must not change (its `model` is read-only).
         if self.reviewer is not None:
-            self.reviewer.model = model
+            from .decision_reviewer import DecisionReviewer
+
+            if not isinstance(self.reviewer, DecisionReviewer):
+                self.reviewer.model = model
         if not had_history:
             return None
         from .providers.matrix import model_labels
@@ -1316,7 +1321,7 @@ class TurnEngine:
                     reasoning="".join(streamed_reasoning) or None,
                 )
 
-            model_started, model_clock = time.time(), time.monotonic()
+            model_started, model_clock = time.time(), time.perf_counter()
             try:
                 async for chunk in self._astream():
                     if chunk.reasoning_delta:
@@ -1393,7 +1398,7 @@ class TurnEngine:
                     effort_setting=self.model_settings.get("reasoning_effort"),
                 )
             )
-            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.monotonic() - model_clock) * 1000}
+            self.messages[-1]["timing"] = {"model_started": model_started, "model_ms": (time.perf_counter() - model_clock) * 1000}
             payload: dict[str, Any] = {
                 "text": turn.text,
                 "tool_calls": [tc.name for tc in turn.tool_calls],
@@ -3067,7 +3072,7 @@ class TurnEngine:
         }
 
     def _execute_call(self, tool_call: ToolCall) -> tuple[Any, str]:
-        started, clock = time.time(), time.monotonic()
+        started, clock = time.time(), time.perf_counter()
         try:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
             if delegated and delegated != self._delegated_context(tool_call):
@@ -3086,7 +3091,7 @@ class TurnEngine:
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
         finally:
-            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.monotonic() - clock) * 1000)
+            self._tool_timings.setdefault(tool_call.id, {}).update(tool_started=started, tool_ms=(time.perf_counter() - clock) * 1000)
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         spec = self.registry.get(tool_call.name)
