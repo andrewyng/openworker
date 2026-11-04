@@ -454,6 +454,11 @@ class SessionManager:
 
         self._scope_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="obs-scopes")
         self.recorder.add_listener(self._scopes_on_turn_end)
+        # P3B-5: a team's Phase 3 numbers and task checks, kept until a member's recording,
+        # the board or the journal changes (team_id -> what they were worked out from, result).
+        self._team_obs_cache: dict[str, tuple[Any, Any]] = {}
+        self._team_checked: dict[str, Any] = {}
+        self._team_obs_lock = threading.Lock()
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
         # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
@@ -2057,9 +2062,20 @@ class SessionManager:
         current = self.inbox.get(item.id) if getattr(item, "id", None) else None
         by_raw = str(getattr(current or item, "resolved_by", "") or "")
         by = "lead" if by_raw.startswith(("lead", "agent")) else "user"
+        # P3B-7 (TD3-23): the resume finishes the turn that asked, so when that turn was an
+        # automation run's own, the resumed turn is the run's too: its tokens and health count
+        # in the run's row. The card is the latest turn's (the turn stopped at it); a follow-up
+        # typed into the run's session later carries no `automation`, and neither does its resume.
+        automation = None
+        if item.session_id.startswith("__run__"):
+            try:
+                automation = self.recordings_store.last_turn_automation(item.session_id)
+            except Exception:  # noqa: BLE001 - a recording fact never blocks the resume
+                logger.exception("could not tell whether %s resumes a run's turn", item.session_id)
         try:
             async for _event in engine.resume(trigger="user", team=self._team_stamp(item.session_id), wake={
-                    "reason": "answer", "by": by, "board_seq": self._board_seq(item.session_id)}):
+                    "reason": "answer", "by": by, "board_seq": self._board_seq(item.session_id)},
+                    automation=automation):
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -2748,29 +2764,10 @@ class SessionManager:
         out = make_summary(self, team, time.time())
         # Phase 3 (OB-17, E19c): why each team turn started, from the ledger of every member
         # session (its total equals their pills), and the team events that used to be silent.
+        # Worked out again only when something they read has changed (P3B-5).
         try:
-            members = {w.actor: w.session_id for w in team.workers}
-            sids = [team.lead_session, *members.values()]
-            out["wakes"] = usage_api.team_wakes(self.recordings_store, sids)
-            from ..teams.summary import all_events
-
-            board = list(all_events(self.team_store, team.space))
-            links = []
-            for item in self.team_store.list_items(team.space, self._user_actor()):
-                for link in item.get("links") or []:
-                    if link.get("kind") == "blocked_by" and link.get("item") is not None:
-                        links.append((int(link["item"]), int(item["id"])))
-            out["events"] = usage_api.team_events(self.recordings_store, lead_session=team.lead_session,
-                                                  worker_sessions=members, board_events=board, links=links)
-            out["wake_explained"] = self._wake_explained(sids)
-            # OB-16: "Coverage for this task" on each item a coworker that declares coverage
-            # worked on, with its findings' evidence links.
-            cov = {}
-            for item in self.team_store.list_items(team.space, self._user_actor()):
-                c = self.item_coverage(team, item, board)
-                if c is not None:
-                    cov[str(item["id"])] = c
-            out["coverage"] = cov
+            out.update(self._team_obs(team))
+            cov = out["coverage"]
             by_session = {team.lead_session: team.lead_actor, **{w.session_id: w.actor for w in team.workers}}
             codes = {name: list(sc.get("findings_exit") or []) for name, sc in
                      ((recording_signals.signals().get("scanners") or {}).get("list") or {}).items()}
@@ -2802,9 +2799,64 @@ class SessionManager:
             out.setdefault("events", [])
         return out
 
-    def _wake_explained(self, session_ids: list[str]) -> dict[str, int]:
+    def _team_inputs(self, team) -> dict[str, Any]:
+        """What a team's Phase 3 numbers and task checks are worked out from, read once: the
+        board, its items, and a mark of everything they depend on (P3B-5). The mark is the
+        members' write counts, the board's last event, the journal's last entry and the items
+        themselves; when it is unchanged, so is the answer."""
+        from ..teams.summary import all_events
+
+        members = {w.actor: w.session_id for w in team.workers}
+        sids = [team.lead_session, *members.values()]
+        board = list(all_events(self.team_store, team.space))
+        items = self.team_store.list_items(team.space, self._user_actor())
+        js = self.journal_store
+        with js._lock:
+            row = js._conn.execute("SELECT MAX(seq) AS m FROM journal_entries WHERE space = ?",
+                                   (team.space,)).fetchone()
+        mark = (tuple(sids), self.recordings_store.generation(sids), len(board),
+                board[-1]["seq"] if board else None, row["m"] if row else None,
+                json.dumps(items, sort_keys=True, default=str))
+        return {"members": members, "sids": sids, "board": board, "items": items, "mark": mark}
+
+    def _team_obs(self, team) -> dict[str, Any]:
+        """A team's wakes, events, wake gate and per-item coverage, kept until its inputs
+        change: a refresh of an idle team rereads only the board and the counts (P3B-5)."""
+        inputs = self._team_inputs(team)
+        with self._team_obs_lock:
+            hit = self._team_obs_cache.get(team.team_id)
+        if hit is not None and hit[0] == inputs["mark"]:
+            return hit[1]
+        members, sids, board, items = inputs["members"], inputs["sids"], inputs["board"], inputs["items"]
+        turns = self.recordings_store.team_turns(sids)
+        links = []
+        for item in items:
+            for link in item.get("links") or []:
+                if link.get("kind") == "blocked_by" and link.get("item") is not None:
+                    links.append((int(link["item"]), int(item["id"])))
+        res: dict[str, Any] = {
+            "wakes": usage_api.team_wakes(self.recordings_store, sids),
+            "events": usage_api.team_events(self.recordings_store, lead_session=team.lead_session,
+                                            worker_sessions=members, board_events=board, links=links,
+                                            turns=turns),
+            "wake_explained": self._wake_explained(sids, turns),
+        }
+        # OB-16: "Coverage for this task" on each item a coworker that declares coverage
+        # worked on, with its findings' evidence links.
+        cov = {}
+        for item in items:
+            c = self.item_coverage(team, item, board, turns=turns)
+            if c is not None:
+                cov[str(item["id"])] = c
+        res["coverage"] = cov
+        with self._team_obs_lock:
+            self._team_obs_cache[team.team_id] = (inputs["mark"], res)
+        return res
+
+    def _wake_explained(self, session_ids: list[str],
+                        rows: Optional[list[dict[str, Any]]] = None) -> dict[str, int]:
         """The 95% gate on a real team (V3-08): team turns, and those whose wake is known."""
-        rows = self.recordings_store.team_turns(session_ids)
+        rows = self.recordings_store.team_turns(session_ids) if rows is None else rows
         team_rows = [t for t in rows if (t.get("stamp") or {}).get("team")]
         known = sum(1 for t in team_rows if (t.get("wake") or {}).get("reason") not in (None, "unknown"))
         return {"turns": len(team_rows), "explained": known}
@@ -6805,10 +6857,12 @@ class SessionManager:
             found.setdefault(i.get("turn_id") or last, []).append(i)
         self._store_scope_issues([t["turn_id"] for t in done], found, ["scan_missing", "scanner_failed"])
 
-    def item_coverage(self, team, item: dict[str, Any], events: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    def item_coverage(self, team, item: dict[str, Any], events: list[dict[str, Any]], *,
+                      turns: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
         """"Coverage for this task" (OB-16, §10): a board item of a worker that declares
         coverage, its scans across the item's sessions, the hand-off's report, its findings
-        with their evidence, and the fix it verifies. None when nobody on it promised a scan."""
+        with their evidence, and the fix it verifies. None when nobody on it promised a scan.
+        `turns`: the members' turns, when the caller has read them already (P3B-5)."""
         by_actor = {w.actor: w.session_id for w in team.workers}
         by_actor[team.lead_actor] = team.lead_session
         mine = [e for e in events if e.get("item_id") == item["id"]]
@@ -6819,7 +6873,9 @@ class SessionManager:
         if not sessions:
             return None
         promised: list[str] = []
-        for t in self.recordings_store.team_turns(sessions):
+        mine_turns = ([t for t in turns if t["session_id"] in sessions] if turns is not None
+                      else self.recordings_store.team_turns(sessions))
+        for t in mine_turns:
             for a in (t.get("stamp") or {}).get("persona_coverage") or []:
                 if a not in promised:
                     promised.append(a)
@@ -6885,13 +6941,9 @@ class SessionManager:
     def _handoff_step(self, session_id: str, at_ms: Optional[int]) -> Optional[dict[str, Any]]:
         """The `transition` tool step that handed the item off: the last one of the session at
         or before the board event's time."""
-        rec = self.recordings_store.load_recording(session_id)
-        steps = [s for s in rec.get("steps") or [] if s.get("kind") == "tool" and s.get("name") == "transition"
-                 and (at_ms is None or (s.get("started_at") or 0) <= at_ms + 1000)]
-        if not steps:
-            return None
-        s = steps[-1]
-        return {"step_id": s["step_id"], "seq": s.get("seq"), "turn_id": s.get("turn_id")}
+        # One indexed read, not the whole recording (P3B-5).
+        return self.recordings_store.last_tool_step(session_id, "transition",
+                                                    before_ms=None if at_ms is None else at_ms + 1000)
 
     def _scope_team_tasks(self, team_id: str) -> None:
         """A team's task checks: coverage of each handed-off item of a worker that declares
@@ -6899,13 +6951,15 @@ class SessionManager:
         team = self.teams.get(team_id)
         if team is None:
             return
-        from ..teams.summary import all_events
-
-        events = list(all_events(self.team_store, team.space))
-        sids = [team.lead_session, *(w.session_id for w in team.workers)]
+        inputs = self._team_inputs(team)
+        with self._team_obs_lock:
+            if self._team_checked.get(team_id) == inputs["mark"]:
+                return  # nothing the checks read has changed since the last run (P3B-5)
+        events, sids, items = inputs["board"], inputs["sids"], inputs["items"]
+        turns = self.recordings_store.team_turns(sids)
         found: dict[str, list] = {}
-        for item in self.team_store.list_items(team.space, self._user_actor()):
-            cov = self.item_coverage(team, item, events)
+        for item in items:
+            cov = self.item_coverage(team, item, events, turns=turns)
             if cov is None or not cov["handed_off"]:
                 continue
             for i in cov["issues"]:
@@ -6916,7 +6970,7 @@ class SessionManager:
             if i.get("turn_id"):
                 found.setdefault(i["turn_id"], []).append(i)
         links = []
-        for item in self.team_store.list_items(team.space, self._user_actor()):
+        for item in items:
             for link in item.get("links") or []:
                 if link.get("kind") == "blocked_by":
                     links.append((int(link["item"]), int(item["id"])))
@@ -6931,8 +6985,12 @@ class SessionManager:
             if step and step.get("turn_id"):
                 i.update({"step_id": step["step_id"], "step_seq": step["seq"], "turn_id": step["turn_id"]})
                 found.setdefault(step["turn_id"], []).append(i)
-        turn_ids = [t["turn_id"] for t in self.recordings_store.team_turns(sids)]
+        turn_ids = [t["turn_id"] for t in turns]
         self._store_scope_issues(turn_ids, found, list(_obs_scopes.TASK_CHECKS))
+        # Storing the issues bumps the members' write counts: the mark to compare next time is
+        # the one after this run's own writes.
+        with self._team_obs_lock:
+            self._team_checked[team_id] = self._team_inputs(team)["mark"]
 
     # -- observability Phase 3: rollups over many turns (E24b, E24c, E26b, E27a) ---------------
     def usage_names(self) -> dict[str, str]:

@@ -383,8 +383,9 @@ class Exporter:
         rows = getattr(self.store, "feedback_since", None)
         if rows is None:
             return 0
-        todo = [fb for fb in rows(cfg.since_ms, limit=100)
-                if self._feedback_mark(fb) not in self.store.export_marked(dest, fb["turn_id"])]
+        # The unsent ones are picked in the query, not after it: filtering after a LIMIT left the
+        # queue stuck on the first 100 once those had gone (P3B-2).
+        todo = rows(cfg.since_ms, limit=100, unsent_for=dest)
         sent = 0
         for fb in todo:
             mark = [(self._feedback_mark(fb), fb["turn_id"])]

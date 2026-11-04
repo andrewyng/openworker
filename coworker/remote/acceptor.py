@@ -814,10 +814,11 @@ def mount_acceptor(
             )
         return {"ok": True, "revoked": names}
 
-    def _cached_rollup(machine_id: str, grouping: str):
-        """An offline machine's last rollup, labelled with when it was fetched (TD3-6). The
+    def _cached_rollup(machine_id: str, query: str):
+        """An offline machine's last answer to this same rollup request, labelled with when it
+        was fetched (TD3-6). Only the same period, grouping and coworker count (P3B-3). The
         desktop never adds it to the live totals without that label."""
-        found = registry.last_rollup(machine_id, grouping)
+        found = registry.last_rollup(machine_id, query)
         if found is None:
             return None
         try:
@@ -841,9 +842,8 @@ def mount_acceptor(
         _touch(machine_id)
         live = await _live_or_wake(machine_id)
         rollup = request.method == "GET" and path == "v1/observability/rollup"
-        grouping = request.query_params.get("group") or "all"
         if live is None:
-            cached = _cached_rollup(machine_id, grouping) if rollup else None
+            cached = _cached_rollup(machine_id, request.url.query) if rollup else None
             return cached or JSONResponse({"error": "machine offline"}, status_code=503)
         target = "/" + path
         if request.url.query:
@@ -863,12 +863,12 @@ def mount_acceptor(
         except asyncio.TimeoutError:
             return JSONResponse({"error": "machine timed out"}, status_code=504)
         except ConnectionError:
-            cached = _cached_rollup(machine_id, grouping) if rollup else None
+            cached = _cached_rollup(machine_id, request.url.query) if rollup else None
             return cached or JSONResponse({"error": "machine disconnected"}, status_code=503)
-        # Phase 3 (E28): each machine's last Usage rollup, per grouping, for when it is off.
+        # Phase 3 (E28): each machine's last answer per Usage request, for when it is off.
         if rollup and status == 200:
             try:
-                registry.save_rollup(machine_id, grouping, request.url.query, payload.decode("utf-8"))
+                registry.save_rollup(machine_id, request.url.query, payload.decode("utf-8"))
             except Exception:
                 pass
         # Tier-2 snapshot: every successful unfiltered session-list fetch doubles

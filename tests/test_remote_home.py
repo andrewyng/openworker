@@ -2503,7 +2503,7 @@ async def test_browser_sealed_managed_grant_lands_on_the_box(tmp_path):
 
 async def test_offline_machine_serves_its_last_usage_rollup_as_of(tmp_path):
     """Observability Phase 3 (E28, TD3-6): the desktop keeps each machine's last Usage rollup
-    per grouping; while the machine is offline the proxy answers with it, labelled `cached`
+    per request; while the machine is offline the proxy answers the same request with it, labelled `cached`
     with the time it was fetched, never as live numbers."""
     async with _Server(_controller(tmp_path)) as server:
         join_url = await _arm(server.base)
@@ -2540,6 +2540,18 @@ async def test_offline_machine_serves_its_last_usage_rollup_as_of(tmp_path):
             none = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
                                     params={"group": "day"})
             assert none.status_code == 503
+            # P3B-3: the same grouping for another period or another coworker is another
+            # question; the copy for "from 0" never stands in for it
+            other_period = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                            params={"group": "all", "from": 1000})
+            assert other_period.status_code == 503
+            other_coworker = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                              params={"group": "all", "from": 0, "persona_id": "p-x"})
+            assert other_coworker.status_code == 503
+            # the same question with its parameters in another order still finds its copy
+            reordered = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                         params={"from": 0, "group": "all"})
+            assert reordered.status_code == 200 and reordered.json()["cached"]["as_of"] > 0
 
 
 async def test_a_joined_machine_stamps_its_turns_with_the_controllers_id(tmp_path, monkeypatch):

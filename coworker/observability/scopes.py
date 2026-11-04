@@ -169,6 +169,12 @@ def same_approval_twice(cards: list[dict]) -> list[dict]:
     """Task check over the team's approval cards in order: the same tool and args_hash asked
     again after an earlier card for it was approved. `cards`: [{tool, args_hash, session,
     outcome}]."""
+    return [f for f, _card in same_approval_repeats(cards)]
+
+
+def same_approval_repeats(cards: list[dict]) -> list[tuple[dict, dict]]:
+    """`same_approval_twice` with the card that asked again: (finding, repeat card). Both the
+    Issues tab and TeamView's event line point at that card, the second ask (P3B-4)."""
     approved: dict[tuple, dict] = {}
     fired = []
     for c in cards:
@@ -176,7 +182,7 @@ def same_approval_twice(cards: list[dict]) -> list[dict]:
             continue  # arguments that never parsed match nothing (build: not in the prototype)
         k = (c["tool"], c["args_hash"])
         if k in approved:
-            fired.append({"tool": c["tool"], "first_by": approved[k]["session"], "again_by": c["session"]})
+            fired.append(({"tool": c["tool"], "first_by": approved[k]["session"], "again_by": c["session"]}, c))
         if c.get("outcome") == "approved":
             approved.setdefault(k, c)
     return fired
@@ -321,14 +327,11 @@ def failed_in_a_row_issue(runs: list[dict], last_step: Optional[dict] = None) ->
 
 
 def same_approval_issues(cards: list[dict]) -> list[dict]:
-    out = []
-    for i, f in enumerate(same_approval_twice(cards)):
-        step = next((c.get("step") for c in cards
-                     if c["tool"] == f["tool"] and c["session"] == f["again_by"] and c.get("step")), None)
-        out.append(_issue("same_approval_twice",
-                          f"Same approval asked twice: {f['tool']} ({f['first_by']}, then {f['again_by']}).",
-                          step, **f))
-    return out
+    """Each repeat as an issue on the card that asked again (P3B-4), not the first one."""
+    return [_issue("same_approval_twice",
+                   f"Same approval asked twice: {f['tool']} ({f['first_by']}, then {f['again_by']}).",
+                   card.get("step"), **f)
+            for f, card in same_approval_repeats(cards)]
 
 
 def reviewed_before_prereq_issues(events: list[dict], links: Iterable[tuple[Any, Any]]) -> list[dict]:

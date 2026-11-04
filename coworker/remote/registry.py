@@ -48,24 +48,27 @@ class MachinesRegistry:
                 )
                 """
             )
-            # Tier-2 snapshot (remote-home-design.md data path): the last-known
-            # session-LIST METADATA per machine — what keeps an offline machine's
-            # sessions greyed-but-visible instead of vanished.
             # Observability Phase 3 (E28, TD3-6): the last Usage rollup each machine answered,
-            # per grouping, so an offline machine still shows its numbers on the Usage page,
-            # labelled "as of". Counts only (the ledger is content-free).
+            # per request (period, grouping, coworker, ...), so an offline machine still shows
+            # its numbers on the Usage page, labelled "as of", and only for the question that
+            # was asked (P3B-3). Counts only (the ledger is content-free). The first build kept
+            # one row per grouping, whatever the period; that table is dropped.
+            self._conn.execute("DROP TABLE IF EXISTS machine_rollups")
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS machine_rollups (
+                CREATE TABLE IF NOT EXISTS machine_rollup_answers (
                     machine_id TEXT NOT NULL,
-                    grouping TEXT NOT NULL,
+                    query_key TEXT NOT NULL,
                     query TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     updated_at REAL NOT NULL,
-                    PRIMARY KEY (machine_id, grouping)
+                    PRIMARY KEY (machine_id, query_key)
                 )
                 """
             )
+            # Tier-2 snapshot (remote-home-design.md data path): the last-known
+            # session-LIST METADATA per machine — what keeps an offline machine's
+            # sessions greyed-but-visible instead of vanished.
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS machine_sessions (
@@ -289,22 +292,43 @@ class MachinesRegistry:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def save_rollup(self, machine_id: str, grouping: str, query: str, payload: str) -> None:
+    ROLLUPS_KEPT = 50  # per machine: the few periods and coworkers a person looks at
+
+    @staticmethod
+    def rollup_key(query: str) -> str:
+        """A rollup request's cache key: its query parameters, sorted, so the same question
+        asked with its parameters in another order finds the same answer."""
+        from urllib.parse import parse_qsl, urlencode
+
+        return urlencode(sorted(parse_qsl(query or "", keep_blank_values=True)))
+
+    def save_rollup(self, machine_id: str, query: str, payload: str) -> None:
+        """Keep a machine's answer to one rollup request (P3B-3: the whole request is the key,
+        not just its grouping). Only the newest `ROLLUPS_KEPT` per machine stay."""
         with self._lock:
             self._conn.execute(
-                "INSERT INTO machine_rollups (machine_id, grouping, query, payload, updated_at)"
-                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, grouping) DO UPDATE SET"
+                "INSERT INTO machine_rollup_answers (machine_id, query_key, query, payload, updated_at)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(machine_id, query_key) DO UPDATE SET"
                 " query = excluded.query, payload = excluded.payload, updated_at = excluded.updated_at",
-                (machine_id, grouping, query, payload, time.time()),
+                (machine_id, self.rollup_key(query), query, payload, time.time()),
+            )
+            self._conn.execute(
+                "DELETE FROM machine_rollup_answers WHERE machine_id = ? AND query_key NOT IN ("
+                " SELECT query_key FROM machine_rollup_answers WHERE machine_id = ?"
+                " ORDER BY updated_at DESC LIMIT ?)",
+                (machine_id, machine_id, self.ROLLUPS_KEPT),
             )
             self._conn.commit()
 
-    def last_rollup(self, machine_id: str, grouping: str) -> Optional[dict]:
-        """The machine's last Usage rollup for this grouping: {payload, query, updated_at}."""
+    def last_rollup(self, machine_id: str, query: str) -> Optional[dict]:
+        """The machine's last answer to this same rollup request: {payload, query, updated_at},
+        or None when that request was never answered (another period or coworker is not a
+        stand-in)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT payload, query, updated_at FROM machine_rollups WHERE machine_id = ? AND grouping = ?",
-                (machine_id, grouping),
+                "SELECT payload, query, updated_at FROM machine_rollup_answers"
+                " WHERE machine_id = ? AND query_key = ?",
+                (machine_id, self.rollup_key(query)),
             ).fetchone()
             return dict(row) if row else None
 

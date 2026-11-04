@@ -265,12 +265,14 @@ def team_wakes(store: Any, session_ids: Iterable[str], *, start: int = 0, end: i
 
 
 def team_events(store: Any, *, lead_session: str, worker_sessions: dict[str, str],
-                board_events: list[dict[str, Any]], links: list[tuple[int, int]], limit: int = 50) -> list[dict[str, Any]]:
+                board_events: list[dict[str, Any]], links: list[tuple[int, int]], limit: int = 50,
+                turns: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
     """"Team events that used to be silent" (§11.4), newest first: cap hits, long deferrals,
     watchdog nudges, lead polling, the same approval asked twice and an item reviewed before
-    its prerequisite. Each names the session and turn whose Steps it opens."""
+    its prerequisite. Each names the session and turn whose Steps it opens. `turns`: the
+    members' turns when the caller has read them already (P3B-5)."""
     sessions = {lead_session: "lead", **{sid: actor for actor, sid in worker_sessions.items()}}
-    rows = store.team_turns(list(sessions))
+    rows = store.team_turns(list(sessions)) if turns is None else turns
     events: list[dict[str, Any]] = []
     for t in rows:
         wake = t.get("wake") or {}
@@ -290,10 +292,9 @@ def team_events(store: Any, *, lead_session: str, worker_sessions: dict[str, str
         events.append({"session_id": lead_session, "turn_id": t["turn_id"], "seq": t["seq"], "at": t["started_at"],
                        "who": "lead", "kind": "lead_polling", "severity": "warn", "count": f["count"]})
     cards = store.team_approval_cards(list(sessions))
-    for f in scopes.same_approval_twice(cards):
-        c = next((c for c in reversed(cards) if c["tool"] == f["tool"] and c["session"] == f["again_by"]), None)
-        events.append({"session_id": f["again_by"], "turn_id": (c or {}).get("turn_id"), "seq": (c or {}).get("seq"),
-                       "at": (c or {}).get("at"), "who": sessions.get(f["again_by"], "?"), "kind": "same_approval_twice",
+    for f, c in scopes.same_approval_repeats(cards):  # the repeat card, as the Issues tab (P3B-4)
+        events.append({"session_id": f["again_by"], "turn_id": c.get("turn_id"), "seq": c.get("seq"),
+                       "at": c.get("at"), "who": sessions.get(f["again_by"], "?"), "kind": "same_approval_twice",
                        "severity": "warn", "tool": f["tool"], "first_by": sessions.get(f["first_by"], f["first_by"]),
                        "again_by": sessions.get(f["again_by"], f["again_by"])})
     transitions = [{"seq": e["seq"], "item": e.get("item_id"), "to": (e.get("payload") or {}).get("to"),
