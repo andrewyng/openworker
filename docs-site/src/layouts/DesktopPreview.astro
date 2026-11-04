@@ -1,6 +1,8 @@
 ---
 import {desktopPreview,navigation} from '../lib/desktop-preview.mjs';
-import '../styles/desktop-preview.css';
+import '../styles/studio.css';
+import '../styles/editorial-preview.css';
+import SourceDrawer from '../components/SourceDrawer.astro';
 const {design}=Astro.props;
 const guide=await desktopPreview();
 const base=import.meta.env.BASE_URL.replace(/\/$/,'');
@@ -46,11 +48,7 @@ const sourceUrl=`${base}/examples/desktop.json`;
   </div>
   <footer class="article-footer"><span>OpenWorker Harness SDK</span><a href={`${base}/server/`}>Next: Build a web app <span aria-hidden="true">→</span></a></footer>
  </main>
- <dialog id="example-source-drawer" aria-labelledby="example-source-title">
-  <header class="source-header"><div><span class="source-label">EXAMPLE SOURCE</span><h2 id="example-source-title">Code Atlas</h2></div><button type="button" data-source-close aria-label="Close source code">×</button></header>
-  <div class="source-body"><nav aria-label="Example files" data-source-files></nav><section class="source-view" aria-label="Selected source file"><div class="source-toolbar"><span data-source-path></span><button type="button" data-source-copy>Copy</button></div><pre tabindex="0"><code data-source-content></code></pre></section></div>
-  <p class="source-status" role="status" data-source-status></p>
- </dialog>
+ <SourceDrawer title="Code Atlas"/>
  <script>
   import '../scripts/code-tabs';
   import '../scripts/source-explorer';

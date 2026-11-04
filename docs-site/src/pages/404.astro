@@ -1,0 +1,6 @@
+---
+import StudioDocs from '../layouts/StudioDocs.astro';
+const base=import.meta.env.BASE_URL.replace(/\/$/,'');
+const guide={title:'Page not found',subtitle:'<p>This guide may have moved.</p>',headings:[],html:`<p><a href="${base}/">Return to the SDK overview</a> or search the documentation.</p>`};
+---
+<StudioDocs guide={guide} slug="404" notFound/>

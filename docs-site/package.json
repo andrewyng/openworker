@@ -5,14 +5,15 @@
   "scripts": {
     "prepare-content": "node scripts/prepare.mjs",
     "dev": "npm run prepare-content && astro dev",
-    "build": "npm run prepare-content && astro build",
+    "build": "npm run prepare-content && astro build && pagefind --site dist --root-selector \"[data-pagefind-body]\"",
     "preview": "astro preview",
     "test": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.36.0",
     "astro": "^5.6.0",
     "yaml": "^2.4.0",
-    "@astrojs/markdown-remark": "6.3.11"
+    "@astrojs/markdown-remark": "6.3.11",
+    "@astrojs/sitemap": "3.7.3",
+    "pagefind": "1.5.2"
   }
 }
