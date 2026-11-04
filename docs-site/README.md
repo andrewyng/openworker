@@ -17,8 +17,10 @@ npm run preview -- --host 127.0.0.1 --port 4321
 Search is generated during the production build. The page content is identical
 in local preview and deployment; publication is a separate action.
 
-Adapted from the existing OpenWorker Astro/Starlight docs pipeline in
-`ocw-context/site-docs`. It does not require that private repository to build.
+The original Markdown preparation pipeline is retained. Studio now uses a
+shared custom Astro layout instead of Starlight presentation components. Pagefind
+indexes the 18 public guides after the static build; preview and error pages are
+excluded. The site does not require a private repository to build.
 
 ## Language tabs in plain Markdown
 
@@ -68,21 +70,30 @@ as a compact, neutral command panel. Set `frame="none"` on the shell fences to
 omit decorative terminal title bars. The coding-agent selection is independent
 of the TypeScript/Rust selection; both alternatives stay readable on GitHub.
 
-## Desktop design previews (not rolled out)
+## Studio layout
 
-Two isolated routes render the same prepared Desktop Markdown with custom Astro
-layouts, without importing or modifying the Starlight theme:
+`src/layouts/StudioDocs.astro` is the shared layout for every public guide. It has
+a bounded article column, a compact sidebar that opens the active section,
+light syntax-highlighted code, soft gray disclosures and full-text search.
+Markdown in `docs/harness/` remains authoritative. The renderer promotes the
+first prose sentence into the page introduction and preserves everything else;
+table-first guides retain their full content in the article.
 
-- `/docs/sdk/previews/desktop/apple/` — Studio: soft blue introduction, stronger hierarchy and light code surfaces.
-- `/docs/sdk/previews/desktop/notion/` — Editorial: white canvas, compact navigation and a restrained article layout.
+- `src/lib/render-guide.mjs`: common Markdown rendering and headings.
+- `src/lib/navigation.mjs`: grouped navigation and next-page order.
+- `src/styles/studio.css`: shared visual tokens and layout.
+- `src/scripts/guide.ts`: copying and section tracking.
+- `src/scripts/docs-search.ts`: Pagefind search dialog and compact-screen navigation.
+- `scripts/verify-built.py`: all-guide route, internal-link and content checks.
 
-`src/lib/desktop-preview.mjs` reads the generated Markdown, separates its first
-sentence into the page header, and renders the rest with light syntax highlighting.
-The guide source, tested SDK programs and existing docs routes stay unchanged.
-`src/layouts/DesktopPreview.astro` supplies the two visual treatments. Shared
-language/installer tabs and the source explorer retain their existing behavior;
-preview-only code copying, navigation filtering and section tracking live in
-`src/scripts/desktop-preview.ts`. The preview pages are marked noindex.
+Search is available in the production preview after `npm run build` creates its
+index. Run `python3 scripts/verify-built.py dist /docs/sdk` to verify built routes.
+Use `OW_DOCS_BASE` for a versioned deployment; all assets, links and search URLs
+follow that base. Deployment does not need a Node server.
 
-These routes are for design review. Do not roll either layout across the docs
-until a direction is selected. Build with the normal `npm run build` command.
+## Retained design previews
+
+The original comparison routes remain outside navigation and the search/sitemap:
+`/docs/sdk/previews/desktop/apple/` and `/docs/sdk/previews/desktop/notion/`.
+Studio was selected and applied to all SDK guides; Editorial remains a reference.
+The previews share the same content, tabs and source explorer.
