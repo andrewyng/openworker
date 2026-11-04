@@ -112,6 +112,43 @@ def test_exit_code_captured(executor):
     assert executor.run(EXIT_FAIL)["exit_code"] == 1
 
 
+@pytest.mark.skipif(not _WIN, reason="PowerShell's REPL skips a line it cannot parse")
+@pytest.mark.parametrize(
+    "command, message",
+    [
+        # Round-2 F-8: `@notes.txt` (curl's upload syntax) is splatting to PowerShell.
+        ("Write-Output @notes.txt", "splatting operator"),
+        ("if (1 {", "Missing closing"),
+        # An unclosed quote used to swallow the trailer and hang until the timeout.
+        ("Write-Output 'unclosed", "missing the terminator"),
+    ],
+)
+def test_powershell_parse_error_is_a_failure(executor, command, message):
+    start = time.monotonic()
+    result = executor.run("Write-Output before")  # a success first: `$?` was left true
+    assert result["exit_code"] == 0
+    result = executor.run(command)
+    assert result["exit_code"] == 1
+    assert result["timed_out"] is False
+    assert message in result["output"]
+    assert "At line:1 char:" in result["output"]
+    assert time.monotonic() - start < 8.0
+    # Nothing of the check is left in the session, and the shell carries on.
+    after = executor.run("Get-Variable __cw* -ErrorAction SilentlyContinue | Measure-Object | % Count")
+    assert after["exit_code"] == 0
+    assert after["output"].strip() == "0"
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell parse check")
+def test_powershell_parse_check_leaves_valid_commands_alone(executor, tmp_path):
+    # Quotes and `$` travel through the check unchanged; state persists.
+    result = executor.run("$cwValue = \"it's $(1+1) ok\"; Write-Output $cwValue")
+    assert result["exit_code"] == 0
+    assert "it's 2 ok" in result["output"]
+    assert "it's 2 ok" in executor.run("Write-Output $cwValue")["output"]
+    assert executor.run("cmd /c exit 3")["exit_code"] == 3
+
+
 def test_timeout_kills_command(executor):
     start = time.monotonic()
     result = executor.run(SLEEP_5, timeout=1)

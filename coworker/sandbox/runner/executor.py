@@ -25,6 +25,7 @@ when they exit or via `shell_task_kill`.
 
 from __future__ import annotations
 
+import base64
 import os
 import queue
 import signal
@@ -184,6 +185,8 @@ class LocalExecutor(Executor):
         self.default_timeout = default_timeout
         self.max_output_chars = max_output_chars
         self._marker = f"__COWORKER_DONE_{uuid.uuid4().hex}__"
+        # Ends the PowerShell parse check's answer (Windows only; see run()).
+        self._parse_marker = f"__COWORKER_PARSED_{uuid.uuid4().hex}__"
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
         self._bg_counter = 0
@@ -282,12 +285,22 @@ class LocalExecutor(Executor):
 
         timeout = timeout or self.default_timeout
         self._abort.clear()
+        deadline = time.monotonic() + timeout
+
+        if self._is_windows:
+            # PowerShell's `-Command -` REPL skips a line it cannot parse, so the trailer's
+            # `$?` still holds the previous (successful) trailer and the result said exit 0.
+            # An unclosed quote was worse: it swallowed the trailer and hung to the timeout.
+            # So parse first, with PowerShell's own parser; on errors nothing runs.
+            checked = self._powershell_parse_check(command, deadline)
+            if checked is not None:
+                return checked
+
         # Run the command, then emit a marker line with exit code + cwd.
         self._proc.stdin.write(command + "\n")
         self._proc.stdin.write(self._trailer())
         self._proc.stdin.flush()
 
-        deadline = time.monotonic() + timeout
         interrupted = False
         timed_out = False
         aborted = False
@@ -355,6 +368,60 @@ class LocalExecutor(Executor):
             truncated=truncated,
             error="interrupted by user" if aborted else None,
         )
+
+    def _powershell_parse_check(
+        self, command: str, deadline: float
+    ) -> Optional[dict[str, Any]]:
+        """Parse `command` in the running PowerShell before it is sent. Returns None when it
+        parses (the caller runs it), else the finished result: exit code 1 and PowerShell's
+        own error text, the same text and code `powershell -Command` gives. The command
+        travels as base64, so no quoting in it can break the check line; the check's
+        variables are removed again so the session never sees them."""
+        assert self._proc.stdin is not None
+        encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
+        self._proc.stdin.write(
+            "$__cwSrc=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("
+            f"'{encoded}'));$__cwErr=$null;"
+            "$null=[Management.Automation.Language.Parser]::ParseInput("
+            "$__cwSrc,[ref]$null,[ref]$__cwErr);$__cwN=@($__cwErr).Count;"
+            "if($__cwN){(New-Object Management.Automation.ParseException (,$__cwErr)).Message};"
+            "Remove-Variable __cwSrc,__cwErr -ErrorAction Ignore;"
+            f'"`n{self._parse_marker} $__cwN";Remove-Variable __cwN -ErrorAction Ignore\n'
+        )
+        self._proc.stdin.flush()
+
+        lines: list[str] = []
+        while True:
+            aborted = self._abort.is_set()
+            remaining = deadline - time.monotonic()
+            if aborted or remaining <= 0:
+                # Same as a command that overran on Windows: kill the shell, the next
+                # run() respawns it in the last cwd.
+                self.close()
+                return self._result(
+                    command,
+                    None,
+                    "",
+                    timed_out=not aborted,
+                    error="interrupted by user" if aborted else None,
+                )
+            try:
+                item = self._queue.get(timeout=min(remaining, 0.5))
+            except queue.Empty:
+                continue
+            if item is None:
+                return self._result(
+                    command, None, "".join(lines), timed_out=False, error="shell exited"
+                )
+            if self._parse_marker in item:
+                count = _parse_exit_code(item, self._parse_marker)
+                break
+            lines.append(item)
+        if not count:
+            return None
+        # A parse error is the command failing, not the tool: like bash's syntax error,
+        # it is a non-zero exit code with the shell's message as the output.
+        return self._result(command, 1, "".join(lines).strip("\n") + "\n", timed_out=False)
 
     def interrupt_now(self) -> None:
         """User Stop: make an in-flight foreground `run()` bail on its next read tick
