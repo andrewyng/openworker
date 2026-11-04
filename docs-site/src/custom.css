@@ -126,3 +126,25 @@ header.header { border-bottom: 1px solid var(--sl-color-hairline-light); }
 .sl-markdown-content .sdk-code-tabs .expressive-code { margin: 0; }
 .sdk-code-tabs .expressive-code pre { border: 0; border-radius: 0; box-shadow: none; }
 .sdk-code-tabs .expressive-code .frame { box-shadow: none; }
+
+/* Source is generated from the checked-in example, and opened on demand. */
+.example-source-button { display: inline-flex; align-items: center; gap: 1rem; padding: .65rem 1rem; border: 1px solid var(--sl-color-gray-5); border-radius: .6rem; background: var(--sl-color-bg); color: var(--sl-color-text); font: inherit; cursor: pointer; }
+.example-source-button:hover { border-color: var(--sl-color-text); }
+#example-source-drawer { position: fixed; inset: 1rem 1rem 1rem auto; width: min(1080px, calc(100vw - 2rem)); height: calc(100vh - 2rem); max-height: none; max-width: none; margin: 0; padding: 0; border: 1px solid #d8dce3; border-radius: 16px; background: #fff; color: #1b2028; box-shadow: 0 20px 90px #0003; }
+#example-source-drawer::backdrop { background: #15203155; backdrop-filter: blur(3px); }
+#example-source-drawer[open] { display: flex; flex-direction: column; }
+.source-header { display:flex; justify-content:space-between; align-items:center; padding: 22px 26px; border-bottom:1px solid #e1e4ea; }
+.source-header h2 { margin: 3px 0 0; font-size: 22px; }
+.source-label { color:#647080; font-size:10px; letter-spacing:.13em; }
+.source-header button { border:0; background:transparent; font-size:28px; color:inherit; cursor:pointer; }
+.source-body { display:grid; grid-template-columns:230px minmax(0,1fr); flex:1; min-height:0; }
+.source-body nav { overflow:auto; background:#f6f7f9; padding:12px; border-right:1px solid #e1e4ea; }
+.source-body nav button { display:block; width:100%; text-align:left; padding:9px 10px; border:0; border-radius:6px; background:transparent; color:#4a5565; font:12px/1.5 ui-monospace,monospace; overflow-wrap:anywhere; cursor:pointer; }
+.source-body nav button[aria-current] { background:#e4e8ef; color:#141b25; font-weight:600; }
+.source-view { display:flex; flex-direction:column; min-height:0; min-width:0; background:#17202c; color:#e9edf4; }
+.source-toolbar { display:flex; align-items:center; justify-content:space-between; padding:12px 18px; background:#222e3d; font:12px/1.6 ui-monospace,monospace; gap:1rem; }
+.source-toolbar button { background:transparent; border:1px solid #526070; color:inherit; border-radius:5px; padding:4px 10px; cursor:pointer; }
+.source-view pre { margin:0; padding:22px; overflow:auto; flex:1; font:12px/1.75 ui-monospace,SFMono-Regular,monospace; tab-size:2; }
+.source-status { margin:0; padding:0 24px; font-size:12px; color:#4a5565; }
+.source-status:not(:empty) { padding:10px 24px; }
+@media (max-width:700px) { .source-body { grid-template-columns:160px minmax(0,1fr); } }

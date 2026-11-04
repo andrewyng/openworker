@@ -2,6 +2,12 @@
 import DefaultFooter from '@astrojs/starlight/components/Footer.astro';
 ---
 <DefaultFooter {...Astro.props} />
+<dialog id="example-source-drawer" aria-labelledby="example-source-title">
+  <header class="source-header"><div><span class="source-label">COMPLETE EXAMPLE</span><h2 id="example-source-title">Source code</h2></div><button type="button" data-source-close aria-label="Close source code">×</button></header>
+  <div class="source-body"><nav aria-label="Example files" data-source-files></nav><section class="source-view" aria-label="Selected source file"><div class="source-toolbar"><span data-source-path></span><button type="button" data-source-copy>Copy</button></div><pre tabindex="0"><code data-source-content></code></pre></section></div>
+  <p class="source-status" role="status" data-source-status></p>
+</dialog>
 <script>
   import '../scripts/code-tabs';
+  import '../scripts/source-explorer';
 </script>

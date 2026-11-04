@@ -1,29 +1,47 @@
 # Build your product. OpenWorker handles the agents.
 
-OpenWorker is a Rust agent runtime with Rust and TypeScript SDKs. Add an agent to
-a desktop or server application while keeping your own interface, tools and product
-workflow. The harness manages model calls, tool execution, streaming, approvals
-and durable sessions.
+Creating an app that uses AI should be easy. Builders should be able to focus on a
+useful, thoughtful product experience while the harness handles agent loops,
+permissions and alignment. **OpenWorker Harness SDK** gives you the foundation for
+Claude- or Codex-style agent experiences—conversation, tools, streamed activity and
+ongoing sessions—inside your own product.
+
+Build a desktop app for your users, a web app deployed to your cloud, or both.
+The Rust and TypeScript SDKs let you choose the deployment that fits your product.
+Guardrails, sandbox integration, an optional auto-approver, session durability,
+agent alignment controls, service scaling and support for multiple LLM providers
+are built into the platform, so you can configure these capabilities instead of
+implementing them from scratch.
+
+You can configure **NVIDIA OpenShell** to isolate your agents' tool execution.
+The harness coordinates model calls, policy and sessions; the sandbox bounds what
+its ToolRunner can access. See [OpenShell integration](openshell.md) for that boundary.
+
+## Choose a track
+
+- **[Build a desktop app for your users](desktop.md).** Create Code Atlas: select a
+  code directory and stream a guide to its structure and entry points.
+- **[Build a web app and deploy to the cloud](server.md).** Create PDF Notes: upload
+  a PDF, ask questions and get answers with page references.
+
+Both tracks include a small UI, agent creation and packaging/deployment instructions.
+Open the source drawer to explore the complete example files alongside the guide.
 
 ```text
        Desktop app                 Web application
-       Rust / TypeScript           Your API + browser UI
+       Your interface              Your API + browser UI
               │                          │
               └────────────┬─────────────┘
-                    OpenWorker SDK
+               OpenWorker Harness SDK
                            │
                   OpenWorker Harness
            Models · Tools · Sessions · Teams
           Guardrails · Approvals · Observability
                            │
-             Local execution or OpenShell
+           Tool execution: local or OpenShell
 ```
 
-- [Install the SDK](installation.md) from Cargo or npm.
-- [Build a desktop app](desktop.md) for Windows or Mac.
-- [Build a server app](server.md) in a container or connect to a service cluster.
-- [Choose models and credentials](providers.md), including a local model server.
-
-Start with one agent. Add teams, sandboxing and service deployment when your
-application needs them. See the [release contract](../SDK-RELEASE-CONTRACT.md)
-for the beta compatibility and platform qualification policy.
+Start with the example, then choose the [models](providers.md),
+[tools](tools.md) and [deployment](deployment.md) your product needs.
+The [release contract](../SDK-RELEASE-CONTRACT.md) records registry availability,
+compatibility and platform qualification.

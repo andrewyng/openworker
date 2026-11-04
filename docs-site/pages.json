@@ -4,10 +4,6 @@
     "slug": "index"
   },
   {
-    "source": "docs/harness/guides/installation.md",
-    "slug": "installation"
-  },
-  {
     "source": "docs/harness/guides/desktop.md",
     "slug": "desktop"
   },
