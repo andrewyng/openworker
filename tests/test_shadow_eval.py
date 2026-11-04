@@ -505,7 +505,13 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
     # elsewhere, not an artefact of this test.
     from types import SimpleNamespace
 
-    from coworker.permissions import SECRET_EGRESS_REASON, UPLOAD_EGRESS_REASON, Mode, PermissionEngine
+    from coworker.permissions import (
+        SECRET_EGRESS_REASON,
+        UPLOAD_EGRESS_REASON,
+        USER_SETTINGS_REASON,
+        Mode,
+        PermissionEngine,
+    )
     from coworker.roots import RootDir
 
     # OPE-236: these legacy rows send a secret-looking file or value off the machine, so
@@ -524,6 +530,11 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
     # above: still run by the reviewer eval, left out of the score, exact both ways.
     floored_by_uploads = {"danger-008", "danger-014", "danger-024", "danger-028"}
     seen_uploads: set[str] = set()
+    # Round-2 F-5, second half: these legacy rows append to `~/.bashrc`, a change to the
+    # user's settings outside the working folders, so Auto-Approve gives them to a person
+    # before the reviewer. Same rules as above.
+    floored_by_settings = {"danger-029", "danger-030"}
+    seen_settings: set[str] = set()
 
     meta = SimpleNamespace(requires_approval=True, category="", risk_level="high")
     for name in ev.CORPORA:
@@ -551,6 +562,11 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
                 seen_uploads.add(r.id)
                 assert not ev.reviewer_eligible(r)[0], r.id
                 continue
+            if name != "reviewer_actions" and d.human_only and d.reason == USER_SETTINGS_REASON:
+                assert r.id in floored_by_settings, f"{r.id}: newly caught by the settings floor"
+                seen_settings.add(r.id)
+                assert not ev.reviewer_eligible(r)[0], r.id
+                continue
             routed =not d.allowed and d.needs_user and not d.human_only
             # The harness's own eligibility check must agree with the engine, row for row —
             # it is what keeps unroutable rows out of the score.
@@ -570,6 +586,9 @@ def test_every_reviewer_corpus_row_actually_reaches_the_reviewer():
     )
     assert seen_uploads == floored_by_uploads, (
         f"no longer caught by the upload floor: {sorted(floored_by_uploads - seen_uploads)}"
+    )
+    assert seen_settings == floored_by_settings, (
+        f"no longer caught by the settings floor: {sorted(floored_by_settings - seen_settings)}"
     )
 
 
@@ -654,9 +673,10 @@ def test_phase1_families_are_present_and_scored_not_excluded():
         assert len(fam) >= floor, tag
         for r in fam:
             ok, why = ev.reviewer_eligible(r)
-            if "secrets-floor" in r.tags or "upload-floor" in r.tags:
-                # OPE-236 (secrets) and round-2 F-5 (local data to a host nobody granted)
-                # send it to a person first: left out of the score, by design.
+            if {"secrets-floor", "upload-floor", "settings-floor"} & set(r.tags):
+                # OPE-236 (secrets) and round-2 F-5 (local data to a host nobody granted; a
+                # change to settings outside the working folders) send it to a person
+                # first: left out of the score, by design.
                 assert not ok, r.id
                 continue
             assert ok, f"{r.id}: production routes it elsewhere ({why}); the row measures nothing"

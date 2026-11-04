@@ -498,6 +498,31 @@ SECRET_EGRESS_REASON = "this sends a secret-looking file or value off the machin
 # Round-2 F-5: Auto-Approve sends this to a person, not the reviewer. The card shows the
 # command, so the host is not repeated here.
 UPLOAD_EGRESS_REASON = "this sends local files or data to a site you have not allowed — approval required"
+# Round-2 F-5, second half: Auto-Approve sends this to a person, not the reviewer. The card
+# shows the command, so what it changes is not repeated here.
+USER_SETTINGS_REASON = "this changes your settings outside the working folders — approval required"
+
+# Files outside the working folders that change how the user's own tools behave from now
+# on: shell profiles (run at every new terminal) and the user-level config files of the
+# tools `review_facts.shell_settings_changes` covers. Matched on the last part of a path,
+# or the last two for `git/config`.
+_USER_SETTINGS_FILES = {
+    ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc",
+    ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".kshrc", ".cshrc", ".tcshrc",
+    "config.fish", "microsoft.powershell_profile.ps1", "microsoft.vscode_profile.ps1",
+    "profile.ps1", ".gitconfig", ".npmrc", ".yarnrc", "pip.conf", "pip.ini",
+}
+# PowerShell's own name for the profile file(s): `$PROFILE`, `$PROFILE.CurrentUserAllHosts`.
+_PS_PROFILE_VAR = re.compile(r"^\$profile(?:\.\w+)?$", re.IGNORECASE)
+_PS_PROFILE_WORD = re.compile(r"\$profile(?:\.\w+)?\b", re.IGNORECASE)
+_PS_HOME_VARS = re.compile(r"\$env:(?:HOME|USERPROFILE)\b|\$HOME\b|\$\{HOME\}", re.IGNORECASE)
+_HOME_PREFIX = re.compile(
+    r"^(?:~|\$HOME\b|\$\{HOME\}|\$env:(?:HOME|USERPROFILE)\b|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)",
+    re.IGNORECASE,
+)
+# Ends a word when a command is read for paths. Unlike `_WORD_BREAK`, `:` and `=` stay in
+# the word (`C:\Users\...`, `$env:USERPROFILE`); a `--flag=value` word is split below.
+_PATH_WORD_BREAK = re.compile(r"[\s;&|<>(){},]+")
 
 
 # The transcript's full Auto-Approve explainer (owner copy 2026-08-24). Persisted as a
@@ -1019,6 +1044,17 @@ class PermissionEngine:
                 and not self._is_approved_plan_step(tool_name, arguments)
             ):
                 return Decision(False, UPLOAD_EGRESS_REASON, needs_user=True, human_only=True)
+            # The other half of F-5: the same reviewer allowed `git config --global
+            # user.name tester`. A command that changes the user's settings outside the
+            # working folders (global git / npm / pip config, persistent environment
+            # variables, the registry, shell profiles) reaches a person. Reading settings
+            # and repo-local `git config` keep their normal handling. An approved plan step
+            # for this exact command leaves it to the reviewer, as for uploads.
+            if (
+                self._settings_change_outside(str(arguments.get("command", "")))
+                and not self._is_approved_plan_step(tool_name, arguments)
+            ):
+                return Decision(False, USER_SETTINGS_REASON, needs_user=True, human_only=True)
 
         # OPE-234: in Auto-Approve, a read-only command (or a sequence of them) inside the
         # folders needs no reviewer call. Last checks on purpose, like the inert-write tier
@@ -1438,6 +1474,58 @@ class PermissionEngine:
             if not h or not (self._site_allowed(h) or self._domain_allowed(h))
         ]
         return ungranted or None
+
+    def _settings_change_outside(self, command: str) -> list[str]:
+        """Round-2 F-5: what a shell command changes of the user's settings outside the
+        working folders, as fixed labels; empty when nothing. The tools' own config
+        commands come from `review_facts.shell_settings_changes`. On top of those: a
+        command that names a shell profile or a user-level config file (`~/.bashrc`,
+        `$PROFILE`, `~/.gitconfig`) lying outside every working folder, unless the
+        read-only check accepts the command or the file is only `source`d. Best effort on
+        the command text, like the other shell floors."""
+        from . import review_facts as rf
+
+        if not command.strip():
+            return []
+        found = rf.shell_settings_changes(command, self.shell_kind or "bash")
+        # The read-only check refuses any variable; the profile and home variables name
+        # fixed files, so `Get-Content $PROFILE` is judged as the read it is.
+        as_read = _PS_HOME_VARS.sub("~", _PS_PROFILE_WORD.sub("~/profile.ps1", command))
+        if self._only_reads(as_read):
+            return found
+        kept = [
+            part for part in _split_commands(command)
+            if not (len(part.split()) == 2 and part.split()[0] in ("source", "."))
+        ]
+        base = self._shell_base()
+        for word in _PATH_WORD_BREAK.split(re.sub(r"[\"'`]", "", " ".join(kept))):
+            word = word.rsplit("=", 1)[-1] if word.startswith("-") else word
+            if word and self._names_user_settings_file(word, base):
+                found.append("a shell profile or user settings file")
+                break
+        return found
+
+    def _names_user_settings_file(self, word: str, base: Path) -> bool:
+        """Whether a path word names a shell profile or user-level config file that lies
+        outside every working folder. A path that starts with a variable other than the
+        home folder cannot be placed, so it counts as outside."""
+        if _PS_PROFILE_VAR.match(word):
+            return True
+        text = word.replace("\\", "/")
+        tail = text.rstrip("/").lower().split("/")
+        if tail[-1] not in _USER_SETTINGS_FILES and tail[-2:] != ["git", "config"]:
+            return False
+        if tail[-2:] == ["git", "config"] and ".git" in tail[:-1]:
+            return False  # a repository's own `.git/config`: the protected-file floor's
+        text = _HOME_PREFIX.sub(lambda _m: Path.home().as_posix(), text, count=1)
+        if text.startswith(("$", "%")):
+            return True
+        path = Path(text)
+        try:
+            full = (path if path.is_absolute() else base / path).resolve()
+        except (OSError, ValueError):
+            return True
+        return not self._under_root(str(full))
 
     def _sends_secret(self, tool_name: str, arguments: dict[str, Any], risk: RiskClass) -> bool:
         """OPE-236: the call sends data off the machine AND a secret is involved.

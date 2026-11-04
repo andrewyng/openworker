@@ -660,6 +660,193 @@ def shell_upload_hosts(command: str, shell: str = "bash") -> Optional[list[str]]
     return [h.lower() for h in hosts] if sends else None
 
 
+# -- round-2 F-5, second half: settings changed outside the working folders ----------------
+GIT_GLOBAL_SETTINGS = "git's global settings"
+GIT_SYSTEM_SETTINGS = "git's system settings"
+NPM_SETTINGS = "npm's user settings"
+PNPM_SETTINGS = "pnpm's user settings"
+YARN_SETTINGS = "yarn's settings"
+PIP_SETTINGS = "pip's user settings"
+WINDOWS_ENVIRONMENT = "Windows environment variables"
+WINDOWS_REGISTRY = "the Windows registry"
+
+# `npm config <verb>` (and `npm c`, and the `npm set` shorthand) that write the config file.
+_PKG_CONFIG_WRITES = {"set", "delete", "rm", "unset", "edit", "fix"}
+_PIP_PROGRAM = re.compile(r"^pip(?:\d+(?:\.\d+)?)?$")
+_PYTHON_PROGRAM = re.compile(r"^(?:python[\d.]*|py)$")
+# .NET's own call; the third argument picks where the variable lives. `Process` (or no
+# third argument) changes only the running shell; `User` / `Machine` (1 / 2) persist.
+_DOTNET_ENV = re.compile(
+    r"SetEnvironmentVariable\s*\([^;\n|]*?(?:\b(?:User|Machine)\b|,\s*[12]\s*\))", re.IGNORECASE
+)
+_REG_WRITES = {"add", "delete", "import", "copy", "restore", "load", "unload"}
+_PS_ITEM_WRITE = re.compile(
+    r"(?:^|\s)(?:(?:set|new|remove|rename|copy|move|clear)-item(?:property)?|sp|si|ni|ri|rp)\s",
+    re.IGNORECASE,
+)
+_REGISTRY_PATH = re.compile(r"\b(?:HKCU|HKLM|HKU|HKCR|HKCC):|\bHKEY_|Registry::", re.IGNORECASE)
+
+
+def _tool_name(word: str) -> str:
+    """A program's name as typed, without the folder or a Windows launcher extension
+    (`git.exe`, `npm.cmd`, `pnpm.ps1`)."""
+    name = Path(word).name.lower()
+    for ext in (".exe", ".cmd", ".bat", ".ps1"):
+        if name.endswith(ext):
+            return name[: -len(ext)]
+    return name
+
+
+def _git_config_writes(args: list[str]) -> bool:
+    """Whether `git config <args>` changes a setting (rather than reading one)."""
+    from .permissions import _GIT_CONFIG_READS, _GIT_CONFIG_VALUE_FLAGS, _GIT_CONFIG_WRITES
+
+    if any(a in _GIT_CONFIG_WRITES for a in args):
+        return True
+    if any(a in _GIT_CONFIG_READS for a in args):
+        return False
+    operands, skip = 0, False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in _GIT_CONFIG_VALUE_FLAGS:
+            skip = True
+        elif not a.startswith("-"):
+            operands += 1
+    return operands != 1  # `git config key` reads it; `key value` (or anything else) sets
+
+
+def _git_config_scope(argv: list[str]) -> Optional[str]:
+    for i, word in enumerate(argv):
+        if _tool_name(word) != "git":
+            continue
+        rest = argv[i + 1 :]
+        j = 0
+        while j < len(rest) and rest[j].startswith("-"):
+            j += 2 if rest[j] in ("-C", "-c") else 1
+        if j >= len(rest) or rest[j] != "config":
+            continue
+        args = rest[j + 1 :]
+        if not _git_config_writes(args):
+            continue
+        if "--system" in args:
+            return GIT_SYSTEM_SETTINGS
+        if "--global" in args:
+            return GIT_GLOBAL_SETTINGS
+    return None
+
+
+def _location_is_project(args: list[str]) -> bool:
+    """npm / pnpm `--location project` (or `-L project`): the project's own `.npmrc`."""
+    for k, a in enumerate(args):
+        if a.lower() in ("--location=project", "-l=project"):
+            return True
+        if a in ("--location", "-L") and k + 1 < len(args) and args[k + 1].lower() == "project":
+            return True
+    return False
+
+
+def _package_config(argv: list[str]) -> Optional[str]:
+    for i, word in enumerate(argv):
+        program = _tool_name(word)
+        if program not in ("npm", "pnpm", "yarn"):
+            continue
+        args = argv[i + 1 :]
+        verbs = [a.lower() for a in args if not a.startswith("-")]
+        if program == "npm" and verbs[:1] == ["set"]:
+            pass  # `npm set key value` is `npm config set`
+        elif not (verbs[:1] in (["config"], ["c"]) and verbs[1:2] and verbs[1] in _PKG_CONFIG_WRITES):
+            continue
+        if program != "yarn" and _location_is_project(args):
+            continue
+        return {"npm": NPM_SETTINGS, "pnpm": PNPM_SETTINGS, "yarn": YARN_SETTINGS}[program]
+    return None
+
+
+def _pip_config(argv: list[str]) -> Optional[str]:
+    for i, word in enumerate(argv):
+        program = _tool_name(word)
+        if _PIP_PROGRAM.match(program):
+            args = argv[i + 1 :]
+        elif _PYTHON_PROGRAM.match(program) and argv[i + 1 : i + 3] == ["-m", "pip"]:
+            args = argv[i + 3 :]
+        else:
+            continue
+        verbs = [a.lower() for a in args if not a.startswith("-")]
+        if verbs[:1] == ["config"] and verbs[1:2] in (["set"], ["unset"], ["edit"]):
+            if "--site" not in args:  # `--site`: the active environment's own file
+                return PIP_SETTINGS
+    return None
+
+
+def _windows_settings(argv: list[str], part: str) -> Optional[str]:
+    program = _tool_name(argv[0])
+    if program == "setx" and len(argv) > 1 and argv[1] != "/?":
+        return WINDOWS_ENVIRONMENT
+    if program == "reg" and len(argv) > 1 and argv[1].lower() in _REG_WRITES:
+        return WINDOWS_REGISTRY
+    if _PS_ITEM_WRITE.search(" " + part + " ") and _REGISTRY_PATH.search(part):
+        return WINDOWS_REGISTRY
+    return None
+
+
+def _inline_code(argv: list[str]) -> Optional[tuple[str, str]]:
+    """The code and its shell when a part runs a shell on inline code
+    (`bash -c "..."`, `powershell -Command "..."`, `cmd /c ...`)."""
+    program = _tool_name(argv[0])
+    if program in ("sh", "bash", "zsh", "dash", "ksh"):
+        flags, shell = {"-c"}, "bash"
+    elif program in ("powershell", "pwsh"):
+        flags, shell = {"-c", "-command"}, "powershell"
+    elif program == "cmd":
+        flags, shell = {"/c", "/k"}, "powershell"  # whitespace words, like cmd itself
+    else:
+        return None
+    for k, a in enumerate(argv[1:], start=1):
+        if a.lower() in flags:
+            code = " ".join(argv[k + 1 :]) if program == "cmd" or shell == "powershell" else (
+                argv[k + 1] if k + 1 < len(argv) else ""
+            )
+            return code.strip("\"'"), shell
+    return None
+
+
+def shell_settings_changes(command: str, shell: str = "bash", _depth: int = 0) -> list[str]:
+    """What settings OUTSIDE the working folders a shell command changes, as fixed labels
+    (round-2 F-5: `git config --global user.name tester`). Empty when it changes none.
+
+    Covered: `git config --global` / `--system` that set, unset or edit a value; `npm` /
+    `pnpm` / `yarn config set|delete|edit` (and `npm set`), except npm and pnpm's
+    `--location project`; `pip config set|unset|edit` (also `python -m pip`), except
+    `--site`; `setx`; .NET `SetEnvironmentVariable(..., 'User' | 'Machine')`; `reg add` and
+    the other registry writes; PowerShell item cmdlets on a registry path. Shells run on
+    inline code (`bash -c`, `powershell -Command`, `cmd /c`) are read too. Reading config
+    (`git config --get`, `npm config get`) and repo-local `git config` are not changes
+    here. Writes to shell profiles are judged in `permissions`, which knows the folders.
+    This reads the command TEXT and is best effort, like the rest of this module."""
+    text = command or ""
+    found: list[str] = []
+    if _DOTNET_ENV.search(text):
+        found.append(WINDOWS_ENVIRONMENT)
+    from .permissions import _split_commands
+
+    for part in _split_commands(text):
+        argv = _argv(part, shell)
+        if not argv:
+            continue
+        for check in (_git_config_scope, _package_config, _pip_config):
+            label = check(argv)
+            if label:
+                found.append(label)
+        label = _windows_settings(argv, part)
+        if label:
+            found.append(label)
+        inline = _inline_code(argv) if _depth < 2 else None
+        if inline and inline[0]:
+            found.extend(shell_settings_changes(inline[0], inline[1], _depth + 1))
+    return list(dict.fromkeys(found))
+
+
 # -- point 4b: what `git push` would send, what `git add -A` would stage --------------------
 _PUSH_CONTENT_FILES = 100  # blobs read per push check; names are checked for every file
 
