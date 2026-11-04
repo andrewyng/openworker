@@ -554,6 +554,7 @@ def _build_local_app(state: Path):
     cfg = load_config()
     manager = SessionManager(data_dir=state, model=cfg.model, mode=Mode(cfg.mode))
     manager.recordings_store.close_open_turns()  # the engine lock is held (observability TD-12)
+    manager.start_background_checks()  # stale manual runs, Issues re-check (P3-3, P3-4)
     return create_app(manager)
 
 

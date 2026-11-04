@@ -154,7 +154,10 @@ def _step_row(s: dict[str, Any]) -> tuple:
         # A call the provider gave no counts for is `usage: {"reported": false}` (§5.2).
         reported: Optional[int] = int(bool(usage) and usage.get("reported", True) is not False)
     else:
-        reported = _bool(attrs.get("usage_reported"))
+        # The column is the model call's own usage. An auto-approver check's `usage_reported`
+        # (whether its nested call reported) stays in attrs: in the column it read as a call
+        # of 0 tokens to any sum over it (Phase 3 V3-06).
+        reported = None
     facts = attrs.get("provider_facts") or {}
     error = attrs.get("error") if isinstance(attrs.get("error"), dict) else {}
     return (
@@ -616,6 +619,26 @@ class RecordingStore:
             except ValueError:
                 continue
         return out
+
+    def sessions_needing_check(self, version: str) -> list[str]:
+        """Sessions with a finished turn whose Issues result is missing or was made by
+        another `signals.yaml` version (P3-4): the ones the start-up re-check works on."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, issues FROM turns WHERE status IS NOT NULL AND status != 'running'"
+            ).fetchall()
+        out: dict[str, None] = {}
+        for r in rows:
+            if r["session_id"] in out:
+                continue
+            try:
+                have = json.loads(r["issues"]).get("signals_version") if r["issues"] else None
+            except (ValueError, AttributeError):
+                have = None
+            if have != version:
+                out[r["session_id"]] = None
+        return list(out)
 
     def mark_issues_seen(self, session_id: str) -> None:
         self.flush()

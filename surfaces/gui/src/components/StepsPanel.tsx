@@ -113,7 +113,8 @@ export function stepLabel(step: RecordedStep, t: T): string {
     case "context":
       return t("steps.row.context");
     case "model": {
-      const purpose = a.purpose && a.purpose !== "main" ? ` · ${t(`steps.purpose.${a.purpose}`, { defaultValue: a.purpose })}` : "";
+      const p = a.purpose || "unattributed";  // no purpose: the format's "unattributed" (V3-19)
+      const purpose = p !== "main" ? ` · ${t(`steps.purpose.${p}`, { defaultValue: p })}` : "";
       return t("steps.row.model") + purpose;
     }
     case "wait":
@@ -267,7 +268,7 @@ function H(t: T, key: string): string {
 /** The hover help for a step's kind: the row's hover text and its details heading. */
 function kindHelp(step: { kind: string; name?: string; shadow?: boolean; attrs?: any }, t: T): string {
   const a = step.attrs || {};
-  const key = step.kind === "model" ? `kind.model_${a.purpose || "main"}`
+  const key = step.kind === "model" ? `kind.model_${a.purpose || "unattributed"}`
     : step.kind === "auto_approver" ? (step.shadow ? "kind.shadow" : "kind.auto_approver")
     : step.kind === "summary" ? (step.name === "trim" ? "kind.trim" : "kind.summary")
     : step.kind === "notice" ? `notice.${step.name}`
@@ -983,9 +984,9 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
   );
 
   if (d.kind === "model") {
-    const mains = steps.filter((s) => s.kind === "model" && (s.attrs?.purpose || "main") === (a.purpose || "main") && !s.parent_step_id);
+    const mains = steps.filter((s) => s.kind === "model" && (s.attrs?.purpose || "unattributed") === (a.purpose || "unattributed") && !s.parent_step_id);
     const n = mains.findIndex((s) => s.step_id === d.step_id) + 1;
-    const title = (a.purpose || "main") === "main" && n > 0
+    const title = a.purpose === "main" && n > 0
       ? t("steps.insp.model_call", { n, total: mains.length })
       : stepLabel(d, t);
     const attempts = exchanges.filter((x) => !x.auxiliary).length;
@@ -1022,7 +1023,7 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
             <TokenBar u={u} t={t} />
           </>
         )}
-        {(a.purpose || "main") === "main" && ctxStep && (
+        {a.purpose === "main" && ctxStep && (
           <>
             <Sec label={t("steps.insp.context_added")} help={H(t, "sec.context_added")} />
             <ContextAdded ctx={ctxStep.attrs} t={t} />

@@ -167,7 +167,7 @@ def usage(recording: dict[str, Any], session_id: str) -> dict[str, Any]:
         u = a.get("usage") or {}
         if s.get("kind") != "model" or not u.get("reported") or a.get("error") or a.get("purpose") == "proxy":
             continue
-        p = a.get("purpose", "main")
+        p = a.get("purpose") or "unattributed"
         key = a.get("model", "?") + ("" if p == "main" else f" ({p})")
         row = parts.setdefault(key, {"input": 0, "cache": 0, "output": 0})
         for target in (row, totals):

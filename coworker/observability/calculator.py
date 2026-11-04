@@ -58,7 +58,7 @@ def usage(recording: dict[str, Any], session_id: Optional[str] = None,
             unreported_ids.append(s.get("step_id"))
             continue
         total += t
-        p = attrs.get("purpose", "main")
+        p = attrs.get("purpose") or "unattributed"  # the format's word for a call with no purpose (V3-19)
         by_purpose[p] = by_purpose.get(p, 0) + t
         key = attrs.get("model", "?") + ("" if p == "main" else f" ({p})")
         by_model[key] = by_model.get(key, 0) + t

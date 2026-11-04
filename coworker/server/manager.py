@@ -6565,6 +6565,9 @@ class SessionManager:
         if message.get("type") in {"turn_start", "iteration_end", "permission_required", "turn_done"}:
             self.persist_session(session_id)
             self.reconcile_activity_receipts(session_id)
+        if message.get("type") == "turn_done" and session_id.startswith("__run__"):
+            # A manual run is done when its turn is, whether or not a window is open (P3-3).
+            self._finish_manual_run(session_id)
         data = message.get("data") or {}
         if message.get("type") == "team_proposed":
             message = {**message, "data": {**data, **self.team_card_extras(session_id, data.get("members") or [])}}
@@ -8270,6 +8273,69 @@ class SessionManager:
                 f"or modify any scheduled tasks.\n\n{task.instructions}"
             ),
         }
+
+    def _finish_manual_run(self, session_id: str) -> None:
+        """Close the manual run whose session this is, once its turn ended (P3-3). The desktop
+        used to be the only caller of `finalize_manual_run`, so a run whose window closed first
+        stayed "running" for good. Calling it twice is harmless."""
+        try:
+            run = self.task_store.find_run(session_id[len("__run__"):])
+            if run is not None and run.trigger == "manual" and run.status == "running":
+                self.finalize_manual_run(run.task_id, run.run_id)
+        except Exception:  # noqa: BLE001 - closing the run must never break the turn's events
+            logger.exception("could not close manual run of %s", session_id)
+
+    def finish_stale_manual_runs(self) -> int:
+        """At start: close the manual runs an earlier run of the app left "running" (P3-3).
+        One whose turn finished is closed as usual; one whose turn the app's stop cut short
+        (closed as `unknown` at start) is marked failed. A run with no turn yet is left as is.
+        Returns how many were closed."""
+        closed = 0
+        for task in self.task_store.list():
+            for run in self.task_store.runs(task.id):
+                if run.trigger != "manual" or run.status != "running":
+                    continue
+                turns = [t for t in (self.recordings_store.load_recording(run.session_id).get("turns") or [])
+                         if t.get("status") not in (None, "running")]
+                if not turns:
+                    continue
+                if turns[-1].get("status") == "unknown":
+                    run.status, run.error, run.finished_at = "error", "The app stopped before the run finished", _epoch()
+                    self.task_store.add_run(run)
+                    task.last_run, task.last_status = run.finished_at, "error"
+                    task.run_count += 1
+                    self.task_store.save(task)
+                else:
+                    self.finalize_manual_run(task.id, run.run_id)
+                closed += 1
+        return closed
+
+    def recheck_issues(self) -> int:
+        """Work out the Issues result of every finished turn that has none, or one from an
+        older `signals.yaml`, so the sidebar's warnings are right before anyone opens the
+        session (P3-4, Phase 3 TD3-8). A result worked out here is stored as seen: an old turn
+        never lights the dot. Returns how many sessions were checked."""
+        sids = self.recordings_store.sessions_needing_check(recording_signals.version())
+        for sid in sids:
+            try:
+                self._recording_issues(sid, self.recordings_store.load_recording(sid))
+            except Exception:  # noqa: BLE001 - one bad recording must not stop the rest
+                logger.exception("could not re-check issues of %s", sid)
+        return len(sids)
+
+    def start_background_checks(self) -> threading.Thread:
+        """At start, after the open turns are closed: close stale manual runs and re-check
+        Issues, in a background thread so the app is usable at once (P3-3, P3-4)."""
+        def work() -> None:
+            for job in (self.finish_stale_manual_runs, self.recheck_issues):
+                try:
+                    job()
+                except Exception:  # noqa: BLE001
+                    logger.exception("background check %s failed", job.__name__)
+
+        t = threading.Thread(target=work, name="observability-recheck", daemon=True)
+        t.start()
+        return t
 
     def finalize_manual_run(self, task_id: str, run_id: str) -> dict[str, Any]:
         """Mark a manual run complete once its first turn finished (the WS already saved the

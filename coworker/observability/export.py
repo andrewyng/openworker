@@ -640,10 +640,13 @@ class ObservabilityExport:
         _put_profile(self.secrets, {k: v for k, v in held.items() if v})
 
     # -- status (§10.5) ----------------------------------------------------------------------------------
-    def status(self) -> dict[str, Any]:
+    def status(self, *, day_start_ms: Optional[int] = None) -> dict[str, Any]:
+        """The status card. `day_start_ms`: when the viewer's day began (their midnight, sent
+        by the desktop, Phase 3 TD3-2); without it, this machine's own midnight."""
         dest, _ = self.effective()
         ex = self.exporter
-        midnight = time.mktime(time.localtime(self.clock())[:3] + (0, 0, 0, 0, 0, -1)) * 1000
+        midnight = day_start_ms if isinstance(day_start_ms, int) and day_start_ms > 0 else \
+            time.mktime(time.localtime(self.clock())[:3] + (0, 0, 0, 0, 0, -1)) * 1000
         try:
             outside = self.store.outside_calls(since_ms=int(midnight))
         except Exception:  # noqa: BLE001 - the status never fails on this line

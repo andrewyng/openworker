@@ -2407,7 +2407,10 @@ export async function setObservabilitySettings(
 }
 
 export async function getObservabilityStatus(machineId?: string | null): Promise<ObservabilityStatus> {
-  const res = await fetch(`${engineBase(machineId)}/v1/observability/status`);
+  // "Today" is your day, even for a machine in another time zone (Phase 3 TD3-2).
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/status?day_start_ms=${midnight.getTime()}`);
   return res.json();
 }
 

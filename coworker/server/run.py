@@ -111,6 +111,7 @@ def build_app(workspace: str | None, model: str, mode: str):
         # (observability TD-12). Only with the engine lock: a second server on the same
         # folder may have turns running right now.
         manager.recordings_store.close_open_turns()
+        manager.start_background_checks()  # stale manual runs, Issues re-check (P3-3, P3-4)
     return create_app(manager)
 
 

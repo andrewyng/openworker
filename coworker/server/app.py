@@ -876,8 +876,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         return await asyncio.to_thread(manager.observability.send_test)
 
     @app.get("/v1/observability/status")
-    def observability_status() -> dict[str, Any]:
-        return manager.observability.status()
+    def observability_status(day_start_ms: Optional[int] = None) -> dict[str, Any]:
+        # "Today" is the viewer's day: the desktop sends when it began (Phase 3 TD3-2, V3-18).
+        return manager.observability.status(day_start_ms=day_start_ms)
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
