@@ -1,8 +1,9 @@
 // One language selection follows the reader through all examples on the page.
-const storageKey = 'openworker-docs-code-language';
-function initializeTabs() {
-  const groups = [...document.querySelectorAll<HTMLElement>('[data-sdk-tabs]')];
-  let initial = 'typescript';
+function initializeKind(kind: 'language' | 'installer') {
+  const storageKey = `openworker-docs-code-${kind}`;
+  const groups = [...document.querySelectorAll<HTMLElement>(`[data-sdk-tabs][data-tab-kind="${kind}"]`)];
+  const options = kind === 'language' ? ['typescript', 'rust'] : ['codex', 'claude'];
+  let initial = options[0]!;
   try { initial = sessionStorage.getItem(storageKey) ?? initial; } catch { /* storage is optional */ }
   function select(language: string) {
     for (const group of groups) {
@@ -38,7 +39,8 @@ function initializeTabs() {
       });
     }
   }
-  select(initial === 'rust' ? 'rust' : 'typescript');
+  select(options.includes(initial) ? initial : options[0]!);
 }
+function initializeTabs() { initializeKind('language'); initializeKind('installer'); }
 initializeTabs();
 document.addEventListener('astro:page-load', initializeTabs);

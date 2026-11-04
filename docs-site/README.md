@@ -61,3 +61,9 @@ of the example source to maintain, directory scanning, or runtime file access.
 New source files must be added deliberately to the manifest. Generated JSON and
 content are ignored by Git. Links to the complete examples remain usable on GitHub
 and with JavaScript disabled.
+
+For skill-install commands, use `<!-- sdk-install-tabs -->` with `### Codex` and
+`### Claude Code` sections, closed by `<!-- /sdk-install-tabs -->`. These render
+as a compact, neutral command panel. Set `frame="none"` on the shell fences to
+omit decorative terminal title bars. The coding-agent selection is independent
+of the TypeScript/Rust selection; both alternatives stay readable on GitHub.

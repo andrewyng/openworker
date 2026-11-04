@@ -45,17 +45,21 @@ you build. Run the relevant tests and prepare a local package.
 From an OpenWorker checkout, choose the command for your coding agent. Replace
 `/path/to/your-app` with an existing app directory; quote paths containing spaces.
 
-**Codex**
+<!-- sdk-install-tabs -->
 
-```sh
+### Codex
+
+```sh frame="none"
 node skills/install.mjs --agent codex --project /path/to/your-app
 ```
 
-**Claude Code**
+### Claude Code
 
-```sh
+```sh frame="none"
 node skills/install.mjs --agent claude --project /path/to/your-app
 ```
+
+<!-- /sdk-install-tabs -->
 
 Open a new coding-agent session in that project. The installer copies the same
 skill and its two track references into the tool's project skills directory.
