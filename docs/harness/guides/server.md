@@ -15,7 +15,7 @@ Upload a PDF, ask questions and stream answers with page references. Follow-up q
 
 ## The basic flow
 
-Start the harness → configure a model → create an agent → start a session → stream a run.
+Start the harness in your app → configure a model → create an agent → start a session → stream a run.
 
 | Concept | What it does in your app |
 | --- | --- |
@@ -24,7 +24,9 @@ Start the harness → configure a model → create an agent → start a session 
 | Session | Keeps the conversation for one uploaded document. |
 | Run | Processes a message and produces events plus a final result. |
 
-Your browser UI calls your application server. The server uses the SDK and manages a Rust harness subprocess in the same container.
+Your browser UI calls your application server. TypeScript starts the harness as
+a managed Rust child process in the same container. A Rust server can run it
+in-process. In either case, your application manages the harness lifecycle.
 The app supplies the source text, so this example's agent needs no tools.
 
 ## Build with your coding agent

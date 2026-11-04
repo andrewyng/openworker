@@ -22,7 +22,7 @@ Read the relevant guide and source before editing:
 
 ## Integration decisions
 
-- Start the harness once at the application boundary and shut it down on exit. TypeScript uses a managed Rust subprocess; Rust can embed the harness. Browser code never starts the Rust executable directly.
+- Start the harness in the app, once at its application boundary, and shut it down on exit. TypeScript uses a managed Rust subprocess; Rust can embed the harness. Browser code never starts the Rust executable directly.
 - Configure a model provider separately from the agent. Keep credentials in the trusted application process and outside renderer bundles, agent instructions and checked-in files. Ask for an environment-variable name or secret source, not a key in chat.
 - Create an agent with instructions, a default model and an explicit tool list. A session owns conversation history; a run is the work started by sending a message. Stream events and also inspect the terminal result. Cancellation, errors and pending input are distinct from successful completion.
 - The two reference apps collect content themselves. Keep their agents tool-free (`tools: []`, with planning, memory and scheduling disabled) unless the requested product needs tools. Disabling optional memory does not disable session history.
