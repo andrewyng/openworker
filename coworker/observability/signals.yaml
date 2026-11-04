@@ -6,7 +6,7 @@
 # the same issues in both. The numbers in a rule ("3 times", "80%") are settings here, not
 # code.
 #
-# Status: DRAFT 0.6 (2026-11-04). Not frozen. The Phase 2 checks freeze when the labelling
+# Status: DRAFT 0.7 (2026-11-04). Not frozen. The Phase 2 checks freeze when the labelling
 # gate is closed (phase-2 TD2-21). The Phase 3 checks (scope series and task) freeze after
 # they are run on real team, security and automation sessions (phase-3/validation-report.md).
 #
@@ -47,8 +47,12 @@
 #   golden      the scenarios that test it (phase-2/scenarios.md)
 #   source      where the check was asked for
 
-version: "0.6"
+version: "0.7"
 draft: 2026-11-04
+# 0.7: `scanners.not_found` (P3B-1, found while building Phase 3). A scanner that is not
+# installed did not scan: PowerShell exits 1 for a command it does not know, the same code
+# most scanners use for "found something". No check, threshold or text changed; the golden
+# answers are unchanged apart from the version. New vector: golden/phase3/vectors/scanner-not-found.json.
 # 0.6: Phase 3 (phase-3/technical-design.md §5, §10 to §12; decisions TD3-15 to TD3-24, ruled
 # 2026-11-04). A `scope` on every check (default turn). New checks: wake_capped and
 # watchdog_nudged (turn); lead_polling and failed_in_a_row (series); scan_missing,
@@ -632,7 +636,7 @@ checks:
     golden: [S3-60, S3-61, S3-61b, S3-62]
     source: "across-features.md OB-18"
 
-# -- 0.6: how a scan is recognised (OB-16, TD3-16). ------------------------------------------
+# -- 0.6: how a scan is recognised (OB-16, TD3-16; not installed: 0.7). -----------------------
 # The engine sets a run_shell step's `scanner` from the command, by this rule only:
 #   1. split the command into parts at &&, ||, ; and |;
 #   2. in each part, drop `lead_ins` and any NAME=value words at the start, and a leading
@@ -647,18 +651,18 @@ scanners:
   area_words: {code: code, secrets: secret, deps: dependency, iac: infrastructure}
   lead_ins: [sudo, npx, uvx, pipx, run, exec, env, time]
   probe_words: ["--version", version, "-v", "--help"]
-  # A scanner that is not installed did not scan (P3B-1, found in review 2026-11-04; local to
-  # this copy until the shared file takes it, see the Phase 3 build notes). PowerShell exits 1
-  # for a command it does not know, the same code most scanners use for "found something", so
-  # the exit code alone cannot tell them apart. When recording a shell step whose command names
-  # a scanner, the engine records `scanner: null` (no scan ran) when:
+  # 0.7: a scanner that is not installed did not scan (P3B-1). PowerShell exits 1 for a command
+  # it does not know, the same code most scanners use for "found something", so the exit code
+  # alone cannot tell them apart. When recording a run_shell step whose command names a scanner,
+  # the engine records `scanner: null` (no scan ran) when:
   #   - the command exited with one of `exit` (127: sh "command not found"; 9009: cmd.exe), or
-  #   - a line of its output names the scanner's word and holds one of `phrases` (case-insensitive).
-  # The checks then read it as a scan that never ran: scan_missing fires, scanner_failed and
-  # the coverage list do not count it.
+  #   - a line of its output (or error) names the scanner's `word`, or the word with _ for -
+  #     (as python -m prints it), and holds one of `phrases`; both case-insensitive.
+  # The checks then read it as a scan that never ran: scan_missing fires, and scanner_failed and
+  # the coverage list do not count it. "No such file or directory" is left out on purpose: a real
+  # scan of a missing folder can print it.
   not_found:
     exit: [127, 9009]
-    # a line must also name the scanner's word (or the word with _ for -, as python -m prints it)
     phrases: ["is not recognized as", "command not found", ": not found", "commandnotfoundexception",
               "no module named", "could not determine executable to run"]
   list:

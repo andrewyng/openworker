@@ -392,7 +392,7 @@
         "team": {"type": "object", "additionalProperties": false, "required": ["team_id"], "description": "1.2. Team tools only: ids, no text.",
           "properties": {"team_id": {"type": "string"}, "item_id": {"type": ["string", "null"]}, "worker_session_id": {"type": ["string", "null"]},
             "worker_session_ids": {"type": "array", "items": {"type": "string"}, "description": "propose_team only: the sessions it created."}}},
-        "scanner": {"type": ["object", "null"], "additionalProperties": false, "required": ["name", "action"], "description": "1.3. run_shell only: the security scanner the command runs, by the fixed word rule of signals.yaml (scanners). null = a shell command that runs no scanner. Absent = not a shell step, or not recorded.",
+        "scanner": {"type": ["object", "null"], "additionalProperties": false, "required": ["name", "action"], "description": "1.3. run_shell only: the security scanner the command runs, by the fixed word rule of signals.yaml (scanners). null = a shell command that runs no scanner, or names one that was not installed (signals.yaml scanners.not_found). Absent = not a shell step, or not recorded.",
           "properties": {"name": {"enum": ["semgrep", "gitleaks", "osv-scanner", "npm-audit", "pip-audit", "trivy", "checkov"]}, "action": {"enum": ["scan", "version"]}}},
         "result_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}], "description": "1.3. SHA-256 of the raw result, for evidence (OB-16). null = the call never ran."},
         "ended_after_turn_ms": {"$ref": "#/$defs/ended_after_turn_ms"}

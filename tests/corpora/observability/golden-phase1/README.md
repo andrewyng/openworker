@@ -20,7 +20,10 @@ There are **30 scenarios**: S1-01 to S1-13, S1-16, and M-01a, M-01b, M-02 to M-0
 
 **Not here.** Only scenarios that run a turn through the recorder produce events. The standalone scenarios S1-14 (machine and provider stamp), S1-15 (coworker fingerprint) and M-11 (token mapping) test small functions, not the recorder; S1-14 and S1-15 are covered by the stamp rules and M-11 by the usage test vectors in recording-format.md section 5 (and `vectors/usage.json`). S1-17 is a live-run checklist, not a scripted scenario.
 
-## Format 1.0
+## Format 1.0 (valid under 1.1)
+
+Format 1.1 (2026-11-03) only adds two decision values, `readonly_tier` and `gate_tier`. No scenario here uses them, so every file in this folder is unchanged and valid under 1.1.
+
 
 **Context.** The files here are recording format 1.0. The lab recorder was brought to the format on 2026-10-31 and this folder was made again from it, so:
 - the events in every `events.jsonl` are format 1.0 events (section 2 of recording-format.md): each has `v`, `at_ms` and `mono_ms`; content travels in its own `content` part; every `step_ended` carries a copy of the step's identity; `turn_started` carries `first_message_id`;

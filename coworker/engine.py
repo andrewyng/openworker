@@ -40,8 +40,7 @@ from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
 from .observability.recorder import short_hash as _short_hash
 from .observability import stamps as _stamps
 from .observability.canonical import short_hash as _args_hash, text_hash as _text_hash
-from .observability.scopes import scanner_not_found as _scanner_not_found
-from .observability.scopes import scanner_of as _scanner_of
+from .observability.scopes import recorded_scanner as _recorded_scanner
 from .observability.provider_view import tag as _tag_provider, view_for_engine
 from .observability.ids import new_ulid
 
@@ -3086,13 +3085,13 @@ class TurnEngine:
                 )
             if name == "run_shell":
                 # 1.3 (E17b): the scanner this command runs, by the signals.yaml word rule.
+                # A scanner that is not installed did not scan (signals 0.7 `scanners.not_found`,
+                # P3B-1): on Windows that exits 1, the same code as "found something", so its
+                # output and error tell them apart.
                 command = arguments.get("command") if isinstance(arguments, dict) else None
-                out["scanner"] = _scanner_of(command) if isinstance(command, str) else None
-                # A scanner that is not installed did not scan (P3B-1): on Windows that exits 1,
-                # the same code as "found something", so the output tells them apart.
-                if ran and out["scanner"] and isinstance(result, dict) and _scanner_not_found(
-                        out["scanner"], result.get("exit_code"), result.get("output") or result.get("error")):
-                    out["scanner"] = None
+                res = result if isinstance(result, dict) else {}
+                out["scanner"] = _recorded_scanner(command, ran=ran and bool(res), exit_code=res.get("exit_code"),
+                                                   output=res.get("output"), error=res.get("error"))
             # 1.3 (E17b): the full SHA-256 of the raw result, the evidence card's "output sha256".
             out["result_sha256"] = _result_sha256(result) if ran else None
             if name == "todo_write" and isinstance(arguments, dict):

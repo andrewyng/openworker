@@ -1,7 +1,7 @@
 """Observability Phase 3 golden test: rollups over many turns, and the series and task checks.
 
 `tests/corpora/observability/golden-phase3/` is a copy of ocw-context
-docs/observability/golden/phase3 (recording format 1.3, signals.yaml 0.6). The Rust harness runs
+docs/observability/golden/phase3 (recording format 1.3, signals.yaml 0.7). The Rust harness runs
 the same files, so both engines must give the same totals for the same recordings and the same
 issues for the same team, security task or automation.
 
@@ -264,6 +264,20 @@ def test_check_scenario(sc, tmp_path):
 def test_scanner_vectors():
     for case in _load(GOLDEN / "vectors" / "scanners.json")["cases"]:
         assert scopes.scanner_of(case["command"]) == case["scanner"], case["command"]
+
+
+def test_scanner_not_found_vectors():
+    """signals 0.7 `scanners.not_found` (P3B-1): the scanner the engine records after the step
+    ran, by the same function the engine calls."""
+    v = _load(GOLDEN / "vectors" / "scanner-not-found.json")
+    assert len(v["cases"]) == 10
+    for case in v["cases"]:
+        got = scopes.recorded_scanner(case["command"], exit_code=case["exit_code"], output=case["output"])
+        assert got == case["scanner"], case["shows"]
+        assert (got is None) == case["not_installed"], case["shows"]
+        # the message may come in the result's error instead of its output
+        assert scopes.recorded_scanner(case["command"], exit_code=case["exit_code"], output="",
+                                       error=case["output"]) == case["scanner"], case["shows"]
 
 
 def test_day_vectors_read_as_the_client_sends_them():

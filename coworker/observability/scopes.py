@@ -80,6 +80,19 @@ def scanner_not_found(scanner: Optional[dict], exit_code: Any, output: Any) -> b
     return False
 
 
+def recorded_scanner(command: Any, *, ran: bool = True, exit_code: Any = None, output: Any = None,
+                     error: Any = None) -> Optional[dict[str, str]]:
+    """The `scanner` the engine records for a run_shell step (1.3): the word rule
+    (`scanner_of`), then, once the command ran, null when it only showed the scanner is not
+    installed (signals.yaml 0.7 `scanners.not_found`). The output and the error are both read,
+    a line at a time."""
+    found = scanner_of(command) if isinstance(command, str) else None
+    if not found or not ran:
+        return found
+    text = "\n".join(t for t in (output, error) if isinstance(t, str) and t)
+    return None if scanner_not_found(found, exit_code, text) else found
+
+
 def area_word(area: str) -> str:
     return (_scanners().get("area_words") or {}).get(area, area)
 

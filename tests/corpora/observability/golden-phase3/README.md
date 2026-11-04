@@ -1,6 +1,6 @@
 # Golden test, Phase 3
 
-*Written 2026-11-04 with [recording-format.md](../../recording-format.md) 1.3 and [signals.yaml](../../signals.yaml) 0.6. It is made by `phase-3/lab/make_golden3.py` and checked by `phase-3/lab/check_golden3.py`.*
+*Written 2026-11-04 with [recording-format.md](../../recording-format.md) 1.3 and [signals.yaml](../../signals.yaml) 0.6; rebuilt the same day for 0.7, which adds only the not-installed vector. It is made by `phase-3/lab/make_golden3.py` and checked by `phase-3/lab/check_golden3.py`.*
 
 ## What it is
 
@@ -38,6 +38,7 @@ Every rollup uses the viewer's days in [vectors/days-europe-london.json](vectors
 |---|---|
 | `vectors/days-europe-london.json` | The 30 local days from 6 Oct 2026 as `[label, start, end)` epoch ms. 25 Oct is 25 hours long |
 | `vectors/scanners.json` | Shell commands, and the `scanner` each must give by the rule in `signals.yaml` (`scanners`) |
+| `vectors/scanner-not-found.json` | Ten shell steps after they ran (command, exit code, output), and whether the scanner was not installed, by `scanners.not_found` (0.7, P3B-1). When it was not, the recorded `scanner` is `null`. The answers are written by hand, from the app's own test |
 
 `index.json` lists the 26 scenarios: what each one tests, whether its check should fire or stay quiet, and, for the edge cases, the values worked out by hand in [phase-3/scenarios.md](../../phase-3/scenarios.md).
 

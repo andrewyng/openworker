@@ -1,7 +1,7 @@
 """Observability Phase 2, OB-3: the Issues checks (E8b) and the 1.2 fields they read (E8a).
 
 The scenarios in `tests/corpora/observability/golden-phase2/` are the shared test of the checks:
-a copy of ocw-context docs/observability/golden/phase2 (signals.yaml 0.6, recording format 1.2).
+a copy of ocw-context docs/observability/golden/phase2 (signals.yaml 0.7, recording format 1.2).
 Every recording must give exactly its expected issues, and the hash vectors must hash the same,
 in this engine and in the Rust harness."""
 
