@@ -2487,6 +2487,13 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .k-ctx .steps-kind, .steps-kind.k-ctx, .k-ctx .steps-bar { background:var(--bar-ctx); }
 .k-sbx .steps-kind, .steps-kind.k-sbx, .k-sbx .steps-bar { background:var(--bar-sbx); }
 .steps-stage { cursor:default; }
+/* Hover and focus help on labels (observability F-6). */
+.help { text-decoration: underline dotted; text-decoration-color: var(--faint); text-underline-offset: 3px; cursor: help; border-radius: 3px; }
+.help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-tip { position: fixed; z-index: 1000; width: max-content; max-width: 280px; background: var(--ink); color: var(--canvas);
+  border-radius: 10px; padding: 8px 10px; font-size: var(--fs-meta); font-weight: 400; line-height: 1.45; text-align: left;
+  white-space: normal; text-transform: none; letter-spacing: normal; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); pointer-events: none; }
+.help-tip.up { transform: translateY(-100%); }
 .k-gap .steps-kind, .steps-kind.k-gap { background:transparent; outline:1px dashed var(--faint); }
 .k-gap .steps-bar { background:repeating-linear-gradient(90deg, var(--line-strong) 0 2px, transparent 2px 5px); border:1px dashed var(--faint); top:1px; height:10px; }
 .steps-stage .steps-bar { opacity:.75; }

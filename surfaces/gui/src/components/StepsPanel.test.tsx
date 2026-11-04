@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRecordedTurns, getRecordedUsage, getStepDetail, getTurnIssues, getTurnSteps, markIssuesSeen } from "../api";
-import { StepsPanel, formatDuration } from "./StepsPanel";
+import { StepsPanel, formatDuration, stampLine } from "./StepsPanel";
 import i18n from "i18next";
 import zh from "../locales/zh.json";
 
@@ -362,6 +362,79 @@ describe("Gaps (OB-14)", () => {
   });
 });
 
+describe("Hover help (F-6)", () => {
+  it("explains a tile, a details label and the token legend on hover, and on keyboard focus", async () => {
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue(steps as any);
+    vi.mocked(getStepDetail).mockResolvedValue({ ...steps[1], attrs: { ...steps[1].attrs, model: "openai:model-a", finish_reason: "tool_calls" } });
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row")).toHaveLength(6));
+    // "Other" says what it is made of.
+    const other = screen.getAllByTestId("help").find((h) => h.textContent === "Other")!;
+    fireEvent.mouseEnter(other);
+    expect(screen.getByRole("tooltip").textContent).toContain("the session-title call");
+    fireEvent.mouseLeave(other);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // Keyboard: focus shows it, Escape hides it.
+    const total = screen.getAllByTestId("help").find((h) => h.textContent === "Total")!;
+    fireEvent.focus(total);
+    expect(screen.getByRole("tooltip").textContent).toContain("How long the turn took");
+    expect(total.getAttribute("aria-describedby")).toBe(screen.getByRole("tooltip").id);
+    fireEvent.keyDown(total, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    // A row's hover text names its kind.
+    expect(screen.getAllByTestId("steps-row")[1].getAttribute("title")).toContain("main work");
+    // Details: a label and a token part.
+    fireEvent.click(screen.getAllByTestId("steps-row")[1]);
+    await screen.findByTestId("steps-tokens");
+    const attempts = screen.getAllByTestId("help").find((h) => h.textContent === "Attempts")!;
+    fireEvent.mouseEnter(attempts);
+    expect(screen.getByRole("tooltip").textContent).toContain("sent to the provider");
+    fireEvent.mouseLeave(attempts);
+    const cache = screen.getAllByTestId("help").find((h) => (h.textContent || "").startsWith("from cache"))!;
+    fireEvent.mouseEnter(cache);
+    expect(screen.getByRole("tooltip").textContent).toContain("served from its cache");
+  });
+});
+
+describe("Fix list batch (4 Nov)", () => {
+  it("names a sandbox that enforces nothing instead of saying No sandbox (F-7)", () => {
+    const t = ((k: string, o?: any) => ({
+      "steps.sandbox.none": "No sandbox", "steps.sandbox.not_enforced": "not enforced", "steps.sandbox.full": "enforced",
+    } as Record<string, string>)[k] ?? o?.defaultValue ?? k) as any;
+    expect(stampLine({ sandbox: { provider: "runner-local", enforcement: "none" } }, t)).toBe("runner-local · not enforced");
+    expect(stampLine({ sandbox: { provider: "direct", enforcement: "none" } }, t)).toBe("No sandbox");
+    expect(stampLine({ sandbox: { provider: "openshell", enforcement: "full" } }, t)).toBe("openshell · enforced");
+  });
+
+  it("shows rules and AGENTS.md at 0, memories without ids, the audit log in order, and helper tiles", async () => {
+    const ctx = step({ step_id: "c", kind: "context", name: "context", duration_ms: 0,
+      attrs: { session_prompt_hash: "2bcb44", per_turn: { folders: 2, skills_menu: 0 }, size_chars: 654, block_hash: "1039e5",
+               session_start: { memories: [1, 2, 3], memory_mode: "index", rules: 0, agents_md: 0 } } });
+    const ex = step({ step_id: "e", kind: "tool", name: "explore", started_at: 1100, duration_ms: 3000 });
+    const hm = step({ step_id: "hm", kind: "model", name: "model", parent_step_id: "e", started_at: 1200,
+      attrs: { purpose: "helper", usage: { reported: true, input_fresh: 1000, cache_read: 500, cache_write: 0, output: 300 } } });
+    const tool = step({ step_id: "w", kind: "tool", name: "todo_write", call_id: "c9", started_at: 4200 });
+    vi.mocked(getRecordedTurns).mockResolvedValue([turn] as any);
+    vi.mocked(getTurnSteps).mockResolvedValue([ctx, ex, hm, tool] as any);
+    vi.mocked(getStepDetail).mockResolvedValueOnce(ctx as any).mockResolvedValueOnce({ ...tool, attrs: {}, audit: [
+      { stage: "finished" }, { stage: "started" }, { stage: "proposed" }] } as any);
+    render(<StepsPanel sessionId="s1" onClose={() => {}} />);
+    await waitFor(() => expect(screen.getAllByTestId("steps-row").length).toBeGreaterThan(1));
+    const tiles = screen.getByTestId("steps-tiles").textContent || "";
+    expect(tiles).toContain("1Helpers");
+    expect(tiles).toContain("1.8kHelper tokens");
+    fireEvent.click(screen.getAllByTestId("steps-row")[0]);
+    const details = await screen.findByTestId("steps-details");
+    await waitFor(() => expect(details.textContent).toContain("Your rules 0"));
+    expect(details.textContent).toContain("AGENTS.md files 0");
+    expect(details.textContent).toContain("Memories 3 · as an index");
+    expect(details.textContent).not.toContain("mem_");
+    fireEvent.click(screen.getAllByTestId("steps-row").find((r) => r.textContent?.startsWith("todo_write"))!);
+    expect((await screen.findByTestId("steps-audit")).textContent).toBe("3 entries for this call: proposed, started, finished");
+  });
+});
+
 describe("formatDuration", () => {
   it("reads like the mock", () => {
     expect(formatDuration(100)).toBe("0.1s");
@@ -402,7 +475,11 @@ describe("Issues tab (OB-3)", () => {
     expect(screen.queryByTestId("steps-fine")?.textContent ?? "").not.toContain("No step repeated");
     fireEvent.click(screen.getByTestId("steps-fine-toggle"));
     expect(screen.getByTestId("steps-fine").textContent).toContain("No step repeated 3 times in a row");
-    expect(screen.getByTestId("steps-fine").textContent).toContain("No plan to check against");
+    expect(screen.getByTestId("steps-fine").textContent).not.toContain("plan");
+    // F-9: every check is accounted for; what did not apply is listed, with why.
+    expect(screen.getByTestId("steps-issues-summary").textContent).toBe("4 checks: 2 found something · 1 fine · 1 didn't apply");
+    fireEvent.click(screen.getByTestId("steps-na-toggle"));
+    expect(screen.getByTestId("steps-na").textContent).toBe("– Left its plan: no to-do list in this turn");
     fireEvent.click(screen.getAllByText("Go to step")[0]);
     await waitFor(() => expect(screen.getByTestId("steps-timeline")).toBeTruthy());
     expect(screen.getAllByTestId("steps-row-issue").length).toBe(1);

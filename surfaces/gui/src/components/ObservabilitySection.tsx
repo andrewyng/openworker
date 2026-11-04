@@ -240,6 +240,11 @@ export function ObservabilitySection({ machine }: { machine?: Machine | null }) 
                   ? t("obs.status.failed_sub")
                   : t("obs.status.resumes"))}
           </div>
+          {status?.outside_today?.calls ? (
+            <div className="text-meta text-muted mt-1" data-testid="obs-outside">
+              {t("obs.status.outside", { count: status.outside_today.calls, tokens: fmt(status.outside_today.tokens) })}
+            </div>
+          ) : null}
           {status && (status.state === "retrying" || status.state === "failed") && status.last_error ? (
             <div className="text-meta text-danger mt-1" data-testid="obs-status-error">
               {status.last_error === "The destination refused the key" ? t("obs.refused_key") : status.last_error === "Address not found" ? t("obs.not_found") : status.last_error}

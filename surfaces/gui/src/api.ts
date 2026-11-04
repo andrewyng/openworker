@@ -2382,6 +2382,8 @@ export interface ObservabilityStatus {
   failed: number;
   dropped: number;
   last_error: string;
+  // Model calls outside any session today (through this machine's model address; F-4).
+  outside_today?: { calls: number; tokens: number };
 }
 
 export async function getObservabilitySettings(machineId?: string | null): Promise<ObservabilitySettings> {
@@ -4534,8 +4536,8 @@ export interface TurnIssues {
   info: number;
   seen?: boolean;
   issues: TurnIssue[];
-  fine: { check: string; text: string }[];
-  not_checked: { check: string; text: string }[];
+  fine: { check: string; text: string; facts?: Record<string, any> }[];
+  not_checked: { check: string; text: string; facts?: Record<string, any> }[];
 }
 
 export interface RecordedStep {

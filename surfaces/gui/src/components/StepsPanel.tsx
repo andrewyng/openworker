@@ -7,6 +7,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Help } from "./Help";
 import {
   getRecordedTurns,
   getRecordedUsage,
@@ -85,9 +86,12 @@ export function stampLine(stamp: Record<string, any> | undefined, t: T): string 
   }
   const sb = stamp.sandbox;
   if (sb) {
-    parts.push(!sb.enforcement || sb.enforcement === "none" || sb.provider === "direct"
+    // F-7: "No sandbox" only when none ran. A provider that confines nothing (runner-local)
+    // is named, with "not enforced", so the header agrees with the session's sandbox pill.
+    parts.push(!sb.provider || sb.provider === "direct"
       ? t("steps.sandbox.none")
-      : [sb.provider, t(`steps.sandbox.${sb.enforcement}`, { defaultValue: sb.enforcement }),
+      : [sb.provider,
+         !sb.enforcement || sb.enforcement === "none" ? t("steps.sandbox.not_enforced") : t(`steps.sandbox.${sb.enforcement}`, { defaultValue: sb.enforcement }),
          sb.profile ? t("steps.sandbox.network", { profile: sb.profile }) : ""].filter(Boolean).join(" · "));
   }
   if (stamp.persona_fp) parts.push(`ⓕ${stamp.persona_fp}`);
@@ -255,6 +259,22 @@ const KIND_CLASS: Record<string, string> = {
   sandbox: "sbx",
 };
 
+/** A hover help text (observability F-6), from `steps.help`. */
+function H(t: T, key: string): string {
+  return t(`steps.help.${key}`, { defaultValue: "" });
+}
+
+/** The hover help for a step's kind: the row's hover text and its details heading. */
+function kindHelp(step: { kind: string; name?: string; shadow?: boolean; attrs?: any }, t: T): string {
+  const a = step.attrs || {};
+  const key = step.kind === "model" ? `kind.model_${a.purpose || "main"}`
+    : step.kind === "auto_approver" ? (step.shadow ? "kind.shadow" : "kind.auto_approver")
+    : step.kind === "summary" ? (step.name === "trim" ? "kind.trim" : "kind.summary")
+    : step.kind === "notice" ? `notice.${step.name}`
+    : `kind.${step.kind}`;
+  return H(t, key);
+}
+
 const GAPS = ["controller_offline", "nobody_watching", "clock_jump"];
 
 /** A gap notice with a duration (OB-14): drawn as a dashed band, not a point. */
@@ -273,6 +293,21 @@ function kindClass(step: RecordedStep): string {
 /** A moment as the clock on the wall shows it, "14:02". */
 function clockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Helpers this turn ran: explore calls with a helper's own model calls under them (F-8). */
+function helperCount(steps: RecordedStep[]): number {
+  const parents = new Set(steps.filter((s) => s.kind === "model" && s.attrs?.purpose === "helper" && s.parent_step_id).map((s) => s.parent_step_id));
+  return parents.size;
+}
+
+/** The helpers' tokens (input of every kind plus output), already inside the session's total. */
+function helperTokens(steps: RecordedStep[]): number {
+  return steps.filter((s) => s.kind === "model" && s.attrs?.purpose === "helper" && s.attrs?.usage?.reported)
+    .reduce((n, s) => {
+      const u = s.attrs.usage;
+      return n + (u.input_fresh || 0) + (u.cache_read || 0) + (u.cache_write || 0) + (u.output || 0);
+    }, 0);
 }
 
 /** How long the turn spent with the machine offline, or with nobody watching (mock ob14). */
@@ -413,17 +448,17 @@ export function StepsPanel({
   const picker = turns && turns.length > 0 && turnIdx != null && (
     <span className="steps-turn-picker">
       <button aria-label={t("steps.prev_turn")} disabled={turnIdx <= 0} onClick={() => setTurnIdx(turnIdx - 1)}>‹</button>
-      <span data-testid="steps-turn">{t("steps.turn_of", { n: turnIdx + 1, total: turns.length })}</span>
+      <span data-testid="steps-turn"><Help text={H(t, "turn")}>{t("steps.turn_of", { n: turnIdx + 1, total: turns.length })}</Help></span>
       <button aria-label={t("steps.next_turn")} disabled={turnIdx >= turns.length - 1} onClick={() => setTurnIdx(turnIdx + 1)}>›</button>
     </span>
   );
 
   const timeline = turn && (
     <div className="steps-timeline" data-testid="steps-timeline">
-      <div className="steps-axis" aria-hidden>
-        <span>{t("steps.axis.step")}</span>
-        <span className="steps-ticks">{ticks(total).map((x, i) => <span key={i}>{x}</span>)}</span>
-        <span className="steps-axis-time">{t("steps.axis.time")}</span>
+      <div className="steps-axis">
+        <span><Help text={H(t, "axis.step")}>{t("steps.axis.step")}</Help></span>
+        <span className="steps-ticks" aria-hidden>{ticks(total).map((x, i) => <span key={i}>{x}</span>)}</span>
+        <span className="steps-axis-time"><Help text={H(t, "axis.time")}>{t("steps.axis.time")}</Help></span>
       </div>
       {rows.map((row) => row.type === "helper" ? (
         <HelperRow key={`helper-${row.step.step_id}`} row={row} turn={turn} total={total} onToggle={() => toggleHelper(row.step.step_id)} />
@@ -459,24 +494,30 @@ export function StepsPanel({
         {turn && (modeLabel(turn, t) || stampLine(turn.stamp, t)) && (
           <div className="steps-stamp" data-testid="steps-stamp">
             {modeLabel(turn, t) && (
-              <span className={"steps-pill steps-mode" + (turn.reviewer?.active ? " review" : "")} data-testid="steps-mode">{modeLabel(turn, t)}</span>
+              <span className={"steps-pill steps-mode" + (turn.reviewer?.active ? " review" : "")} data-testid="steps-mode"><Help text={H(t, "mode")}>{modeLabel(turn, t)}</Help></span>
             )}
-            {stampLine(turn.stamp, t) && <span className="steps-stamp-line">{stampLine(turn.stamp, t)}</span>}
+            {stampLine(turn.stamp, t) && <span className="steps-stamp-line"><Help text={H(t, "stamp")}>{stampLine(turn.stamp, t)}</Help></span>}
           </div>
         )}
         {turn && !inspecting && (
           <>
             <div className="steps-tiles" data-testid="steps-tiles">
-              <Tile value={formatDuration(turn.buckets.total)} label={t("steps.bucket.total")} />
+              <Tile value={formatDuration(turn.buckets.total)} label={t("steps.bucket.total")} help={H(t, "tile.total")} />
               {BUCKETS.filter((b) => turn.buckets[b] > 0).map((b) => (
-                <Tile key={b} value={formatDuration(turn.buckets[b])} label={t(`steps.bucket.${b}`)} />
+                <Tile key={b} value={formatDuration(turn.buckets[b])} label={t(`steps.bucket.${b}`)} help={H(t, `tile.${b}`)} />
               ))}
-              {turn.buckets.other_shown && <Tile value={formatDuration(turn.buckets.other)} label={t("steps.bucket.other")} />}
+              {turn.buckets.other_shown && <Tile value={formatDuration(turn.buckets.other)} label={t("steps.bucket.other")} help={H(t, "tile.other")} />}
+              {helperCount(steps) > 0 && (
+                <>
+                  <Tile value={String(helperCount(steps))} label={t("steps.bucket.helpers")} help={H(t, "tile.helpers")} />
+                  <Tile value={formatTokens(helperTokens(steps))} label={t("steps.bucket.helper_tokens")} help={H(t, "tile.helper_tokens")} />
+                </>
+              )}
               {gapTotal(steps, "controller_offline") > 0 && (
-                <Tile value={formatDuration(gapTotal(steps, "controller_offline"))} label={t("steps.gap.offline_total")} />
+                <Tile value={formatDuration(gapTotal(steps, "controller_offline"))} label={t("steps.gap.offline_total")} help={H(t, "tile.offline")} />
               )}
               {gapTotal(steps, "nobody_watching") > 0 && (
-                <Tile value={formatDuration(gapTotal(steps, "nobody_watching"))} label={t("steps.gap.nobody_total")} />
+                <Tile value={formatDuration(gapTotal(steps, "nobody_watching"))} label={t("steps.gap.nobody_total")} help={H(t, "tile.nobody")} />
               )}
             </div>
             {steps.some((s) => s.status === "unknown") && (
@@ -544,11 +585,11 @@ export function StepsPanel({
   );
 }
 
-function Tile({ value, label }: { value: string; label: string }) {
+function Tile({ value, label, help }: { value: string; label: string; help?: string }) {
   return (
     <div className="steps-tile">
       <strong>{value}</strong>
-      <span>{label}</span>
+      <span><Help text={help}>{label}</Help></span>
     </div>
   );
 }
@@ -565,6 +606,7 @@ function StepRow({ step, depth, turn, total, label, selected, issue, onSelect }:
     <button
       className={`steps-row k-${kind}` + (selected ? " selected" : "") + (step.shadow ? " shadow" : "")}
       onClick={onSelect}
+      title={kindHelp(step, t) || undefined}
       data-testid="steps-row"
     >
       <span className="steps-label" style={{ paddingLeft: depth * 16 }}>
@@ -599,7 +641,7 @@ function HelperRow({ row, turn, total, onToggle }: {
       className="steps-row k-tool steps-helper"
       onClick={onToggle}
       aria-expanded={row.open}
-      title={row.open ? t("steps.helper.hide") : t("steps.helper.show")}
+      title={`${H(t, "kind.helper")} ${row.open ? t("steps.helper.hide") : t("steps.helper.show")}`}
       data-testid="steps-helper"
     >
       <span className="steps-label" style={{ paddingLeft: row.depth * 16 }}>
@@ -648,12 +690,54 @@ function issueTitle(i: { check: string; facts?: Record<string, any> }, t: T): st
     : t(`steps.issues.title.${i.check}`, { defaultValue: i.check });
 }
 
+/** An issue's sentence in the reader's language, from the facts it was stored with (TD2-3,
+ * fix list C-2). Turns checked before the facts were stored keep their English sentence. */
+export function issueSentence(i: { check: string; text: string; facts?: Record<string, any> }, t: T): string {
+  const { count, ...f } = i.facts || {};
+  if (!f.words) return i.text;
+  const p: Record<string, any> = {
+    ...f, n: count,
+    extra: typeof f.extra_tokens === "number" ? f.extra_tokens.toLocaleString() : f.extra_tokens,
+    exit: f.exit_code,
+    error: f.error_type ? t(`steps.error_type.${f.error_type}`, { defaultValue: f.error_type }) : "",
+    purpose: f.purpose ? t(`steps.purpose.${f.purpose}`, { defaultValue: f.purpose }) : "",
+    result: f.result ? t(`steps.result.${f.result}`, { defaultValue: f.result }) : "",
+    stage: f.stage ? t(`steps.sbx_stage.${f.stage}`, { defaultValue: f.stage }).toLowerCase() : "",
+  };
+  const variant: Record<string, string> = {
+    off_plan: `off_plan_${f.kind}`, refused: `refused_${f.by}`, made_up_tool: `made_up_tool_${f.kind}`,
+    context_full: `context_full_${f.kind}`,
+    tool_failed: f.exit_code != null ? "tool_failed_exit" : "tool_failed",
+    blocked_by_sandbox: f.exit_code != null ? "blocked_by_sandbox_exit" : "blocked_by_sandbox",
+    waited_unwatched: f.inbox ? "waited_unwatched_inbox" : "waited_unwatched",
+  };
+  let out = t(`steps.issues.say.${variant[i.check] || i.check}`, { ...p, defaultValue: "" });
+  if (!out) return i.text;
+  if (i.check === "tool_failed" && f.recovered) out += " " + t("steps.issues.say.tool_failed_recovered", p);
+  if (i.check === "model_failed" && f.stopped) out += " " + t("steps.issues.say.model_failed_stopped");
+  return out;
+}
+
+/** A "Checked and fine" line in the reader's language, from its facts (C-2). */
+export function fineSentence(f: { check: string; text: string; facts?: Record<string, any> }, t: T): string {
+  const { count, ...x } = f.facts || {};
+  if (!x.words) return f.text;
+  const key = f.check === "reviewer_could_not_run" ? `reviewer_could_not_run_${x.variant}`
+    : f.check === "step_limit" && x.cap == null ? "step_limit_nocap" : f.check;
+  // The reviewer lines say "1 action" or "2 actions": the count picks the plural form.
+  const plural = f.check === "reviewer_could_not_run" ? { count } : {};
+  let out = t(`steps.issues.fine_say.${key}`, { ...x, n: count, ...plural, defaultValue: "" });
+  if (!out) return f.text;
+  if (f.check === "context_full" && x.normal) out += t("steps.issues.fine_say.context_full_normal", { n: x.normal });
+  return out;
+}
+
 /** What the app adds from the step's own content, shown here only (design §6): the command a
  * failed tool ran and the first line of its output; the call a shadow check judged. */
 function IssueDetail({ sessionId, issue }: { sessionId: string; issue: TurnIssue }) {
   const [d, setD] = useState<any>(null);
   useEffect(() => {
-    if (!issue.step_id || !["tool_failed", "shadow_disagreed", "refused", "reviewer_allowed_send", "blocked_by_sandbox"].includes(issue.check)) return;
+    if (!issue.step_id || !["tool_failed", "shadow_disagreed", "refused", "reviewer_allowed_send", "blocked_by_sandbox", "model_failed"].includes(issue.check)) return;
     let live = true;
     getStepDetail(sessionId, issue.step_id).then((x) => live && setD(x)).catch(() => {});
     return () => {
@@ -664,7 +748,10 @@ function IssueDetail({ sessionId, issue }: { sessionId: string; issue: TurnIssue
   const args = d.kind === "auto_approver" ? d.for_step?.arguments : d.arguments;
   const main = args && typeof args === "object" ? (args.command ?? args.path ?? args.url ?? args.query) : null;
   let first = "";
-  if (issue.check === "tool_failed" && typeof d.message?.content === "string") {
+  if (issue.check === "model_failed") {
+    // What the provider said (mock review M2-R3), cut to its first line.
+    first = String(d.attrs?.error?.text || "").split("\n").map((l: string) => l.trim()).find(Boolean) || "";
+  } else if (issue.check === "tool_failed" && typeof d.message?.content === "string") {
     try {
       const r = JSON.parse(d.message.content);
       first = String(r?.output ?? r?.error ?? "").split("\n").map((l: string) => l.trim()).find(Boolean) || "";
@@ -695,21 +782,26 @@ function IssuesView({ sessionId, turn, issues, steps, onGo }: {
     if (g) g.items.push(i);
     else groups.push({ key, items: [i] });
   }
-  const noPlan = issues.not_checked.find((n) => n.check === "off_plan");
+  const [openNa, setOpenNa] = useState(false);
+  const fired = new Set(issues.issues.map((i) => i.check)).size;
   return (
     <div className="steps-issues" data-testid="steps-issues">
+      <p className="steps-faint steps-issues-summary" data-testid="steps-issues-summary">
+        <Help text={H(t, "issues.summary")}>{t("steps.issues.summary", {
+          total: fired + issues.fine.length + issues.not_checked.length, fired, fine: issues.fine.length, na: issues.not_checked.length })}</Help>
+      </p>
       {groups.length === 0 && <p className="steps-issues-none">{t("steps.issues.none")}</p>}
       {groups.map((g) => {
         const first = g.items[0];
         const info = first.severity === "info";
         return (
           <div key={g.key} className={"steps-callout " + (info ? "info" : "warn")} data-testid="steps-issue">
-            <b>{issueTitle(first, t)}{g.items.length > 1 ? ` · ${g.items.length}` : ""}</b>
-            {info && <span className="steps-pill steps-info-pill">{t("steps.issues.information")}</span>}
+            <b><Help text={H(t, `issue.${first.check}`)}>{issueTitle(first, t)}</Help>{g.items.length > 1 ? ` · ${g.items.length}` : ""}</b>
+            {info && <span className="steps-pill steps-info-pill"><Help text={H(t, "issues.information")}>{t("steps.issues.information")}</Help></span>}
             {g.items.map((i, n) => (
               <div key={(i.step_id || "") + n} className="steps-issue-line">
                 {i.step_seq != null && <span className="steps-faint">{t("steps.insp.step", { n: i.step_seq })} </span>}
-                <span>{i.text}</span>
+                <span>{issueSentence(i, t)}</span>
                 <IssueDetail sessionId={sessionId} issue={i} />
                 {i.step_id && steps.some((s) => s.step_id === i.step_id) && (
                   <button className="steps-link" onClick={() => onGo(i.step_id!)}>{t("steps.issues.go")}</button>
@@ -719,16 +811,28 @@ function IssuesView({ sessionId, turn, issues, steps, onGo }: {
           </div>
         );
       })}
-      <button className="steps-fine-toggle" onClick={() => setOpenFine(!openFine)} data-testid="steps-fine-toggle">
+      <button className="steps-fine-toggle" onClick={() => setOpenFine(!openFine)} title={H(t, "issues.fine")} data-testid="steps-fine-toggle">
         {t("steps.issues.fine", { n: issues.fine.length })} {openFine ? "▾" : "▸"}
       </button>
       {openFine && (
         <div className="steps-fine" data-testid="steps-fine">
-          {issues.fine.map((f) => <div key={f.check}>✓ {f.text}</div>)}
-          {noPlan && <div className="steps-faint">– {t("steps.issues.no_plan")}</div>}
+          {issues.fine.map((f) => <div key={f.check}>✓ {fineSentence(f, t)}</div>)}
         </div>
       )}
-      {!openFine && noPlan && <div className="steps-faint steps-fine">– {t("steps.issues.no_plan")}</div>}
+      {issues.not_checked.length > 0 && (
+        <>
+          <button className="steps-fine-toggle" onClick={() => setOpenNa(!openNa)} title={H(t, "issues.na")} data-testid="steps-na-toggle">
+            {t("steps.issues.na", { n: issues.not_checked.length })} {openNa ? "▾" : "▸"}
+          </button>
+          {openNa && (
+            <div className="steps-fine steps-faint" data-testid="steps-na">
+              {issues.not_checked.map((n) => (
+                <div key={n.check}>– {issueTitle(n, t)}: {t(`steps.issues.na_reason.${n.check}`, { defaultValue: n.text || "" })}</div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -754,42 +858,46 @@ function inputLines(request: any): string[] {
   });
 }
 
-function Kv({ rows }: { rows: [string, React.ReactNode][] }) {
+type KvRow = [string, React.ReactNode] | [string, React.ReactNode, string];
+
+/** Label and value rows; a third item is the label's hover help (F-6). */
+function Kv({ rows }: { rows: KvRow[] }) {
   return (
     <dl className="steps-kv">
-      {rows.map(([k, v]) => (
-        <div key={k}><dt>{k}</dt><dd>{v ?? "—"}</dd></div>
+      {rows.map(([k, v, help]) => (
+        <div key={k}><dt><Help text={help}>{k}</Help></dt><dd>{v ?? "—"}</dd></div>
       ))}
     </dl>
   );
 }
 
-function Sec({ label, right }: { label: string; right?: React.ReactNode }) {
-  return <div className="steps-seclbl">{label}{right != null && <><span className="steps-sp" /><span className="steps-seclbl-right">{right}</span></>}</div>;
+function Sec({ label, right, help }: { label: string; right?: React.ReactNode; help?: string }) {
+  return <div className="steps-seclbl"><Help text={help}>{label}</Help>{right != null && <><span className="steps-sp" /><span className="steps-seclbl-right">{right}</span></>}</div>;
 }
 
 function ContextAdded({ ctx, t }: { ctx: Record<string, any> | null | undefined; t: T }) {
   if (!ctx) return null;
   const start = ctx.session_start, pt = ctx.per_turn || {};
-  const rows: [string, React.ReactNode][] = [];
+  const rows: [string, React.ReactNode, string][] = [];
   if (start) {
     const mems = start.memories || [];
-    rows.push(["memory", <>{t("steps.detail.memories")} {mems.length}{start.memory_mode === "index" ? ` · ${t("steps.detail.as_index")}` : ""}
-      {mems.length > 0 && <span className="steps-mono steps-faint"> {mems.slice(0, 6).map((m: any) => `mem_${m}`).join(", ")}</span>}</>]);
-    if (start.rules) rows.push(["rules", <>{t("steps.detail.rules")} {start.rules}</>]);
-    if (start.agents_md) rows.push(["AGENTS.md", <>{t("steps.detail.agents_md")} {start.agents_md}</>]);
+    // F-2: the count and the mode say what matters; memory ids carried no names.
+    rows.push(["memory", <>{t("steps.detail.memories")} {mems.length}{start.memory_mode === "index" ? ` · ${t("steps.detail.as_index")}` : ""}</>, "ctx.memory"]);
+    // F-5: shown at 0 too, like the other rows, so a missing row never means "not recorded".
+    rows.push(["rules", <>{t("steps.detail.rules")} {start.rules ?? 0}</>, "ctx.rules"]);
+    rows.push(["AGENTS.md", <>{t("steps.detail.agents_md")} {start.agents_md ?? 0}</>, "ctx.agents_md"]);
   }
-  rows.push(["skill", <>{t("steps.detail.skills")} {pt.skills_menu || 0}{pt.skills_hash && <span className="steps-mono steps-faint"> ⓢ{pt.skills_hash}</span>}</>]);
-  rows.push(["folder", <>{t("steps.detail.folders")} {pt.folders ?? 0}</>]);
-  if (pt.mode_note) rows.push(["mode", <>{t("steps.detail.mode_note")} {pt.mode_note}</>]);
-  if (pt.sandbox_note) rows.push(["sandbox", <>{t("steps.detail.sandbox_note")}</>]);
+  rows.push(["skill", <>{t("steps.detail.skills")} {pt.skills_menu || 0}{pt.skills_hash && <span className="steps-mono steps-faint"> ⓢ{pt.skills_hash}</span>}</>, "ctx.skill"]);
+  rows.push(["folder", <>{t("steps.detail.folders")} {pt.folders ?? 0}</>, "ctx.folder"]);
+  if (pt.mode_note) rows.push(["mode", <>{t("steps.detail.mode_note")} {pt.mode_note}</>, "ctx.mode"]);
+  if (pt.sandbox_note) rows.push(["sandbox", <>{t("steps.detail.sandbox_note")}</>, "ctx.sandbox"]);
   return (
     <div className="steps-ctxlist">
-      {rows.map(([tag, body]) => (
-        <div key={tag}><span className="steps-pill">{tag}</span><span className="steps-c">{body}</span></div>
+      {rows.map(([tag, body, help]) => (
+        <div key={tag}><span className="steps-pill">{tag}</span><span className="steps-c"><Help text={H(t, help)}>{body}</Help></span></div>
       ))}
       {ctx.size_chars != null && (
-        <div><span className="steps-pill">{t("steps.insp.block")}</span><span className="steps-c">{t("steps.detail.size")}</span>
+        <div><span className="steps-pill">{t("steps.insp.block")}</span><span className="steps-c"><Help text={H(t, "ctx.block")}>{t("steps.detail.size")}</Help></span>
           <span className="steps-sz">{ctx.size_chars} · <span className="steps-mono">{ctx.block_hash || "—"}</span></span></div>
       )}
     </div>
@@ -806,12 +914,12 @@ function TokenBar({ u, t }: { u: any; t: T }) {
     <div data-testid="steps-tokens">
       <div className="steps-tokbar">{seg(cache, "c-cache")}{seg(written, "c-write")}{seg(fresh, "c-new")}{seg(out, "c-out")}</div>
       <div className="steps-legend">
-        ■ <span className="c-cache">{t("steps.insp.from_cache", { n: formatTokens(cache) })}</span>
-        {" · "}<span className="c-write">{t("steps.insp.written", { n: u.cache_write == null ? "—" : formatTokens(written) })}</span>
-        {" · "}<span className="c-new">{t("steps.insp.new", { n: formatTokens(fresh) })}</span>
-        {" · "}<span className="c-out">{u.reasoning != null
+        ■ <span className="c-cache"><Help text={H(t, "tok.cache")}>{t("steps.insp.from_cache", { n: formatTokens(cache) })}</Help></span>
+        {" · "}<span className="c-write"><Help text={H(t, "tok.written")}>{t("steps.insp.written", { n: u.cache_write == null ? "—" : formatTokens(written) })}</Help></span>
+        {" · "}<span className="c-new"><Help text={H(t, "tok.new")}>{t("steps.insp.new", { n: formatTokens(fresh) })}</Help></span>
+        {" · "}<span className="c-out"><Help text={H(t, "tok.out")}>{u.reasoning != null
           ? t("steps.insp.out_reasoning", { n: formatTokens(out), r: formatTokens(u.reasoning) })
-          : t("steps.insp.out", { n: formatTokens(out) })}</span>
+          : t("steps.insp.out", { n: formatTokens(out) })}</Help></span>
       </div>
     </div>
   );
@@ -819,11 +927,13 @@ function TokenBar({ u, t }: { u: any; t: T }) {
 
 function Joined({ audit, t }: { audit: any[]; t: T }) {
   if (!audit?.length) return null;
-  const stages = Array.from(new Set(audit.map((r) => r.stage).filter(Boolean)));
+  const ORDER = ["proposed", "started", "finished"];
+  const stages = Array.from(new Set(audit.map((r) => r.stage).filter(Boolean)))
+    .sort((a, b) => (ORDER.indexOf(a) + 1 || 99) - (ORDER.indexOf(b) + 1 || 99));
   return (
     <>
-      <Sec label={t("steps.insp.joined")} />
-      <div className="steps-small">{t("steps.insp.joined_line", { count: audit.length })} · <span className="steps-mono">{stages.join(", ")}</span> · {t("steps.insp.same_call")}</div>
+      <Sec label={t("steps.insp.joined")} help={H(t, "sec.joined")} />
+      <div className="steps-small" data-testid="steps-audit">{t("steps.insp.joined_line", { count: audit.length, stages: stages.join(", ") })}</div>
     </>
   );
 }
@@ -865,7 +975,7 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
   const exchanges = (d.exchange_rebuilt || []) as any[];
   const exact = exchanges.length > 0 && (
     <details className="steps-exchange">
-      <summary>{t("steps.exchange", { count: exchanges.length })}</summary>
+      <summary title={H(t, "sec.exact")}>{t("steps.exchange", { count: exchanges.length })}</summary>
       {exchanges.map((x: any, i: number) => (
         <pre className="steps-box" key={i}>{JSON.stringify(x.request, null, 2)}{"\n\n"}{x.response}</pre>
       ))}
@@ -887,41 +997,41 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
     const lines = inputLines(exchanges.find((x) => !x.auxiliary)?.request);
     return (
       <>
-        <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} />{title}<span className="steps-pill">{t("steps.insp.step", { n: d.seq ?? "—" })}</span></h3>
+        <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} /><Help text={kindHelp(d, t)}>{title}</Help><span className="steps-pill">{t("steps.insp.step", { n: d.seq ?? "—" })}</span></h3>
         <div className="steps-meta">
           {[a.provider_title || a.provider ? t("steps.insp.via", { model: a.model, provider: a.provider_title || a.provider }) : a.model, t("steps.insp.started", { at: started }), why].filter(Boolean).join(" · ")}
         </div>
         <Kv rows={[
-          [t("steps.detail.duration"), <>{formatDuration(d.duration_ms)}{a.ttft_ms != null && <span className="steps-faint"> ({t("steps.insp.first_reply", { t: formatDuration(a.ttft_ms) })})</span>}</>],
-          [t("steps.detail.attempts"), attempts <= 1 ? t("steps.insp.attempt_one") : t("steps.insp.attempt_many", { n: attempts, retries: attempts - 1 })],
+          [t("steps.detail.duration"), <>{formatDuration(d.duration_ms)}{a.ttft_ms != null && <span className="steps-faint"> ({t("steps.insp.first_reply", { t: formatDuration(a.ttft_ms) })})</span>}</>, H(t, "detail.duration")],
+          [t("steps.detail.attempts"), attempts <= 1 ? t("steps.insp.attempt_one") : t("steps.insp.attempt_many", { n: attempts, retries: attempts - 1 }), H(t, "detail.attempts")],
           ...(facts.served_model && facts.served_model !== String(a.model || "").split(":").pop()
-            ? [[t("steps.detail.served"), facts.served_model] as [string, React.ReactNode]] : []),
+            ? [[t("steps.detail.served"), facts.served_model, H(t, "detail.served")] as KvRow] : []),
           ...(ctxStep?.attrs?.session_prompt_hash
-            ? [[t("steps.detail.session_prompt"), <><span className="steps-mono">{ctxStep.attrs.session_prompt_hash}</span> <span className="steps-faint">{t("steps.insp.session_prompt_note")}</span></>] as [string, React.ReactNode]] : []),
+            ? [[t("steps.detail.session_prompt"), <><span className="steps-mono">{ctxStep.attrs.session_prompt_hash}</span> <span className="steps-faint">{t("steps.insp.session_prompt_note")}</span></>, H(t, "detail.session_prompt")] as KvRow] : []),
           ...(turn.stamp?.persona_fp
-            ? [[t("steps.detail.coworker"), <><span className="steps-mono">ⓕ{turn.stamp.persona_fp}</span> <span className="steps-faint">{t("steps.insp.coworker_note")}</span></>] as [string, React.ReactNode]] : []),
-          [t("steps.detail.tools"), a.tools_offered ? <>{t("steps.insp.tools_n", { count: a.tools_offered })} <span className="steps-mono steps-faint">set·{a.tools_hash || "—"}</span></> : "0"],
-          ...(facts.provider_request_id ? [[t("steps.detail.request_id"), <span className="steps-mono">{facts.provider_request_id}</span>] as [string, React.ReactNode]] : []),
-          ...(facts.provider_response_id ? [[t("steps.detail.response_id"), <span className="steps-mono">{facts.provider_response_id}</span>] as [string, React.ReactNode]] : []),
-          ...(a.error ? [[t("steps.detail.error"), `${t(`steps.error_type.${a.error.type}`, { defaultValue: a.error.type })}${a.error.text ? ` · ${a.error.text}` : ""}`] as [string, React.ReactNode]] : []),
+            ? [[t("steps.detail.coworker"), <><span className="steps-mono">ⓕ{turn.stamp.persona_fp}</span> <span className="steps-faint">{t("steps.insp.coworker_note")}</span></>, H(t, "detail.coworker")] as KvRow] : []),
+          [t("steps.detail.tools"), a.tools_offered ? <>{t("steps.insp.tools_n", { count: a.tools_offered })} <span className="steps-mono steps-faint">set·{a.tools_hash || "—"}</span></> : "0", H(t, "detail.tools")],
+          ...(facts.provider_request_id ? [[t("steps.detail.request_id"), <span className="steps-mono">{facts.provider_request_id}</span>, H(t, "detail.request_id")] as KvRow] : []),
+          ...(facts.provider_response_id ? [[t("steps.detail.response_id"), <span className="steps-mono">{facts.provider_response_id}</span>, H(t, "detail.response_id")] as KvRow] : []),
+          ...(a.error ? [[t("steps.detail.error"), `${t(`steps.error_type.${a.error.type}`, { defaultValue: a.error.type })}${a.error.text ? ` · ${a.error.text}` : ""}`, H(t, "detail.error")] as KvRow] : []),
         ]} />
         {u && (
           <>
-            <Sec label={t("steps.insp.tokens")} right={u.reported ? t("steps.insp.in_out", {
+            <Sec label={t("steps.insp.tokens")} help={H(t, "sec.tokens")} right={u.reported ? t("steps.insp.in_out", {
               in: formatTokens((u.cache_read || 0) + (u.cache_write || 0) + (u.input_fresh || 0)), out: formatTokens(u.output || 0) }) : undefined} />
             <TokenBar u={u} t={t} />
           </>
         )}
         {(a.purpose || "main") === "main" && ctxStep && (
           <>
-            <Sec label={t("steps.insp.context_added")} />
+            <Sec label={t("steps.insp.context_added")} help={H(t, "sec.context_added")} />
             <ContextAdded ctx={ctxStep.attrs} t={t} />
           </>
         )}
         {lines.length > 0 && <InputBox lines={lines} t={t} />}
         {(d.message?.content || d.message?.tool_calls?.length) && (
           <>
-            <Sec label={t("steps.insp.output")} />
+            <Sec label={t("steps.insp.output")} help={H(t, "sec.output")} />
             <div className="steps-box">
               {[d.message.content ? `${d.message.content}${d.message.cut ? "\n…" : ""}` : "",
                 ...(d.message.tool_calls || []).map((c: any) => `→ ${t("steps.insp.tool_call")}: ${c.name} ${c.arguments}`)].filter(Boolean).join("\n")}
@@ -948,23 +1058,23 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
     const who = turn.reviewer?.active ? reviewerLabel(turn.reviewer, t) : "";
     return (
       <>
-        <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} />{d.name}<span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
+        <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} /><Help text={kindHelp(d, t)}>{d.name}</Help><span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
         <div className="steps-meta">
           {[a.risk_class ? t(`steps.risk.${a.risk_class}`, { defaultValue: a.risk_class }) : "",
             d.call_id ? `${t("steps.detail.call_id")} ${d.call_id}` : "",
             mode ? `${t("steps.detail.mode")} ${mode}${who ? ` (${t("steps.reviewer_is", { who })})` : ""}` : ""].filter(Boolean).join(" · ")}
         </div>
         <Kv rows={[
-          [t("steps.insp.ran_for"), formatDuration(d.duration_ms)],
-          ...(wait ? [[t("steps.insp.waited"), formatDuration(wait.duration_ms)] as [string, React.ReactNode]] : []),
-          ...(a.result_bytes != null ? [[t("steps.detail.result_size"), formatBytes(a.result_bytes)] as [string, React.ReactNode]] : []),
-          ...(a.exit_code != null ? [[t("steps.detail.exit"), String(a.exit_code)] as [string, React.ReactNode]] : []),
-          ...(a.decision?.origin ? [[t("steps.detail.origin"), t(`steps.origin.${a.decision.origin}`, { defaultValue: a.decision.origin })] as [string, React.ReactNode]] : []),
-          ...(a.sandbox ? [[t("steps.detail.blocked"), a.sandbox.blocked_known ? String(a.sandbox.blocked_count) : t("steps.detail.unknown")] as [string, React.ReactNode]] : []),
+          [t("steps.insp.ran_for"), formatDuration(d.duration_ms), H(t, "detail.ran_for")],
+          ...(wait ? [[t("steps.insp.waited"), formatDuration(wait.duration_ms), H(t, "detail.waited")] as KvRow] : []),
+          ...(a.result_bytes != null ? [[t("steps.detail.result_size"), formatBytes(a.result_bytes), H(t, "detail.result_size")] as KvRow] : []),
+          ...(a.exit_code != null ? [[t("steps.detail.exit"), String(a.exit_code), H(t, "detail.exit")] as KvRow] : []),
+          ...(a.decision?.origin ? [[t("steps.detail.origin"), t(`steps.origin.${a.decision.origin}`, { defaultValue: a.decision.origin }), H(t, "detail.origin")] as KvRow] : []),
+          ...(a.sandbox ? [[t("steps.detail.blocked"), a.sandbox.blocked_known ? String(a.sandbox.blocked_count) : t("steps.detail.unknown"), H(t, "detail.blocked")] as KvRow] : []),
         ]} />
         {path.length > 0 && (
           <>
-            <Sec label={t("steps.insp.how_allowed")} />
+            <Sec label={t("steps.insp.how_allowed")} help={H(t, "sec.how_allowed")} />
             <ol className="steps-ctxlist steps-path">
               {path.map((p: any, i: number) => {
                 const last = i === path.length - 1;
@@ -983,13 +1093,13 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
         )}
         {d.arguments != null && (
           <>
-            <Sec label={t("steps.insp.arguments")} />
+            <Sec label={t("steps.insp.arguments")} help={H(t, "sec.arguments")} />
             <div className="steps-box">{typeof d.arguments === "string" ? d.arguments : JSON.stringify(d.arguments, null, 2)}</div>
           </>
         )}
         {d.message?.content && (
           <>
-            <Sec label={t("steps.insp.result")} />
+            <Sec label={t("steps.insp.result")} help={H(t, "sec.result")} />
             <div className="steps-box">{d.message.content}{d.message.cut ? "\n…" : ""}</div>
           </>
         )}
@@ -1002,46 +1112,46 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
 
   // Waits, summaries, context steps and notices.
   const pill = statusPill(d, t);
-  const rows: [string, React.ReactNode][] = [
-    [t("steps.detail.started"), started],
-    [t("steps.detail.duration"), formatDuration(d.duration_ms)],
+  const rows: KvRow[] = [
+    [t("steps.detail.started"), started, H(t, "detail.started")],
+    [t("steps.detail.duration"), formatDuration(d.duration_ms), H(t, "detail.duration")],
   ];
   if (d.kind === "wait") {
-    rows.push([t("steps.detail.where"), t(`steps.where.${a.where}`, { defaultValue: a.where })],
-              [t("steps.detail.outcome"), a.outcome == null ? "—" : t(`steps.outcome.${a.outcome}`, { defaultValue: a.outcome })]);
-    if (d.content?.resolved_by) rows.push([t("steps.detail.answered_by"), d.content.resolved_by]);
+    rows.push([t("steps.detail.where"), t(`steps.where.${a.where}`, { defaultValue: a.where }), H(t, "detail.where")],
+              [t("steps.detail.outcome"), a.outcome == null ? "—" : t(`steps.outcome.${a.outcome}`, { defaultValue: a.outcome }), H(t, "detail.outcome")]);
+    if (d.content?.resolved_by) rows.push([t("steps.detail.answered_by"), d.content.resolved_by, H(t, "detail.answered_by")]);
   }
   if (d.kind === "summary") {
-    if (a.reason) rows.push([t("steps.detail.summary_reason"), t(`steps.summary_reason.${a.reason}`, { defaultValue: a.reason })]);
-    rows.push([t("steps.detail.tokens_before"), a.tokens_before == null ? "—" : formatTokens(a.tokens_before)],
-              [t("steps.detail.tokens_after"), a.tokens_after == null ? "—" : formatTokens(a.tokens_after)]);
+    if (a.reason) rows.push([t("steps.detail.summary_reason"), t(`steps.summary_reason.${a.reason}`, { defaultValue: a.reason }), H(t, "detail.summary_reason")]);
+    rows.push([t("steps.detail.tokens_before"), a.tokens_before == null ? "—" : formatTokens(a.tokens_before), H(t, "detail.tokens_before")],
+              [t("steps.detail.tokens_after"), a.tokens_after == null ? "—" : formatTokens(a.tokens_after), H(t, "detail.tokens_after")]);
   }
-  if (d.kind === "context") rows.push([t("steps.detail.session_prompt"), <span className="steps-mono">{a.session_prompt_hash || "—"}</span>]);
+  if (d.kind === "context") rows.push([t("steps.detail.session_prompt"), <span className="steps-mono">{a.session_prompt_hash || "—"}</span>, H(t, "detail.session_prompt")]);
   if (d.kind === "sandbox") {
-    rows.push([t("steps.sbx.provider"), a.provider || "—"],
-              [t("steps.sbx.trigger"), t(`steps.sbx.trigger_${a.trigger}`, { defaultValue: a.trigger || "—" })]);
+    rows.push([t("steps.sbx.provider"), a.provider || "—", H(t, "detail.sbx_provider")],
+              [t("steps.sbx.trigger"), t(`steps.sbx.trigger_${a.trigger}`, { defaultValue: a.trigger || "—" }), H(t, "detail.sbx_trigger")]);
   }
   if (d.kind === "notice" && d.name === "sandbox_restarted") {
-    rows.push([t("steps.sbx.provider"), a.provider || "—"],
-              [t("steps.sbx.reason"), t(`steps.sbx.reason_${a.reason}`, { defaultValue: a.reason || "—" })],
-              [t("steps.sbx.how"), t(`steps.sbx.how_${a.how}`, { defaultValue: a.how || "—" })]);
+    rows.push([t("steps.sbx.provider"), a.provider || "—", H(t, "detail.sbx_provider")],
+              [t("steps.sbx.reason"), t(`steps.sbx.reason_${a.reason}`, { defaultValue: a.reason || "—" }), H(t, "detail.sbx_reason")],
+              [t("steps.sbx.how"), t(`steps.sbx.how_${a.how}`, { defaultValue: a.how || "—" }), H(t, "detail.sbx_how")]);
   }
   if (isGap(d) || (d.kind === "notice" && d.name === "recording_gap")) {
     const until = d.name === "recording_gap" ? a.until : d.started_at + (d.duration_ms || 0);
     rows.splice(0, rows.length,
-      [t("steps.gap.from"), clockTime(d.started_at)],
-      [t("steps.gap.until"), typeof until === "number" ? clockTime(until) : "—"]);
-    if (d.name === "clock_jump") rows.push([t("steps.gap.skipped"), formatDuration(a.skipped_ms ?? d.duration_ms)]);
-    else rows.push([t("steps.detail.duration"), formatDuration(typeof until === "number" ? until - d.started_at : d.duration_ms)]);
-    if (a.reason) rows.push([t("steps.gap.why"), t(`steps.gap.reason_${a.reason}`, { defaultValue: a.reason })]);
-    if (a.cause) rows.push([t("steps.gap.why"), t(`steps.gap.cause_${a.cause}`, { defaultValue: a.cause })]);
+      [t("steps.gap.from"), clockTime(d.started_at), H(t, "detail.gap_from")],
+      [t("steps.gap.until"), typeof until === "number" ? clockTime(until) : "—", H(t, "detail.gap_until")]);
+    if (d.name === "clock_jump") rows.push([t("steps.gap.skipped"), formatDuration(a.skipped_ms ?? d.duration_ms), H(t, "detail.gap_skipped")]);
+    else rows.push([t("steps.detail.duration"), formatDuration(typeof until === "number" ? until - d.started_at : d.duration_ms), H(t, "detail.duration")]);
+    if (a.reason) rows.push([t("steps.gap.why"), t(`steps.gap.reason_${a.reason}`, { defaultValue: a.reason }), H(t, "detail.gap_why")]);
+    if (a.cause) rows.push([t("steps.gap.why"), t(`steps.gap.cause_${a.cause}`, { defaultValue: a.cause }), H(t, "detail.gap_why")]);
   }
   const sbxStages: SandboxStage[] = d.kind === "sandbox" && Array.isArray(a.stages) ? a.stages : [];
   const changed = d.kind === "notice" && d.name === "stamp_changed" ? stampChanges(a, t) : [];
   const showsContext = d.kind === "context" || (d.kind === "notice" && d.name === "context_changed");
   return (
     <>
-      <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} />{stepLabel(d, t)}<span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
+      <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} /><Help text={kindHelp(d, t)}>{stepLabel(d, t)}</Help><span className={`steps-pill ${pill.cls}`}>{pill.text}</span></h3>
       {d.kind === "sandbox" && d.status === "error" && (
         <div className="steps-callout err" data-testid="steps-sandbox-failed">
           {t("steps.sbx.failed", {
@@ -1053,35 +1163,36 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
       <Kv rows={rows} />
       {sbxStages.length > 0 && (
         <>
-          <Sec label={t("steps.sbx.stages")} />
+          <Sec label={t("steps.sbx.stages")} help={H(t, "sec.stages")} />
           <Kv rows={sbxStages.map((s) => [
             t(`steps.sbx_stage.${s.name}`, { defaultValue: s.name }),
             s.uncertain ? t("steps.sbx.image_note") : `${formatDuration(s.duration_ms)}${s.status === "error" ? ` · ${t("steps.status.error")}` : ""}`,
-          ] as [string, React.ReactNode])} />
+          ] as KvRow)} />
         </>
       )}
       {d.kind === "notice" && d.name === "clock_jump" && <p className="steps-line">{t("steps.gap.asleep_note")}</p>}
       {d.kind === "sandbox" && a.error?.text && (
         <>
-          <Sec label={t("steps.sbx.error_text")} />
+          <Sec label={t("steps.sbx.error_text")} help={H(t, "sec.error_text")} />
           <div className="steps-box">{a.error.text}</div>
         </>
       )}
       {changed.length > 0 && (
         <>
-          <Sec label={t("steps.insp.changed")} />
+          <Sec label={t("steps.insp.changed")} help={H(t, "sec.changed")} />
           <Kv rows={changed} />
         </>
       )}
       {showsContext && (
         <>
-          <Sec label={d.kind === "context" ? t("steps.insp.context_added") : t("steps.insp.context_now")} />
+          <Sec label={d.kind === "context" ? t("steps.insp.context_added") : t("steps.insp.context_now")}
+            help={H(t, d.kind === "context" ? "sec.context_added" : "sec.context_now")} />
           <ContextAdded ctx={a} t={t} />
         </>
       )}
       {d.children?.length > 0 && (
         <>
-          <Sec label={t("steps.insp.inside")} />
+          <Sec label={t("steps.insp.inside")} help={H(t, "sec.inside")} />
           <div className="steps-ctxlist">
             {d.children.map((c: any) => (
               <div key={c.step_id}><span className={`steps-kind k-${KIND_CLASS[c.kind] || "ctx"}`} /><span className="steps-c">{stepLabel(c, t)}</span><span className="steps-sz">{formatDuration(c.duration_ms)}</span></div>
@@ -1096,8 +1207,8 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
 
 /** A `stamp_changed` notice's new values: only the keys that changed (attended, reviewer,
  * the sandbox group). */
-function stampChanges(a: Record<string, any>, t: T): [string, React.ReactNode][] {
-  const out: [string, React.ReactNode][] = [];
+function stampChanges(a: Record<string, any>, t: T): KvRow[] {
+  const out: KvRow[] = [];
   if (typeof a.attended === "boolean")
     out.push([t("steps.insp.changed_attended"), t(a.attended ? "steps.insp.attended_yes" : "steps.insp.attended_no")]);
   if (a.reviewer) {
@@ -1123,6 +1234,7 @@ function InputBox({ lines, t }: { lines: string[]; t: T }) {
     <>
       <Sec
         label={all ? t("steps.insp.input_all", { total: lines.length }) : t("steps.insp.input_last", { n: shown.length, total: lines.length })}
+        help={H(t, "sec.input")}
         right={lines.length > 3 ? <button className="steps-btn" onClick={() => setAll(!all)}>{all ? t("steps.insp.show_less") : t("steps.insp.show_all")}</button> : undefined}
       />
       <div className={"steps-box" + (all ? " tall" : "")}>{shown.join("\n\n")}</div>
@@ -1164,7 +1276,7 @@ function CheckInspector({ d, turn, sessionId, t }: { d: any; turn: RecordedTurn;
     <>
       <h3 className="steps-h3">
         <span className="steps-kind k-review" />
-        {d.shadow ? t("steps.insp.shadow_title") : t("steps.insp.check_title")}
+        <Help text={kindHelp(d, t)}>{d.shadow ? t("steps.insp.shadow_title") : t("steps.insp.check_title")}</Help>
         <span className={`steps-pill ${d.shadow ? "" : pillCls}`}>{d.shadow ? t("steps.check_mode.shadow") : t(`steps.result.${result}`, { defaultValue: result || "" })}</span>
       </h3>
       <div className="steps-meta">
@@ -1172,23 +1284,23 @@ function CheckInspector({ d, turn, sessionId, t }: { d: any; turn: RecordedTurn;
       </div>
       {result === "could_not_run" && <div className="steps-callout err">{t("steps.insp.cnr")}</div>}
       <Kv rows={d.shadow ? [
-        [t("steps.insp.would"), t(`steps.result.${result}`, { defaultValue: result || "" })],
-        [t("steps.insp.you_decided"), wait ? <><b>{t(`steps.outcome.${wait.attrs?.outcome}`, { defaultValue: wait.attrs?.outcome || "—" })}</b> {t("steps.insp.after", { t: formatDuration(wait.duration_ms) })}</> : "—"],
-        [t("steps.insp.match"), a.matched_user == null ? "—" : <span className={"steps-pill " + (a.matched_user ? "ok" : "warn")}>{a.matched_user ? t("steps.insp.matched") : t("steps.insp.not_matched")}</span>],
-        [t("steps.insp.took"), formatDuration(d.duration_ms)],
-        [t("steps.insp.tokens"), tokens],
+        [t("steps.insp.would"), t(`steps.result.${result}`, { defaultValue: result || "" }), H(t, "detail.would")],
+        [t("steps.insp.you_decided"), wait ? <><b>{t(`steps.outcome.${wait.attrs?.outcome}`, { defaultValue: wait.attrs?.outcome || "—" })}</b> {t("steps.insp.after", { t: formatDuration(wait.duration_ms) })}</> : "—", H(t, "detail.you_decided")],
+        [t("steps.insp.match"), a.matched_user == null ? "—" : <span className={"steps-pill " + (a.matched_user ? "ok" : "warn")}>{a.matched_user ? t("steps.insp.matched") : t("steps.insp.not_matched")}</span>, H(t, "detail.match")],
+        [t("steps.insp.took"), formatDuration(d.duration_ms), H(t, "detail.took")],
+        [t("steps.insp.tokens"), tokens, H(t, "detail.check_tokens")],
       ] : [
-        [t("steps.insp.result_label"), t(`steps.insp.result_${result}`, { defaultValue: t(`steps.result.${result}`, { defaultValue: result || "—" }) })],
-        ...(d.content?.reason ? [[t("steps.detail.reason"), `"${d.content.reason}"`] as [string, React.ReactNode]] : []),
-        [t("steps.insp.took"), formatDuration(d.duration_ms)],
-        [t("steps.insp.tokens"), tokens],
+        [t("steps.insp.result_label"), t(`steps.insp.result_${result}`, { defaultValue: t(`steps.result.${result}`, { defaultValue: result || "—" }) }), H(t, "detail.result")],
+        ...(d.content?.reason ? [[t("steps.detail.reason"), `"${d.content.reason}"`, H(t, "detail.reason")] as KvRow] : []),
+        [t("steps.insp.took"), formatDuration(d.duration_ms), H(t, "detail.took")],
+        [t("steps.insp.tokens"), tokens, H(t, "detail.check_tokens")],
         ...(a.breaker ? [[t("steps.detail.breaker"), a.breaker.tripped
           ? t("steps.insp.breaker_paused", { n: a.breaker.denials_in_row })
-          : t("steps.insp.breaker_armed", { n: a.breaker.denials_in_row ?? 0 })] as [string, React.ReactNode]] : []),
+          : t("steps.insp.breaker_armed", { n: a.breaker.denials_in_row ?? 0 }), H(t, "detail.breaker")] as KvRow] : []),
       ]} />
       {questions.length > 0 && (
         <>
-          <Sec label={t("steps.insp.questions")} />
+          <Sec label={t("steps.insp.questions")} help={H(t, "sec.questions")} />
           <table className="steps-qtable" data-testid="steps-questions">
             <thead><tr><th>{t("steps.insp.question")}</th><th>{t("steps.insp.answer")}</th></tr></thead>
             <tbody>
@@ -1202,7 +1314,7 @@ function CheckInspector({ d, turn, sessionId, t }: { d: any; turn: RecordedTurn;
       )}
       {shown && (
         <>
-          <Sec label={t("steps.insp.shown")} />
+          <Sec label={t("steps.insp.shown")} help={H(t, "sec.shown")} />
           <div className="steps-box">{shown}</div>
         </>
       )}
@@ -1233,14 +1345,14 @@ function UsageView({ sessionId, refreshKey }: { sessionId: string; refreshKey: n
       <div className="steps-seclbl steps-usage-title">{t("steps.usage.title")}<span className="steps-sp" />
         {u.turns != null && <span className="steps-seclbl-right">{t("steps.usage.turns", { count: u.turns })}</span>}</div>
       <div className="steps-tiles">
-        <Tile value={(u.at_least ? "≥ " : "") + formatTokens(u.totals?.input || 0)} label={t("steps.usage.input")} />
-        <Tile value={formatTokens(u.totals?.output || 0)} label={t("steps.usage.output")} />
-        <Tile value={u.cache_share == null ? "—" : `${Math.round(u.cache_share * 100)}%`} label={t("steps.usage.from_cache")} />
+        <Tile value={(u.at_least ? "≥ " : "") + formatTokens(u.totals?.input || 0)} label={t("steps.usage.input")} help={H(t, "usage.input")} />
+        <Tile value={formatTokens(u.totals?.output || 0)} label={t("steps.usage.output")} help={H(t, "usage.output")} />
+        <Tile value={u.cache_share == null ? "—" : `${Math.round(u.cache_share * 100)}%`} label={t("steps.usage.from_cache")} help={H(t, "usage.cache")} />
       </div>
       {u.unreported_calls > 0 && <p className="steps-line">{t("steps.usage.unreported", { count: u.unreported_calls })}</p>}
       {u.failed_calls > 0 && <p className="steps-line">{t("steps.usage.failed", { count: u.failed_calls })}</p>}
       {u.overflow_calls > 0 && <p className="steps-line">{t("steps.usage.overflow", { count: u.overflow_calls })}</p>}
-      <Sec label={t("steps.usage.by_purpose")} />
+      <Sec label={t("steps.usage.by_purpose")} help={H(t, "usage.purpose")} />
       <div className="steps-purposes">
         {purposes.map(([p, n]) => (
           <div className="steps-purpose" key={p}>
@@ -1250,7 +1362,7 @@ function UsageView({ sessionId, refreshKey }: { sessionId: string; refreshKey: n
           </div>
         ))}
       </div>
-      <Sec label={t("steps.usage.by_model")} />
+      <Sec label={t("steps.usage.by_model")} help={H(t, "usage.model")} />
       <table className="steps-models">
         <thead><tr><th>{t("steps.usage.model")}</th><th>{t("steps.usage.in")}</th><th>{t("steps.usage.cache")}</th><th>{t("steps.usage.out")}</th></tr></thead>
         <tbody>
@@ -1264,13 +1376,13 @@ function UsageView({ sessionId, refreshKey }: { sessionId: string; refreshKey: n
       </table>
       {u.context && u.context.window ? (
         <>
-          <Sec label={t("steps.usage.context_now")} />
+          <Sec label={t("steps.usage.context_now")} help={H(t, "usage.context")} />
           <div className="steps-purpose-bar wide"><i className="c-new" style={{ width: `${Math.min(100, (u.context.tokens / u.context.window) * 100)}%` }} /></div>
           <p className="steps-line">{t("steps.usage.context_line", { used: formatTokens(u.context.tokens), window: formatTokens(u.context.window) })}</p>
         </>
       ) : u.context?.tokens ? (
         <>
-          <Sec label={t("steps.usage.context_now")} />
+          <Sec label={t("steps.usage.context_now")} help={H(t, "usage.context")} />
           <p className="steps-line">{t("steps.usage.context_no_window", { used: formatTokens(u.context.tokens) })}</p>
         </>
       ) : null}
