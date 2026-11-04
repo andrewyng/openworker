@@ -149,6 +149,36 @@ def test_powershell_parse_check_leaves_valid_commands_alone(executor, tmp_path):
     assert executor.run("cmd /c exit 3")["exit_code"] == 3
 
 
+@pytest.mark.skipif(not _WIN, reason="PowerShell's REPL waits for an empty line after a block")
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ('foreach ($i in 1..2) {\n  Write-Output "n$i"\n}', ["n1", "n2"]),
+        ('foreach ($i in 1..2) {\n\n  Write-Output "n$i"\n}', ["n1", "n2"]),  # empty line inside
+        ("if ($true) {\n  Write-Output yes\n} else {\n  Write-Output no\n}", ["yes"]),
+        ("Write-Output a\nWrite-Output b\n", ["a", "b"]),
+    ],
+)
+def test_powershell_multi_line_command_finishes(executor, command, expected):
+    # Used to hang until the timeout: the trailer was read into the open block.
+    start = time.monotonic()
+    result = executor.run(command, timeout=8)
+    assert result["timed_out"] is False
+    assert result["exit_code"] == 0
+    assert result["output"].split() == expected
+    assert time.monotonic() - start < 6.0
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell multi-line commands")
+def test_powershell_multi_line_keeps_exit_codes_and_state(executor):
+    assert executor.run("Write-Output a\ncmd /c exit 4")["exit_code"] == 4  # last line decides
+    assert executor.run("cmd /c exit 4\nWrite-Output a")["exit_code"] == 0
+    defined = executor.run("$cwMulti = 7\nfunction Get-CwMulti {\n  'from-function'\n}")
+    assert defined["exit_code"] == 0
+    used = executor.run("Get-CwMulti; $cwMulti")
+    assert used["output"].split() == ["from-function", "7"]
+
+
 def test_timeout_kills_command(executor):
     start = time.monotonic()
     result = executor.run(SLEEP_5, timeout=1)

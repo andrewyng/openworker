@@ -298,6 +298,12 @@ class LocalExecutor(Executor):
 
         # Run the command, then emit a marker line with exit code + cwd.
         self._proc.stdin.write(command + "\n")
+        if self._is_windows and "\n" in command.strip("\n"):
+            # The REPL keeps reading a statement that spans lines (`foreach (...) {` ... `}`)
+            # until an empty line, as in an interactive console. Without one, the trailer
+            # was read into the block and the call hung until its timeout. The parse check
+            # above guarantees the command is complete, so this line only ends it.
+            self._proc.stdin.write("\n")
         self._proc.stdin.write(self._trailer())
         self._proc.stdin.flush()
 
