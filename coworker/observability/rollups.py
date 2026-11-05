@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Optional
 
+from .model_names import CANONICAL_MODEL_SQL
+
 TOKEN_PARTS = ("input_fresh", "cache_read", "cache_write", "output")
 
 
@@ -198,7 +200,8 @@ GROUPS = {
     "persona_id": "u.persona_id",
     "machine": "u.machine",
     "purpose": "COALESCE(u.purpose, 'unattributed')",
-    "model": "COALESCE(u.model, 'unknown')",
+    # T3-4: one name per model, as `model_names.canonical_model` (openai: dropped on read)
+    "model": "COALESCE(" + CANONICAL_MODEL_SQL + ", 'unknown')",
     "wake_reason": "COALESCE(u.wake_reason, 'unknown')",
     "team_role": "u.team_role",
     "team_id": "u.team_id",

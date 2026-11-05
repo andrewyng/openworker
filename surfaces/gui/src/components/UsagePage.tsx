@@ -19,6 +19,7 @@ import {
 } from "../api";
 import { formatTokens } from "../usage";
 import { listPersonaName } from "../personaScope";
+import { canonicalModels } from "../modelNames";
 import { formatDuration } from "./StepsPanel";
 import {
   approverPart,
@@ -296,8 +297,10 @@ export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked =
                 const title = h.session_deleted ? t("p3.usage.deleted_session") : (h.title || h.session_id);
                 const turn = h.seq != null ? t("p3.usage.turn_n", { n: h.seq }) : "";
                 const who = (h.persona_id && names[h.persona_id]) || h.persona_id || "—";
-                const models = h.model_ids.join(", ") || "—";
-                const shortModels = h.model_ids.map(shortModel).join(", ") || "—";
+                // T3-4: one name per model, however an older turn recorded it
+                const ids = canonicalModels(h.model_ids);
+                const models = ids.join(", ") || "—";
+                const shortModels = ids.map(shortModel).join(", ") || "—";
                 const issues = h.checks.map((c) => t(`steps.issues.title.${c}`, { defaultValue: c }));
                 return (
                 <tr key={h.turn_id}>

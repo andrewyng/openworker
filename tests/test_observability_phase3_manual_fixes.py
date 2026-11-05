@@ -213,3 +213,36 @@ def test_a_versions_models_are_its_own_work_only(tmp_path):
     assert usage_api.canonical_model("openai:model-x") == "model-x"
     assert usage_api.canonical_model("openrouter:openai/model-x") == "openrouter:openai/model-x"
     store.close()
+
+
+# -- T3-4 -----------------------------------------------------------------------------------------
+def test_one_model_is_read_and_grouped_under_one_name(tmp_path):
+    """Turns saved before the model-prefix fix (#837) recorded one OpenAI model as both
+    `openai:model-x` and `model-x`. Read and grouped, it is one model; other prefixes stay."""
+    from coworker.observability import calculator, read_api, signals
+    from coworker.observability.model_names import canonical_model
+
+    assert canonical_model("openai:model-x") == "model-x"
+    assert canonical_model(" model-x ") == "model-x"
+    assert canonical_model("anthropic:model-y") == "anthropic:model-y"
+    assert canonical_model("openai:") == "openai:"  # nothing after the prefix: kept as is
+    assert canonical_model("OpenAI:model-x") == "OpenAI:model-x"  # the exact prefix only
+
+    store = RecordingStore(tmp_path / "recordings.db", background=False)
+    usage = {"reported": True, "input_fresh": 100, "cache_read": 0, "cache_write": 0, "output": 10}
+    for i, model in enumerate(["openai:model-x", "model-x", "anthropic:model-y"]):
+        tid = f"T{i}"
+        store.write_turn(_turn(tid, "s1", i + 1, RECENT + i * 1000))
+        store.write_step(_step(tid, "s1", 1, RECENT + i * 1000, "model", {"purpose": "main", "model": model, "usage": usage}))
+        store.write_issues(tid, {"signals_version": signals.version(), "warn": 0, "info": 0, "issues": [], "fine": []}, seen=True)
+    store.flush()
+    span = (RECENT - 1, RECENT + 60_000)
+    groups = {g["key"]["model"]: g["total"] for g in store.usage_rollup(["model"], *span)}
+    assert groups == {"model-x": 220, "anthropic:model-y": 110}
+    assert [t["models"] for t in store.usage_turns(*span)] == [["model-x"], ["model-x"], ["anthropic:model-y"]]
+    heavy = usage_api.heaviest(store, start=span[0], end=span[1])["turns"]
+    assert sorted(m for t in heavy for m in t["model_ids"]) == ["anthropic:model-y", "model-x", "model-x"]
+    rec = store.load_recording("s1")
+    assert calculator.usage(rec)["by_model"] == {"model-x": 220, "anthropic:model-y": 110}
+    assert set(read_api.usage(rec, "s1")["by_model_parts"]) == {"model-x", "anthropic:model-y"}
+    store.close()

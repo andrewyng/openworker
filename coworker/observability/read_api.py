@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional
 
 from . import calculator
 from .capture import rebuild_request
+from .model_names import canonical_model
 
 MESSAGE_CUT = 4096
 
@@ -168,7 +169,7 @@ def usage(recording: dict[str, Any], session_id: str) -> dict[str, Any]:
         if s.get("kind") != "model" or not u.get("reported") or a.get("error") or a.get("purpose") == "proxy":
             continue
         p = a.get("purpose") or "unattributed"
-        key = a.get("model", "?") + ("" if p == "main" else f" ({p})")
+        key = canonical_model(a.get("model") or "?") + ("" if p == "main" else f" ({p})")  # T3-4
         row = parts.setdefault(key, {"input": 0, "cache": 0, "output": 0})
         for target in (row, totals):
             target["input"] += calculator.input_total(u)

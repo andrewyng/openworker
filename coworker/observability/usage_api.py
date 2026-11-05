@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from . import scopes
 from . import signals as _signals
+from .model_names import canonical_model
 from .rollups import STEP_GROUPS, median
 
 MIN_RUNS_TO_COMPARE = 10  # TD3-14
@@ -93,11 +94,6 @@ def heaviest(store: Any, *, start: int, end: int, limit: int = 20,
 ASKED = ("unsure", "context_changed", "could_not_run")
 
 
-def canonical_model(model: str) -> str:
-    """One name per model (T3-16, T3-4): OpenAI is the default provider, so `openai:gpt-5.6-sol`
-    and `gpt-5.6-sol` are the same model. Only the `openai:` prefix is dropped, the same rule
-    as `canonical_model` on issue/ope-247-openai-model-prefix; every other provider keeps its."""
-    return model[len("openai:"):] if isinstance(model, str) and model.startswith("openai:") else model
 
 
 def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:

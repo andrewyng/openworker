@@ -90,6 +90,14 @@ describe("UsageBody", () => {
     expect(screen.getByTestId("usage-open-steps").textContent).toBe("Trace");
   });
 
+  it("shows one model once in Heaviest turns, however an older turn recorded it (T3-4)", () => {
+    const heavy = [{ ...data().heavy[0], model_ids: ["openai:model-x", "model-x"] }];
+    render(<UsageBody data={data({ heavy })} period="7d" t={t} />);
+    const cell = screen.getByTestId("usage-heavy-model");
+    expect(cell.textContent).toBe("model-x");
+    expect(cell.getAttribute("title")).toBe("model-x");
+  });
+
   it("lists machines, an offline one by its cached answer's time", () => {
     render(<UsageBody data={data()} period="7d" t={t} />);
     const m = screen.getByTestId("usage-machines").textContent || "";

@@ -29,6 +29,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 
+from .model_names import canonical_model
+
 log = logging.getLogger(__name__)
 
 FILENAME = "recordings.db"
@@ -883,11 +885,13 @@ class RecordingStore:
             d["total"] += tot
             if r["purpose"] is not None:
                 d["by_purpose"][r["purpose"]] = d["by_purpose"].get(r["purpose"], 0) + tot
-            if r["model"] and r["model"] not in d["models"] and (r["calls"] or r["unreported"]):
-                d["models"].append(r["model"])
-            if (r["model"] and r["purpose"] in ("main", "helper") and r["model"] not in d["own_models"]
+            # T3-4: one name per model (openai: dropped), however the turn recorded it
+            model = canonical_model(r["model"]) if r["model"] else None
+            if model and model not in d["models"] and (r["calls"] or r["unreported"]):
+                d["models"].append(model)
+            if (model and r["purpose"] in ("main", "helper") and model not in d["own_models"]
                     and (r["calls"] or r["unreported"])):
-                d["own_models"].append(r["model"])
+                d["own_models"].append(model)
         for d in out.values():
             d["at_least"] = d["unreported"] > 0
             d["active_ms"] = None if d["duration_ms"] is None else d["duration_ms"] - (d["waiting_ms"] or 0)

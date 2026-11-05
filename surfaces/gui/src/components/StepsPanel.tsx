@@ -22,6 +22,7 @@ import {
   type TurnIssues,
 } from "../api";
 import { formatTokens } from "../usage";
+import { canonicalModel } from "../modelNames";
 import { turnTexts, wakeKey } from "../obs3";
 import { TurnList, TurnStrip } from "./TurnPicker";
 
@@ -107,7 +108,7 @@ export function stampLine(stamp: Record<string, any> | undefined, t: T): string 
   }
   if (stamp.persona_fp) parts.push(`ⓕ${stamp.persona_fp}`);
   const md = stamp.model;
-  if (md?.id) parts.push([md.id, md.provider_title].filter(Boolean).join(" · "));
+  if (md?.id) parts.push([canonicalModel(md.id), md.provider_title].filter(Boolean).join(" · "));  // T3-4
   return parts.join("  ·  ");
 }
 
@@ -1053,7 +1054,7 @@ function Inspector({ d, turn, steps, sessionId, t }: { d: any; turn: RecordedTur
       <>
         <h3 className="steps-h3"><span className={`steps-kind k-${kind}`} /><Help text={kindHelp(d, t)}>{title}</Help><span className="steps-pill">{t("steps.insp.step", { n: d.seq ?? "—" })}</span></h3>
         <div className="steps-meta">
-          {[a.provider_title || a.provider ? t("steps.insp.via", { model: a.model, provider: a.provider_title || a.provider }) : a.model, t("steps.insp.started", { at: started }), why].filter(Boolean).join(" · ")}
+          {[a.provider_title || a.provider ? t("steps.insp.via", { model: canonicalModel(a.model), provider: a.provider_title || a.provider }) : canonicalModel(a.model), t("steps.insp.started", { at: started }), why].filter(Boolean).join(" · ")}
         </div>
         <Kv rows={[
           [t("steps.detail.duration"), <>{formatDuration(d.duration_ms)}{a.ttft_ms != null && <span className="steps-faint"> ({t("steps.insp.first_reply", { t: formatDuration(a.ttft_ms) })})</span>}</>, H(t, "detail.duration")],
