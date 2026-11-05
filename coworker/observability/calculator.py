@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from .model_names import canonical_model
-
 BUCKET_ORDER = ["waiting", "tools", "model", "auto_approver", "summary", "sandbox"]
 
 
@@ -62,7 +60,7 @@ def usage(recording: dict[str, Any], session_id: Optional[str] = None,
         total += t
         p = attrs.get("purpose") or "unattributed"  # the format's word for a call with no purpose (V3-19)
         by_purpose[p] = by_purpose.get(p, 0) + t
-        key = canonical_model(attrs.get("model") or "?") + ("" if p == "main" else f" ({p})")  # T3-4
+        key = attrs.get("model", "?") + ("" if p == "main" else f" ({p})")
         by_model[key] = by_model.get(key, 0) + t
         u = attrs["usage"]
         if u.get("cache_read") is not None:  # a call with no cache count stays out of the share

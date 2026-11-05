@@ -243,6 +243,7 @@ def test_one_model_is_read_and_grouped_under_one_name(tmp_path):
     heavy = usage_api.heaviest(store, start=span[0], end=span[1])["turns"]
     assert sorted(m for t in heavy for m in t["model_ids"]) == ["anthropic:model-y", "model-x", "model-x"]
     rec = store.load_recording("s1")
-    assert calculator.usage(rec)["by_model"] == {"model-x": 220, "anthropic:model-y": 110}
+    # the per-turn usage keeps the recorded spelling: the golden corpus defines it
+    assert calculator.usage(rec)["by_model"] == {"openai:model-x": 110, "model-x": 110, "anthropic:model-y": 110}
     assert set(read_api.usage(rec, "s1")["by_model_parts"]) == {"model-x", "anthropic:model-y"}
     store.close()
