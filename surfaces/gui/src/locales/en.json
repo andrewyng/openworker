@@ -4018,7 +4018,12 @@
       "where_langfuse": "Saved on this machine. Also sent to Langfuse (export is on).",
       "where_otlp": "Saved on this machine. Also sent to your OpenTelemetry endpoint (export is on).",
       "where_company": "Saved on this machine. Also sent to your company's Langfuse.",
-      "with_note": "With your note."
+      "with_note": "With your note.",
+      "pick_any": "Pick any that apply.",
+      "will_local": "Will be saved on this machine.",
+      "will_langfuse": "Will be saved on this machine, and sent to Langfuse (export is on).",
+      "will_otlp": "Will be saved on this machine, and sent to your OpenTelemetry endpoint (export is on).",
+      "will_company": "Will be saved on this machine, and sent to your company's Langfuse."
     },
     "doing": {
       "title": "How it's been doing · last 30 days, on this machine",

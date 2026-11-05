@@ -96,10 +96,16 @@ export function TurnFooterLine({
           </>
         )}
         <span className="sep">·</span>
-        <button className={"thumb" + (rating === "up" ? " sel" : "")} aria-pressed={rating === "up"} data-testid="turn-footer-up"
+        {/* T3-8: while the 👎 card is open, 👎 is the one shown chosen; 👎 again closes the card
+            and leaves the rating as it was. */}
+        <button className={"thumb" + (rating === "up" && !card ? " sel" : "")} aria-pressed={rating === "up" && !card} data-testid="turn-footer-up"
           title={t("p3.fb.up")} onClick={() => { setCard(false); void rate(rating === "up" ? null : "up"); }}>👍</button>
-        <button className={"thumb" + (rating === "down" ? " sel" : "")} aria-pressed={rating === "down"} data-testid="turn-footer-down"
-          title={t("p3.fb.down")} onClick={() => { if (rating === "down" && !card) { void rate(null); return; } setCard(true); }}>👎</button>
+        <button className={"thumb" + (rating === "down" || card ? " sel" : "")} aria-pressed={rating === "down" || card} data-testid="turn-footer-down"
+          title={t("p3.fb.down")} onClick={() => {
+            if (card) setCard(false);
+            else if (rating === "down") void rate(null);
+            else setCard(true);
+          }}>👎</button>
         {where && !card && <span className="text-faint ml-2" data-testid="turn-footer-where">{whereLine(where, t)}</span>}
       </div>
       {card && (
@@ -123,8 +129,8 @@ export function TurnFooterLine({
 
 /** The machine's own answer says whether the note went too (`with_note`: a note was given
  * and "Your messages and the AI's answers" is on, TD3-11). */
-export function whereLine(w: FeedbackWhere | null | undefined, t: (k: string, o?: any) => string): string {
-  const { key, withNote } = whereKey(w);
+export function whereLine(w: FeedbackWhere | null | undefined, t: (k: string, o?: any) => string, future = false): string {
+  const { key, withNote } = whereKey(w, future);
   return t(key, { by: w?.by || "" }) + (withNote ? " " + t("p3.fb.with_note") : "");
 }
 
@@ -147,6 +153,8 @@ export function RatingCard({
   return (
     <div className="p3-ratecard" data-testid="rating-card">
       <b>{t("p3.fb.what_wrong")} <span className="text-faint font-normal">{t("p3.fb.optional")}</span></b>
+      {/* T3-8 (a): reasons are zero or more of the five, so say so */}
+      <div className="text-faint text-meta" data-testid="rating-pick-any">{t("p3.fb.pick_any")}</div>
       <div className="flex gap-1.5 flex-wrap my-2">
         {REASONS.map((r) => (
           <button key={r} className={"p3-pill" + (reasons.includes(r) ? " on" : "")} aria-pressed={reasons.includes(r)}
@@ -163,7 +171,7 @@ export function RatingCard({
         </button>
         <button className="btn" data-testid="rating-skip" onClick={onSkip}>{t("p3.fb.skip")}</button>
         <span className="text-faint ml-auto text-meta">
-          {failed ? t("p3.fb.failed") : whereLine(where, t)}
+          {failed ? t("p3.fb.failed") : whereLine(where, t, true)}
         </span>
       </div>
     </div>

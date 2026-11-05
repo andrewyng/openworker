@@ -56,6 +56,30 @@ describe("TurnFooterLine", () => {
     await waitFor(() => expect((putTurnFeedback as any).mock.calls[1][2].rating).toBeNull());
   });
 
+  it("the open 👎 card says reasons can be several and where the rating will go; 👎 again closes it unrated (T3-8)", () => {
+    const up = { ...footer, feedback: { turn_id: "t1", session_id: "s1", rating: "up" as const, reasons: [], rated_at: 1, changed_at: null } };
+    render(<TurnFooterLine sessionId="s1" footer={up} last defaultWhere={{ local: true, export: null, managed: false, with_note: false }} />);
+    expect(screen.getByTestId("turn-footer-up").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByTestId("turn-footer-down"));
+    const card = screen.getByTestId("rating-card").textContent || "";
+    expect(card).toContain("Pick any that apply.");
+    expect(card).toContain("Will be saved on this machine.");
+    expect(card).not.toContain("Saved on this machine.");
+    // (d) 👎 is the one shown chosen while its card is open
+    expect(screen.getByTestId("turn-footer-up").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("turn-footer-down").getAttribute("aria-pressed")).toBe("true");
+    // (a) several reasons stay picked
+    fireEvent.click(screen.getByTestId("rating-reason-wrong_answer"));
+    fireEvent.click(screen.getByTestId("rating-reason-too_slow"));
+    expect(screen.getByTestId("rating-reason-wrong_answer").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("rating-reason-too_slow").getAttribute("aria-pressed")).toBe("true");
+    // (c) 👎 again closes the card without rating; the 👍 is back
+    fireEvent.click(screen.getByTestId("turn-footer-down"));
+    expect(screen.queryByTestId("rating-card")).toBeNull();
+    expect(putTurnFeedback).not.toHaveBeenCalled();
+    expect(screen.getByTestId("turn-footer-up").getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("with recording off, says so and still offers a rating", () => {
     render(<TurnFooterLine sessionId="s1" footer={footer} recording={false} last />);
     expect(screen.getByTestId("turn-footer").textContent).toContain("Recording is off on this machine");

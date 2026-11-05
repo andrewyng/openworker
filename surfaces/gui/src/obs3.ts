@@ -189,10 +189,12 @@ export function turnForAnswer(footers: TurnFooter[], ts: number | undefined, ans
 export const REASONS = ["wrong_answer", "too_slow", "did_unasked", "did_not_finish", "other"] as const;
 
 /** The rating card's last line: where the rating went (§8.3). */
-export function whereKey(w: FeedbackWhere | null | undefined): { key: string; withNote: boolean } {
-  if (!w || !w.export) return { key: "p3.fb.where_local", withNote: false };
-  if (w.managed) return { key: "p3.fb.where_company", withNote: !!w.with_note };
-  return { key: w.export === "langfuse" ? "p3.fb.where_langfuse" : "p3.fb.where_otlp", withNote: !!w.with_note };
+export function whereKey(w: FeedbackWhere | null | undefined, future = false): { key: string; withNote: boolean } {
+  // T3-8: before Send or Skip nothing is saved yet, so the open card says where it *will* go.
+  const pre = future ? "p3.fb.will_" : "p3.fb.where_";
+  if (!w || !w.export) return { key: pre + "local", withNote: false };
+  if (w.managed) return { key: pre + "company", withNote: !future && !!w.with_note };
+  return { key: pre + (w.export === "langfuse" ? "langfuse" : "otlp"), withNote: !future && !!w.with_note };
 }
 
 // -- wake reasons (OB-17) ----------------------------------------------------------------------

@@ -3953,7 +3953,12 @@
       "where_langfuse": "已保存在这台机器上。也已发送到 Langfuse(导出已开启)。",
       "where_otlp": "已保存在这台机器上。也已发送到你的 OpenTelemetry 端点(导出已开启)。",
       "where_company": "已保存在这台机器上。也已发送到你公司的 Langfuse。",
-      "with_note": "包括你的备注。"
+      "with_note": "包括你的备注。",
+      "pick_any": "可多选。",
+      "will_local": "将保存在这台机器上。",
+      "will_langfuse": "将保存在这台机器上，并发送到 Langfuse(导出已开启)。",
+      "will_otlp": "将保存在这台机器上，并发送到你的 OpenTelemetry 端点(导出已开启)。",
+      "will_company": "将保存在这台机器上，并发送到你公司的 Langfuse。"
     },
     "doing": {
       "title": "表现如何 · 最近 30 天,在这台机器上",
