@@ -265,7 +265,7 @@ describe("StepsPanel", () => {
   it("says when a session has no recorded steps", async () => {
     vi.mocked(getRecordedTurns).mockResolvedValue([]);
     render(<StepsPanel sessionId="old" onClose={() => {}} />);
-    expect((await screen.findByTestId("steps-none")).textContent).toContain("No recorded steps yet");
+    expect((await screen.findByTestId("steps-none")).textContent).toContain("Nothing recorded yet");
   });
 });
 
