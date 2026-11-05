@@ -14,12 +14,13 @@ const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0
 // `callId` (OPE-238): opened from the "changes made without asking" summary — show that one
 // tool call's rows, with the filter visible and clearable.
 // Phase 3 (OB-8): the page gains a tab bar, Log | Usage. A call filter always opens the Log.
-export function AuditView({ callId, initialTab = "log", onTabChange, onOpenTurn }: {
+export function AuditView({ callId, initialTab = "log", onTabChange, onOpenTurn, onOpenPersona }: {
   callId?: string;
   initialTab?: "log" | "usage";
   /** T3-11: the open tab, for the page's address */
   onTabChange?: (tab: "log" | "usage") => void;
   onOpenTurn?: (sessionId: string, turnId: string) => void;
+  onOpenPersona?: (personaId: string) => void;
 } = {}) {
   const [tab, setTab] = useState<"log" | "usage">(callId ? "log" : initialTab);
   useEffect(() => {
@@ -66,7 +67,7 @@ export function AuditView({ callId, initialTab = "log", onTabChange, onOpenTurn 
               {t("p3.usage.tab_usage")}
             </button>
           </div>
-          {tab === "usage" ? <UsagePage onOpenTurn={onOpenTurn} /> : (<>
+          {tab === "usage" ? <UsagePage onOpenTurn={onOpenTurn} onOpenPersona={onOpenPersona} /> : (<>
 
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <input className={INPUT} placeholder={t("audit.placeholder_session")} value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} />

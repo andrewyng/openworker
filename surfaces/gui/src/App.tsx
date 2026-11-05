@@ -405,13 +405,16 @@ export function App() {
   const [personaViewId, setPersonaViewId] = useState<string>("");
   // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
   // was opened from there (persona config now lives in Settings).
-  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
+  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings" | "activity">("session");
+  const [personaViewFocus, setPersonaViewFocus] = useState<"doing" | undefined>(undefined);
   const openPersona = (
     id: string,
-    from: "session" | "settings" = "session",
+    from: "session" | "settings" | "activity" = "session",
     machineId?: string | null,
   ) => {
     setPersonaViewReturn(from);
+    // T3-12: from Usage ▸ By coworker, the page opens at its history
+    setPersonaViewFocus(from === "activity" ? "doing" : undefined);
     setPersonaViewId(id);
     setPersonaViewMachine(machineId ?? null);
     setSurface("persona");
@@ -2188,15 +2191,18 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView callId={auditCallId} initialTab={activityTab} onTabChange={setActivityTab} onOpenTurn={openTurnSteps} />
+        <AuditView callId={auditCallId} initialTab={activityTab} onTabChange={setActivityTab} onOpenTurn={openTurnSteps}
+          onOpenPersona={(id) => openPersona(id, "activity")} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
         <PersonaView
           machine={machines.find((m) => m.id === personaViewMachine) ?? null}
           personaId={personaViewId || agent}
+          focus={personaViewFocus}
           onBack={() =>
-            personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
+            personaViewReturn === "settings" ? openSettings("personas")
+              : personaViewReturn === "activity" ? setSurface("audit") : setSurface("session")
           }
           onOpenIntegrations={() => openSettings("connectors")}
         />

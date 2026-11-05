@@ -167,10 +167,24 @@ export function PersonasTab({
           {list.map((p) => (
             <div key={p.id} className="px-[18px] py-4">
               <div className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-body font-medium truncate">{p.name}</div>
-                  <div className="text-meta text-faint truncate mt-0.5">{p.tagline}</div>
-                </div>
+                {/* T3-12: the name opens the coworker's page (its settings and "How it's
+                    been doing"), the default coworker's too */}
+                {onOpenPersona ? (
+                  <button
+                    className="min-w-0 flex-1 text-left cursor-pointer group"
+                    title={t("personas.open_title", { name: p.name })}
+                    data-testid={`persona-open-${p.id}`}
+                    onClick={() => onOpenPersona(p.id)}
+                  >
+                    <div className="text-body font-medium truncate group-hover:underline">{p.name}</div>
+                    <div className="text-meta text-faint truncate mt-0.5">{p.tagline}</div>
+                  </button>
+                ) : (
+                  <div className="min-w-0 flex-1">
+                    <div className="text-body font-medium truncate">{p.name}</div>
+                    <div className="text-meta text-faint truncate mt-0.5">{p.tagline}</div>
+                  </div>
+                )}
                 {p.default ? (
                   /* The default coworker cannot be disabled or hidden — no toggle, no
                      configure; a quiet tag says why (owner 2026-08-21). It regains its

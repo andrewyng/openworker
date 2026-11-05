@@ -104,6 +104,15 @@ describe("UsageBody", () => {
     render(<UsageBody data={data()} period="7d" t={t} picked />);
     expect(screen.getByTestId("usage-coworkers-all").textContent).toBe("All coworkers, for comparison");
   });
+
+  it("each coworker's name in By coworker opens its history (T3-12)", () => {
+    const open = vi.fn();
+    render(<UsageBody data={data()} period="7d" t={t} onOpenPersona={open} />);
+    const links = screen.getAllByTestId("usage-coworker-open-cowork");
+    expect(links).toHaveLength(2); // its own row and its automation row
+    fireEvent.click(links[0]);
+    expect(open).toHaveBeenCalledWith("cowork");
+  });
 });
 
 describe("ApproverStripView", () => {

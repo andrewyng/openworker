@@ -69,3 +69,42 @@ def test_overridden_is_counted_per_reviewer(tmp_path):
     assert rows["session_model"]["tokens"] == 320 and rows["openai_decisions"]["tokens"] == 55
     assert rows["typesafe_jev"]["tokens"] == 0
     store.close()
+
+
+# -- T3-12 ----------------------------------------------------------------------------------------
+def test_the_default_coworkers_page_and_history_answer(tmp_path, monkeypatch):
+    """Settings ▸ Coworkers now opens the default coworker's page too: its detail and its "How
+    it's been doing" must answer for the default id, with its turns counted."""
+    from fastapi.testclient import TestClient
+
+    from coworker.personas.registry import DEFAULT_PERSONA_ID
+    from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from coworker.providers.base import TokenUsage
+    from coworker.server import SessionManager, create_app
+    from coworker.sessions import SessionRecord
+
+    class _Scripted(ProviderClient):
+        def complete(self, *, model, messages, tools=None, **settings):
+            return AssistantTurn(text="Done.", finish_reason="stop", usage=TokenUsage(input=20, output=5))
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path, provider=_Scripted())
+    client = TestClient(create_app(manager))
+    manager.session_store.save(SessionRecord(session_id="s1", workspace=str(tmp_path), model="sample",
+                                             mode="interactive", agent=DEFAULT_PERSONA_ID))
+    with client.websocket_connect("/ws/session/s1") as ws:
+        assert ws.receive_json()["type"] in ("ready", "export_notice")
+        ws.send_json({"type": "user_message", "text": "hello"})
+        while ws.receive_json()["type"] != "turn_done":
+            pass
+    detail = client.get(f"/v1/personas/{DEFAULT_PERSONA_ID}")
+    assert detail.status_code == 200 and detail.json().get("default") is True
+    doing = client.get(f"/v1/personas/{DEFAULT_PERSONA_ID}/doing", params={"days": 30})
+    assert doing.status_code == 200, doing.text
+    body = doing.json()
+    assert body["persona_id"] == DEFAULT_PERSONA_ID and body["runs"] == 1, body
+    assert sum(r["turns"] for r in body["rows"]) == 1
+    manager.observability.close()

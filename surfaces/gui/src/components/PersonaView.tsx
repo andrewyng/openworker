@@ -48,8 +48,11 @@ export function PersonaView({
   onBack,
   onOpenIntegrations,
   machine,
+  focus,
 }: {
   personaId: string;
+  /** T3-12: "doing" scrolls to "How it's been doing" (opened from Usage ▸ By coworker) */
+  focus?: "doing";
   onBack?: () => void;
   onOpenIntegrations?: () => void;
   // UX-046 machine scope: this coworker lives on a joined machine; every read
@@ -355,7 +358,7 @@ export function PersonaView({
           )}
 
           {/* Phase 3 OB-15: how each version of this coworker has been doing */}
-          <PersonaDoing personaId={personaId} machineId={mid} secClass={SEC_H} />
+          <PersonaDoing personaId={personaId} machineId={mid} secClass={SEC_H} scrollIntoView={focus === "doing"} />
 
           {/* defaults footer */}
           <section className="flex flex-wrap gap-x-8 gap-y-2 text-ui">

@@ -107,7 +107,11 @@ export async function loadUsage(period: Period, now = new Date(), personaId: str
   return { total, prev, dayPurpose, coworkers, heavy, approver, machines: [...machines, ...remote] };
 }
 
-export function UsagePage({ onOpenTurn }: { onOpenTurn?: (sessionId: string, turnId: string) => void }) {
+export function UsagePage({ onOpenTurn, onOpenPersona }: {
+  onOpenTurn?: (sessionId: string, turnId: string) => void;
+  /** T3-12: a coworker's page, at its "How it's been doing" */
+  onOpenPersona?: (personaId: string) => void;
+}) {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>("7d");
   const [persona, setPersona] = useState<string | null>(null);
@@ -155,14 +159,15 @@ export function UsagePage({ onOpenTurn }: { onOpenTurn?: (sessionId: string, tur
       ) : !data ? (
         <div className={CARD + " p-4 text-ui text-muted"}>{t("p3.usage.loading")}</div>
       ) : (
-        <UsageBody data={data} period={period} t={t} onOpenTurn={onOpenTurn} picked={!!persona} />
+        <UsageBody data={data} period={period} t={t} onOpenTurn={onOpenTurn} onOpenPersona={onOpenPersona} picked={!!persona} />
       )}
     </div>
   );
 }
 
-export function UsageBody({ data, period, t, onOpenTurn, picked = false }: {
+export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked = false }: {
   data: UsageData; period: Period; t: T; onOpenTurn?: (sessionId: string, turnId: string) => void;
+  onOpenPersona?: (personaId: string) => void;
   /** a coworker is picked: everything narrows to it but By coworker (T3-11) */
   picked?: boolean;
 }) {
@@ -224,7 +229,12 @@ export function UsageBody({ data, period, t, onOpenTurn, picked = false }: {
             <thead><tr><th>{t("p3.usage.coworker")}</th><th className="n">{t("p3.usage.tokens")}</th><th className="n">{t("p3.usage.with_issues")}</th></tr></thead>
             <tbody>
               {coworkerRows.map((r) => (
-                <tr key={r.key}><td>{r.name}{r.automation && <span className="text-faint"> {t("p3.usage.automation")}</span>}</td>
+                <tr key={r.key}><td>
+                  {r.personaId && onOpenPersona ? (
+                    <button className="p3-link" title={t("p3.usage.open_history", { name: r.name })}
+                      data-testid={`usage-coworker-open-${r.personaId}`} onClick={() => onOpenPersona(r.personaId!)}>{r.name}</button>
+                  ) : r.name}
+                  {r.automation && <span className="text-faint"> {t("p3.usage.automation")}</span>}</td>
                   <td className="n">{(r.atLeast ? "≥ " : "") + formatTokens(r.total)}</td>
                   <td className="n">{r.checked ? `${Math.round((r.withWarn / r.checked) * 100)}%` : "—"}</td></tr>
               ))}
@@ -355,12 +365,12 @@ function Tile({ label, value, sub, testid }: { label: string; value: string; sub
 /** By coworker, named from the installed coworkers or the kept versions (M3-R1); an
  * automation's turns get their own row under their coworker, "(automation)". */
 export function coworkerTable(groups: RollupGroup[], names: Record<string, string>, t: T) {
-  const rows = new Map<string, { key: string; name: string; automation: boolean; total: number; atLeast: boolean; checked: number; withWarn: number }>();
+  const rows = new Map<string, { key: string; personaId: string | null; name: string; automation: boolean; total: number; atLeast: boolean; checked: number; withWarn: number }>();
   for (const g of groups) {
     const pid = g.key.persona_id as string | null;
     const auto = g.key.task_id != null;
     const key = `${pid ?? ""}|${auto ? "a" : ""}`;
-    const r = rows.get(key) || { key, name: pid ? names[pid] || pid : t("p3.usage.unknown_coworker"), automation: auto, total: 0, atLeast: false, checked: 0, withWarn: 0 };
+    const r = rows.get(key) || { key, personaId: pid, name: pid ? names[pid] || pid : t("p3.usage.unknown_coworker"), automation: auto, total: 0, atLeast: false, checked: 0, withWarn: 0 };
     r.total += g.total;
     r.atLeast = r.atLeast || g.unreported > 0;
     r.checked += g.checked;

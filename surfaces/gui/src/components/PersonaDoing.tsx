@@ -12,7 +12,9 @@ import { shortDate } from "../obs3";
 
 type T = (k: string, o?: any) => string;
 
-export function PersonaDoing({ personaId, machineId, secClass }: { personaId: string; machineId?: string | null; secClass?: string }) {
+export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }: {
+  personaId: string; machineId?: string | null; secClass?: string; scrollIntoView?: boolean;
+}) {
   const { t } = useTranslation();
   const [doing, setDoing] = useState<Doing | null>(null);
   const [diff, setDiff] = useState<{ fp: string; files: (VersionFileChange & { diff: string })[] } | null>(null);
@@ -27,9 +29,12 @@ export function PersonaDoing({ personaId, machineId, secClass }: { personaId: st
     };
   }, [personaId, machineId]);
   if (!doing || !Array.isArray(doing.rows)) return null;  // an older engine answers something else
+  const reveal = (el: HTMLElement | null) => {
+    if (el && scrollIntoView && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "start" });
+  };
   const newest = doing.rows[0];
   return (
-    <section data-testid="persona-doing">
+    <section data-testid="persona-doing" ref={reveal}>
       <div className={`${secClass || ""} mb-1.5`}>{t("p3.doing.title")}</div>
       <div className="rounded-xl2 border border-line bg-panel p-3">
         {doing.rows.length === 0 ? (
