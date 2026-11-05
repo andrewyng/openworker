@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from pathlib import Path
 
 import jsonschema
@@ -28,6 +29,10 @@ from coworker.teams.store import BoardError, TeamStore
 from coworker.tools import ToolRegistry
 
 SCHEMA = json.loads((Path(__file__).parent / "corpora/observability/recording-format.schema.json").read_text("utf-8"))
+
+# A turn an hour old, not from 1970: a store with the background writer sweeps on its first tick, and
+# a 1970 turn is past the 30 days, so it could vanish between the write and the read.
+RECENT = int(time.time() * 1000) - 3_600_000
 
 
 class _Scripted(ProviderClient):
@@ -231,7 +236,7 @@ def test_lead_polling_is_stored_once_on_the_last_turn_of_the_run(tmp_path):
     manager = SessionManager(workspace=tmp_path, provider=_Scripted([]))
     store = manager.recordings_store
     team = {"team_id": "t1", "role": "lead"}
-    turns = [_turn(f"L{i}", "lead-s", i, 1_000_000 + i * 60_000, {"reason": "timer", "board_seq": 5}, team)
+    turns = [_turn(f"L{i}", "lead-s", i, RECENT + i * 60_000, {"reason": "timer", "board_seq": 5}, team)
              for i in range(1, 5)]
     _write(store, turns, [_step(t["turn_id"], "lead-s", 1, t["started_at"]) for t in turns])
     manager._scope_lead_polling("lead-s")
@@ -331,8 +336,8 @@ def test_run_health_counts_a_stuck_run_as_failed():
 def test_turns_recorded_before_the_ledger_are_filled_in(tmp_path):
     manager = SessionManager(workspace=tmp_path, provider=_Scripted([]))
     store = manager.recordings_store
-    t = _turn("T0", "s-old", 1, 1_000, {"reason": "user"})
-    _write(store, [t], [_step("T0", "s-old", 1, 1_000)])
+    t = _turn("T0", "s-old", 1, RECENT, {"reason": "user"})
+    _write(store, [t], [_step("T0", "s-old", 1, RECENT)])
     with store._lock, store._conn:
         store._conn.execute("DELETE FROM turn_usage")  # as a Phase 2 store has none
     assert store.turns_without_usage() == ["T0"]

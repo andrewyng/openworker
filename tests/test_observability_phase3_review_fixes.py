@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 from coworker.observability import RecordingStore, rollups, scopes, signals, usage_api
@@ -16,6 +17,10 @@ from coworker.server.manager import SessionManager
 from coworker.sessions import SessionRecord
 from coworker.teams.model import Actor, Role
 from coworker.teams.registry import TeamWorker
+
+# A turn an hour old, not from 1970: a store with the background writer sweeps on its first tick, and
+# a 1970 turn is past the 30 days, so it could vanish between the write and the read.
+RECENT = int(time.time() * 1000) - 3_600_000
 
 
 def _turn(tid, sid, seq, at, *, automation=None, status="completed"):
@@ -141,9 +146,9 @@ def test_a_team_summary_reads_once_and_works_out_again_only_on_a_change(tmp_path
                                 lead_actor="lead",
                                 workers=[TeamWorker(actor="sam", persona="swe-worker", session_id="worker-session")])
     store = manager.recordings_store
-    _write(store, [_turn("W1", "worker-session", 1, 1_000)],
-           [_step("W1", "worker-session", 1, 1_000),
-            _step("W1", "worker-session", 2, 1_100, kind="tool", name="transition", call_id="t1", attrs={})])
+    _write(store, [_turn("W1", "worker-session", 1, RECENT + 1_000)],
+           [_step("W1", "worker-session", 1, RECENT + 1_000),
+            _step("W1", "worker-session", 2, RECENT + 1_100, kind="tool", name="transition", call_id="t1", attrs={})])
 
     reads = {"team_turns": 0, "load_recording": 0}
     for name in reads:
@@ -155,8 +160,8 @@ def test_a_team_summary_reads_once_and_works_out_again_only_on_a_change(tmp_path
 
         monkeypatch.setattr(store, name, counted)
     # the hand-off step is one indexed read, not the whole recording
-    assert manager._handoff_step("worker-session", 2_000) == {"step_id": "W1-s2", "seq": 2, "turn_id": "W1"}
-    assert manager._handoff_step("worker-session", 0) is None  # before the step
+    assert manager._handoff_step("worker-session", RECENT + 2_000) == {"step_id": "W1-s2", "seq": 2, "turn_id": "W1"}
+    assert manager._handoff_step("worker-session", RECENT) is None  # before the step
     assert reads["load_recording"] == 0
 
     first = manager.team_summary(team.team_id)
@@ -167,7 +172,7 @@ def test_a_team_summary_reads_once_and_works_out_again_only_on_a_change(tmp_path
     assert reads["team_turns"] == after_first  # nothing changed: the kept answer
     assert again["wakes"] == first["wakes"] and again["events"] == first["events"]
     # a member's new turn is a change
-    _write(store, [_turn("W2", "worker-session", 2, 5_000)], [_step("W2", "worker-session", 1, 5_000)])
+    _write(store, [_turn("W2", "worker-session", 2, RECENT + 5_000)], [_step("W2", "worker-session", 1, RECENT + 5_000)])
     manager.team_summary(team.team_id)
     assert reads["team_turns"] == after_first + 1
     # so is a board change
@@ -208,14 +213,14 @@ def test_a_resumed_automation_turn_is_tagged_with_its_run(tmp_path, monkeypatch)
     store = manager.recordings_store
     run = {"task_id": "task-1", "run_id": "run-1", "trigger": "schedule"}
     # the run's own turn stopped at an approval; the app restarted; the card is answered
-    _write(store, [_turn("R1", "__run__run-1", 1, 1_000, automation=run, status="unknown")],
-           [_step("R1", "__run__run-1", 1, 1_000)])
+    _write(store, [_turn("R1", "__run__run-1", 1, RECENT + 1_000, automation=run, status="unknown")],
+           [_step("R1", "__run__run-1", 1, RECENT + 1_000)])
     got = _resume(manager, "__run__run-1")
     assert got["automation"] == run and got["wake"]["reason"] == "answer"
     # a follow-up typed into the run's session later is not the run's, nor is its resume (TD3-23)
-    _write(store, [_turn("R2", "__run__run-1", 2, 9_000, status="unknown")], [_step("R2", "__run__run-1", 1, 9_000)])
+    _write(store, [_turn("R2", "__run__run-1", 2, RECENT + 9_000, status="unknown")], [_step("R2", "__run__run-1", 1, RECENT + 9_000)])
     assert _resume(manager, "__run__run-1")["automation"] is None
     # an ordinary session's resume carries none
-    _write(store, [_turn("S1", "plain", 1, 1_000, automation=run)], [_step("S1", "plain", 1, 1_000)])
+    _write(store, [_turn("S1", "plain", 1, RECENT + 1_000, automation=run)], [_step("S1", "plain", 1, RECENT + 1_000)])
     assert _resume(manager, "plain")["automation"] is None
     manager.observability.close()
