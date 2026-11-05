@@ -2484,6 +2484,9 @@ export function App() {
               // path is dead by construction, so say so explicitly rather than
               // letting a hopeful socket state enable the button.
               connected={connected && !currentRowOffline}
+              questionPending={
+                !!pendingQuestion || sessionInbox[0]?.kind === "question"
+              }
               // A draft on a machine asks THAT machine's readiness (its keys,
               // its config), like the models/labels above; the controller's
               // own flag is desktop-only (the cloud shim always says false).
