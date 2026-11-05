@@ -4830,7 +4830,9 @@ export interface DoingRow {
   too_few: boolean;
   models: string[];
   changed: { from: string; files: VersionFileChange[] } | null;
-  model_line?: { kind: "unchanged" | "changed" | "several"; models?: string[]; from?: string; to?: string };
+  model_line?: { kind: "first" | "unchanged" | "changed" | "several"; models?: string[]; from?: string; to?: string };
+  /** T3-15: the version's number, oldest first ("v1") */
+  version_n?: number | null;
 }
 export interface PersonaDoing {
   persona_id: string;

@@ -177,7 +177,7 @@ def persona_doing(store: Any, persona_id: str, *, start: int, end: int, current_
     Usage page. Fewer than `min_runs` runs: no medians, "too few runs to compare"."""
     turns = store.usage_turns(start, end, where={"persona_id": persona_id})
     kept_from = store.usage_kept_from()
-    models_of_turn = {t["turn_id"]: t["models"] for t in turns}
+    models_of_turn = {t["turn_id"]: t.get("own_models", t["models"]) for t in turns}
     runs: dict[tuple, dict[str, Any]] = {}
     for t in turns:
         k = (t["persona_fp"], t["session_id"])
@@ -220,12 +220,19 @@ def persona_doing(store: Any, persona_id: str, *, start: int, end: int, current_
     changes = {}
     for prev, cur in zip(ordered, ordered[1:]):
         changes[cur["fp"]] = {"from": prev["fp"], **diff_versions(prev, cur, store)}
+    number = {v["fp"]: i + 1 for i, v in enumerate(ordered)}
     for row in out:
         row["changed"] = changes.get(row["fp"])
+        # T3-15: "v1 · current": versions numbered oldest first, by first sighting
+        row["version_n"] = number.get(row["fp"])
     # model line: "model unchanged", "model changed: a -> b", or several models
     for i, row in enumerate(out):
         older = out[i + 1] if i + 1 < len(out) else None
-        if len(row["models"]) > 1:
+        # T3-15: a first version has nothing to compare a model with (it says only that it is
+        # the first); the models are listed on their own line either way
+        if not row.get("changed"):
+            row["model_line"] = {"kind": "first", "models": row["models"]}
+        elif len(row["models"]) > 1:
             row["model_line"] = {"kind": "several", "models": row["models"]}
         elif older is not None and row["models"] and older["models"] and row["models"] != older["models"]:
             row["model_line"] = {"kind": "changed", "from": older["models"][-1], "to": row["models"][0]}

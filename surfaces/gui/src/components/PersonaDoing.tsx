@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getPersonaDoing, getPersonaVersionDiff, type DoingRow, type PersonaDoing as Doing, type VersionFileChange } from "../api";
 import { formatTokens } from "../usage";
-import { shortDate } from "../obs3";
+import { inUseSpan } from "../obs3";
 
 type T = (k: string, o?: any) => string;
 
@@ -33,6 +33,7 @@ export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }:
     if (el && scrollIntoView && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "start" });
   };
   const newest = doing.rows[0];
+  const models = newest?.model_line?.models || newest?.models || [];
   return (
     <section data-testid="persona-doing" ref={reveal}>
       <div className={`${secClass || ""} mb-1.5`}>{t("p3.doing.title")}</div>
@@ -45,11 +46,11 @@ export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }:
               <tr>
                 <th>{t("p3.doing.version")}</th>
                 <th>{t("p3.doing.in_use")}</th>
-                <th className="n">{t("p3.doing.runs")}</th>
-                <th className="n">{t("p3.doing.median_tokens")}</th>
-                <th className="n">{t("p3.doing.with_issues")}</th>
+                <th className="n">{t("p3.doing.sessions")}</th>
+                <th className="n" title={t("p3.doing.typical_tokens_title")}>{t("p3.doing.typical_tokens")}</th>
                 <th className="n">{t("p3.doing.approvals")}</th>
-                <th className="n">👍 / 👎</th>
+                <th className="n">{t("p3.doing.with_issues")}</th>
+                <th className="n">{t("p3.doing.ratings")}</th>
               </tr>
             </thead>
             <tbody>
@@ -64,20 +65,32 @@ export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }:
             <div className="flex-1 min-w-0">
               <b className="font-medium">{t("p3.doing.what_changed", { fp: newest.fp ?? "—" })}</b>{" "}
               <span className="text-muted">{changedLine(newest, t)}</span>
+              {models.length > 0 && (
+                <div className="text-muted mt-0.5" title={models.join(", ")} data-testid="persona-doing-models">
+                  {models.length === 1
+                    ? t("p3.doing.models_used_one", { model: models[0] })
+                    : t("p3.doing.models_used_more", { model: models[0], count: models.length - 1 })}
+                </div>
+              )}
             </div>
-            <button
-              className="text-meta px-2.5 py-1 rounded-lg border border-line"
-              disabled={!newest.changed || !newest.fp}
-              data-testid="persona-doing-diff"
-              onClick={async () => {
-                if (!newest.changed || !newest.fp) return;
-                if (diff?.fp === newest.fp) return setDiff(null);
-                const d = await getPersonaVersionDiff(personaId, newest.changed.from, newest.fp, machineId).catch(() => null);
-                if (d && !d.error) setDiff({ fp: newest.fp, files: d.files || [] });
-              }}
-            >
-              {diff ? t("p3.doing.hide_diff") : t("p3.doing.show_diff")}
-            </button>
+            {/* T3-15 (a): a first version has nothing to compare with, so no button that looks
+                clickable and does nothing */}
+            {newest.changed && newest.fp ? (
+              <button
+                className="text-meta px-2.5 py-1 rounded-lg border border-line"
+                data-testid="persona-doing-diff"
+                onClick={async () => {
+                  if (!newest.changed || !newest.fp) return;
+                  if (diff?.fp === newest.fp) return setDiff(null);
+                  const d = await getPersonaVersionDiff(personaId, newest.changed.from, newest.fp, machineId).catch(() => null);
+                  if (d && !d.error) setDiff({ fp: newest.fp, files: d.files || [] });
+                }}
+              >
+                {diff ? t("p3.doing.hide_diff") : t("p3.doing.show_diff")}
+              </button>
+            ) : (
+              <span className="text-faint" data-testid="persona-doing-nothing-to-compare">{t("p3.doing.nothing_to_compare")}</span>
+            )}
           </div>
         )}
         {diff && (
@@ -97,32 +110,38 @@ export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }:
 }
 
 function DoingTr({ r, t }: { r: DoingRow; t: T }) {
-  const from = r.first_seen != null ? shortDate(r.first_seen) : "—";
-  const to = r.last_seen != null ? shortDate(r.last_seen) : "—";
+  const version = r.unknown_version ? t("p3.doing.unknown_version")
+    : r.version_n ? t("p3.doing.version_n", { n: r.version_n }) : `ⓕ${r.fp}`;
   return (
     <tr data-testid="persona-doing-row">
       <td>
-        <span className="font-mono">{r.unknown_version ? t("p3.doing.unknown_version") : `ⓕ${r.fp}`}</span>
-        {r.current && <span className="p3-chip ok ml-1.5">{t("p3.doing.current")}</span>}
+        <span title={r.fp ? t("p3.doing.fingerprint", { fp: r.fp }) : undefined} data-testid="persona-doing-version">
+          {version}
+          {r.current && <span className="text-ok"> · {t("p3.doing.current")}</span>}
+        </span>
       </td>
-      <td>{r.before_kept ? t("p3.doing.before", { date: to }) : `${from} – ${to}`}</td>
+      <td className="whitespace-nowrap">{inUseSpan(r.first_seen, r.last_seen, r.before_kept, t)}</td>
       <td className="n">
         {r.runs}
         {r.automation_runs > 0 && <span className="text-faint"> {t("p3.doing.automation_runs", { count: r.automation_runs })}</span>}
       </td>
       {r.too_few ? (
-        <td className="n text-faint" colSpan={1}>{t("p3.doing.too_few")}</td>
+        // T3-15 (h): one note across both typical-number columns
+        <td className="n text-faint" colSpan={2} data-testid="persona-doing-too-few">{t("p3.doing.too_few")}</td>
       ) : (
-        <td className="n">{(r.at_least ? "≥ " : "") + formatTokens(r.median_tokens ?? 0)}</td>
+        <>
+          <td className="n">{(r.at_least ? "≥ " : "") + formatTokens(r.median_tokens ?? 0)}</td>
+          <td className="n">{r.approvals_per_run == null ? "—" : r.approvals_per_run.toFixed(1)}</td>
+        </>
       )}
       <td className="n">{r.checked ? `${Math.round((r.with_warn / r.checked) * 100)}%` : "—"}</td>
-      <td className="n">{r.approvals_per_run == null ? "—" : r.approvals_per_run.toFixed(1)}</td>
       <td className="n">{r.up || r.down ? `${r.up} / ${r.down}` : "— / —"}</td>
     </tr>
   );
 }
 
-/** "skill semgrep-scan 1.1 → 1.2 · instructions edited (+4 lines) · model unchanged". */
+/** "skill semgrep-scan 1.1 → 1.2 · instructions edited (+4 lines) · model unchanged"; a first
+ * version: "First version seen on this machine." The models used have their own line. */
 export function changedLine(r: DoingRow, t: T): string {
   const parts: string[] = [];
   if (!r.changed) parts.push(t("p3.doing.first_version"));
@@ -154,9 +173,9 @@ export function changedLine(r: DoingRow, t: T): string {
     }
     if (!r.changed.files.length) parts.push(t("p3.doing.no_file_change"));
   }
+  if (!r.changed) return parts.join(" · ");  // T3-15: a first version says only that
   const m = r.model_line;
   if (m?.kind === "changed") parts.push(t("p3.doing.model_changed", { from: m.from, to: m.to }));
-  else if (m?.kind === "several") parts.push(t("p3.doing.models", { models: (m.models || []).join(", ") }));
-  else parts.push(t("p3.doing.model_unchanged"));
+  else if (m?.kind === "unchanged" && (m.models || []).length) parts.push(t("p3.doing.model_unchanged"));
   return parts.join(" · ");
 }

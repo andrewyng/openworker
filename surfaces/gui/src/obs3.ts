@@ -242,6 +242,24 @@ export function shortDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
 }
 
+/** T3-15: when a coworker version was in use, as a person says it: "Nov 2" for one day,
+ * "Nov 3 – today", "Nov 3 or earlier – today" when the ledger keeps nothing older. */
+export function inUseSpan(
+  first: number | null, last: number | null, beforeKept: boolean,
+  t: (k: string, o?: any) => string, now = new Date(),
+): string {
+  if (first == null || last == null) return "—";
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return d.toDateString() === now.toDateString()
+      ? t("p3.doing.today")
+      : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  const from = beforeKept ? t("p3.doing.or_earlier", { date: day(first) }) : day(first);
+  const sameDay = new Date(first).toDateString() === new Date(last).toDateString();
+  return sameDay && !beforeKept ? from : `${from} – ${day(last)}`;
+}
+
 // -- moving between turns in the Trace panel (T3-14) ------------------------------------------
 /** A turn's part of the conversation the GUI already holds: what you asked, its answer, and
  * the tools and files its steps touched. Nothing here is fetched or sent anywhere. */

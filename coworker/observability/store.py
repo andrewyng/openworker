@@ -872,6 +872,9 @@ class RecordingStore:
                 d = out[r["turn_id"]] = {k: r[k] for k in r.keys() if k not in ("purpose", "model", "first")}
                 d["warn_checks"] = json.loads(d["warn_checks"] or "[]")
                 d["total"], d["models"], d["by_purpose"] = 0, [], {}
+                # T3-15: the models of the coworker's own work (main and helpers), without the
+                # auto-approver's, the title's or the summary's
+                d["own_models"] = []
                 for k in self._SUMMED:
                     d[k] = 0
             for k in self._SUMMED:
@@ -882,6 +885,9 @@ class RecordingStore:
                 d["by_purpose"][r["purpose"]] = d["by_purpose"].get(r["purpose"], 0) + tot
             if r["model"] and r["model"] not in d["models"] and (r["calls"] or r["unreported"]):
                 d["models"].append(r["model"])
+            if (r["model"] and r["purpose"] in ("main", "helper") and r["model"] not in d["own_models"]
+                    and (r["calls"] or r["unreported"])):
+                d["own_models"].append(r["model"])
         for d in out.values():
             d["at_least"] = d["unreported"] > 0
             d["active_ms"] = None if d["duration_ms"] is None else d["duration_ms"] - (d["waiting_ms"] or 0)

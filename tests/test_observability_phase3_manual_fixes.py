@@ -107,6 +107,12 @@ def test_the_default_coworkers_page_and_history_answer(tmp_path, monkeypatch):
     body = doing.json()
     assert body["persona_id"] == DEFAULT_PERSONA_ID and body["runs"] == 1, body
     assert sum(r["turns"] for r in body["rows"]) == 1
+    # T3-15 (d): the default coworker is built in code, not from a manifest; its only version
+    # is still the current one. (b, f): a first version, numbered v1, with only its own models.
+    [only] = body["rows"]
+    assert only["current"] is True and only["version_n"] == 1
+    assert only["changed"] is None and only["model_line"]["kind"] == "first"
+    assert only["models"] == only["model_line"]["models"]  # the session's own model(s), listed once
     # T3-10's route answers with the card's fields
     now = int(time.time() * 1000)
     got = client.get("/v1/observability/ratings", params={"from": now - 86_400_000, "to": now + 60_000}).json()
@@ -181,3 +187,24 @@ def test_stopping_the_app_drops_queued_scope_checks_and_stops_the_start_up_check
     loaded = []
     monkeypatch.setattr(manager.recordings_store, "load_recording", lambda sid: loaded.append(sid))
     assert manager.recheck_issues() == 2 and loaded == []
+
+
+# -- T3-15 (b) ------------------------------------------------------------------------------------
+def test_a_versions_models_are_its_own_work_only(tmp_path):
+    from coworker.observability import signals
+
+    store = RecordingStore(tmp_path / "recordings.db", background=False)
+    t = _turn("T1", "s1", 1, RECENT)
+    t["stamp"].update({"persona_id": "cowork", "persona_fp": "fp1"})
+    store.write_turn(t)
+    usage = {"reported": True, "input_fresh": 10, "cache_read": 0, "cache_write": 0, "output": 1}
+    for n, (purpose, model) in enumerate([("main", "model-x"), ("helper", "model-h"), ("auto_approver", "reviewer-model"),
+                                          ("title", "title-model"), ("summary", "summary-model")], start=1):
+        store.write_step(_step("T1", "s1", n, RECENT + n, "model", {"purpose": purpose, "model": model, "usage": usage}))
+    store.write_issues("T1", {"signals_version": signals.version(), "warn": 0, "info": 0, "issues": [], "fine": []}, seen=True)
+    store.flush()
+    got = usage_api.persona_doing(store, "cowork", start=RECENT - 1, end=RECENT + 60_000)
+    [row] = got["rows"]
+    assert row["models"] == ["model-h", "model-x"]
+    assert row["model_line"] == {"kind": "first", "models": ["model-h", "model-x"]}
+    store.close()

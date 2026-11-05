@@ -7043,12 +7043,15 @@ class SessionManager:
     def current_persona_fp(self, persona_id: str) -> Optional[str]:
         """The coworker's fingerprint now, worked out as the session build does (E16)."""
         entry = self.personas.get(persona_id)
-        manifest = entry.manifest if entry else None
-        if manifest is None:
+        if entry is None:
             return None
         try:
+            # T3-15 (d): from the built agent, as the session does (agent.py). A coworker built
+            # in code (the default, OpenWorker) has no manifest, so reading the manifest's
+            # prompt gave it no current version at all.
+            agent = entry.agent()
             skill_dir = self.persona_skill_scope(persona_id)[0]
-            return _obs_stamps.persona_fingerprint(persona_id, manifest.system_prompt,
+            return _obs_stamps.persona_fingerprint(agent.name, agent.system_prompt,
                                                    [skill_dir] if skill_dir is not None else [])
         except Exception:  # noqa: BLE001
             return None
