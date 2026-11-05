@@ -91,12 +91,36 @@ describe("ApproverStripView", () => {
       tokens: 3796, shadow_checks: 2, by_reviewer: [{ kind: "session_model", checks: 1, allowed: 1, asked: 0, blocked: 0, could_not_run: 0, median_ms: 1000 }], shown: true };
     render(<ApproverStripView ap={ap} t={t} />);
     const text = screen.getByTestId("usage-approver").textContent || "";
-    expect(text).toContain("allowed 1");
     expect(text).not.toContain("%");
-    expect(text).toContain("session model");
-    expect(text).toContain("incl. 2 shadow checks");
+    expect(screen.getByTestId("usage-approver-session_model").textContent).toContain("Session model");
+    expect(screen.getByTestId("usage-approver-total").textContent).toContain("incl. 2 shadow checks");
+    expect(screen.getByTestId("usage-approver-total").textContent).toContain("3.8k");
     expect(text).toContain("Auto-approve");
     expect(text).not.toContain("Safety reviewer");
+  });
+
+  it("one row per reviewer, named in full, with its own overrides and tokens, and a Total row (T3-6)", () => {
+    const row = (kind: string, checks: number, allowed: number, asked: number, blocked: number, overridden: number, tokens: number) =>
+      ({ kind, checks, allowed, asked, blocked, could_not_run: 0, median_ms: 1000, overridden, tokens });
+    const ap = { checks: 98, allowed: 80, asked: 10, blocked: 8, could_not_run: 0, median_ms: 1000, overridden: 3,
+      tokens: 457_000, shadow_checks: 2, shown: true,
+      by_reviewer: [row("openai_decisions", 2, 1, 1, 0, 0, 0), row("session_model", 95, 79, 8, 8, 3, 450_000), row("typesafe_jev", 1, 0, 1, 0, 0, 0)] };
+    render(<ApproverStripView ap={ap} t={t} />);
+    const cells = (id: string) => [...screen.getByTestId(id).querySelectorAll("td")].map((c) => c.textContent);
+    expect(cells("usage-approver-openai_decisions")[0]).toBe("Decision model · OpenAI Decisions");
+    expect(cells("usage-approver-typesafe_jev")[0]).toBe("Decision model · Jev");
+    // overridden is each reviewer's own, not the period's total on every line
+    expect(cells("usage-approver-session_model")[6]).toBe("3");
+    expect(cells("usage-approver-typesafe_jev")[6]).toBe("0");
+    // 95 checks: shares; 2 checks: counts
+    expect(cells("usage-approver-session_model")[2]).toBe("83%");
+    expect(cells("usage-approver-openai_decisions")[2]).toBe("1");
+    const total = cells("usage-approver-total");
+    expect(total[0]).toContain("Total");
+    expect(total[0]).toContain("incl. 2 shadow checks");
+    expect(total[1]).toBe("98");
+    expect(total[6]).toBe("3");
+    expect(total[8]).toBe("457k");
   });
 });
 

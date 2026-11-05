@@ -901,7 +901,7 @@ class RecordingStore:
         self.flush()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT s.kind, s.shadow, s.duration_ms, s.attrs, s.parent_step_id FROM steps s "
+                "SELECT s.kind, s.shadow, s.duration_ms, s.attrs, s.parent_step_id, t.reviewer FROM steps s "
                 "JOIN turns t ON t.turn_id = s.turn_id WHERE t.started_at >= ? AND t.started_at < ? "
                 "AND (s.kind = 'auto_approver' OR (s.kind = 'tool' AND s.attrs LIKE '%allow_anyway%'))"
                 # one coworker: by the ledger's coworker id, which stands in for 1.2 turns
@@ -909,7 +909,26 @@ class RecordingStore:
                    if persona_id else ""),
                 (start, end, persona_id) if persona_id else (start, end)).fetchall()
         return [{"kind": r["kind"], "shadow": bool(r["shadow"]), "duration_ms": r["duration_ms"],
-                 "parent_step_id": r["parent_step_id"], "attrs": json.loads(r["attrs"] or "{}")} for r in rows]
+                 "parent_step_id": r["parent_step_id"], "attrs": json.loads(r["attrs"] or "{}"),
+                 "turn_reviewer": json.loads(r["reviewer"]) if r["reviewer"] else None} for r in rows]
+
+    def approver_tokens_by_reviewer(self, start: int, end: int, *,
+                                    persona_id: Optional[str] = None) -> dict[str, int]:
+        """The live auto-approver model calls' tokens of turns that started in the period, by the
+        reviewer kind the turn ran with (T3-6, one row per reviewer). Shadow checks are left out:
+        the strip's total, from the ledger, has them."""
+        self.flush()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT json_extract(t.reviewer, '$.kind') AS rkind, SUM(COALESCE(s.input_fresh,0)"
+                "+COALESCE(s.cache_read,0)+COALESCE(s.cache_write,0)+COALESCE(s.output,0)) AS tok "
+                "FROM steps s JOIN turns t ON t.turn_id = s.turn_id WHERE t.started_at >= ? AND t.started_at < ? "
+                "AND s.kind = 'model' AND s.shadow = 0 AND s.usage_reported = 1 "
+                "AND s.purpose = 'auto_approver'"
+                + (" AND EXISTS (SELECT 1 FROM turn_usage u WHERE u.turn_id = t.turn_id AND u.persona_id = ?)"
+                   if persona_id else "") + " GROUP BY rkind",
+                (start, end, persona_id) if persona_id else (start, end)).fetchall()
+        return {r["rkind"] or "unknown": int(r["tok"] or 0) for r in rows}
 
     def outside_calls_between(self, start: int, end: int) -> dict[str, int]:
         """Model steps with no turn (proxy calls) in [start, end): in no pill, so outside the

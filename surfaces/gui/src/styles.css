@@ -2644,6 +2644,9 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-chip.ok { background:var(--ok-soft); color:var(--ok); }
 .p3-chip.warn { background:var(--warn-soft); color:var(--warn-ink); }
 .p3-chip.err { background:var(--danger-soft); color:var(--danger); }
+/* T3-6: the Auto-approve table, one row per reviewer and a Total row */
+.p3-ap td.c-ok { color:var(--ok); } .p3-ap td.c-warn { color:var(--warn-ink); } .p3-ap td.c-err { color:var(--danger); }
+.p3-ap tr.p3-total td { border-top:1px solid var(--line-strong, var(--line)); }
 .p3-callout { border-radius:9px; padding:8px 12px; font-size:var(--fs-meta); margin:8px 0; }
 .p3-callout.err { background:var(--danger-soft); color:var(--danger); }
 .p3-event { display:flex; align-items:center; gap:8px; width:100%; background:none; border:0; padding:3px 0; font-size:var(--fs-meta); color:var(--ink); cursor:pointer; }

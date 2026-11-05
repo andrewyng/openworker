@@ -101,9 +101,15 @@ def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = No
     steps = store.approver_steps(start, end, persona_id=persona_id)
     live = [s for s in steps if s["kind"] == "auto_approver" and not s["shadow"] and s["parent_step_id"] is None]
     shadow = [s for s in steps if s["kind"] == "auto_approver" and s["shadow"]]
-    overridden = sum(1 for s in steps if s["kind"] == "tool" and any(
+    overrides = [s for s in steps if s["kind"] == "tool" and any(
         x.get("stage") == "grant" and x.get("outcome") == "allow_anyway"
-        for x in (s["attrs"].get("decision") or {}).get("path") or []))
+        for x in (s["attrs"].get("decision") or {}).get("path") or [])]
+    # T3-6: an override counts for the reviewer its turn ran with (the one whose block was
+    # let through); the step itself names none, as no reviewer is asked again.
+    overridden_by: dict[str, int] = {}
+    for s in overrides:
+        k = (s.get("turn_reviewer") or {}).get("kind") or "unknown"
+        overridden_by[k] = overridden_by.get(k, 0) + 1
 
     def counts(rows: list[dict]) -> dict[str, Any]:
         res = [r["attrs"].get("result") for r in rows]
@@ -117,8 +123,10 @@ def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = No
     tokens = sum(g["total"] for g in store.usage_rollup(["purpose"], start, end,
                                                         where={"persona_id": persona_id} if persona_id else None)
                  if g["key"]["purpose"] == "auto_approver")
-    return {**counts(live), "overridden": overridden, "tokens": tokens, "shadow_checks": len(shadow),
-            "by_reviewer": [{"kind": k, **counts(v)} for k, v in sorted(by_kind.items())],
+    tokens_by = store.approver_tokens_by_reviewer(start, end, persona_id=persona_id)
+    return {**counts(live), "overridden": len(overrides), "tokens": tokens, "shadow_checks": len(shadow),
+            "by_reviewer": [{"kind": k, **counts(v), "overridden": overridden_by.get(k, 0),
+                             "tokens": tokens_by.get(k, 0)} for k, v in sorted(by_kind.items())],
             "shown": bool(live)}
 
 

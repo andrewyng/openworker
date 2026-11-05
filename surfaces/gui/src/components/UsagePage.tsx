@@ -322,36 +322,57 @@ export function coworkerTable(groups: RollupGroup[], names: Record<string, strin
   return [...rows.values()].sort((a, b) => b.total - a.total);
 }
 
+/** T3-6: one row per reviewer, named in full, and a Total row; the point is comparing
+ * reviewers, so they stay apart. Under 10 checks a cell is a count, from 10 a share (M3-R5). */
 export function ApproverStripView({ ap, t }: { ap: ApproverStrip; t: T }) {
-  const lines = ap.by_reviewer.length ? ap.by_reviewer : [{ ...ap, kind: "" }];
+  const rows = ap.by_reviewer.length ? ap.by_reviewer : [{ ...ap, kind: "unknown", tokens: undefined }];
+  const part = (n: number, checks: number) => {
+    const p = approverPart(n, checks);
+    return p.share ? t("p3.ap.share", { n: p.value }) : String(p.value);
+  };
+  const cells = (l: { checks: number; allowed: number; asked: number; blocked: number; could_not_run: number; median_ms: number | null },
+                 overridden: number | undefined, tokens: number | undefined) => (
+    <>
+      <td className="n">{l.checks}</td>
+      <td className="n c-ok">{part(l.allowed, l.checks)}</td>
+      <td className="n c-warn">{part(l.asked, l.checks)}</td>
+      <td className="n c-err">{part(l.blocked, l.checks)}</td>
+      <td className="n">{l.could_not_run}</td>
+      <td className="n">{overridden ?? "—"}</td>
+      <td className="n">{formatDuration(l.median_ms)}</td>
+      <td className="n">{tokens == null ? "—" : formatTokens(tokens)}</td>
+    </>
+  );
+  const anyShare = rows.some((r) => r.checks >= 10) || ap.checks >= 10;
   return (
-    <div className={CARD + " p3-card mt-3 flex flex-col gap-1.5"} data-testid="usage-approver">
-      {lines.map((l) => {
-        const part = (n: number, key: string) => {
-          const p = approverPart(n, l.checks);
-          return t(`p3.ap.${key}_${p.share ? "share" : "count"}`, { n: p.value });
-        };
-        return (
-          <div key={l.kind} className="flex items-center gap-3 flex-wrap text-meta">
-            <b className="p3-h">{t("p3.ap.title")}</b>
-            <span className="text-muted">
-              {t("p3.ap.checks", { count: l.checks })}
-              {l.kind ? " · " + t(`p3.ap.kind.${l.kind}`, { defaultValue: l.kind }) : ""}
-            </span>
-            <span className="p3-chip ok">{part(l.allowed, "allowed")}</span>
-            <span className="p3-chip warn">{part(l.asked, "asked")}</span>
-            <span className="p3-chip err">{part(l.blocked, "blocked")}</span>
-            <span className="text-muted">
-              {t("p3.ap.could_not_run", { n: l.could_not_run })} · {t("p3.ap.overridden", { n: ap.overridden })} ·{" "}
-              {t("p3.ap.median", { time: formatDuration(l.median_ms) })}
-            </span>
-          </div>
-        );
-      })}
-      <div className="text-meta text-muted">
-        {t("p3.ap.tokens", { tokens: formatTokens(ap.tokens) })}
-        {ap.shadow_checks > 0 ? " · " + t("p3.ap.incl_shadow", { count: ap.shadow_checks }) : ""}
-      </div>
+    <div className={CARD + " p3-card mt-3"} data-testid="usage-approver">
+      <b className="p3-h">{t("p3.ap.title")}</b>
+      <table className="p3-t p3-ap" data-testid="usage-approver-table">
+        <thead>
+          <tr>
+            <th>{t("p3.ap.col.reviewer")}</th>
+            {(["checks", "allowed", "asked", "blocked", "could_not_run", "overridden", "median", "tokens"] as const).map((c) => (
+              <th key={c} className="n">{t(`p3.ap.col.${c}`)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((l) => (
+            <tr key={l.kind} data-testid={`usage-approver-${l.kind}`}>
+              <td>{t(`p3.ap.name.${l.kind}`, { defaultValue: l.kind })}</td>
+              {cells(l, l.overridden, l.tokens)}
+            </tr>
+          ))}
+          <tr className="p3-total" data-testid="usage-approver-total">
+            <td>
+              <b>{t("p3.ap.total")}</b>
+              {ap.shadow_checks > 0 && <div className="text-faint">{t("p3.ap.incl_shadow", { count: ap.shadow_checks })}</div>}
+            </td>
+            {cells(ap, ap.overridden, ap.tokens)}
+          </tr>
+        </tbody>
+      </table>
+      {anyShare && <div className="text-meta text-faint mt-1">{t("p3.ap.shares_note")}</div>}
     </div>
   );
 }

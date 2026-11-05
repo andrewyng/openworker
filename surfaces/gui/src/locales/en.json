@@ -3968,23 +3968,26 @@
     },
     "ap": {
       "title": "Auto-approve",
-      "checks_one": "{{count}} check",
-      "checks_other": "{{count}} checks",
-      "kind": {
-        "session_model": "session model",
-        "openai_decisions": "decision model",
-        "typesafe_jev": "decision model"
+      "col": {
+        "reviewer": "Reviewer",
+        "checks": "Checks",
+        "allowed": "Allowed",
+        "asked": "Asked you",
+        "blocked": "Blocked",
+        "could_not_run": "Could not run",
+        "overridden": "Overridden",
+        "median": "Median time",
+        "tokens": "Tokens"
       },
-      "allowed_count": "allowed {{n}}",
-      "allowed_share": "allowed {{n}}%",
-      "asked_count": "asked you {{n}}",
-      "asked_share": "asked you {{n}}%",
-      "blocked_count": "blocked {{n}}",
-      "blocked_share": "blocked {{n}}%",
-      "could_not_run": "could not run {{n}}",
-      "overridden": "overridden {{n}}",
-      "median": "{{time}} median",
-      "tokens": "{{tokens}} tokens",
+      "name": {
+        "session_model": "Session model",
+        "openai_decisions": "Decision model · OpenAI Decisions",
+        "typesafe_jev": "Decision model · Jev",
+        "unknown": "Unknown reviewer"
+      },
+      "total": "Total",
+      "share": "{{n}}%",
+      "shares_note": "From 10 checks, a row shows shares of its checks; under 10, counts.",
       "incl_shadow_one": "incl. {{count}} shadow check",
       "incl_shadow_other": "incl. {{count}} shadow checks"
     },

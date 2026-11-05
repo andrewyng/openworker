@@ -3908,22 +3908,26 @@
     },
     "ap": {
       "title": "自动审批",
-      "checks_other": "{{count}} 次检查",
-      "kind": {
-        "session_model": "会话模型",
-        "openai_decisions": "决策模型",
-        "typesafe_jev": "决策模型"
+      "col": {
+        "reviewer": "审核者",
+        "checks": "检查",
+        "allowed": "允许",
+        "asked": "询问你",
+        "blocked": "阻止",
+        "could_not_run": "无法运行",
+        "overridden": "被你放行",
+        "median": "中位用时",
+        "tokens": "令牌"
       },
-      "allowed_count": "允许 {{n}}",
-      "allowed_share": "允许 {{n}}%",
-      "asked_count": "询问你 {{n}}",
-      "asked_share": "询问你 {{n}}%",
-      "blocked_count": "阻止 {{n}}",
-      "blocked_share": "阻止 {{n}}%",
-      "could_not_run": "无法运行 {{n}}",
-      "overridden": "被你放行 {{n}}",
-      "median": "中位数 {{time}}",
-      "tokens": "{{tokens}} 令牌",
+      "name": {
+        "session_model": "会话模型",
+        "openai_decisions": "决策模型 · OpenAI Decisions",
+        "typesafe_jev": "决策模型 · Jev",
+        "unknown": "未知审核者"
+      },
+      "total": "合计",
+      "share": "{{n}}%",
+      "shares_note": "一行有 10 次及以上检查时显示占比，不足 10 次时显示次数。",
       "incl_shadow_other": "含 {{count}} 次影子检查"
     },
     "foot": {

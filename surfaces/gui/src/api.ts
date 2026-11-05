@@ -4733,7 +4733,9 @@ export interface ApproverStrip extends ApproverCounts {
   overridden: number;
   tokens: number;
   shadow_checks: number;
-  by_reviewer: (ApproverCounts & { kind: string })[];
+  // T3-6: each reviewer's own overrides and model tokens (live checks only; the strip's
+  // `tokens` total has the shadow checks too)
+  by_reviewer: (ApproverCounts & { kind: string; overridden?: number; tokens?: number })[];
   shown: boolean;
 }
 
