@@ -4573,6 +4573,11 @@ export interface RecordedTurn {
   wake?: { reason?: string; kinds?: string[]; item_ids?: string[]; board_seq?: number | null; batched?: number | null;
     deferred?: { by: string; ms: number } | null; by?: string | null } | null;
   automation?: { task_id: string; run_id: string; trigger: string } | null;
+  // The turn's first and last message ids, and its warning checks (T3-14: the turn list
+  // finds a turn's part of the conversation by the answer's id, and searches issue titles).
+  first_message_id?: string | null;
+  last_message_id?: string | null;
+  issue_checks?: string[];
 }
 
 // One worker turn under a lead's turn (OB-7). `tokens` are the worker's own, never the lead's.

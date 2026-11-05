@@ -241,3 +241,82 @@ export function hhmm(ms: number): string {
 export function shortDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
 }
+
+// -- moving between turns in the Trace panel (T3-14) ------------------------------------------
+/** A turn's part of the conversation the GUI already holds: what you asked, its answer, and
+ * the tools and files its steps touched. Nothing here is fetched or sent anywhere. */
+export interface TurnText {
+  user: string;
+  answer: string;
+  tools: string[];
+  files: string[];
+}
+
+type ConvItem = { kind: string; text?: string; mid?: string; name?: string; args?: any };
+
+const FILE_KEYS = ["path", "file", "file_path", "filename", "paths", "files", "target", "dest", "source"];
+
+function filesOf(args: any): string[] {
+  if (!args || typeof args !== "object") return [];
+  const out: string[] = [];
+  for (const k of FILE_KEYS) {
+    const v = args[k];
+    if (typeof v === "string" && v) out.push(v);
+    else if (Array.isArray(v)) for (const x of v) if (typeof x === "string" && x) out.push(x);
+  }
+  return out;
+}
+
+/** Splits the conversation at each turn's answer: a turn's part runs from just after the
+ * previous turn's last message to its own (`last_message_id`, the answer's `mid`). A turn with
+ * no answer yet (running, or cut off) gets what is left at the end when it is the last one. */
+export function turnTexts(
+  turns: { turn_id: string; last_message_id?: string | null }[],
+  items: ConvItem[],
+): Map<string, TurnText> {
+  const at = new Map<string, number>();
+  items.forEach((it, i) => {
+    if (it.mid) at.set(it.mid, i);
+  });
+  const out = new Map<string, TurnText>();
+  const fill = (tid: string, from: number, to: number) => {
+    const part: TurnText = { user: "", answer: "", tools: [], files: [] };
+    for (const it of items.slice(from, to)) {
+      if (it.kind === "user" && it.text) part.user += (part.user ? "\n" : "") + it.text;
+      else if (it.kind === "assistant" && it.text) part.answer += (part.answer ? "\n" : "") + it.text;
+      else if ((it.kind === "tool" || it.kind === "approval") && it.name) {
+        part.tools.push(it.name);
+        part.files.push(...filesOf(it.args));
+      }
+    }
+    out.set(tid, part);
+  };
+  let start = 0;
+  turns.forEach((tn, k) => {
+    const end = tn.last_message_id != null ? at.get(tn.last_message_id) : undefined;
+    if (end != null && end >= start) {
+      fill(tn.turn_id, start, end + 1);
+      start = end + 1;
+    } else if (k === turns.length - 1) {
+      fill(tn.turn_id, start, items.length);
+    }
+  });
+  return out;
+}
+
+/** Whether a turn matches the list's search: its number, what you asked, the answer, tool
+ * names, file names and its issues' titles, ignoring case. */
+export function turnMatches(n: number, text: TurnText | undefined, issueTitles: string[], query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (/^\d+$/.test(q)) return String(n) === q;
+  const hay = [text?.user, text?.answer, ...(text?.tools || []), ...(text?.files || []), ...issueTitles]
+    .filter(Boolean).join("\n").toLowerCase();
+  return hay.includes(q);
+}
+
+/** The first words of a message, on one line. */
+export function firstWords(text: string, max = 70): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > max ? one.slice(0, max - 1).trimEnd() + "…" : one;
+}

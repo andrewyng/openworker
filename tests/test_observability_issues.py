@@ -225,6 +225,7 @@ def test_issues_are_stored_at_turn_end_and_served(tmp_path):
 
     [turn] = client.get("/v1/sessions/i1/turns").json()["turns"]
     assert turn["issues"] == {"warn": 1, "info": 0}
+    assert turn["issue_checks"] == ["tool_failed"]  # T3-14: the turn list searches by issue title
     got = client.get(f"/v1/sessions/i1/turns/{turn['turn_id']}/issues").json()
     assert got["signals_version"] == signals.version() and got["seen"] is False
     [failed] = got["issues"]

@@ -3328,6 +3328,20 @@
     "prev_turn": "上一轮",
     "next_turn": "下一轮",
     "turn_of": "第 {{n}} 轮，共 {{total}} 轮",
+    "turns": {
+      "open_list": "本会话的所有轮次，可搜索",
+      "list_title": "本会话的轮次",
+      "search": "搜索轮次，或输入轮次编号",
+      "no_match": "没有匹配的轮次。",
+      "jump_hint": "按 Enter 转到第 {{n}} 轮。",
+      "no_such": "本会话共有 {{total}} 轮。",
+      "turn_n": "第 {{n}} 轮",
+      "tokens": "{{tokens}} 令牌",
+      "issues_other": "{{count}} 个问题",
+      "no_message": "（没有你的消息）",
+      "strip": "各轮次的令牌",
+      "bar": "第 {{n}} 轮 · {{tokens}} 令牌"
+    },
     "reviewer_is": "审查者 {{who}}",
     "finish": {
       "stop": "回答已完成",

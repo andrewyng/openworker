@@ -22,7 +22,8 @@ import {
   type TurnIssues,
 } from "../api";
 import { formatTokens } from "../usage";
-import { wakeKey } from "../obs3";
+import { turnTexts, wakeKey } from "../obs3";
+import { TurnList, TurnStrip } from "./TurnPicker";
 
 type T = (k: string, o?: any) => string;
 
@@ -364,9 +365,13 @@ export function StepsPanel({
   openAt = null,
   onClose,
   onOpenSession,
+  conversation = [],
 }: {
   sessionId: string;
   refreshKey?: number;
+  /** T3-14: the session's conversation as the GUI holds it, for the turn list's first
+   * words and its search. Read here only; nothing is sent. */
+  conversation?: { kind: string; text?: string; mid?: string; name?: string; args?: any }[];
   // A worker row's "Open worker session" (OB-7).
   onOpenSession?: (sessionId: string) => void;
   // Opened from a turn's answer: its time (unix seconds) picks the turn that produced it.
@@ -382,6 +387,7 @@ export function StepsPanel({
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [openHelpers, setOpenHelpers] = useState<Set<string>>(new Set());
+  const [listOpen, setListOpen] = useState(false);
 
   // Another session: start again at its newest turn.
   useEffect(() => {
@@ -466,14 +472,36 @@ export function StepsPanel({
   const inspecting = tab === "timeline" && !!selected && !!turn;
   const total = turn ? Math.max(1, turn.buckets.total || turn.duration_ms || 1) : 1;
 
+  // T3-14: each turn's part of the conversation, for the list's first words and its search
+  const texts = useMemo(() => turnTexts(turns || [], conversation), [turns, conversation]);
   const picker = turns && turns.length > 0 && turnIdx != null && (
     <span className="steps-turn-picker">
       <button aria-label={t("steps.prev_turn")} disabled={turnIdx <= 0} onClick={() => setTurnIdx(turnIdx - 1)}>‹</button>
-      <span data-testid="steps-turn"><Help text={H(t, "turn")}>{t("steps.turn_of", { n: turnIdx + 1, total: turns.length })}</Help></span>
+      <button className="steps-turn-open" data-testid="steps-turn" aria-haspopup="dialog" aria-expanded={listOpen}
+        title={t("steps.turns.open_list")} onClick={() => setListOpen((o) => !o)}>
+        {t("steps.turn_of", { n: turnIdx + 1, total: turns.length })} <span aria-hidden>▾</span>
+      </button>
       <button aria-label={t("steps.next_turn")} disabled={turnIdx >= turns.length - 1} onClick={() => setTurnIdx(turnIdx + 1)}>›</button>
       {turn && wakeLine(turn, t) && <span className="steps-turn-wake text-faint" data-testid="steps-turn-wake">· {wakeLine(turn, t)}</span>}
+      {listOpen && (
+        <TurnList turns={turns} current={turnIdx} texts={texts} wakeOf={(tn) => wakeLine(tn, t)} t={t}
+          onPick={(i) => setTurnIdx(i)} onClose={() => setListOpen(false)} />
+      )}
     </span>
   );
+  // T3-14 (B): ← and → move between turns while the panel has focus and no text box does.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!turns || turnIdx == null || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const el = e.target as HTMLElement;
+    if (el.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (e.key === "ArrowLeft" && turnIdx > 0) {
+      setTurnIdx(turnIdx - 1);
+      e.preventDefault();
+    } else if (e.key === "ArrowRight" && turnIdx < turns.length - 1) {
+      setTurnIdx(turnIdx + 1);
+      e.preventDefault();
+    }
+  };
 
   const timeline = turn && (
     <div className="steps-timeline" data-testid="steps-timeline">
@@ -505,7 +533,8 @@ export function StepsPanel({
   );
 
   return (
-    <div className={"team-view steps-panel" + (inspecting ? " inspecting" : "")} data-testid="steps-panel">
+    <div className={"team-view steps-panel" + (inspecting ? " inspecting" : "")} data-testid="steps-panel"
+      tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="steps-railhead">
         <div className="steps-railhead-title">
           <strong>{t("steps.title")}</strong>
@@ -513,6 +542,9 @@ export function StepsPanel({
           <span className="steps-sp" />
           <button className="steps-close" aria-label={t("steps.close")} onClick={onClose}>✕</button>
         </div>
+        {turns && turns.length > 0 && turnIdx != null && (
+          <TurnStrip turns={turns} current={turnIdx} onPick={(i) => setTurnIdx(i)} t={t} />
+        )}
         {turn && (modeLabel(turn, t) || stampLine(turn.stamp, t)) && (
           <div className="steps-stamp" data-testid="steps-stamp">
             {modeLabel(turn, t) && (

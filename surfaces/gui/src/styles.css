@@ -2445,6 +2445,28 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .steps-turn-picker button, .steps-close { border:0; background:none; color:var(--muted); cursor:pointer; border-radius:6px; padding:1px 6px; font:inherit; line-height:1.3; }
 .steps-turn-picker button:hover:not(:disabled), .steps-close:hover { background:var(--paper); color:var(--ink); }
 .steps-turn-picker button:disabled { opacity:.35; cursor:default; }
+/* T3-14: the turn list under "Turn N of M", and the turns strip */
+.steps-turn-picker { position:relative; }
+.steps-panel:focus { outline:none; }
+.steps-turnlist { position:absolute; top:calc(100% + 4px); left:0; z-index:30; width:min(380px, 80vw); max-height:60vh; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line-strong); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); font-weight:400; color:var(--ink); }
+.steps-turnlist-search { margin:8px; padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px; background:var(--paper); color:var(--ink); font:inherit; font-size:var(--fs-ui); outline:none; }
+.steps-turnlist-search:focus { border-color:var(--accent); }
+.steps-turnlist-hint, .steps-turnlist-empty { padding:4px 12px 8px; font-size:var(--fs-meta); color:var(--muted); }
+.steps-turnlist-rows { overflow-y:auto; padding:0 4px 6px; }
+.steps-turnlist-row { display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; border:0; background:none; color:var(--ink); padding:6px 8px; border-radius:7px; cursor:pointer; font:inherit; font-size:var(--fs-meta); }
+.steps-turnlist-row:hover { background:var(--paper); }
+.steps-turnlist-row.current { background:var(--paper); box-shadow:inset 2px 0 0 var(--accent); }
+.steps-turnlist-head { display:flex; align-items:center; gap:6px; min-width:0; }
+.steps-turnlist-words, .steps-turnlist-wake { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.steps-strip { display:flex; align-items:flex-end; gap:1px; height:22px; margin-top:6px; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; }
+.steps-strip-bar { flex:1 0 3px; max-width:14px; height:100%; display:flex; align-items:flex-end; border:0; padding:0; background:none; cursor:pointer; border-radius:2px; }
+.steps-strip.dense .steps-strip-bar { flex:0 0 3px; }
+.steps-strip-bar i { display:block; width:100%; background:var(--line-strong); border-radius:2px 2px 0 0; }
+.steps-strip-bar:hover i { background:var(--muted); }
+.steps-strip-bar.warn i { background:#f59e0b; }
+.steps-strip-bar.current { box-shadow:inset 0 -2px 0 var(--accent); }
+.steps-strip-bar.current i { background:var(--accent); }
+.steps-strip-bar.current.warn i { background:#f59e0b; outline:1px solid var(--accent); }
 .steps-close { font-size:var(--fs-meta); }
 .steps-stamp { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:6px; font-size:var(--fs-meta); color:var(--faint); }
 .steps-stamp-line { min-width:0; overflow-wrap:anywhere; }

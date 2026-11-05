@@ -3375,6 +3375,21 @@
     "prev_turn": "Previous turn",
     "next_turn": "Next turn",
     "turn_of": "Turn {{n}} of {{total}}",
+    "turns": {
+      "open_list": "All turns of this session, with search",
+      "list_title": "Turns of this session",
+      "search": "Search turns, or type a turn number",
+      "no_match": "No turns match.",
+      "jump_hint": "Press Enter to go to turn {{n}}.",
+      "no_such": "This session has {{total}} turns.",
+      "turn_n": "Turn {{n}}",
+      "tokens": "{{tokens}} tokens",
+      "issues_one": "{{count}} issue",
+      "issues_other": "{{count}} issues",
+      "no_message": "(no message of yours)",
+      "strip": "Turns, by tokens",
+      "bar": "Turn {{n}} · {{tokens}} tokens"
+    },
     "reviewer_is": "reviewer {{who}}",
     "finish": {
       "stop": "it finished its answer",

@@ -6659,6 +6659,9 @@ class SessionManager:
         for t in turns:
             r = issues.get(t["turn_id"]) or {}
             t["issues"] = {"warn": int(r.get("warn") or 0), "info": int(r.get("info") or 0)}
+            # T3-14: which checks warned, so the turn list can be searched by issue title
+            t["issue_checks"] = sorted({i.get("check") for i in r.get("issues") or []
+                                        if i.get("severity") == "warn" and i.get("check")})
             if workers.get(t["turn_id"]):
                 t["workers"] = workers[t["turn_id"]]
         return {"turns": turns}
