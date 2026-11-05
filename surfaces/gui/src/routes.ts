@@ -8,6 +8,7 @@
 //   #/s/{sessionId}          → land on that session (bookmark/refresh)
 //   #/settings/{page}?m={id} → open that Settings page; ?m= is the machine
 //                              scope for machine-scoped pages (UX-046)
+//   #/activity/{log|usage}   → open Activity on that tab (T3-11: a reload stays there)
 
 const initialHash = typeof window !== "undefined" ? window.location.hash : "";
 
@@ -53,6 +54,27 @@ export const initialSettingsTab = (() => {
 // "session" at mount) and would overwrite the link before it is read.
 let settingsLinkPending = initialSettingsTab !== "";
 
+/** The Activity tab a #/activity link asks for ("" = none); a bare #/activity is the Log. */
+export const initialActivityTab: "" | "log" | "usage" = (() => {
+  const m = initialHash.match(/^#\/activity(?:\/(log|usage))?/);
+  if (!m) return "";
+  return (m[1] as "log" | "usage" | undefined) ?? "log";
+})();
+// Same as a settings link: the session reflection at mount must not overwrite it.
+let activityLinkPending = initialActivityTab !== "";
+
+/** Reflect the open Activity tab in the URL (replaceState, like Settings and sessions). */
+export function reflectActivity(tab: "log" | "usage"): void {
+  if (hasPendingApproval()) return;
+  activityLinkPending = false;
+  settingsLinkPending = false;
+  try {
+    window.history.replaceState(null, "", `#/activity/${tab}`);
+  } catch {
+    /* file:// or restricted contexts — the URL is a convenience */
+  }
+}
+
 /** The ?m= machine scope, read LIVE from the current hash (not the boot one):
  * reflectSettings keeps it current, so a Settings remount re-reads the scope
  * it was already showing instead of resetting to the default. */
@@ -71,6 +93,7 @@ export function settingsMachineParam(): string {
 export function reflectSettings(tab: string, machineId?: string | null): void {
   if (hasPendingApproval()) return;
   settingsLinkPending = false;
+  activityLinkPending = false;
   const slug = SLUG_BY_TAB[tab] ?? "general";
   try {
     window.history.replaceState(
@@ -113,7 +136,7 @@ export function hasPendingApproval(): boolean {
 /** Reflect the active session in the URL so refresh and bookmarks return
  * here. replaceState: session switching must not pile up history entries. */
 export function reflectSession(sessionId: string): void {
-  if (!sessionId || hasPendingApproval() || settingsLinkPending) return;
+  if (!sessionId || hasPendingApproval() || settingsLinkPending || activityLinkPending) return;
   try {
     window.history.replaceState(null, "", `#/s/${sessionId}`);
   } catch {

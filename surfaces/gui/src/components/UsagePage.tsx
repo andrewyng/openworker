@@ -155,13 +155,17 @@ export function UsagePage({ onOpenTurn }: { onOpenTurn?: (sessionId: string, tur
       ) : !data ? (
         <div className={CARD + " p-4 text-ui text-muted"}>{t("p3.usage.loading")}</div>
       ) : (
-        <UsageBody data={data} period={period} t={t} onOpenTurn={onOpenTurn} />
+        <UsageBody data={data} period={period} t={t} onOpenTurn={onOpenTurn} picked={!!persona} />
       )}
     </div>
   );
 }
 
-export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; period: Period; t: T; onOpenTurn?: (sessionId: string, turnId: string) => void }) {
+export function UsageBody({ data, period, t, onOpenTurn, picked = false }: {
+  data: UsageData; period: Period; t: T; onOpenTurn?: (sessionId: string, turnId: string) => void;
+  /** a coworker is picked: everything narrows to it but By coworker (T3-11) */
+  picked?: boolean;
+}) {
   const days = useMemo(() => localDays(period), [period]);
   const all = sumAll(data.total);
   const prev = sumAll(data.prev);
@@ -215,6 +219,7 @@ export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; pe
         </div>
         <div className={CARD + " p3-card"}>
           <b className="p3-h">{t("p3.usage.by_coworker")}</b>
+          {picked && <div className="text-meta text-faint" data-testid="usage-coworkers-all">{t("p3.usage.by_coworker_all")}</div>}
           <table className="p3-t" data-testid="usage-coworkers">
             <thead><tr><th>{t("p3.usage.coworker")}</th><th className="n">{t("p3.usage.tokens")}</th><th className="n">{t("p3.usage.with_issues")}</th></tr></thead>
             <tbody>

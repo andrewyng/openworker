@@ -64,7 +64,9 @@ import type {
 import {
   hasPendingApproval,
   initialSessionId,
+  initialActivityTab,
   initialSettingsTab,
+  reflectActivity,
   reflectSession,
 } from "./routes";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
@@ -384,6 +386,11 @@ export function App() {
     if (surface === "session") reflectSession(sessionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, surface]);
+  // T3-11: Activity has its own address too, with its tab, so a reload stays on it.
+  const [activityTab, setActivityTab] = useState<"log" | "usage">(initialActivityTab || "log");
+  useEffect(() => {
+    if (surface === "audit") reflectActivity(activityTab);
+  }, [surface, activityTab]);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
@@ -744,6 +751,10 @@ export function App() {
           // a #/settings/{page} link opens Settings on that page.
           if (hasPendingApproval()) openSettings("machines");
           else if (initialSettingsTab) openSettings(initialSettingsTab as SetTab);
+          else if (initialActivityTab) {
+            setAuditCallId(undefined);
+            setSurface("audit");
+          }
           setModel(h.model);
           // First-run setup wizard (desktop): show until the user completes/dismisses it.
           if (isTauri()) {
@@ -2124,6 +2135,7 @@ export function App() {
         onOpenIntegrations={() => openSettings("connectors")}
         onOpenAudit={() => {
           setAuditCallId(undefined);
+          setActivityTab("log");
           setSurface("audit");
         }}
         onOpenInbox={() => setSurface("inbox")}
@@ -2176,7 +2188,7 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView callId={auditCallId} onOpenTurn={openTurnSteps} />
+        <AuditView callId={auditCallId} initialTab={activityTab} onTabChange={setActivityTab} onOpenTurn={openTurnSteps} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (

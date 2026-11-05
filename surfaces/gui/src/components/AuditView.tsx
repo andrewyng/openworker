@@ -14,12 +14,18 @@ const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0
 // `callId` (OPE-238): opened from the "changes made without asking" summary — show that one
 // tool call's rows, with the filter visible and clearable.
 // Phase 3 (OB-8): the page gains a tab bar, Log | Usage. A call filter always opens the Log.
-export function AuditView({ callId, initialTab = "log", onOpenTurn }: {
+export function AuditView({ callId, initialTab = "log", onTabChange, onOpenTurn }: {
   callId?: string;
   initialTab?: "log" | "usage";
+  /** T3-11: the open tab, for the page's address */
+  onTabChange?: (tab: "log" | "usage") => void;
   onOpenTurn?: (sessionId: string, turnId: string) => void;
 } = {}) {
   const [tab, setTab] = useState<"log" | "usage">(callId ? "log" : initialTab);
+  useEffect(() => {
+    onTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [sessionFilter, setSessionFilter] = useState("");
   const [connectorFilter, setConnectorFilter] = useState("");

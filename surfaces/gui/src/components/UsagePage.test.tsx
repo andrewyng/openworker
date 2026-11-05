@@ -97,6 +97,12 @@ describe("UsageBody", () => {
     expect(rows.map((r) => [r.name, r.automation, r.total])).toEqual([["Cowork", false, 800_000], ["Cowork", true, 48_910]]);
     render(<UsageBody data={data()} period="7d" t={t} />);
     expect(screen.getByTestId("usage-coworkers").textContent).toContain("(automation)");
+    expect(screen.queryByTestId("usage-coworkers-all")).toBeNull();
+  });
+
+  it("with a coworker picked, says By coworker still lists them all (T3-11)", () => {
+    render(<UsageBody data={data()} period="7d" t={t} picked />);
+    expect(screen.getByTestId("usage-coworkers-all").textContent).toBe("All coworkers, for comparison");
   });
 });
 

@@ -3939,6 +3939,7 @@
       "overhead_sub": "On its own scale: the tallest day is {{tokens}} tokens.",
       "point_hint": "Point at a bar to see each part's tokens.",
       "by_coworker": "By coworker",
+      "by_coworker_all": "All coworkers, for comparison",
       "coworker": "Coworker",
       "automation": "(automation)",
       "unknown_coworker": "unknown coworker",
