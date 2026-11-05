@@ -1570,6 +1570,7 @@
     "builtin": "· built-in",
     "configure_title": "Configure {{name}}",
     "open_title": "Open {{name}}: its settings and how it's been doing",
+    "default_in_list": "Coworker (default)",
     "connectors_tag": "connectors",
     "default_for_new": "Default for new sessions",
     "delete": "Delete",

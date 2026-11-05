@@ -106,6 +106,14 @@ describe("UsageBody", () => {
     expect(screen.queryByTestId("usage-coworkers-all")).toBeNull();
   });
 
+  it("names the default coworker Coworker (default) in By coworker and Heaviest turns (T3-15 e)", () => {
+    const d = data({ total: { ...data().total, names: { cowork: "OpenWorker" } } });
+    render(<UsageBody data={{ ...d, coworkers: { ...d.coworkers, names: { cowork: "OpenWorker" } } }} period="7d" t={t} />);
+    expect(screen.getByTestId("usage-coworkers").textContent).toContain("Coworker (default)");
+    expect(screen.getByTestId("usage-coworkers").textContent).not.toContain("OpenWorker");
+    expect(screen.getByTestId("usage-heaviest").textContent).toContain("Coworker (default)");
+  });
+
   it("with a coworker picked, says By coworker still lists them all (T3-11)", () => {
     render(<UsageBody data={data()} period="7d" t={t} picked />);
     expect(screen.getByTestId("usage-coworkers-all").textContent).toBe("All coworkers, for comparison");
@@ -175,7 +183,8 @@ describe("one coworker", () => {
     const r = rollup([group({ persona_id: "sec", task_id: null }, 5), group({ persona_id: "sec", task_id: "t1" }, 1),
       group({ persona_id: "cowork", task_id: null }, 3), group({ persona_id: null, task_id: null }, 1)],
       { names: { sec: "Security Coworker", cowork: "OpenWorker" } });
-    expect(coworkerChoices(r)).toEqual([{ id: "cowork", name: "OpenWorker" }, { id: "sec", name: "Security Coworker" }]);
+    // T3-15 (e): the default coworker is "Coworker (default)" in the picker
+    expect(coworkerChoices(r, t)).toEqual([{ id: "cowork", name: "Coworker (default)" }, { id: "sec", name: "Security Coworker" }]);
   });
 
   it("narrows every call but the coworker list to the picked coworker", async () => {

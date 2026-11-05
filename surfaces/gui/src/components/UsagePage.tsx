@@ -18,6 +18,7 @@ import {
   type UsageRollup,
 } from "../api";
 import { formatTokens } from "../usage";
+import { listPersonaName } from "../personaScope";
 import { formatDuration } from "./StepsPanel";
 import {
   approverPart,
@@ -58,9 +59,18 @@ export interface UsageData {
   ratings?: RatingsSummary | null;
 }
 
+/** The coworker names as shown on the page: the server's names, the default coworker's as
+ * "Coworker (default)" (T3-15 e). The default coworker has an entry even without a name. */
+export function shownNames(names: Record<string, string>, t: T): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [id, name] of Object.entries(names)) out[id] = listPersonaName(name, id, t);
+  out.cowork = listPersonaName(names.cowork, "cowork", t);
+  return out;
+}
+
 /** The coworkers of the period for the picker: each id once, by its name (M3-R1), A to Z. */
-export function coworkerChoices(r: UsageRollup | null | undefined): { id: string; name: string }[] {
-  const names = r?.names || {};
+export function coworkerChoices(r: UsageRollup | null | undefined, t: T): { id: string; name: string }[] {
+  const names = shownNames(r?.names || {}, t);
   const ids = new Set<string>();
   for (const g of r?.groups || []) {
     const id = g.key.persona_id as string | null;
@@ -134,7 +144,7 @@ export function UsagePage({ onOpenTurn, onOpenPersona }: {
       live = false;
     };
   }, [period, persona]);
-  const choices = data ? coworkerChoices(data.coworkers) : [];
+  const choices = data ? coworkerChoices(data.coworkers, t) : [];
 
   return (
     <div data-testid="usage-page">
@@ -185,7 +195,8 @@ export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked =
   const pct = canCompare && prev ? changePct(all?.total ?? 0, prev.total) : null;
   const chart = purposeByDay(days, data.dayPurpose.groups);
   const overhead = overheadByDay(chart);
-  const names = data.total.names || data.coworkers.names || {};
+  // T3-15 (e): the default coworker is "Coworker (default)" in every list on the page
+  const names = shownNames({ ...(data.coworkers.names || {}), ...(data.total.names || {}) }, t);
   const turns = all?.turns ?? 0;
   const checked = all?.checked ?? 0;
   const withWarn = all?.with_warn ?? 0;

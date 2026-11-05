@@ -26,6 +26,10 @@ describe("PersonasTab", () => {
     render(<PersonasTab onOpenPersona={open} />);
     await waitFor(() => expect(screen.getByTestId("persona-open-cowork")).toBeTruthy());
     expect(screen.getByTestId("persona-default-tag")).toBeTruthy();
+    // T3-15 (e): the default coworker is "Coworker (default)" here, not the backend's "OpenWorker"
+    expect(screen.getByTestId("persona-open-cowork").textContent).toContain("Coworker (default)");
+    expect(screen.getByTestId("persona-open-cowork").textContent).not.toContain("OpenWorker");
+    expect(screen.getByTestId("persona-open-sec").textContent).toContain("Security Coworker");
     fireEvent.click(screen.getByTestId("persona-open-cowork"));
     expect(open).toHaveBeenCalledWith("cowork");
     fireEvent.click(screen.getByTestId("persona-open-sec"));
