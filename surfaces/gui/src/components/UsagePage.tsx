@@ -248,24 +248,43 @@ export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; pe
         {data.heavy.length === 0 ? (
           <div className="text-meta text-faint mt-1">{t("p3.usage.no_turns")}</div>
         ) : (
-          <table className="p3-t" data-testid="usage-heaviest">
+          // T3-5: fixed column widths, so long titles, model names and badges are cut inside
+          // their cell (full text on hover) and the table never grows past its card.
+          <table className="p3-t p3-heavy" data-testid="usage-heaviest">
+            <colgroup>
+              <col style={{ width: "27%" }} /><col style={{ width: "14%" }} /><col style={{ width: "18%" }} />
+              <col style={{ width: "9%" }} /><col style={{ width: "9%" }} /><col style={{ width: "16%" }} /><col style={{ width: "7%" }} />
+            </colgroup>
             <thead><tr><th>{t("p3.usage.session")}</th><th>{t("p3.usage.coworker")}</th><th>{t("p3.usage.model")}</th>
               <th className="n">{t("p3.usage.tokens")}</th><th className="n">{t("p3.usage.active_time")}</th><th>{t("p3.usage.issues")}</th><th></th></tr></thead>
             <tbody>
-              {data.heavy.map((h) => (
+              {data.heavy.map((h) => {
+                const title = h.session_deleted ? t("p3.usage.deleted_session") : (h.title || h.session_id);
+                const turn = h.seq != null ? t("p3.usage.turn_n", { n: h.seq }) : "";
+                const who = (h.persona_id && names[h.persona_id]) || h.persona_id || "—";
+                const models = h.model_ids.join(", ") || "—";
+                const issues = h.checks.map((c) => t(`steps.issues.title.${c}`, { defaultValue: c }));
+                return (
                 <tr key={h.turn_id}>
-                  <td className="p3-trunc">{h.session_deleted ? <span className="text-faint">{t("p3.usage.deleted_session")}</span> : (h.title || h.session_id)}
-                    {h.seq != null && <span className="text-faint"> · {t("p3.usage.turn_n", { n: h.seq })}</span>}</td>
-                  <td>{(h.persona_id && names[h.persona_id]) || h.persona_id || "—"}</td>
-                  <td className="font-mono">{h.model_ids.join(", ") || "—"}</td>
+                  <td><span className="p3-cut" title={turn ? `${title} · ${turn}` : title}>
+                    {h.session_deleted ? <span className="text-faint">{title}</span> : title}
+                    {turn && <span className="text-faint"> · {turn}</span>}</span></td>
+                  <td><span className="p3-cut" title={who}>{who}</span></td>
+                  <td><span className="p3-cut font-mono" title={models} data-testid="usage-heavy-model">{models}</span></td>
                   <td className="n">{(h.at_least ? "≥ " : "") + formatTokens(h.total)}</td>
                   <td className="n">{h.found_open ? <span className="text-faint">{t("p3.usage.found_open")}</span> : formatDuration(h.active_ms)}</td>
-                  <td>{h.checks.map((c) => <span key={c} className="steps-badge warn mr-1">{t(`steps.issues.title.${c}`, { defaultValue: c })}</span>)}</td>
+                  <td>{issues.length > 0 && (
+                    <span className="p3-badges" title={issues.join(", ")} data-testid="usage-heavy-issues">
+                      <span className="steps-badge warn">{issues[0]}</span>
+                      {issues.length > 1 && <span className="steps-badge warn">+{issues.length - 1}</span>}
+                    </span>
+                  )}</td>
                   <td>{!h.session_deleted && onOpenTurn && (
                     <button className="p3-link" data-testid="usage-open-steps" onClick={() => onOpenTurn(h.session_id, h.turn_id)}>{t("steps.open")}</button>
                   )}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

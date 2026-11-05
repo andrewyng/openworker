@@ -2638,6 +2638,13 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-t td { padding:5px 6px; border-bottom:1px solid var(--line); color:var(--ink); vertical-align:top; }
 .p3-t tr:last-child td { border-bottom:0; }
 .p3-t .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* T3-5: Heaviest turns stays inside its card: fixed columns, text cut with the full text on hover */
+.p3-heavy { table-layout:fixed; }
+.p3-heavy td { overflow:hidden; }
+.p3-cut { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.p3-badges { display:flex; flex-wrap:nowrap; gap:3px; min-width:0; }
+.p3-badges .steps-badge:first-child { flex:0 1 auto; }
+.p3-badges .steps-badge + .steps-badge { flex:0 0 auto; }
 .p3-trunc { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .p3-link { color:var(--accent); background:none; border:0; padding:0; cursor:pointer; font-size:inherit; }
 .p3-link:hover { text-decoration:underline; }

@@ -69,6 +69,21 @@ describe("UsageBody", () => {
     expect(open).toHaveBeenCalledWith("s1", "t5");
   });
 
+  it("keeps the heaviest turns inside the card: fixed columns, +N for more badges, full names on hover (T3-5)", () => {
+    const long = "openrouter:some-lab/a-very-long-model-name-v4-pro";
+    const heavy = [{ ...data().heavy[0], model_ids: [long], checks: ["bad_tool_call", "tool_failed", "slow_tool"] }];
+    render(<UsageBody data={data({ heavy })} period="7d" t={t} onOpenTurn={() => {}} />);
+    const table = screen.getByTestId("usage-heaviest");
+    expect(table.className).toContain("p3-heavy");
+    expect(table.querySelectorAll("col")).toHaveLength(7);
+    expect(screen.getByTestId("usage-heavy-model").getAttribute("title")).toBe(long);
+    const issues = screen.getByTestId("usage-heavy-issues");
+    expect(issues.querySelectorAll(".steps-badge")).toHaveLength(2);
+    expect(issues.textContent).toContain("+2");
+    expect(issues.getAttribute("title")).toContain("A tool failed");
+    expect(screen.getByTestId("usage-open-steps").textContent).toBe("Trace");
+  });
+
   it("lists machines, an offline one by its cached answer's time", () => {
     render(<UsageBody data={data()} period="7d" t={t} />);
     const m = screen.getByTestId("usage-machines").textContent || "";
