@@ -3896,6 +3896,7 @@
       "session": "会话",
       "model": "模型",
       "active_time": "不含等待的时长",
+      "active_time_short": "活跃时长",
       "issues": "问题",
       "turn_n": "第 {{n}} 轮",
       "deleted_session": "已删除的会话",

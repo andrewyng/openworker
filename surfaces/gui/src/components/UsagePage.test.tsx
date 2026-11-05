@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "i18next";
-import { ApproverStripView, coworkerChoices, coworkerTable, loadUsage, RatingsCard, UsageBody, type UsageData } from "./UsagePage";
+import { ApproverStripView, coworkerChoices, coworkerTable, loadUsage, RatingsCard, shortModel, UsageBody, type UsageData } from "./UsagePage";
 import type { UsageRollup } from "../api";
 
 afterEach(cleanup);
@@ -77,6 +77,12 @@ describe("UsageBody", () => {
     expect(table.className).toContain("p3-heavy");
     expect(table.querySelectorAll("col")).toHaveLength(7);
     expect(screen.getByTestId("usage-heavy-model").getAttribute("title")).toBe(long);
+    expect(screen.getByTestId("usage-heavy-model").textContent).toBe("a-very-long-model-name-v4-pro");
+    // the turn number is its own piece, so the title is cut before it, never the number
+    expect(screen.getByTestId("usage-heavy-turn").textContent).toContain("turn 5");
+    // a short header, the long one on hover
+    const th = [...table.querySelectorAll("th")].find((x) => x.textContent === "Active time")!;
+    expect(th.getAttribute("title")).toBe("Time without waiting");
     const issues = screen.getByTestId("usage-heavy-issues");
     expect(issues.querySelectorAll(".steps-badge")).toHaveLength(2);
     expect(issues.textContent).toContain("+2");
@@ -112,6 +118,16 @@ describe("UsageBody", () => {
     expect(links).toHaveLength(2); // its own row and its automation row
     fireEvent.click(links[0]);
     expect(open).toHaveBeenCalledWith("cowork");
+  });
+});
+
+describe("shortModel (T3-5)", () => {
+  it("drops the provider and the lab, keeps a size tag", () => {
+    expect(shortModel("openrouter:deepseek/deepseek-v4-pro")).toBe("deepseek-v4-pro");
+    expect(shortModel("openrouter:z-ai/glm-5.3")).toBe("glm-5.3");
+    expect(shortModel("openai:gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(shortModel("ollama:qwen3:0.6b")).toBe("qwen3:0.6b");
+    expect(shortModel("model-x")).toBe("model-x");
   });
 });
 

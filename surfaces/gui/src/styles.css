@@ -2643,6 +2643,13 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-heavy td { overflow:hidden; }
 .p3-cut { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .p3-badges { display:flex; flex-wrap:nowrap; gap:3px; min-width:0; }
+.p3-heavy th { white-space:normal; overflow-wrap:anywhere; vertical-align:bottom; }
+.p3-titleturn { display:flex; min-width:0; white-space:nowrap; }
+.p3-titleturn .p3-cut { flex:0 1 auto; min-width:0; }
+.p3-keep { flex:0 0 auto; }
+/* a right-aligned number column and the left-aligned Issues column need air between them */
+.p3-heavy th:nth-child(6), .p3-heavy td:nth-child(6) { padding-left:16px; }
+.p3-heavy td.n .p3-wrap { white-space:normal; }
 .p3-badges .steps-badge:first-child { flex:0 1 auto; }
 .p3-badges .steps-badge + .steps-badge { flex:0 0 auto; }
 .p3-trunc { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

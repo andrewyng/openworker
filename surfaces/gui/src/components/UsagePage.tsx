@@ -273,27 +273,31 @@ export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked =
           // their cell (full text on hover) and the table never grows past its card.
           <table className="p3-t p3-heavy" data-testid="usage-heaviest">
             <colgroup>
-              <col style={{ width: "27%" }} /><col style={{ width: "14%" }} /><col style={{ width: "18%" }} />
-              <col style={{ width: "9%" }} /><col style={{ width: "9%" }} /><col style={{ width: "16%" }} /><col style={{ width: "7%" }} />
+              <col style={{ width: "25%" }} /><col style={{ width: "12%" }} /><col style={{ width: "16%" }} />
+              <col style={{ width: "8%" }} /><col style={{ width: "8%" }} /><col style={{ width: "25%" }} /><col style={{ width: "6%" }} />
             </colgroup>
             <thead><tr><th>{t("p3.usage.session")}</th><th>{t("p3.usage.coworker")}</th><th>{t("p3.usage.model")}</th>
-              <th className="n">{t("p3.usage.tokens")}</th><th className="n">{t("p3.usage.active_time")}</th><th>{t("p3.usage.issues")}</th><th></th></tr></thead>
+              <th className="n">{t("p3.usage.tokens")}</th>
+              <th className="n" title={t("p3.usage.active_time")}>{t("p3.usage.active_time_short")}</th>
+              <th>{t("p3.usage.issues")}</th><th></th></tr></thead>
             <tbody>
               {data.heavy.map((h) => {
                 const title = h.session_deleted ? t("p3.usage.deleted_session") : (h.title || h.session_id);
                 const turn = h.seq != null ? t("p3.usage.turn_n", { n: h.seq }) : "";
                 const who = (h.persona_id && names[h.persona_id]) || h.persona_id || "—";
                 const models = h.model_ids.join(", ") || "—";
+                const shortModels = h.model_ids.map(shortModel).join(", ") || "—";
                 const issues = h.checks.map((c) => t(`steps.issues.title.${c}`, { defaultValue: c }));
                 return (
                 <tr key={h.turn_id}>
-                  <td><span className="p3-cut" title={turn ? `${title} · ${turn}` : title}>
-                    {h.session_deleted ? <span className="text-faint">{title}</span> : title}
-                    {turn && <span className="text-faint"> · {turn}</span>}</span></td>
+                  <td><span className="p3-titleturn" title={turn ? `${title} · ${turn}` : title}>
+                    {/* the title is cut, never the turn number after it */}
+                    <span className={"p3-cut" + (h.session_deleted ? " text-faint" : "")}>{title}</span>
+                    {turn && <span className="text-faint p3-keep" data-testid="usage-heavy-turn">&nbsp;· {turn}</span>}</span></td>
                   <td><span className="p3-cut" title={who}>{who}</span></td>
-                  <td><span className="p3-cut font-mono" title={models} data-testid="usage-heavy-model">{models}</span></td>
+                  <td><span className="p3-cut font-mono" title={models} data-testid="usage-heavy-model">{shortModels}</span></td>
                   <td className="n">{(h.at_least ? "≥ " : "") + formatTokens(h.total)}</td>
-                  <td className="n">{h.found_open ? <span className="text-faint">{t("p3.usage.found_open")}</span> : formatDuration(h.active_ms)}</td>
+                  <td className="n">{h.found_open ? <span className="text-faint p3-wrap">{t("p3.usage.found_open")}</span> : formatDuration(h.active_ms)}</td>
                   <td>{issues.length > 0 && (
                     <span className="p3-badges" title={issues.join(", ")} data-testid="usage-heavy-issues">
                       <span className="steps-badge warn">{issues[0]}</span>
@@ -328,6 +332,15 @@ export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked =
       )}
     </>
   );
+}
+
+/** The model's own name without its provider and lab ("openrouter:deepseek/deepseek-v4-pro"
+ * → "deepseek-v4-pro"); the cell's hover keeps the full id (T3-5). */
+export function shortModel(id: string): string {
+  if (id.includes("/")) return id.slice(id.lastIndexOf("/") + 1);
+  // only the provider prefix goes: "ollama:qwen3:0.6b" keeps its size tag
+  const i = id.indexOf(":");
+  return i >= 0 ? id.slice(i + 1) : id;
 }
 
 type ChartRow = { label: string; values: Record<string, number>; total: number };
@@ -430,9 +443,9 @@ export function RatingsCard({ r, names, t, onOpenTurn }: {
                   const reasons = d.reasons.map(reasonLabel).join(", ");
                   return (
                     <tr key={d.turn_id}>
-                      <td><span className="p3-cut" title={turn ? `${title} · ${turn}` : title}>
-                        {d.session_deleted ? <span className="text-faint">{title}</span> : title}
-                        {turn && <span className="text-faint"> · {turn}</span>}</span></td>
+                      <td><span className="p3-titleturn" title={turn ? `${title} · ${turn}` : title}>
+                        <span className={"p3-cut" + (d.session_deleted ? " text-faint" : "")}>{title}</span>
+                        {turn && <span className="text-faint p3-keep">&nbsp;· {turn}</span>}</span></td>
                       <td><span className="p3-cut" title={who}>{who}</span></td>
                       <td><span className="p3-cut" title={reasons}>{reasons || <span className="text-faint">—</span>}</span></td>
                       <td><span className="p3-cut" title={d.note || ""} data-testid="usage-ratings-note">{d.note || <span className="text-faint">—</span>}</span></td>

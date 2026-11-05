@@ -3955,6 +3955,7 @@
       "session": "Session",
       "model": "Model",
       "active_time": "Time without waiting",
+      "active_time_short": "Active time",
       "issues": "Issues",
       "turn_n": "turn {{n}}",
       "deleted_session": "deleted session",
