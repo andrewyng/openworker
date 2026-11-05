@@ -18,6 +18,7 @@ import {
   type Persona,
 } from "../../api";
 import type { SessionInfo } from "../../types";
+import { canonicalModels, sameModel } from "../../modelNames";
 type SessionRow = SessionInfo;
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, XBTN } from "./ui";
 
@@ -270,13 +271,21 @@ function ConfigurationDialog({
   }, [machineId]);
   const personaRow = personas.find((p) => p.id === persona);
   // The coworker's own list when it has one, else the machine's selectable models.
-  const offered = useMemo(() => (personaRow?.models?.length ? personaRow.models : selectable), [personaRow, selectable]);
+  // Ids in canonical form (`canonicalModel`): a manifest's "openai:gpt-5.5" is the
+  // machine's "gpt-5.5".
+  const offered = useMemo(
+    () => (personaRow?.models?.length ? canonicalModels(personaRow.models) : selectable),
+    [personaRow, selectable],
+  );
   useEffect(() => {
     // Keep the chosen models within what is offered; default to the first runnable.
-    const kept = models.filter((m) => offered.includes(m));
-    if (kept.length !== models.length) setModels(kept);
+    // A saved "openai:gpt-5.5" is kept under the offered spelling.
+    const kept = models
+      .map((m) => offered.find((o) => sameModel(o, m)))
+      .filter((m): m is string => !!m);
+    if (kept.join("|") !== models.join("|")) setModels(kept);
     if (kept.length === 0 && offered.length) {
-      const first = offered.find((m) => selectable.includes(m)) ?? offered[0];
+      const first = offered.find((m) => selectable.some((s) => sameModel(s, m))) ?? offered[0];
       setModels([first]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -454,7 +463,7 @@ function ConfigurationDialog({
                   {offered.map((m) => {
                     const i = models.indexOf(m);
                     const on = i >= 0;
-                    const runnable = selectable.includes(m);
+                    const runnable = selectable.some((s) => sameModel(s, m));
                     return (
                       <button
                         key={m}
