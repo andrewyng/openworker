@@ -453,6 +453,8 @@ class SessionManager:
         import concurrent.futures
 
         self._scope_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="obs-scopes")
+        # T3-3: set when the app stops, so the start-up checks stop between sessions
+        self._obs_closing = threading.Event()
         self.recorder.add_listener(self._scopes_on_turn_end)
         # P3B-5: a team's Phase 3 numbers and task checks, kept until a member's recording,
         # the board or the journal changes (team_id -> what they were worked out from, result).
@@ -7294,6 +7296,11 @@ class SessionManager:
             logger.debug("sandbox reap at start failed", exc_info=True)
 
     async def aclose(self) -> None:
+        # T3-3: the Phase 3 background work stops before the stores close. The scope pool's
+        # thread is not a daemon, so Python waits for it at exit, and it would run every
+        # queued check on a closed store first; the start-up checks stop between sessions.
+        self._obs_closing.set()
+        self._scope_pool.shutdown(wait=False, cancel_futures=True)
         # Sandboxes first: each holds a container or a sandboxed process that nobody else
         # would remove once this server is gone.
         await asyncio.to_thread(self._close_all_sandboxes)
@@ -9054,6 +9061,8 @@ class SessionManager:
         never lights the dot. Returns how many sessions were checked."""
         sids = self.recordings_store.sessions_needing_check(recording_signals.version())
         for sid in sids:
+            if self._obs_closing.is_set():
+                break  # the app is stopping; the rest are checked at the next start
             try:
                 self._recording_issues(sid, self.recordings_store.load_recording(sid))
             except Exception:  # noqa: BLE001 - one bad recording must not stop the rest
@@ -9070,6 +9079,8 @@ class SessionManager:
             if not ids or ids == last:
                 return done  # nothing left, or a batch that cannot be written (logged)
             last = ids
+            if self._obs_closing.is_set():
+                return done  # the app is stopping; the rest are filled at the next start
             for tid in ids:
                 self.recordings_store.refresh_usage(tid)
             self.recordings_store.flush()

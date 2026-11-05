@@ -149,3 +149,35 @@ def test_the_ratings_card_counts_reasons_and_lists_the_down_turns(tmp_path):
     one = usage_api.ratings(store, start=RECENT - 1, end=RECENT + 60_000, persona_id="sec")
     assert (one["up"], one["down"]) == (1, 1) and one["down_turns"][0]["turn_id"] == "T2"
     store.close()
+
+
+# -- T3-3 -----------------------------------------------------------------------------------------
+def test_stopping_the_app_drops_queued_scope_checks_and_stops_the_start_up_checks(tmp_path, monkeypatch):
+    import asyncio
+    import threading as _threading
+
+    from coworker.server import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    manager = SessionManager(workspace=tmp_path)
+    gate, ran = _threading.Event(), []
+
+    def check(sid, tid):
+        ran.append(tid)
+        gate.wait(5)
+
+    monkeypatch.setattr(manager, "run_scope_checks", check)
+    for i in range(20):
+        manager._scopes_on_turn_end({"type": "turn_ended", "turn_id": f"T{i}", "session_id": "s"})
+    asyncio.run(manager.aclose())
+    gate.set()
+    manager._scope_pool.shutdown(wait=True)
+    assert len(ran) <= 1  # the one running finishes; the 19 queued are dropped
+    # a turn that ends after the stop is not queued
+    manager._scopes_on_turn_end({"type": "turn_ended", "turn_id": "late", "session_id": "s"})
+    assert "late" not in ran
+    # the start-up checks stop between sessions
+    monkeypatch.setattr(manager.recordings_store, "sessions_needing_check", lambda v: ["a", "b"])
+    loaded = []
+    monkeypatch.setattr(manager.recordings_store, "load_recording", lambda sid: loaded.append(sid))
+    assert manager.recheck_issues() == 2 and loaded == []
