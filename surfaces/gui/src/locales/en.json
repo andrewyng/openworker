@@ -3254,8 +3254,8 @@
       "information": "information",
       "fine": "Checked and fine · {{n}}",
       "no_plan": "No plan to check against",
-      "unseen_one": "{{count}} issue in Steps you have not looked at",
-      "unseen_other": "{{count}} issues in Steps you have not looked at",
+      "unseen_one": "{{count}} issue in the trace you have not looked at",
+      "unseen_other": "{{count}} issues in the trace you have not looked at",
       "title": {
         "repeated_step": "Repeated the same step",
         "off_plan": "Left its plan",
@@ -3366,10 +3366,11 @@
         "reviewer_could_not_run_shadow_other": "Shadow reviewer checked {{count}} actions; none failed to run"
       }
     },
-    "title": "Steps",
-    "open": "Steps",
+    "title": "Trace",
+    "open": "Trace",
+    "open_session": "Session trace",
     "open_title": "Every step of each turn, and where the time and tokens went",
-    "close": "Close steps",
+    "close": "Close the trace",
     "prev_turn": "Previous turn",
     "next_turn": "Next turn",
     "turn_of": "Turn {{n}} of {{total}}",
@@ -3461,8 +3462,8 @@
       "runner": "runner {{version}}"
     },
     "loading": "Loading…",
-    "load_error": "Steps could not be loaded.",
-    "not_recorded": "No recorded steps yet. Steps are recorded for turns run from now on.",
+    "load_error": "The trace could not be loaded.",
+    "not_recorded": "Nothing recorded yet. A trace is recorded for each turn run from now on.",
     "tab": {
       "timeline": "Timeline",
       "usage": "Usage"
@@ -3794,7 +3795,7 @@
   },
   "obs": {
     "title": "Observability",
-    "sub": "Every step your coworkers take is recorded on this machine so you can see it under Steps. You can also send these recordings to a tool your company uses. They use the OpenTelemetry standard.",
+    "sub": "Every step your coworkers take is recorded on this machine so you can see it in its trace. You can also send these recordings to a tool your company uses. They use the OpenTelemetry standard.",
     "load_failed": "Could not read this machine's observability settings.",
     "error_save": "Could not save.",
     "error_address": "Enter an address that starts with http:// or https://.",
@@ -3820,8 +3821,8 @@
     },
     "record": {
       "title": "Record steps",
-      "sub": "Needed for Steps, Issues and Usage. About 2.5 MB a day for typical use.",
-      "off": "Off: new sessions are not recorded. Steps, Issues and Usage stay empty for them."
+      "sub": "Needed for Trace, Issues and Usage. About 2.5 MB a day for typical use.",
+      "off": "Off: new sessions are not recorded. Trace, Issues and Usage stay empty for them."
     },
     "keep": {
       "title": "Keep recordings for",
@@ -3887,8 +3888,8 @@
       "counts": "Today: {{sent}} steps sent · {{failed}} failed · {{dropped}} dropped.",
       "resumes": "If the destination stops answering, nothing is lost: sending resumes where it stopped.",
       "failed_sub": "Sending has stopped until the settings change.",
-      "outside_one": "Today: {{count}} model call from outside any session ({{tokens}} tokens), through this machine's model address. They are not in any session's Steps or Usage.",
-      "outside_other": "Today: {{count}} model calls from outside any session ({{tokens}} tokens), through this machine's model address. They are not in any session's Steps or Usage."
+      "outside_one": "Today: {{count}} model call from outside any session ({{tokens}} tokens), through this machine's model address. They are not in any session's trace or Usage.",
+      "outside_other": "Today: {{count}} model calls from outside any session ({{tokens}} tokens), through this machine's model address. They are not in any session's trace or Usage."
     },
     "state": {
       "off": "Off",
@@ -4089,7 +4090,7 @@
       "events": "Team events that used to be silent",
       "issue": "issue",
       "info": "info",
-      "events_note": "Each line opens the Steps of the turn involved."
+      "events_note": "Each line opens the trace of the turn involved."
     },
     "ev": {
       "wake_capped": "Team paused at the wake cap (60 this hour) · this wake waited {{min}} min",

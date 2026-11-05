@@ -2296,7 +2296,7 @@ export function App() {
                 aria-pressed={stepsOpen}
                 data-testid="steps-open"
               >
-                <span>{t("steps.open")}</span>
+                <span>{t("steps.open_session")}</span>
               </button>
             )}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona

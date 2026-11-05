@@ -30,6 +30,7 @@ describe("TurnFooterLine", () => {
     expect(text).toContain("1 issue");
     expect(text).toContain("1 auto-approved");
     expect(text).not.toContain("asked you");
+    expect(screen.getByTestId("turn-footer-steps").textContent).toBe("Trace"); // T3-13
   });
 
   it("a 👎 opens the card; Send stores the reasons and the note and says where it went", async () => {
