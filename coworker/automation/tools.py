@@ -9,7 +9,7 @@ results (the artifacts are real files in that folder).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 
@@ -86,6 +86,14 @@ _CREATE_SCHEMA = {
                         "required": ["tool", "target", "access"],
                     },
                 },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "Optional run timeout in seconds (default 900s / 15 min).",
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "description": "Optional maximum error retries with exponential backoff (default 0).",
+                },
             },
             "required": ["title", "instructions"],
         },
@@ -105,6 +113,9 @@ _UPDATE_SCHEMA = {
                 "instructions": {"type": "string"},
                 "cron": {"type": "string"},
                 "title": {"type": "string"},
+                "timeout_seconds": {"type": "number"},
+                "max_retries": {"type": "integer"},
+                "retry_backoff_seconds": {"type": "number"},
             },
             "required": ["id"],
         },
@@ -155,7 +166,14 @@ def scheduling_tools(
     default_workspace: str,
 ) -> list[Callable[..., Any]]:
     def create_scheduled_task(
-        title, instructions, cron=None, fire_at=None, timezone="local", permissions=None
+        title,
+        instructions,
+        cron=None,
+        fire_at=None,
+        timezone="local",
+        permissions=None,
+        timeout_seconds=900.0,
+        max_retries=0,
     ):
         from croniter import croniter
 
@@ -185,6 +203,8 @@ def scheduling_tools(
             origin_session_id=origin.get("session_id", ""),
             agent=origin.get("agent", "cowork"),
             always_allowed_tools=grants,
+            timeout_seconds=float(timeout_seconds) if timeout_seconds is not None else 900.0,
+            max_retries=int(max_retries) if max_retries is not None else 0,
         )
         store.save(task)
         return {
@@ -195,13 +215,22 @@ def scheduling_tools(
             "next_run": task.next_run,
             "workspace": workspace,
             "always_allowed": grants,
+            "timeout_seconds": task.timeout_seconds,
+            "max_retries": task.max_retries,
         }
 
     def list_scheduled_tasks():
         return {"tasks": [t.public() for t in store.list()]}
 
     def update_scheduled_task(
-        id, enabled=None, instructions=None, cron=None, title=None
+        id,
+        enabled=None,
+        instructions=None,
+        cron=None,
+        title=None,
+        timeout_seconds=None,
+        max_retries=None,
+        retry_backoff_seconds=None,
     ):
         from croniter import croniter
 
@@ -219,6 +248,12 @@ def scheduling_tools(
             task.instructions = instructions
         if title is not None:
             task.title = title
+        if timeout_seconds is not None:
+            task.timeout_seconds = float(timeout_seconds)
+        if max_retries is not None:
+            task.max_retries = int(max_retries)
+        if retry_backoff_seconds is not None:
+            task.retry_backoff_seconds = float(retry_backoff_seconds)
         store.save(task)
         return {"ok": True, "task": task.public()}
 

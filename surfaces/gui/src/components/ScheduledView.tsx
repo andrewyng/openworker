@@ -7,6 +7,7 @@ import {
   getAutomations,
   markAutomationSeen,
   announceAutomationsChanged,
+  stopAutomation,
   updateAutomation,
   type Automation,
   type AutomationRun,
@@ -367,6 +368,12 @@ function TaskDetail({
     onBack();
   };
 
+  const isRunning = runs.some((r) => r.status === "running") || task.last_status === "running";
+  const forceStop = async () => {
+    await stopAutomation(id);
+    refresh();
+  };
+
   return (
     <Shell>
       <button className="text-ui text-muted hover:text-ink mb-3" onClick={onBack}>
@@ -394,9 +401,15 @@ function TaskDetail({
               </>
             ) : (
               <>
-                <button className="btn-primary sm" onClick={() => onRunNow(id, task.title)}>
-                  {tt("automations.run_now")}
-                </button>
+                {isRunning ? (
+                  <button className="btn sm danger-btn" onClick={forceStop}>
+                    {tt("automations.force_stop", "Force Stop")}
+                  </button>
+                ) : (
+                  <button className="btn-primary sm" onClick={() => onRunNow(id, task.title)}>
+                    {tt("automations.run_now")}
+                  </button>
+                )}
                 <button className="btn sm" onClick={startEdit}>{tt("automations.edit")}</button>
                 <button className="btn sm danger-btn" onClick={remove}>
                   <Icon name="trash" size={14} /> {tt("automations.delete")}
@@ -495,6 +508,18 @@ function TaskDetail({
                   <span className="run-new-pill" data-testid="run-new">{tt("automations.new_pill")}</span>
                 )}
                 {fmt(r.started_at)} · <span className={"run-" + r.status}>{r.status}</span> · {r.trigger}
+                {r.status === "running" && (
+                  <button
+                    className="btn sm danger-btn ml-2 py-0.5 px-2 text-xs"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await stopAutomation(id);
+                      refresh();
+                    }}
+                  >
+                    {tt("automations.force_stop", "Force Stop")}
+                  </button>
+                )}
                 {r.artifacts.length > 0 && <span className="dim"> · {tt("automations.file_count", { count: r.artifacts.length })}</span>}
               </span>
               <span className="sched-run-go" aria-hidden>
