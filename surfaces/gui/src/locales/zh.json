@@ -1350,7 +1350,6 @@
     "models": "模型",
     "models_help": "已勾选的模型会显示在输入框的选择器中；黑色徽标表示新会话的默认模型。",
     "azure_deployment_help": "在 Azure 上，模型 ID 就是你的部署名称——按 Azure 或 Foundry 门户中的名称，逐个添加你要使用的部署。",
-
     "one_click_coming": "一键登录即将推出 —— 目前请在下方手动连接：",
     "optional": "（可选）",
     "or_connect_manually": "或手动连接：",
@@ -1402,6 +1401,9 @@
     "group_subscription": "订阅",
     "group_api_key": "API 密钥",
     "no_providers_match": "没有匹配的提供商。",
+    "providers_loading": "正在加载提供商…",
+    "providers_failed": "无法加载提供商。",
+    "providers_retry": "重试",
     "show_more": "再显示 {{count}} 个",
     "show_fewer": "收起",
     "search_providers": "搜索提供商…",
