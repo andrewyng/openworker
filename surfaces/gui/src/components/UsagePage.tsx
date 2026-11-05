@@ -23,6 +23,7 @@ import {
   comparable,
   hhmm,
   localDays,
+  overheadByDay,
   previousDays,
   purposeByDay,
   SERIES,
@@ -168,6 +169,7 @@ export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; pe
   const canCompare = comparable(data.total.kept_from, prevStart);
   const pct = canCompare && prev ? changePct(all?.total ?? 0, prev.total) : null;
   const chart = purposeByDay(days, data.dayPurpose.groups);
+  const overhead = overheadByDay(chart);
   const names = data.total.names || data.coworkers.names || {};
   const turns = all?.turns ?? 0;
   const checked = all?.checked ?? 0;
@@ -194,30 +196,22 @@ export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; pe
       <div className="p3-two">
         <div className={CARD + " p3-card"}>
           <b className="p3-h">{t("p3.usage.per_day")}</b>
-          <div className="p3-bars" data-testid="usage-bars">
-            {chart.rows.map((r) => (
-              <div key={r.label} className="p3-bar" title={`${r.label}: ${formatTokens(r.total)}`}>
-                {SERIES.map((s) =>
-                  r.values[s] ? (
-                    <i key={s} className={`p3-s-${s}`} style={{ height: `${Math.max(1, (r.values[s] / chart.max) * 100)}%` }}
-                      title={`${t(`p3.series.${s}`)}: ${r.values[s].toLocaleString()}`} />
-                  ) : null,
-                )}
-              </div>
-            ))}
-          </div>
-          {days.length > 1 && (
-            <div className="p3-xl">
-              {days.map(([label, start]) => (
-                <span key={label}>{days.length <= 7 ? new Date(start).toLocaleDateString(undefined, { weekday: "short", day: "2-digit" }) : new Date(start).getDate()}</span>
-              ))}
-            </div>
-          )}
+          <Bars rows={chart.rows} max={chart.max} series={SERIES} t={t} testid="usage-bars" />
+          <DayLabels days={days} />
           <div className="p3-legend" data-testid="usage-legend">
             {SERIES.filter((s) => chart.legend[s] > 0).map((s) => (
               <span key={s}><i className={`p3-s-${s}`} />{t(`p3.series.${s}`)} {formatTokens(chart.legend[s])}</span>
             ))}
           </div>
+          {overhead && (
+            <div className="mt-3" data-testid="usage-overhead">
+              <b className="p3-h">{t("p3.usage.overhead")}</b>
+              <div className="text-meta text-faint">{t("p3.usage.overhead_sub", { tokens: formatTokens(overhead.max) })}</div>
+              <Bars rows={overhead.rows} max={overhead.max} series={overhead.series} t={t} small testid="usage-overhead-bars" />
+              <DayLabels days={days} />
+            </div>
+          )}
+          <div className="text-meta text-faint mt-2">{t("p3.usage.point_hint")}</div>
         </div>
         <div className={CARD + " p3-card"}>
           <b className="p3-h">{t("p3.usage.by_coworker")}</b>
@@ -291,6 +285,36 @@ export function UsageBody({ data, period, t, onOpenTurn }: { data: UsageData; pe
         <div className="text-meta text-faint mt-1">{t("p3.usage.kept_note")}</div>
       )}
     </>
+  );
+}
+
+type ChartRow = { label: string; values: Record<string, number>; total: number };
+
+function Bars({ rows, max, series, t, small, testid }: { rows: ChartRow[]; max: number; series: readonly string[]; t: T; small?: boolean; testid: string }) {
+  return (
+    <div className={"p3-bars" + (small ? " small" : "")} data-testid={testid}>
+      {rows.map((r) => (
+        <div key={r.label} className="p3-bar" title={`${r.label}: ${formatTokens(r.total)}`}>
+          {series.map((s) =>
+            r.values[s] ? (
+              <i key={s} className={`p3-s-${s}`} style={{ height: `${Math.max(1, (r.values[s] / max) * 100)}%` }}
+                title={`${t(`p3.series.${s}`)}: ${r.values[s].toLocaleString()}`} />
+            ) : null,
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DayLabels({ days }: { days: [string, number, number][] }) {
+  if (days.length <= 1) return null;
+  return (
+    <div className="p3-xl">
+      {days.map(([label, start]) => (
+        <span key={label}>{days.length <= 7 ? new Date(start).toLocaleDateString(undefined, { weekday: "short", day: "2-digit" }) : new Date(start).getDate()}</span>
+      ))}
+    </div>
   );
 }
 

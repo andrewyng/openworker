@@ -2620,6 +2620,7 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-card { padding:12px 14px; min-width:0; }
 .p3-h { font-weight:500; font-size:var(--fs-ui); color:var(--ink); }
 .p3-bars { display:flex; align-items:flex-end; gap:3px; height:120px; margin-top:10px; border-bottom:1px solid var(--line); }
+.p3-bars.small { height:56px; margin-top:6px; } /* T3-7 */
 .p3-bar { flex:1; height:100%; display:flex; flex-direction:column-reverse; min-width:2px; }
 .p3-bar i { display:block; width:100%; }
 .p3-bar i:last-child { border-radius:3px 3px 0 0; }

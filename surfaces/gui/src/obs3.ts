@@ -105,6 +105,16 @@ export function purposeByDay(days: DayBoundary[], groups: RollupGroup[]) {
   return { rows, legend, max: Math.max(1, ...rows.map((r) => r.total)) };
 }
 
+/** T3-7: the same days without main work, on their own scale, so summaries, the
+ * auto-approver and titles get a readable size (main work is often 95% or more). Null when
+ * the period has none of them. */
+export function overheadByDay(chart: ReturnType<typeof purposeByDay>) {
+  const series = SERIES.filter((s) => s !== "main");
+  const rows = chart.rows.map((r) => ({ ...r, values: { ...r.values, main: 0 }, total: r.total - r.values.main }));
+  const max = Math.max(0, ...rows.map((r) => r.total));
+  return max > 0 ? { rows, max, series } : null;
+}
+
 // -- the Auto-approve strip (§7.3, M3-R5) -----------------------------------------------------
 /** Under 10 checks a part is a count ("allowed 1"), from 10 a share ("allowed 72%"): "allowed
  * 100%" of one check says nothing. */

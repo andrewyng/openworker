@@ -7,6 +7,7 @@ import {
   footerParts,
   healthTone,
   localDays,
+  overheadByDay,
   previousDays,
   purposeByDay,
   seriesOf,
@@ -68,6 +69,18 @@ describe("tokens per day, by purpose", () => {
     expect(out.rows[0].total).toBe(123);
     expect(out.rows[1].total).toBe(7);
     expect(out.legend).toEqual({ main: 120, summary: 0, auto_approver: 7, title: 3, other: 0 });
+  });
+  it("the second chart leaves main work out and has its own scale (T3-7)", () => {
+    const days: [string, number, number][] = [["d1", 0, 10], ["d2", 10, 20]];
+    const g = (day: string, purpose: string, total: number) => ({ key: { day, purpose }, total }) as any;
+    const chart = purposeByDay(days, [g("d1", "main", 17_000_000), g("d1", "summary", 36_000), g("d2", "auto_approver", 457_000), g("d2", "title", 7_700)]);
+    const o = overheadByDay(chart)!;
+    expect(o.series).toEqual(["summary", "auto_approver", "title", "other"]);
+    expect(o.rows.map((r) => r.total)).toEqual([36_000, 464_700]);
+    expect(o.max).toBe(464_700); // not the 17M of main work
+    expect(o.rows[0].values.main).toBe(0);
+    // only main work: no second chart
+    expect(overheadByDay(purposeByDay(days, [g("d1", "main", 5)]))).toBeNull();
   });
 });
 
