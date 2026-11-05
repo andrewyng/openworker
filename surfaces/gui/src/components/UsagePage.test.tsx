@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "i18next";
-import { ApproverStripView, coworkerChoices, coworkerTable, loadUsage, UsageBody, type UsageData } from "./UsagePage";
+import { ApproverStripView, coworkerChoices, coworkerTable, loadUsage, RatingsCard, UsageBody, type UsageData } from "./UsagePage";
 import type { UsageRollup } from "../api";
 
 afterEach(cleanup);
@@ -179,5 +179,41 @@ describe("one coworker", () => {
     expect(list).toHaveLength(1);
     expect(list[0]).not.toContain("persona_id=sec");
     expect(narrowed).toHaveLength(usage.length - 1);
+  });
+});
+
+describe("RatingsCard (T3-10)", () => {
+  const ratings = {
+    up: 4, down: 2, reasons: { too_slow: 1, wrong_answer: 2, did_unasked: 1 }, more: 0,
+    down_turns: [
+      { turn_id: "t7", session_id: "s1", title: "Fix the build", seq: 7, session_deleted: false, persona_id: "cowork",
+        started_at: 2, reasons: ["wrong_answer", "did_unasked"], note: "ran a command I didn't want", auto_approved: 2 },
+      { turn_id: "t3", session_id: "gone", title: null, seq: null, session_deleted: true, persona_id: "cowork",
+        started_at: 1, reasons: [], note: null, auto_approved: 0 },
+    ],
+  };
+
+  it("counts the thumbs, the reasons in their fixed order, and lists the 👎 turns with their note", () => {
+    const open = vi.fn();
+    render(<RatingsCard r={ratings} names={{ cowork: "OpenWorker" }} t={t} onOpenTurn={open} />);
+    expect(screen.getByTestId("usage-ratings-counts").textContent).toBe("👍 4👎 2");
+    const reasons = screen.getByTestId("usage-ratings-reasons").textContent || "";
+    expect(reasons.indexOf("Wrong answer 2")).toBeLessThan(reasons.indexOf("Took too long 1"));
+    expect(reasons).toContain("Did something I didn't ask 1");
+    const table = screen.getByTestId("usage-ratings-down").textContent || "";
+    expect(table).toContain("Fix the build");
+    expect(table).toContain("OpenWorker");
+    expect(screen.getAllByTestId("usage-ratings-note")[0].textContent).toBe("ran a command I didn't want");
+    // a deleted session's turn has no Trace link
+    const links = screen.getAllByTestId("usage-ratings-open");
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toBe("Trace");
+    fireEvent.click(links[0]);
+    expect(open).toHaveBeenCalledWith("s1", "t7");
+  });
+
+  it("says so when nothing was rated", () => {
+    render(<RatingsCard r={{ up: 0, down: 0, reasons: {}, down_turns: [], more: 0 }} names={{}} t={t} />);
+    expect(screen.getByTestId("usage-ratings").textContent).toContain("No turns of this period were rated.");
   });
 });

@@ -9,8 +9,10 @@ import {
   getApproverStrip,
   getHeaviestTurns,
   getMachines,
+  getRatings,
   getUsageRollup,
   type ApproverStrip,
+  type RatingsSummary,
   type HeavyTurn,
   type Machine,
   type UsageRollup,
@@ -26,6 +28,7 @@ import {
   overheadByDay,
   previousDays,
   purposeByDay,
+  REASONS,
   SERIES,
   type Period,
   type RollupGroup,
@@ -51,6 +54,8 @@ export interface UsageData {
   heavy: HeavyTurn[];
   approver: ApproverStrip | null;
   machines: MachineRow[];
+  /** T3-10; null when the engine has no ratings endpoint (older) or it failed */
+  ratings?: RatingsSummary | null;
 }
 
 /** The coworkers of the period for the picker: each id once, by its name (M3-R1), A to Z. */
@@ -77,7 +82,7 @@ export async function loadUsage(period: Period, now = new Date(), personaId: str
   // One coworker, when picked: every number on the page narrows to its turns. The By
   // coworker table keeps listing all of them, so the picker always has its choices.
   const who = personaId ? { persona_id: personaId } : {};
-  const [total, prev, dayPurpose, coworkers, heavy, approver, fleet] = await Promise.all([
+  const [total, prev, dayPurpose, coworkers, heavy, approver, fleet, ratings] = await Promise.all([
     getUsageRollup({ from, to, group: "all", ...who }),
     getUsageRollup({ from: prevDays[0][1], to: prevDays[prevDays.length - 1][2], group: "all", ...who }).catch(() => null),
     getUsageRollup({ from, to, days, group: "day,purpose", ...who }),
@@ -85,6 +90,7 @@ export async function loadUsage(period: Period, now = new Date(), personaId: str
     getHeaviestTurns(from, to, null, 20, personaId).then((r) => r.turns).catch(() => [] as HeavyTurn[]),
     getApproverStrip(from, to, null, personaId).catch(() => null),
     getMachines().then((r) => r.machines || []).catch(() => [] as Machine[]),
+    getRatings(from, to, personaId).catch(() => null),
   ]);
   const here = sumAll(total);
   const machines: MachineRow[] = [
@@ -104,7 +110,7 @@ export async function loadUsage(period: Period, now = new Date(), personaId: str
       }
     }),
   );
-  return { total, prev, dayPurpose, coworkers, heavy, approver, machines: [...machines, ...remote] };
+  return { total, prev, dayPurpose, coworkers, heavy, approver, machines: [...machines, ...remote], ratings };
 }
 
 export function UsagePage({ onOpenTurn, onOpenPersona }: {
@@ -307,6 +313,8 @@ export function UsageBody({ data, period, t, onOpenTurn, onOpenPersona, picked =
 
       {ap && ap.shown && <ApproverStripView ap={ap} t={t} />}
 
+      {data.ratings && <RatingsCard r={data.ratings} names={names} t={t} onOpenTurn={onOpenTurn} />}
+
       {data.total.no_turn.calls > 0 && (
         <div className="text-meta text-faint mt-2" data-testid="usage-no-turn">
           {t("p3.usage.no_turn", { calls: data.total.no_turn.calls, tokens: data.total.no_turn.total.toLocaleString() })}
@@ -378,6 +386,71 @@ export function coworkerTable(groups: RollupGroup[], names: Record<string, strin
     rows.set(key, r);
   }
   return [...rows.values()].sort((a, b) => b.total - a.total);
+}
+
+/** T3-10 (lean): the period's 👍 and 👎, how often each reason was picked, and the turns rated
+ * 👎 with their note, each opening its trace. No charts or trends: those stay with Langfuse. */
+export function RatingsCard({ r, names, t, onOpenTurn }: {
+  r: RatingsSummary; names: Record<string, string>; t: T; onOpenTurn?: (sessionId: string, turnId: string) => void;
+}) {
+  const reasonLabel = (k: string) => t(`p3.fb.reason.${k}`, { defaultValue: k });
+  const picked = [...REASONS.filter((k) => r.reasons[k]), ...Object.keys(r.reasons).filter((k) => !(REASONS as readonly string[]).includes(k))];
+  return (
+    <div className={CARD + " p3-card mt-3"} data-testid="usage-ratings">
+      <b className="p3-h">{t("p3.ratings.title")}</b>
+      {r.up + r.down === 0 ? (
+        <div className="text-meta text-faint mt-1">{t("p3.ratings.none")}</div>
+      ) : (
+        <>
+          <div className="flex items-center gap-4 mt-1 text-ui" data-testid="usage-ratings-counts">
+            <span>👍 {r.up}</span>
+            <span>👎 {r.down}</span>
+          </div>
+          {picked.length > 0 && (
+            <div className="flex gap-1.5 flex-wrap mt-2 items-center text-meta" data-testid="usage-ratings-reasons">
+              <span className="text-faint">{t("p3.ratings.reasons")}</span>
+              {picked.map((k) => (
+                <span key={k} className="p3-chip">{reasonLabel(k)} {r.reasons[k]}</span>
+              ))}
+            </div>
+          )}
+          {r.down_turns.length > 0 && (
+            <table className="p3-t p3-heavy mt-2" data-testid="usage-ratings-down">
+              <colgroup>
+                <col style={{ width: "26%" }} /><col style={{ width: "14%" }} /><col style={{ width: "22%" }} />
+                <col style={{ width: "24%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} />
+              </colgroup>
+              <thead><tr><th>{t("p3.usage.session")}</th><th>{t("p3.usage.coworker")}</th><th>{t("p3.ratings.col_reasons")}</th>
+                <th>{t("p3.ratings.col_note")}</th><th className="n" title={t("p3.ratings.auto_title")}>{t("p3.ratings.col_auto")}</th><th></th></tr></thead>
+              <tbody>
+                {r.down_turns.map((d) => {
+                  const title = d.session_deleted ? t("p3.usage.deleted_session") : (d.title || d.session_id);
+                  const turn = d.seq != null ? t("p3.usage.turn_n", { n: d.seq }) : "";
+                  const who = (d.persona_id && names[d.persona_id]) || d.persona_id || "—";
+                  const reasons = d.reasons.map(reasonLabel).join(", ");
+                  return (
+                    <tr key={d.turn_id}>
+                      <td><span className="p3-cut" title={turn ? `${title} · ${turn}` : title}>
+                        {d.session_deleted ? <span className="text-faint">{title}</span> : title}
+                        {turn && <span className="text-faint"> · {turn}</span>}</span></td>
+                      <td><span className="p3-cut" title={who}>{who}</span></td>
+                      <td><span className="p3-cut" title={reasons}>{reasons || <span className="text-faint">—</span>}</span></td>
+                      <td><span className="p3-cut" title={d.note || ""} data-testid="usage-ratings-note">{d.note || <span className="text-faint">—</span>}</span></td>
+                      <td className="n">{d.auto_approved || "—"}</td>
+                      <td>{!d.session_deleted && onOpenTurn && (
+                        <button className="p3-link" data-testid="usage-ratings-open" onClick={() => onOpenTurn(d.session_id, d.turn_id)}>{t("steps.open")}</button>
+                      )}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          {r.more > 0 && <div className="text-meta text-faint mt-1">{t("p3.ratings.more", { count: r.more })}</div>}
+        </>
+      )}
+    </div>
+  );
 }
 
 /** T3-6: one row per reviewer, named in full, and a Total row; the point is comparing

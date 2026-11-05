@@ -4739,6 +4739,35 @@ export interface ApproverStrip extends ApproverCounts {
   shown: boolean;
 }
 
+// T3-10: the Ratings card on Usage (counts, reasons, and the turns rated 👎)
+export interface RatedDownTurn {
+  turn_id: string;
+  session_id: string;
+  title: string | null;
+  seq: number | null;
+  session_deleted: boolean;
+  persona_id: string | null;
+  started_at: number;
+  reasons: string[];
+  note: string | null;
+  auto_approved: number;
+}
+export interface RatingsSummary {
+  up: number;
+  down: number;
+  reasons: Record<string, number>;
+  down_turns: RatedDownTurn[];
+  more: number;
+  names?: Record<string, string>;
+}
+
+export async function getRatings(from: number, to: number, personaId?: string | null): Promise<RatingsSummary> {
+  const who = personaId ? `&persona_id=${encodeURIComponent(personaId)}` : "";
+  const res = await fetch(`${engineBase(null)}/v1/observability/ratings?from=${from}&to=${to}${who}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function getApproverStrip(from: number, to: number, machineId?: string | null,
                                        personaId?: string | null): Promise<ApproverStrip> {
   const who = personaId ? `&persona_id=${encodeURIComponent(personaId)}` : "";

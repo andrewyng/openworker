@@ -130,6 +130,43 @@ def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = No
             "shown": bool(live)}
 
 
+RATED_DOWN_SHOWN = 50
+
+
+def ratings(store: Any, *, start: int, end: int, persona_id: Optional[str] = None,
+            title_of: Optional[Callable[[str], Optional[str]]] = None) -> dict[str, Any]:
+    """`GET /v1/observability/ratings`: the Usage page's Ratings card (T3-10, lean). The 👍 and
+    👎 of the turns that started in the period (the same turns the page counts), how often each
+    reason was picked, and the 👎 turns, newest first, with their note and how many of their
+    steps the auto-approver let through. No charts or trends: those stay with Langfuse."""
+    where = {"persona_id": persona_id} if persona_id else None
+    rated = [t for t in store.usage_turns(start, end, where=where) if t.get("rating") in ("up", "down")]
+    down = sorted((t for t in rated if t["rating"] == "down"), key=lambda t: (-(t["started_at"] or 0), t["turn_id"]))
+    feedback = store.feedback_for([t["turn_id"] for t in down])
+    reasons: dict[str, int] = {}
+    for f in feedback.values():
+        for r in f.get("reasons") or []:
+            reasons[r] = reasons.get(r, 0) + 1
+    shown = down[:RATED_DOWN_SHOWN]
+    seqs = store.turn_seqs([t["turn_id"] for t in shown]) if shown else {}
+    turns = []
+    for t in shown:
+        f = feedback.get(t["turn_id"]) or {}
+        title = None
+        if title_of is not None and not t["session_deleted"]:
+            try:
+                title = title_of(t["session_id"])
+            except Exception:  # noqa: BLE001
+                title = None
+        turns.append({"turn_id": t["turn_id"], "session_id": t["session_id"], "title": title,
+                      "seq": seqs.get(t["turn_id"]), "session_deleted": bool(t["session_deleted"]),
+                      "persona_id": t["persona_id"], "started_at": t["started_at"],
+                      "reasons": f.get("reasons") or [], "note": (f.get("content") or {}).get("note"),
+                      "auto_approved": len(f.get("auto_approved") or [])})
+    return {"up": sum(1 for t in rated if t["rating"] == "up"), "down": len(down), "reasons": reasons,
+            "down_turns": turns, "more": max(0, len(down) - len(shown))}
+
+
 # -- OB-15: how a coworker has been doing ------------------------------------------------------
 
 

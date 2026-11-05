@@ -1100,6 +1100,19 @@ class RecordingStore:
             self._conn.execute("DELETE FROM feedback WHERE turn_id = ?", (turn_id,))
             self._conn.execute("UPDATE turn_usage SET rating = NULL WHERE turn_id = ?", (turn_id,))
 
+    def feedback_for(self, turn_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """The ratings of these turns, by turn id (the Usage page's Ratings card, T3-10)."""
+        out: dict[str, dict[str, Any]] = {}
+        ids = list(dict.fromkeys(turn_ids))
+        with self._lock:
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i + 400]
+                rows = self._conn.execute(
+                    f"SELECT * FROM feedback WHERE turn_id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+                for r in rows:
+                    out[r["turn_id"]] = _feedback_record(r)
+        return out
+
     def session_feedback(self, session_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM feedback WHERE session_id = ? ORDER BY rated_at",

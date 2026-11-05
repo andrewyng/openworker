@@ -107,4 +107,45 @@ def test_the_default_coworkers_page_and_history_answer(tmp_path, monkeypatch):
     body = doing.json()
     assert body["persona_id"] == DEFAULT_PERSONA_ID and body["runs"] == 1, body
     assert sum(r["turns"] for r in body["rows"]) == 1
+    # T3-10's route answers with the card's fields
+    now = int(time.time() * 1000)
+    got = client.get("/v1/observability/ratings", params={"from": now - 86_400_000, "to": now + 60_000}).json()
+    assert (got["up"], got["down"], got["down_turns"], got["more"]) == (0, 0, [], 0)
     manager.observability.close()
+
+
+# -- T3-10 ----------------------------------------------------------------------------------------
+def test_the_ratings_card_counts_reasons_and_lists_the_down_turns(tmp_path):
+    from coworker.observability import signals
+
+    store = RecordingStore(tmp_path / "recordings.db", background=False)
+    main = {"purpose": "main", "model": "model-x",
+            "usage": {"reported": True, "input_fresh": 10, "cache_read": 0, "cache_write": 0, "output": 1}}
+    for i, (sid, persona) in enumerate([("s1", "cowork"), ("s1", "cowork"), ("s2", "sec"), ("s2", "sec"), ("s3", "cowork")]):
+        t = _turn(f"T{i}", sid, i + 1, RECENT + i * 1000)
+        t["stamp"]["persona_id"] = persona
+        store.write_turn(t)
+        store.write_step(_step(f"T{i}", sid, 1, RECENT + i * 1000, "model", main))
+        store.write_issues(f"T{i}", {"signals_version": signals.version(), "warn": 0, "info": 0, "issues": [], "fine": []},
+                           seen=True)
+    store.flush()
+    fb = lambda tid, sid, rating, reasons=(), note=None, auto=(): store.put_feedback(  # noqa: E731
+        {"turn_id": tid, "session_id": sid, "rating": rating, "reasons": list(reasons), "note": note,
+         "auto_approved": list(auto)})
+    fb("T0", "s1", "up")
+    fb("T1", "s1", "down", ["wrong_answer", "too_slow"], "it guessed")
+    fb("T2", "s2", "down", ["did_unasked"], None, ["T2-s4", "T2-s5"])
+    fb("T3", "s2", "up")
+    # T4 is not rated
+    got = usage_api.ratings(store, start=RECENT - 1, end=RECENT + 60_000, title_of=lambda sid: f"title {sid}")
+    assert (got["up"], got["down"]) == (2, 2)
+    assert got["reasons"] == {"wrong_answer": 1, "too_slow": 1, "did_unasked": 1}
+    assert [t["turn_id"] for t in got["down_turns"]] == ["T2", "T1"]  # newest first
+    t2, t1 = got["down_turns"]
+    assert t1["note"] == "it guessed" and t1["title"] == "title s1" and t1["reasons"] == ["wrong_answer", "too_slow"]
+    assert t2["auto_approved"] == 2 and t2["note"] is None and t2["seq"] == 3
+    assert got["more"] == 0
+    # one coworker narrows it, as the rest of the page
+    one = usage_api.ratings(store, start=RECENT - 1, end=RECENT + 60_000, persona_id="sec")
+    assert (one["up"], one["down"]) == (1, 1) and one["down_turns"][0]["turn_id"] == "T2"
+    store.close()

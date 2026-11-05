@@ -926,6 +926,15 @@ def create_app(manager: SessionManager) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return manager.usage_approver(start=start, end=end, persona_id=persona_id)
 
+    @app.get("/v1/observability/ratings")
+    def observability_ratings(request: Request, to: Optional[int] = None, persona_id: Optional[str] = None):
+        # T3-10: the Ratings card on Usage
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_ratings(start=start, end=end, persona_id=persona_id)
+
     @app.get("/v1/personas/{persona_id}/doing")
     def persona_doing(persona_id: str, days: int = 30, to: Optional[int] = None) -> dict[str, Any]:
         return manager.persona_doing(persona_id, days=days, end=to)

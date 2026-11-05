@@ -7028,6 +7028,13 @@ class SessionManager:
     def usage_approver(self, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
         return usage_api.approver(self.recordings_store, start=start, end=end, persona_id=persona_id)
 
+    def usage_ratings(self, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
+        """The Ratings card on Usage (T3-10)."""
+        out = usage_api.ratings(self.recordings_store, start=start, end=end, persona_id=persona_id,
+                                title_of=self.session_store.display_title)
+        out["names"] = self.usage_names()
+        return out
+
     def current_persona_fp(self, persona_id: str) -> Optional[str]:
         """The coworker's fingerprint now, worked out as the session build does (E16)."""
         entry = self.personas.get(persona_id)

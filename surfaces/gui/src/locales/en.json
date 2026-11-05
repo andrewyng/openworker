@@ -3997,6 +3997,17 @@
       "incl_shadow_one": "incl. {{count}} shadow check",
       "incl_shadow_other": "incl. {{count}} shadow checks"
     },
+    "ratings": {
+      "title": "Ratings",
+      "none": "No turns of this period were rated.",
+      "reasons": "Reasons picked:",
+      "col_reasons": "Reasons",
+      "col_note": "Note",
+      "col_auto": "Auto-approved",
+      "auto_title": "Steps of that turn the auto-approver let through",
+      "more_one": "and {{count}} more turn rated 👎",
+      "more_other": "and {{count}} more turns rated 👎"
+    },
     "foot": {
       "tokens": "{{tokens}} tokens this turn",
       "issues_one": "{{count}} issue",

@@ -3936,6 +3936,16 @@
       "shares_note": "一行有 10 次及以上检查时显示占比，不足 10 次时显示次数。",
       "incl_shadow_other": "含 {{count}} 次影子检查"
     },
+    "ratings": {
+      "title": "评价",
+      "none": "这段时间没有被评价的轮次。",
+      "reasons": "选择的原因：",
+      "col_reasons": "原因",
+      "col_note": "备注",
+      "col_auto": "自动批准",
+      "auto_title": "该轮次中由自动审批放行的步骤",
+      "more_other": "另有 {{count}} 个被评为 👎 的轮次"
+    },
     "foot": {
       "tokens": "本轮 {{tokens}} 令牌",
       "issues_other": "{{count}} 个问题",
