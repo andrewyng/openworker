@@ -210,6 +210,6 @@ def test_a_versions_models_are_its_own_work_only(tmp_path):
     assert row["models"] == ["model-h", "model-x", "together:model-h"]
     assert row["model_line"] == {"kind": "first", "models": ["model-h", "model-x", "together:model-h"]}
     assert row["version_n"] == 1  # T3-16: numbered even when its files were not kept
-    assert usage_api.canonical_model("openai:gpt-5.6-sol") == "gpt-5.6-sol"
-    assert usage_api.canonical_model("openrouter:openai/gpt-5") == "openrouter:openai/gpt-5"
+    assert usage_api.canonical_model("openai:model-x") == "model-x"
+    assert usage_api.canonical_model("openrouter:openai/model-x") == "openrouter:openai/model-x"
     store.close()

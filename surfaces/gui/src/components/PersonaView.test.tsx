@@ -34,7 +34,7 @@ const DETAIL = {
   surfaced: true,
   default: false,
   tools: ["files", "search", "shell"],
-  recommended_models: ["claude-opus-4-8", "gpt-5.5"],
+  recommended_models: ["anthropic:model-x", "model-y"],
   default_permission_mode: "interactive",
   workspace: "deliverable",
   recommends: [
@@ -82,8 +82,8 @@ describe("PersonaView", () => {
     expect(screen.getByText("Add")).toBeTruthy(); // filesystem (mcp, not connected)
     // the models it may use, labelled apart from the models its sessions used (T3-16 d);
     // Default mode and Workspace are gone (T3-16 e)
-    expect(screen.getByText("claude-opus-4-8")).toBeTruthy();
-    expect(screen.getByTestId("persona-can-use").textContent).toBe("Can use: claude-opus-4-8, gpt-5.5");
+    expect(screen.getByText("anthropic:model-x")).toBeTruthy();
+    expect(screen.getByTestId("persona-can-use").textContent).toBe("Can use: anthropic:model-x, model-y");
     expect(screen.queryByText(/Default mode/)).toBeNull();
     expect(screen.queryByText(/Workspace/)).toBeNull();
   });

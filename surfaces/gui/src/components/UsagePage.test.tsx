@@ -123,10 +123,10 @@ describe("UsageBody", () => {
 
 describe("shortModel (T3-5)", () => {
   it("drops the provider and the lab, keeps a size tag", () => {
-    expect(shortModel("openrouter:deepseek/deepseek-v4-pro")).toBe("deepseek-v4-pro");
-    expect(shortModel("openrouter:z-ai/glm-5.3")).toBe("glm-5.3");
-    expect(shortModel("openai:gpt-5.6-sol")).toBe("gpt-5.6-sol");
-    expect(shortModel("ollama:qwen3:0.6b")).toBe("qwen3:0.6b");
+    expect(shortModel("openrouter:lab-a/model-x-pro")).toBe("model-x-pro");
+    expect(shortModel("openrouter:lab-b/model-y")).toBe("model-y");
+    expect(shortModel("openai:model-x")).toBe("model-x");
+    expect(shortModel("ollama:model-q:0.6b")).toBe("model-q:0.6b");
     expect(shortModel("model-x")).toBe("model-x");
   });
 });

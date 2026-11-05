@@ -90,7 +90,7 @@ describe("PersonaDoing", () => {
   });
 
   it("a first version: no Show diff, 'Nothing to compare yet', and the models used on their own line", async () => {
-    const models = ["gpt-5.6-sol", "model-a", "model-b"];
+    const models = ["model-x", "model-a", "model-b"];
     (getPersonaDoing as any).mockResolvedValue({
       persona_id: "cowork", kept_from: null, min_runs: 10, total: 1, runs: 1,
       rows: [row({ version_n: 1, model_line: { kind: "first", models }, models })],
@@ -102,8 +102,8 @@ describe("PersonaDoing", () => {
     expect(screen.getByTestId("persona-doing-changed").textContent).toContain("First version seen on this machine.");
     expect(screen.getByTestId("persona-doing-changed").textContent).not.toContain("unchanged");
     const line = screen.getByTestId("persona-doing-models");
-    expect(line.textContent).toBe("Models used in the last 30 days: gpt-5.6-sol and 2 more");
-    expect(line.getAttribute("title")).toBe("gpt-5.6-sol, model-a, model-b");
+    expect(line.textContent).toBe("Models used in the last 30 days: model-x and 2 more");
+    expect(line.getAttribute("title")).toBe("model-x, model-a, model-b");
   });
 
   it("renders nothing when the engine has no such endpoint", async () => {
