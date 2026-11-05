@@ -74,7 +74,11 @@ describe("Settings ▸ Observability", () => {
     }
     expect(screen.getByTestId("obs-keep-30").getAttribute("aria-checked")).toBe("true");
     await waitFor(() => expect(screen.getByTestId("obs-status-pill").textContent).toBe("Off"));
-    expect(screen.getByText(/Never sent, whatever is on/)).toBeTruthy();
+    // T3-9: plain wording, the status says where to start, and Off is a label without a pill outline
+    expect(screen.getByText(/These never leave this machine, whichever switches above are on/)).toBeTruthy();
+    expect(screen.getByText(/they can contain file paths, web addresses and emails/)).toBeTruthy();
+    expect(screen.getByText(/Pick a destination above \(Langfuse or an OpenTelemetry endpoint\)/)).toBeTruthy();
+    expect(screen.getByTestId("obs-status-pill").className).toContain("border-transparent");
   });
 
   it("Langfuse: the address and keys are saved once; keys come back masked, never shown", async () => {

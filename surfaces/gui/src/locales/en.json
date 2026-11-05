@@ -3811,7 +3811,7 @@
     "refused_key": "The destination refused the key",
     "not_found": "Address not found",
     "record_off_note": "Recording is off, so nothing is sent.",
-    "never_sent": "Never sent, whatever is on: the model's thinking text, error messages (they hold addresses) and provider-reported cost. Auto-approver verdicts (allowed, blocked, asked you), the reviewer's name and its timings are metadata, so they are always included when sending.",
+    "never_sent": "These never leave this machine, whichever switches above are on: the model's thinking text, error messages (they can contain file paths, web addresses and emails), and the cost your provider reports. Always sent while sending is on, because they contain no text from your sessions: the auto-approver's verdicts (allowed, blocked, asked you), which reviewer decided, and how long it took.",
     "sec": {
       "machine": "On this machine",
       "send_to": "Send recordings to",
@@ -3882,7 +3882,7 @@
     },
     "status": {
       "off_title": "Not sending",
-      "off_sub": "Choose where to send recordings to start. Only turns that end after that are sent.",
+      "off_sub": "Pick a destination above (Langfuse or an OpenTelemetry endpoint) to start sending. Only turns that finish after that are sent; earlier ones are not.",
       "nothing_yet": "Nothing sent yet",
       "last_sent": "Last sent {{when}}",
       "counts": "Today: {{sent}} steps sent · {{failed}} failed · {{dropped}} dropped.",

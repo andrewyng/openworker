@@ -36,6 +36,8 @@ const PILL_TONE = {
   warn: "bg-warnSoft text-warnInk border-transparent",
   bad: "bg-dangerSoft text-danger border-transparent",
   plain: "bg-chrome text-muted border-line",
+  // T3-9 (c): a state that is only a label (Off) has no pill outline, so it does not read as a switch
+  label: "bg-transparent text-muted border-transparent px-0",
 };
 const MAX_HEADERS = 8;
 type Kind = "off" | "langfuse" | "otlp";
@@ -253,7 +255,7 @@ export function ObservabilitySection({ machine }: { machine?: Machine | null }) 
         </div>
         {status ? (
           <Pill
-            tone={status.state === "sending" || status.state === "managed" ? "ok" : status.state === "retrying" ? "warn" : status.state === "failed" ? "bad" : "plain"}
+            tone={status.state === "sending" || status.state === "managed" ? "ok" : status.state === "retrying" ? "warn" : status.state === "failed" ? "bad" : status.state === "off" ? "label" : "plain"}
             testId="obs-status-pill"
           >
             {t(`obs.state.${status.state}`)}
