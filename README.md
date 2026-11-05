@@ -8,7 +8,7 @@
 
 **AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: your code reviewed for vulnerabilities with fixes ready to go, a polished document, a Slack reply with the numbers, a triaged inbox. It ships **specialist Security coworkers** first — attackers already use AI, and defenders deserve the same leverage, governed.
 
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose. Every action an agent takes is governed and logged — see [Governed by design](#governed-by-design) — and its commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox.
+It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. On compatible Macs, the experimental Apple Foundation Models provider runs through Apple Intelligence without an API key or cloud fallback. Your data leaves your machine only through the model and integrations *you* choose. Every action an agent takes is governed and logged — see [Governed by design](#governed-by-design) — and its commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox.
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
@@ -87,7 +87,7 @@ Unattended runs never self-approve: their asks park in an inbox until a human an
 
 Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
-**OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm.
+**OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm, and experimental on-device **Apple Foundation Models** on compatible Macs.
 
 A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
 
@@ -110,6 +110,8 @@ cd openworker
 # 1. One-time bootstrap - creates the Python venv at .venv
 #    (on Windows, run from Git Bash or WSL)
 bash packaging/setup_dev_env.sh
+# Optional on Apple Silicon with macOS 26+ and Xcode 26+:
+# .venv/bin/pip install -e ".[apple-foundation-models]"
 
 # 2. Start the local agent server
 .venv/bin/python -m coworker.server.run --cwd ~/some/project --port 8765

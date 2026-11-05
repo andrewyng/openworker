@@ -90,6 +90,7 @@ export const PROVIDER_ORDER = [
 
   "ark-agent-plan-cn",
   "meta",
+  "apple",
   "ollama",
   "llamacpp",
   "vllm",

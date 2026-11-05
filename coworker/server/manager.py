@@ -4232,7 +4232,20 @@ class SessionManager:
                 ),
                 "is_custom": is_custom_provider(d.name, self.secrets),
             }
-            if d.kind == "local":
+            if d.name == "apple":
+                # Keyless does not mean usable: expose the concrete local reason so the
+                # picker never promises a cloud fallback on an unsupported Mac.
+                from ..providers.apple_foundation_provider import AppleFoundationProvider
+
+                state = AppleFoundationProvider().availability()
+                row["availability"] = {
+                    "available": state.available,
+                    "code": state.code,
+                    "detail": state.detail,
+                    "context_size": state.context_size,
+                }
+                row["alive"] = state.available
+            if d.kind == "local" and d.name != "apple":
                 # A keyless server is "connected" when it answers (cached probes), not
                 # when a form was saved; the page groups connected providers first.
                 row["alive"] = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)

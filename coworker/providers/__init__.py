@@ -1,4 +1,5 @@
 from .anthropic_provider import AnthropicProvider
+from .apple_foundation_provider import AppleAvailability, AppleFoundationProvider
 from .bedrock_provider import BedrockProvider
 from .base import (
     AssistantTurn,
@@ -35,6 +36,8 @@ __all__ = [
     "StreamChunk",
     "ToolCall",
     "AnthropicProvider",
+    "AppleAvailability",
+    "AppleFoundationProvider",
     "BedrockProvider",
     "CodexProvider",
     "GeminiProvider",

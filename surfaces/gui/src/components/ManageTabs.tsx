@@ -250,8 +250,9 @@ export function ModelsTab() {
           have nothing in the wallet — no row. */}
       {ps.credentialed && ps.sel && <WalletChips profiles={[`provider:${ps.sel}`]} />}
 
-      {info?.kind === "local" ? (
+      {info?.kind === "local" && !info.availability ? (
         // A local provider: the machine, then what the server holds (UX-055).
+        // Apple runs in the OS, with no server to list, so it takes the models section.
         localTables()
       ) : info?.configured ? (
         <div className="mt-6">

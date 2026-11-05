@@ -70,7 +70,10 @@ export function ProviderGroups({
         <ProviderMark name={p.name} title={p.title} />
         <span className="min-w-0 flex-1">
           <span className={"block text-ui font-semibold leading-tight truncate" + (connected ? "" : " text-muted")}>{p.title}</span>
-          {p.managed?.phase === "running" && p.managed.model ? (
+          {p.availability ? (
+            // Apple: the OS decides availability; there is no server to probe or start.
+            ps.statusFor(p)
+          ) : p.managed?.phase === "running" && p.managed.model ? (
             <span className="block text-meta text-ok font-medium truncate">{t("llamacpp.card_running", { model: p.managed.model })}</span>
           ) : p.managed && !connected && ["installing", "downloading", "loading", "checking"].includes(p.managed.phase) ? (
             <span className="block text-meta text-muted truncate">{t(p.managed.phase === "installing" ? "llamacpp.status_installing" : "llamacpp.status_starting")}</span>
