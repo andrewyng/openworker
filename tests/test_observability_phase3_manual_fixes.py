@@ -198,13 +198,18 @@ def test_a_versions_models_are_its_own_work_only(tmp_path):
     t["stamp"].update({"persona_id": "cowork", "persona_fp": "fp1"})
     store.write_turn(t)
     usage = {"reported": True, "input_fresh": 10, "cache_read": 0, "cache_write": 0, "output": 1}
-    for n, (purpose, model) in enumerate([("main", "model-x"), ("helper", "model-h"), ("auto_approver", "reviewer-model"),
+    for n, (purpose, model) in enumerate([("main", "model-x"), ("helper", "model-h"), ("main", "openai:model-h"),
+                                          ("main", "together:model-h"), ("auto_approver", "reviewer-model"),
                                           ("title", "title-model"), ("summary", "summary-model")], start=1):
         store.write_step(_step("T1", "s1", n, RECENT + n, "model", {"purpose": purpose, "model": model, "usage": usage}))
     store.write_issues("T1", {"signals_version": signals.version(), "warn": 0, "info": 0, "issues": [], "fine": []}, seen=True)
     store.flush()
     got = usage_api.persona_doing(store, "cowork", start=RECENT - 1, end=RECENT + 60_000)
     [row] = got["rows"]
-    assert row["models"] == ["model-h", "model-x"]
-    assert row["model_line"] == {"kind": "first", "models": ["model-h", "model-x"]}
+    # T3-16 (d): openai:model-h is model-h (only the openai: prefix goes); together: keeps its own
+    assert row["models"] == ["model-h", "model-x", "together:model-h"]
+    assert row["model_line"] == {"kind": "first", "models": ["model-h", "model-x", "together:model-h"]}
+    assert row["version_n"] == 1  # T3-16: numbered even when its files were not kept
+    assert usage_api.canonical_model("openai:gpt-5.6-sol") == "gpt-5.6-sol"
+    assert usage_api.canonical_model("openrouter:openai/gpt-5") == "openrouter:openai/gpt-5"
     store.close()

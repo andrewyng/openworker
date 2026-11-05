@@ -2662,6 +2662,10 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .p3-t .n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 /* T3-5: Heaviest turns stays inside its card: fixed columns, text cut with the full text on hover */
 .p3-heavy { table-layout:fixed; }
+/* T3-16: the coworker history table stays inside its card; headers wrap */
+.p3-doing { table-layout:fixed; }
+.p3-doing th { white-space:normal; vertical-align:bottom; }
+.p3-doing td { overflow-wrap:anywhere; }
 .p3-heavy td { overflow:hidden; }
 .p3-cut { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .p3-badges { display:flex; flex-wrap:nowrap; gap:3px; min-width:0; }

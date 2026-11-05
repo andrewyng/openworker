@@ -41,7 +41,11 @@ export function PersonaDoing({ personaId, machineId, secClass, scrollIntoView }:
         {doing.rows.length === 0 ? (
           <div className="text-meta text-faint">{t("p3.doing.none")}</div>
         ) : (
-          <table className="p3-t">
+          <table className="p3-t p3-doing">
+            <colgroup>
+              <col style={{ width: "15%" }} /><col style={{ width: "19%" }} /><col style={{ width: "11%" }} />
+              <col style={{ width: "15%" }} /><col style={{ width: "14%" }} /><col style={{ width: "12%" }} /><col style={{ width: "14%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>{t("p3.doing.version")}</th>
@@ -120,14 +124,14 @@ function DoingTr({ r, t }: { r: DoingRow; t: T }) {
           {r.current && <span className="text-ok"> · {t("p3.doing.current")}</span>}
         </span>
       </td>
-      <td className="whitespace-nowrap">{inUseSpan(r.first_seen, r.last_seen, r.before_kept, t)}</td>
+      <td>{inUseSpan(r.first_seen, r.last_seen, r.before_kept, t)}</td>
       <td className="n">
         {r.runs}
         {r.automation_runs > 0 && <span className="text-faint"> {t("p3.doing.automation_runs", { count: r.automation_runs })}</span>}
       </td>
       {r.too_few ? (
         // T3-15 (h): one note across both typical-number columns
-        <td className="n text-faint" colSpan={2} data-testid="persona-doing-too-few">{t("p3.doing.too_few")}</td>
+        <td className="text-faint text-center" colSpan={2} data-testid="persona-doing-too-few">{t("p3.doing.too_few")}</td>
       ) : (
         <>
           <td className="n">{(r.at_least ? "≥ " : "") + formatTokens(r.median_tokens ?? 0)}</td>

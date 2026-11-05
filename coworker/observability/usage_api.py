@@ -93,6 +93,13 @@ def heaviest(store: Any, *, start: int, end: int, limit: int = 20,
 ASKED = ("unsure", "context_changed", "could_not_run")
 
 
+def canonical_model(model: str) -> str:
+    """One name per model (T3-16, T3-4): OpenAI is the default provider, so `openai:gpt-5.6-sol`
+    and `gpt-5.6-sol` are the same model. Only the `openai:` prefix is dropped, the same rule
+    as `canonical_model` on issue/ope-247-openai-model-prefix; every other provider keeps its."""
+    return model[len("openai:"):] if isinstance(model, str) and model.startswith("openai:") else model
+
+
 def approver(store: Any, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
     """`GET /v1/observability/approver`: the Auto-approve strip (§7.3). Live checks by result
     (asked you includes could-not-run: the card falls back to asking), overridden tool
@@ -177,7 +184,8 @@ def persona_doing(store: Any, persona_id: str, *, start: int, end: int, current_
     Usage page. Fewer than `min_runs` runs: no medians, "too few runs to compare"."""
     turns = store.usage_turns(start, end, where={"persona_id": persona_id})
     kept_from = store.usage_kept_from()
-    models_of_turn = {t["turn_id"]: t.get("own_models", t["models"]) for t in turns}
+    models_of_turn = {t["turn_id"]: list(dict.fromkeys(canonical_model(m) for m in t.get("own_models", t["models"])))
+                      for t in turns}
     runs: dict[tuple, dict[str, Any]] = {}
     for t in turns:
         k = (t["persona_fp"], t["session_id"])
@@ -220,7 +228,10 @@ def persona_doing(store: Any, persona_id: str, *, start: int, end: int, current_
     changes = {}
     for prev, cur in zip(ordered, ordered[1:]):
         changes[cur["fp"]] = {"from": prev["fp"], **diff_versions(prev, cur, store)}
-    number = {v["fp"]: i + 1 for i, v in enumerate(ordered)}
+    # a version whose files were not kept still gets its number, by when it was first seen here
+    fps = [v["fp"] for v in ordered]
+    fps += [r["fp"] for r in sorted(out, key=lambda r: r["first_seen"] or 0) if r["fp"] and r["fp"] not in fps]
+    number = {fp: i + 1 for i, fp in enumerate(fps)}
     for row in out:
         row["changed"] = changes.get(row["fp"])
         # T3-15: "v1 · current": versions numbered oldest first, by first sighting

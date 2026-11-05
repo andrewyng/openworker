@@ -80,8 +80,12 @@ describe("PersonaView", () => {
     expect(screen.getAllByText(/Ready/).length).toBeGreaterThan(0);
     expect(screen.getByText("Connect")).toBeTruthy(); // datadog (core, not connected)
     expect(screen.getByText("Add")).toBeTruthy(); // filesystem (mcp, not connected)
-    // defaults footer
+    // the models it may use, labelled apart from the models its sessions used (T3-16 d);
+    // Default mode and Workspace are gone (T3-16 e)
     expect(screen.getByText("claude-opus-4-8")).toBeTruthy();
+    expect(screen.getByTestId("persona-can-use").textContent).toBe("Can use: claude-opus-4-8, gpt-5.5");
+    expect(screen.queryByText(/Default mode/)).toBeNull();
+    expect(screen.queryByText(/Workspace/)).toBeNull();
   });
 
   it("toggling a default connection POSTs /connections and applies the returned defaults", async () => {

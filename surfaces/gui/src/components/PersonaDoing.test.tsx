@@ -82,6 +82,7 @@ describe("PersonaDoing", () => {
     const tooFew = screen.getByTestId("persona-doing-too-few");
     expect(tooFew.textContent).toBe("too few sessions to compare");
     expect(tooFew.getAttribute("colspan")).toBe("2");
+    expect(tooFew.className).toContain("text-center"); // T3-16 (b): across both columns, not under the second
     expect(b.textContent).toContain("or earlier");
     expect(b.textContent).toContain("2 / 1");
     // a later version can be compared
@@ -101,7 +102,7 @@ describe("PersonaDoing", () => {
     expect(screen.getByTestId("persona-doing-changed").textContent).toContain("First version seen on this machine.");
     expect(screen.getByTestId("persona-doing-changed").textContent).not.toContain("unchanged");
     const line = screen.getByTestId("persona-doing-models");
-    expect(line.textContent).toBe("Models used: gpt-5.6-sol and 2 more");
+    expect(line.textContent).toBe("Models used in the last 30 days: gpt-5.6-sol and 2 more");
     expect(line.getAttribute("title")).toBe("gpt-5.6-sol, model-a, model-b");
   });
 
