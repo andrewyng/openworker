@@ -9,6 +9,7 @@ vi.mock("../api", () => ({
   getUsageRollup: vi.fn(async () => empty),
   getHeaviestTurns: vi.fn(async () => ({ turns: [] })),
   getApproverStrip: vi.fn(async () => ({ shown: false })),
+  getRatings: vi.fn(async () => ({ up: 0, down: 0, reasons: {}, down_turns: [], more: 0 })),
   getMachines: vi.fn(async () => ({ machines: [], armed: false })),
 }));
 vi.mock("./IntegrationsView", () => ({ PanelHead: ({ title }: { title: string }) => <h1>{title}</h1> }));
