@@ -848,6 +848,59 @@ button.btn.danger { color: var(--accent); }
 .artifact-md { padding: 26px 28px 70px; font-size: var(--fs-body); line-height: 1.6; color: var(--ink); }
 .artifact-md .md h1 { font-size: 24px; }
 .artifact-md .md h2 { font-size: 20px; margin-top: 22px; }
+/* Preview | Source, in the artifact header — same job as Cursor's markdown tabs. */
+.md-mode {
+  display: inline-flex; padding: 2px; flex: none;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+}
+.md-mode-btn {
+  font: inherit; font-size: var(--fs-meta); color: var(--muted); cursor: pointer;
+  background: transparent; border: 0; border-radius: 6px; padding: 4px 10px;
+}
+.md-mode-btn.active { color: var(--ink); background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+/* Read-only YAML frontmatter, laid out like Cursor's properties list. */
+.md-props {
+  border: 1px solid var(--line); border-radius: 10px; margin-bottom: 22px;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+}
+.md-props-title {
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.02em;
+  color: var(--faint); padding: 10px 14px 2px;
+}
+.md-prop-row {
+  display: grid; grid-template-columns: minmax(108px, 32%) minmax(0, 1fr);
+  gap: 10px 14px; align-items: start; padding: 7px 14px;
+}
+.md-prop-key {
+  display: flex; align-items: flex-start; gap: 4px; min-width: 0;
+  font-family: var(--mono); font-size: var(--fs-meta); color: var(--muted);
+  word-break: break-word; padding-top: 1px;
+}
+.md-prop-twist, .md-prop-twist-spacer {
+  width: 16px; height: 16px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; background: transparent; color: var(--faint);
+}
+.md-prop-twist { cursor: pointer; }
+.md-prop-value { min-width: 0; font-size: var(--fs-ui); color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.md-prop-null { color: var(--faint); }
+.md-prop-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.md-prop-chip {
+  display: inline-flex; align-items: center; max-width: 100%;
+  font-size: var(--fs-meta); line-height: 1.4; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+}
+.md-prop-check { accent-color: var(--accent); width: 14px; height: 14px; margin: 2px 0 0; }
+.md-prop-nested {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  font: inherit; font-family: var(--mono); font-size: var(--fs-meta); color: var(--muted);
+  background: transparent; border: 0; padding: 0;
+}
+.md-prop-nested-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-prop-nested pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: var(--fs-meta); color: var(--ink); text-align: left;
+}
 
 /* working-directory bar */
 /* Workspace chip lives INSIDE the composer card's head row (top chip row, Tailwind-laid-out). */
