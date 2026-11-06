@@ -1371,7 +1371,6 @@
     "models": "Models",
     "models_help": "Ticked models show in the composer's picker; the black badge marks the default for new sessions.",
     "azure_deployment_help": "On Azure the model id is your deployment name — add each deployment you want to use, as named in the Azure or Foundry portal.",
-
     "one_click_coming": "One-click sign-in is coming soon — connect manually below for now:",
     "optional": "(optional)",
     "or_connect_manually": "or connect manually:",
@@ -1423,6 +1422,9 @@
     "group_subscription": "Subscriptions",
     "group_api_key": "API keys",
     "no_providers_match": "No providers match.",
+    "providers_loading": "Loading providers…",
+    "providers_failed": "Could not load the providers.",
+    "providers_retry": "Try again",
     "show_more": "Show {{count}} more",
     "show_fewer": "Show fewer",
     "search_providers": "Search providers…",
