@@ -1545,6 +1545,8 @@
   },
   "models": {
     "add_btn": "Add",
+    "adding": "Adding…",
+    "add_failed": "Could not add the model.",
     "add_placeholder": "Add another model…",
     "default_badge": "default",
     "default_locked": "The default model is always shown — make another model default first",

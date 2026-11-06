@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from coworker import model_config
-from coworker.providers import local_machine, local_server
+from coworker.providers import local_machine, local_server, probe_http
 from coworker.providers.capabilities import capabilities_for
 from coworker.providers.registry import get_descriptor, provider_descriptors
 
@@ -22,9 +22,9 @@ def _state(tmp_path, monkeypatch):
 
 
 def _fake_http(monkeypatch, handler):
+    # Probes go through the shared client in probe_http.py; the fake stands in for it.
     fake = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(httpx, "get", lambda url, headers=None, timeout=None: fake.get(url, headers=headers))
-    monkeypatch.setattr(httpx, "post", lambda url, json=None, headers=None, timeout=None: fake.post(url, json=json, headers=headers))
+    monkeypatch.setattr(probe_http, "_client", fake)
 
 
 def test_descriptors_carry_a_kind_for_grouping():
@@ -42,17 +42,17 @@ def test_descriptors_carry_a_kind_for_grouping():
 
 
 def test_v1_base_takes_the_root_or_an_explicit_v1():
-    assert local_server.v1_base("llamacpp", None) == "http://localhost:8080/v1"
+    assert local_server.v1_base("llamacpp", None) == "http://127.0.0.1:8080/v1"
     assert local_server.v1_base("llamacpp", "http://box.local:9000/") == "http://box.local:9000/v1"
     assert local_server.v1_base("vllm", "http://box.local:8000/v1") == "http://box.local:8000/v1"
-    assert local_server.v1_base("lmstudio", None) == "http://localhost:1234/v1"
+    assert local_server.v1_base("lmstudio", None) == "http://127.0.0.1:1234/v1"
     assert local_server.v1_base("lmstudio", "http://127.0.0.1:1234/v1/") == "http://127.0.0.1:1234/v1"
     assert local_server.v1_base("jan", None) == "http://127.0.0.1:1337/v1"
     assert local_server.v1_base("mlx", None) == "http://127.0.0.1:8080/v1"
     assert local_server.v1_base("mlx", "http://127.0.0.1:8081") == "http://127.0.0.1:8081/v1"
     # Docker Model Runner's API sits under /engines: the root, /engines and /engines/v1 all
     # land on the same place, and a named engine path is kept.
-    assert local_server.v1_base("docker", None) == "http://localhost:12434/engines/v1"
+    assert local_server.v1_base("docker", None) == "http://127.0.0.1:12434/engines/v1"
     assert local_server.v1_base("docker", "http://localhost:12434") == "http://localhost:12434/engines/v1"
     assert local_server.v1_base("docker", "http://localhost:12434/engines") == "http://localhost:12434/engines/v1"
     assert local_server.v1_base("docker", "http://localhost:12434/engines/v1") == "http://localhost:12434/engines/v1"
@@ -66,7 +66,7 @@ def test_the_builder_sends_a_placeholder_key_when_none_is_set():
     client = get_descriptor("vllm").build({"base_url": "http://gpu:8000", "api_key": "s3"}, None)
     assert client._base_url == "http://gpu:8000/v1" and client._api_key == "s3"
     client = get_descriptor("lmstudio").build({}, None)
-    assert client._base_url == "http://localhost:1234/v1" and client._api_key == "none"
+    assert client._base_url == "http://127.0.0.1:1234/v1" and client._api_key == "none"
     client = get_descriptor("docker").build({"base_url": "http://localhost:12434"}, None)
     assert client._base_url == "http://localhost:12434/engines/v1" and client._api_key == "none"
     client = get_descriptor("jan").build({}, None)
