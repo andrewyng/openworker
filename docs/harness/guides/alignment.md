@@ -33,6 +33,5 @@ Auto-skipping a question also does not count as approval.
 
 These mechanisms help enforce intent; a model reviewer is not a guarantee of perfect
 judgment. Evaluate it against representative tasks and adversarial inputs from your
-application. See [session grants](../SESSION-GRANTS.md),
-[application policy](../APP-POLICY-CONTRACT.md), [guardrails](../GUARDRAILS-QUICKSTART.md)
-and the [safety test catalog](../GUARDRAILS-TESTING.md).
+application. See [guardrails](guardrails.md) and [sessions](sessions.md) for
+configuration and interruption handling.

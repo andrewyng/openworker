@@ -4,12 +4,12 @@ Start with the simplest placement that fits your product.
 
 ## Choose a platform
 
-| Platform | Reference | Qualification boundary |
-|---|---|---|
-| [Private Kubernetes cluster](private-kubernetes.md) | Customer-managed cluster, PostgreSQL and OpenShell | Local Kubernetes/OpenShell qualified; validate your distribution and policies |
-| [AWS](aws.md) | EKS, PostgreSQL, S3 and OpenShell | Recorded live trials; fresh current-release installation remains a gate |
-| [GCP](gcp.md) | GKE Standard, Cloud SQL, Cloud Storage and OpenShell | Implementation locally qualified; live workload trial outstanding |
-| [Azure](azure.md) | AKS, PostgreSQL, Blob and OpenShell | Implementation locally qualified; live deployment trial outstanding |
+| Platform | Reference |
+|---|---|
+| [Private Kubernetes cluster](private-kubernetes.md) | Your cluster, PostgreSQL and OpenShell |
+| [AWS](aws.md) | EKS, PostgreSQL, S3 and OpenShell |
+| [GCP](gcp.md) | GKE Standard, Cloud SQL, Cloud Storage and OpenShell |
+| [Azure](azure.md) | AKS, PostgreSQL, Blob and OpenShell |
 
 The application-facing service API stays the same. Cloud identity, networking,
 storage and lifecycle setup are provider-specific. [NVIDIA OpenShell](openshell.md)
@@ -34,11 +34,10 @@ OpenShell runs tool execution in a sandbox while the current harness remains in
 the trusted service domain. RuntimeProfiles select the provider and allowed
 resources. A profile is configuration; a provisioned environment is an instance.
 
-Start with [local installation](../OWS-LOCAL-INSTALLATION.md), then read the
-[deployment specification](../OWS-DEPLOYMENT-SPEC.md) and
-[architecture scenarios](../SERVICE-ARCHITECTURE.html). Cloud credentials, budgets
-and cluster identity are operator-owned. Consult each cloud's qualification ledger
-before treating its deployment path as supported.
+Start with the [local service setup](../../../deploy/service/README.md) and
+[service CLI](../../../harness/service-cli/README.md). Cloud credentials, budgets
+and cluster identity are operator-owned. Cloud deployment paths are experimental;
+validate the configuration in the target environment before production use.
 
-Before upgrading, follow the [release contract](../SDK-RELEASE-CONTRACT.md) and
-[current schema upgrade procedure](../GUARDRAILS-QUICKSTART.md#upgrade-an-existing-installation).
+Before upgrading, read [versions and compatibility](releases.md) and the
+[storage migration instructions](guardrails.md#upgrade-an-existing-installation).

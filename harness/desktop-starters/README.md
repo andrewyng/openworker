@@ -60,7 +60,7 @@ Set `OW_PACKAGED_APP` to the packaged executable to run the same loop against an
 actual app bundle rather than development Electron. Earlier development qualification
 covered Mac/Windows Electron, Mac Tauri compilation/bundling, and native WebView
 interaction. Those checks predate this public source-layout migration. See the
-[release checklist](../../docs/harness/RELEASE-CHECKLIST.md) for checks repeated on
+[Versions and compatibility](../../docs/harness/guides/releases.md) for checks repeated on
 this snapshot. Repeat visual recovery/gameplay checks and clean installer tests on
 your target platforms, and reassess dependency advisories before publishing signed
 installers.

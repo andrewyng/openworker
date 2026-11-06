@@ -11,14 +11,14 @@ Help the developer build their product while OpenWorker owns the agent loop. Exp
 
 Use the developer's OpenWorker checkout and pinned SDK version. If installed by our project installer, `references/checkout.json` records the source checkout and commit. It is a locator, not permission to edit that checkout or a reason to upgrade dependencies. Verify it still exists and compare its revision with the application's dependency pin before using its APIs.
 
-If the checkout is unavailable, locate the matching source in [andrewyng/openworker](https://github.com/andrewyng/openworker/tree/openworker-harness-sdk). Use the application's pinned revision when one exists. For a new integration, resolve and record a commit before depending on the moving development branch. If neither local source nor remote access is available, ask for the matching checkout rather than inventing APIs.
+If the checkout is unavailable, locate the matching source in [andrewyng/openworker](https://github.com/andrewyng/openworker/tree/main). Use the application's pinned revision when one exists. For a new integration, resolve and record a commit before depending on the moving branch. If neither local source nor remote access is available, ask for the matching checkout rather than inventing APIs.
 
 Read the relevant guide and source before editing:
 
 - Desktop: [desktop reference](references/desktop.md).
 - Web: [web reference](references/web.md).
 - Shared implementation: `harness/examples/quickstart/src/agent.ts` and the example `README.md` in that checkout.
-- Package availability and compatibility: `docs/harness/SDK-RELEASE-CONTRACT.md` and `harness/release/manifest.json`. Check these before prescribing npm/Cargo registry commands; a version in a manifest is not proof it has been published.
+- Package availability and compatibility: `docs/harness/guides/releases.md` and `harness/release/manifest.json`. Check these before prescribing npm/Cargo registry commands; a version in a manifest is not proof it has been published.
 
 ## Integration decisions
 

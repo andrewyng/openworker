@@ -17,11 +17,8 @@ assume subscription Owner rights, and the normal executor is not granted permiss
 to change role assignments. Keep customer-owned/shared resources outside the trial's
 cleanup scope.
 
-**Qualification:** the Azure implementation has deterministic/local qualification.
-Live Azure IAM, AKS, PostgreSQL, Blob, OpenShell and cleanup qualification is still
-outstanding. Treat the path as experimental; a passing local test is not proof of
-permissions or runtime compatibility in a subscription.
+This deployment path is experimental. Validate live Azure permissions, network,
+OpenShell compatibility and independent cleanup in your subscription before use.
 
-See the [Azure service reference](../OWS-AZURE-SERVICE.md),
-[bootstrap](../OWS-AZURE-BOOTSTRAP.md) and
-[implementation/qualification record](../OWS-AZURE-IMPLEMENTATION.md).
+Start with the [service CLI](../../../harness/service-cli/README.md) and
+[deployment options](deployment.md).

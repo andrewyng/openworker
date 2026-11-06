@@ -41,10 +41,8 @@ service depends on it. Gateway versions are qualification pins, not a promise th
 any upstream release is interchangeable.
 
 See [private Kubernetes](private-kubernetes.md),
-[local installer](../OWS-LOCAL-INSTALLATION.md),
-[OpenShell Git access](../OPENSHELL-GIT-ACCESS.md) and
-[isolated coding teams](../ISOLATED-CODING-TEAMS.md).
+[deployment options](deployment.md) and [sessions and teams](sessions.md).
 
 OpenShell is the execution boundary. [Agent alignment](alignment.md),
-[guardrails](../GUARDRAILS-QUICKSTART.md) and [compliance](compliance.md) provide
+[Guardrails guide](guardrails.md) and [compliance](compliance.md) provide
 additional decisions and evidence around that boundary.

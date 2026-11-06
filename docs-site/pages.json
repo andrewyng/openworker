@@ -24,7 +24,7 @@
     "slug": "sessions"
   },
   {
-    "source": "docs/harness/GUARDRAILS-QUICKSTART.md",
+    "source": "docs/harness/guides/guardrails.md",
     "slug": "guardrails"
   },
   {
@@ -36,7 +36,7 @@
     "slug": "observability"
   },
   {
-    "source": "docs/harness/SDK-RELEASE-CONTRACT.md",
+    "source": "docs/harness/guides/releases.md",
     "slug": "releases"
   },
   {

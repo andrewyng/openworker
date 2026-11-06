@@ -9,7 +9,6 @@ latency, usage and failures. The compliance journal records committed policy and
 execution metadata with scoped queries and durable export. Do not turn on prompt
 or tool-content capture just to obtain usage statistics.
 
-[Observability design](../OBSERVABILITY.md) covers storage and correlation;
-[queries](../OBSERVABILITY-QUERIES.md) covers authorized run access;
-[guardrails and compliance](../GUARDRAILS-QUICKSTART.md) covers decision records,
+See the [observability setup](../../../harness/observability/README.md) for
+storage and export configuration, and [compliance](compliance.md) for audit
 retention and SIEM delivery. A missing exporter must not trigger tool replay.

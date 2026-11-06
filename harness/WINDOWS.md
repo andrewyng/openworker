@@ -37,11 +37,11 @@ not a security boundary against hostile code.
 
 State directories use Windows ACL protection. Secure static provider credentials
 use DPAPI; short-lived access tokens stay in memory. See
-[provider authentication](../docs/harness/PROVIDER-AUTH.md).
+[Models and credentials](../docs/harness/guides/providers.md).
 
 ## Integrate
 
-Start with the [desktop QuickStart](../docs/harness/QUICKSTART.md) or
+Start with the [Desktop app guide](../docs/harness/guides/desktop.md) or
 [Arcade Studio](examples/arcade/README.md). For device and computer-use tools, see
 [the custom host example](examples/native-tools-runtime/README.md).
 

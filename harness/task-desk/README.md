@@ -78,7 +78,7 @@ certificates expire after 30 days. The shared sandbox remains mutually trusted,
 not per-user isolation. Live model calls incur provider charges when used.
 
 Cloud deployment and measured results are documented in
-[`deploy/aws/README.md`](../../deploy/aws/README.md) and the server journal.
+[`deploy/aws/README.md`](../../deploy/aws/README.md).
 
 ## Reliability and tests
 

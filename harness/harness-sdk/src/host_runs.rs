@@ -3,7 +3,7 @@
 //!
 //! These live behind the protocol boundary so every client (Rust embedded or
 //! child process, other-language SDKs over stdio) gets identical semantics.
-//! The wire contract is documented in docs/harness/AGENT-RUN-PROTOCOL.md.
+//! SDK request and response types are defined in the protocol module.
 use super::Host;
 use crate::agents::{compile::AgentProfile, Approvals};
 use anyhow::{bail, ensure, Context, Result};

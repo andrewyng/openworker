@@ -135,7 +135,7 @@ sample remains no data, not zero; scripted model runs do not report token usage.
 Durable logical-turn context preserves linked execution segments across worker
 changes; other lifecycle activity also correlates through pseudonymous hashes.
 See [telemetry configuration and limits](../../harness/telemetry/README.md), and
-[collector/Langfuse qualification](EXPORT-QUALIFICATION.md).
+[Observability guide](../../docs/harness/guides/observability.md).
 
 Both UIs are optional. Customers can keep their own UI and OTel backend. The
 console is a small buildless Node/browser app without framework/npm runtime
@@ -223,5 +223,5 @@ Pinned choices/configuration verified against upstream sources:
 [Grafana's local LGTM reference](https://github.com/grafana/docker-otel-lgtm/tree/v0.36.0),
 [SeaweedFS mini](https://github.com/seaweedfs/seaweedfs/wiki/Quick-Start-with-weed-mini),
 [S3 credentials](https://github.com/seaweedfs/seaweedfs/wiki/S3-Credentials).
-Digests are in `compose.yaml`. Read the implementation ledger in
-`docs/harness/LOCAL-DEPLOYMENT-PLAN.md` for actual test evidence and limits.
+Digests are in `compose.yaml`. Validate the selected versions and resource limits
+in your own deployment.

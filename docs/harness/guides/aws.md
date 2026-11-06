@@ -18,13 +18,8 @@ network route. Expose the authenticated OpenWorker API to your application. Budg
 alerts are not a hard spending cap; the reference's independent cleanup mechanism
 is part of the trial lifecycle.
 
-**Qualification:** recorded AWS trials exercised real EKS/OpenShell execution,
-artifact access, recovery and independent expiry cleanup. Those results apply to
-the pinned trial configurations. A fresh installation of the current consolidated
-SDK release remains a release gate; older trial evidence does not automatically
-qualify every new release or customer topology.
+This deployment path is experimental. Validate your account policies, network,
+OpenShell version and recovery/cleanup behavior before using it for production.
 
-See [AWS preflight](../OWS-AWS-PREFLIGHT.md),
-[infrastructure export](../OWS-AWS-INFRASTRUCTURE-EXPORT.md),
-[lifecycle and cleanup](../OWS-AWS-LIFECYCLE.md) and
-[trial evidence](../OWS-AWS-TRIAL-PLAN.md).
+Use the [AWS deployment commands](../../../deploy/aws/README.md) and
+[service CLI](../../../harness/service-cli/README.md) for setup and operation.

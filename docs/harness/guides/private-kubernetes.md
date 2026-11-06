@@ -36,12 +36,9 @@ The `ows` installer plans and checks the OpenShell/OpenWorker installation toget
 An existing gateway keeps its original owner; selecting it does not authorize the
 installer to delete or reconfigure unrelated resources.
 
-**Qualification:** local kind/Kubernetes plus OpenShell has been exercised end to
-end. This is a reference for a private cluster, not certification of every
-Kubernetes distribution or network policy. The current local installer has fixture
-namespace/context constraints; do not treat its kind-only command as a generic
-production installer.
+The local installer has fixture namespace/context constraints. Use the
+[service Helm chart](../../../deploy/service/chart/README.md) for a cluster you
+operate; do not treat a kind-only test command as a generic production installer.
 
-Continue with the [local installation guide](../OWS-LOCAL-INSTALLATION.md),
-[deployment specification](../OWS-DEPLOYMENT-SPEC.md),
-[OpenShell integration](openshell.md) and [deployment options](deployment.md).
+Continue with [OpenShell integration](openshell.md) and
+[deployment options](deployment.md).

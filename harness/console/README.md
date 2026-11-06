@@ -61,5 +61,5 @@ existing endpoints. No protocol/schema change to local SDK/stdio/Desktop.
 `node --test harness/console/server.test.mjs` tests auth, mutation rejection,
 read failover, URL/Origin/Host boundary and browser credential separation.
 `browser-check.mjs` is optional Playwright QA against actual qualification data.
-See the deployment ledger for tested hosts/screenshots. The Sites local-only
+The Sites local-only
 workflow guided responsive design and visual verification; nothing is hosted.

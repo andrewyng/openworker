@@ -1,6 +1,6 @@
 # Diagnostic recording storage
 
-Storage and query foundation for [harness observability](../../docs/harness/OBSERVABILITY.md).
+Storage and query foundation for [Observability guide](../../docs/harness/guides/observability.md).
 Metadata-only immutable steps, SQLite/PostgreSQL adapters and a bounded independent
 writer. Does not depend on an OpenTelemetry exporter. Committed rows survive
 restart; the queue is not a durable outbox, billing ledger or audit record.
@@ -45,7 +45,7 @@ even an explicitly content-enabled exporter cannot add content fields to it.
 ## Service
 
 Add `observability` to the server-reference JSON configuration; see the
-[same-target and separate-target examples](../../docs/harness/OBSERVABILITY.md#service-configuration).
+[Observability guide](../../docs/harness/guides/observability.md).
 Run the existing server's `--config <path> migrate` command explicitly. PostgreSQL
 defaults to verified TLS; plaintext is accepted only for explicit loopback tests.
 Separate-target credentials and roots do not inherit from the execution database.
@@ -62,7 +62,7 @@ inspect the stable step ID rather than assume absence or replay agent work. Ther
 is no automatic connection replacement or write retry in M1; after a broken
 connection, restart the process to establish a fresh writer. A lock timeout leaves
 the connection reusable. The low-level Store API is trusted-host only; service reads use the
-authorized [recording query API](../../docs/harness/OBSERVABILITY-QUERIES.md).
+authorized [Observability guide](../../docs/harness/guides/observability.md).
 Counters are process-local diagnostics, not durable accounting. Local PostgreSQL
 qualification uses explicit loopback plaintext; the new recording connector's
 verified-TLS path has not yet been qualified against a real TLS database.
@@ -82,7 +82,7 @@ readable in the unchanged indexed SQL schema. No historical values are inferred.
 Authorized search, bounded rollups and management UI integration are implemented
 by the service/UI adapters; this crate remains the trusted storage/projection seam.
 Never display an incomplete total as complete. See the
-[M2 accounting contract](../../docs/harness/OBSERVABILITY.md#m2-accounting-contract).
+[Observability guide](../../docs/harness/guides/observability.md).
 
 ## Local tests
 
@@ -119,7 +119,7 @@ tests are explicitly ignored outside that runner.
 ## Authorized queries (M3)
 
 The reference service exposes run search, per-turn timeline/summary and bounded
-multi-run summaries. See the [query guide](../../docs/harness/OBSERVABILITY-QUERIES.md).
+multi-run summaries. See the [Observability guide](../../docs/harness/guides/observability.md).
 Search uses execution-store authorization before pagination. Recording reads
 recheck canonical permission after a separate read-only SQL transaction; a
 recording outage never becomes an authorization fallback.
@@ -134,6 +134,7 @@ There is no persistent summary cache or mandatory additional database.
 ## Export alignment
 
 Local recording and remote export share the [typed attribute registry](../telemetry/attributes.json).
-Capture policy and failure handling remain independent. The [local qualification](../../deploy/reference/EXPORT-QUALIFICATION.md)
-reconciles source records against the official collector and actual Langfuse
-observations, including cache/reasoning normalization and cross-worker context.
+Capture policy and failure handling remain independent. Use
+`node deploy/reference/qualify-exports.mjs` with a disposable local stack to check
+record/export correlation. See [local Langfuse setup](../../deploy/reference/LANGFUSE-LOCAL.md)
+for a persistent development installation.

@@ -148,7 +148,7 @@ The mount is independent of execution/model/bootstrap credentials and is supplie
 to harness roles and the migration/bootstrap job. It is never mounted into the
 management UI or TLS proxy. Bootstrap explicitly prepares both schemas before
 normal startup; separate target failures do not silently select execution storage.
-The APIs in [the query guide](../../../docs/harness/OBSERVABILITY-QUERIES.md) use
+The APIs in [Observability guide](../../../docs/harness/guides/observability.md) use
 current service-token/session scope. Live management UI charts remain separate.
 
 ### Optional exporter authentication
@@ -184,4 +184,4 @@ Scope Azure Blob data access to the exact artifact container and bind federation
 to `system:serviceaccount:ow-service:ows-artifacts` plus the original AKS issuer.
 Local Helm/backend tests pass; actual AKS admission, OIDC/RBAC/private Blob DNS and
 OpenShell runtime remain live-trial gates. See
-[Azure service reference](../../../docs/harness/OWS-AZURE-SERVICE.md).
+[Azure deployment guide](../../../docs/harness/guides/azure.md).

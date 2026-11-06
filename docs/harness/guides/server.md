@@ -198,7 +198,7 @@ in the application container; it does not require a separate service cluster.
 
 For shared workers, PostgreSQL recovery or independently scaled tool environments,
 see [deployment options](deployment.md) and the
-[service architecture scenarios](../SERVICE-ARCHITECTURE.html).
+[service setup](../../../deploy/service/README.md).
 
 ## Make it yours
 

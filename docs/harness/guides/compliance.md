@@ -32,11 +32,10 @@ expired metadata physically removed. Pending exports remain protected from pruni
 ## External security checks
 
 Hooks can send selected context to an external scanner before a protected step.
-The Prisma AIRS adapter is mock-qualified; live tenant/profile qualification is
-still required. Do not equate an external scanner with an audit log or implicitly
+The Prisma AIRS adapter is experimental; validate it against your tenant and
+profile before relying on it. Do not equate an external scanner with an audit log or implicitly
 upload the whole conversation.
 
-See the [guardrail/compliance QuickStart](../GUARDRAILS-QUICKSTART.md),
-[test catalog](../GUARDRAILS-TESTING.md) and [observability](observability.md).
+See [guardrails](guardrails.md) and [observability](observability.md).
 This provides auditability, not a regulatory certification or tamper-proof storage
 against a database administrator. Legal holds and immutable archives are separate work.

@@ -9,14 +9,14 @@ dependency. Python/Desktop remains separate.
 
 ## Desktop QuickStart
 
-For service deployments, [Git access through OpenShell](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+For service deployments, [OpenShell integration](../../docs/harness/guides/openshell.md)
 covers `RuntimeProfile.gitAccess` and `runtimeProfileGrants(profile)`. These select
 operator-installed grants without passing Git credentials through the SDK.
-For artifact-first builders and verifiers, see [isolated coding teams](../../docs/harness/ISOLATED-CODING-TEAMS.md)
+For artifact-first builders and verifiers, see [Sessions and teams](../../docs/harness/guides/sessions.md)
 and `isolatedCodingServiceTeam`; exact submitted revisions cross independent
 sandboxes without sharing a filesystem or GitHub credential.
 
-For server/container coding agents, see [coding tools and unattended sessions](../../docs/harness/CODING-TOOLS.md).
+For server/container coding agents, see [Tools and MCP](../../docs/harness/guides/tools.md).
 `autoSkipQuestions` is independent of `approvals`; select `coding.*` tools explicitly.
 
 The [desktop starters](../desktop-starters/README.md) bundle the runtime and wire
@@ -59,7 +59,7 @@ await harness.shutdown();
 
 For a guide that must only return text, set `tools: []`, `planning: false`,
 `memory: false` and `scheduling: false`. No implicit `ask_user` or `read_history`
-tools are exposed. See [tool-free agents](../../docs/harness/TOOL-FREE-AGENTS.md).
+tools are exposed. See [Sessions and teams](../../docs/harness/guides/sessions.md).
 
 No-key local providers use `api: 'chat-completions'` and an explicit `baseUrl`,
 such as `http://127.0.0.1:11434/v1`. Configure the provider before creating a live
@@ -110,9 +110,7 @@ authorize and constrain what they capture. Plain JSON return values are unchange
 ## Chat Completions streaming compatibility
 
 For partner proxies with short-lived bearer JWTs, use `auth.getToken` and
-`harness.updateProviderCredentials()`. See the
-[ExampleApp provider authentication guide](../../docs/harness/PROVIDER-AUTH.md)
-for proactive rotation, on-demand refresh, Rust examples and direct stdio messages.
+`harness.updateProviderCredentials()`. See [models and credentials](../../docs/harness/guides/providers.md) for provider setup.
 This requires rebuilding the native harness; access tokens stay in memory.
 
 The Rust host accepts both OpenAI's empty-choices usage trailer and OpenRouter's
@@ -369,8 +367,8 @@ storage: {
 ```
 
 Run the existing Rust storage migration **explicitly before startup**, using
-`Storage::migrate()` or the operator setup in
-[SDK-STORAGE.md](../../docs/harness/SDK-STORAGE.md). Node does not implement
+`Storage::migrate()`; follow the
+[storage migration instructions](../../docs/harness/guides/guardrails.md#upgrade-an-existing-installation). Node does not implement
 SQL adapters or run unrequested migrations. The same agent/team APIs work with
 either store. A PostgreSQL SDK host is **one supervisor per schema**, not a
 multi-node worker pool; use the distributed server deployment for that role.
@@ -381,7 +379,7 @@ Named multi-instance teams use `harness.newTeam(...)` and optional
 `delegation: { tools: ["coding.read_file"] }`. This exposes `team_define_type`
 under the app's ceiling. Exact approvals and private role revisions survive
 restart on either database; they are not global agent registrations. See
-[scoped types and current adapter limits](../../docs/harness/TEAM-TYPES-AND-SANDBOXES.md#sdk-scoped-type-implementation-31-october).
+[Sessions and teams](../../docs/harness/guides/sessions.md).
 Run `npm run test:team-types` with `OW_TS_TEST_HOST` and, for PostgreSQL,
 an isolated `OW_PG_TEST_URL` to exercise both real managed-process adapters.
 
@@ -428,7 +426,7 @@ separate; cross-platform Node APIs alone are not evidence of Windows acceptance.
 Agent definitions accept `limits: { maxModelCalls, maxOutputTokens, summaryTokens? }`.
 A new message can override them with `session.send(text, { limits })`; the service
 SDK accepts the same limits plus its usual `idempotencyKey`. Resuming keeps the
-original budget. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
+original budget. See [Sessions and teams](../../docs/harness/guides/sessions.md)
 for counting rules, the final-summary reserve and sandbox-owned process tools.
 
 ### Service teams with private types
@@ -440,4 +438,4 @@ existing exact-definition approval flow. Definitions remain private to that lead
 The service controller and worker restore the same approved revision after restart.
 This adapter currently shares the original team environment; nondefault remote
 workspace/new/member placement is still gated. See the
-[team design and deployment limits](../../docs/harness/TEAM-TYPES-AND-SANDBOXES.md#service-side-scoped-types).
+[Sessions and teams](../../docs/harness/guides/sessions.md).

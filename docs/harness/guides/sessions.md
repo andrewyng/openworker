@@ -26,5 +26,7 @@ durable inboxes/board mentions and wait without keeping an execution slot occupi
 Shared workspaces use separate worktrees; independent sandboxes exchange changes
 through explicit handoff. Team creation does not enlarge the lead's permissions.
 
-See [agent APIs](../AGENTS-API.md), [team implementation](../AGENT-TEAMS-IMPLEMENTATION.md),
-[session grants](../SESSION-GRANTS.md) and [storage](../SDK-STORAGE.md).
+Continue with the [Rust SDK](../../../harness/harness-sdk/README.md) or
+[TypeScript SDK](../../../harness/typescript-sdk/README.md) for session and team
+APIs. See [alignment](alignment.md) for approval behavior and
+[deployment options](deployment.md) for shared service storage.

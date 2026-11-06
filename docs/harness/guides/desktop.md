@@ -252,7 +252,7 @@ agent layer; your chosen Rust UI framework owns its window and installer.
 The complete desktop app stores sessions under its application-data directory.
 It creates one session per summary; the previous model context cannot silently
 carry into the next directory. Add [custom tools](tools.md),
-[guardrails](../GUARDRAILS-QUICKSTART.md) or [OpenShell isolation](openshell.md)
+[Guardrails guide](guardrails.md) or [OpenShell isolation](openshell.md)
 when your product needs them. Packaging and pre-publication setup details are in
 [the example README](../../../harness/examples/quickstart/README.md).
 

@@ -33,12 +33,13 @@ test('published Markdown documentation has no dangling relative links',()=>{
   }
   assert.deepEqual(missing,[]);
 });
-test('QuickStart uses source starters and makes host callback isolation explicit',()=>{
-  const html=readFileSync(join(root,'docs/harness/DESKTOP-QUICKSTART.html'),'utf8');
-  assert.equal(html.includes('npm create openworker@latest'),false);
-  assert.ok(html.includes('harness/desktop-starters/create.mjs'));
-  assert.ok(html.includes('electron-game-builder'));
-  assert.ok(html.includes('tauri-game-builder'));
-  assert.ok(html.includes('no OS isolation'));
-  assert.ok(existsSync(join(root,'docs/harness/QUICKSTART.md')));
+test('public quickstart is self-contained and states host execution boundaries',()=>{
+  const guide=readFileSync(join(root,'docs/harness/guides/desktop.md'),'utf8');
+  assert.ok(guide.includes('harness/examples/quickstart'));
+  assert.ok(guide.includes('sandbox: "off"'));
+  assert.ok(guide.includes('not an OS-isolation demonstration'));
+  assert.ok(existsSync(join(root,'docs/harness/guides/server.md')));
+  assert.equal(existsSync(join(root,'docs/harness/evidence')),false);
+  const top=readdirSync(join(root,'docs/harness'));
+  assert.deepEqual(top,['guides']);
 });

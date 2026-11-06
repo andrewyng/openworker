@@ -1,117 +1,59 @@
 # OpenWorker Harness
 
-Start with the [SDK guides](../docs/harness/guides/index.md) or run the [local documentation site](../docs-site/README.md).
-
 Build your product and user experience. Let OpenWorker run the agents.
 
 OpenWorker Harness is a Rust agent runtime with Rust and TypeScript SDKs. It
 manages model requests, tools, approvals, durable sessions and agent teams.
-Embed it in a desktop application or deploy the server reference with PostgreSQL.
-The shipped Rust runtime does not require Python.
+Embed it in a desktop application or deploy the service with PostgreSQL.
+The shipped Rust runtime does not require Python. The existing OpenWorker
+Desktop application continues to use its Python harness.
 
-This branch is a **release candidate for integration testing**, not a stable SDK
-release announcement. Use a pinned checkout and build the SDK and executable from
-the same revision. The existing OpenWorker Desktop application continues to use
-its Python harness; this directory is additive.
-
-## Integration branch
-
-Use **`openworker-harness-sdk`** in `andrewyng/openworker` for harness feature
-development and partner integration. It is the shared integration branch that
-will eventually merge into `main`. Start individual feature branches from it and
-merge verified milestones back regularly.
-
-```sh
-git fetch origin
-git switch openworker-harness-sdk
-git pull --ff-only origin openworker-harness-sdk
-```
-
-Pin a commit for reproducible partner builds, and build the SDK and harness
-executable from that same checkout. Source manifests remain development packages.
+Use a pinned checkout and build the SDK and executable from the same revision.
+Source manifests are development packages; see [versions and compatibility](../docs/harness/guides/releases.md).
 
 ## Start here
 
-- **[Desktop QuickStart](../docs/harness/guides/desktop.md)** — build a Windows or Mac
-  app with TypeScript/Electron or Rust/Tauri.
-- **[Documentation site](../docs-site/README.md)** — build the local
-  HTML file in a browser for tabbed Rust/TypeScript examples.
-- **[Arcade Studio](examples/arcade/README.md)** — the flagship integration:
-  a game library, cloud/local model settings, guided creation, streamed activity,
-  isolated previews, approval-based publishing and revision recovery.
-- **[Server getting started](../docs/harness/DEVELOPER-GETTING-STARTED.md)** —
-  REST/SSE, PostgreSQL, workers and deployment references.
-- **[Coding tools and unattended sessions](../docs/harness/CODING-TOOLS.md)** —
-  file editing/search, managed preview processes and auto-skip questions.
-- **[Coding agents](../docs/harness/CODING-AGENTS.md)** — versioned single-agent
-  and shared-team presets, scoped builder worktrees and service releases.
-- **[Trusted Git broker](../docs/harness/TRUSTED-GIT-BROKER.md)** — optional
-  private-source staging and constrained publication outside agent sandboxes;
-  separate from [sandbox Git through OpenShell](../docs/harness/OPENSHELL-GIT-ACCESS.md).
-- **[Workspace and GitHub scenarios](../docs/harness/CODING-WORKSPACE-SCENARIOS.md)** —
-  ASCII flows for shared worktrees, independent bundle transfer and GitHub access.
-- **[Turn limits and process ownership](../docs/harness/TURN-LIMITS-AND-PROCESSES.md)** —
-  agent defaults, per-turn budgets, correctable arguments and OpenShell server lifetime.
-- **[Memory and scheduling](../docs/harness/ASSISTANT-TOOLS.md)** — opt-in durable
-  learner memory and scheduled work on SQLite or PostgreSQL.
-- **[Python/Rust tool survey](../docs/harness/TOOL-PARITY.md)** — remaining parity gaps.
-- **[Observability](../docs/harness/OBSERVABILITY.md)** — recording storage,
-  independent PostgreSQL connections and staged usage/timeline implementation.
-- **[Guardrails and compliance](../docs/harness/GUARDRAILS-QUICKSTART.md)** —
-  built-in/regex/model checks, hooks, scoped audit reads and optional security/SIEM adapters.
-- **[Safety test catalog](../docs/harness/GUARDRAILS-TESTING.md)** — what each suite
-  verifies, with local storage, process/provider and OpenShell qualification.
-- **[Binary footprint](../docs/harness/BINARY-FOOTPRINT.md)** — measured stripped
-  release sizes and build settings.
-- **[GCP deployment progress](../docs/harness/OWS-GCP-TRIAL-PLAN.md)** — qualified
-  bootstrap/local graph checks and remaining cloud execution/cleanup gates.
+- [SDK guides](../docs/harness/guides/index.md) — choose a desktop or web application.
+- [Desktop app](../docs/harness/guides/desktop.md) — build Code Atlas with an Electron UI and the TypeScript SDK; a Rust agent example is included.
+- [Web app](../docs/harness/guides/server.md) — upload a PDF and ask questions about it.
+- [Arcade Studio](examples/arcade/README.md) — a desktop game-building application.
+- [Rust SDK](harness-sdk/README.md) and [TypeScript SDK](typescript-sdk/README.md).
+- [Tools and MCP](../docs/harness/guides/tools.md), [sessions and teams](../docs/harness/guides/sessions.md), and [model credentials](../docs/harness/guides/providers.md).
+- [Guardrails](../docs/harness/guides/guardrails.md), [alignment](../docs/harness/guides/alignment.md), [compliance](../docs/harness/guides/compliance.md), and [observability](../docs/harness/guides/observability.md).
+- [Deployment options](../docs/harness/guides/deployment.md) — local containers, Kubernetes and cloud deployments.
+- [Documentation site](../docs-site/README.md) — build the HTML guides from Markdown.
 
 ## What the harness handles
 
-- Responses, Chat Completions and Anthropic Messages APIs; configurable cloud
-  proxies and compatible local servers such as Ollama or vLLM.
-- Streaming output, tool execution, cancellation, context compaction and session
-  recovery.
-- Human approvals and questions, session-scoped grants and optional model-based
-  approval review. Approval modes do not replace execution isolation.
-- Native Rust tools, app-owned callbacks and explicitly registered MCP servers.
-- Agent teams with durable task/message boards; SQLite or PostgreSQL storage.
-- Optional OpenTelemetry export and artifact storage for server deployments.
-- Guardrails and blocking hooks; metadata-only compliance evidence, durable
-  observer delivery and optional HTTP security scanners/SIEM export.
-- App-owned authentication callbacks and proactive rotation of short-lived bearer
-  tokens, without recreating sessions.
+- Responses, Chat Completions and Anthropic Messages APIs, cloud proxies and compatible local model servers.
+- Streaming, tools, cancellation, compaction and durable session recovery.
+- Human approvals, optional model-based review and session-scoped grants.
+- Rust tools, application callbacks and explicitly registered MCP servers.
+- Agent teams with durable inboxes and boards, on SQLite or PostgreSQL.
+- Guardrails, hooks, compliance recording and optional security/SIEM adapters.
+- Observability export and artifact storage for service deployments.
 
-Your application owns its UI, user/device authentication, project catalog and
-product-specific tools. The harness owns the execution record. Keep these storage
-boundaries separate; use SDK/protocol APIs instead of reading runtime tables.
+Your application owns its UI, authentication and product workflow. Keep model keys
+and service credentials in trusted configuration, outside prompts and browser code.
+Use SDK/service interfaces instead of reading runtime tables directly.
 
 ## Pick an integration
 
-For authenticated remote SDK access, release/RuntimeProfile deployment and the
-`ows` CLI, see the [service CLI quickstart](../docs/harness/SERVICE-M3-QUICKSTART.md)
-and [local Docker deployment](../deploy/service/README.md). For expiring service
-credentials, configuration and Kubernetes capacity, see the
-[service administration guide](../docs/harness/SERVICE-M4-QUICKSTART.md). The
-[service specification](../docs/harness/OPENWORKER-SERVICE.md) also describes later
-management and cloud milestones; see the ledger for qualified scope.
-The [local Kubernetes installation guide](../docs/harness/OWS-LOCAL-INSTALLATION.md)
-covers pinned OpenShell installation, existing-gateway reuse and installer recovery.
-
 | Application | Interface |
 |---|---|
-| Rust desktop app | Embed `openworker-sdk` in your Tokio process, or use its managed child |
+| Rust desktop app | Run `openworker-sdk` in your Tokio process or use a managed child |
 | TypeScript desktop app | `@openworker/harness` manages the Rust child over private stdio |
-| Custom process client | [Versioned SDK protocol](../docs/harness/AGENT-RUN-PROTOCOL.md) |
-| Multi-node service | [Server reference](server-reference/README.md), REST/SSE and PostgreSQL |
+| Custom tool host | [Native host builder](partner/README.md) and [tools SDK](tools-sdk/README.md) |
+| Service | [API and workers](server-reference/README.md), [CLI](service-cli/README.md), REST/SSE and PostgreSQL |
 
-Rust SDK and TypeScript SDK share the same engine. The TypeScript SDK does not
-reimplement agent logic. Native tool crates are separate from the Harness SDK.
+For local containers and Kubernetes, start with the [service deployment README](../deploy/service/README.md).
+The Rust and TypeScript SDKs share the same engine; TypeScript does not reimplement
+agent logic.
 
 ## Build from this checkout
 
-Use the pinned Rust toolchain in `rust-toolchain.toml`, Node.js 24 and npm 11+ for
-the JavaScript packages, plus your platform's native build prerequisites.
+Use the pinned Rust toolchain in `rust-toolchain.toml`, Node.js 24 and npm 11+,
+plus your platform's native build prerequisites.
 
 ```sh
 cd harness
@@ -121,82 +63,50 @@ npm --prefix typescript-sdk run build
 ```
 
 The executable is `target/release/openworker-harness` (`.exe` on Windows).
-Crate/npm manifests are currently source-distribution packages: use local paths
-or a pinned Git revision, not an assumed published registry package.
 
 ## Execution and safety
 
 The runtime defaults to NVIDIA OpenShell. Provision Docker/OpenShell before using
-that execution mode. Unsupported/unavailable sandboxing fails rather than silently
-falling back. Desktop starters explicitly use `sandbox: "off"` for app-owned
-callbacks; those callbacks have the application's privileges. Their generated-game
-preview is separately isolated from the native bridge and network.
+that mode. Unavailable sandboxing fails rather than silently falling back.
+Desktop examples explicitly select `sandbox: "off"` for application-owned work;
+that work runs with the application's privileges and has no OS isolation from
+other host resources. See [OpenShell integration](../docs/harness/guides/openshell.md).
 
-Linux is the server/OpenShell reference platform. Windows and macOS have desktop
-SDK integrations; native build and packaging prerequisites apply. Do not infer
-that every architecture, installer, local model or sandbox combination is qualified.
-
-- [Windows build notes](WINDOWS.md)
-- [Tool and resource policy](../docs/harness/APP-POLICY-CONTRACT.md)
-- [Guardrails and hooks — draft API and plan](../docs/harness/GUARDRAILS-AND-HOOKS.md)
-- [Session approvals](../docs/harness/SESSION-GRANTS.md)
-- [Provider authentication and token rotation](../docs/harness/PROVIDER-AUTH.md)
-- [Custom native tool packaging](../docs/harness/PARTNER-SDK-BUILD.md)
-- [Deployment and operations](../deploy/reference/README.md)
+Linux is the service/OpenShell reference platform. Windows and macOS have desktop
+SDK integrations; native build and packaging prerequisites apply. See
+[Windows build notes](WINDOWS.md). Build and test on the OS/architecture you ship.
 
 ## Layout
 
 ```text
-runtime/              Agent loop, policies, sessions, execution and protocol
-harness-sdk/          Rust library and SDK-capable executable
+runtime/              Agent loop, policy, sessions and execution
+harness-sdk/          Rust SDK and native executable
 typescript-sdk/       Node/TypeScript client
 tools-sdk/            Native Rust tool interface
-store-postgres/       PostgreSQL storage and coordination
-artifacts/            Artifact persistence
+store-postgres/       Service persistence and coordination
+artifacts/            Filesystem and object-store artifacts
 telemetry/            OpenTelemetry integration
-server-reference/     API, worker and administrative server roles
-desktop-starters/     Small Electron and Tauri application generators
-examples/arcade/      Flagship desktop app
-examples/             Focused coworker, tool and custom-host examples
-tests/                Shared contract fixtures and acceptance tests
-partner/              Generic custom-host builder and protocol reference
-console/              Optional observability console
-task-desk/            Small server-backed reference app
+server-reference/     Service API and workers
+service-cli/          ows CLI
+service-ui/           Management UI
+desktop-starters/     Electron and Tauri project generators
+examples/             Runnable applications and integrations
+tests/                Shared contracts and test entry points
 ```
 
-## Verify changes
+## Test changes
 
 ```sh
 cd harness
 cargo fmt --all -- --check
 cargo test --locked -p openworker-sdk --features test-support --test provider_auth
-cargo test --locked -p notification-tools -p device-tools -p computer-tools --lib
 npm --prefix typescript-sdk test
 node --test desktop-starters/test.mjs tests/stdio-client.test.mjs
 ```
 
-The full Linux workspace/storage matrix is in
-[CI](../.github/workflows/rust-sdk.yml). Tests that need PostgreSQL, OpenShell,
-live credentials or a visible desktop must be enabled and qualified explicitly.
-See the [release checklist](../docs/harness/RELEASE-CHECKLIST.md) for this snapshot.
+The workspace/storage matrix is in [CI](../.github/workflows/rust-sdk.yml).
+Tests requiring PostgreSQL, OpenShell, credentials or a visible desktop must be
+explicitly enabled with their prerequisites. A skipped external test is not a pass.
 
 Licensed under the repository's [MIT license](../LICENSE). Third-party example
 assets retain their own notices and licenses.
-
-Repeatable resilience checks: [test cases and run commands](../docs/harness/RESILIENCE-TEST-CASES.md)
-cover fast contracts, real PostgreSQL worker recovery and local Kubernetes/OpenShell.
-
-Named agent teams provide multiple instances per type, durable inboxes, mention-only
-boards and waits that release server capacity. Both SDKs use the same Rust domain
-on SQLite/PostgreSQL; shared OpenShell teams run through the service. The earlier
-work-item team API keeps its assignment/review contract.
-See the [team QuickStart](../docs/harness/AGENT-TEAMS-QUICKSTART.md),
-[decisions](../docs/harness/AGENT-TEAMS-DECISIONS.md),
-[test cases](../docs/harness/AGENT-TEAMS-TEST-CASES.md), and
-[qualification ledger](../docs/harness/AGENT-TEAMS-IMPLEMENTATION.md).
-
-Opt-in session-defined types now use exact durable approvals and private runtime
-revisions in both SDKs on SQLite/PostgreSQL. Per-member placement, workspace
-selection and dynamic retirement continue in [Team types and sandboxes](../docs/harness/TEAM-TYPES-AND-SANDBOXES.md).
-Its [implementation ledger](../docs/harness/TEAM-TYPES-AND-SANDBOXES-PLAN.md) distinguishes
-the current trusted outside harness from the future sandbox-contained MCP integration.

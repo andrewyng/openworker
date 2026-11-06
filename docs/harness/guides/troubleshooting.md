@@ -15,4 +15,4 @@ For a useful bug report include the SDK/host versions, OS/CPU, execution/storage
 profile, session/run IDs and sanitized error/event codes. Exclude API keys,
 provider tokens, prompts, file contents and private state directories.
 
-[Release contract](../SDK-RELEASE-CONTRACT.md) · [Test catalog](../GUARDRAILS-TESTING.md)
+[Versions and compatibility](releases.md) · [Guardrails guide](guardrails.md)

@@ -2,8 +2,7 @@
 
 Plain Markdown in `docs/harness/` is authoritative and readable on GitHub.
 `pages.json` chooses the public navigation; `scripts/prepare.mjs` adds site-only
-frontmatter and rewrites links. Other technical references remain accessible on
-GitHub. Never edit generated `src/content/docs/`.
+frontmatter and rewrites links. Only user-facing guides are published. Never edit generated `src/content/docs/`.
 
 ```sh
 npm ci

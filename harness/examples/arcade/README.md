@@ -488,7 +488,7 @@ For Anthropic, also set `ARCADE_LIVE_PROVIDER=anthropic` and supply a credential
 containing `ANTHROPIC_API_KEY`. `node test/live-ui.mjs` plays the generated test game
 from its saved evidence after a successful live test.
 The live test preserves its synthetic game and evidence in a temporary directory.
-See [release checklist](../../../docs/harness/RELEASE-CHECKLIST.md) for verified results and
+See [Versions and compatibility](../../../docs/harness/guides/releases.md) for verified results and
 remaining qualification gaps; fixture success is not a live-model claim.
 
 ## Move into its own repository

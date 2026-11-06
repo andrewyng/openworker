@@ -59,8 +59,8 @@ example with your reviewed coworker/tool distribution for a real application.
 Base images are pinned; apt package updates mean rebuilds are not byte-identical.
 Production image signing, SBOMs and registry publishing are not automated here.
 
-For qualification on this Mac we reused freshly built, stripped Linux ARM64
-binaries in `.ow-helm/build/{openworker,openworker-server-reference}`:
+For a local prebuilt-image workflow, place matching stripped Linux binaries
+in `.ow-helm/build/{openworker,openworker-server-reference}`:
 
 ```sh
 docker build --target prebuilt -f deploy/containers/Dockerfile -t openworker-harness:local .
@@ -68,10 +68,7 @@ docker build -f deploy/local/runner.Dockerfile -t openworker-runner:local .ow-he
 node deploy/helm/load-images.mjs /path/to/kind YOUR_KIND_CLUSTER openworker-harness:local openworker-runner:local
 ```
 
-The prebuilt target and resulting pods were exercised. The cold release-builder
-target was not executed in this qualification; the separate `source-check` target
-passed a clean locked Cargo check from the Docker build context, including the
-shared compaction contract fixtures. Ensure the runner image contains
+Ensure the runner image contains
 the **same Linux executable** as the harness image; the harness pins its identity.
 The loader imports the selected CPU platform and returns manifest-digest image
 references. It does not confuse Docker configuration IDs with manifest digests,
@@ -175,7 +172,7 @@ egress is **not enabled** by the local fixture. OpenTelemetry is optional via an
 explicit HTTPS `config.telemetry.endpoint` and matching egress; no collector or
 dashboard is installed implicitly by the chart. The Compose console remains
 separate; optional Task Desk is configured through `taskDesk` values. See the
-[developer guide](../../docs/harness/DEVELOPER-GETTING-STARTED.md) for the
+[Deployment options](../../docs/harness/guides/deployment.md) for the
 current integration and AWS deployment path.
 
 ## Inspect, upgrade and stop

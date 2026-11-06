@@ -86,4 +86,4 @@ work; there is no automatic resume-after-credential-change operation in this sli
 The [Rust SDK](../harness-sdk/README.md) exposes these methods through its request
 API in embedded and managed-stdio modes; this remains a development interface.
 For multi-node Linux deployments, use the host-owned identity references and
-worker-only credentials in [providers and teams](../../docs/harness/PROVIDERS-AND-TEAMS.md).
+worker-only credentials in [Models and credentials](../../docs/harness/guides/providers.md).

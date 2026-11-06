@@ -6,15 +6,15 @@ One Rust client, two deployment backends, the same native engine. This is a beta
 crate with an explicit SDK/runtime compatibility contract. It is distinct
 from `openworker-tools`, which defines partner-owned tools.
 
-For service coding teams, see [isolated coding teams](../../docs/harness/ISOLATED-CODING-TEAMS.md)
+For service coding teams, see [Sessions and teams](../../docs/harness/guides/sessions.md)
 for independent OpenShell checkouts, exact-submission verification and explicit
-integration. [OpenShell Git access](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+integration. [OpenShell integration](../../docs/harness/guides/openshell.md)
 documents optional named RuntimeProfile grants; artifacts need no child Git key.
 
 **Storage-selectable host:** use `HostConfig` with either `Storage::Sqlite` or
 `Storage::Postgres`, and register one or more trusted coworkers. Both
 `HarnessClient::embedded` and `HarnessClient::managed_stdio` support this host,
-including Teams. See [SDK storage and teams](../../docs/harness/SDK-STORAGE.md)
+including Teams. See [Sessions and teams](../../docs/harness/guides/sessions.md)
 for configuration, native child packaging and the tested four-way matrix.
 The host may also start with zero agents. `agents::Harness::create_agent(definition)`
 registers an agent after startup and returns an `AgentHandle` with `new_session`,
@@ -39,7 +39,7 @@ Partner Rust application → HarnessClient
 
 For a lesson guide or text-only assistant, use an empty tool list with optional
 capabilities disabled. It receives no implicit question/history tools. See
-[tool-free agents](../../docs/harness/TOOL-FREE-AGENTS.md) for Rust/TypeScript
+[Sessions and teams](../../docs/harness/guides/sessions.md) for Rust/TypeScript
 examples and regression coverage.
 
 ```rust,no_run
@@ -102,7 +102,7 @@ not binary streams. Timers and steering are explicitly unsupported in `state()`.
 
 Most applications should start with `openworker_sdk::agents`: define agents as
 values, run them, handle typed interruptions. It is a thin layer over the
-`HarnessClient` described below. See [Agents API](../../docs/harness/AGENTS-API.md).
+`HarnessClient` described below. See [Sessions and teams](../../docs/harness/guides/sessions.md).
 
 ```rust,ignore
 use openworker_sdk::agents::*;
@@ -198,7 +198,7 @@ a later live notification arrived; snapshots and replay may overlap.
 Requests are typed for the core flow; evolving snapshots/results remain JSON.
 The bounded `request(method, params)` escape hatch covers model connections,
 defaults, policies, permissions/revocation, skills, history and native tool controls
-using the [existing protocol](../partner/PROTOCOL.md). Initialization is SDK-owned.
+using the SDK-owned process protocol. Initialization is SDK-owned.
 Use `attach` for replay subscriptions. Model credentials should be configured via
 `connection/set`, never executable arguments or coworker bundles. Managed children
 receive a narrow OS/runtime environment allowlist, not inherited provider keys.
@@ -244,7 +244,7 @@ not weaken saved approval identities to make upgrades appear seamless.
 
 ## Example and verification
 
-For service deployments, [Git access through OpenShell](../../docs/harness/OPENSHELL-GIT-ACCESS.md)
+For service deployments, [OpenShell integration](../../docs/harness/guides/openshell.md)
 explains `RuntimeProfile.git_access`, operator-owned provider pins and
 `RuntimeProfile::delegated_grants()` for bounded child placement. Git credentials
 remain in OpenShell; the SDK selects a versioned grant name.
@@ -275,11 +275,11 @@ timeout and serial test execution. Mac host compilation is not a native Mac port
 
 Set an agent default with `.limits(TurnLimits { ..Default::default() })`; use
 `session.send_with_limits(text, limits)` for one new message. Resuming keeps the
-original limits and consumption. See [turn budgets and process ownership](../../docs/harness/TURN-LIMITS-AND-PROCESSES.md)
-for the bounded final-summary reserve and sandbox-owned process tools.
+original limits and consumption. The runtime reserves a bounded final-summary
+response; process lifetime remains separate from turn completion.
 
 
-Service coding teams can select an optional [trusted Git broker](../../docs/harness/TRUSTED-GIT-BROKER.md).
+Service coding teams can select an optional trusted Git broker.
 The app supplies a named repository, permitted ref and exact commit. The harness
 stages verified artifacts and ToolRunner imports them before the lead starts;
 GitHub credentials stay outside the sandbox. Publication is a separately selected

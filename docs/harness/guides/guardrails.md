@@ -5,10 +5,6 @@ selected tool results. The same engine serves Rust embedded applications, Rust
 managed subprocesses, TypeScript managed subprocesses and service workers.
 Checks remain active in Ask, auto-approve and bypass modes.
 
-See the [contract](GUARDRAILS-AND-HOOKS.md), [API decisions](GUARDRAILS-TEXT-AND-HOOKS-API.md),
-[implementation ledger](GUARDRAILS-AND-HOOKS-PLAN.md) and
-[test catalog](GUARDRAILS-TESTING.md) for scope and qualification evidence.
-
 ## Start with two rules
 
 <!-- sdk-tabs -->
@@ -232,9 +228,8 @@ hold, immutable archive or protection against a privileged database administrato
 
 ## Prisma AIRS and other scanners
 
-The Prisma adapter is **mock-qualified**. No live Prisma credentials or vendor
-qualification were used. It follows the documented synchronous scan request;
-qualify the real tenant/profile before enabling it in production.
+The Prisma adapter is experimental. It uses the synchronous scan API; validate
+your tenant, profile and failure handling before enabling it in production.
 
 ```typescript
 const harness = await Harness.start({ inheritEnv: ["PRISMA_AIRS_KEY"] });

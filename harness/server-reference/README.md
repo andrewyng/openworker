@@ -1,13 +1,10 @@
 # Two API / two worker reference
 
-For the opt-in versioned service API and Rust/TypeScript `Harness.connect()`, see
-[Service M1 quickstart](../../docs/harness/SERVICE-M1-QUICKSTART.md).
-For release deployment, RuntimeProfiles and automatic OpenShell provisioning, see
-[Service M2 quickstart](../../docs/harness/SERVICE-M2-QUICKSTART.md).
-For optional diagnostic recording, including independent execution/observability
-database connections, see the [observability spec](../../docs/harness/OBSERVABILITY.md)
-and [recording adapter guide](../observability/README.md). M1 stores existing
-instrumentation; complete usage accounting and management UI queries follow later.
+For service placement and RuntimeProfiles, see
+[deployment options](../../docs/harness/guides/deployment.md). For Rust/TypeScript
+`Harness.connect()`, see the SDK READMEs. For diagnostic recording and independent
+execution/observability database connections, see the
+[recording adapter guide](../observability/README.md).
 
 A deliberately small native Rust server adapter and Node client, using the same
 runtime as Desktop/stdio/SDK. No second agent loop and no Python dependency.

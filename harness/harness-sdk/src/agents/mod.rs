@@ -122,7 +122,7 @@ impl Approvals {
 /// An agent definition. Cheap to clone; nothing runs until a [`Harness`] loads it.
 ///
 /// Also the wire format of `HostConfig.agents`: other-language SDKs send the
-/// same JSON (see `docs/harness/AGENT-RUN-PROTOCOL.md`).
+/// same JSON representation defined by the SDK protocol types.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {

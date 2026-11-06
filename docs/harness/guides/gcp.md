@@ -16,12 +16,9 @@ Use scoped service-account impersonation and workload identity instead of copyin
 administrator credentials into pods. Validate the chosen node OS/kernel and
 networking with OpenShell; do not assume that a different GKE mode is interchangeable.
 
-**Qualification:** bootstrap, infrastructure/lifecycle logic and installation
-wiring have local qualification. A complete live GKE/OpenShell workload and
-independent cleanup trial is still outstanding. Treat this deployment path as
-experimental until that evidence is recorded.
+This deployment path is experimental. A production deployment requires validation
+of live GCP permissions, OpenShell compatibility and independent cleanup in your
+project.
 
-See [GCP bootstrap](../OWS-GCP-BOOTSTRAP.md),
-[infrastructure](../OWS-GCP-INFRASTRUCTURE.md),
-[installation](../OWS-GCP-INSTALLATION.md),
-[lifecycle](../OWS-GCP-LIFECYCLE.md) and [trial status](../OWS-GCP-TRIAL-PLAN.md).
+Start with the [service CLI](../../../harness/service-cli/README.md) and
+[deployment options](deployment.md).

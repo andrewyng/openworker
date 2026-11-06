@@ -364,21 +364,13 @@ The native probe uses explicitly test-only unsandboxed workspaces. The separate
 checks real HTTP/SSE clients, API/worker replacement and OpenShell tool execution.
 Run that on fresh owned sandbox resources rather than a live application's workspace.
 
-The local regression PostgreSQL fixture needed 1 GiB rather than 512 MiB after
-accumulating schemas; observe OOM/connection/latency signals and size your own
-deployment. Four worker slots in this test are not a recommendation for every host.
+## Production deployment
 
-## Remaining before a server release
+Monitor database memory, connections, latency and retained-data growth. Choose
+worker slots from your own workload measurements. Applications own tenant quotas,
+ingress authorization, database high availability and upgrade/cutover procedures.
 
-The bounded worker service, portable OpenShell environment profile, non-owner
-session creation and REST/SSE reference now exist and have local replica tests.
-Basic scoped authorization, artifacts, OpenTelemetry and local/AWS reference
-deployment qualification are also available in the server journal. Remaining:
-production tenant isolation/quotas/ingress, HA database and full operational
-cutover, and broader physical-node/cloud/load acceptance. The Rust SDK supports
-SQLite or PostgreSQL; see [SDK storage](../../docs/harness/SDK-STORAGE.md). Review
-the exact selected deployment's limits rather than treating source-level feature
-coverage as production certification. See
-[the review](../../docs/harness/RELEASE-CHECKLIST.md),
-[the continuation checklist](../../deploy/reference/OPERATIONS.md)
-and [server specification](../../docs/harness/DEVELOPER-GETTING-STARTED.md).
+The Rust SDK supports SQLite or PostgreSQL; see
+[sessions and teams](../../docs/harness/guides/sessions.md),
+[versions and compatibility](../../docs/harness/guides/releases.md) and
+[deployment options](../../docs/harness/guides/deployment.md).

@@ -5,11 +5,9 @@ The upstream accepts a synthetic secret only; an opaque placeholder reaching it
 unchanged fails authentication. Python is used only for this test remote and its
 orchestrator. The shipped harness and credential helper remain native Rust.
 
-The [test catalog](../../../../../docs/harness/CODING-AGENT-PRESETS-TESTING.md)
-explains the layers. The [journal](../../../../../docs/harness/CODING-AGENT-PRESETS-PLAN.md)
-records actual native and public service/SDK runs.
-The [service guide](../../../../../docs/harness/OPENSHELL-GIT-ACCESS.md) explains
-operator grants, RuntimeProfiles and SDK setup.
+See [sessions and teams](../../../../../docs/harness/guides/sessions.md) and
+[OpenShell integration](../../../../../docs/harness/guides/openshell.md) for the
+application-facing concepts.
 
 ## What is exercised
 

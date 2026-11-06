@@ -21,7 +21,7 @@ A custom proxy can supply short-lived bearer tokens through the provider-auth
 callback interface and proactively rotate them. Authentication refresh does not
 create another session or silently change the selected model.
 
-See [provider APIs and teams](../PROVIDERS-AND-TEAMS.md),
-[desktop example](desktop.md) and [guardrail models](../GUARDRAILS-QUICKSTART.md).
+See the [desktop example](desktop.md), [TypeScript SDK](../../../harness/typescript-sdk/README.md)
+and [guardrails guide](guardrails.md).
 A compatible endpoint does not guarantee equivalent tool or image behavior;
 qualify the specific model/configuration used by your application.

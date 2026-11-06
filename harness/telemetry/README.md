@@ -173,9 +173,9 @@ spans' `on_end`, not global sampler/on_start hooks. Keep ownership of shared
 providers: the sink flushes but does not explicitly shut them down. Official
 Rust OTel components are pinned to 0.33.1. Custom sinks own any extra fields they add.
 
-## Reproduce qualification
+## Test export integration
 
-See [export qualification](../../deploy/reference/EXPORT-QUALIFICATION.md) for the
-pinned local collector/Langfuse fixture, fault tests, recording reconciliation and
-limits. The fixture uses synthetic measurements, no paid models or real tools.
-Fresh-cloud, Windows VM and multi-AZ qualification remain separate work.
+Use `node deploy/reference/qualify-exports.mjs` with a disposable local stack.
+The fixture uses synthetic measurements, no paid models or real tools. See
+[local Langfuse setup](../../deploy/reference/LANGFUSE-LOCAL.md) for the optional
+persistent development installation.

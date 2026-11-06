@@ -2,8 +2,7 @@
 
 `manifest.json` is the release version, public Rust dependency closure and native
 platform matrix. This directory prepares artifacts; it never publishes them.
-See the [contract](../../docs/harness/SDK-RELEASE-CONTRACT.md) and
-[ledger](../../docs/harness/SDK-RELEASE-PLAN.md).
+See [versions and compatibility](../../docs/harness/guides/releases.md).
 
 ## Local candidate
 

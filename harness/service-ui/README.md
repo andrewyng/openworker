@@ -32,7 +32,7 @@ node harness/service-ui/server.mjs /path/to/ui.json
 
 Open http://127.0.0.1:58641 and sign in with an existing service token. Issue scoped
 credentials with `ows credentials issue` as described in the
-[M4 quickstart](../../docs/harness/SERVICE-M4-QUICKSTART.md). There is no public bootstrap
+[Deployment options](../../docs/harness/guides/deployment.md). There is no public bootstrap
 or default password. Use separate runner/publisher/administrator credentials as needed.
 
 ## What is connected
@@ -258,7 +258,7 @@ configuration and run explicit migrations as described in the
 [chart guide](../../deploy/service/chart/README.md#optional-agent-recordings).
 If recording is disabled or unavailable, run search remains usable; no sample data
 or execution-database fallback replaces missing recording data.
-[REST contracts](../../docs/harness/OBSERVABILITY-QUERIES.md).
+[Observability guide](../../docs/harness/guides/observability.md).
 
 ### Browser qualification
 

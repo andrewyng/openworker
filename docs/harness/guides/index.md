@@ -43,5 +43,5 @@ Open the source drawer to explore the complete example files alongside the guide
 
 Start with the example, then choose the [models](providers.md),
 [tools](tools.md) and [deployment](deployment.md) your product needs.
-The [release contract](../SDK-RELEASE-CONTRACT.md) records registry availability,
-compatibility and platform qualification.
+Read [versions and compatibility](releases.md) for package availability and safe
+application upgrades.

@@ -15,10 +15,9 @@ from its permission classification: registering a tool does not grant unrestrict
 file, network or screen access.
 
 Use the bundled coding tools for workspace files, search, patches, processes and
-Git. See [coding tools](../ASSISTANT-TOOLS.md),
-[tool configuration](../TOOL-CONFIGURATION.md) and
-[application policy](../APP-POLICY-CONTRACT.md).
+Git. Use the [tools SDK](../../../harness/tools-sdk/README.md) for native tools
+and the [TypeScript SDK](../../../harness/typescript-sdk/README.md) for app callbacks.
 
 For external services, keep endpoints and credentials in trusted registration
 configuration. Guardrails may inspect selected arguments/results, and authorization
-still runs before execution. See [guardrails](../GUARDRAILS-QUICKSTART.md).
+still runs before execution. See [Guardrails guide](guardrails.md).

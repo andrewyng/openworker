@@ -7,7 +7,7 @@ or OpenShell, and it is not a production HA deployment.
 
 For the native `ows deploy local` Kubernetes installer, including pinned OpenShell
 installation or reuse of an existing gateway, see the
-[local installation guide](../../docs/harness/OWS-LOCAL-INSTALLATION.md).
+[Deployment options](../../docs/harness/guides/deployment.md).
 
 ```text
 ows / application SDK
@@ -98,7 +98,7 @@ output when it might contain credentials. Do not paste state/config files into l
 
 ## Deploy and submit an agent
 
-See the [CLI quickstart](../../docs/harness/SERVICE-M3-QUICKSTART.md) for profile and
+See the [Deployment options](../../docs/harness/guides/deployment.md) for profile and
 agent definitions, submission, approvals, questions and cancellation. Deployment
 publishes immutable JSON/YAML definitions selecting tools already installed in the
 image. It does not upload native code or arbitrary tool servers.
@@ -107,7 +107,7 @@ The default bundle contains `read_file`, `write_file`, and `run_shell`. In this
 milestone the OpenShell workspace is `/sandbox` and the execution network policy is
 network-deny. Approval bypass does not disable sandbox policy.
 
-An opt-in [coding runner and catalog](../../docs/harness/LOCAL-CODING-ACCEPTANCE.md)
+An opt-in [Sessions and teams](../../docs/harness/guides/sessions.md)
 adds bounded search/patch/Git and managed-process tools, with Node, Python, Git and
 curl in the development image. It does not change this minimal default. The local
 real-model exercise found remaining turn-budget, argument-error and cross-turn
@@ -159,14 +159,14 @@ destruction starts, the deployment identity cannot be restarted against an empty
 database. An interrupted destruction can be resumed with the same exact ID.
 
 Expiring service tokens, revisioned configuration and Kubernetes pool management
-are covered by the [M4 guide](../../docs/harness/SERVICE-M4-QUICKSTART.md).
+are covered by the [Deployment options](../../docs/harness/guides/deployment.md).
 Hosted SSO follows later. Model connections/secrets and
 worker-slot settings currently remain deployment configuration.
 
 Cloud installation uses the same native installer through `ows deploy cluster`.
-See the [experimental AWS lifecycle guide](../../docs/harness/OWS-AWS-LIFECYCLE.md)
+See the [AWS deployment guide](../../docs/harness/guides/aws.md)
 for planning, guard checks, image publication, private Secret handoff and recovery.
-The bounded Oregon/Linux ARM64 [AWS artifact trial](../../docs/harness/evidence/aws-artifact-storage-20261029.json)
+The bounded Oregon/Linux ARM64 [Deployment options](../../docs/harness/guides/deployment.md)
 also exercises actual Pod Identity/S3 transfers and scheduled cleanup. Its proxy
 fix was qualified via a reviewed chart upgrade, rather than a fresh final-chart
 AWS install. Other cloud configurations and final billing attribution remain open.
@@ -179,5 +179,5 @@ must preserve those bounds and streaming behavior. Tokens, AWS credentials and
 artifact storage locations are never supplied in model output or coworker bundles.
 
 For repeatable worker faults, shared execution, cleanup and observability checks,
-see the [resilience test catalog](../../docs/harness/RESILIENCE-TEST-CASES.md).
+see the [Deployment options](../../docs/harness/guides/deployment.md).
 The fault-injection image is qualification-only and requires a dedicated local namespace.

@@ -6,7 +6,7 @@ A Rust CLI over the OpenWorker Service SDK. Build with:
 cargo build --locked --release -p openworker-service-cli
 ```
 
-Start with the [CLI quickstart](../../docs/harness/SERVICE-M3-QUICKSTART.md) and
+Start with the [Deployment options](../../docs/harness/guides/deployment.md) and
 [local Docker package](../../deploy/service/README.md). Run `ows --help` for commands.
 JSON is written to stdout, errors to stderr; `watch` produces NDJSON.
 
@@ -51,23 +51,17 @@ AWS plans have two export options:
 
 - `--operator-arn` plus `--infrastructure-config`: generate infrastructure templates,
   the execution role and scoped execution policies. See the
-  [infrastructure export guide](../../docs/harness/OWS-AWS-INFRASTRUCTURE-EXPORT.md).
+  [AWS deployment guide](../../docs/harness/guides/aws.md).
 - Paired `--operator-arn` and `--execution-role-arn`: retain an existing executor and
   export identities only.
 
 The imported-role option exports two IAM role policies, an identity-only
 CloudFormation template, a review, and `bootstrap.sh`. This path requires an existing customer-reviewed CloudFormation
 execution role. It is not the complete infrastructure installer. Both modes produce
-a script that is customer-run explicitly with `--apply-identities`; `ows` never executes it. It has
-only been tested against a fake AWS CLI, not live IAM. Ordinary plans emit no script.
-GCP/Azure bootstrap generation is still design-only.
+a script that is customer-run explicitly with `--apply-identities`; `ows` never executes it. It needs
+to be reviewed for your account policies before use. Ordinary plans emit no script.
 
-See [cloud identities and bootstrap](../../docs/harness/OWS-CLOUD-IDENTITY-DESIGN.md)
-for commands, exact scope, prerequisites, cloud-specific implementation order, and
-remaining execution-policy work.
-
-[Specification](../../docs/harness/OWS-DEPLOYMENT-SPEC.md) ·
-[Implementation plan and ledger](../../docs/harness/OWS-DEPLOYMENT-PLAN.md)
+Run `ows deploy --help` and each subcommand's help for accepted arguments.
 
 ## Read-only AWS preflight
 
@@ -84,7 +78,7 @@ report still has `applyReady: false`.
 
 After identity bootstrap, `--check-setup-role` verifies temporary assumption of the
 exact setup role with identity-only session permissions. Credentials are not saved.
-See the [preflight guide](../../docs/harness/OWS-AWS-PREFLIGHT.md) for timeouts,
+See the [AWS deployment guide](../../docs/harness/guides/aws.md) for timeouts,
 permissions, pricing assumptions and remaining deployment gates.
 
 ## Experimental AWS lifecycle and shared Kubernetes installer
@@ -97,11 +91,6 @@ images and emits an identity-bound installation handoff. Cloud mutations require
 Secret staging, managed-database checks and teardown receipts. Native CLI runtime
 dependencies are AWS CLI/Helm/kubectl/Docker/tar, not Python or Node.
 
-See the [operator workflow](../../docs/harness/OWS-AWS-LIFECYCLE.md) and
-[progress/evidence](../../docs/harness/OWS-CLOUD-EXECUTION-PLAN.md). Qualification
-includes fake-provider recovery, local kind/OpenShell/PostgreSQL, and the bounded
-[real AWS artifact trial](../../docs/harness/evidence/aws-artifact-storage-20261029.json).
-The Oregon/Linux ARM64 reference exercises IAM, private EKS/RDS, strict networking,
-S3 transfers through Pod Identity and actual scheduled cleanup. The artifact proxy
-fix was tested through a reviewed chart upgrade; this is not qualification of all
-cloud configurations, and final delayed billing attribution remains separate.
+See [AWS deployment](../../docs/harness/guides/aws.md) and
+[deployment options](../../docs/harness/guides/deployment.md). Use an owned trial
+with an explicit budget and independent cleanup before production deployment.

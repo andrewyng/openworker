@@ -22,6 +22,6 @@ Start with the managed subprocess in the application container. `npm run web` ru
 
 The reference app is one user per instance. Its shared application token and random document IDs are not a multi-tenant authorization design. For multiple users, implement login, owner-bound document/session lookup, quotas and retention before exposing a shared instance.
 
-For a separately deployed harness service, read `docs/harness/guides/deployment.md` and `docs/harness/SERVICE-ARCHITECTURE.html`. Do not substitute service-cluster APIs for the local example without checking the current SDK interface and the product's requirements.
+For a separately deployed harness service, read `docs/harness/guides/deployment.md` and `deploy/service/README.md`. Do not substitute service-cluster APIs for the local example without checking the current SDK interface and the product's requirements.
 
 Verify upload rejection, isolated document contexts, streamed responses, follow-up questions and denied access. Use a configured live provider only when authorized; otherwise run the fixture and state that it does not evaluate answer quality.
