@@ -492,6 +492,7 @@ fn stale_wrong_or_incomplete_preflight_and_locked_state_prevent_all_calls() {
     let lock = fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(false)
         .open(f.home.path().join("state/cloud.lock"))
         .unwrap();
     lock.lock().unwrap();
@@ -563,11 +564,11 @@ fn offline_platform_export_and_lost_cni_reply_reconcile_without_a_second_update(
     );
     assert_eq!(hook["spec"]["ingress"], json!([]));
     assert_eq!(hook["spec"]["egress"][0]["ports"][0]["port"], 443);
-    assert!(hook["spec"]["egress"].as_array().unwrap().iter().all(|v| v
-        .as_object()
+    assert!(hook["spec"]["egress"]
+        .as_array()
         .unwrap()
-        .len()
-        > 0));
+        .iter()
+        .all(|v| !v.as_object().unwrap().is_empty()));
     let gateway = items
         .iter()
         .find(|v| v["metadata"]["name"] == "ows-trusted-gateway")

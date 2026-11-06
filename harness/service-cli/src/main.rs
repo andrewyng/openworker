@@ -263,7 +263,7 @@ fn output(value: impl serde::Serialize) -> Result<()> {
 fn key(value: &Option<String>) -> String {
     value
         .clone()
-        .unwrap_or_else(|| openworker_sdk::service::new_idempotency_key())
+        .unwrap_or_else(openworker_sdk::service::new_idempotency_key)
 }
 fn read(path: &PathBuf, limit: usize) -> Result<String> {
     use std::io::Read;

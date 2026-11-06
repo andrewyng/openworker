@@ -63,7 +63,8 @@ export interface Activity {
 export interface Pending {
   id: string;
   session_id: string;
-  kind: "approval" | "question";
+  kind: "approval" | "question" | "safety";
+  code?: string;
   tool?: string;
   question?: string;
   options?: string[];

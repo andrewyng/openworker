@@ -323,6 +323,7 @@ fn os_lock_and_read_only_status_preserve_remote_state() {
     let f = Fixture::new();
     let lock = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(f.state.join("installer.lock"))

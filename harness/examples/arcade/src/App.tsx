@@ -609,16 +609,20 @@ export function App() {
                   {project.pending.map((p) => (
                     <section className="approval-card" key={p.id}>
                       <strong>
-                        {p.kind === "approval"
-                          ? "Save this game update?"
-                          : p.question}
+                        {p.kind === "safety"
+                          ? "Build paused by a safety check"
+                          : p.kind === "approval"
+                            ? "Save this game update?"
+                            : p.question}
                       </strong>
                       <p>
-                        {p.kind === "approval"
-                          ? "The agent is ready to publish a new playable version to this game’s folder."
-                          : "Your agent needs a little direction."}
+                        {p.kind === "safety"
+                          ? "The app must resolve this safety check before continuing. You can stop the build; your saved game is still available."
+                          : p.kind === "approval"
+                            ? "The agent is ready to publish a new playable version to this game’s folder."
+                            : "Your agent needs a little direction."}
                       </p>
-                      {p.kind === "approval" ? (
+                      {p.kind === "safety" ? null : p.kind === "approval" ? (
                         <div className="button-row">
                           {project.reviewAvailable && (
                             <button

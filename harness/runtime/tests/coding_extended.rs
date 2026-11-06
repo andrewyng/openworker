@@ -48,7 +48,10 @@ async fn regex_glob_and_ignore_rules() {
         .await
         .unwrap();
     assert_eq!(scoped["matches"].as_array().unwrap().len(), 1);
-    assert_eq!(scoped["matches"][0]["path"], "src/visible.rs");
+    assert_eq!(
+        std::path::Path::new(scoped["matches"][0]["path"].as_str().unwrap()),
+        std::path::Path::new("src").join("visible.rs")
+    );
 }
 #[tokio::test]
 async fn codex_patch_prevalidates_every_file_and_rejects_escape() {

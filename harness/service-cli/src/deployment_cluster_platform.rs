@@ -143,25 +143,6 @@ fn platform_matches(expected: &Value, actual: &Value) -> bool {
     }
     subset(&expected, actual)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn omitted_empty_network_rules_are_equivalent_only_for_explicit_deny_direction() {
-        let expected = json!({"kind":"NetworkPolicy","spec":{"policyTypes":["Ingress"],"ingress":[],"podSelector":{"matchLabels":{"app":"hook"}}}});
-        let mut actual = expected.clone();
-        actual["spec"].as_object_mut().unwrap().remove("ingress");
-        assert!(platform_matches(&expected, &actual));
-        actual["spec"]["ingress"] = json!([{}]);
-        assert!(!platform_matches(&expected, &actual));
-        actual = expected.clone();
-        actual["spec"]["podSelector"] = json!({});
-        assert!(!platform_matches(&expected, &actual));
-        actual = expected.clone();
-        actual["spec"]["policyTypes"] = json!(["Egress"]);
-        assert!(!platform_matches(&expected, &actual));
-    }
-}
 pub(super) async fn apply(
     client: &Client<'_>,
     p: &Plan,
@@ -224,8 +205,8 @@ pub(super) async fn apply(
                 let name = object["metadata"]["name"].as_str().unwrap().to_string();
                 let ns = object["metadata"]["namespace"].as_str().map(str::to_owned);
                 let key = format!("platform:{kind}:{}:{name}", ns.as_deref().unwrap_or(""));
-                if kind == "StorageClass" && p.config.cloud.is_some() {
-                    let scope = cloud::install_scope(p.config.cloud.as_ref().unwrap())?;
+                if let ("StorageClass", Some(binding)) = (kind.as_str(), p.config.cloud.as_ref()) {
+                    let scope = cloud::install_scope(binding)?;
                     ensure!(
                         object["parameters"]["tagSpecification_1"]
                             == format!("ows:deployment-id={}", scope.0),
@@ -301,4 +282,24 @@ pub(super) async fn apply(
     crate::output(
         json!({"phase":j.phase,"functionalNetworkQualification":"required_separately","sharedPlatformRetainedOnServiceTeardown":true}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn omitted_empty_network_rules_are_equivalent_only_for_explicit_deny_direction() {
+        let expected = json!({"kind":"NetworkPolicy","spec":{"policyTypes":["Ingress"],"ingress":[],"podSelector":{"matchLabels":{"app":"hook"}}}});
+        let mut actual = expected.clone();
+        actual["spec"].as_object_mut().unwrap().remove("ingress");
+        assert!(platform_matches(&expected, &actual));
+        actual["spec"]["ingress"] = json!([{}]);
+        assert!(!platform_matches(&expected, &actual));
+        actual = expected.clone();
+        actual["spec"]["podSelector"] = json!({});
+        assert!(!platform_matches(&expected, &actual));
+        actual = expected.clone();
+        actual["spec"]["policyTypes"] = json!(["Egress"]);
+        assert!(!platform_matches(&expected, &actual));
+    }
 }

@@ -65,3 +65,28 @@ test("canonical transcript shows ordinary text, not tool code, context or reason
     ],
   );
 });
+
+test("a safety interruption cannot be submitted as an approval or question answer", async () => {
+  const { AgentService } = await import("../build/electron/agent-service.js");
+  const pending = { id: "safety-1", session_id: "session-1", kind: "safety", code: "scanner_unavailable" };
+  const calls = [];
+  let stateReads = 0;
+  const service = Object.create(AgentService.prototype);
+  Object.assign(service, {
+    pending: new Map([["game-1", [pending]]]), watches: new Map(),
+    activeGameId: "game-1", launching: false,
+    session: async () => ({
+      id: "session-1", state: async () => { stateReads++; return { pending: [pending] }; },
+      send: async (...args) => calls.push(["send", ...args]),
+      resumeStreamed: async () => calls.push(["resume"]),
+    }),
+    emit: () => {},
+  });
+  for (const [decision, answer] of [["once", undefined], [undefined, "continue"]]) {
+    // App errors remain sanitized; the pending card explains the safety pause.
+    await assert.rejects(service.respond("game-1", "safety-1", decision, answer), /could not complete/i);
+    assert.deepEqual(service.pending.get("game-1"), [pending]);
+    assert.deepEqual(calls, []);
+  }
+  assert.equal(stateReads, 2);
+});

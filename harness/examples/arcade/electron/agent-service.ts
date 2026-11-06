@@ -586,7 +586,11 @@ export class AgentService {
       pending,
       active:
         this.watches.has(id) || (this.launching && this.activeGameId === id),
-      stage: pending.length ? "Waiting for your input" : p.stage,
+      stage: pending.some((item) => item.kind === "safety")
+        ? "Paused by a safety check"
+        : pending.length
+          ? "Waiting for your input"
+          : p.stage,
       revisions: this.library.revisions(id),
       previewUrl: game.revisionId ? previewUrl(id, game.revisionId) : null,
     };
@@ -869,6 +873,10 @@ export class AgentService {
       );
       if (!pending)
         throw new Error("This question or approval is no longer pending.");
+      if (pending.kind === "safety")
+        throw new Error(
+          "A safety check paused this build. It cannot be answered or approved here.",
+        );
       if (pending.kind === "approval") {
         if (!decision || !["once", "session", "deny"].includes(decision))
           throw new Error("Choose an approval decision.");

@@ -401,7 +401,7 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
     );
     let v = read_json(&c.service.values_file)?;
     ensure!(
-        v["image"].as_str().is_some_and(|s| pinned(s)),
+        v["image"].as_str().is_some_and(pinned),
         "Service image must be digest pinned"
     );
     ensure!(
@@ -612,18 +612,29 @@ async fn owned(client: &Client<'_>, p: &Plan, j: &Journal, name: &str) -> Result
     }
     Ok(ns)
 }
+struct ReleaseInstall<'a> {
+    key: &'a str,
+    ns: &'a str,
+    release: &'a str,
+    chart: &'a Path,
+    values: &'a Path,
+    reconcile_ready: bool,
+}
 async fn install_release(
     client: &Client<'_>,
     p: &Plan,
     root: &Path,
     j: &mut Journal,
-    key: &str,
-    ns: &str,
-    release: &str,
-    chart: &Path,
-    values: &Path,
-    reconcile_ready: bool,
+    install: ReleaseInstall<'_>,
 ) -> Result<()> {
+    let ReleaseInstall {
+        key,
+        ns,
+        release,
+        chart,
+        values,
+        reconcile_ready,
+    } = install;
     owned(client, p, j, ns)
         .await?
         .context("Owned namespace missing")?;
@@ -1624,12 +1635,14 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
                     &p,
                     state,
                     &mut j,
-                    "openshell-release",
-                    ns,
-                    release,
-                    archive,
-                    values_file,
-                    false,
+                    ReleaseInstall {
+                        key: "openshell-release",
+                        ns,
+                        release,
+                        chart: archive,
+                        values: values_file,
+                        reconcile_ready: false,
+                    },
                 )
                 .await?;
             }
@@ -1671,14 +1684,16 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
                 &p,
                 state,
                 &mut j,
-                "service-release",
-                &p.config.service.namespace,
-                &p.config.service.release,
-                &p.config.service.chart,
-                &p.config.service.values_file,
-                reconcile_ready_release
-                    .as_ref()
-                    .is_some_and(|s| s == "service-release"),
+                ReleaseInstall {
+                    key: "service-release",
+                    ns: &p.config.service.namespace,
+                    release: &p.config.service.release,
+                    chart: &p.config.service.chart,
+                    values: &p.config.service.values_file,
+                    reconcile_ready: reconcile_ready_release
+                        .as_ref()
+                        .is_some_and(|s| s == "service-release"),
+                },
             )
             .await?;
             ready_service(&client, &p).await?;
@@ -1694,7 +1709,10 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         if j.phase == "destroyed" {
             return crate::output(json!({"deploymentId":p.id,"phase":"destroyed"}));
         }
-        if let Some(_) = owned(&client, &p, &j, &p.config.service.namespace).await? {
+        if owned(&client, &p, &j, &p.config.service.namespace)
+            .await?
+            .is_some()
+        {
             let service_dispatched = j.operations.contains_key("service-release");
             if !service_dispatched {
                 for role in ["api", "worker"] {
@@ -1705,13 +1723,14 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
             if service_dispatched && j.phase != "destroying" {
                 quiet_database(&client, &p).await?;
             }
-            if let Some(_) = client
+            if client
                 .get(
                     "deployment",
                     &format!("{}-api", p.config.service.release),
                     Some(&p.config.service.namespace),
                 )
                 .await?
+                .is_some()
             {
                 client
                     .kube(
