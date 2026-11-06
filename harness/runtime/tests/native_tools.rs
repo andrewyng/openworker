@@ -92,7 +92,6 @@ fn registry_requires_exact_names_and_rejects_ambiguity() {
         json!(["unknown.probe"]),
         json!(["partner.probe", "partner.probe"]),
         json!(["probe"]),
-        json!([]),
     ] {
         bundle(tmp.path(), names);
         assert!(Bundle::load_with_registry(tmp.path(), &r).is_err());
@@ -111,6 +110,19 @@ fn registry_requires_exact_names_and_rejects_ambiguity() {
     .unwrap();
     bundle(tmp.path(), json!(["partner.a.b", "partner.a__b"]));
     assert!(Bundle::load_with_registry(tmp.path(), &r).is_err());
+}
+#[test]
+fn empty_tool_selection_does_not_inherit_registered_tools() {
+    let tmp = tempfile::tempdir().unwrap();
+    bundle(tmp.path(), json!([]));
+    let r = registry("1", Default::default());
+    let b = Bundle::load_with_registry(tmp.path(), &r).unwrap();
+    assert!(b.tools.bindings.is_empty());
+    assert!(
+        openworker_runtime::bundle::bound_tools(&b, &Default::default())
+            .unwrap()
+            .is_empty()
+    );
 }
 #[test]
 fn bundle_selects_only_named_tools_and_pins_registry_without_an_acl() {

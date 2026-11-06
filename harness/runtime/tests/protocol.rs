@@ -22,7 +22,14 @@ async fn stdio_initialization_validation_snapshot_and_eof() {
     runner_fixture(&runner);
     let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_openworker"))
-        .args(["serve", "--stdio", "--scripted", "--state-dir"])
+        .args([
+            "serve",
+            "--stdio",
+            "--scripted",
+            "--sandbox",
+            "off",
+            "--state-dir",
+        ])
         .arg(&state)
         .arg("--bundle")
         .arg(bundle)
@@ -102,7 +109,14 @@ async fn oversized_stdio_frame_fails_closed() {
     runner_fixture(&runner);
     let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_openworker"))
-        .args(["serve", "--stdio", "--scripted", "--state-dir"])
+        .args([
+            "serve",
+            "--stdio",
+            "--scripted",
+            "--sandbox",
+            "off",
+            "--state-dir",
+        ])
         .arg(root.path().join("state"))
         .arg("--bundle")
         .arg(bundle)
@@ -143,7 +157,14 @@ async fn sigint_exits_with_stdin_still_open() {
     runner_fixture(&runner);
     let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant");
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_openworker"))
-        .args(["serve", "--stdio", "--scripted", "--state-dir"])
+        .args([
+            "serve",
+            "--stdio",
+            "--scripted",
+            "--sandbox",
+            "off",
+            "--state-dir",
+        ])
         .arg(root.path().join("state"))
         .arg("--bundle")
         .arg(bundle)

@@ -27,6 +27,9 @@ pub fn identity(pid: u32, token: &str) -> Result<Identity> {
     })
 }
 pub async fn cleanup(id: &Identity) -> Result<()> {
+    cleanup_with_timeout(id, Duration::from_secs(10)).await
+}
+async fn cleanup_with_timeout(id: &Identity, timeout: Duration) -> Result<()> {
     let p = match process(id.pid) {
         Ok(p) => p,
         Err(e)
@@ -44,11 +47,32 @@ pub async fn cleanup(id: &Identity) -> Result<()> {
         bail!("Wrong platform process identity");
     }
     let name = job_name(&id.token)?;
-    let job = Job(Handle::new(unsafe {
+    let job = Handle::new(unsafe {
         OpenJobObjectW(JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY, 0, name.as_ptr())
-    })?);
+    });
+    let job = match job {
+        Ok(handle) => Job(handle),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32)) =>
+        {
+            // EOF can make the supervisor drop its kill-on-close job before
+            // its process is signaled. A missing name alone is NOT proof of
+            // cleanup: wait on the original, creation-time-verified handle.
+            return tokio::time::timeout(timeout, async {
+                while !p.exited()? {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .context("Windows supervisor exit pending after job disappeared")?;
+        }
+        Err(error) => return Err(error),
+    };
     job.terminate()?;
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(timeout, async {
         while job.active()? != 0 || !p.exited()? {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -112,4 +136,68 @@ pub fn supervise(owner: u32, workspace: &Path, command: &[String], token: &str) 
         std::thread::sleep(Duration::from_millis(10));
     }
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_fixture() {
+        let Ok(token) = std::env::var("OW_TEST_CLOSED_JOB_TOKEN") else {
+            return;
+        };
+        // Deterministically hold the gap between dropping the named job and
+        // exiting, instead of relying on a scheduler race in the regression.
+        drop(Job::new(Some(&token)).unwrap());
+        println!("JOB_CLOSED");
+        std::io::stdout().flush().unwrap();
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_job_requires_verified_supervisor_exit() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let token = crate::id("supervisor");
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "direct::windows::tests::exit_fixture",
+                "--nocapture",
+            ])
+            .env("OW_TEST_CLOSED_JOB_TOKEN", &token)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !lines
+                .next_line()
+                .await
+                .unwrap()
+                .unwrap()
+                .contains("JOB_CLOSED")
+            {}
+        })
+        .await
+        .unwrap();
+        let id = identity(child.id().unwrap(), &token).unwrap();
+        let owned_process = process(id.pid).unwrap();
+        assert!(cleanup_with_timeout(&id, Duration::from_millis(30))
+            .await
+            .is_err());
+        assert!(!owned_process.exited().unwrap());
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            drop(input);
+        });
+        cleanup(&id).await.unwrap();
+        assert!(owned_process.exited().unwrap());
+        assert!(child.wait().await.unwrap().success());
+        release.await.unwrap();
+    }
 }
