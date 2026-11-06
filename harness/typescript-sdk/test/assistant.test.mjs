@@ -8,7 +8,8 @@ import { Harness } from "../dist/index.js";
 const plan = (name, args) => `TEST_RESOURCE_GRANTS ${JSON.stringify([{name, arguments: args}])}`;
 async function invoke(h, s, name, args) {
   const run = await s.send(plan(name, args));
-  assert.equal((await run.result()).status, "completed");
+  const terminal = await run.result();
+  assert.equal(terminal.status, "completed", JSON.stringify({terminal, events: terminal.status === "completed" ? [] : await h.request("event/read", {session_id: s.id, after: 0})}));
   const history = await h.request("history/read", {session_id: s.id, after: 0});
   const item = history.items.map(v => v.item).reverse().find(v => v.type === "function_call_output");
   const result = JSON.parse(item.output);

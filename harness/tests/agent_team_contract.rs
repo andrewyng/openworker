@@ -683,21 +683,18 @@ pub fn exercise_coding_defaults(db: &mut dyn StateStore) {
     assert!(db.agent_team("lead", "team_spawn", &wrong, None).is_err());
     let mut selected = verifier;
     selected["source"] = json!({"kind":"submission","id":"handoff_original"});
-    let v = db
+    // A syntactically valid reference is insufficient: it must already belong
+    // to this team. Failed reservation must not allocate the verifier.
+    assert!(db
         .agent_team("lead", "team_spawn", &selected, None)
-        .unwrap();
-    assert_eq!(v["instance"]["phase"], "reserved");
-    assert_eq!(v["source"], selected["source"]);
+        .is_err());
     let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert!(snapshot["roster"]["instances"]["check"].is_null());
     assert_eq!(
         snapshot["roster"]["requests"]["ui"]["source"],
         json!({"kind":"initial"})
     );
-    assert_eq!(
-        snapshot["roster"]["requests"]["check"]["source"],
-        selected["source"]
-    );
-    assert!(snapshot["workspaces"].as_object().unwrap().is_empty()); // Still needs real import/admission.
+    assert!(snapshot["workspaces"].as_object().unwrap().is_empty());
     let public = openworker_runtime::agent_team::public_snapshot(snapshot);
     assert!(public.get("coding").is_none());
     assert!(public.get("coding_selection").is_none());
@@ -754,6 +751,35 @@ pub fn exercise_coding_defaults(db: &mut dyn StateStore) {
     .unwrap();
     db.agent_team("lead", "ready", &json!({"agent_id":"shared-source"}), None)
         .unwrap();
+    // Register an actual originating submission after the builder's source
+    // receipt, then verify that the same selection can reserve a verifier.
+    let (mut submitting, _, _) = db.accept(&child.id, "submit", "Submit work").unwrap();
+    let turn = submitting.turn.as_mut().unwrap();
+    turn.status = "running".into();
+    turn.queue = vec![
+        json!({"type":"function_call","call_id":"submit-code","name":"team_submit_code","arguments":"{}"}),
+    ];
+    db.save(&submitting, "assistant_message", json!({}))
+        .unwrap();
+    let submission = db
+        .agent_team(
+            &child.id,
+            "team_submit_code",
+            &json!({"commit":"b".repeat(40),"summary":"Builder revision"}),
+            None,
+        )
+        .unwrap();
+    selected["source"]["id"] = submission["id"].clone();
+    let v = db
+        .agent_team("lead", "team_spawn", &selected, None)
+        .unwrap();
+    assert_eq!(v["instance"]["phase"], "reserved");
+    assert_eq!(v["source"], selected["source"]);
+    let snapshot = db.agent_team("lead", "snapshot", &json!({}), None).unwrap();
+    assert_eq!(
+        snapshot["roster"]["requests"]["check"]["source"],
+        selected["source"]
+    );
     let mut changed = args.clone();
     changed["coding"]["source"]["commit"] = json!("b".repeat(40));
     assert!(db.agent_team("lead", "create", &changed, None).is_err());
