@@ -417,6 +417,11 @@ class SessionManager:
         # Sandboxes left behind by a server that died: removed once, in the background, at
         # start (design doc, OPE-200 "sandbox lifetime"). Cheap when there are none.
         threading.Thread(target=self._reap_sandboxes, name="sandbox-reap", daemon=True).start()
+        # The one HTTP client every local-server probe uses (providers/probe_http.py) is
+        # built now, off this thread, so the first Models & Keys open does not pay for it.
+        from ..providers import probe_http
+
+        probe_http.warm()
         # Sessions whose connector set changed mid-turn (§11.6): rebuilt at mark_idle.
         self._stale_engines: set[str] = set()
         # Sessions whose workspace was promoted mid-turn (workspace-scratch-design.md §5):
@@ -4597,6 +4602,11 @@ class SessionManager:
                 if not f.secret and profile.get(f.key)
             }
             env_var = d.env_key if (d.env_key and os.environ.get(d.env_key)) else None
+            alive: Optional[bool] = None
+            if d.kind == "local":
+                # A keyless server is "connected" when it answers (cached probes), not
+                # when a form was saved; the page groups connected providers first.
+                alive = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)
             row = {
                 **d.to_dict(),
                 "configured": configured,
@@ -4607,7 +4617,9 @@ class SessionManager:
                 # to hide "Remove key" for a key it cannot remove (#742).
                 "key_source": "store" if profile.get("api_key") else ("env" if env_var else None),
                 "env_key": env_var,
-                "suggested_models": self._suggested_models(d.name),
+                # A local server that does not answer is not asked for its models (OPE-250:
+                # that was a second wait, per server, on a port nobody listens on).
+                "suggested_models": self._suggested_models(d.name) if alive is not False else [],
                 # Key hygiene for the Settings pane: when the key was saved (date, stamped
                 # by set_provider) and when the provider last served a completion (epoch,
                 # stamped by the router's on_use hook). Absent for env-only config.
@@ -4618,9 +4630,7 @@ class SessionManager:
                 "is_custom": is_custom_provider(d.name, self.secrets),
             }
             if d.kind == "local":
-                # A keyless server is "connected" when it answers (cached probes), not
-                # when a form was saved; the page groups connected providers first.
-                row["alive"] = self._ollama_alive() if d.name == "ollama" else self._local_server_alive(d.name)
+                row["alive"] = alive
             if d.name == "llamacpp":
                 # UX-057: OpenWorker can set it up and run it here (Mac for now).
                 from ..providers import llamacpp_setup
@@ -4778,11 +4788,11 @@ class SessionManager:
 
         def probe(name: str) -> None:
             try:
-                self._suggested_models(name)
-                if name == "ollama":
-                    self._ollama_alive()
-                else:
-                    self._local_server_alive(name)
+                up = self._ollama_alive() if name == "ollama" else self._local_server_alive(name)
+                # A server that does not answer has no models to list; asking it would
+                # be a second wait on a port nobody listens on.
+                if up:
+                    self._suggested_models(name)
             except Exception:  # noqa: BLE001 - the loop asks again and shows what it gets
                 pass
 
@@ -5093,11 +5103,10 @@ class SessionManager:
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
         try:
-            import httpx
-
+            from ..providers import probe_http
             from ..providers.local_server import probe_timeout
 
-            alive = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 0.8)).status_code == 200
+            alive = probe_http.get(base + "/api/tags", timeout=probe_timeout(base, 0.8)).status_code == 200
         except Exception:
             alive = False
         self._ollama_alive_cache = (now, alive)

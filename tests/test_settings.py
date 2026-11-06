@@ -180,14 +180,12 @@ def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
 def _ollama_manager(tmp_path, monkeypatch, pulled=("qwen2.5:7b-instruct",)):
     """A fresh manager (no keys, no saved Ollama profile) whose local Ollama answers
     `/api/tags` with `pulled` — none of them the recommended model."""
-    import httpx
-
     from coworker.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
 
-    from coworker.providers import ollama_facts
+    from coworker.providers import ollama_facts, probe_http
 
     class _Tags:
         status_code = 200
@@ -201,8 +199,9 @@ def _ollama_manager(tmp_path, monkeypatch, pulled=("qwen2.5:7b-instruct",)):
         def json(self):
             return {"capabilities": ["completion", "tools"]}
 
-    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: _Tags())
-    monkeypatch.setattr(httpx, "post", lambda url, json=None, timeout=None: _Show())
+    # Probes go through the shared client in probe_http.py, not httpx.get.
+    monkeypatch.setattr(probe_http, "get", lambda url, **_kw: _Tags())
+    monkeypatch.setattr(probe_http, "post", lambda url, **_kw: _Show())
     ollama_facts.forget_all()  # answers are cached per server; never across tests
     return SessionManager(data_dir=tmp_path / "data")
 
