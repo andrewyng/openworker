@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
-import { ToolImageResult } from "@openworker/harness";
+import { ToolImageResult } from "@openworkerai/sdk";
 import { Library } from "../build/electron/library.js";
 import { SettingsStore } from "../build/electron/settings.js";
 import { AgentService } from "../build/electron/agent-service.js";

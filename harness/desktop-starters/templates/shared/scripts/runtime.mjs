@@ -40,7 +40,7 @@ if (config.sdkRoot && config.template === "electron-game-builder") {
 }
 let source = config.runtime;
 if (!source && !config.sdkRoot) {
-  const { resolveRuntimeExecutable } = await import("@openworker/harness");
+  const { resolveRuntimeExecutable } = await import("@openworkerai/sdk");
   source = resolveRuntimeExecutable();
 }
 if (!source) {

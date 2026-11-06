@@ -1,5 +1,5 @@
 {
-  "name": "@openworker/harness",
+  "name": "@openworkerai/sdk",
   "version": "0.1.0-beta.1",
   "description": "Node.js client for the OpenWorker Rust harness over managed private stdio",
   "type": "module",

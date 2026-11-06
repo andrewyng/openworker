@@ -1,6 +1,6 @@
 # OpenWorker TypeScript Harness SDK
 
-Registry candidate: **0.1.0-beta.1**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+Registry candidate: **0.1.0-beta.1**. After publication, install with `npm install @openworkerai/sdk@0.1.0-beta.1`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
 
 Beta API, Node.js 20+, ESM. Registry-ready source/tarball distribution. The Rust host owns model/tool execution, policy, persistence,
 agent teams and run semantics. This package owns typed APIs and a managed private
@@ -24,7 +24,7 @@ model settings, chat, approvals and an isolated playable preview. Application co
 runs in Electron's trusted main process, not the renderer.
 
 ```typescript
-import { Harness } from '@openworker/harness';
+import { Harness } from '@openworkerai/sdk';
 
 const harness = await Harness.start({ sandbox: 'off' }); // Trusted app callbacks only.
 await harness.setModelProvider({
@@ -90,7 +90,7 @@ side effects. Callbacks retain the app's privileges, not an OS sandbox's.
 An application callback can explicitly return one image alongside JSON metadata:
 
 ```typescript
-import { ToolImageResult } from '@openworker/harness';
+import { ToolImageResult } from '@openworkerai/sdk';
 // Inside execute(): capture only the app-authorized surface.
 return new ToolImageResult(
   { width: 960, height: 600, scope: 'game-preview' },
@@ -192,29 +192,35 @@ prefer shared providers and the desktop facade above.
 
 ## Install and pair with a runtime
 
-From the matching repository checkout:
+After publication:
 
 ```sh
-cd harness/typescript-sdk
-npm ci
-npm test
-npm pack
-# In your application's project:
-npm install /absolute/path/to/openworker-harness-0.1.0.tgz
+npm install @openworkerai/sdk@0.1.0-beta.1
 ```
 
-Build the default MCP-capable binary from that same checkout, with Rust 1.96:
+The client installs the matching `@openworkerai/harness-runtime-<platform>-<arch>`
+optional dependency. That package contains the prebuilt executable. Keep optional
+dependencies enabled: there is no postinstall download or compilation, and the
+application does not fetch a helper at startup. Electron apps must bundle the
+helper outside ASAR; `resolveRuntimeExecutable()` returns its installed path.
+
+Before publication, install the prepared client and your platform archive together:
 
 ```sh
-cd harness
-cargo build --locked --release -p openworker-sdk --bin openworker-harness
+npm install /absolute/release/openworkerai-sdk-0.1.0-beta.1.tgz \
+  /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.1.tgz
 ```
 
-Native Rust tools require a partner binary that registers those tools and calls
-`openworker_sdk::cli::main_with_registry(registry)`. The npm package does not
-download, compile, or bundle a runtime binary. Pin and ship the tested pair;
-protocol 0.1 plus `capabilities.agent_runs` is checked at connection time, not a
-promise that arbitrary future runtime versions are compatible.
+Choose the actual platform/architecture. The source manifest intentionally remains
+private and does not list unpublished runtime dependencies; use the repository's
+release preparer to stage distributable packages instead of publishing the source
+folder directly.
+
+For a custom native tool registry, build a partner executable from the same SDK
+revision and pass its absolute path through `executable`. The partner entry point
+registers those tools with `openworker_sdk::cli::main_with_registry(registry)`.
+Keep SDK and executable versions paired; protocol 0.1 alone does not promise
+compatibility between arbitrary releases.
 
 ## QuickStart
 
@@ -235,7 +241,7 @@ test-support binary; that is not a live model demonstration.
 The core API in an installed consumer is:
 
 ```typescript
-import { Harness, type Agent } from '@openworker/harness';
+import { Harness, type Agent } from '@openworkerai/sdk';
 
 const assistant: Agent = {
   id: 'assistant',

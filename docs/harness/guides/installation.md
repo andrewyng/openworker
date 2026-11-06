@@ -7,7 +7,7 @@ archives described below; a preview of this guide is not a publication announcem
 ## TypeScript
 
 ```sh
-npm install @openworker/harness@0.1.0-beta.1
+npm install @openworkerai/sdk@0.1.0-beta.1
 ```
 
 Use Node.js 20 or newer. This is a Node application dependency, not a browser
@@ -45,8 +45,8 @@ A prepared release directory contains npm tarballs, the native archive, checksum
 and release metadata. Install the client and your platform package together:
 
 ```sh
-npm install /absolute/release/openworker-harness-0.1.0-beta.1.tgz \
-  /absolute/release/openworker-harness-runtime-darwin-arm64-0.1.0-beta.1.tgz
+npm install /absolute/release/openworkerai-sdk-0.1.0-beta.1.tgz \
+  /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.1.tgz
 ```
 
 Replace the platform filename for your machine. Rust consumers can pin the public

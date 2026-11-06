@@ -21,6 +21,18 @@ version, creates the platform npm package, client/starter tarballs, a standalone
 runtime archive, SHA256SUMS and `release.json`. It refuses to overwrite a candidate.
 Native compilation and clean-machine testing are required on every claimed target.
 
+The npm client is `@openworkerai/sdk`; matching runtime packages are
+`@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
+`@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
+skill into a Codex or Claude Code project. The skill package has no runtime or
+SDK dependency. To prepare just that archive without compiling Rust:
+
+```sh
+node skills/prepare.mjs /absolute/new-skills-candidate
+```
+
+Run this command from the repository root. See [skill installation](../../skills/README.md).
+
 Source npm manifests remain `private` so a plain `npm publish` in the checkout
 cannot accidentally publish an incomplete client. Staging removes that marker and
 adds the exact-version platform dependencies. This also keeps `npm ci` usable before

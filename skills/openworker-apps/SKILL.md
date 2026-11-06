@@ -5,34 +5,47 @@ description: Build or adapt desktop and web applications using the OpenWorker Ha
 
 # Build apps with OpenWorker
 
-Help the developer build their product while OpenWorker owns the agent loop. Explain the important SDK calls as you integrate them. Preserve the developer's chosen UI framework, model and deployment target.
+Help the developer build their product while OpenWorker owns the agent loop.
+Preserve their chosen UI framework, model and deployment target.
 
-## Find the matching implementation
+## Choose the track
 
-Use the developer's OpenWorker checkout and pinned SDK version. If installed by our project installer, `references/checkout.json` records the source checkout and commit. It is a locator, not permission to edit that checkout or a reason to upgrade dependencies. Verify it still exists and compare its revision with the application's dependency pin before using its APIs.
+- Read [SDK integration](references/sdk.md) for the shared lifecycle and package contract.
+- For desktop apps, read [Desktop](references/desktop.md).
+- For browser/server apps, read [Web](references/web.md).
 
-If the checkout is unavailable, locate the matching source in [andrewyng/openworker](https://github.com/andrewyng/openworker/tree/main). Use the application's pinned revision when one exists. For a new integration, resolve and record a commit before depending on the moving branch. If neither local source nor remote access is available, ask for the matching checkout rather than inventing APIs.
+These references are bundled with the skill; an OpenWorker repository checkout
+is not required. If `references/installation.json` exists, it records the exact
+SDK version this skill accompanies. Otherwise the skill package's version is the
+SDK version. Match the application's installed version before using these APIs;
+do not silently upgrade an existing application. Use the installed package's
+TypeScript declarations for APIs outside the bundled examples. For Rust, consult
+the matching SDK version's API documentation or source when needed.
 
-Read the relevant guide and source before editing:
+For an unpublished local candidate, use the provided SDK and native runtime
+archives. A manifest version is not proof that the package exists in a registry.
+Do not fall back to similarly named third-party packages.
 
-- Desktop: [desktop reference](references/desktop.md).
-- Web: [web reference](references/web.md).
-- Shared implementation: `harness/examples/quickstart/src/agent.ts` and the example `README.md` in that checkout.
-- Package availability and compatibility: `docs/harness/guides/releases.md` and `harness/release/manifest.json`. Check these before prescribing npm/Cargo registry commands; a version in a manifest is not proof it has been published.
+## Integration boundaries
 
-## Integration decisions
+- TypeScript starts a managed Rust subprocess in Electron's main process or the
+  application server. Browser/renderer code uses the application's API or narrow
+  IPC. Rust can embed the harness in-process.
+- Keep model credentials in that trusted process. The application owns its UI,
+  authentication, session ownership and lifecycle.
+- Select tools deliberately. The directory-summary and PDF examples supply their
+  own input, so use `tools: []` and disable planning, memory and scheduling there.
+  Other apps may need tools. Disabling optional memory does not disable history.
+- File and document content is untrusted data. Render model text safely. The
+  directory reader's exclusions are not a secret scanner or an OS sandbox.
+- The bundled examples select `sandbox: "off"` for application-owned input.
+  Tools in that mode have host privileges. Consult the OpenShell guide if the
+  product requires isolated tool execution.
 
-- Start the harness in the app, once at its application boundary, and shut it down on exit. TypeScript uses a managed Rust subprocess; Rust can embed the harness. Browser code never starts the Rust executable directly.
-- Configure a model provider separately from the agent. Keep credentials in the trusted application process and outside renderer bundles, agent instructions and checked-in files. Ask for an environment-variable name or secret source, not a key in chat.
-- Create an agent with instructions, a default model and an explicit tool list. A session owns conversation history; a run is the work started by sending a message. Stream events and also inspect the terminal result. Cancellation, errors and pending input are distinct from successful completion.
-- The two reference apps collect content themselves. Keep their agents tool-free (`tools: []`, with planning, memory and scheduling disabled) unless the requested product needs tools. Disabling optional memory does not disable session history.
-- Uploaded documents and source files are untrusted data, not instructions. Render responses as text or sanitized content. Do not treat a system prompt as a security boundary.
-- The examples explicitly use host execution (`sandbox: "off"`); do not present them as sandboxed. If tools need isolation, read `docs/harness/guides/openshell.md`: the current OpenShell integration isolates ToolRunner while the harness coordinates outside it.
+## Verify the integration
 
-## Implement and verify
-
-Adapt the maintained example rather than copying snippets into an unrelated skeleton. When copying an example outside the checkout, update local dependency paths and confirm the matching runtime helper can be found. Keep application UI and input handling separate from SDK lifecycle code.
-
-Run the relevant example checks and the application's own build. Use the deterministic model fixture for transport/streaming tests when no live provider is configured, and label that qualification accurately. Check the visible UI if computer/browser tools are available. Report what ran, what remains unverified, and how to start the app. A local build does not qualify another OS, a cloud deployment or model answer quality.
-
-Prepare packaging/deployment files appropriate to the requested target. Creating an app does not by itself authorize cloud provisioning, publication, credential creation or signing with a developer's identity.
+Test streaming and terminal status, errors, cancellation, restart and the packaged
+runtime path for the chosen product. A deterministic model fixture can verify
+transport and lifecycle without a live key; it does not establish answer quality.
+Only claim target-platform and deployment support actually exercised. Installing
+this skill does not publish an application or grant cloud-deployment permission.

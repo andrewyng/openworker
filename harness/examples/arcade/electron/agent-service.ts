@@ -4,7 +4,7 @@ import {
   type Session,
   type RunStream,
   type RunResult,
-} from "@openworker/harness";
+} from "@openworkerai/sdk";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
