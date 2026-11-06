@@ -168,7 +168,7 @@ jobs:
             harness/target
           key: rust-sdk-v2-storage-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('harness/Cargo.lock', 'harness/rust-toolchain.toml') }}
       - name: Configure isolated PostgreSQL test service
-        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests" >> "$GITHUB_ENV"
+        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: SDK SQLite/PostgreSQL and embedded/stdio matrix
         run: node tests/sdk-storage-shard.mjs "${{ matrix.shard }}"
 
@@ -212,7 +212,7 @@ jobs:
             harness/target
           key: rust-sdk-v2-typescript-${{ runner.os }}-${{ hashFiles('harness/Cargo.lock', 'harness/rust-toolchain.toml') }}
       - name: Configure isolated PostgreSQL test service
-        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests" >> "$GITHUB_ENV"
+        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: Build release test host
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
@@ -275,7 +275,7 @@ jobs:
             harness/target
           key: rust-sdk-v2-runtime-${{ runner.os }}-${{ hashFiles('harness/Cargo.lock', 'harness/rust-toolchain.toml') }}
       - name: Configure isolated PostgreSQL test service
-        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests" >> "$GITHUB_ENV"
+        run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: Assistant SQLite/PostgreSQL parity
         run: cargo test --locked -p openworker-runtime -p openworker-store-postgres --test assistant -- --include-ignored --test-threads=1
       - name: Runtime and telemetry regressions

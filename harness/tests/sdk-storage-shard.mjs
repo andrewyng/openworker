@@ -28,7 +28,7 @@ if (process.argv.includes("--list")) {
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
   run(["test", "--locked", "-p", "openworker-sdk", "--features", "test-support",
-    ...(shard === "core" ? ["--lib"] : []),
+    ...(shard === "core" ? ["--lib", "--bins"] : []),
     ...groups[shard].flatMap((name) => ["--test", name]),
     "--", "--include-ignored", "--test-threads=1"]);
   if (shard === "core") run(["test", "--locked", "-p", "openworker-sdk", "--doc"]);
