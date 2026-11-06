@@ -1,5 +1,7 @@
 # OpenWorker Harness
 
+> **Under active development:** Please do not open pull requests for the Harness SDK yet—we are still evolving it. Please try it out and [open issues](https://github.com/andrewyng/openworker/issues) for feature requests and bug reports. Your feedback is welcome!
+
 Build your product and user experience. Let OpenWorker run the agents.
 
 OpenWorker Harness is a Rust agent runtime with Rust and TypeScript SDKs. It
