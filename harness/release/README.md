@@ -60,7 +60,9 @@ pointing only to those extracted crates. It never uses source-checkout dependenc
 Use a shared `CARGO_TARGET_DIR` to avoid duplicate build caches. Before first
 publication, Cargo 1.96.0's multi-package verification encountered an internal
 “no hash listed” temporary-registry error locally; this separate consumer check
-covers archive completeness. Normal `cargo publish --dry-run`/verification against
+covers archive completeness. On a clean machine, add `--fetch` to populate third-party
+dependencies before the offline consumer check; CI uses this option.
+Normal `cargo publish --dry-run`/verification against
 registry dependencies remains a promotion gate, not a claimed completed upload.
 
 ## CI and promotion

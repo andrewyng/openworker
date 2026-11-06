@@ -46,7 +46,9 @@ const skillArchives=await prepareSkills(join(out,'skills'));
 await cp(join(skillArchives,`openworkerai-build-with-sdk-skills-${manifest.version}.tgz`),join(archives,`openworkerai-build-with-sdk-skills-${manifest.version}.tgz`));
 // Portable GitHub archive, with the same executable and metadata as npm.
 const archive=`openworker-harness-${manifest.version}-${target.rust}.tar.gz`;
-execFileSync('tar',['-czf',join(archives,archive),'-C',native,'bin','runtime.json','LICENSE','README.md']);
+// A Windows drive letter is parsed as a remote host by GNU tar. Keep both
+// archive and input paths relative to the controlled staging directory.
+execFileSync('tar',['-czf',`../archives/${archive}`,'bin','runtime.json','LICENSE','README.md'],{cwd:native});
 const {readdir}=await import('node:fs/promises');const sums=[];
 for(const file of (await readdir(archives)).sort())sums.push(`${createHash('sha256').update(await readFile(join(archives,file))).digest('hex')}  ${file}`);
 await writeFile(join(archives,'SHA256SUMS'),sums.join('\n')+'\n');
