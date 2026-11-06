@@ -313,19 +313,24 @@ impl Processes {
 #[cfg(target_os = "linux")]
 async fn exited_without_reaping(pid: u32) -> Result<()> {
     loop {
-        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid,
-                info.as_mut_ptr(),
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
+        // siginfo_t may contain non-Send pointers in downstream libc versions.
+        // Keep the synchronous probe out of the future's suspended state.
+        let exited = {
+            let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    info.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            unsafe { info.assume_init().si_pid() != 0 }
         };
-        if result < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        if unsafe { info.assume_init().si_pid() } != 0 {
+        if exited {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
