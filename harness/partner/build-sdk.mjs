@@ -160,6 +160,7 @@ pub fn registry() -> anyhow::Result<ToolRegistry> {
 pub fn config(state_dir: PathBuf, package_dir: &Path) -> HostConfig {
     HostConfig {
         state_dir,
+        desktop: Default::default(),
         runner: package_dir.join("bin").join(RUNTIME_NAME),
         storage: Storage::Sqlite,
         coworkers: vec![],
