@@ -163,7 +163,7 @@ fn native_cannot_claim_sandbox_placement() {
     assert!(error.to_string().contains("host placement"), "{error:#}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod execution {
     use super::*;
     use openworker_runtime::{execution::Backend, model::Model, runtime::Runtime};
@@ -292,7 +292,17 @@ mod execution {
         let invalid = f
             .start(&rt, "bypass", json!({"behavior":"not-in-schema"}))
             .await;
-        assert_eq!(finish(&rt, &invalid).await["turn"]["status"], "failed");
+        // Invalid arguments are returned to the model as an unexecuted tool
+        // error so it can correct them or finish, rather than failing the turn.
+        let finished = finish(&rt, &invalid).await;
+        assert_eq!(finished["turn"]["status"], "completed");
+        assert_eq!(finished["turn"]["budget"]["validation_errors"], 1);
+        let events = rt.store.lock().unwrap().events(&invalid, 0).unwrap();
+        assert!(!events.iter().any(|e| e.kind == "tool_started"));
+        let rejected = events.iter().find(|e| e.kind == "tool_finished").unwrap();
+        assert_eq!(rejected.data["result"]["code"], "invalid_tool_arguments");
+        assert_eq!(rejected.data["result"]["executed"], false);
+        assert!(events.iter().any(|e| e.kind == "tool_validation_failed"));
         assert_eq!(f.calls.load(Ordering::SeqCst), 0);
         rt.shutdown().await.unwrap();
     }

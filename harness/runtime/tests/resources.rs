@@ -313,15 +313,9 @@ fn replacing_a_granted_root_invalidates_its_resolved_identity() {
 async fn protocol_preview_pins_creation_and_blocks_changed_credentials() {
     let f = Fixture::new();
     let runner = f.root.join("runner");
-    fs::write(
-        &runner,
-        if cfg!(target_os = "macos") {
-            b"\xcf\xfa\xed\xfe-test-no-execution".as_slice()
-        } else {
-            b"\x7fELF-test-no-execution".as_slice()
-        },
-    )
-    .unwrap();
+    // OpenShell runs a Linux guest even when the host is macOS. This policy
+    // preview never executes the fixture, but it must match that guest format.
+    fs::write(&runner, b"\x7fELF-test-no-execution").unwrap();
     let rt = Runtime::open_with_policies(
         &f.root.join("state"),
         &f.bundle.root,
