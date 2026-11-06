@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readFile, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +50,8 @@ for (const database of ["sqlite", "postgres"]) {
       timeout: 360_000,
     },
     async (t) => {
-      const root = await mkdtemp(join(tmpdir(), "ow-ts-real-"));
+      // Trusted server policy paths cannot traverse macOS's /var symlink.
+      const root = await realpath(await mkdtemp(join(tmpdir(), "ow-ts-real-")));
       const work = join(root, "work");
       await mkdir(work);
       const servers = join(root, "servers.json");
@@ -157,7 +158,9 @@ for (const database of ["sqlite", "postgres"]) {
       });
       await h.setConnection({
         coworker: "worker",
-        id: "test",
+        // Connections are harness-wide; a provider cannot be retargeted by
+        // changing the legacy coworker field on the same connection ID.
+        id: "test-anthropic",
         label: "Test",
         provider: "anthropic",
         apiKey: "fixture-only",

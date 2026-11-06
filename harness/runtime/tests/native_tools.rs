@@ -92,7 +92,6 @@ fn registry_requires_exact_names_and_rejects_ambiguity() {
         json!(["unknown.probe"]),
         json!(["partner.probe", "partner.probe"]),
         json!(["probe"]),
-        json!([]),
     ] {
         bundle(tmp.path(), names);
         assert!(Bundle::load_with_registry(tmp.path(), &r).is_err());
@@ -111,6 +110,19 @@ fn registry_requires_exact_names_and_rejects_ambiguity() {
     .unwrap();
     bundle(tmp.path(), json!(["partner.a.b", "partner.a__b"]));
     assert!(Bundle::load_with_registry(tmp.path(), &r).is_err());
+}
+#[test]
+fn empty_tool_selection_does_not_inherit_registered_tools() {
+    let tmp = tempfile::tempdir().unwrap();
+    bundle(tmp.path(), json!([]));
+    let r = registry("1", Default::default());
+    let b = Bundle::load_with_registry(tmp.path(), &r).unwrap();
+    assert!(b.tools.bindings.is_empty());
+    assert!(
+        openworker_runtime::bundle::bound_tools(&b, &Default::default())
+            .unwrap()
+            .is_empty()
+    );
 }
 #[test]
 fn bundle_selects_only_named_tools_and_pins_registry_without_an_acl() {
@@ -151,7 +163,7 @@ fn native_cannot_claim_sandbox_placement() {
     assert!(error.to_string().contains("host placement"), "{error:#}");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod execution {
     use super::*;
     use openworker_runtime::{execution::Backend, model::Model, runtime::Runtime};
@@ -280,7 +292,17 @@ mod execution {
         let invalid = f
             .start(&rt, "bypass", json!({"behavior":"not-in-schema"}))
             .await;
-        assert_eq!(finish(&rt, &invalid).await["turn"]["status"], "failed");
+        // Invalid arguments are returned to the model as an unexecuted tool
+        // error so it can correct them or finish, rather than failing the turn.
+        let finished = finish(&rt, &invalid).await;
+        assert_eq!(finished["turn"]["status"], "completed");
+        assert_eq!(finished["turn"]["budget"]["validation_errors"], 1);
+        let events = rt.store.lock().unwrap().events(&invalid, 0).unwrap();
+        assert!(!events.iter().any(|e| e.kind == "tool_started"));
+        let rejected = events.iter().find(|e| e.kind == "tool_finished").unwrap();
+        assert_eq!(rejected.data["result"]["code"], "invalid_tool_arguments");
+        assert_eq!(rejected.data["result"]["executed"], false);
+        assert!(events.iter().any(|e| e.kind == "tool_validation_failed"));
         assert_eq!(f.calls.load(Ordering::SeqCst), 0);
         rt.shutdown().await.unwrap();
     }

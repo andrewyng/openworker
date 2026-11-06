@@ -83,20 +83,17 @@ mod linux {
         if exited()? {
             return Ok(false);
         }
-        if cmdline.is_empty() {
-            // The group leader can have released its mm/cmdline while other
-            // threads are still leaving the thread group. pidfd readiness follows
-            // group exit. Wait briefly WITHOUT signaling or relaxing ownership.
-            return tokio::time::timeout(Duration::from_secs(1), async {
-                while !exited()? {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-                Ok(false)
-            })
-            .await
-            .context("Supervisor command line empty but exit unconfirmed; refusing signal")?;
-        }
-        bail!("Supervisor ownership token mismatch in nonempty command line; refusing signal")
+        // Command-line inspection can race with exit even when it returns
+        // nonempty bytes. pidfd readiness follows thread-group exit. Never
+        // signal a mismatch: accept only confirmed exit of this same pidfd.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !exited()? {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok(false)
+        })
+        .await
+        .context("Supervisor ownership token mismatch and exit unconfirmed; refusing signal")?
     }
     pub async fn cleanup(expected: &Identity) -> Result<()> {
         if expected.pid <= 1 || expected.token.is_empty() || expected.token.len() > 80 {
@@ -175,14 +172,16 @@ mod linux {
                 .await
                 .is_err()
         );
-        let mut checks = 0;
-        assert!(!token_owner(b"", "expected", || {
-            checks += 1;
-            Ok(checks >= 3)
-        })
-        .await
-        .unwrap());
-        assert_eq!(checks, 3); // cleared cmdline precedes confirmed group exit
+        for cmdline in [b"".as_slice(), b"program\0mismatch\0".as_slice()] {
+            let mut checks = 0;
+            assert!(!token_owner(cmdline, "expected", || {
+                checks += 1;
+                Ok(checks >= 3)
+            })
+            .await
+            .unwrap());
+            assert_eq!(checks, 3); // mismatch precedes confirmed group exit
+        }
     }
 
     static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

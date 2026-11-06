@@ -14,14 +14,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&workspace)?;
         let mut config = fixture_sdk::config(root.join(format!("state-{name}")), &package);
         config.sandbox = Sandbox::Off;
-        config.scripted = true;
         config.agents = vec![Agent::new("assistant")
             .instructions("Use the test tool.")
+            .model("Fixture", "fixture")
             .tool("partner.note")];
         let harness = fixture_sdk::start(config, mode).await?;
+        harness
+            .set_model_provider(
+                ModelProvider::responses("Fixture")
+                    .base_url(args[3].clone())
+                    .credentials(Credentials::secure("synthetic-partner-key").memory_only()),
+            )
+            .await?;
         let session = harness.session("assistant", &workspace).await?;
         let result = session
-            .run("TEST_RESOURCE_GRANTS [{\"name\":\"partner__note\",\"arguments\":{}}]")
+            .run("Write the partner proof using your tool.")
             .await?;
         assert_eq!(result.status, RunStatus::Interrupted);
         assert!(!workspace.join("partner-proof.txt").exists());

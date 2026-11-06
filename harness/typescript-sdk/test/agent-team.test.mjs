@@ -12,7 +12,13 @@ for(const backend of ["sqlite","postgres"]) test(
   { skip: !process.env.OW_TS_TEST_HOST || (backend==="postgres"&&!process.env.OW_PG_TEST_URL), timeout: 120000 },
   async (t) => {
     const root = await mkdtemp(join(tmpdir(), "ow-team-ts-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    let harness;
+    t.after(async () => {
+      // Windows cannot remove SQLite state while the host still owns it.
+      // Keep this in one hook: a failed removal must never skip host shutdown.
+      await harness?.shutdown();
+      await rm(root, { recursive: true, force: true });
+    });
     await mkdir(join(root, "work"));
     const storage=backend==="postgres"?{type:"postgres",connectionEnv:"OW_PG_TEST_URL",schema:"ow_ts_team_"+randomUUID().replaceAll("-",""),loopbackPlaintext:true}:{type:"sqlite"};
     if(backend==="postgres") {
@@ -33,8 +39,7 @@ for(const backend of ["sqlite","postgres"]) test(
         approvals: { mode: "never" },
       })),
     };
-    let harness = await Harness.start(options);
-    t.after(() => harness.shutdown());
+    harness = await Harness.start(options);
     const team = await harness.newTeam("lead", {
       workspace: join(root, "work"),
       agentTypes: ["builder", "verifier"],
