@@ -1,0 +1,114 @@
+name: Harness release artifacts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+            exe: openworker-harness
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            exe: openworker-harness
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: openworker-harness.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            exe: openworker-harness.exe
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            exe: openworker-harness
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            exe: openworker-harness
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: harness
+      - name: Validate release contract and compile client
+        run: |
+          node --test harness/release/contract.test.mjs harness/desktop-starters/test.mjs
+          npm --prefix harness/typescript-sdk ci
+          npm --prefix harness/typescript-sdk run build
+          node --test harness/typescript-sdk/test/runtime-package.test.mjs
+      - name: Build native host
+        run: cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
+      - name: Native lifecycle/provider qualification
+        run: cargo test --manifest-path harness/Cargo.toml --locked -p openworker-sdk --features test-support --test desktop_api --test tool_free -- --test-threads=1
+      - name: Prepare immutable candidate artifacts
+        run: node harness/release/prepare.mjs "$GITHUB_WORKSPACE/harness/target/release/${{ matrix.exe }}" '${{ matrix.target }}' .sdk-release
+      - name: Install tarballs and run the exact TypeScript guide
+        run: node harness/release/smoke-npm.mjs .sdk-release/archives
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.target }}
+          path: .sdk-release/archives/
+          if-no-files-found: error
+  docs:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix docs-site ci
+      - run: npm --prefix docs-site test
+      - run: npm --prefix docs-site run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-documentation
+          path: docs-site/dist/
+# No npm/cargo publish, release creation, credential upload or website deployment.
+
+  crates:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/harness/target
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: harness
+      - name: Package public Rust dependency closure
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"),cp=require("child_process"),m=JSON.parse(fs.readFileSync("harness/release/manifest.json"));cp.execFileSync("cargo",["package","--manifest-path","harness/Cargo.toml","--no-verify",...m.rustPackages.flatMap(p=>["-p",p.name])],{stdio:"inherit"});'
+      - name: Compile the Markdown example using only extracted archives
+        shell: bash
+        run: |
+          node harness/release/check-examples.mjs "$RUNNER_TEMP/sdk-examples"
+          python3 harness/release/verify-crates.py --packages "$CARGO_TARGET_DIR/package" --out "$RUNNER_TEMP/sdk-crate-consumer" --example "$RUNNER_TEMP/sdk-examples/desktop.rs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-rust-crates
+          path: harness/target/package/*.crate
+          if-no-files-found: error

@@ -1,0 +1,48 @@
+{
+  "name": "openworker-arcade",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A desktop game studio built on the OpenWorker Harness SDK",
+  "main": "build/electron/main.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "sdk": "npm --prefix ../../typescript-sdk run build",
+    "runtime": "node scripts/runtime.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build:main": "node scripts/bundle-libraries.mjs && tsc -p tsconfig.main.json",
+    "build": "npm run sdk && npm run build:main && tsc -p tsconfig.json && vite build",
+    "test": "npm run build:main && node --test test/storage.test.mjs test/projection.test.mjs test/projects.test.mjs test/starters.test.mjs test/assets.test.mjs test/game-progress.test.mjs test/asset-catalog.test.mjs test/review.test.mjs test/test-evidence.test.mjs",
+    "test:integration": "npm run sdk && npm run build:main && node --test test/integration.test.mjs test/provider-probe.test.mjs test/project-agent.test.mjs test/preview-agent.test.mjs",
+    "test:playtest": "npm run build && node test/playtest-ui.mjs && node test/playtest-app-ui.mjs",
+    "test:ui": "npm run build && node test/offline-ui.mjs && node test/ui.mjs && node test/studio-ui.mjs && node test/discovery-ui.mjs && node test/review-ui.mjs",
+    "test:starters": "node starter-games/neon-drift/test.mjs && node starter-games/lumen-garden/test.mjs && node --test starter-games/skybound-carrier/test.mjs starter-games/moonlight-rally/test.mjs starter-games/pip-garden/test.mjs",
+    "test:adventure": "npm run build && node test/adventure-ui.mjs",
+    "test:rally": "npm run build && node test/rally-ui.mjs",
+    "test:progress": "npm run build && node test/progress-ui.mjs",
+    "package:dev": "npm run build && node scripts/package-dev.mjs",
+    "test:skybound": "npm run build && node test/skybound-ui.mjs",
+    "package": "npm run runtime && npm run build && electron-builder --dir",
+    "dist:app": "npm run runtime && npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@openworker/harness": "file:../../typescript-sdk",
+    "fflate": "0.8.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "45.0.0",
+    "electron-builder": "^26.0.0",
+    "playwright": "^1.56.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.5"
+  }
+}

@@ -1,0 +1,77 @@
+{{- if .Values.taskDesk.enabled }}
+{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" .Values.taskDesk.image) }}{{ fail "Task Desk image must be pinned by digest" }}{{ end -}}
+{{- $_ := required "Task Desk accessSecret is required" .Values.taskDesk.accessSecret -}}
+{{- $_ := required "Task Desk apiCASecret is required" .Values.taskDesk.apiCASecret -}}
+{{- if .Values.taskDesk.config.private_network }}{{ fail "This private Task Desk profile must bind only loopback" }}{{ end -}}
+{{- if ne (int (.Values.taskDesk.config.port | default 54350)) 54350 }}{{ fail "Private Task Desk uses fixed loopback port 54350" }}{{ end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ow.name" . }}-taskdesk
+data:
+  task-desk.json: |
+    {{- .Values.taskDesk.config | toPrettyJson | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ow.name" . }}-taskdesk
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels: {app: ow-taskdesk, release: {{ .Release.Name | quote }}}
+  template:
+    metadata:
+      labels: {app: ow-taskdesk, release: {{ .Release.Name | quote }}}
+      annotations:
+        checksum/config: {{ .Values.taskDesk.config | toJson | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000}
+      containers:
+        - name: taskdesk
+          image: {{ .Values.taskDesk.image | quote }}
+          env: [{name: NODE_EXTRA_CA_CERTS, value: /api-ca/ca.crt}]
+          securityContext:
+            {{- include "ow.security" . | nindent 12 }}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "const c=JSON.parse(require('fs').readFileSync('/config/task-desk.json','utf8'));const host=new URL(c.origin||'http://127.0.0.1:54350').host;require('http').get('http://127.0.0.1:54350/',{headers:{host}},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+            timeoutSeconds: 3
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: access, mountPath: /access, readOnly: true}
+            - {name: api-ca, mountPath: /api-ca, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: {{ include "ow.name" . }}-taskdesk}
+        - name: access
+          secret: {secretName: {{ .Values.taskDesk.accessSecret }}, defaultMode: 0440}
+        - name: api-ca
+          secret: {secretName: {{ .Values.taskDesk.apiCASecret }}, defaultMode: 0440}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ow.name" . }}-taskdesk
+spec:
+  podSelector:
+    matchLabels: {app: ow-taskdesk, release: {{ .Release.Name | quote }}}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: api
+      ports: [{protocol: TCP, port: 8443}]
+{{- end }}

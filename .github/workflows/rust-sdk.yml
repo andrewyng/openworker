@@ -1,0 +1,154 @@
+name: Rust SDK
+
+on:
+  pull_request:
+    paths: ["harness/**", "docs/harness/**", "deploy/**", ".github/workflows/rust-sdk.yml"]
+  push:
+    branches: [main, openworker-harness-sdk]
+    paths: ["harness/**", "docs/harness/**", "deploy/**", ".github/workflows/rust-sdk.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arcade-and-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Public layout and retained transport tests
+        run: node --test harness/tests/release-layout.test.mjs harness/tests/stdio-client.test.mjs harness/desktop-starters/test.mjs
+      - name: Build SDK and flagship app without launching Electron
+        run: |
+          npm --prefix harness/typescript-sdk ci
+          npm --prefix harness/typescript-sdk run build
+          npm --prefix harness/examples/arcade ci --ignore-scripts
+          npm --prefix harness/examples/arcade test
+          npm --prefix harness/examples/arcade run build
+
+  native-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: harness
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Find Windows Clang
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $clang = Get-ChildItem 'C:\Program Files\LLVM\bin\clang.exe','C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin\clang.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (!$clang) { throw 'Clang is required for the native Rust dependencies' }
+          $clang.DirectoryName >> $env:GITHUB_PATH
+      - name: Compile and test the native desktop host
+        run: |
+          rustup show active-toolchain
+          cargo test --locked -p openworker-sdk --features test-support --lib --test desktop_api --test agent_team -- --test-threads=1
+          cargo test --locked -p openworker-runtime --test connections --test model_endpoints --test direct_macos --test coding --test coding_extended --test assistant
+          cargo test --locked -p openworker-sdk --features test-support --test coding --test assistant -- --test-threads=1
+          npm --prefix typescript-sdk ci
+          npm --prefix typescript-sdk test
+          if [ "$RUNNER_OS" = Windows ]; then
+            export OW_TS_TEST_HOST="$(pwd -W)/target/debug/sdk-test-host.exe"
+          else
+            export OW_TS_TEST_HOST="$PWD/target/debug/sdk-test-host"
+          fi
+          node --test typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
+          node --test typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
+          node --test desktop-starters/test.mjs
+          node --test tests/stdio-client.test.mjs tests/release-layout.test.mjs
+
+  storage-and-process-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_PASSWORD: sdk-test-only
+          POSTGRES_DB: sdk_tests
+        ports: ["5432/tcp"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: harness
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - name: Load pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: harness/typescript-sdk/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            harness/target
+          key: rust-sdk-${{ runner.os }}-${{ hashFiles('harness/Cargo.lock', 'harness/rust-toolchain.toml') }}
+      - name: Formatting and strict Clippy
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --workspace --all-targets --features openworker-sdk/test-support,openworker-server-reference/team-test -- -D warnings
+      - name: SDK SQLite/PostgreSQL and embedded/stdio matrix
+        env:
+          OW_PG_TEST_URL: postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests
+        run: |
+          cargo test --locked -p openworker-sdk --features test-support --lib --tests -- --include-ignored --test-threads=1
+          cargo test --locked -p openworker-sdk --doc
+          cargo test --locked -p openworker-runtime -p openworker-store-postgres --test assistant -- --include-ignored --test-threads=1
+      - name: TypeScript SDK transport and real-host storage parity
+        env:
+          OW_PG_TEST_URL: postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: |
+          cargo build --locked --release -p openworker-sdk --features test-support --bin sdk-test-host
+          npm --prefix typescript-sdk ci
+          npm --prefix typescript-sdk test
+          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" npm --prefix typescript-sdk run test:integration
+          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" npm --prefix typescript-sdk run test:dynamic-agents
+          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" node --test typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
+          OW_TS_TEST_HOST="$PWD/target/release/sdk-test-host" node --test typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
+          node --test desktop-starters/test.mjs
+          (cd typescript-sdk && npm pack --dry-run)
+          node --test partner/build-sdk.test.mjs
+          CARGO_TARGET_DIR="$PWD/target" node --test partner/build-sdk.integration.mjs
+      - name: Runtime and telemetry regressions
+        run: |
+          cargo test --locked -p openworker-runtime -- --test-threads=1
+          cargo test --locked -p openworker-telemetry --features otlp
+      - name: Shared PostgreSQL team contract
+        env:
+          OW_PG_TEST_URL: postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports[5432] }}/sdk_tests
+        run: cargo test --locked -p openworker-store-postgres --features test-support --test team_contract --test agent_team_contract --test agent_team_worker -- --ignored --test-threads=1
