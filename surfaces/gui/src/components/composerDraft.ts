@@ -13,6 +13,11 @@ import type { SessionSkillRow } from "../api";
 
 const DRAFT_KEY_PREFIX = "coworker:composer-draft:v1:";
 
+// The one draft slot shared by brand-new chats (no message sent yet). Such a chat's session
+// id is throwaway — "New session" and the setup row's coworker/folder picks each mint a new
+// one — so keying its draft by id would strand it. Never a valid session id.
+export const NEW_CHAT_DRAFT_KEY = "new-chat";
+
 export interface ComposerDraft {
   text: string;
   attachments: Attachment[];
