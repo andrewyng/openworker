@@ -446,6 +446,7 @@ class SessionManager:
         self._autotitle_sig: dict[str, int] = {}
         self.workspace_trust = WorkspaceTrustStore()
         self.secrets = SecretStore()
+        self._migrate_legacy_ollama_default()
         # OB-6: record on or off, keep for, and sending recordings to Langfuse or an
         # OpenTelemetry endpoint. Settings live in the machine's state folder (beside the
         # secrets), never in a project. Off by default: then no exporter exists at all.
@@ -5085,6 +5086,35 @@ class SessionManager:
             self._prefs.pop("dm_session", None)
         self._save_prefs()
         return {"ok": True, "dm_session": self.dm_session()}
+
+    # The Ollama default before OPE-229 (2026-11-02). The Settings form prefills the
+    # field and saves every field, so anyone who saved the Ollama card before then
+    # carries this value without having typed it.
+    LEGACY_OLLAMA_URL = "http://localhost:11434"
+
+    def _migrate_legacy_ollama_default(self) -> None:
+        """A saved Ollama `base_url` that is exactly the pre-OPE-229 default becomes the
+        current one (127.0.0.1), once. On Windows `localhost` tries ::1 first, where Ollama
+        does not listen, so every new connection waited 0.3-2 s (OPE-250). OPE-229's rule
+        that a saved address is used as typed stands for anything else: a copy of the old
+        default is not an address anyone typed, so `localhost:11435` or a path after the
+        port is left alone."""
+        profile = self.secrets.get("provider:ollama")
+        if not isinstance(profile, dict):
+            return
+        saved = str(profile.get("base_url") or "").strip()
+        bare = saved.rstrip("/")
+        suffix = ""
+        if bare.endswith("/v1"):
+            bare, suffix = bare[: -len("/v1")], "/v1"
+        if bare.lower() != self.LEGACY_OLLAMA_URL:
+            return
+        migrated = dict(profile)
+        migrated["base_url"] = DEFAULT_OLLAMA_URL + suffix
+        try:
+            self.secrets.put("provider:ollama", migrated)
+        except OSError:
+            return  # a read-only store keeps the slow address; nothing else depends on this
 
     def _ollama_alive(self) -> bool:
         """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI

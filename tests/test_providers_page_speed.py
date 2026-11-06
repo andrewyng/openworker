@@ -133,6 +133,40 @@ def test_a_server_that_does_not_answer_is_not_asked_for_its_models(tmp_path, mon
         manager.observability.close()
 
 
+def test_an_ollama_profile_saved_as_the_old_default_becomes_127_0_0_1(tmp_path, monkeypatch):
+    """The Settings form saved the prefilled default, so profiles from before OPE-229 carry
+    `http://localhost:11434` without anyone having typed it. That exact value (a trailing
+    slash or `/v1` allowed) becomes the current default once; any other address stays as
+    typed, as OPE-229 decided."""
+    from coworker.secrets import SecretStore
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    store = SecretStore()
+
+    def after(saved: str) -> str:
+        store.put("provider:ollama", {"base_url": saved, "note": "kept"})
+        manager = SessionManager(workspace=tmp_path)
+        got = manager.secrets.get("provider:ollama")
+        assert got["note"] == "kept"  # the rest of the profile is untouched
+        if hasattr(manager, "observability"):
+            manager.observability.close()
+        return got["base_url"]
+
+    assert after("http://localhost:11434") == "http://127.0.0.1:11434"
+    assert after("http://localhost:11434/") == "http://127.0.0.1:11434"
+    assert after("http://LOCALHOST:11434/v1") == "http://127.0.0.1:11434/v1"
+    # Addresses someone chose are used as typed.
+    assert after("http://localhost:11435") == "http://localhost:11435"
+    assert after("http://localhost:11434/ollama") == "http://localhost:11434/ollama"
+    assert after("http://gpu-box.lan:11434") == "http://gpu-box.lan:11434"
+    # No profile at all: nothing is written.
+    store.delete("provider:ollama")
+    manager = SessionManager(workspace=tmp_path)
+    assert manager.secrets.get("provider:ollama") is None
+    if hasattr(manager, "observability"):
+        manager.observability.close()
+
+
 def test_local_server_defaults_name_127_0_0_1_not_localhost():
     """`localhost` resolves to ::1 first on Windows, so a probe of a server that is not
     running waited out two connects; the defaults name the address directly (as OPE-229
