@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Harness } from "@openworker/harness";
+import { Harness } from "@openworkerai/harness-sdk";
 import { modelFixture } from "./model-fixture.mjs";
 test(
   "provider probe validates model identity, rejects failure, creates no agent/session",

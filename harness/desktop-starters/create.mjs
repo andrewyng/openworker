@@ -45,9 +45,9 @@ pkg.name = appId.toLowerCase();
 pkg.engines = { node: ">=22.12.0", npm: ">=11" };
 pkg.packageManager = "npm@11.21.1";
 if (template === "electron-game-builder")
-  pkg.dependencies["@openworker/harness"] =
+  pkg.dependencies["@openworkerai/harness-sdk"] =
     sdkRoot ? "file:" + join(sdkRoot, "typescript-sdk") : version;
-if (template === "tauri-game-builder" && !sdkRoot) pkg.devDependencies["@openworker/harness"] = version;
+if (template === "tauri-game-builder" && !sdkRoot) pkg.devDependencies["@openworkerai/harness-sdk"] = version;
 await writeFile(
   join(destination, "package.json"),
   JSON.stringify(pkg, null, 2) + "\n",

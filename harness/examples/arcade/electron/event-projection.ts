@@ -1,4 +1,4 @@
-import type { RunEvent, Json } from "@openworker/harness";
+import type { RunEvent, Json } from "@openworkerai/harness-sdk";
 import type { Activity, Message } from "../shared/contracts.js";
 export class EventProjection {
   private seen = new Set<number>();

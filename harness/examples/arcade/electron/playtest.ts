@@ -1,7 +1,7 @@
 import { BrowserWindow, session } from "electron";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { ToolImageResult, type Json } from "@openworker/harness";
+import { ToolImageResult, type Json } from "@openworkerai/harness-sdk";
 import type { Library } from "./library.js";
 import { assetMime, fileBytes, textFile } from "./project.js";
 import { temporaryPreviewHtml } from "./temporary-preview.js";

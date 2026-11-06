@@ -12,7 +12,7 @@ const archives=resolve(process.argv[2]);const dir=await mkdtemp(join(tmpdir(),'o
 const npm=process.platform==='win32'?'npm.cmd':'npm';
 try {
  await writeFile(join(dir,'package.json'),JSON.stringify({name:'packed-sdk-consumer',private:true,type:'module'}));
- execFileSync(npm,['install','--cache',join(dir,'cache'),'--offline','--ignore-scripts','--no-audit','--no-fund',join(archives,`openworker-harness-${version}.tgz`),join(archives,`openworker-harness-runtime-${process.platform}-${process.arch}-${version}.tgz`),join(archives,`create-openworker-${version}.tgz`)],{cwd:dir,stdio:'inherit',shell:process.platform==='win32'});
+ execFileSync(npm,['install','--cache',join(dir,'cache'),'--offline','--ignore-scripts','--no-audit','--no-fund',join(archives,`openworkerai-harness-sdk-${version}.tgz`),join(archives,`openworkerai-harness-runtime-${process.platform}-${process.arch}-${version}.tgz`),join(archives,`create-openworker-${version}.tgz`)],{cwd:dir,stdio:'inherit',shell:process.platform==='win32'});
  execFileSync(process.execPath,[join(root,'release/check-examples.mjs'),dir],{stdio:'inherit'});
  execFileSync(process.execPath,[join(root,'typescript-sdk/node_modules/typescript/bin/tsc'),join(dir,'desktop.ts'),'--module','nodenext','--target','es2022','--strict','--skipLibCheck','--typeRoots',join(root,'typescript-sdk/node_modules/@types')],{cwd:dir,stdio:'inherit'});
  execFileSync(process.execPath,[join(dir,'node_modules/create-openworker/create.mjs'),join(dir,'new-app')],{cwd:dir,stdio:'inherit'});

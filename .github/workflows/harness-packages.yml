@@ -50,10 +50,11 @@ jobs:
           npm --prefix harness/typescript-sdk ci
           npm --prefix harness/typescript-sdk run build
           node --test harness/typescript-sdk/test/runtime-package.test.mjs
+      - name: Native lifecycle/provider qualification
+        run: cargo test --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --features test-support --test desktop_api --test tool_free -- --test-threads=1
+      # Build after qualification so test-support cannot affect the shipped host.
       - name: Build native host
         run: cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
-      - name: Native lifecycle/provider qualification
-        run: cargo test --manifest-path harness/Cargo.toml --locked -p openworker-sdk --features test-support --test desktop_api --test tool_free -- --test-threads=1
       - name: Prepare immutable candidate artifacts
         run: node harness/release/prepare.mjs "$GITHUB_WORKSPACE/harness/target/release/${{ matrix.exe }}" '${{ matrix.target }}' .sdk-release
       - name: Install tarballs and run the exact TypeScript guide
@@ -106,7 +107,7 @@ jobs:
         shell: bash
         run: |
           node harness/release/check-examples.mjs "$RUNNER_TEMP/sdk-examples"
-          python3 harness/release/verify-crates.py --packages "$CARGO_TARGET_DIR/package" --out "$RUNNER_TEMP/sdk-crate-consumer" --example "$RUNNER_TEMP/sdk-examples/desktop.rs"
+          python3 harness/release/verify-crates.py --fetch --packages "$CARGO_TARGET_DIR/package" --out "$RUNNER_TEMP/sdk-crate-consumer" --example "$RUNNER_TEMP/sdk-examples/desktop.rs"
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-rust-crates

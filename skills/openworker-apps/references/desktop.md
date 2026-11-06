@@ -1,24 +1,79 @@
 # Desktop track
 
-Read these files in the matching OpenWorker checkout:
+Use the developer's chosen desktop UI. Electron is a convenient TypeScript path;
+Rust/Tauri applications can embed the Rust SDK instead. Build the actual requested
+product, not necessarily the reference directory summarizer.
 
-- `docs/harness/guides/desktop.md` — the teaching sequence and Rust/TypeScript lifecycle snippets.
-- `harness/examples/quickstart/README.md` — setup, runtime resolution and packaging.
-- `harness/examples/quickstart/desktop/main.mjs` and `desktop/preload.cjs` — trusted main process, narrow IPC, directory dialog, cancellation and shutdown.
-- `harness/examples/quickstart/src/directory.ts` — bounded source snapshot and exclusions.
-- `harness/examples/quickstart/public/desktop.html`, `desktop.js` and `style.css` — complete Electron UI.
-- `harness/examples/quickstart/rust/src/main.rs` — runnable in-process Rust agent layer; it is not a complete Rust GUI.
+## Code Atlas example
 
-## Product to build
+A useful first app lets a user choose a code directory, review the files to share,
+request a summary and see streamed text with relative file references. Collect
+that input in the application and give it to a tool-free agent using the bundled
+[sdk.md](sdk.md) lifecycle. Use a new session for unrelated directories.
 
-For Code Atlas, let the user choose a directory, review selected files, request a summary and see streamed text. Create a new session for each summary so unrelated directories do not share context. Explain structure and entry points with file references, without adding shell execution or write access.
+Bound the number of files and total input bytes. Skip symlinks, dependencies,
+hidden directories, binary files and obvious credential files. Show which files
+will be sent to the selected model. These exclusions do not guarantee that the
+remaining files contain no secrets. Do not add shell execution or write access
+when the task only calls for a summary.
 
-The source reader excludes hidden/dependency directories, symlinks and obvious credential filenames, and limits file count and bytes. It is not a secret scanner or hostile-filesystem sandbox. Preserve disclosure of what is sent to the configured model. If the user requests a different product, adapt input collection and instructions accordingly.
+## Electron process boundary
 
-## Run and package
+Keep the SDK, directory dialog, filesystem reads and provider credentials in the
+main process. Expose specific actions through a context-isolated preload: choose
+a directory, start/cancel a summary and receive text/status events. Check the IPC
+sender and validate inputs. Do not enable Node integration in the renderer or
+expose arbitrary filesystem/SDK calls through IPC. Render output with textContent
+or a sanitized Markdown renderer.
 
-From `harness/examples/quickstart`, follow the README environment setup, then use `npm run setup` and `npm run desktop`. `npm test` uses the real Rust helper when `OPENWORKER_EXECUTABLE` is configured, with a synthetic model endpoint.
+Use the app's data directory for durable state. At startup, resolve the helper:
 
-`npm run package:desktop` creates an unpacked Electron app. The matching helper is bundled outside ASAR. Package on the target OS; signing is an explicit release configuration. For a Rust-native UI, embed the demonstrated lifecycle in the chosen UI framework and supply its platform packaging; do not claim the Rust CLI is already a desktop window.
+```typescript
+import { app } from 'electron';
+import { join } from 'node:path';
+import { Harness, resolveRuntimeExecutable } from '@openworkerai/harness-sdk';
 
-Verify directory selection, streamed output, cancellation/error handling and the packaged helper path. Check which target platforms were actually exercised before reporting support.
+await app.whenReady();
+const filename = process.platform === 'win32'
+  ? 'openworker-harness.exe' : 'openworker-harness';
+const executable = app.isPackaged
+  ? join(process.resourcesPath, filename)
+  : resolveRuntimeExecutable();
+const harness = await Harness.start({
+  stateDir: join(app.getPath('userData'), 'agent-state'),
+  executable,
+  sandbox: 'off',
+});
+```
+
+Configure the provider and create the agent as shown in [sdk.md](sdk.md). Start
+one harness at the application boundary; do not start a process on every click.
+Guard duplicate submissions and display failure/cancellation states distinctly.
+During shutdown, await harness.shutdown() before completing app exit; avoid an
+unhandled asynchronous before-quit handler or recursive quit calls.
+
+## Package the native helper
+
+In the build script, use `resolveRuntimeExecutable()` to locate the installed
+binary. Copy it through the packager's extraResources mechanism to the filename
+used above, outside ASAR. Keep its executable permissions on macOS/Linux. Bundle
+the matching version and architecture, including when cross-building an app.
+The default npm installation selects the build machine's architecture, not an
+arbitrary packaging target.
+
+Make `@openworkerai/harness-sdk` a production dependency. Test the unpacked packaged app
+with no `OPENWORKER_EXECUTABLE` override and without the OpenWorker checkout.
+Then qualify installers, signing and notarization on the actual target OS.
+Do not claim a complete Rust GUI when only a Rust agent-loop sample was built.
+
+## Reference source when useful
+
+A full maintained Code Atlas example is in `harness/examples/quickstart` of
+https://github.com/andrewyng/openworker. It includes main/preload handlers, a
+bounded directory reader, and a renderer. Reading it is optional for the bundled
+integration above. If copying it, choose a matching revision, replace checkout
+`file:` dependencies with the published SDK version, and preserve its limits.
+
+Verify directory selection, content preview, streamed response, Stop, error
+handling, shutdown and the packaged helper path. Synthetic provider tests verify
+transport behavior; a live model test additionally evaluates actual responses.

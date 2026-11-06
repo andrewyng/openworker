@@ -42,29 +42,30 @@ agent and session code, and prepare container deployment files.
 
 <details><summary>Install the skill for this project</summary>
 
-From an OpenWorker checkout, choose the command for your coding agent. Replace
-`/path/to/your-app` with an existing app directory; quote paths containing spaces.
+After npm publication, install the matching skill in your existing app project.
+The candidate below is not published yet; for local archives or checkout installation,
+see the [skill installation guide](../../../skills/README.md).
 
 <!-- sdk-install-tabs -->
 
 ### Codex
 
 ```sh frame="none"
-node skills/install.mjs --agent codex --project /path/to/your-app
+npx @openworkerai/build-with-sdk-skills@0.1.0-beta.1 --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-node skills/install.mjs --agent claude --project /path/to/your-app
+npx @openworkerai/build-with-sdk-skills@0.1.0-beta.1 --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->
 
 Open a new coding-agent session in that project. The installer copies the same
-skill and its two track references into the tool's project skills directory.
+skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 It doesn't change global settings or overwrite an existing skill. See the
-[skill installation guide](../../../skills/README.md) for manual installation
+[skill installation guide](../../../skills/README.md) for local candidate installation
 and invocation details.
 
 </details>

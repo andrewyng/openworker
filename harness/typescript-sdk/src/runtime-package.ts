@@ -26,7 +26,7 @@ export function installedRuntime():string|undefined {
     if(!header?.glibcVersionRuntime)return undefined;
   }
   let manifest:string;
-  try {manifest=require.resolve(`@openworker/harness-runtime-${process.platform}-${process.arch}/package.json`);}
+  try {manifest=require.resolve(`@openworkerai/harness-runtime-${process.platform}-${process.arch}/package.json`);}
   catch(e) {if((e as NodeJS.ErrnoException).code==="MODULE_NOT_FOUND")return undefined;throw e;}
   return validateRuntimePackage(dirname(manifest));
 }

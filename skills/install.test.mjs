@@ -11,7 +11,12 @@ for (const agent of ['codex','claude']) test(`install complete ${agent} skill; p
   const skill=await readFile(join(dest,'SKILL.md'),'utf8');
   for(const [,path] of skill.matchAll(/\]\((references\/[^)]+)\)/g)) assert.ok((await readFile(join(dest,path),'utf8')).length>0);
   assert.ok((await readFile(join(dest,'agents/openai.yaml'),'utf8')).includes('$openworker-apps'));
-  assert.ok(JSON.parse(await readFile(join(dest,'references/checkout.json'),'utf8')).checkout);
+  const metadata=JSON.parse(await readFile(join(dest,'references/installation.json'),'utf8'));
+  const pkg=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8'));
+  assert.equal(metadata.sdkPackage,'@openworkerai/harness-sdk');
+  assert.equal(metadata.sdkVersion,pkg.version);
+  assert.equal(metadata.package,'@openworkerai/build-with-sdk-skills');
+  assert.equal(metadata.checkout,undefined);
   await writeFile(join(dest,'SKILL.md'),'local customization');
   await assert.rejects(install({agent,project:root}),{code:'EEXIST'});
   assert.equal(await readFile(join(dest,'SKILL.md'),'utf8'),'local customization');
