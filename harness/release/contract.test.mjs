@@ -26,7 +26,7 @@ test('source-mode starter keeps explicit checkout references',()=>{
  try {
  const result=spawnSync(process.execPath,[join(root,'desktop-starters/create.mjs'),join(dir,'app'),'--sdk-root',root],{encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);
- assert.equal(JSON.parse(readFileSync(join(dir,'app/package.json'))).dependencies['@openworkerai/sdk'],'file:'+join(root,'typescript-sdk'));
+ assert.equal(JSON.parse(readFileSync(join(dir,'app/package.json'))).dependencies['@openworkerai/harness-sdk'],'file:'+join(root,'typescript-sdk'));
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test('registry-mode starters require no checkout paths',()=>{
@@ -34,7 +34,7 @@ test('registry-mode starters require no checkout paths',()=>{
  try {for(const template of ['electron-game-builder','tauri-game-builder']) {
  const dest=join(dir,template);const result=spawnSync(process.execPath,[join(root,'desktop-starters/create.mjs'),dest,'--template',template],{encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);const config=JSON.parse(readFileSync(join(dest,'openworker.json')));assert.equal(config.sdkRoot,null);
- const pkg=JSON.parse(readFileSync(join(dest,'package.json')));assert.equal((pkg.dependencies['@openworkerai/sdk']??pkg.devDependencies['@openworkerai/sdk']),manifest.version);
+ const pkg=JSON.parse(readFileSync(join(dest,'package.json')));assert.equal((pkg.dependencies['@openworkerai/harness-sdk']??pkg.devDependencies['@openworkerai/harness-sdk']),manifest.version);
  if(template.startsWith('tauri'))assert.ok(readFileSync(join(dest,'src-tauri/Cargo.toml'),'utf8').includes(`openworker-sdk = "=${manifest.version}"`));
  }}finally{rmSync(dir,{recursive:true,force:true});}
 });

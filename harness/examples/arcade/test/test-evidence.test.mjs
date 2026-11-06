@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ToolImageResult } from "@openworkerai/sdk";
+import { ToolImageResult } from "@openworkerai/harness-sdk";
 import { Library } from "../build/electron/library.js";
 import { TestEvidence, CHECKS } from "../build/electron/test-evidence.js";
 test("testing facts persist, never imply passes, bind exact digest, and preserve invalid evidence", async (t) => {

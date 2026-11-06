@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { ToolImageResult, type Json } from "@openworkerai/sdk";
+import { ToolImageResult, type Json } from "@openworkerai/harness-sdk";
 import { atomicWrite, readBounded, scoped } from "./files.js";
 import type { Library } from "./library.js";
 import type { TestingSummary, TestCheck } from "../shared/contracts.js";

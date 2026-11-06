@@ -21,7 +21,7 @@ version, creates the platform npm package, client/starter tarballs, a standalone
 runtime archive, SHA256SUMS and `release.json`. It refuses to overwrite a candidate.
 Native compilation and clean-machine testing are required on every claimed target.
 
-The npm client is `@openworkerai/sdk`; matching runtime packages are
+The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
 `@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
 skill into a Codex or Claude Code project. The skill package has no runtime or

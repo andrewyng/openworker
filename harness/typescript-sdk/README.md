@@ -1,6 +1,6 @@
 # OpenWorker TypeScript Harness SDK
 
-Registry candidate: **0.1.0-beta.1**. After publication, install with `npm install @openworkerai/sdk@0.1.0-beta.1`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
+Registry candidate: **0.1.0-beta.1**. After publication, install with `npm install @openworkerai/harness-sdk@0.1.0-beta.1`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
 
 Beta API, Node.js 20+, ESM. Registry-ready source/tarball distribution. The Rust host owns model/tool execution, policy, persistence,
 agent teams and run semantics. This package owns typed APIs and a managed private
@@ -24,7 +24,7 @@ model settings, chat, approvals and an isolated playable preview. Application co
 runs in Electron's trusted main process, not the renderer.
 
 ```typescript
-import { Harness } from '@openworkerai/sdk';
+import { Harness } from '@openworkerai/harness-sdk';
 
 const harness = await Harness.start({ sandbox: 'off' }); // Trusted app callbacks only.
 await harness.setModelProvider({
@@ -90,7 +90,7 @@ side effects. Callbacks retain the app's privileges, not an OS sandbox's.
 An application callback can explicitly return one image alongside JSON metadata:
 
 ```typescript
-import { ToolImageResult } from '@openworkerai/sdk';
+import { ToolImageResult } from '@openworkerai/harness-sdk';
 // Inside execute(): capture only the app-authorized surface.
 return new ToolImageResult(
   { width: 960, height: 600, scope: 'game-preview' },
@@ -195,7 +195,7 @@ prefer shared providers and the desktop facade above.
 After publication:
 
 ```sh
-npm install @openworkerai/sdk@0.1.0-beta.1
+npm install @openworkerai/harness-sdk@0.1.0-beta.1
 ```
 
 The client installs the matching `@openworkerai/harness-runtime-<platform>-<arch>`
@@ -207,7 +207,7 @@ helper outside ASAR; `resolveRuntimeExecutable()` returns its installed path.
 Before publication, install the prepared client and your platform archive together:
 
 ```sh
-npm install /absolute/release/openworkerai-sdk-0.1.0-beta.1.tgz \
+npm install /absolute/release/openworkerai-harness-sdk-0.1.0-beta.1.tgz \
   /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.1.tgz
 ```
 
@@ -241,7 +241,7 @@ test-support binary; that is not a live model demonstration.
 The core API in an installed consumer is:
 
 ```typescript
-import { Harness, type Agent } from '@openworkerai/sdk';
+import { Harness, type Agent } from '@openworkerai/harness-sdk';
 
 const assistant: Agent = {
   id: 'assistant',

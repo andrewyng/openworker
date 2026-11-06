@@ -12,7 +12,7 @@ Checks remain active in Ask, auto-approve and bypass modes.
 ### TypeScript
 
 ```typescript
-import { Harness, guard, hook } from "@openworkerai/sdk";
+import { Harness, guard, hook } from "@openworkerai/harness-sdk";
 
 const harness = await Harness.start({
   guardrails: {

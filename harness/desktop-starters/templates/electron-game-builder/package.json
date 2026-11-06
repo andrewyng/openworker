@@ -13,7 +13,7 @@
     "package": "npm run build && electron-builder --config electron-builder.json"
   },
   "dependencies": {
-    "@openworkerai/sdk": "file:../typescript-sdk",
+    "@openworkerai/harness-sdk": "file:../typescript-sdk",
     "@tauri-apps/api": "^2.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

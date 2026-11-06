@@ -31,7 +31,7 @@ Use the app's data directory for durable state. At startup, resolve the helper:
 ```typescript
 import { app } from 'electron';
 import { join } from 'node:path';
-import { Harness, resolveRuntimeExecutable } from '@openworkerai/sdk';
+import { Harness, resolveRuntimeExecutable } from '@openworkerai/harness-sdk';
 
 await app.whenReady();
 const filename = process.platform === 'win32'
@@ -61,7 +61,7 @@ the matching version and architecture, including when cross-building an app.
 The default npm installation selects the build machine's architecture, not an
 arbitrary packaging target.
 
-Make `@openworkerai/sdk` a production dependency. Test the unpacked packaged app
+Make `@openworkerai/harness-sdk` a production dependency. Test the unpacked packaged app
 with no `OPENWORKER_EXECUTABLE` override and without the OpenWorker checkout.
 Then qualify installers, signing and notarization on the actual target OS.
 Do not claim a complete Rust GUI when only a Rust agent-loop sample was built.

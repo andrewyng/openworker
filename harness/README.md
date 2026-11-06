@@ -44,7 +44,7 @@ Use SDK/service interfaces instead of reading runtime tables directly.
 | Application | Interface |
 |---|---|
 | Rust desktop app | Run `openworker-sdk` in your Tokio process or use a managed child |
-| TypeScript desktop app | `@openworkerai/sdk` manages the Rust child over private stdio |
+| TypeScript desktop app | `@openworkerai/harness-sdk` manages the Rust child over private stdio |
 | Custom tool host | [Native host builder](partner/README.md) and [tools SDK](tools-sdk/README.md) |
 | Service | [API and workers](server-reference/README.md), [CLI](service-cli/README.md), REST/SSE and PostgreSQL |
 

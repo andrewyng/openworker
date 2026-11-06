@@ -1,4 +1,4 @@
-import { Harness } from "@openworkerai/sdk";
+import { Harness } from "@openworkerai/harness-sdk";
 
 export async function startHarness(stateDir: string) {
   const harness = await Harness.start({

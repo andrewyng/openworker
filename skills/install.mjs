@@ -26,7 +26,7 @@ export async function install({agent, project}) {
   await writeFile(join(destination,name), content[index], {flag:'wx'});
  }
  await writeFile(join(destination,'references/installation.json'), JSON.stringify({
-  package:pkg.name, version:pkg.version, sdkPackage:'@openworkerai/sdk', sdkVersion:pkg.version,
+  package:pkg.name, version:pkg.version, sdkPackage:'@openworkerai/harness-sdk', sdkVersion:pkg.version,
  },null,2)+'\n');
  return destination;
 }

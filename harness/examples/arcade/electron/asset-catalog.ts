@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { binaryAsset, digest, type ProjectFiles } from "./project.js";
-import type { Json } from "@openworkerai/sdk";
+import type { Json } from "@openworkerai/harness-sdk";
 
 // App-shipped, reviewed assets only. No URL, local path, account or executable input.
 export class AssetCatalog {

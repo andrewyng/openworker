@@ -28,7 +28,7 @@ const metadata={version:manifest.version,protocol:manifest.protocol,platform:tar
 await writeFile(join(native,'runtime.json'),JSON.stringify(metadata,null,2)+'\n');
 await writeFile(join(native,'package.json'),JSON.stringify({name,version:manifest.version,description:'OpenWorker native harness runtime',license:'MIT',os:[target.platform],cpu:[target.arch],...(target.platform==='linux'?{libc:['glibc']}:{}),files:['bin','runtime.json','LICENSE','README.md'],repository:{type:'git',url:'git+https://github.com/andrewyng/openworker.git'},publishConfig:{access:'public',tag:'beta'}},null,2)+'\n');
 await cp(join(root,'..','LICENSE'),join(native,'LICENSE'));
-await writeFile(join(native,'README.md'),`# ${name}\n\nMatching native host for @openworkerai/sdk ${manifest.version}. Installed automatically for this platform.\n`);
+await writeFile(join(native,'README.md'),`# ${name}\n\nMatching native host for @openworkerai/harness-sdk ${manifest.version}. Installed automatically for this platform.\n`);
 for(const [directory,files] of [['typescript-sdk',['dist','examples','README.md','LICENSE']],['desktop-starters',['create.mjs','templates','README.md']]]) {
  const dest=join(out,directory);await mkdir(dest);
  const pkg=JSON.parse(await readFile(join(root,directory,'package.json'),'utf8'));

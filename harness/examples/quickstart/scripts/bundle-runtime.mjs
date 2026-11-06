@@ -1,4 +1,4 @@
-import { resolveRuntimeExecutable } from "@openworkerai/sdk";
+import { resolveRuntimeExecutable } from "@openworkerai/harness-sdk";
 import { mkdir, copyFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 const source = process.env.OPENWORKER_EXECUTABLE || resolveRuntimeExecutable();

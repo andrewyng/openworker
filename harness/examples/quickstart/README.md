@@ -21,7 +21,7 @@ npm run web
 
 Run one command per terminal. The web app opens at http://127.0.0.1:4352/ . The model credentials stay in Electron's main process or the web server. They are never forwarded to the renderer/browser.
 
-The source example uses a local SDK dependency until publication. Once `0.1.0-beta.1` is published, applications can install `@openworkerai/sdk@0.1.0-beta.1` from npm, including its matching native package, instead of using this checkout and executable override.
+The source example uses a local SDK dependency until publication. Once `0.1.0-beta.1` is published, applications can install `@openworkerai/harness-sdk@0.1.0-beta.1` from npm, including its matching native package, instead of using this checkout and executable override.
 
 ## Desktop packaging
 

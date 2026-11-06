@@ -92,7 +92,7 @@ in the examples directory.
 ### TypeScript
 
 ```typescript example=desktop
-import { Harness } from "@openworkerai/sdk";
+import { Harness } from "@openworkerai/harness-sdk";
 
 const harness = await Harness.start({ appId: "code-atlas", sandbox: "off" });
 try {

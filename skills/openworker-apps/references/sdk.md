@@ -3,7 +3,7 @@
 ## Install and choose the runtime
 
 Read `installation.json` beside this file for the matching SDK version, then pin
-that exact version of `@openworkerai/sdk` in the app's dependencies. Commit the
+that exact version of `@openworkerai/harness-sdk` in the app's dependencies. Commit the
 application's lockfile. For local release candidates, install the client and
 matching native `.tgz` archives supplied by the maintainer instead.
 
@@ -25,7 +25,7 @@ This TypeScript helper uses the runtime installed with the SDK. The application
 supplies a private, writable state directory and an exact model ID.
 
 ```typescript
-import { Harness } from '@openworkerai/sdk';
+import { Harness } from '@openworkerai/harness-sdk';
 
 export async function openAssistant(stateDir: string, modelId: string) {
   const harness = await Harness.start({ stateDir, sandbox: 'off' });
@@ -96,7 +96,7 @@ needs to resume a durable conversation via `agent.resumeSession(reference)`.
 
 ## More APIs
 
-Inspect the installed `@openworkerai/sdk` declarations before adding tools, teams
+Inspect the installed `@openworkerai/harness-sdk` declarations before adding tools, teams
 or safety policies. The public guides are at https://openworker.com/docs/sdk/.
 Use the guide that matches the installed release; live website examples may be
 newer. The bundled snippets above are the starting point for this skill version.

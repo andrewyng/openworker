@@ -16,7 +16,7 @@
     "package:desktop": "npm run build && node scripts/bundle-runtime.mjs && electron-builder --dir"
   },
   "dependencies": {
-    "@openworkerai/sdk": "file:../../typescript-sdk",
+    "@openworkerai/harness-sdk": "file:../../typescript-sdk",
     "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {

@@ -28,7 +28,7 @@
     "dist:app": "npm run runtime && npm run build && electron-builder"
   },
   "dependencies": {
-    "@openworkerai/sdk": "file:../../typescript-sdk",
+    "@openworkerai/harness-sdk": "file:../../typescript-sdk",
     "fflate": "0.8.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

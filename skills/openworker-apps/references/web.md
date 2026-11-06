@@ -26,7 +26,7 @@ from durable harness history retention.
 
 ## Container packaging
 
-Install the matching `@openworkerai/sdk` release inside a glibc-based Linux image,
+Install the matching `@openworkerai/harness-sdk` release inside a glibc-based Linux image,
 with optional dependencies enabled, so npm selects the Linux runtime. Do not copy
 macOS node_modules or its binary into that image. Supply runtime secrets and
 writable state storage, handle SIGTERM by shutting down the harness, and expose

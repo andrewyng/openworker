@@ -444,7 +444,7 @@ agent definitions, build-info or launch arguments.
 
 ## TypeScript application
 
-Use @openworkerai/sdk with executable pointing to bin/${executable}. Select the
+Use @openworkerai/harness-sdk with executable pointing to bin/${executable}. Select the
 same native qualified tool names in agents. TypeScript does not reimplement or
 wrap those native tools as MCP. TypeScript-authored tools still use MCP.
 
