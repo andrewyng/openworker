@@ -78,6 +78,7 @@ import { MachinesSection } from "./MachinesSection";
 import { RemoteConnectorsPanel } from "./RemoteConnectorsPanel";
 import { MemorySection } from "./MemorySection";
 import { SandboxSection } from "./SandboxSection";
+import { ObservabilitySection } from "./ObservabilitySection";
 import { CustomizationTab } from "./CustomizationTab";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
@@ -99,6 +100,8 @@ export type SetTab =
   | "voice"
   | "memory"
   | "sandbox"
+  // OB-6: record on or off, keep for, and sending recordings to Langfuse or OpenTelemetry.
+  | "observability"
   | "machines"
   | "connectors"
   // UX-058: the services behind the tools (web search provider + keys, fetch switch).
@@ -132,6 +135,7 @@ type SetIcon =
   | "refresh"
   | "plug"
   | "shield"
+  | "audit"
   | "user";
 // `labelKey` = the i18n key for the label; tabs without one yet show `label` as is.
 type TabDef = { key: SetTab; label: string; labelKey?: string; icon: SetIcon };
@@ -161,6 +165,7 @@ const SET_GROUPS: { name: string; nameKey?: string; scope: "app" | "machine" | "
       { key: "skills", label: "Skills", labelKey: "settings.tab.skills", icon: "book" },
       { key: "memory", label: "Memory", labelKey: "settings.tab.memory", icon: "archive" },
       { key: "sandbox", label: "Sandbox", labelKey: "settingsx.tab.sandbox", icon: "shield" },
+      { key: "observability", label: "Observability", labelKey: "settingsx.tab.observability", icon: "audit" },
       { key: "personas", label: "Coworkers", labelKey: "settings.tab.personas", icon: "sparkle" },
     ],
   },
@@ -407,6 +412,8 @@ export function SettingsView({
             />
           ) : tab === "sandbox" ? (
             <SandboxSection key={scopeId || "local"} machine={scoped} onProviderChanged={onSandboxProviderChanged} />
+          ) : tab === "observability" ? (
+            <ObservabilitySection key={scopeId || "local"} machine={scoped} />
           ) : tab === "customization" ? (
             <CustomizationTab key={scopeId || "local"} machine={scoped} />
           ) : tab === "machines" ? (

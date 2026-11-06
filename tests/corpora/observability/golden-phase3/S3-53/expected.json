@@ -1,0 +1,9 @@
+{
+ "same_approval_twice": [
+  {
+   "tool": "run_shell",
+   "first_by": "golden-approve-lead",
+   "again_by": "golden-approve-maya"
+  }
+ ]
+}

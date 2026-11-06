@@ -1,0 +1,5669 @@
+{
+ "recording": {
+  "turns": [
+   {
+    "turn_id": "golden-team-L1",
+    "session_id": "golden-team-lead",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600000000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L2",
+    "session_id": "golden-team-lead",
+    "seq": 2,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600060000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L3",
+    "session_id": "golden-team-lead",
+    "seq": 3,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600120000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L4",
+    "session_id": "golden-team-lead",
+    "seq": 4,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600180000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L5",
+    "session_id": "golden-team-lead",
+    "seq": 5,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600240000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L6",
+    "session_id": "golden-team-lead",
+    "seq": 6,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600300000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L7",
+    "session_id": "golden-team-lead",
+    "seq": 7,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600360000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L8",
+    "session_id": "golden-team-lead",
+    "seq": 8,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600420000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L9",
+    "session_id": "golden-team-lead",
+    "seq": 9,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600480000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 100,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L10",
+    "session_id": "golden-team-lead",
+    "seq": 10,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600540000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 110,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L11",
+    "session_id": "golden-team-lead",
+    "seq": 11,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600600000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 111,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "timer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L12",
+    "session_id": "golden-team-lead",
+    "seq": 12,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600660000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 112,
+     "batched": null,
+     "deferred": {
+      "by": "cap",
+      "ms": 360000
+     },
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L13",
+    "session_id": "golden-team-lead",
+    "seq": 13,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600720000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 113,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L14",
+    "session_id": "golden-team-lead",
+    "seq": 14,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600780000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 114,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L15",
+    "session_id": "golden-team-lead",
+    "seq": 15,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600840000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 115,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L16",
+    "session_id": "golden-team-lead",
+    "seq": 16,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600900000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 116,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L17",
+    "session_id": "golden-team-lead",
+    "seq": 17,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600960000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 117,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L18",
+    "session_id": "golden-team-lead",
+    "seq": 18,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601020000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 118,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L19",
+    "session_id": "golden-team-lead",
+    "seq": 19,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601080000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 119,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L20",
+    "session_id": "golden-team-lead",
+    "seq": 20,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601140000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 120,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-team-L21",
+    "session_id": "golden-team-lead",
+    "seq": 21,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601200000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 121,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L22",
+    "session_id": "golden-team-lead",
+    "seq": 22,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601260000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 122,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L23",
+    "session_id": "golden-team-lead",
+    "seq": 23,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601320000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 123,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L24",
+    "session_id": "golden-team-lead",
+    "seq": 24,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601380000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 124,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L25",
+    "session_id": "golden-team-lead",
+    "seq": 25,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601440000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 125,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L26",
+    "session_id": "golden-team-lead",
+    "seq": 26,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601500000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 126,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "answer"
+    }
+   },
+   {
+    "turn_id": "golden-team-L27",
+    "session_id": "golden-team-lead",
+    "seq": 27,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601560000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "13",
+      "14"
+     ],
+     "board_seq": 127,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "watchdog"
+    }
+   },
+   {
+    "turn_id": "golden-team-L28",
+    "session_id": "golden-team-lead",
+    "seq": 28,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601620000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "13",
+      "14"
+     ],
+     "board_seq": 128,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "watchdog"
+    }
+   },
+   {
+    "turn_id": "golden-team-L29",
+    "session_id": "golden-team-lead",
+    "seq": 29,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601680000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "13",
+      "14"
+     ],
+     "board_seq": 129,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "watchdog"
+    }
+   },
+   {
+    "turn_id": "golden-team-L30",
+    "session_id": "golden-team-lead",
+    "seq": 30,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601740000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "13",
+      "14"
+     ],
+     "board_seq": 130,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "watchdog"
+    }
+   },
+   {
+    "turn_id": "golden-team-L31",
+    "session_id": "golden-team-lead",
+    "seq": 31,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601800000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 131,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "user"
+    }
+   },
+   {
+    "turn_id": "golden-team-L32",
+    "session_id": "golden-team-lead",
+    "seq": 32,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793601860000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": 132,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "user"
+    }
+   },
+   {
+    "turn_id": "golden-team-W33",
+    "session_id": "golden-team-worker-3",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601920000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W34",
+    "session_id": "golden-team-worker-1",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793601980000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W35",
+    "session_id": "golden-team-worker-2",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602040000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W36",
+    "session_id": "golden-team-worker-3",
+    "seq": 2,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602100000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W37",
+    "session_id": "golden-team-worker-1",
+    "seq": 2,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602160000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W38",
+    "session_id": "golden-team-worker-2",
+    "seq": 2,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602220000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W39",
+    "session_id": "golden-team-worker-3",
+    "seq": 3,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602280000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W40",
+    "session_id": "golden-team-worker-1",
+    "seq": 3,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602340000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W41",
+    "session_id": "golden-team-worker-2",
+    "seq": 3,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602400000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W42",
+    "session_id": "golden-team-worker-3",
+    "seq": 4,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602460000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W43",
+    "session_id": "golden-team-worker-1",
+    "seq": 4,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602520000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W44",
+    "session_id": "golden-team-worker-2",
+    "seq": 4,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602580000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W45",
+    "session_id": "golden-team-worker-3",
+    "seq": 5,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602640000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W46",
+    "session_id": "golden-team-worker-1",
+    "seq": 5,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602700000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W47",
+    "session_id": "golden-team-worker-2",
+    "seq": 5,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602760000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W48",
+    "session_id": "golden-team-worker-3",
+    "seq": 6,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602820000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W49",
+    "session_id": "golden-team-worker-1",
+    "seq": 6,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602880000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W50",
+    "session_id": "golden-team-worker-2",
+    "seq": 6,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793602940000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W51",
+    "session_id": "golden-team-worker-3",
+    "seq": 7,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603000000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W52",
+    "session_id": "golden-team-worker-1",
+    "seq": 7,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603060000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "board"
+    }
+   },
+   {
+    "turn_id": "golden-team-W53",
+    "session_id": "golden-team-worker-2",
+    "seq": 7,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603120000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "mention"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "mention"
+    }
+   },
+   {
+    "turn_id": "golden-team-W54",
+    "session_id": "golden-team-worker-3",
+    "seq": 8,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603180000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "mention"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "mention"
+    }
+   },
+   {
+    "turn_id": "golden-team-W55",
+    "session_id": "golden-team-worker-1",
+    "seq": 8,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603240000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "mention"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "mention"
+    }
+   },
+   {
+    "turn_id": "golden-team-W56",
+    "session_id": "golden-team-worker-2",
+    "seq": 8,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603300000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "steer"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "steer"
+    }
+   },
+   {
+    "turn_id": "golden-team-W57",
+    "session_id": "golden-team-worker-3",
+    "seq": 9,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603360000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "steer"
+    },
+    "woken_by": {
+     "lead_session_id": "golden-team-lead",
+     "team_id": "team-1",
+     "item_ids": [
+      "14"
+     ],
+     "via": "steer"
+    }
+   },
+   {
+    "turn_id": "golden-team-W99",
+    "session_id": "golden-team-worker-1",
+    "seq": 9,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793603420000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "unknown"
+    }
+   }
+  ],
+  "steps": [
+   {
+    "step_id": "golden-team-L1-m1",
+    "turn_id": "golden-team-L1",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600000000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30404,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L2-m1",
+    "turn_id": "golden-team-L2",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600060000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L3-m1",
+    "turn_id": "golden-team-L3",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600120000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L4-m1",
+    "turn_id": "golden-team-L4",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600180000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L5-m1",
+    "turn_id": "golden-team-L5",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600240000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L6-m1",
+    "turn_id": "golden-team-L6",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600300000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L7-m1",
+    "turn_id": "golden-team-L7",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600360000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L8-m1",
+    "turn_id": "golden-team-L8",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600420000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L9-m1",
+    "turn_id": "golden-team-L9",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600480000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L10-m1",
+    "turn_id": "golden-team-L10",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600540000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L11-m1",
+    "turn_id": "golden-team-L11",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600600000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 3109,
+      "cache_read": 30399,
+      "cache_write": 0,
+      "output": 1037,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L12-m1",
+    "turn_id": "golden-team-L12",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600660000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9246,
+      "cache_read": 25247,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L13-m1",
+    "turn_id": "golden-team-L13",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600720000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L14-m1",
+    "turn_id": "golden-team-L14",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600780000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L15-m1",
+    "turn_id": "golden-team-L15",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600840000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L16-m1",
+    "turn_id": "golden-team-L16",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600900000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L17-m1",
+    "turn_id": "golden-team-L17",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793600960000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L18-m1",
+    "turn_id": "golden-team-L18",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601020000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L19-m1",
+    "turn_id": "golden-team-L19",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601080000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L20-m1",
+    "turn_id": "golden-team-L20",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601140000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9244,
+      "cache_read": 25244,
+      "cache_write": 0,
+      "output": 1067,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L21-m1",
+    "turn_id": "golden-team-L21",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601200000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L22-m1",
+    "turn_id": "golden-team-L22",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601260000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L23-m1",
+    "turn_id": "golden-team-L23",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601320000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L24-m1",
+    "turn_id": "golden-team-L24",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601380000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L25-m1",
+    "turn_id": "golden-team-L25",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601440000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L26-m1",
+    "turn_id": "golden-team-L26",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601500000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 9801,
+      "cache_read": 24149,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L27-m1",
+    "turn_id": "golden-team-L27",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601560000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 28700,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L28-m1",
+    "turn_id": "golden-team-L28",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601620000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 28700,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L29-m1",
+    "turn_id": "golden-team-L29",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601680000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 28700,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L30-m1",
+    "turn_id": "golden-team-L30",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601740000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 28700,
+      "cache_write": 0,
+      "output": 1050,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L31-m1",
+    "turn_id": "golden-team-L31",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601800000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 12255,
+      "cache_read": 8600,
+      "cache_write": 0,
+      "output": 645,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-L32-m1",
+    "turn_id": "golden-team-L32",
+    "session_id": "golden-team-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601860000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 12255,
+      "cache_read": 8600,
+      "cache_write": 0,
+      "output": 645,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W33-m1",
+    "turn_id": "golden-team-W33",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601920000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W34-m1",
+    "turn_id": "golden-team-W34",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793601980000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W35-m1",
+    "turn_id": "golden-team-W35",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602040000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W36-m1",
+    "turn_id": "golden-team-W36",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602100000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W37-m1",
+    "turn_id": "golden-team-W37",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602160000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W38-m1",
+    "turn_id": "golden-team-W38",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602220000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W39-m1",
+    "turn_id": "golden-team-W39",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602280000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W40-m1",
+    "turn_id": "golden-team-W40",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602340000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W41-m1",
+    "turn_id": "golden-team-W41",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602400000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W42-m1",
+    "turn_id": "golden-team-W42",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602460000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W43-m1",
+    "turn_id": "golden-team-W43",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602520000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W44-m1",
+    "turn_id": "golden-team-W44",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602580000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W45-m1",
+    "turn_id": "golden-team-W45",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602640000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W46-m1",
+    "turn_id": "golden-team-W46",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602700000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W47-m1",
+    "turn_id": "golden-team-W47",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602760000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W48-m1",
+    "turn_id": "golden-team-W48",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602820000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W49-m1",
+    "turn_id": "golden-team-W49",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602880000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W50-m1",
+    "turn_id": "golden-team-W50",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793602940000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W51-m1",
+    "turn_id": "golden-team-W51",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603000000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W52-m1",
+    "turn_id": "golden-team-W52",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603060000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 5250,
+      "cache_read": 9000,
+      "cache_write": 0,
+      "output": 750,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W53-m1",
+    "turn_id": "golden-team-W53",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603120000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 2334,
+      "cache_read": 4000,
+      "cache_write": 0,
+      "output": 334,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W54-m1",
+    "turn_id": "golden-team-W54",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603180000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 2333,
+      "cache_read": 3999,
+      "cache_write": 0,
+      "output": 334,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W55-m1",
+    "turn_id": "golden-team-W55",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603240000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 2333,
+      "cache_read": 3999,
+      "cache_write": 0,
+      "output": 334,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W56-m1",
+    "turn_id": "golden-team-W56",
+    "session_id": "golden-team-worker-2",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603300000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 2625,
+      "cache_read": 4500,
+      "cache_write": 0,
+      "output": 375,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W57-m1",
+    "turn_id": "golden-team-W57",
+    "session_id": "golden-team-worker-3",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603360000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 2625,
+      "cache_read": 4500,
+      "cache_write": 0,
+      "output": 375,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-team-W99-m1",
+    "turn_id": "golden-team-W99",
+    "session_id": "golden-team-worker-1",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "model",
+    "name": "model",
+    "started_at": 1793603420000,
+    "duration_ms": 3000,
+    "status": "ok",
+    "call_id": null,
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "purpose": "main",
+     "provider": "provider-x",
+     "provider_title": "Provider X",
+     "model": "model-x",
+     "stream": true,
+     "finish_reason": "stop",
+     "ttft_ms": 5,
+     "context_window": 200000,
+     "usage": {
+      "reported": true,
+      "input_fresh": 900,
+      "cache_read": 0,
+      "cache_write": 0,
+      "output": 100,
+      "reasoning": null
+     },
+     "tools_offered": 3
+    },
+    "content": {}
+   }
+  ]
+ }
+}

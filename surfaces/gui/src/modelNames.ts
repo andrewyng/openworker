@@ -16,3 +16,25 @@ export function modelHover(id: string, labels?: Record<string, string>): string 
   const label = labels?.[id];
   return label && label !== id ? `${label} (${id})` : id;
 }
+
+// One spelling per model (same rule as the server, `coworker/providers/router.py`
+// `canonical_model`). A model id with no "provider:" prefix runs on the default
+// provider, so "openai:gpt-5.5" and "gpt-5.5" are the same model. The machine's model
+// list spells OpenAI models bare; coworker manifests often write "openai:…". Compare
+// and store the bare form. Every other prefix ("anthropic:", "ollama:" …) is kept.
+export const DEFAULT_PROVIDER = "openai";
+
+export function canonicalModel(id: string): string {
+  const m = (id || "").trim();
+  const prefix = `${DEFAULT_PROVIDER}:`;
+  return m.startsWith(prefix) && m.length > prefix.length ? m.slice(prefix.length) : m;
+}
+
+export function sameModel(a: string, b: string): boolean {
+  return canonicalModel(a) === canonicalModel(b);
+}
+
+/** The list in canonical form, first spelling of each model kept, order kept. */
+export function canonicalModels(ids: string[]): string[] {
+  return Array.from(new Set(ids.map(canonicalModel).filter(Boolean)));
+}

@@ -69,6 +69,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
           text: m.content || "",
           ...(typeof m.ts === "number" ? { ts: m.ts } : {}),
           ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+          ...(typeof (m as any).mid === "string" ? { mid: (m as any).mid } : {}),
         });
       for (const tc of m.tool_calls || []) {
         let args: any = {};
@@ -126,9 +127,10 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
                   // the `server` field existed) recover the name from their own text, so old
                   // transcripts collapse too instead of keeping the wall of stderr.
                   mcpNoticeItem(m)
-                : m.kind === "project_presence"
+                : m.kind === "project_presence" || m.kind === "export_notice"
                   ? // Grant-time pointer (pass 20): the granted folder already has
-                    // memory/board — informational, one quiet line.
+                    // memory/board — informational, one quiet line. The OB-6 notice (a
+                    // company policy sends this session's content) reads the same way.
                     { kind: "notice", tone: "info", text: m.text || "" }
                   : m.kind === "reviewer_paused"
                     ? // §8.4 breaker: auto-approve paused itself for the rest of the turn.

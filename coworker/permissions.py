@@ -755,6 +755,29 @@ class PermissionEngine:
             out.append((Path(p).expanduser().resolve(), w))
         return out
 
+    def session_grant_suspended(
+        self, tool_name: str, arguments: dict[str, Any], metadata: Any = None
+    ) -> bool:
+        """Whether a session or run grant covers this call but Auto-Approve set it aside
+        (§1.5: in-flow clicks never skip the reviewer). The same checks `evaluate` makes
+        when grants are honoured; read by the observability decision path."""
+        if self.mode is not Mode.AUTO_APPROVE:
+            return False
+        arguments = arguments or {}
+        risk = classify(tool_name, metadata, self.risk_overrides)
+        is_connector = getattr(metadata, "category", "") == "connector"
+        if risk is RiskClass.EXEC:
+            command = str(arguments.get("command", ""))
+            return bool(command) and (
+                command in self.session_allow_commands
+                or (self.session_readonly and self._readonly_grant_covers(command))
+            )
+        if risk is RiskClass.EGRESS:
+            url = str(arguments.get("url", ""))
+            if self._domain_allowed(url) and not self._domain_allowed(url, include_session=False):
+                return True
+        return (tool_name in self.session_allow_tools and not is_connector) or tool_name in self.run_allow_tools
+
     def evaluate(
         self, tool_name: str, arguments: dict[str, Any], metadata: Any = None
     ) -> Decision:

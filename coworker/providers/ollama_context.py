@@ -437,6 +437,7 @@ def to_openai_completion(native: dict[str, Any]) -> dict[str, Any]:
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "total_tokens": prompt + completion,
+            **_cached_details(native),
         },
     }
     return body
@@ -477,6 +478,7 @@ def to_openai_stream_events(
                     "prompt_tokens": prompt,
                     "completion_tokens": completion,
                     "total_tokens": prompt + completion,
+                    **_cached_details(native),
                 },
             }
         )
@@ -523,3 +525,13 @@ def _finish_reason(reason: str, has_tools: bool) -> str:
 
 def _usage_counts(native: dict[str, Any]) -> tuple[int, int]:
     return int(native.get("prompt_eval_count") or 0), int(native.get("eval_count") or 0)
+
+
+def _cached_details(native: dict[str, Any]) -> dict[str, Any]:
+    """Ollama's `prompt_eval_cached_count`, the part of the prompt reused from its cache, as
+    the OpenAI-shaped `cached_tokens`, so fresh input is the rest (V-20, observability E3).
+    An older Ollama that does not send it leaves the cached share unknown."""
+    cached = native.get("prompt_eval_cached_count")
+    if cached is None:
+        return {}
+    return {"prompt_tokens_details": {"cached_tokens": int(cached)}}
