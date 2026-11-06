@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,existsSync,mkdtempSync,rmSync} from 'node:fs';
+import {readFileSync,existsSync,mkdtempSync,rmSync,mkdirSync,copyFileSync,writeFileSync} from 'node:fs';
 import {dirname,resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -37,4 +37,26 @@ test('registry-mode starters require no checkout paths',()=>{
  const pkg=JSON.parse(readFileSync(join(dest,'package.json')));assert.equal((pkg.dependencies['@openworkerai/harness-sdk']??pkg.devDependencies['@openworkerai/harness-sdk']),manifest.version);
  if(template.startsWith('tauri'))assert.ok(readFileSync(join(dest,'src-tauri/Cargo.toml'),'utf8').includes(`openworker-sdk = "=${manifest.version}"`));
  }}finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Markdown programs are identical in LF and Windows CRLF checkouts',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'ow-guide-line-endings-'));
+ try {
+  const script=join(dir,'harness/release/check-examples.mjs');
+  const guide=join(dir,'docs/harness/guides/desktop.md');
+  mkdirSync(dirname(script),{recursive:true});mkdirSync(dirname(guide),{recursive:true});
+  copyFileSync(join(root,'release/check-examples.mjs'),script);
+  const source=readFileSync(join(root,'../docs/harness/guides/desktop.md'),'utf8').replace(/\r\n/g,'\n');
+  const programs=[];
+  for(const [name,newline] of [['lf','\n'],['crlf','\r\n']]) {
+   writeFileSync(guide,source.replace(/\n/g,newline));
+   const output=join(dir,name);
+   const result=spawnSync(process.execPath,[script,output],{encoding:'utf8'});
+   assert.equal(result.status,0,result.stderr);
+   programs.push(['desktop.ts','desktop.rs'].map(file=>readFileSync(join(output,file),'utf8')));
+  }
+  assert.deepEqual(programs[1],programs[0]);
+  assert.match(programs[0][0],/@openworkerai\/harness-sdk/);
+  assert.match(programs[0][1],/use openworker_sdk/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });
