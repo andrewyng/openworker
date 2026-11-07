@@ -507,6 +507,11 @@ class TurnEngine:
         # into the tool message's `_display` sidecar, so the quiet provenance chips
         # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
         self._approval_origins: dict[str, dict[str, str]] = {}
+        # Per-call override for the denied-tool-result text, keyed by tool_call id. An
+        # approver that resolves a request itself (a subagent's expired approval wait)
+        # sets this before returning DENY, so the model reads WHY instead of the
+        # generic "denied by user" (OPE-255 ruling: the response must say it expired).
+        self._deny_notes: dict[str, str] = {}
         # OPE-232: set once a shell command has been cleared in the batch being authorized.
         # The batch runs only after every call is cleared, and the shell persists, so a
         # later command's folder is unknown from then on (see `current_shell_cwd`).
@@ -1470,6 +1475,8 @@ class TurnEngine:
                 payload["reasoning_effort"] = effort_record
             if turn.served_by:
                 payload["served_by"] = turn.served_by
+            # Context panel (FB-015): the window occupancy after this reply landed.
+            payload["context"] = self.context_snapshot()
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
@@ -1640,6 +1647,39 @@ class TurnEngine:
         state, and exported trajectories / run records had nothing at all."""
         state = self.compaction_state
         return state.as_dict() if state is not None else None
+
+    def context_snapshot(self) -> dict[str, Any]:
+        """What occupies the model's window right now (FB-015), for the GUI's Context
+        panel: `used` is the provider-reported prompt-side total from the latest round
+        trip when one exists (estimate fallback otherwise, flagged `estimated`); the
+        category split — system prompt / tool schemas / conversation — is always the
+        chars/4 estimate, so surfaces must present it as proportion, not ledger."""
+        msgs = self._outbound_messages()
+        system = _compaction.estimate_tokens(
+            [m for m in msgs if m.get("role") == "system"]
+        )
+        convo = _compaction.estimate_tokens(
+            [m for m in msgs if m.get("role") != "system"]
+        )
+        schemas = self.registry.schemas() or []
+        tools = (
+            len(json.dumps(schemas, ensure_ascii=False)) // 4 if schemas else 0
+        )
+        reported = int(self._last_context_tokens or 0)
+        snapshot: dict[str, Any] = {
+            "window": self._compaction_config().get("context_window"),
+            "used": reported or (system + tools + convo),
+            "estimated": not reported,
+            "breakdown": {"system": system, "tools": tools, "messages": convo},
+        }
+        state = self.compaction_state
+        if state is not None:
+            snapshot["compaction"] = {
+                "created_at": state.created_at,
+                "messages": state.boundary_index,
+                "trimmed": state.trimmed,
+            }
+        return snapshot
 
     async def _compact_now(self, *, force: bool = False) -> Optional[str]:
         """Run the compaction policy. Callers gate on `_compaction_due()` (or `force`,
@@ -2878,7 +2918,8 @@ class TurnEngine:
             if outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
-                    "interrupted by user" if self._cancel.is_set() else "denied by user",
+                    self._deny_notes.pop(tool_call.id, None)
+                    or ("interrupted by user" if self._cancel.is_set() else "denied by user"),
                 )
                 self._approval_origins[tool_call.id] = {
                     "origin": "user",

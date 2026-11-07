@@ -28,6 +28,7 @@ export type EventType =
   | "mode_notice"
   | "export_notice"
   | "memory_saved"
+  | "agent_task"
   | "compacting"
   | "compacted"
   | "continuation"
@@ -95,6 +96,18 @@ export interface TurnUsage {
 export interface SessionUsage {
   byModel: Record<string, TurnUsage>;
   context: number;
+}
+
+// Window occupancy for the rail's Context section (FB-015), from the `ready` event and
+// each `assistant_message`. The category split is a server-side chars/4 estimate, so it
+// is rendered as proportion of `used`, never as a ledger. `window` is null when the
+// model isn't in the matrix ("window unknown", same contract as the composer ring).
+export interface ContextInfo {
+  window: number | null;
+  used: number;
+  estimated: boolean;
+  breakdown: { system: number; tools: number; messages: number };
+  compaction?: { created_at?: number; messages?: number; trimmed?: boolean };
 }
 
 export interface SessionInfo {

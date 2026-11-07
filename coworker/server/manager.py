@@ -550,6 +550,11 @@ class SessionManager:
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
+        # Async subagents (OPE-253): the supplemental session record for subagent runs —
+        # written on task transitions, so a run that ends between turn checkpoints survives.
+        from ..tools.agent_tasks import AgentTaskStore
+
+        self.agent_task_store = AgentTaskStore(base / "agent_tasks.json")
         # Channel subscriptions (inbound): persisted (session_id, channel) records + a ring buffer
         # of recently-seen channel messages for get_channel_messages.
         self.subscriptions = SubscriptionStore(base / "subscriptions.json")
@@ -911,6 +916,7 @@ class SessionManager:
                 engine.team_approver = team_approver
             if items_approver is not None:
                 engine.items_approver = items_approver
+            self._wire_agent_tasks(session_id, engine)
             return engine
 
         record = self.session_store.load(session_id)
@@ -1083,9 +1089,44 @@ class SessionManager:
         if not self._session_clients.get(session_id):
             self._note_watching(session_id, False)  # built with no window open (a schedule, a wake)
         self.sync_worker_mode(session_id, engine)  # §11.6: approvals follow the lead
+        self._wire_agent_tasks(session_id, engine)
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
         return engine
+
+    def _wire_agent_tasks(self, session_id: str, engine: TurnEngine) -> None:
+        """Hook a session's async-subagent registry (OPE-254) to the server: the loop
+        its inherit children run on, report delivery through deliver_to_session (steer
+        when busy, background turn when idle), live agent_task events for the rail,
+        and expiry resolution for a parked card whose approval wait timed out."""
+        reg = getattr(engine, "agent_tasks", None)
+        if reg is None:
+            return
+        reg.loop = self._loop
+        reg.attach_store(self.agent_task_store, session_id)
+
+        def deliver(text: str, source: dict) -> None:
+            if self._loop is None:
+                raise RuntimeError("agent-task delivery needs the server loop")
+            asyncio.run_coroutine_threadsafe(
+                self.deliver_to_session(session_id, text, source=source), self._loop
+            )
+
+        def on_event(payload: dict) -> None:
+            if self._loop is None:
+                return
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": "agent_task", "data": payload}),
+                self._loop,
+            )
+
+        def resolve_expired(tool_call_id: str) -> None:
+            item = self.inbox.for_tool_call(session_id, tool_call_id)
+            if item is not None:
+                # First-responder-wins: a no-op if the human answered in the same instant.
+                self.inbox.resolve(item.id, "expired", by="timeout")
+
+        reg.deliver, reg.on_event, reg.resolve_expired = deliver, on_event, resolve_expired
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
         """Phase 5 telemetry, fired once per brand-new session on a background thread
@@ -9755,6 +9796,8 @@ class SessionManager:
         # ...and closes its pending Inbox items — an orphaned approval/question can never be
         # meaningfully answered (owner call, 2026-07-03).
         self.inbox.resolve_session(session_id)
+        # ...and its subagent-run history (the supplemental record dies with the session).
+        self.agent_task_store.drop(session_id)
         # ...and its scratch dir. STRICTLY scoped: only a directory inside scratch_base is
         # removed — a real project folder the user picked is never touched.
         if ok and record and record.workspace:

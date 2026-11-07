@@ -624,6 +624,25 @@ export async function getRoots(sessionId: string): Promise<RootInfo[]> {
   return (await res.json()).roots ?? [];
 }
 
+// -- async subagents (OPE-257): the Running section's registry view ----------
+export interface AgentTaskInfo {
+  id: string;
+  label: string;
+  task: string;
+  mode: string; // "read_only" | "inherit"
+  status: string; // running | waiting | done | error | canceled
+  note?: string;
+  created: number;
+  finished?: number | null;
+  usage?: Record<string, { input: number; output: number; cache_read: number; cache_write: number; turns: number }>;
+  icon_seed?: number;
+}
+
+export async function getAgentTasks(sessionId: string): Promise<AgentTaskInfo[]> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/tasks`);
+  return (await res.json()).agents ?? [];
+}
+
 export async function addRoot(
   sessionId: string,
   path: string,

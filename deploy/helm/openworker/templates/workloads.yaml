@@ -1,0 +1,154 @@
+{{- range $role := list "api" "worker" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ow.name" $ }}-{{ $role }}
+  labels:
+    {{- include "ow.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  replicas: {{ index $.Values $role "replicas" }}
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "ow.labels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $role }}
+  template:
+    metadata:
+      labels:
+        {{- include "ow.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $role }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with index $.Values $role "serviceAccountName" }}
+      serviceAccountName: {{ . | quote }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext: {fsGroup: 1000}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $.Values.databaseReadiness.enabled }}
+      initContainers:
+        - name: database-ready
+          image: {{ $.Values.databaseReadiness.image | quote }}
+          command: ["sh", "-c", "i=0; until pg_isready -q -t 3; do i=$((i+1)); [ \"$i\" -lt 20 ] || exit 1; sleep 2; done"]
+          env:
+            - {name: PGHOST, value: {{ required "databaseReadiness.host required" $.Values.databaseReadiness.host | quote }}}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGUSER, value: "openworker"}
+            - {name: PGDATABASE, value: "openworker"}
+            - {name: PGSSLMODE, value: verify-full}
+            - {name: PGSSLROOTCERT, value: /database-ca/ca.crt}
+          securityContext:
+            {{- include "ow.security" $ | nindent 12 }}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: database-ca, mountPath: /database-ca, readOnly: true}
+      {{- end }}
+      containers:
+        - name: harness
+          image: {{ $.Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/openworker/openworker-server-reference"]
+          args: ["--config", "/config/reference.json", "{{ $role }}", "--node", "$(POD_NAME)"{{ if eq $role "api" }}, "--listen", "127.0.0.1:8080"{{ else }}, "--health-listen", "127.0.0.1:8081", "--slots", {{ $.Values.worker.slots | quote }}, "--drain-timeout-seconds", {{ $.Values.worker.drainTimeoutSeconds | quote }}, "--shutdown-timeout-seconds", {{ $.Values.worker.shutdownTimeoutSeconds | quote }}{{ end }}]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: OW_SERVER_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ $.Values.secrets.database }}, key: url}}
+          {{- if and (eq $role "api") $.Values.secrets.objectStore }}
+          envFrom:
+            - secretRef: {name: {{ $.Values.secrets.objectStore }}}
+          {{- else if and (eq $role "worker") $.Values.secrets.model }}
+          envFrom:
+            - secretRef: {name: {{ $.Values.secrets.model }}}
+          {{- end }}
+          securityContext:
+            {{- include "ow.security" $ | nindent 12 }}
+          resources: {{ toYaml $.Values.resources | nindent 12 }}
+          livenessProbe:
+            exec: {command: ["sh", "-ec", "kill -0 1"]}
+            periodSeconds: 10
+          {{- if eq $role "api" }}
+          readinessProbe:
+            exec: {command: ["curl", "--silent", "--fail", "--max-time", "3", "--config", "/probe/curl.conf", "http://127.0.0.1:8080/readyz"]}
+            periodSeconds: 5
+            timeoutSeconds: 4
+          {{- else }}
+          readinessProbe:
+            exec: {command: ["curl", "--silent", "--fail", "--max-time", "2", "http://127.0.0.1:8081/readyz"]}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          {{- end }}
+          volumeMounts:
+            - {name: config, mountPath: /config/reference.json, subPath: reference.json, readOnly: true}
+            - {name: state, mountPath: /state}
+            - {name: tmp, mountPath: /tmp}
+            - {name: database-ca, mountPath: /database-ca, readOnly: true}
+            {{- if not $.Values.config.recovery_read_only }}
+            - {name: openshell, mountPath: /openshell, readOnly: true}
+            {{- end }}
+            {{- if eq $role "api" }}
+            - {name: probe, mountPath: /probe, readOnly: true}
+            {{- if $.Values.secrets.objectStoreCA }}
+            - {name: object-ca, mountPath: /object-ca, readOnly: true}
+            {{- end }}
+            {{- end }}
+        {{- if eq $role "api" }}
+        - name: tls
+          image: {{ $.Values.proxyImage | quote }}
+          command: ["nginx", "-c", "/config/nginx.conf", "-g", "daemon off;"]
+          securityContext:
+            {{- include "ow.security" $ | nindent 12 }}
+          resources: {{ toYaml $.Values.proxyResources | nindent 12 }}
+          ports: [{name: https, containerPort: 8443}]
+          readinessProbe:
+            tcpSocket: {port: https}
+          volumeMounts:
+            - {name: config, mountPath: /config/nginx.conf, subPath: nginx.conf, readOnly: true}
+            - {name: api-tls, mountPath: /tls, readOnly: true}
+            - {name: proxy-tmp, mountPath: /tmp}
+        {{- end }}
+      volumes:
+        - name: config
+          configMap: {name: {{ include "ow.name" $ }}}
+        - {name: state, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        - name: database-ca
+          secret: {secretName: {{ $.Values.secrets.databaseCA }}, defaultMode: 0440}
+        {{- if not $.Values.config.recovery_read_only }}
+        - name: openshell
+          secret:
+            secretName: {{ $.Values.secrets.openshell }}
+            defaultMode: 0440
+            {{- if eq $role "api" }}
+            items: [{key: ca.crt, path: ca.crt}]
+            {{- end }}
+        {{- end }}
+        {{- if eq $role "api" }}
+        - {name: proxy-tmp, emptyDir: {}}
+        - name: probe
+          secret: {secretName: {{ $.Values.secrets.probe }}, defaultMode: 0440}
+        - name: api-tls
+          secret: {secretName: {{ $.Values.secrets.apiTLS }}, defaultMode: 0440}
+        {{- if $.Values.secrets.objectStoreCA }}
+        - name: object-ca
+          secret: {secretName: {{ $.Values.secrets.objectStoreCA }}, defaultMode: 0440}
+        {{- end }}
+        {{- end }}
+{{- end }}
