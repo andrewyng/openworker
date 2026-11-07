@@ -1,0 +1,10 @@
+**/node_modules
+**/target
+**/dist
+**/.state
+**/.env*
+**/.git
+**/*.log
+.sdk-release*
+
+harness/examples/quickstart/release/

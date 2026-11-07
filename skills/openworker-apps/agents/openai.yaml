@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build with OpenWorker"
+  short_description: "Build desktop and web apps with the OpenWorker SDK"
+  default_prompt: "Use $openworker-apps to build an app with OpenWorker and explain the SDK integration."

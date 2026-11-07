@@ -1,0 +1,11 @@
+{
+  "runner": "/absolute/path/to/pinned/linux-openworker-ELF",
+  "openshell": {
+    "identity": "local-reference",
+    "endpoint": "https://127.0.0.1:61540",
+    "certificates": "/absolute/path/to/private/mtls",
+    "tls_server_name": "localhost",
+    "workspace": "default",
+    "image": "registry.example/runner@sha256:REPLACE_WITH_VERIFIED_DIGEST"
+  }
+}
