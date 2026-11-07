@@ -35,6 +35,7 @@ import {
   setOnboarded,
   setPdfSettings,
   setScratchBase,
+  setWorktreeSettings,
   setSessionsPeek,
   setWorkspaceTrusted,
   type CompactionSettings,
@@ -110,6 +111,113 @@ export type SetTab =
   // UX-049: per-connector glance pages (App group), shown once connected somewhere.
   | "slack"
   | "github";
+
+// Feature worktrees (Code coworker, owner ruling 2026-11-07): where a task's worktree
+// goes, how its branch is named, fetch-first, cleanup, and the per-repo setup command.
+// Six fields with defaults most people never touch; saved as one change.
+function WorktreesCard() {
+  const { t } = useTranslation();
+  const [settings, setSettings] = useState<ModelSettings | null>(null);
+  const [draft, setDraft] = useState<{
+    location: "in_repo" | "sibling" | "custom"; custom_dir: string; branch_prefix: string;
+    fetch_first: boolean; cleanup_on_archive: boolean; prune_days: number; setup_command: string;
+  } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const desktop = isTauri();
+
+  const refresh = () =>
+    getSettings()
+      .then((s) => {
+        setSettings(s);
+        setDraft({
+          location: s.worktree_location || "in_repo",
+          custom_dir: s.worktree_custom_dir || "",
+          branch_prefix: s.worktree_branch_prefix || "",
+          fetch_first: s.worktree_fetch_first !== false,
+          cleanup_on_archive: s.worktree_cleanup_on_archive !== false,
+          prune_days: s.worktree_prune_days || 14,
+          setup_command: s.worktree_setup_command || "",
+        });
+      })
+      .catch(() => setSettings(null));
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  if (!settings || !draft) return null;
+  const set = <K extends keyof typeof draft>(k: K, v: (typeof draft)[K]) => setDraft({ ...draft, [k]: v });
+  const save = async () => {
+    setMsg(null);
+    const res = await setWorktreeSettings(draft);
+    setMsg(res.ok ? t("settings.worktrees_saved") : res.error || t("settings.files_save_error"));
+    if (res.ok) refresh();
+  };
+
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="worktrees-card">
+      <div className={FIELD_LABEL}>{t("settings.worktrees_title")}</div>
+      <div className={FIELD_HELP}>{t("settings.worktrees_help")}</div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_where")}</label>
+        <select
+          className={INPUT}
+          data-testid="worktree-location"
+          value={draft.location}
+          onChange={(e) => set("location", e.target.value as typeof draft.location)}
+        >
+          <option value="in_repo">{t("settings.worktrees_in_repo")}</option>
+          <option value="sibling">{t("settings.worktrees_sibling")}</option>
+          <option value="custom">{t("settings.worktrees_custom")}</option>
+        </select>
+      </div>
+      {draft.location === "custom" && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_custom_dir")}</label>
+          <input className={INPUT} type="text" value={draft.custom_dir} spellCheck={false}
+            onChange={(e) => set("custom_dir", e.target.value)} />
+          {desktop && (
+            <button className={BTN_BORDERED} onClick={async () => { const p = await pickFolder(); if (p) set("custom_dir", p); }}>
+              {t("settings.files_browse")}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_prefix")}</label>
+        <input className={INPUT} type="text" value={draft.branch_prefix} spellCheck={false}
+          placeholder={t("settings.worktrees_prefix_placeholder")}
+          onChange={(e) => set("branch_prefix", e.target.value)} />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_setup")}</label>
+        <input className={INPUT} type="text" value={draft.setup_command} spellCheck={false}
+          placeholder={t("settings.worktrees_setup_placeholder")}
+          onChange={(e) => set("setup_command", e.target.value)} />
+      </div>
+      <label className="mt-3 flex items-start gap-2 text-ui text-ink cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={draft.fetch_first}
+          onChange={(e) => set("fetch_first", e.target.checked)} />
+        <span>{t("settings.worktrees_fetch_first")}</span>
+      </label>
+      <label className="mt-2 flex items-start gap-2 text-ui text-ink cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={draft.cleanup_on_archive}
+          onChange={(e) => set("cleanup_on_archive", e.target.checked)} />
+        <span>{t("settings.worktrees_cleanup")}</span>
+      </label>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_prune")}</label>
+        <input className={INPUT + " max-w-[6rem]"} type="number" min={1} value={draft.prune_days}
+          onChange={(e) => set("prune_days", Math.max(1, Number(e.target.value) || 1))} />
+        <span className="text-meta text-muted">{t("settings.worktrees_prune_unit")}</span>
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button className={BTN_ACCENT} onClick={save} data-testid="worktrees-save">{t("settings.files_save")}</button>
+        {msg && <span className="text-ui text-muted">{msg}</span>}
+      </div>
+    </div>
+  );
+}
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-ui font-medium text-ink";
@@ -972,6 +1080,8 @@ function AppearanceSection() {
       <AutoApproveCard />
 
       <FilesCard />
+
+      <WorktreesCard />
 
       <TrustedWorkspacesCard />
 

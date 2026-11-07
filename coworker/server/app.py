@@ -2718,6 +2718,17 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
         return manager.set_scratch_base(str((body or {}).get("path", "")))
 
+    # Feature worktrees (Code coworker, 2026-11-07): the global defaults, and a per-repo
+    # override keyed by the repo (any path inside it).
+    @app.post("/v1/settings/worktrees")
+    def settings_set_worktrees(body: dict) -> dict[str, Any]:
+        return manager.set_worktree_settings(body or {})
+
+    @app.post("/v1/settings/worktrees/repo")
+    def settings_set_worktrees_repo(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.set_worktree_override(str(b.get("path", "")), b.get("settings") or {})
+
     @app.post("/v1/settings/nav-layout")
     def settings_set_nav_layout(body: dict) -> dict[str, Any]:
         return manager.set_nav_layout(str((body or {}).get("nav_layout", "")))
@@ -3349,6 +3360,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     # Context panel (FB-015): occupancy on reconnect, so a reopened
                     # session shows its meter before any new turn runs.
                     "context": engine.context_snapshot(),
+                    # The branch the shell is on (a reopened session has no folder pick
+                    # to learn it from) and the feature worktree, if start_worktree made one.
+                    "branch": manager.session_branch(session_id),
+                    "worktree": manager.session_worktree(session_id),
                 },
             }
         )

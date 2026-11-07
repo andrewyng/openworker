@@ -956,10 +956,19 @@ export function App() {
           // A subagent started/finished/is waiting — the rail refetches the registry.
           setAgentTaskKey((k) => k + 1);
           break;
+        case "workspace_changed":
+          // start_worktree moved the session into its feature worktree: the folder and
+          // branch the Environment block shows follow it (Code coworker, 2026-11-07).
+          if (d.workspace) setWorkspace(d.workspace);
+          if (typeof d.branch === "string") setBranch(d.branch);
+          break;
         case "ready":
           setPreparingSandbox(null);
           setSandboxInfo(d.sandbox || null);
           if (d.context) setContextInfo(d.context);
+          // Server truth on the branch (a reopened session has no folder pick to learn
+          // it from): the Environment block's branch tag survives reopen.
+          if (typeof d.branch === "string") setBranch(d.branch || null);
           setSessionRefused(false);
           setConnected(true);
           if (d.model) setModel(d.model);
