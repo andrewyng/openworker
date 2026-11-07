@@ -3187,6 +3187,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # Context panel (FB-015): occupancy on reconnect, so a reopened
+                    # session shows its meter before any new turn runs.
+                    "context": engine.context_snapshot(),
                 },
             }
         )
