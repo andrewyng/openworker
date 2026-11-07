@@ -321,6 +321,11 @@
       "moved_to": "to"
     }
   },
+  "plandock": {
+    "tag": "Plan",
+    "count": "{{done}} of {{total}}",
+    "all_done": "All steps done"
+  },
   "rail": {
     "progress_title": "Progress",
     "context_title": "Context",

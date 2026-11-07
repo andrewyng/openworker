@@ -800,6 +800,29 @@ html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 .agent-grid { display: flex; flex-wrap: wrap; gap: 7px 9px; padding: 8px 2px 2px; margin-top: 6px; border-top: 1px solid var(--line); }
 .agent-grid-item { opacity: 0.75; display: inline-flex; }
 .agent-grid-item:hover { opacity: 1; }
+/* Plan dock (owner mock 2026-11-07): the current task's plan, fused to the composer's
+   top edge. Quiet by default — one line with the live step; the card only on demand. */
+.plandock { border: 1px solid var(--line); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--paper); overflow: hidden; }
+.plandock-head { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 14px; border: 0; background: transparent; cursor: pointer; font: inherit; text-align: left; min-height: 32px; }
+.plandock-tag { font-size: var(--fs-label); font-weight: 600; color: var(--muted); flex: none; }
+.plandock-now { font-size: var(--fs-meta); font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.plandock-count { font-size: var(--fs-label); color: var(--muted); flex: none; margin-left: auto; }
+.plandock-now + .plandock-count { margin-left: 0; }
+.plandock-meter { width: 42px; height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; flex: none; }
+.plandock-meter i { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.plandock-chev { color: var(--faint); flex: none; }
+.plandock-body { display: flex; flex-direction: column; gap: 7px; padding: 3px 14px 11px; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.plandock-step { display: flex; gap: 9px; align-items: center; font-size: var(--fs-meta); color: var(--muted); min-width: 0; }
+.plandock-step .plandock-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plandock-step.done { color: var(--faint); }
+.plandock-step.in_progress { color: var(--ink); font-weight: 500; }
+.plandock-mark { width: 13px; height: 13px; border-radius: 999px; flex: none; display: grid; place-items: center; }
+.plandock-step.done .plandock-mark { background: var(--muted); }
+.plandock-step.done .plandock-mark::after { content: "✓"; color: var(--paper); font-size: 8px; font-weight: 700; }
+/* No accent in the composer (UX-056): the live step is a neutral target mark. */
+.plandock-step.in_progress .plandock-mark { border: 1.6px solid var(--muted); }
+.plandock-step.in_progress .plandock-mark::after { content: ""; width: 5px; height: 5px; border-radius: 999px; background: var(--muted); }
+.plandock-step.pending .plandock-mark { border: 1.4px dashed var(--faint); }
 .agent-label { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs-ui); font-weight: 500; color: var(--ink); overflow: hidden; }
 .agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-sub { font-size: var(--fs-label); color: var(--faint); flex: none; }

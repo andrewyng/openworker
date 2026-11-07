@@ -79,6 +79,7 @@ import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
+import { PlanDock } from "./components/PlanDock";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
@@ -2457,6 +2458,9 @@ export function App() {
               </div>
             )}
             <Composer
+              /* The plan dock rides the composer (owner mock 2026-11-07): undefined
+                 when there is no plan, so the box keeps its rounded top. */
+              planSlot={todo.length > 0 ? <PlanDock todo={todo} /> : undefined}
               statusSlot={activeInfo?.liveness === "sleeping" && !running ? (
                 <div className="sleep-strip" data-testid="sleep-strip">
                   <span className="sleep-dot" />

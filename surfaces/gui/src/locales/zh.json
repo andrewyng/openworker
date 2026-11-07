@@ -314,6 +314,11 @@
       "moved_to": "至"
     }
   },
+  "plandock": {
+    "tag": "计划",
+    "count": "{{done}}/{{total}}",
+    "all_done": "全部步骤已完成"
+  },
   "rail": {
     "progress_title": "进度",
     "context_title": "上下文",

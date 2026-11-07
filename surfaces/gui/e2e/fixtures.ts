@@ -806,6 +806,24 @@ export async function mockApi(page: import("@playwright/test").Page) {
           return;
         }
         // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        // Plan dock: a todo_write mid-task — the dock above the composer mirrors it.
+        if (/make a plan/i.test(msg.text)) {
+          send("tool_proposed", {
+            name: "todo_write",
+            arguments: {
+              todos: [
+                { content: "Read README, config and deployment setup", status: "done" },
+                { content: "Read server and client source", status: "done" },
+                { content: "Check tests and git history", status: "in_progress" },
+                { content: "Assess and propose improvements", status: "pending" },
+              ],
+            },
+          });
+          send("tool_finished", { name: "todo_write", status: "ok" });
+          send("assistant_message", { text: "Filed the plan; working through it." });
+          send("turn_done");
+          return;
+        }
         // Async subagents (OPE-257): spawn → the registry row + started event arrive
         // while the parent carries on; the finish event lands after the turn, like a
         // real background run.
