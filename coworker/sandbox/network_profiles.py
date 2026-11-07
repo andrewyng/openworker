@@ -15,7 +15,7 @@ import sys
 
 CODE_HOSTS = ["github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com", "raw.githubusercontent.com", "gitlab.com"]
 PACKAGE_REGISTRIES = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "proxy.golang.org", "sum.golang.org"]
-SEARCH_APIS = ["api.search.brave.com", "api.tavily.com", "html.duckduckgo.com", "duckduckgo.com", "google.serper.dev", "api.exa.ai", "api.firecrawl.dev", "api.you.com", "ydc-index.io"]
+SEARCH_APIS = ["api.search.brave.com", "api.tavily.com", "html.duckduckgo.com", "duckduckgo.com", "google.serper.dev", "api.serply.io", "api.exa.ai", "api.firecrawl.dev", "api.you.com", "ydc-index.io"]
 
 # The page's catalogue, by group. None is allowed until ticked.
 SITES: dict[str, list[str]] = {"code-hosts": CODE_HOSTS, "package-registries": PACKAGE_REGISTRIES, "search-apis": SEARCH_APIS}
