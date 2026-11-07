@@ -825,18 +825,25 @@ export async function mockApi(page: import("@playwright/test").Page) {
           }, 400);
           return;
         }
-        // The turn that pushed occupancy over the compaction line: assistant_message
-        // carries a fresh context whose `compaction` stamp the rail must surface.
+        // Auto-compaction (OPE-27) + the rail's Context panel in ONE flow, like the
+        // real server: the transient `compacting` signal, then the divider marker,
+        // then an assistant_message whose fresh `context` carries the compaction
+        // stamp. (Two separate handlers once shadowed each other — owner-visible
+        // breakage caught 2026-11-07.)
         if (/compact the context/i.test(msg.text)) {
-          send("assistant_message", {
-            text: "Summarized the early turns to make room.",
-            context: {
-              ...contextPayload,
-              used: 41_000,
-              compaction: { created_at: 1724200000, messages: 12, trimmed: false },
-            },
-          });
-          send("turn_done");
+          send("compacting", {});
+          setTimeout(() => {
+            send("compacted", { text: "Context compacted — earlier turns were summarized" });
+            send("assistant_message", {
+              text: "Still on it — continuing where I left off.",
+              context: {
+                ...contextPayload,
+                used: 41_000,
+                compaction: { created_at: 1724200000, messages: 12, trimmed: false },
+              },
+            });
+            send("turn_done");
+          }, 400);
           return;
         }
         if (/show the report/i.test(msg.text)) {
@@ -913,18 +920,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
             });
             send("turn_done");
           }, 120);
-          return;
-        }
-        // Auto-compaction (OPE-27): the server signals `compacting` (the transient
-        // spinner label), summarizes for a beat, then emits the marker and the turn
-        // continues normally — the divider must render inline.
-        if (/compact the context/i.test(msg.text)) {
-          send("compacting", {});
-          setTimeout(() => {
-            send("compacted", { text: "Context compacted — earlier turns were summarized" });
-            send("assistant_message", { text: "Still on it — continuing where I left off." });
-            send("turn_done");
-          }, 400);
           return;
         }
         // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
