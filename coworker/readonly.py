@@ -1502,9 +1502,10 @@ def _unquoted(token: str) -> str:
     return "".join(out)
 
 
-def _split_sequence(command: str) -> list[str] | None:
+def _split_sequence(command: str) -> tuple[list[str], list[str]] | None:
     """Split on top-level `;`, `&&`, `||`, outside quotes. None on unbalanced quoting."""
     parts: list[str] = []
+    operators: list[str] = []
     buf: list[str] = []
     quote: str | None = None
     escaped = False
@@ -1526,9 +1527,11 @@ def _split_sequence(command: str) -> list[str] | None:
             buf.append(ch)
         elif ch == ";":
             parts.append("".join(buf))
+            operators.append(";")
             buf = []
         elif command.startswith("&&", i) or command.startswith("||", i):
             parts.append("".join(buf))
+            operators.append(command[i:i + 2])
             buf = []
             i += 1
         else:
@@ -1537,7 +1540,32 @@ def _split_sequence(command: str) -> list[str] | None:
     if quote or escaped:
         return None
     parts.append("".join(buf))
-    return [p.strip() for p in parts]
+    return [p.strip() for p in parts], operators
+
+
+def readonly_globs_safe(command: str, cwd: _Path, shell: str = "bash") -> bool:
+    """An expanded word must remain a file operand, never become an option or program.
+
+    Path scoping alone cannot catch `tree *` expanding to `tree -o output input`.
+    Quoted patterns are not expanded by bash. Ambiguous mixed quoting falls back to
+    review; ordinary file operands such as `*.md` still qualify.
+    """
+    if shell != "bash":
+        return True  # PowerShell cmdlet paths are expanded by the cmdlet, not the shell.
+    raw = _raw_tokens(command)
+    if raw is None:
+        return False
+    targets = read_targets(command, shell=shell)
+    for token in raw:
+        pattern = _unquoted(token)
+        if not any(c in pattern for c in _GLOB_CHARS):
+            continue
+        if pattern not in targets:
+            return False
+        for match in _glob.glob(str(cwd / pattern)):
+            if _Path(match).name.startswith("-"):
+                return False
+    return True
 
 
 def _without_harmless_redirects(tokens: list[str]) -> list[str]:
@@ -1647,8 +1675,11 @@ def readonly_tier_check(
     command = str(command or "")
     if not command.strip() or any(ord(c) < 32 and c != "\t" for c in command):
         return False, ""  # empty, or more than one line (each line is its own command)
-    parts = _split_sequence(command)
-    if parts is None or not parts or len(parts) > _MAX_PARTS or any(not p for p in parts):
+    sequence = _split_sequence(command)
+    if sequence is None:
+        return False, ""
+    parts, operators = sequence
+    if not parts or len(parts) > _MAX_PARTS or any(not p for p in parts):
         return False, ""
     here = _Path(cwd)
     if not inside(here):
@@ -1674,6 +1705,10 @@ def readonly_tier_check(
         if any(_flag_carries_path(w) for w in words):
             return False, ""
         if words[0] == "cd":
+            # Only an AND-list guarantees that later reads run after a successful cd.
+            # `cd missing || cat ../x` otherwise reads from the original directory.
+            if any(op != "&&" for op in operators):
+                return False, ""
             if len(stages) != 1 or len(words) != 2 or words[1].startswith("-"):
                 return False, ""
             if any(c in _GLOB_CHARS or c == "~" for c in _unquoted(raw[1])):

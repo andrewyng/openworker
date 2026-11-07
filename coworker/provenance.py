@@ -15,6 +15,7 @@ confidence.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -87,6 +88,26 @@ class Origin:
     # OPE-236: the agent's write put a secret-looking value in this file. Sticky for the
     # session: a later edit that adds no secret does not prove the earlier one is gone.
     secret: bool = False
+    fingerprint: Optional[str] = None
+
+
+def _fingerprint(path: str) -> Optional[str]:
+    """Bounded snapshot for the reversible-write grant; unknown means normal review."""
+    limit = 8 * 1024 * 1024
+    try:
+        p = Path(path)
+        before = p.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+            return None
+        with p.open("rb") as stream:
+            data = stream.read(limit + 1)
+        after = p.stat()
+        identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        if len(data) > limit or identity(after) != identity(before):
+            return None
+        return hashlib.sha256(data).hexdigest()
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -593,14 +614,17 @@ class SessionFiles:
             # ones that would execute. The secret mark stays (fail closed).
             before = self._files.get(key)
             self._files[key] = Origin(
-                step=step, kind=origin, secret=secret or (before is not None and before.secret)
+                step=step, kind=origin, secret=secret or (before is not None and before.secret),
+                fingerprint=_fingerprint(key) if origin == WRITTEN else None,
             )
 
     def wrote(self, path: Path | str) -> bool:
         """True when the agent's own write (not a download) produced this file's current
         bytes this session. Overwriting it loses nothing of the user's (OPE-233)."""
-        origin = self._files.get(resolve(str(path), self.root))
-        return origin is not None and origin.kind == WRITTEN
+        key = resolve(str(path), self.root)
+        origin = self._files.get(key)
+        return (origin is not None and origin.kind == WRITTEN
+                and origin.fingerprint is not None and _fingerprint(key) == origin.fingerprint)
 
     def carries_secret(self, path: Path | str) -> bool:
         """True when one of the agent's own writes this session put a secret-looking value

@@ -736,6 +736,9 @@ def _mcp_server_defs(
     return load_mcp_servers(workspace, secrets=secrets, workspace_trusted=False)
 
 
+_MCP_CONNECT_TIMEOUT = 30.0
+
+
 async def _attach_mcp(engine: Any, servers: list, secrets: Any, *, on_note: Any) -> Any:
     """Connect each enabled MCP server and register its tools on the LIVE engine.
 
@@ -754,10 +757,15 @@ async def _attach_mcp(engine: Any, servers: list, secrets: Any, *, on_note: Any)
         if not server.enabled:
             continue
         try:
-            conn = await manager.ensure(server)
+            conn = await asyncio.wait_for(manager.ensure(server), timeout=_MCP_CONNECT_TIMEOUT)
+        except asyncio.CancelledError:
+            await manager.aclose()
+            raise
         except Exception as exc:  # noqa: BLE001 - a bad server must never kill the run
             tail = manager.last_stderr(server.name)
-            msg = f"{exc}" + (f" — {tail}" if tail else "")
+            msg = (f"connection timed out after {_MCP_CONNECT_TIMEOUT:g}s"
+                   if isinstance(exc, asyncio.TimeoutError) else str(exc))
+            msg += f" — {tail}" if tail else ""
             on_note("mcp_server_failed", {"server": server.name, "error": msg[:600]})
             continue
         callables = build_callables(

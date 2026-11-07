@@ -50,7 +50,7 @@ _STEPS_SCHEMA = {
                             },
                             "target": {
                                 "type": "string",
-                                "description": "write/delete: the file path only; run: the exact command line only; send: the file name only (or, for a message, what it is). No description here.",
+                                "description": "write/delete: the file path only; run: the exact command line only; send: the file name or the exact message text to send, not a summary of it. Put explanations in note.",
                             },
                             "destination": {
                                 "type": "string",

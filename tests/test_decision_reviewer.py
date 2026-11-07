@@ -497,10 +497,10 @@ def test_eval_stub_runs_each_decision_reviewer(backend, capsys):
 def _shadow(store, call, verdict, reviewer="jev", decision=None, approval="once"):
     store.append({"session_id": "s1", "tool": "run_shell", "arguments": {"command": f"cmd {call}"},
                   "stage": "reviewer_shadow", "status": verdict, "reason": f"r {call}",
-                  "call_id": call, "reviewer": reviewer})
+                  "call_id": call, "reviewer": reviewer, "occurrence_id": call})
     if decision:
         store.append({"session_id": "s1", "tool": "run_shell", "arguments": {}, "stage": "approval_resolved",
-                      "status": decision, "approval": approval, "call_id": call})
+                      "status": decision, "approval": approval, "call_id": call, "occurrence_id": call})
 
 
 def test_shadow_summary_counts_and_matches(tmp_path):

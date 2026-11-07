@@ -59,7 +59,7 @@ def _project(tmp_path: Path) -> Path:
         "git status",
         "ls -la",
         "grep -n foo src/x.py",
-        "cd src && grep -n foo x.py ; wc -l x.py",
+        "cd src && grep -n foo x.py && wc -l x.py",
         "git status && git log --oneline -5",
         "git diff --stat || true",
         "ls 2>/dev/null",
@@ -67,7 +67,7 @@ def _project(tmp_path: Path) -> Path:
         "cat *.md",
         "find . -name '*.py' | sort",
         "awk '{print $1}' README.md",
-        "cd src ; cd .. ; cat README.md",
+        "cd src && cd .. && cat README.md",
         "git show HEAD:src/x.py",
         "git show v1.0:README.md",
     ],
@@ -221,7 +221,7 @@ def test_the_tier_runs_every_part_through_the_grants_check(tmp_path, monkeypatch
         return real(command, base, secrets=secrets)
 
     monkeypatch.setattr(eng, "_readonly_reads_inside", spy)
-    assert eng._readonly_tier("cd src && grep -n foo x.py ; wc -l x.py")[0]
+    assert eng._readonly_tier("cd src && grep -n foo x.py && wc -l x.py")[0]
     assert seen == [("grep -n foo x.py", "src", True), ("wc -l x.py", "src", True)]
     # A refusal in the shared check is a refusal of the tier.
     monkeypatch.setattr(eng, "_readonly_reads_inside", lambda command, base, *, secrets=False: None)
