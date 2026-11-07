@@ -34,12 +34,34 @@ describe("PlanDock", () => {
     expect(steps.querySelector(".plandock-step.pending")?.textContent).toContain("step 3");
   });
 
-  it("auto-collapses and says so once every step is done", () => {
+  it("auto-collapses into the Last-plan receipt once every step is done", () => {
     const { rerender } = render(<PlanDock todo={plan(["done", "in_progress"])} />);
     fireEvent.click(screen.getByTestId("plan-dock-toggle"));
     expect(screen.getByTestId("plan-dock-steps")).toBeTruthy();
+    expect(screen.queryByTestId("plan-dock-clear")).toBeNull(); // live plans aren't clearable
     rerender(<PlanDock todo={plan(["done", "done"])} />);
     expect(screen.queryByTestId("plan-dock-steps")).toBeNull();
-    expect(screen.getByTestId("plan-dock-toggle").textContent).toContain("All steps done");
+    const head = screen.getByTestId("plan-dock-toggle");
+    expect(head.textContent).toContain("Last plan");
+    expect(head.textContent).toContain("All steps done");
+  });
+
+  it("the ✕ clears the receipt; a superseding plan brings the dock back", () => {
+    const { rerender } = render(<PlanDock todo={plan(["done", "done"])} />);
+    fireEvent.click(screen.getByTestId("plan-dock-clear"));
+    expect(screen.queryByTestId("plan-dock")).toBeNull();
+    // Same finished plan stays cleared across re-renders…
+    rerender(<PlanDock todo={plan(["done", "done"])} />);
+    expect(screen.queryByTestId("plan-dock")).toBeNull();
+    // …but a NEW plan (different steps) supersedes and shows again.
+    rerender(
+      <PlanDock
+        todo={[
+          { content: "fresh step A", status: "in_progress" },
+          { content: "fresh step B", status: "pending" },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("plan-dock-toggle").textContent).toContain("fresh step A");
   });
 });

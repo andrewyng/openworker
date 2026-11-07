@@ -802,7 +802,11 @@ html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 .agent-grid-item:hover { opacity: 1; }
 /* Plan dock (owner mock 2026-11-07): the current task's plan, fused to the composer's
    top edge. Quiet by default — one line with the live step; the card only on demand. */
-.plandock { border: 1px solid var(--line); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--paper); overflow: hidden; }
+.plandock { position: relative; border: 1px solid var(--line); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--paper); overflow: hidden; }
+/* Finished plan: the receipt state — a ✕ clears it; the head makes room for it. */
+.plandock.done .plandock-head { padding-right: 36px; }
+.plandock-x { position: absolute; top: 5px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; }
+.plandock-x:hover { color: var(--ink); background: var(--chrome-hover); }
 .plandock-head { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 14px; border: 0; background: transparent; cursor: pointer; font: inherit; text-align: left; min-height: 32px; }
 .plandock-tag { font-size: var(--fs-label); font-weight: 600; color: var(--muted); flex: none; }
 .plandock-now { font-size: var(--fs-meta); font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }

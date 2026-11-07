@@ -806,6 +806,24 @@ export async function mockApi(page: import("@playwright/test").Page) {
           return;
         }
         // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        // Plan dock: every step done — the receipt state with the ✕.
+        if (/finish the plan/i.test(msg.text)) {
+          send("tool_proposed", {
+            name: "todo_write",
+            arguments: {
+              todos: [
+                { content: "Read README, config and deployment setup", status: "done" },
+                { content: "Read server and client source", status: "done" },
+                { content: "Check tests and git history", status: "done" },
+                { content: "Assess and propose improvements", status: "done" },
+              ],
+            },
+          });
+          send("tool_finished", { name: "todo_write", status: "ok" });
+          send("assistant_message", { text: "All steps are done." });
+          send("turn_done");
+          return;
+        }
         // Plan dock: a todo_write mid-task — the dock above the composer mirrors it.
         if (/make a plan/i.test(msg.text)) {
           send("tool_proposed", {

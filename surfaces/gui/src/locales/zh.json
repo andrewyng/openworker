@@ -316,8 +316,10 @@
   },
   "plandock": {
     "tag": "计划",
+    "tag_finished": "上一个计划",
     "count": "{{done}}/{{total}}",
-    "all_done": "全部步骤已完成"
+    "all_done": "全部步骤已完成",
+    "clear": "清除已完成的计划"
   },
   "rail": {
     "progress_title": "进度",
