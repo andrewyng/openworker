@@ -103,6 +103,7 @@ from ..providers import (
     verify_provider_key,
 )
 from ..providers.local_server import LOCAL_SERVERS
+from ..providers.router import DEFAULT_PROVIDER, canonical_model
 from ..providers.registry import CUSTOM_PROVIDERS_PROFILE, DEFAULT_OLLAMA_URL
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
@@ -4582,7 +4583,9 @@ class SessionManager:
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors(self.secrets):
+        descriptors = provider_descriptors(self.secrets)
+        self._warm_local_probes([d.name for d in descriptors if d.kind == "local"])
+        for d in descriptors:
             profile = self.secrets.get(f"provider:{d.name}") or {}
             configured = descriptor_configured(d, profile)
             values = {
@@ -4760,6 +4763,28 @@ class SessionManager:
         "cohere": ["command-a-plus-05-2026"],
         "siliconflow": ["zai-org/GLM-5.2"],
     }
+
+    def _warm_local_probes(self, names: list[str]) -> None:
+        """Ask the local model servers at the same time (T3-2): each answer is cached (30 s
+        for liveness, 60 s for the models), so the loop in get_providers reads the caches
+        instead of waiting on each server in turn. Best-effort: a probe that fails here is
+        tried again, alone, by the loop."""
+        if len(names) < 2:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        def probe(name: str) -> None:
+            try:
+                self._suggested_models(name)
+                if name == "ollama":
+                    self._ollama_alive()
+                else:
+                    self._local_server_alive(name)
+            except Exception:  # noqa: BLE001 - the loop asks again and shows what it gets
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(8, len(names)), thread_name_prefix="provider-probe") as pool:
+            list(pool.map(probe, names))
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
@@ -5009,7 +5034,7 @@ class SessionManager:
             prefix = model.split(":", 1)[0]
             if get_descriptor(prefix, self.secrets) is not None:
                 return prefix
-        return "openai"
+        return DEFAULT_PROVIDER
 
     def _provider_configured(self, name: str) -> bool:
         d = get_descriptor(name, self.secrets)
@@ -5067,7 +5092,9 @@ class SessionManager:
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            from ..providers.local_server import probe_timeout
+
+            alive = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 0.8)).status_code == 200
         except Exception:
             alive = False
         self._ollama_alive_cache = (now, alive)
@@ -5166,14 +5193,17 @@ class SessionManager:
         from ..providers import local_server
 
         now = time.monotonic()
-        cache = getattr(self, "_local_alive_cache", None) or {}
+        # One dict, updated in place: get_providers asks several servers at once (T3-2), and
+        # each thread putting back its own copy lost the others' answers.
+        cache = getattr(self, "_local_alive_cache", None)
+        if cache is None:
+            cache = self.__dict__.setdefault("_local_alive_cache", {})
         hit = cache.get(name)
         if hit and now - hit[0] < 30:
             return hit[1]
         profile = self.secrets.get(f"provider:{name}") or {}
         alive = local_server.alive(name, profile.get("base_url"), profile.get("api_key"))
         cache[name] = (now, alive)
-        self._local_alive_cache = cache
         return alive
 
     def _local_server_models(self, name: str) -> list[str]:
@@ -5252,11 +5282,15 @@ class SessionManager:
         """The model a session of `persona_id` runs on (spec §4). No list: the requested
         model or the machine default, as before. A list: the requested model when it is
         on the list, else the first entry this machine can run, else the first entry
-        (unrunnable — the composer shows its honest "No model" state)."""
-        allowed = self.persona_models(persona_id)
-        requested = (requested or "").strip()
+        (unrunnable — the composer shows its honest "No model" state).
+
+        Ids are compared and returned in their canonical form (`canonical_model`), so a
+        list entry `openai:gpt-5.5` matches a requested `gpt-5.5`, and the session records
+        one name per model."""
+        allowed = list(dict.fromkeys(canonical_model(m) for m in self.persona_models(persona_id)))
+        requested = canonical_model(requested or "")
         if not allowed:
-            return requested or self.model
+            return requested or canonical_model(self.model)
         if requested in allowed:
             return requested
         available = [m for m in allowed if self.model_selectable(m)]
@@ -5275,8 +5309,11 @@ class SessionManager:
         from ..providers.matrix import model_labels
 
         labels = model_labels()
-        allowed = self.persona_models(persona_id)
-        human_pick, lead_pick = (human_pick or "").strip(), (lead_pick or "").strip()
+        # Canonical ids (`canonical_model`): `openai:gpt-5.5` and `gpt-5.5` are one model,
+        # and the worker's session records it under one name.
+        allowed = list(dict.fromkeys(canonical_model(m) for m in self.persona_models(persona_id)))
+        human_pick, lead_pick = canonical_model(human_pick or ""), canonical_model(lead_pick or "")
+        lead_model = canonical_model(lead_model or "")
         if human_pick and self.model_selectable(human_pick):
             return human_pick, ""
         if lead_pick and (not allowed or lead_pick in allowed) and self.model_selectable(lead_pick):
@@ -5284,7 +5321,7 @@ class SessionManager:
         runnable = [m for m in allowed if self.model_selectable(m)]
         if runnable:
             return runnable[0], ""
-        fallback = lead_model if lead_model and self.model_selectable(lead_model) else self.model
+        fallback = lead_model if lead_model and self.model_selectable(lead_model) else canonical_model(self.model)
         if not allowed:
             return fallback, ""
         entry = self.personas.get(persona_id)

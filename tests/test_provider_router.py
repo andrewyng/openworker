@@ -874,3 +874,29 @@ def test_manager_azure_card_saves_endpoint_and_key_and_verifies_at_the_resource(
     added = mgr.add_model("azure:gpt-5-prod")
     assert added["ok"] and "azure:gpt-5-prod" in added["models"]
     assert mgr._model_provider("azure:gpt-5-prod") == "azure"
+
+
+# -- one spelling per model: the default provider's prefix is dropped ----------------------
+
+
+def test_canonical_model_drops_only_the_default_providers_prefix():
+    from coworker.providers.router import canonical_model, same_model
+
+    assert canonical_model("openai:gpt-test-1") == "gpt-test-1"
+    assert canonical_model(" gpt-test-1 ") == "gpt-test-1"
+    assert canonical_model("anthropic:model-a") == "anthropic:model-a"
+    assert canonical_model("ollama:qwen-test:32b") == "ollama:qwen-test:32b"
+    assert canonical_model("openai-codex:gpt-test-1") == "openai-codex:gpt-test-1"
+    assert canonical_model("openai:") == "openai:"
+    assert canonical_model("") == ""
+    assert same_model("openai:gpt-test-1", "gpt-test-1")
+    assert not same_model("anthropic:gpt-test-1", "gpt-test-1")
+
+
+def test_canonical_model_routes_where_the_original_did():
+    from coworker.providers.router import canonical_model
+
+    router = ProviderRouter()
+    for model in ("openai:gpt-test-1", "anthropic:model-a", "ollama:qwen-test:32b"):
+        assert router._provider_name(canonical_model(model)) == router._provider_name(model)
+        assert router._bare(canonical_model(model)) == router._bare(model)

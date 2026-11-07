@@ -38,3 +38,24 @@ export function sameModel(a: string, b: string): boolean {
 export function canonicalModels(ids: string[]): string[] {
   return Array.from(new Set(ids.map(canonicalModel).filter(Boolean)));
 }
+
+/**
+ * The composer's model choice for a coworker with a `models:` list (connectors-across-
+ * machines §4). `picker` is what the picker offers (the coworker's list, or the machine's
+ * when it has none); `unavailable` the list entries this machine can't run; `bind` the
+ * model a fresh draft should switch to, or null to keep `current`.
+ */
+export function coworkerModels(
+  personaModels: string[],
+  selectable: string[],
+  current: string,
+): { picker: string[]; unavailable: string[]; bind: string | null } {
+  const listed = canonicalModels(personaModels);
+  if (!listed.length) return { picker: selectable, unavailable: [], bind: null };
+  const runnable = new Set(selectable.map(canonicalModel));
+  const unavailable = listed.filter((m) => !runnable.has(m));
+  const bind = listed.includes(canonicalModel(current))
+    ? null
+    : (listed.find((m) => runnable.has(m)) ?? listed[0]);
+  return { picker: listed, unavailable, bind };
+}
