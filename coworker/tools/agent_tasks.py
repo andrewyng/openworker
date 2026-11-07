@@ -101,11 +101,62 @@ class AgentTaskStore:
             self.put(session_id, rows)
         return rows
 
+    # -- transcripts (OPE-262): one JSON file per child, beside the run record ----------------
+
+    def _transcript_dir(self, session_id: str) -> Optional[Path]:
+        if self.path is None:
+            return None
+        return self.path.parent / "agent_transcripts" / session_id
+
+    def write_transcript(self, session_id: str, task_id: str, messages: list[dict[str, Any]]) -> None:
+        d = self._transcript_dir(session_id)
+        if d is None:
+            return
+        d.mkdir(parents=True, exist_ok=True)
+        target = d / f"{task_id}.json"
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(messages, default=str), encoding="utf-8")
+        tmp.replace(target)
+
+    def read_transcript(self, session_id: str, task_id: str) -> Optional[list[dict[str, Any]]]:
+        d = self._transcript_dir(session_id)
+        if d is None:
+            return None
+        target = d / f"{task_id}.json"
+        if not target.is_file():
+            return None
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, list) else None
+
+    def _drop_transcripts(self, session_id: str, task_ids: Optional[set[str]] = None) -> None:
+        """Remove a session's transcript files — all of them, or just `task_ids`."""
+        d = self._transcript_dir(session_id)
+        if d is None or not d.is_dir():
+            return
+        for f in d.glob("*.json"):
+            if task_ids is None or f.stem in task_ids:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+        if task_ids is None:
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
     def put(self, session_id: str, rows: list[dict[str, Any]]) -> None:
         live = [r for r in rows if r.get("status") in ("running", "waiting")]
         done = [r for r in rows if r.get("status") not in ("running", "waiting")]
         done.sort(key=lambda r: r.get("finished") or r.get("created") or 0, reverse=True)
         keep = live + done[:_KEEP_FINISHED]
+        # Retention covers the transcripts too: a pruned run loses its file.
+        pruned = {str(r.get("id")) for r in done[_KEEP_FINISHED:] if r.get("id")}
+        if pruned:
+            self._drop_transcripts(session_id, pruned)
         for r in keep:
             rep = r.get("report") or ""
             if len(rep) > _REPORT_STORE_MAX:
@@ -122,6 +173,7 @@ class AgentTaskStore:
             if session_id in self._sessions:
                 del self._sessions[session_id]
                 self._save()
+        self._drop_transcripts(session_id)
 
 INHERIT_INSTRUCTIONS = """You are a background subagent of the main coworker, working inside the same \
 workspace with the same tools and the same permissions. The user sees your approval requests in the \
@@ -291,6 +343,9 @@ class AgentTaskRegistry:
                 elif event.type == EventType.ASSISTANT_MESSAGE:
                     if event.data.get("text"):
                         report = event.data["text"]
+                    # Durability (OPE-262): the transcript on disk after every reply, so
+                    # an audit sees the child's conversation even if the app dies mid-run.
+                    self._persist_transcript(task)
                     u = event.data.get("usage")
                     if isinstance(u, dict):
                         key = str(u.get("model") or "unknown")
@@ -308,7 +363,18 @@ class AgentTaskRegistry:
                     status = f"error: {event.data.get('error', '')}"
         except Exception as exc:  # the child must never take the parent surface down
             status = f"error: {exc}"
+        self._persist_transcript(task)
         self._finish(task, report, status)
+
+    def _persist_transcript(self, task: AgentTask) -> None:
+        """The child's full message log, written beside the run record (owner ruling
+        2026-11-07): never streamed, never in Recents, always there for an audit."""
+        if self.store is None or not self.session_id or task.engine is None:
+            return
+        try:
+            self.store.write_transcript(self.session_id, task.id, list(task.engine.messages))
+        except Exception:
+            pass  # a persistence hiccup must never take a child run down
 
     def _finish(self, task: AgentTask, report: str, status: str) -> None:
         # The spawn step's helper pill (attrs.helper, same shape as explore's): model
@@ -435,6 +501,7 @@ def agent_task_tools(
                 instructions=INHERIT_INSTRUCTIONS,
                 max_iterations=_CHILD_MAX_ITERATIONS,
                 model_settings=model_settings,
+                audit_sink=getattr(parent, "audit_sink", None),
             )
             wrapped = registry._wrap_approver(task, child)
             if wrapped is not None:
@@ -452,6 +519,7 @@ def agent_task_tools(
             model=model,
             model_settings=model_settings,
             max_iterations=_CHILD_MAX_ITERATIONS,
+            audit_sink=getattr(registry.parent, "audit_sink", None),
         )
 
     def _launch(task: AgentTask, user_input: str) -> None:
@@ -512,6 +580,10 @@ def agent_task_tools(
         t.engine = _build_child(t, child_provider)
         if t.obs is not None:
             t.engine._obs = t.obs
+        # Audit (OPE-262): the child's rows carry the PARENT session's context plus its
+        # own task id, so `/v1/audit?session_id=` answers "what did agent-N touch".
+        parent_ctx = dict(getattr(registry.parent, "audit_context", None) or {})
+        t.engine.audit_context = {**parent_ctx, "subagent": t.id}
         registry._emit("agent_task_started", t)
         _launch(t, task)
         return {

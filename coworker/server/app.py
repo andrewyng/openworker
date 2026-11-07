@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
@@ -499,6 +499,15 @@ def create_app(manager: SessionManager) -> FastAPI:
         rows = manager.agent_task_store.load(session_id)
         rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
         return {"agents": [{k: v for k, v in r.items() if k != "report"} for r in rows]}
+
+    @app.get("/v1/sessions/{session_id}/tasks/{task_id}/transcript")
+    def get_session_task_transcript(session_id: str, task_id: str) -> dict[str, Any]:
+        # Subagent durability (OPE-262): the child's full message log, on demand only —
+        # for an audit or a future read-only viewer. Never streamed.
+        messages = manager.agent_task_store.read_transcript(session_id, task_id)
+        if messages is None:
+            raise HTTPException(status_code=404, detail="no transcript for that subagent run")
+        return {"task_id": task_id, "messages": messages}
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
