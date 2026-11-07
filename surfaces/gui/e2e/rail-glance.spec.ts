@@ -35,6 +35,20 @@ test("a turn's context payload updates the meter and surfaces the compaction not
   await expect(page.getByTestId("ctx-compacted")).toContainText("12");
 });
 
+test("a spawned subagent appears in the Subagents section and settles to done", async ({ page }) => {
+  await page.goto("/");
+  await page.getByPlaceholder(/Ask the coworker/).fill("spawn a subagent");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const head = page.getByTestId("rail-toggle-subagents");
+  // The row appears with the start event and settles to done when the background
+  // finish event lands (asserting the transient "running" state would race it).
+  await expect(head).toContainText("1 done");
+  await head.click();
+  const list = page.getByTestId("agent-tasks");
+  await expect(list).toContainText("repo survey");
+});
+
 test("collapsed section headers still answer with a summary value", async ({ page }) => {
   await page.goto("/");
   // Progress reports the live turn while it runs.

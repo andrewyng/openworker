@@ -20,7 +20,7 @@ import { ConnectorBadge, hexToRgba, NEUTRAL } from "../connectors/ConnectorIcon"
 import { resolveConnector } from "../connectors/registry";
 
 /** Coarse relative time from epoch seconds: "just now" / "5m ago" / "2h ago" / "3d ago" / a date. */
-function relativeTime(tsSeconds: number, t: (key: string, opts?: any) => string): string {
+export function relativeTime(tsSeconds: number, t: (key: string, opts?: any) => string): string {
   if (!tsSeconds || !isFinite(tsSeconds)) return "";
   const then = tsSeconds * 1000;
   const diff = Date.now() - then;

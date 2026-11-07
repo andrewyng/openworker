@@ -266,6 +266,8 @@ export function App() {
   // Window occupancy for the rail's Context section (FB-015): from `ready` (so a
   // reopened session has it before any turn) and refreshed by each assistant_message.
   const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
+  // Async subagents (OPE-257): bumped by agent_task events; the rail refetches its list.
+  const [agentTaskKey, setAgentTaskKey] = useState(0);
   // The server refused to build this session (its sandbox cannot be used) and closed the
   // socket for good: no reconnect strip, the error notice in the transcript says why.
   const [sessionRefused, setSessionRefused] = useState(false);
@@ -912,6 +914,10 @@ export function App() {
           // No transcript item here: one would make a fresh session non-idle and hide its
           // intro screen. Which wall the session runs behind belongs in the header (OPE-207).
           setPreparingSandbox(null);
+          break;
+        case "agent_task":
+          // A subagent started/finished/is waiting — the rail refetches the registry.
+          setAgentTaskKey((k) => k + 1);
           break;
         case "ready":
           setPreparingSandbox(null);
@@ -2632,6 +2638,7 @@ export function App() {
             onOpenIntegrations={() => openSettings("connectors")}
             context={contextInfo}
             sessionUsage={usage}
+            agentTaskKey={agentTaskKey}
             machineName={curSession?.machine_name}
             machineOffline={!!curSession?.machine_offline}
             sandbox={sandboxInfo}

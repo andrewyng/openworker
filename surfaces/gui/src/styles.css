@@ -775,6 +775,24 @@ button.btn.danger { color: var(--accent); }
 .ctx-model { font-size: var(--fs-label); }
 .ctx-val { margin-left: auto; color: var(--faint); flex: none; }
 .ctx-note { font-size: var(--fs-label); color: var(--faint); }
+/* Subagents (OPE-257): active runs + done history. The seeded chip is the slot the
+   cute-icon set (OPE-259) fills in later — stable per task via icon_seed. */
+.agent-list { display: flex; flex-direction: column; gap: 2px; }
+.agent-row { display: flex; gap: 9px; align-items: center; padding: 5px 2px; border-radius: 8px; }
+.agent-ico { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; flex: none; color: var(--ink); }
+.agent-ico.seed-0 { background: #e8ddf7; } .agent-ico.seed-1 { background: #f7dddd; }
+.agent-ico.seed-2 { background: #f7eedd; } .agent-ico.seed-3 { background: #ddeef7; }
+.agent-ico.seed-4 { background: #ddf7e4; } .agent-ico.seed-5 { background: #f7ddf0; }
+.agent-ico.seed-6 { background: #e4e7f7; } .agent-ico.seed-7 { background: #eef7dd; }
+html[data-theme="dark"] .agent-ico { color: #1c1c1f; }
+.agent-label { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs-ui); font-weight: 500; color: var(--ink); overflow: hidden; }
+.agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-sub { font-size: var(--fs-label); color: var(--faint); flex: none; }
+.agent-sub.attention { color: var(--warn-ink); }
+.agent-dot { width: 7px; height: 7px; border-radius: 999px; margin-left: auto; flex: none; background: var(--line-strong); }
+.agent-dot.running { background: var(--accent); }
+.agent-dot.waiting { background: var(--warn-ink); }
+.agent-dot.error { background: var(--danger-ink, #c33); }
 /* Journal + Access fold behind this quiet row (three primary sections max). */
 .rail-more-row { display: flex; gap: 8px; align-items: center; width: 100%; padding: 11px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; cursor: pointer; font: inherit; font-size: var(--fs-meta); color: var(--faint); text-align: left; }
 .rail-more-row:hover { color: var(--muted); }

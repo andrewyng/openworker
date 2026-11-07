@@ -7,6 +7,7 @@ import type { ContextInfo } from "../types";
 import { RightRail } from "./RightRail";
 
 vi.mock("../api", () => ({
+  getAgentTasks: vi.fn().mockResolvedValue([]),
   getArtifacts: vi.fn().mockResolvedValue([]),
   getJournalCases: vi.fn().mockResolvedValue([]),
   getRoots: vi.fn().mockResolvedValue([]),
@@ -93,6 +94,27 @@ describe("context section", () => {
   it("renders no section at all before the server has reported", () => {
     render(<RightRail {...baseProps} />);
     expect(screen.queryByTestId("rail-toggle-context")).toBeNull();
+  });
+});
+
+describe("subagents section", () => {
+  it("lists runs, amber while one waits on an approval, ages for the done", async () => {
+    const { getAgentTasks } = await import("../api");
+    (getAgentTasks as any).mockResolvedValue([
+      { id: "agent-1", label: "repo map", task: "t", mode: "read_only", status: "done", created: 1, finished: Date.now() / 1000 - 7200, icon_seed: 1 },
+      { id: "agent-2", label: "marker run", task: "t", mode: "inherit", status: "waiting", created: 2, icon_seed: 2 },
+    ]);
+    render(<RightRail {...baseProps} />);
+    const head = await screen.findByTestId("rail-toggle-subagents");
+    expect(head.textContent).toContain("1 waiting");
+    expect(head.textContent).toContain("1 done");
+    expect(head.querySelector(".rail-summary.attention")).not.toBeNull();
+    fireEvent.click(head);
+    const list = screen.getByTestId("agent-tasks");
+    expect(list.textContent).toContain("repo map");
+    expect(list.textContent).toContain("marker run");
+    expect(list.textContent).toContain("waiting on approval");
+    (getAgentTasks as any).mockResolvedValue([]);
   });
 });
 

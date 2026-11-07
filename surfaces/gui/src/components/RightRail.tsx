@@ -4,17 +4,20 @@ import { useTranslation } from "react-i18next";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
+  getAgentTasks,
   getArtifacts,
   getJournalCases,
   getRoots,
   readArtifact,
   revealArtifact,
+  type AgentTaskInfo,
   type ArtifactContent,
   type ArtifactInfo,
   type Board,
   type JournalCase,
   type RootInfo,
 } from "../api";
+import { relativeTime } from "./ConnectorMessageCard";
 import type { ContextInfo, SessionInfo, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { ContextPanel, ContextSummary } from "./RailContext";
@@ -28,7 +31,7 @@ import type { SessionUsage } from "../types";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 // (ContextInfo/SessionUsage power the Context section; see RailContext.tsx.)
 
-type Panel = "context" | "progress" | "artifacts" | "board" | "journal" | "team" | "files";
+type Panel = "context" | "progress" | "agents" | "artifacts" | "board" | "journal" | "team" | "files";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -76,6 +79,8 @@ interface Props {
   context?: ContextInfo | null;
   // Per-model token totals for the Context section's model rows.
   sessionUsage?: SessionUsage;
+  // Bumped by agent_task events; the Subagents section refetches its registry.
+  agentTaskKey?: number;
   // Environment block: where this session runs. Absent machineName = this machine.
   machineName?: string;
   machineOffline?: boolean;
@@ -126,6 +131,7 @@ export function RightRail({
   onOpenIntegrations,
   context = null,
   sessionUsage,
+  agentTaskKey = 0,
   machineName,
   machineOffline = false,
   sandbox = null,
@@ -154,6 +160,7 @@ export function RightRail({
   const [open, setOpen] = useState<Record<Panel, boolean>>({
     context: false,
     progress: false,
+    agents: false,
     artifacts: false,
     board: false,
     journal: false,
@@ -243,6 +250,14 @@ export function RightRail({
     if (!active) return;
     getRoots(sessionId).then(setRootDirs).catch(() => setRootDirs([]));
   }, [active, sessionId, refreshKey]);
+
+  // Async subagents (OPE-257): the registry view, refetched on every agent_task event.
+  const [agentTasks, setAgentTasks] = useState<AgentTaskInfo[]>([]);
+  useEffect(() => setAgentTasks([]), [sessionId]);
+  useEffect(() => {
+    if (!active) return;
+    getAgentTasks(sessionId).then(setAgentTasks).catch(() => setAgentTasks([]));
+  }, [active, sessionId, refreshKey, agentTaskKey]);
 
   // Journal cases surface only when a board exists — same visibility rule as the
   // Board section, so plain sessions carry zero team chrome.
@@ -428,6 +443,54 @@ export function RightRail({
               <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
             </RailSection>
           )}
+
+          {/* Async subagents (OPE-257): active runs + done history, zero chrome when
+              none ever ran. Amber only while one waits on an approval. */}
+          {agentTasks.length > 0 && (() => {
+            const act = agentTasks.filter((a) => a.status === "running").length;
+            const waiting = agentTasks.filter((a) => a.status === "waiting").length;
+            const rest = agentTasks.length - act - waiting;
+            const parts = [
+              waiting ? t("rail.agents_waiting", { count: waiting }) : "",
+              act ? t("rail.agents_running", { count: act }) : "",
+              rest ? t("rail.agents_done", { count: rest }) : "",
+            ].filter(Boolean);
+            return (
+              <RailSection
+                title={t("rail.agents_title")}
+                summary={parts.join(" · ")}
+                summaryAttention={waiting > 0}
+                open={open.agents}
+                onToggle={() => setOpen({ ...open, agents: !open.agents })}
+              >
+                <div className="agent-list" data-testid="agent-tasks">
+                  {agentTasks.map((a) => (
+                    <div className="agent-row" key={a.id} title={a.task}>
+                      {/* Seeded chip: OPE-259 swaps the glyph set in, no migration. */}
+                      <span className={`agent-ico seed-${(a.icon_seed ?? 0) % 8}`}>
+                        <Icon name="sparkle" size={11} />
+                      </span>
+                      <span className="agent-label">
+                        <span className="agent-name">{a.label}</span>
+                        <span className={"agent-sub" + (a.status === "waiting" ? " attention" : "")}>
+                          {a.status === "waiting"
+                            ? t("rail.agent_waiting")
+                            : a.status === "running"
+                              ? t("rail.agent_running")
+                              : a.status === "error"
+                                ? t("rail.agent_error")
+                                : a.status === "canceled"
+                                  ? t("rail.agent_canceled")
+                                  : relativeTime(a.finished || a.created, t)}
+                        </span>
+                      </span>
+                      <span className={"agent-dot " + a.status} />
+                    </div>
+                  ))}
+                </div>
+              </RailSection>
+            );
+          })()}
 
           {/* Standalone boards have no team icon. Keep their existing entry point;
               staffed leads use the quick look and Team View instead. */}

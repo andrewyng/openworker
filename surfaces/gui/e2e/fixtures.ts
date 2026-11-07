@@ -614,6 +614,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Session roots — the primary (writable, non-removable) scratch plus any added folders. Mutable so
   // the RO/RW add/toggle round-trips through the real UI. POST upserts by path (a toggle re-adds).
   const roots: any[] = [{ ...PRIMARY_ROOT }];
+  // Async subagents: starts empty; the scripted spawn turn fills it and fires events.
+  const agentTasks: any[] = [];
   // Session connections — PER-TEST copy so the Access section's mute toggle (POST) can flip
   // `enabled` without leaking into sibling tests.
   const connections = {
@@ -804,6 +806,25 @@ export async function mockApi(page: import("@playwright/test").Page) {
           return;
         }
         // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        // Async subagents (OPE-257): spawn → the registry row + started event arrive
+        // while the parent carries on; the finish event lands after the turn, like a
+        // real background run.
+        if (/spawn a subagent/i.test(msg.text)) {
+          const t: any = {
+            id: "agent-1", label: "repo survey", task: "survey the repo layout",
+            mode: "read_only", status: "running", created: Date.now() / 1000, icon_seed: 1,
+          };
+          agentTasks.unshift(t);
+          send("agent_task", { kind: "agent_task_started", ...t });
+          send("assistant_message", { text: "Spawned a subagent; carrying on." });
+          send("turn_done");
+          setTimeout(() => {
+            t.status = "done";
+            t.finished = Date.now() / 1000;
+            send("agent_task", { kind: "agent_task_finished", ...t });
+          }, 400);
+          return;
+        }
         // The turn that pushed occupancy over the compaction line: assistant_message
         // carries a fresh context whose `compaction` stamp the rail must surface.
         if (/compact the context/i.test(msg.text)) {
@@ -1230,6 +1251,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const b = req.postDataJSON() || {};
       (projectNames[b.kind] ||= []).unshift({ name: b.name, key: "/Users/u/fleet/ro4d/demo-universe/notes" });
       return json({ ok: true, kind: b.kind, name: b.name });
+    }
+    // Async subagents (OPE-257): the Subagents section's registry view. Mutated by
+    // the "spawn a subagent" scripted turn below.
+    if (/\/v1\/sessions\/[^/]+\/tasks$/.test(p)) {
+      return json({ agents: agentTasks });
     }
     if (/\/v1\/sessions\/[^/]+\/roots$/.test(p)) {
       if (m === "POST") {

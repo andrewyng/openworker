@@ -6,6 +6,7 @@ import { getArtifacts, readArtifact } from "../api";
 import { RightRail } from "./RightRail";
 
 vi.mock("../api", () => ({
+  getAgentTasks: vi.fn().mockResolvedValue([]),
   getArtifacts: vi.fn(),
   getJournalCases: vi.fn().mockResolvedValue([]),
   getRoots: vi.fn().mockResolvedValue([]),

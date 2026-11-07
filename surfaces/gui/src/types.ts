@@ -25,6 +25,7 @@ export type EventType =
   | "model_changed"
   | "mode_notice"
   | "memory_saved"
+  | "agent_task"
   | "compacting"
   | "compacted"
   | "continuation"
