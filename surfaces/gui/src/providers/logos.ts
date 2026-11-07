@@ -40,6 +40,7 @@ import xai from "./logos/xai.svg";
 import meta from "./logos/meta.svg";
 import nebius from "./logos/nebius.svg";
 import upstage from "./logos/upstage.svg";
+import opper from "./logos/opper.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
@@ -79,6 +80,7 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   minimax,
   xai,
   upstage,
+  opper,
 };
 
 export const PROVIDER_ORDER = [
@@ -120,6 +122,7 @@ export const PROVIDER_ORDER = [
   "novita",
   "groq",
   "upstage",
+  "opper",
   // No vendored marks yet for these four: the gallery shows the neutral monogram.
   "cerebras",
   "huggingface",
