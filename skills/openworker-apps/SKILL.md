@@ -1,6 +1,6 @@
 ---
 name: openworker-apps
-description: Build or adapt desktop and web applications using the OpenWorker Harness SDK, including agent creation, streamed sessions, model configuration and application packaging. Use for OpenWorker integrations, not general website design or unrelated agent frameworks.
+description: Build or adapt desktop and web applications using the OpenWorker Harness SDK, including agent creation, streamed sessions, model configuration, application packaging and Railway deployment. Use for OpenWorker integrations, not general website design or unrelated agent frameworks.
 ---
 
 # Build apps with OpenWorker
@@ -13,11 +13,14 @@ Preserve their chosen UI framework, model and deployment target.
 - Read [SDK integration](references/sdk.md) for the shared lifecycle and package contract.
 - For desktop apps, read [Desktop](references/desktop.md).
 - For browser/server apps, read [Web](references/web.md).
+- For a Railway deployment, read [Railway](references/railway.md). Default to one
+  Node service serving the frontend and HTTP API with a managed Rust harness.
 
 These references are bundled with the skill; an OpenWorker repository checkout
 is not required. If `references/installation.json` exists, it records the exact
-SDK version this skill accompanies. Otherwise the skill package's version is the
-SDK version. Match the application's installed version before using these APIs;
+SDK version this skill supports. For a source checkout, use the skill package's
+`openworkerSdkVersion`. Skill releases can advance independently of the SDK.
+Match the application's installed version before using these APIs;
 do not silently upgrade an existing application. Use the installed package's
 TypeScript declarations for APIs outside the bundled examples. For Rust, consult
 the matching SDK version's API documentation or source when needed.

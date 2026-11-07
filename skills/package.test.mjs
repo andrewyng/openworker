@@ -4,6 +4,7 @@ import { mkdtemp, readFile, mkdir, readdir, rm, writeFile, realpath } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { prepare } from './prepare.mjs';
 
 test('packed installer works outside the checkout without SDK or native dependencies', {timeout: 60000}, async () => {
@@ -32,14 +33,31 @@ test('packed installer works outside the checkout without SDK or native dependen
       ? execFileSync(process.execPath,[join(installed,'install.mjs'),...args],{cwd:consumer,encoding:'utf8'})
       : execFileSync(bin,args,{cwd:consumer,encoding:'utf8'});
     assert.match(run(['--help']), /--agent codex\|claude/);
+    assert.match(run(['--help']), /--global/);
+    // Mock only the child's OS home resolver; never write to the developer's
+    // actual home or override HOME/USERPROFILE while exercising the real CLI.
+    const userHome=join(root,'personal home');await mkdir(userHome);
+    const preload=join(root,'home-fixture.mjs');
+    await writeFile(preload,`import os from 'node:os';import{syncBuiltinESMExports}from'node:module';os.homedir=()=>${JSON.stringify(userHome)};syncBuiltinESMExports();`);
+    const runGlobal=(args)=>execFileSync(process.execPath,['--import',pathToFileURL(preload).href,join(installed,'install.mjs'),...args],{cwd:consumer,encoding:'utf8',stdio:'pipe'});
     for (const agent of ['codex','claude']) {
       const project = join(root, `new ${agent} app`);
       await mkdir(project);
       assert.match(run(['--agent',agent,'--project',project]), /Installed:/);
       const dest = join(project,agent==='codex'?'.agents':'.claude','skills/openworker-apps');
       const metadata = JSON.parse(await readFile(join(dest,'references/installation.json'),'utf8'));
-      assert.equal(metadata.sdkVersion,pkg.version);
+      assert.equal(metadata.sdkVersion,pkg.openworkerSdkVersion);
       assert.equal(metadata.sdkPackage,'@openworkerai/harness-sdk');
+      assert.equal(metadata.version,pkg.version);
+      assert.match(runGlobal(['--agent',agent,'--global']),/Installed:/);
+      const globalDest=join(userHome,agent==='codex'?'.agents':'.claude','skills/openworker-apps');
+      assert.deepEqual(JSON.parse(await readFile(join(globalDest,'references/installation.json'),'utf8')),metadata);
+      for(const file of ['SKILL.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore'])
+        assert.equal(await readFile(join(globalDest,file),'utf8'),await readFile(join(dest,file),'utf8'));
+      await assert.rejects(readFile(join(consumer,agent==='codex'?'.agents':'.claude','skills/openworker-apps/SKILL.md')),{code:'ENOENT'});
+      await writeFile(join(globalDest,'SKILL.md'),'personal customization');
+      assert.throws(()=>runGlobal(['--global','--agent',agent]));
+      assert.equal(await readFile(join(globalDest,'SKILL.md'),'utf8'),'personal customization');
       for (const folder of ['', 'references', 'agents']) {
         for (const file of await readdir(join(dest,folder))) {
           if (!/\.(md|json|yaml)$/.test(file)) continue;

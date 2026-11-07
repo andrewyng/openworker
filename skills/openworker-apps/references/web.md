@@ -34,9 +34,11 @@ HTTPS through the platform's ingress. A managed child process needs a host that
 supports its lifecycle; do not assume a request-limited function is a persistent
 agent worker.
 
-Detailed Railway/Vercel recipes and operation of a separate Kubernetes harness
-service are outside this skill version's qualified deployment examples. For an
-existing service, consult https://openworker.com/docs/sdk/deployment/ and the
+For Railway, default to one Node service serving the built frontend and HTTP API,
+with the Rust harness as its managed child. Preserve an existing split if the app
+already has one. Use [the deployment track](railway.md) and its bundled Docker assets.
+Vercel recipes and operation of a separate Kubernetes harness service remain
+separate work. For an existing service, consult https://openworker.com/docs/sdk/deployment/ and the
 installed SDK's service API declarations before changing the application model.
 
 ## Reference source when useful

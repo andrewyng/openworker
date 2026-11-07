@@ -10,7 +10,7 @@ export async function prepare(directory) {
   const out = resolve(directory);
   const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
   const release = JSON.parse(await readFile(join(source, '../harness/release/manifest.json'), 'utf8'));
-  if (pkg.version !== release.version) throw Error('Skill and SDK release versions must match');
+  if (pkg.openworkerSdkVersion !== release.version) throw Error('Skill SDK compatibility must match the SDK release');
   await mkdir(out); // An existing candidate must never be overwritten.
   const staging = join(out, 'package');
   await mkdir(staging);
