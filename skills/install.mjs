@@ -1,17 +1,31 @@
 #!/usr/bin/env node
-// Project-local installation only; never overwrite an existing skill.
+// Project or user-wide installation; never overwrite an existing skill.
 import { mkdir, lstat, realpath, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { parseArgs } from 'node:util';
 const source = dirname(fileURLToPath(import.meta.url));
+const usage = 'build-with-sdk-skills --agent codex|claude (--project /path/to/your-app | --global)';
 const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore','agents/openai.yaml'];
-export async function install({agent, project}) {
- if (!['codex','claude'].includes(agent) || !project) throw Error('Use --agent codex|claude --project /path/to/your-app');
+function validate({agent, project, global: userWide = false}) {
+ if (!['codex','claude'].includes(agent) || typeof userWide !== 'boolean' ||
+     (project !== undefined && (typeof project !== 'string' || !project.trim())) ||
+     userWide === (project !== undefined)) throw Error(`Use ${usage}; choose exactly one installation scope.`);
+}
+export function parseInstallArgs(args) {
+ const {values} = parseArgs({args, options:{agent:{type:'string'}, project:{type:'string'}, global:{type:'boolean'}}});
+ validate(values);
+ return values;
+}
+export async function install(options, {userHome = homedir()} = {}) {
+ validate(options);
+ const {agent, project, global: userWide = false} = options;
  const pkg = JSON.parse(await readFile(join(source,'package.json'),'utf8'));
  // Validate package completeness before creating an installation directory.
  const content = await Promise.all(files.map(name => readFile(join(source,'openworker-apps',name))));
- const root = await realpath(project);
- if (!(await lstat(root)).isDirectory()) throw Error('Project must be an existing directory.');
+ const root = await realpath(userWide ? userHome : project);
+ if (!(await lstat(root)).isDirectory()) throw Error('Installation root must be an existing directory.');
  let parent = root;
  for (const component of [agent === 'codex' ? '.agents' : '.claude', 'skills']) {
   parent = join(parent, component);
@@ -32,11 +46,11 @@ export async function install({agent, project}) {
 }
 if (process.argv[1] && await realpath(process.argv[1]).catch(() => resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
  const args=process.argv.slice(2);
- if(args.length===1 && args[0]==='--help') console.log('build-with-sdk-skills --agent codex|claude --project /path/to/your-app');
+ if(args.length===1 && args[0]==='--help') console.log(`${usage}\n--global installs for your user across projects on this machine (Codex: ~/.agents/skills; Claude Code: ~/.claude/skills).`);
  else {
   try {
-   if(args.length!==4 || args[0]!=='--agent' || args[2]!=='--project') throw Error('Use --agent codex|claude --project /path/to/your-app');
-   console.log(`Installed: ${await install({agent:args[1],project:args[3]})}\nOpen a new coding-agent session in that project to use openworker-apps.`);
+   const options = parseInstallArgs(args);
+   console.log(`Installed: ${await install(options)}\nOpen a new coding-agent session${options.global ? '' : ' in that project'} to use openworker-apps.`);
   } catch(error) { console.error(error.code==='EEXIST' ? 'An installation already exists. Review or back it up before replacing it.' : error.message);process.exitCode=1; }
  }
 }

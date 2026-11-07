@@ -6,24 +6,24 @@ snippets and separate Desktop/Web references. No OpenWorker checkout is required
 for the packaged skill, and installing it does not install the SDK or a runtime.
 
 **Release candidate:** `@openworkerai/build-with-sdk-skills@0.1.0-beta.2` is prepared
-locally. Registry commands below apply after publication; the version in this
-repository does not mean it has been published.
+locally. The new `--global` option and Railway guidance require this release;
+until it is published, use the local candidate instructions below to try them.
 
-## Install in your app project
+## Install the skill
 
-After publication, from an existing app project:
+From an existing app project, install the latest published skill:
 
 ```sh
-npx @openworkerai/build-with-sdk-skills@0.1.0-beta.2 --agent codex --project .
+npx @openworkerai/build-with-sdk-skills --agent codex --project .
 ```
 
 For Claude Code:
 
 ```sh
-npx @openworkerai/build-with-sdk-skills@0.1.0-beta.2 --agent claude --project .
+npx @openworkerai/build-with-sdk-skills --agent claude --project .
 ```
 
-The installer creates `.agents/skills/openworker-apps/` for Codex or
+These project commands create `.agents/skills/openworker-apps/` for Codex or
 `.claude/skills/openworker-apps/` for Claude Code. It supports quoted project paths
 on Windows and macOS, leaves global settings alone, and refuses to overwrite an
 existing skill. Review/back up an existing installation before replacing it.
@@ -31,7 +31,30 @@ existing skill. Review/back up an existing installation before replacing it.
 checkout paths or credentials. Use `sdkVersion` from that file for the SDK. Skill and SDK package versions may
 differ; this skill candidate targets SDK `0.1.0-beta.1`.
 
-The skill is discoverable in that project. Restart the coding-agent session if it
+### Across your projects
+
+For user-wide installation, use `--global` instead of `--project`:
+
+```sh
+npx @openworkerai/build-with-sdk-skills --agent claude --global
+```
+
+```sh
+npx @openworkerai/build-with-sdk-skills --agent codex --global
+```
+
+This installs into `~/.claude/skills/openworker-apps/` for Claude Code or
+`~/.agents/skills/openworker-apps/` for Codex, making the skill available across
+projects for your user on this machine. It does not install into Claude web or
+Cowork, change account settings, or require `npm install -g` or administrator
+access. Choose either `--global` or `--project`, not both. Both modes preserve an
+existing installation.
+
+Unversioned commands select npm's `latest` release. To pin an installation for
+reproducibility, append `@<version>` to the package name. The installer records
+the compatible SDK version separately; the skill and SDK versions may differ.
+
+The skill is discoverable in the selected scope. Restart the coding-agent session if it
 does not appear. Invoke `$openworker-apps` in Codex or `/openworker-apps` in Claude
 Code, or ask:
 
@@ -46,8 +69,17 @@ and Docker assets. The default is one Node service serving the frontend and API,
 with the Rust harness running as a managed child process. The recipe has been tested locally and on Railway with the
 published SDK, including streamed Claude responses and conversation recovery
 after redeployment. Vercel recipes and a cluster-operations skill will
-follow separately. This installer
-targets local Codex and Claude Code projects, not Claude web/Cowork uploads.
+follow separately. This installer targets local Codex and Claude Code sessions.
+
+## Claude workspace uploads
+
+Claude's **Customize → Skills → Upload** is a separate installation route.
+For that flow, zip the complete installed `openworker-apps` directory, including
+its references, Docker assets and `references/installation.json`; uploading only
+`SKILL.md` loses the supporting files. The npm `.tgz` package is not this upload
+format. Uploading a skill provides instructions, not an installed SDK, runtime,
+or permission to deploy an app. The workspace upload flow has not been qualified
+by this package's local installer tests.
 
 ## Try the local candidate
 

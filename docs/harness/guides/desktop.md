@@ -42,31 +42,32 @@ you build. Run the relevant tests and prepare a local package.
 
 <details><summary>Install the skill for this project</summary>
 
-After npm publication, install the matching skill in your existing app project.
-The candidate below is not published yet; for local archives or checkout installation,
-see the [skill installation guide](../../../skills/README.md).
+Run one of these commands from your app project to install the latest published
+skill. No OpenWorker repository checkout is required.
 
 <!-- sdk-install-tabs -->
 
 ### Codex
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills@0.1.0-beta.1 --agent codex --project .
+npx @openworkerai/build-with-sdk-skills --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills@0.1.0-beta.1 --agent claude --project .
+npx @openworkerai/build-with-sdk-skills --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->
 
 Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
-It doesn't change global settings or overwrite an existing skill. See the
-[skill installation guide](../../../skills/README.md) for local candidate installation
-and invocation details.
+For all your projects on this machine, replace `--project .` with `--global`.
+That installs to your user skills directory; neither mode overwrites an existing
+skill. The `--global` option is new in the pending skills `0.1.0-beta.2` release.
+See the [skill installation guide](../../../skills/README.md) for availability,
+local candidate installation and invocation details.
 
 </details>
 
