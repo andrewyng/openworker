@@ -1,0 +1,12 @@
+{
+ "health": [
+  "ok",
+  "failed",
+  "failed",
+  "failed"
+ ],
+ "failed_in_a_row": {
+  "count": 3,
+  "last_error": null
+ }
+}

@@ -1,0 +1,222 @@
+{
+ "recording": {
+  "turns": [
+   {
+    "turn_id": "golden-s3-40-t1",
+    "session_id": "golden-s3-40",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "user",
+    "started_at": 1793600000000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "security",
+     "persona_coverage": [
+      "code",
+      "secrets",
+      "deps"
+     ]
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [],
+     "board_seq": null,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "user"
+    }
+   }
+  ],
+  "steps": [
+   {
+    "step_id": "st9",
+    "turn_id": "golden-s3-40-t1",
+    "session_id": "golden-s3-40",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600010000,
+    "duration_ms": 5000,
+    "status": "ok",
+    "call_id": "call_st9",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 500,
+     "exit_code": 1,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "allowed",
+        "detail": "bypass"
+       }
+      ],
+      "origin": "bypass"
+     },
+     "sandbox": null,
+     "args_hash": "000001",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": false,
+     "scanner": {
+      "name": "semgrep",
+      "action": "scan"
+     },
+     "result_sha256": "0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    "content": {}
+   },
+   {
+    "step_id": "st10",
+    "turn_id": "golden-s3-40-t1",
+    "session_id": "golden-s3-40",
+    "parent_step_id": null,
+    "seq": 2,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600020000,
+    "duration_ms": 5000,
+    "status": "ok",
+    "call_id": "call_st10",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 500,
+     "exit_code": 0,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "allowed",
+        "detail": "bypass"
+       }
+      ],
+      "origin": "bypass"
+     },
+     "sandbox": null,
+     "args_hash": "000002",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": false,
+     "scanner": {
+      "name": "osv-scanner",
+      "action": "scan"
+     },
+     "result_sha256": "0000000000000000000000000000000000000000000000000000000000000002"
+    },
+    "content": {}
+   },
+   {
+    "step_id": "st3",
+    "turn_id": "golden-s3-40-t1",
+    "session_id": "golden-s3-40",
+    "parent_step_id": null,
+    "seq": 3,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600030000,
+    "duration_ms": 5000,
+    "status": "ok",
+    "call_id": "call_st3",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 500,
+     "exit_code": 0,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "allowed",
+        "detail": "bypass"
+       }
+      ],
+      "origin": "bypass"
+     },
+     "sandbox": null,
+     "args_hash": "000003",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": false,
+     "scanner": {
+      "name": "semgrep",
+      "action": "version"
+     },
+     "result_sha256": "0000000000000000000000000000000000000000000000000000000000000003"
+    },
+    "content": {}
+   }
+  ]
+ },
+ "task": {
+  "report": {
+   "secrets": {
+    "ran": true,
+    "findings": 0
+   },
+   "code": {
+    "ran": true,
+    "findings": 25
+   }
+  },
+  "findings": [
+   {
+    "id": 7,
+    "severity": "high",
+    "evidence": [
+     "st9"
+    ]
+   }
+  ],
+  "fix": null
+ }
+}

@@ -534,7 +534,7 @@ export function RightRail({
           {/* The team panel: who's working, on what, and the way into their sessions —
               the altitude-3 escape hatch, moved here from the sidebar (RECENT keeps ONE
               entry per team: the lead). */}
-          {teamMembers.length > 0 && <TeamRail key={sessionId} members={teamMembers} summary={teamSummary}
+          {teamMembers.length > 0 && <TeamRail key={sessionId} leadSessionId={sessionId} members={teamMembers} summary={teamSummary}
             open={open.team} onToggle={() => setOpen({ ...open, team: !open.team })}
             usage={teamUsage} machine={teamMachine} chatEnabled={teamChatEnabled} unread={teamChatUnread}
             onChat={onOpenTeamChat} onWorker={onOpenWorker} onTeam={onOpenTeamView} onWorkers={onOpenWorkers} />}

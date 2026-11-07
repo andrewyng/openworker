@@ -58,6 +58,8 @@ def _usage_from(usage: Any) -> Optional[TokenUsage]:
         output=int(usage.get("outputTokens") or 0),
         cache_read=int(usage.get("cacheReadInputTokens") or 0),
         cache_write=int(usage.get("cacheWriteInputTokens") or 0),
+        cache_read_reported="cacheReadInputTokens" in usage,
+        cache_write_reported="cacheWriteInputTokens" in usage,
     )
 
 # Converse has no required max token param but per-model defaults vary wildly (Meta's is

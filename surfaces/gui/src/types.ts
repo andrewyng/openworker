@@ -1,5 +1,7 @@
 export type EventType =
   | "ready"
+  // Observability: batched recording events for the Steps panel ({events: [...]}).
+  | "step"
   | "inbound"
   | "turn_start"
   | "assistant_delta"
@@ -24,6 +26,7 @@ export type EventType =
   | "interrupted"
   | "model_changed"
   | "mode_notice"
+  | "export_notice"
   | "memory_saved"
   | "agent_task"
   | "compacting"
@@ -122,6 +125,8 @@ export interface SessionInfo {
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
   liveness?: "working" | "sleeping" | "idle";
+  // OB-3: warnings in turns whose Issues you have not opened (an amber ring in the sidebar).
+  issues_unseen?: number;
   // When sleeping: the next timer fire (ISO) — drives the "sleeping until…" strip.
   sleeping_until?: string | null;
   // Channels this session listens to (inbound subscriptions).
@@ -176,7 +181,8 @@ export type Item =
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
   | { kind: "teamcreated"; teamId: string; workers: { actor: string; persona: string }[]; ts?: number }
-  | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
+  // `mid`: the message id (observability links a turn footer to its answer by it, OB-5).
+  | { kind: "assistant"; text: string; ts?: number; reasoning?: string; mid?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SessionInfo, SessionUsage } from "../types";
 import type { TeamSummary } from "../teamView";
@@ -8,7 +8,8 @@ import {
   type RosterEntry,
   type WorkerFilter,
 } from "../teamRoster";
-import { formatTokens, totalTokens } from "../usage";
+import { formatTokens, totalTokens, usageFromRecordings } from "../usage";
+import { getRecordedUsage } from "../api";
 import { Icon } from "./Icon";
 
 export function WorkerSearch({
@@ -36,7 +37,8 @@ export function WorkerSearch({
 export function TeamRail({
   members,
   summary,
-  usage,
+  usage: transcriptUsage,
+  leadSessionId,
   machine,
   chatEnabled,
   unread = 0,
@@ -50,6 +52,8 @@ export function TeamRail({
   members: SessionInfo[];
   summary?: TeamSummary | null;
   usage?: SessionUsage;
+  // The lead's own session: its recording is added to the members' (P3-1).
+  leadSessionId?: string;
   machine?: string;
   chatEnabled: boolean;
   unread?: number;
@@ -60,6 +64,21 @@ export function TeamRail({
   open: boolean;
   onToggle: () => void;
 }) {
+  // The team's tokens as the Steps pill counts them, from each session's recording; the
+  // transcript's count (main calls only) stays the fallback (P3-1, Phase 3 V3-01).
+  const [recorded, setRecorded] = useState<SessionUsage | null>(null);
+  const ids = [leadSessionId, ...members.map((m) => m.session_id)].filter(Boolean) as string[];
+  const idsKey = ids.join(",");
+  useEffect(() => {
+    let live = true;
+    Promise.all(ids.map((id) => getRecordedUsage(id).catch(() => null)))
+      .then((recs) => live && setRecorded(usageFromRecordings(recs)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [idsKey, transcriptUsage]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const usage = recorded ?? transcriptUsage;
   const { t } = useTranslation();
   const [chatNotice, setChatNotice] = useState(false),
     [query, setQuery] = useState("");

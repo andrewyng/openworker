@@ -30,12 +30,21 @@ class TokenUsage:
     split into `cache_read`/`cache_write`. Providers that don't report a cache
     split (Ollama, most compat vendors) leave the cache fields at 0. `output`
     includes thinking tokens where the vendor bills them as output (Gemini).
+
+    For observability (E3) a count the provider did not send must read as unknown, not
+    0: `cache_read_reported` / `cache_write_reported` say whether it was sent, and
+    `reasoning` (thinking tokens within `output`) is None when not sent. The int fields
+    stay ints, so existing sums are unchanged.
     """
 
     input: int = 0
     output: int = 0
     cache_read: int = 0
     cache_write: int = 0
+    # Not part of equality: two usages with the same counts are equal, as before.
+    reasoning: Optional[int] = field(default=None, compare=False)
+    cache_read_reported: bool = field(default=True, compare=False)
+    cache_write_reported: bool = field(default=True, compare=False)
 
     @property
     def context_tokens(self) -> int:

@@ -552,6 +552,10 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
             self.calls = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
+            # The fire-and-forget auto-title call runs concurrently with the turn; it must
+            # not take the one scripted outage meant for the chat call.
+            if messages and "title chat sessions" in str(messages[0].get("content", "")):
+                return _text("A Title")
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("outage")
@@ -1050,6 +1054,10 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         _drain(ws)
         ws.send_json({"type": "set_model", "model": "kimi:kimi-k2.6"})
         changed = ws.receive_json()
+        while changed["type"] == "step":
+            # Live Steps updates go out in 100 ms batches, so one can land after
+            # turn_done (observability; fix list C-1). They are not part of this test.
+            changed = ws.receive_json()
         assert changed["type"] == "model_changed"
         assert changed["data"]["model"] == "kimi:kimi-k2.6"
         assert "Kimi" in changed["data"]["text"]

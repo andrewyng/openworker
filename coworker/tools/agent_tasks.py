@@ -44,6 +44,8 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from ..engine import ApprovalOutcome, EventType, PermissionRequest, TurnEngine
+from ..observability.engine_hooks import HelperRecording, current_tool_run
+from ..observability.provider_view import tag as tag_provider
 from .subagent import build_explorer_engine
 
 _MAX_ACTIVE = 3
@@ -149,6 +151,11 @@ class AgentTask:
     # The loop the child runs on (its own in read_only, the server's in inherit) —
     # how cancel and follow-ups reach it thread-safely.
     loop: Optional[asyncio.AbstractEventLoop] = None
+    # Observability (OPE-244 integration): the child's steps and model calls recorded
+    # on the parent's turn, nested under the spawn_agent step — the same HelperRecording
+    # contract as explore, so the Steps panel and the Usage ledger see background
+    # children too. None when recording was off at spawn time.
+    obs: Optional[Any] = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -304,6 +311,17 @@ class AgentTaskRegistry:
         self._finish(task, report, status)
 
     def _finish(self, task: AgentTask, report: str, status: str) -> None:
+        # The spawn step's helper pill (attrs.helper, same shape as explore's): model
+        # calls, tool calls and tokens the child spent, stamped when it ends. Display
+        # only — the Usage ledger already counted its steps as they happened.
+        if task.obs is not None:
+            try:
+                task.obs.parent.update_step(
+                    task.obs.parent_step_id,
+                    attrs={"helper": task.obs.summary({"canceled": "interrupted"}.get(status, status))},
+                )
+            except Exception:
+                pass  # a recording hiccup must never take the run result down
         task.finished = time.time()
         task.report = report
         if status == "completed":
@@ -402,7 +420,7 @@ def agent_task_tools(
     registry = AgentTaskRegistry()
     ws = str(Path(workspace).resolve())
 
-    def _build_child(task: AgentTask) -> TurnEngine:
+    def _build_child(task: AgentTask, child_provider: Any) -> TurnEngine:
         if task.mode == "inherit":
             parent = registry.parent
             assert parent is not None
@@ -410,7 +428,7 @@ def agent_task_tools(
                 exclude={"spawn_agent", "agent_task_output", "agent_send", "agent_task_cancel", "explore"}
             )
             child = TurnEngine(
-                provider=provider,
+                provider=child_provider,
                 registry=child_registry,
                 permissions=parent.permissions,  # same mode, same session grants
                 model=model,
@@ -430,7 +448,7 @@ def agent_task_tools(
             return child
         return build_explorer_engine(
             workspace=ws,
-            provider=provider,
+            provider=child_provider,
             model=model,
             model_settings=model_settings,
             max_iterations=_CHILD_MAX_ITERATIONS,
@@ -479,7 +497,21 @@ def agent_task_tools(
         if approval_timeout:
             timeout = max(float(approval_timeout), _MIN_APPROVAL_TIMEOUT)
         t = registry.new_task(label.strip() or task.strip()[:40], task, mode, timeout)
-        t.engine = _build_child(t)
+        # Observability (OPE-244 integration): the child records under THIS spawn step,
+        # on the parent's turn, exactly like explore's helper — so background runs show
+        # in the Steps panel and their tokens reach the Usage ledger. The recording
+        # outlives this turn by design; late steps on an ended turn are already a
+        # recorder concept (the after-turn title step).
+        run = current_tool_run()
+        child_provider: Any = provider
+        if run is not None and run.step_id is not None:
+            t.obs = HelperRecording(run.recording, run.step_id, run.turn_id, detached=True)
+            child_provider = tag_provider(
+                run.view, purpose="helper", parent=run.step_id, turn=run.turn_id, sink=t.obs
+            )
+        t.engine = _build_child(t, child_provider)
+        if t.obs is not None:
+            t.engine._obs = t.obs
         registry._emit("agent_task_started", t)
         _launch(t, task)
         return {

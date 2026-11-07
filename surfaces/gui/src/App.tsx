@@ -65,7 +65,9 @@ import type {
 import {
   hasPendingApproval,
   initialSessionId,
+  initialActivityTab,
   initialSettingsTab,
+  reflectActivity,
   reflectSession,
 } from "./routes";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
@@ -96,6 +98,7 @@ import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
+import { useSessionFooters } from "./components/TurnFooter";
 import { InboxView } from "./components/InboxView";
 import {
   approvalItemFromPayload,
@@ -114,6 +117,7 @@ import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { TeamView, TeamQuickLook } from "./components/TeamView";
+import { StepsPanel } from "./components/StepsPanel";
 import type { WorkerFilter } from "./teamRoster";
 import type { TeamSummary } from "./teamView";
 import { getTeamSummary } from "./api";
@@ -392,6 +396,11 @@ export function App() {
     if (surface === "session") reflectSession(sessionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, surface]);
+  // T3-11: Activity has its own address too, with its tab, so a reload stays on it.
+  const [activityTab, setActivityTab] = useState<"log" | "usage">(initialActivityTab || "log");
+  useEffect(() => {
+    if (surface === "audit") reflectActivity(activityTab);
+  }, [surface, activityTab]);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
@@ -406,13 +415,16 @@ export function App() {
   const [personaViewId, setPersonaViewId] = useState<string>("");
   // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
   // was opened from there (persona config now lives in Settings).
-  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
+  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings" | "activity">("session");
+  const [personaViewFocus, setPersonaViewFocus] = useState<"doing" | undefined>(undefined);
   const openPersona = (
     id: string,
-    from: "session" | "settings" = "session",
+    from: "session" | "settings" | "activity" = "session",
     machineId?: string | null,
   ) => {
     setPersonaViewReturn(from);
+    // T3-12: from Usage ▸ By coworker, the page opens at its history
+    setPersonaViewFocus(from === "activity" ? "doing" : undefined);
     setPersonaViewId(id);
     setPersonaViewMachine(machineId ?? null);
     setSurface("persona");
@@ -424,6 +436,15 @@ export function App() {
   boardSessionRef.current = sessionId;
   const [boardOwner, setBoardOwner] = useState("");
   const [teamViewOpen, setTeamViewOpen] = useState(false);
+  // Observability (UX-059 OB-1): the Steps panel takes the rail's full-view slot, like the
+  // team view; `stepsKey` moves on live step events and at a turn's end so it follows along.
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [stepsKey, setStepsKey] = useState(0);
+  // A turn's answer opened the panel: the answer's time picks the turn (unix seconds).
+  const [stepsAt, setStepsAt] = useState<{ ts?: number; turnId?: string; n: number } | null>(null);
+  // OB-5 (Phase 3): the footers under each answer, read again when a turn ends.
+  const [footKey, setFootKey] = useState(0);
+  const [footers, setFooter] = useSessionFooters(sessionId, footKey);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
   const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
@@ -743,6 +764,10 @@ export function App() {
           // a #/settings/{page} link opens Settings on that page.
           if (hasPendingApproval()) openSettings("machines");
           else if (initialSettingsTab) openSettings(initialSettingsTab as SetTab);
+          else if (initialActivityTab) {
+            setAuditCallId(undefined);
+            setSurface("audit");
+          }
           setModel(h.model);
           // First-run setup wizard (desktop): show until the user completes/dismisses it.
           if (isTauri()) {
@@ -1108,6 +1133,11 @@ export function App() {
           else if (d.status === "truncated")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
           break;
+        case "export_notice":
+          // OB-6: the company's policy sends this machine's content somewhere; a new session
+          // says what goes where (server-authored, persisted like mode_notice).
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "" }]);
+          break;
         case "mode_notice":
           if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
           // Server-authored + persisted (owner ruling 2026-08-24): the Auto-Approve
@@ -1173,8 +1203,14 @@ export function App() {
             { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
           ]);
           break;
+        case "step":
+          // Recording events for the Steps panel (batched by the server every 100 ms).
+          setStepsKey((k) => k + 1);
+          break;
         case "turn_done":
           setRunning(false);
+          setStepsKey((k) => k + 1);
+          setFootKey((k) => k + 1);
           setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
@@ -1660,6 +1696,20 @@ export function App() {
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
+  // Phase 3: open one recorded turn's Steps, in its own session (Usage's heaviest turns,
+  // TeamView's events and evidence, an automation run's Steps).
+  const openTurnSteps = (sid: string, turnId: string) => {
+    const w = sessions.find((x) => x.session_id === sid);
+    const open = () => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    };
+    if (sid === sessionId) return open();
+    if (!w) return;
+    void selectSession(w.session_id, w.workspace, w.agent).then(open);
+  };
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
@@ -1856,6 +1906,18 @@ export function App() {
     setSurface("session");
     setShowGate(false);
     selectSession(sessionId, ws, ag);
+  };
+  // OB-18: a run's Steps, at its first turn.
+  const openRunSteps = (sid: string, turnId: string, ws: string, ag: string, task?: { id: string; title: string }) => {
+    setRunContext(task ?? null);
+    setSurface("session");
+    setShowGate(false);
+    void selectSession(sid, ws, ag).then(() => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    });
   };
   const runTaskNow = async (taskId: string, title?: string) => {
     const r = await runAutomation(taskId);
@@ -2095,6 +2157,7 @@ export function App() {
         onOpenIntegrations={() => openSettings("connectors")}
         onOpenAudit={() => {
           setAuditCallId(undefined);
+          setActivityTab("log");
           setSurface("audit");
         }}
         onOpenInbox={() => setSurface("inbox")}
@@ -2109,6 +2172,7 @@ export function App() {
       {surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
+          onOpenRunSteps={openRunSteps}
           onRunNow={runTaskNow}
           initialOpenId={scheduledOpenId}
         />
@@ -2146,15 +2210,18 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView callId={auditCallId} />
+        <AuditView callId={auditCallId} initialTab={activityTab} onTabChange={setActivityTab} onOpenTurn={openTurnSteps}
+          onOpenPersona={(id) => openPersona(id, "activity")} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
         <PersonaView
           machine={machines.find((m) => m.id === personaViewMachine) ?? null}
           personaId={personaViewId || agent}
+          focus={personaViewFocus}
           onBack={() =>
-            personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
+            personaViewReturn === "settings" ? openSettings("personas")
+              : personaViewReturn === "activity" ? setSurface("audit") : setSurface("session")
           }
           onOpenIntegrations={() => openSettings("connectors")}
         />
@@ -2252,6 +2319,23 @@ export function App() {
             {surface === "session" && (
               <SandboxChip info={sandboxInfo} onOpenSettings={() => openSettings("sandbox")} />
             )}
+            {/* UX-059 OB-1: every step of each turn, and where the time and tokens went. */}
+            {surface === "session" && agent !== "chat" && (
+              <button
+                className={"topbar-steps-btn" + (stepsOpen ? " active" : "")}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => {
+                  setStepsOpen(!stepsOpen);
+                  setTeamViewOpen(false);
+                  setRailHidden(false);
+                }}
+                title={t("steps.open_title")}
+                aria-pressed={stepsOpen}
+                data-testid="steps-open"
+              >
+                <span>{t("steps.open_session")}</span>
+              </button>
+            )}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
             {agent !== "chat" && (
@@ -2347,6 +2431,15 @@ export function App() {
                       setSurface("audit");
                     }}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
+                    footers={agent !== "chat" ? footers : null}
+                    footerSessionId={sessionId || undefined}
+                    onFooterChange={setFooter}
+                    onOpenSteps={agent !== "chat" ? (ts, turnId) => {
+                      setStepsAt((prev) => ({ ts, turnId, n: (prev?.n || 0) + 1 }));
+                      setStepsOpen(true);
+                      setTeamViewOpen(false);
+                      setRailHidden(false);
+                    } : undefined}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
@@ -2626,7 +2719,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} openAt={stepsAt} conversation={items} onClose={() => setStepsOpen(false)} onOpenSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} onOpenSteps={openTurnSteps} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
