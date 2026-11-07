@@ -1455,7 +1455,7 @@
     "fit_not_usable": "Not usable",
     "no_tools_note": "Cannot use tools, so coworkers cannot work with it.",
     "thinking_tag": "thinking",
-    "local_models_help": "Ticked models appear in the picker. ⚙ sets a model's context, reply length, thinking and sampling; ✕ takes it out of the picker.",
+    "local_models_help": "Ticked models appear in the picker; untick one to take it out. ⚙ sets a model's context, reply length, thinking and sampling; Make default picks the model new sessions start on.",
     "local_server_not_answering": "Nothing answers at this address.",
     "vllm_tools_off": "This server cannot use tools yet, so coworkers cannot work with it. Start vLLM with tool calling turned on, then check again.",
     "configure_model": "Settings for this model",

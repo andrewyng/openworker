@@ -95,13 +95,25 @@ describe("LocalModelsTable: Make default (OPE-260)", () => {
     expect(order[0]).toBeLessThan(order[1]);
   });
 
-  it("the default row's checkbox is locked and says why; ✕ is absent on it", async () => {
+  it("the default row's checkbox is locked and says why", async () => {
     await renderTable();
     const rowEl = screen.getByTestId("local-model-qwen3:0.6b");
     const box = rowEl.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(box.disabled).toBe(true);
     expect(box.title).toContain("default");
-    expect(rowEl.querySelector("button[title='Take out of the picker'], button[title*='picker']")).toBeNull();
+  });
+
+  it("the tick is the one in/out control: no ✕ beside it, and the help text says untick", async () => {
+    await renderTable();
+    expect(screen.queryByTitle("Remove from the picker")).toBeNull();
+    expect(screen.queryByText("✕")).toBeNull();
+    expect(screen.getByText(/untick one to take it out/)).toBeTruthy();
+  });
+
+  it("Make default stays on one line", async () => {
+    await renderTable();
+    const btn = screen.getByTestId("local-model-make-default-llama3.2:3b");
+    expect(btn.className).toContain("whitespace-nowrap");
   });
 
   it("unticking another row calls removeModel and refreshes", async () => {

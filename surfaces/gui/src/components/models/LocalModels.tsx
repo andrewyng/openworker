@@ -1,7 +1,8 @@
 // A local provider opened in place (UX-055): "Your system" laid out like the Mac's
 // About panel, then the models the server holds with size, tools, reasoning, how each
-// sits on this machine and the context it runs at. Tick = in the picker, ⚙ = the
-// model's settings, ✕ = out of the picker, Make default = what new sessions start on.
+// sits on this machine and the context it runs at. Tick = in the picker (untick = out;
+// the tick is the one control for that — a ✕ beside it said the same thing twice, owner
+// feedback 2026-11-07), ⚙ = the model's settings, Make default = what new sessions start on.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -154,7 +155,7 @@ export function LocalModelsTable({
         </div>
       )}
       <div className="rounded-xl border border-line bg-panel">
-        <div className="grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_92px_22px_22px] items-center gap-2.5 px-3.5 py-1.5 text-label text-faint">
+        <div className="grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_112px_22px] items-center gap-2.5 px-3.5 py-1.5 text-label text-faint">
           <span />
           <span>{t("manage.col_model")}</span>
           <span>{t("manage.col_size")}</span>
@@ -164,7 +165,6 @@ export function LocalModelsTable({
           <span>{t("manage.col_context")}</span>
           <span />
           <span />
-          <span />
         </div>
         {rows.map((row) => {
           const usable = row.tools !== false;
@@ -172,7 +172,7 @@ export function LocalModelsTable({
           return (
             <div
               key={row.model}
-              className={"grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_92px_22px_22px] items-center gap-2.5 px-3.5 py-2.5 border-t border-line" + (usable ? "" : " opacity-60")}
+              className={"grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_112px_22px] items-center gap-2.5 px-3.5 py-2.5 border-t border-line" + (usable ? "" : " opacity-60")}
               data-testid={`local-model-${row.name}`}
             >
               <input type="checkbox" checked={ticked} disabled={!usable || row.model === defaultModel} title={row.model === defaultModel ? t("models.default_locked") : undefined} onChange={() => toggle(row)} />
@@ -188,7 +188,7 @@ export function LocalModelsTable({
               {row.model === defaultModel ? (
                 <span className="mlist-default justify-self-start" data-testid={`local-model-default-${row.name}`}>{t("models.default_badge")}</span>
               ) : usable ? (
-                <button className="mlist-make" onClick={() => makeDefault(row)} data-testid={`local-model-make-default-${row.name}`}>
+                <button className="mlist-make whitespace-nowrap justify-self-start" onClick={() => makeDefault(row)} data-testid={`local-model-make-default-${row.name}`}>
                   {t("models.make_default")}
                 </button>
               ) : (
@@ -197,13 +197,6 @@ export function LocalModelsTable({
               {usable ? (
                 <button className="text-faint hover:text-ink" title={t("manage.configure_model")} onClick={() => onConfigure(row.model)} data-testid={`local-model-configure-${row.name}`}>
                   ⚙
-                </button>
-              ) : (
-                <span />
-              )}
-              {usable && ticked && row.model !== defaultModel ? (
-                <button className="text-faint hover:text-ink" title={t("manage.remove_from_picker")} onClick={() => toggle(row)}>
-                  ✕
                 </button>
               ) : (
                 <span />

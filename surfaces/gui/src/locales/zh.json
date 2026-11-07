@@ -1434,7 +1434,7 @@
     "fit_not_usable": "不可用",
     "no_tools_note": "无法使用工具，因此同事无法使用它。",
     "thinking_tag": "思考",
-    "local_models_help": "勾选的模型会出现在选择器中。⚙ 设置模型的上下文、回复长度、思考和采样；✕ 将其从选择器中移除。",
+    "local_models_help": "勾选的模型会出现在选择器中；取消勾选即可移除。⚙ 设置模型的上下文、回复长度、思考和采样；“设为默认”选择新会话使用的模型。",
     "local_server_not_answering": "该地址没有响应。",
     "vllm_tools_off": "此服务器尚不能使用工具，因此同事无法使用它。请开启工具调用后重新启动 vLLM，然后再检查。",
     "configure_model": "此模型的设置",
