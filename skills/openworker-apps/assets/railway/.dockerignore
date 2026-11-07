@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+.git
+.railway
+.agents
+.claude
+.env
+.env.*
+!.env.example
+.npmrc
+*.log
+coverage
+dist
+.state
+state
+data
+uploads

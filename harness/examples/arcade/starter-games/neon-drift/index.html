@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080b16">
+  <title>Neon Drift</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="game-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-icon">↗</span><div>NEON<span>DRIFT</span><small>AFTER HOURS CIRCUIT</small></div></div>
+      <div class="stats" aria-label="Game statistics"><div><small>ENERGY</small><strong id="energy">00<span> / 18</span></strong></div><div><small>TIME LEFT</small><strong id="clock">60<span>s</span></strong></div><div class="integrity"><small>INTEGRITY</small><strong id="lives" aria-label="3 lives">◆ ◆ ◆</strong></div></div>
+      <button class="icon-button" id="pause" aria-label="Pause game" disabled>Ⅱ</button>
+    </header>
+    <section class="arena-wrap" aria-label="Neon Drift game arena">
+      <canvas id="arena" tabindex="0" aria-label="Collect 18 golden energy shards and avoid pink sentinels. Move with arrow keys or WASD, or drag to steer. Space or the dash button makes you temporarily invincible."></canvas>
+      <div class="arena-label"><span class="status-dot"></span> SECTOR 07 <span class="divider">/</span> MIDNIGHT RUN</div>
+      <div class="overlay" id="overlay">
+        <article class="card">
+          <p class="eyebrow" id="eyebrow">THE CITY IS YOUR CIRCUIT</p>
+          <h1 id="heading">NEON<br><span>DRIFT</span><i>↗</i></h1>
+          <p class="intro" id="message">Catch the light. Lose the heat.<br>Collect <b>18 energy shards</b> in 60 seconds.<br>Stay clear of the pink sentinels.</p>
+          <button class="start-button" id="start">ENTER THE CIRCUIT <span>↗</span></button>
+          <div class="instructions" id="instructions"><span><kbd>WASD</kbd> / <kbd>↑↓←→</kbd> steer</span><span><kbd>SPACE</kbd> dash</span><span>or drag anywhere to steer</span></div>
+        </article>
+      </div>
+      <div class="toast" id="toast" aria-live="polite"></div>
+      <div class="bottom-hud"><span id="hint">BUILD YOUR OWN MOMENTUM</span><button id="dash" disabled><span>↗</span> DASH <span class="dash-key">SPACE</span><i id="dash-fill"></i></button></div>
+    </section>
+    <footer><span><i></i> OFFLINE ARCADE</span><span>COLLECT · EVADE · REPEAT</span><span><kbd>P</kbd> PAUSE</span></footer>
+  </main>
+  <script src="game.js"></script>
+</body>
+</html>

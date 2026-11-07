@@ -4,19 +4,24 @@ import { useTranslation } from "react-i18next";
 // Emits the asset URL only; the worker itself loads lazily with the pdfjs chunk.
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
+  getAgentTasks,
   getArtifacts,
   getJournalCases,
   getRoots,
   readArtifact,
   revealArtifact,
+  type AgentTaskInfo,
   type ArtifactContent,
   type ArtifactInfo,
   type Board,
   type JournalCase,
   type RootInfo,
 } from "../api";
-import type { SessionInfo, TodoItem } from "../types";
+import { relativeTime } from "./ConnectorMessageCard";
+import { AgentGlyph } from "./AgentGlyph";
+import type { ContextInfo, SessionInfo, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
+import { ContextPanel, ContextSummary } from "./RailContext";
 import { BoardSection } from "./BoardPanel";
 import { TeamRail } from "./TeamRail";
 import type { TeamSummary } from "../teamView";
@@ -25,8 +30,9 @@ import type { WorkerFilter } from "../teamRoster";
 import { Icon } from "./Icon";
 import type { SessionUsage } from "../types";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
+// (ContextInfo/SessionUsage power the Context section; see RailContext.tsx.)
 
-type Panel = "progress" | "artifacts" | "board" | "journal" | "team" | "files";
+type Panel = "context" | "progress" | "agents" | "artifacts" | "board" | "journal" | "team" | "files";
 
 // Quiet file-type icons for the artifact list (the colored kind pills read as noisy).
 function kindIcon(kind: string): "file" | "fileCode" | "image" | "table" {
@@ -70,6 +76,15 @@ interface Props {
   scratchPrimary?: boolean;
   openAccessKey?: number;
   onOpenIntegrations?: () => void;
+  // FB-015: window occupancy for the Context section (from `ready`/assistant_message).
+  context?: ContextInfo | null;
+  // Per-model token totals for the Context section's model rows.
+  sessionUsage?: SessionUsage;
+  // Bumped by agent_task events; the Subagents section refetches its registry.
+  agentTaskKey?: number;
+  // Environment block: where this session runs. Absent machineName = this machine.
+  machineName?: string;
+  machineOffline?: boolean;
   // OPE-219: the session's sandbox, for the Access section's Sites group.
   sandbox?: SessionSandbox | null;
   onSandbox?: (next: SessionSandbox) => void;
@@ -115,6 +130,11 @@ export function RightRail({
   scratchPrimary,
   openAccessKey = 0,
   onOpenIntegrations,
+  context = null,
+  sessionUsage,
+  agentTaskKey = 0,
+  machineName,
+  machineOffline = false,
   sandbox = null,
   onSandbox,
   onOpenSandboxSettings,
@@ -139,7 +159,9 @@ export function RightRail({
   // chip is the maximum signal. One exception survives (solo sessions only): Progress
   // still auto-opens the first time a live turn has todos.
   const [open, setOpen] = useState<Record<Panel, boolean>>({
+    context: false,
     progress: false,
+    agents: false,
     artifacts: false,
     board: false,
     journal: false,
@@ -229,6 +251,14 @@ export function RightRail({
     if (!active) return;
     getRoots(sessionId).then(setRootDirs).catch(() => setRootDirs([]));
   }, [active, sessionId, refreshKey]);
+
+  // Async subagents (OPE-257): the registry view, refetched on every agent_task event.
+  const [agentTasks, setAgentTasks] = useState<AgentTaskInfo[]>([]);
+  useEffect(() => setAgentTasks([]), [sessionId]);
+  useEffect(() => {
+    if (!active) return;
+    getAgentTasks(sessionId).then(setAgentTasks).catch(() => setAgentTasks([]));
+  }, [active, sessionId, refreshKey, agentTaskKey]);
 
   // Journal cases surface only when a board exists — same visibility rule as the
   // Board section, so plain sessions carry zero team chrome.
@@ -343,20 +373,163 @@ export function RightRail({
         />
       ) : (
         <>
+          {/* Environment: where this session runs — machine, folder+branch, sandbox.
+              Identity at a glance, not config: Access stays the config surface (§32). */}
+          <div className="rail-env" data-testid="rail-env">
+            <div className="rail-env-row">
+              <Icon name="monitor" size={15} />
+              <span className="rail-env-main">{machineName || t("rail.env_this_machine")}</span>
+              {machineOffline && <span className="rail-env-tag">{t("rail.env_offline")}</span>}
+            </div>
+            <div className="rail-env-row" title={scratchPrimary ? undefined : workspace}>
+              <Icon name="folder" size={15} />
+              <span className="rail-env-main">
+                {scratchPrimary || !workspace
+                  ? t("root.temporary_space")
+                  : workspace.split("/").pop() || workspace}
+              </span>
+              {!scratchPrimary && branch && (
+                <span className="rail-env-sub">
+                  <Icon name="branch" size={12} /> {branch}
+                </span>
+              )}
+            </div>
+            {sandbox && sandbox.state !== "off" && (
+              <button
+                className="rail-env-row rail-env-btn"
+                data-testid="rail-env-sandbox"
+                onClick={onOpenSandboxSettings}
+                title={t("rail.env_sandbox_open")}
+              >
+                <Icon name="shield" size={15} />
+                <span className="rail-env-main">
+                  {sandbox.state !== "sandboxed"
+                    ? t("rail.env_not_sandboxed")
+                    : sandbox.provider
+                      ? t("rail.env_sandboxed", { provider: sandbox.provider })
+                      : t("rail.env_sandboxed_plain")}
+                </span>
+                <span className={"rail-env-dot " + (sandbox.state === "sandboxed" ? "ok" : "warn")} />
+              </button>
+            )}
+          </div>
+
+          {/* Context (FB-015): how full the window is. The header carries the value;
+              the composer's ring (UX-048) stays the always-on glance. */}
+          {context && (
+            <RailSection
+              title={t("rail.context_title")}
+              summary={<ContextSummary info={context} />}
+              open={open.context}
+              onToggle={() => setOpen({ ...open, context: !open.context })}
+            >
+              <ContextPanel info={context} usage={sessionUsage} />
+            </RailSection>
+          )}
+
           {/* Leads carry no Progress panel — the board IS the lead's progress surface. */}
           {!isLead && (
-            <RailSection title={t("rail.progress_title")} open={open.progress} onToggle={() => setOpen({ ...open, progress: !open.progress })}>
+            <RailSection
+              title={t("rail.progress_title")}
+              summary={
+                running
+                  ? t("rail.sum_working")
+                  : todo.length
+                    ? t("rail.sum_done_of", { done: todo.filter((i) => i.status === "done").length, total: todo.length })
+                    : undefined
+              }
+              open={open.progress}
+              onToggle={() => setOpen({ ...open, progress: !open.progress })}
+            >
               <ProgressSummary running={running} toolNames={toolNames} todo={todo} />
             </RailSection>
           )}
 
+          {/* Async subagents (OPE-257): active runs + done history, zero chrome when
+              none ever ran. Amber only while one waits on an approval. */}
+          {agentTasks.length > 0 && (() => {
+            const act = agentTasks.filter((a) => a.status === "running").length;
+            const waiting = agentTasks.filter((a) => a.status === "waiting").length;
+            const rest = agentTasks.length - act - waiting;
+            const parts = [
+              waiting ? t("rail.agents_waiting", { count: waiting }) : "",
+              act ? t("rail.agents_running", { count: act }) : "",
+              rest ? t("rail.agents_done", { count: rest }) : "",
+            ].filter(Boolean);
+            // Owner ruling 2026-11-07: ten or fewer = a row each; past ten the LIVE
+            // runs keep full rows (those you need to read) and only the done history
+            // compresses into the glyph grid, labels on hover.
+            const live = agentTasks.filter((a) => a.status === "running" || a.status === "waiting");
+            const compress = agentTasks.length > 10;
+            const rows = compress ? live : agentTasks;
+            const grid = compress ? agentTasks.filter((a) => !live.includes(a)) : [];
+            const statusLine = (a: AgentTaskInfo) =>
+              a.status === "waiting"
+                ? t("rail.agent_waiting")
+                : a.status === "running"
+                  ? t("rail.agent_running")
+                  : a.status === "error"
+                    ? t("rail.agent_error")
+                    : a.status === "canceled"
+                      ? t("rail.agent_canceled")
+                      : relativeTime(a.finished || a.created, t);
+            return (
+              <RailSection
+                title={t("rail.agents_title")}
+                summary={
+                  <>
+                    <span className="agent-chips" data-testid="agent-chips">
+                      {agentTasks.slice(0, 5).map((a) => (
+                        <AgentGlyph key={a.id} seed={a.icon_seed ?? 0} size={14} />
+                      ))}
+                    </span>
+                    {parts.join(" · ")}
+                  </>
+                }
+                summaryAttention={waiting > 0}
+                open={open.agents}
+                onToggle={() => setOpen({ ...open, agents: !open.agents })}
+              >
+                <div className="agent-list" data-testid="agent-tasks">
+                  {rows.map((a) => (
+                    <div className="agent-row" key={a.id} title={a.task}>
+                      <AgentGlyph seed={a.icon_seed ?? 0} size={18} />
+                      <span className="agent-label">
+                        <span className="agent-name">{a.label}</span>
+                        <span className={"agent-sub" + (a.status === "waiting" ? " attention" : "")}>
+                          {statusLine(a)}
+                        </span>
+                      </span>
+                      <span className={"agent-dot " + a.status} />
+                    </div>
+                  ))}
+                  {grid.length > 0 && (
+                    <div className="agent-grid" data-testid="agent-grid">
+                      {grid.map((a) => (
+                        <span key={a.id} className="agent-grid-item" title={`${a.label} · ${statusLine(a)}`}>
+                          <AgentGlyph seed={a.icon_seed ?? 0} size={17} />
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </RailSection>
+            );
+          })()}
+
           {/* Standalone boards have no team icon. Keep their existing entry point;
               staffed leads use the quick look and Team View instead. */}
-          {!isLead && board?.space && <RailSection title={t("rail.board_title")} open={open.board}
-            onToggle={() => setOpen({ ...open, board: !open.board })}
-            action={<button className="rail-mini-btn" data-testid="board-expand" onClick={onExpandBoard} title={t("rail.board_expand")}><Icon name="panelOpen" size={13} /></button>}>
-            <BoardSection board={board} onExpand={() => onExpandBoard?.()} onOpenItem={onOpenBoardItem} />
-          </RailSection>}
+          {!isLead && board?.space && (() => {
+            const attention = board.items.filter((i) => i.state === "blocked" || i.state === "review").length;
+            const active = board.items.filter((i) => i.state === "open" || i.state === "in_progress").length;
+            return <RailSection title={t("rail.board_title")} open={open.board}
+              summary={attention ? t("rail.sum_board_attention", { count: attention }) : active ? t("rail.sum_board_open", { count: active }) : undefined}
+              summaryAttention={attention > 0}
+              onToggle={() => setOpen({ ...open, board: !open.board })}
+              action={<button className="rail-mini-btn" data-testid="board-expand" onClick={onExpandBoard} title={t("rail.board_expand")}><Icon name="panelOpen" size={13} /></button>}>
+              <BoardSection board={board} onExpand={() => onExpandBoard?.()} onOpenItem={onOpenBoardItem} />
+            </RailSection>;
+          })()}
 
           {/* The team panel: who's working, on what, and the way into their sessions —
               the altitude-3 escape hatch, moved here from the sidebar (RECENT keeps ONE
@@ -369,7 +542,7 @@ export function RightRail({
           {showArtifacts && (
           <RailSection
             title={t("rail.artifacts_title")}
-            count={artifacts.length ? String(artifacts.length) : undefined}
+            summary={artifacts.length ? String(artifacts.length) : undefined}
             open={open.artifacts}
             onToggle={() => setOpen({ ...open, artifacts: !open.artifacts })}
             action={
@@ -414,7 +587,7 @@ export function RightRail({
           {board?.space && journal.length > 0 && (
             <RailSection
               title={t("rail.journal_title")}
-              count={String(journal.length)}
+              summary={String(journal.length)}
               open={open.journal}
               onToggle={() => setOpen({ ...open, journal: !open.journal })}
             >
@@ -435,7 +608,7 @@ export function RightRail({
           {rootDirs.length > 0 && (
             <RailSection
               title={t("rail.crumb_files")}
-              count={String(rootDirs.length)}
+              summary={String(rootDirs.length)}
               open={open.files}
               onToggle={() => setOpen({ ...open, files: !open.files })}
             >
@@ -540,18 +713,19 @@ function RailSection({
   onToggle,
   children,
   action,
-  count,
-  countAttention,
+  summary,
+  summaryAttention,
 }: {
   title: string;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
   action?: ReactNode;
-  // The header's maximum signal: a small count chip; amber when it carries attention
-  // states (blocked/review). Panels never shout louder than this.
-  count?: string;
-  countAttention?: boolean;
+  // The header's maximum signal: a right-aligned, muted summary value — the collapsed
+  // header still answers "what's in here?". Amber only for attention states
+  // (blocked/review). Panels never shout louder than this.
+  summary?: ReactNode;
+  summaryAttention?: boolean;
 }) {
   return (
     <section className="rail-section">
@@ -563,8 +737,8 @@ function RailSection({
         >
           <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="rail-chev" />
           <span>{title}</span>
-          {count && (
-            <span className={"rail-count" + (countAttention ? " attention" : "")}>{count}</span>
+          {summary != null && (
+            <span className={"rail-summary" + (summaryAttention ? " attention" : "")}>{summary}</span>
           )}
         </button>
         {action}

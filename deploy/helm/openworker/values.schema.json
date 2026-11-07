@@ -1,0 +1,388 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "databaseReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" },
+        "image": { "type": "string", "pattern": "@sha256:[a-f0-9]{64}$" }
+      },
+      "required": ["enabled", "host", "image"]
+    },
+    "taskDesk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "accessSecret": { "type": "string" },
+        "apiCASecret": { "type": "string" },
+        "config": { "type": "object" }
+      },
+      "required": ["enabled", "image", "accessSecret", "apiCASecret", "config"]
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proxyImage": {
+      "type": "string",
+      "pattern": "@sha256:[a-f0-9]{64}$"
+    },
+    "allowMutableImages": {
+      "type": "boolean"
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serviceAccountName": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        }
+      },
+      "required": ["replicas"]
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "drainTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "shutdownTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "serviceAccountName": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "slots": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        }
+      },
+      "required": ["replicas", "slots"]
+    },
+    "resources": {
+      "type": "object"
+    },
+    "proxyResources": {
+      "type": "object"
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 45,
+      "maximum": 3900
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "database": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "databaseCA": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "openshell": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "apiTLS": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "probe": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "objectStore": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "objectStoreCA": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        }
+      },
+      "required": []
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recovery_read_only": { "type": "boolean" },
+        "database_env": {
+          "const": "OW_SERVER_DATABASE_URL"
+        },
+        "schema": {
+          "type": "string",
+          "pattern": "^ow_[a-z0-9_]+$"
+        },
+        "database_loopback_plaintext": {
+          "const": false
+        },
+        "database_ca": {
+          "const": "/database-ca/ca.crt"
+        },
+        "state_root": {
+          "const": "/state"
+        },
+        "bundle": {
+          "type": "string",
+          "pattern": "^/opt/openworker/"
+        },
+        "runner": {
+          "const": "/opt/openworker/openworker"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_provider": { "enum": ["openai", "anthropic"] },
+        "model_connections": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "provider", "identity", "key_env"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+              "provider": { "enum": ["openai", "anthropic"] },
+              "identity": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_.:-]+$" },
+              "key_env": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[A-Z0-9_]+$" }
+            }
+          }
+        },
+        "scripted": {
+          "type": "boolean"
+        },
+        "api_token_file": {
+          "const": "/bootstrap/admin"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "openshell": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "git_grants": { "$ref": "#/definitions/gitGrants" },
+            "identity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$"
+            },
+            "certificates": {
+              "const": "/openshell"
+            },
+            "tls_server_name": {
+              "type": "string"
+            },
+            "workspace": {
+              "type": "string",
+              "minLength": 1
+            },
+            "image": {
+              "type": "string",
+              "pattern": "@sha256:[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "identity",
+            "endpoint",
+            "certificates",
+            "workspace",
+            "image"
+          ]
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "s3"
+            },
+            "deployment": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bucket": {
+              "type": "string",
+              "minLength": 3
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$"
+            },
+            "ca_file": {
+              "const": "/object-ca/ca.crt"
+            }
+          },
+          "required": ["kind", "deployment", "bucket", "region"]
+        },
+        "telemetry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deployment": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$"
+            }
+          },
+          "required": ["endpoint"]
+        },
+        "operational_metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sample_interval_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60
+            },
+            "stalled_after_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "recent_window_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            }
+          }
+        }
+      },
+      "required": [
+        "database_env",
+        "schema",
+        "database_ca",
+        "state_root",
+        "bundle",
+        "runner",
+        "model",
+        "api_token_file",
+        "actor",
+        "openshell"
+      ]
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "clientNamespaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "serviceNamespaces": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extraEgress": {
+          "type": "array"
+        }
+      },
+      "required": []
+    }
+  },
+  "required": ["image", "config"],
+  "definitions": {
+    "gitGrants": {
+      "type": "object", "maxProperties": 16,
+      "propertyNames": { "pattern": "^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$" },
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["provider", "scope"],
+        "properties": {
+          "provider": {
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "provider_id", "profile_id", "profile_workspace", "profile_digest"],
+            "properties": {
+              "name": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "provider_id": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "profile_id": {"type":"string", "minLength":1, "maxLength":128, "pattern":"^[a-zA-Z0-9_-]+$"},
+              "profile_workspace": {"type":"string", "maxLength":128, "pattern":"^[a-zA-Z0-9_-]*$"},
+              "profile_digest": {"type":"string", "pattern":"^[a-f0-9]{64}$"},
+              "configuration_digest": {"type":"string", "pattern":"^[a-f0-9]{64}$"}
+            }
+          },
+          "scope": {
+            "type":"object", "additionalProperties":false,
+            "required":["host","repositories"],
+            "properties": {
+              "host":{"type":"string", "minLength":1, "maxLength":255, "pattern":"^[a-zA-Z0-9.:-]+$"},
+              "repositories":{"type":"array", "minItems":1, "maxItems":16, "uniqueItems":true, "items":{"type":"string", "minLength":3, "maxLength":200}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

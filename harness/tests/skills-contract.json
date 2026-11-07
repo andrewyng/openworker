@@ -1,0 +1,14 @@
+{
+  "python_reference":"c34615de73e97f7df899f471a6c12caa45b44b83",
+  "shared":[
+    {"folder":"report","text":"---\nname: report\ndescription: Make a report\n---\nRead the template.","name":"report","description":"Make a report","instructions":"Read the template.","allowed_tools":[]},
+    {"folder":"review","text":"---\nname: review\ndescription: Review local files\nallowed-tools: read_file, run_shell\n---\nKeep evidence.\n\n---\nDo not publish.","name":"review","description":"Review local files","instructions":"Keep evidence.\n\n---\nDo not publish.","allowed_tools":["read_file","run_shell"]},
+    {"folder":"guide","text":"---\nname: guide\ndescription: Unicode café report\nallowed_tools: read_file\n---\nPreserve café.","name":"guide","description":"Unicode café report","instructions":"Preserve café.","allowed_tools":["read_file"]}
+  ],
+  "differences":[
+    {"folder":"report","text":"---\nname: report\ndescription: |\n  A multiline description\n  with YAML semantics.\n---\nInstructions.","python_description":"|","rust_description":"A multiline description\nwith YAML semantics.\n"},
+    {"folder":"report","text":"---\nname: report\nname: replacement\ndescription: A duplicate key\n---\nInstructions.","python_name":"replacement","rust_reject":true},
+    {"folder":"report","text":"---\nname: other\ndescription: Mismatched folder and name\n---\nInstructions.","python_name":"other","rust_reject":true},
+    {"folder":"report","text":"---\nname: report\ndescription: List metadata\nallowed-tools: [read_file, run_shell]\n---\nInstructions.","python_allowed_tools":["[read_file","run_shell]"],"rust_allowed_tools":["read_file","run_shell"]}
+  ]
+}

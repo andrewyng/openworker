@@ -486,6 +486,19 @@ def create_app(manager: SessionManager) -> FastAPI:
             "attendance": manager.unattended.attendance(session_id),
         }
 
+    @app.get("/v1/sessions/{session_id}/tasks")
+    def get_session_tasks(session_id: str) -> dict[str, Any]:
+        # Async subagents (OPE-257): the Subagents section's registry view. A live
+        # engine answers from its registry; otherwise the supplemental record answers,
+        # so history shows before the session's first turn after a restart.
+        engine = manager._engines.get(session_id)
+        reg = getattr(engine, "agent_tasks", None) if engine else None
+        if reg is not None:
+            return {"agents": reg.snapshot()}
+        rows = manager.agent_task_store.load(session_id)
+        rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
+        return {"agents": [{k: v for k, v in r.items() if k != "report"} for r in rows]}
+
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
         # Auto-Approve metering (§1.7): checks/verdicts/tokens from the durable audit rows.
@@ -3192,6 +3205,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # Context panel (FB-015): occupancy on reconnect, so a reopened
+                    # session shows its meter before any new turn runs.
+                    "context": engine.context_snapshot(),
                 },
             }
         )

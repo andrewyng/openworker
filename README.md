@@ -14,6 +14,10 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 
 ## Download
 
+Building your own agentic application? The [OpenWorker Harness](harness/README.md)
+release-candidate source includes Rust and TypeScript SDKs, desktop starters and
+server deployment references. It is separate from the Desktop app's Python engine.
+
 [**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
 <sub>macOS 12+ · signed & notarized · auto-updates</sub>
 
