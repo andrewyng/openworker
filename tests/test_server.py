@@ -483,9 +483,6 @@ def test_ws_rate_limits_inbound_frames(tmp_path):
 
 
 def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
-    import sys
-    from types import SimpleNamespace
-
     from coworker.server import run as server_run
 
     seen = {}
@@ -494,15 +491,21 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(server_run, "_ensure_ca_bundle", lambda: None)
     monkeypatch.setattr(server_run, "_exit_when_orphaned", lambda: None)
     monkeypatch.setattr(server_run, "build_app", lambda *args: fake_app)
-    monkeypatch.setitem(
-        sys.modules,
-        "uvicorn",
-        SimpleNamespace(run=lambda app, **kwargs: seen.update(app=app, **kwargs)),
-    )
+    from coworker.server import ws_guard
+
+    class _Server:
+        # T3-3: the launcher runs uvicorn through GuardedServer (ws_guard.py)
+        def __init__(self, config):
+            seen.update(app=config.app, ws_max_size=config.ws_max_size, port=config.port)
+
+        def run(self):
+            seen["ran"] = True
+
+    monkeypatch.setattr(ws_guard, "GuardedServer", _Server)
 
     server_run.main(["--cwd", str(tmp_path), "--port", "8766"])
 
-    assert seen["app"] is fake_app
+    assert seen["app"] is fake_app and seen["ran"] and seen["port"] == 8766
     assert seen["ws_max_size"] == server_run._WS_MAX_FRAME_BYTES
 
 
