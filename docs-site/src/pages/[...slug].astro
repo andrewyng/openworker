@@ -1,0 +1,12 @@
+---
+import StudioDocs from '../layouts/StudioDocs.astro';
+import pages from '../../pages.json';
+import {renderGuide} from '../lib/render-guide.mjs';
+const sources=import.meta.glob('../content/docs/*.md',{eager:true,query:'?raw',import:'default'});
+export function getStaticPaths() {
+ return pages.map(page=>({params:{slug:page.slug==='index'?undefined:page.slug},props:{page}}));
+}
+const {page}=Astro.props;
+const guide=await renderGuide(sources[`../content/docs/${page.slug}.md`]);
+---
+<StudioDocs guide={guide} slug={page.slug}/>

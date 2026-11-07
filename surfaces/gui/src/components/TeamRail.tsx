@@ -122,7 +122,14 @@ export function TeamRail({
             className="rail-chev"
           />
           <span>{t("rail.team_title")}</span>
-          <span className="team-roster-count">{entries.length}</span>
+          {/* Header summary, like every other section: attention first, else activity. */}
+          <span className={"rail-summary" + (waiting.length ? " attention" : "")}>
+            {waiting.length
+              ? t("rail.sum_team_waiting", { count: waiting.length })
+              : entries.filter((w) => w.working).length
+                ? t("rail.sum_team_working", { count: entries.filter((w) => w.working).length })
+                : String(entries.length)}
+          </span>
         </button>
         <div className="team-rail-actions">
           <button

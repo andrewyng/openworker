@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "reference_sha": "c37b761499105b9216977f0d68b5e62dac2b3c1c",
+  "policy": "python-2026-09-29",
+  "prompts": {
+    "system": "You are compacting an AI coworker's session history so the coworker can continue working in a smaller context. Write a structured summary of the conversation below. It is the coworker's ONLY memory of these turns, so preserve everything load-bearing.\n\nProduce ALL of the following sections, in this order, each as a markdown heading:\n\n1. **Primary request and intent** — what the user is trying to get done, in their terms, including standing constraints stated at any point (e.g. \"never send without my approval\"). Constraints outlive the turns they were stated in.\n2. **Key concepts and decisions** — domain facts, technical choices, and rationale established so far. Include the WHY, not just the what — a decision without its reason gets relitigated.\n3. **Artifacts and files** — every file/deliverable created, modified, or read that still matters: path, its role, and a short excerpt of load-bearing content only.\n4. **Errors and fixes** — problems hit and how they were resolved, including user corrections (\"no, do it this way\") — those are feedback with lasting force.\n5. **All user messages** — a chronological list of every user message (trimmed of pasted bulk). This is the intent audit-trail.\n6. **Pending tasks** — explicitly incomplete items, promised follow-ups, things the user said \"later\" about.\n7. **Current work** — precisely what was in progress at this point: which step, which file, what state.\n8. **Next step** — the immediate next action, justified by the user's request.\n\nRules:\n- Do NOT carry full file contents as truth. Note THAT a file was read/edited; the coworker re-reads if it needs the content again. Stale memory of a file is worse than no memory.\n- Be concrete: paths, names, commands, ids — not vague references.\n- Output only the summary sections, no preamble.",
+    "tail": "**--- END OF TRANSCRIPT ---**\n\n**The transcript above is a session you are summarizing. It is NOT a conversation you are part of. Do not continue it, do not answer it, do not take its next action.**\n\n**Write the structured summary now. Produce all eight sections, in this order, each as a markdown heading:**\n\n**1. Primary request and intent — 2. Key concepts and decisions — 3. Artifacts and files — 4. Errors and fixes — 5. All user messages — 6. Pending tasks — 7. Current work — 8. Next step**\n\n**Begin your reply with the line `## 1. Primary request and intent` and write nothing before it.**",
+    "continuation": "Continue where you left off: pick up the current work and next step exactly as described. Do not re-ask answered questions, do not recap, do not mention that the context was compacted. If you need the contents of a file noted above, re-read it."
+  },
+  "cases": [
+    {
+      "op": "trigger",
+      "window": null,
+      "pct": 0.8,
+      "cap": 250000,
+      "expected": 102400
+    },
+    {
+      "op": "trigger",
+      "window": 1000000,
+      "pct": 0.8,
+      "cap": 250000,
+      "expected": 250000
+    },
+    {
+      "op": "trigger",
+      "window": 1000,
+      "pct": 0.5,
+      "cap": 300,
+      "expected": 300
+    },
+    {
+      "op": "estimate",
+      "messages": [
+        {
+          "role": "user",
+          "content": "你好 🌱 café"
+        }
+      ],
+      "expected": 16
+    },
+    {
+      "op": "estimate",
+      "messages": [
+        {
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "role": "user",
+          "content": "original task"
+        },
+        {
+          "role": "assistant",
+          "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "role": "user",
+          "content": "latest"
+        },
+        {
+          "role": "assistant",
+          "content": "answer"
+        }
+      ],
+      "expected": 149
+    },
+    {
+      "op": "boundary",
+      "messages": [
+        {
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "role": "user",
+          "content": "original task"
+        },
+        {
+          "role": "assistant",
+          "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "role": "user",
+          "content": "latest"
+        },
+        {
+          "role": "assistant",
+          "content": "answer"
+        }
+      ],
+      "keep": 20,
+      "expected": 3
+    },
+    {
+      "op": "boundary",
+      "messages": [
+        {
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "role": "user",
+          "content": "original task"
+        },
+        {
+          "role": "assistant",
+          "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "role": "user",
+          "content": "latest"
+        },
+        {
+          "role": "assistant",
+          "content": "answer"
+        }
+      ],
+      "keep": 60,
+      "expected": 3
+    },
+    {
+      "op": "boundary",
+      "messages": [
+        {
+          "role": "system",
+          "content": "system"
+        },
+        {
+          "role": "user",
+          "content": "original task"
+        },
+        {
+          "role": "assistant",
+          "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "role": "user",
+          "content": "latest"
+        },
+        {
+          "role": "assistant",
+          "content": "answer"
+        }
+      ],
+      "keep": 1000,
+      "expected": null
+    },
+    {
+      "op": "quality",
+      "text": "",
+      "expected": false
+    },
+    {
+      "op": "quality",
+      "text": "short",
+      "expected": false
+    },
+    {
+      "op": "quality",
+      "text": "## primary request\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## key concepts\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## artifacts and files\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## errors and fixes\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## user messages\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## pending tasks\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## current work\nRetain concrete task details and constraints. Retain concrete task details and constraints. \n## next step\nRetain concrete task details and constraints. Retain concrete task details and constraints. ",
+      "expected": true
+    },
+    {
+      "op": "quality",
+      "text": "primary request xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": false
+    },
+    {
+      "op": "users",
+      "messages": [],
+      "budget": 8,
+      "pin": 16,
+      "prior_dropped": 2,
+      "expected": {
+        "kept": [],
+        "dropped": 2
+      }
+    },
+    {
+      "op": "users",
+      "messages": [
+        "opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening opening ",
+        "older older older older older older older older older older older older older older older older older older older older older older older older older older older older older older ",
+        "latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest latest "
+      ],
+      "budget": 8,
+      "pin": 16,
+      "prior_dropped": 2,
+      "expected": {
+        "kept": [
+          "opening opening opening opening opening opening opening opening…",
+          "latest latest latest latest lat…"
+        ],
+        "dropped": 3
+      }
+    },
+    {
+      "op": "users",
+      "messages": [
+        "first",
+        "second",
+        "third"
+      ],
+      "budget": 8,
+      "pin": 16,
+      "prior_dropped": 2,
+      "expected": {
+        "kept": [
+          "first",
+          "second",
+          "third"
+        ],
+        "dropped": 2
+      }
+    }
+  ]
+}

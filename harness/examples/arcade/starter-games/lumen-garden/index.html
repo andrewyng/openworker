@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b2426">
+  <title>Lumen Garden</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header><a class="brand" href="#" id="home" aria-label="Lumen Garden home"><span class="brand-mark">✳</span> LUMEN GARDEN</a><button class="quiet" id="help">How to play <span aria-hidden="true">↗</span></button></header>
+    <main>
+      <section class="story" aria-labelledby="heading">
+        <div class="eyebrow" id="eyebrow">A LITTLE LIGHT. A LITTLE WONDER.</div>
+        <h1 id="heading">Let your<br>garden <em>glow.</em></h1>
+        <p class="intro" id="description">Turn the stems. Follow the light. Bring a sleeping garden back to life, one small bloom at a time.</p>
+        <div id="welcome"><button class="primary" id="start">Enter the garden <span aria-hidden="true">→</span></button><p class="small-note">6 quiet puzzles · No timer · Just a little curiosity</p></div>
+        <div id="playing" hidden>
+          <div class="stats"><div><span id="blooms">0 / 2</span><small>BLOOMS AWAKE</small></div><div><span id="moves">0</span><small>STEMS TURNED</small></div></div>
+          <p class="status" id="status" role="status" aria-live="polite">Find the sun. Help its light reach every flower.</p>
+          <button class="primary" id="next" hidden>Next garden <span aria-hidden="true">→</span></button>
+          <div class="actions"><button class="quiet" id="reset">↺ &nbsp;Start over</button><button class="quiet" id="hint">✧ &nbsp;A little help</button></div>
+          <nav class="chapters" id="chapters" aria-label="Garden chapters"></nav>
+        </div>
+        <div class="legend"><span><i class="sun-dot"></i> Sun</span><span><i class="stem-dot"></i> Stem</span><span><i class="bloom-dot"></i> Bloom</span></div>
+      </section>
+      <section class="garden-panel" aria-label="Garden puzzle">
+        <div class="board-top"><span id="board-label">THE NIGHT GARDEN</span><span class="board-icon" aria-hidden="true">✦</span></div>
+        <div class="board" id="board"><canvas id="canvas" width="640" height="640" aria-label="Light paths in a geometric garden"></canvas><div id="tile-controls" role="group" aria-label="Rotatable stems"></div></div>
+        <div class="board-bottom"><span id="board-tip">A small world, waiting to wake.</span><span aria-hidden="true">✺</span></div>
+      </section>
+    </main>
+    <footer><span>GROW SOMETHING BRIGHT</span><span>Made for a moment of calm.</span></footer>
+  </div>
+  <dialog id="help-dialog" aria-labelledby="help-title"><button class="close quiet" id="close-help" aria-label="Close instructions">✕</button><div class="eyebrow">A FIELD GUIDE</div><h2 id="help-title">Light finds a way.</h2><p>The golden sun is your source. Connect its light to every flower to wake the garden.</p><ol><li>Click or tap a stem to turn it clockwise.</li><li>Match the ends of neighboring stems. Light only travels through joined ends.</li><li>The sun and flowers stay in place. Every flower must glow.</li></ol><p class="keyboard-note"><strong>Keyboard:</strong> Tab to a stem. Use arrow keys to move between stems, and Enter or Space to rotate. R restarts the current garden. There’s no timer, and help is always available.</p><button class="primary" id="got-it">Let’s grow <span aria-hidden="true">→</span></button></dialog>
+  <script src="game.js"></script>
+</body>
+</html>

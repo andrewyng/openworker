@@ -1,0 +1,5 @@
+# SERVICE_IMAGE is the operator-qualified service image. Use an immutable digest
+# for a registry build, or a separately verified local tag for local acceptance.
+ARG SERVICE_IMAGE=openworker-service:local
+FROM ${SERVICE_IMAGE}
+COPY deploy/service/coding-bundle/ /opt/openworker/bundle/
