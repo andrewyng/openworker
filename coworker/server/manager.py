@@ -4245,7 +4245,9 @@ class SessionManager:
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors(self.secrets):
+        descriptors = provider_descriptors(self.secrets)
+        self._warm_local_probes([d.name for d in descriptors if d.kind == "local"])
+        for d in descriptors:
             profile = self.secrets.get(f"provider:{d.name}") or {}
             configured = descriptor_configured(d, profile)
             values = {
@@ -4423,6 +4425,28 @@ class SessionManager:
         "cohere": ["command-a-plus-05-2026"],
         "siliconflow": ["zai-org/GLM-5.2"],
     }
+
+    def _warm_local_probes(self, names: list[str]) -> None:
+        """Ask the local model servers at the same time (T3-2): each answer is cached (30 s
+        for liveness, 60 s for the models), so the loop in get_providers reads the caches
+        instead of waiting on each server in turn. Best-effort: a probe that fails here is
+        tried again, alone, by the loop."""
+        if len(names) < 2:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        def probe(name: str) -> None:
+            try:
+                self._suggested_models(name)
+                if name == "ollama":
+                    self._ollama_alive()
+                else:
+                    self._local_server_alive(name)
+            except Exception:  # noqa: BLE001 - the loop asks again and shows what it gets
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(8, len(names)), thread_name_prefix="provider-probe") as pool:
+            list(pool.map(probe, names))
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
@@ -4730,7 +4754,9 @@ class SessionManager:
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            from ..providers.local_server import probe_timeout
+
+            alive = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 0.8)).status_code == 200
         except Exception:
             alive = False
         self._ollama_alive_cache = (now, alive)
@@ -4829,14 +4855,17 @@ class SessionManager:
         from ..providers import local_server
 
         now = time.monotonic()
-        cache = getattr(self, "_local_alive_cache", None) or {}
+        # One dict, updated in place: get_providers asks several servers at once (T3-2), and
+        # each thread putting back its own copy lost the others' answers.
+        cache = getattr(self, "_local_alive_cache", None)
+        if cache is None:
+            cache = self.__dict__.setdefault("_local_alive_cache", {})
         hit = cache.get(name)
         if hit and now - hit[0] < 30:
             return hit[1]
         profile = self.secrets.get(f"provider:{name}") or {}
         alive = local_server.alive(name, profile.get("base_url"), profile.get("api_key"))
         cache[name] = (now, alive)
-        self._local_alive_cache = cache
         return alive
 
     def _local_server_models(self, name: str) -> list[str]:

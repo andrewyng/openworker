@@ -33,6 +33,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -65,6 +66,23 @@ def v1_base(name: str, base_url: Optional[str]) -> str:
     return base if base.endswith("/v1") else base + "/v1"
 
 
+LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+LOOPBACK_CONNECT_SECONDS = 0.3
+
+
+def probe_timeout(url: str, read: float) -> httpx.Timeout:
+    """The timeout of a first request to a local model server. On Windows a connection to a
+    loopback port nobody listens on is refused only after about 2 s (and `localhost` tries
+    ::1, then 127.0.0.1), so the Models & Keys page waited 2-15 s on servers that are not
+    running (T3-2). A server on this machine accepts at once, so the connect wait is short
+    for loopback; a server elsewhere keeps the whole `read` budget."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        host = ""
+    return httpx.Timeout(read, connect=LOOPBACK_CONNECT_SECONDS) if host in LOOPBACK else httpx.Timeout(read)
+
+
 def _headers(api_key: Optional[str]) -> dict[str, str]:
     key = (api_key or "").strip()
     return {"Authorization": f"Bearer {key}"} if key else {}
@@ -72,7 +90,8 @@ def _headers(api_key: Optional[str]) -> dict[str, str]:
 
 def alive(name: str, base_url: Optional[str], api_key: Optional[str] = None) -> bool:
     try:
-        return httpx.get(v1_base(name, base_url) + "/models", headers=_headers(api_key), timeout=0.8).status_code == 200
+        url = v1_base(name, base_url) + "/models"
+        return httpx.get(url, headers=_headers(api_key), timeout=probe_timeout(url, 0.8)).status_code == 200
     except Exception:  # noqa: BLE001 - a probe never raises
         return False
 
@@ -135,7 +154,7 @@ def context_window_for(model: str) -> Optional[int]:
 def _fetch(name: str, base: str, api_key: Optional[str]) -> list[dict[str, Any]]:
     headers = _headers(api_key)
     try:
-        listing = httpx.get(base + "/models", headers=headers, timeout=4.0).json()
+        listing = httpx.get(base + "/models", headers=headers, timeout=probe_timeout(base, 4.0)).json()
     except (httpx.HTTPError, ValueError, OSError):
         return []
     items = listing.get("data") if isinstance(listing, dict) else None
