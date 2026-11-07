@@ -703,7 +703,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
-    send("ready", sid === "resume-live-1" ? { running: true } : {});
+    // Context occupancy (FB-015) rides `ready` like the real server's, so the rail's
+    // Context section has a value before any turn runs: 68k of 200k = 34%.
+    const contextPayload = {
+      window: 200_000,
+      used: 68_000,
+      estimated: false,
+      breakdown: { system: 10_000, tools: 8_000, messages: 50_000 },
+    };
+    send("ready", {
+      context: contextPayload,
+      ...(sid === "resume-live-1" ? { running: true } : {}),
+    });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -793,6 +804,20 @@ export async function mockApi(page: import("@playwright/test").Page) {
           return;
         }
         // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        // The turn that pushed occupancy over the compaction line: assistant_message
+        // carries a fresh context whose `compaction` stamp the rail must surface.
+        if (/compact the context/i.test(msg.text)) {
+          send("assistant_message", {
+            text: "Summarized the early turns to make room.",
+            context: {
+              ...contextPayload,
+              used: 41_000,
+              compaction: { created_at: 1724200000, messages: 12, trimmed: false },
+            },
+          });
+          send("turn_done");
+          return;
+        }
         if (/show the report/i.test(msg.text)) {
           send("assistant_message", {
             text: "Done — [Security review](artifact:reports/security-review.html)",
