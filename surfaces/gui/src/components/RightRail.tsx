@@ -18,6 +18,7 @@ import {
   type RootInfo,
 } from "../api";
 import { relativeTime } from "./ConnectorMessageCard";
+import { AgentGlyph } from "./AgentGlyph";
 import type { ContextInfo, SessionInfo, TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { ContextPanel, ContextSummary } from "./RailContext";
@@ -455,38 +456,62 @@ export function RightRail({
               act ? t("rail.agents_running", { count: act }) : "",
               rest ? t("rail.agents_done", { count: rest }) : "",
             ].filter(Boolean);
+            // Owner ruling 2026-11-07: ten or fewer = a row each; past ten the LIVE
+            // runs keep full rows (those you need to read) and only the done history
+            // compresses into the glyph grid, labels on hover.
+            const live = agentTasks.filter((a) => a.status === "running" || a.status === "waiting");
+            const compress = agentTasks.length > 10;
+            const rows = compress ? live : agentTasks;
+            const grid = compress ? agentTasks.filter((a) => !live.includes(a)) : [];
+            const statusLine = (a: AgentTaskInfo) =>
+              a.status === "waiting"
+                ? t("rail.agent_waiting")
+                : a.status === "running"
+                  ? t("rail.agent_running")
+                  : a.status === "error"
+                    ? t("rail.agent_error")
+                    : a.status === "canceled"
+                      ? t("rail.agent_canceled")
+                      : relativeTime(a.finished || a.created, t);
             return (
               <RailSection
                 title={t("rail.agents_title")}
-                summary={parts.join(" · ")}
+                summary={
+                  <>
+                    <span className="agent-chips" data-testid="agent-chips">
+                      {agentTasks.slice(0, 5).map((a) => (
+                        <AgentGlyph key={a.id} seed={a.icon_seed ?? 0} size={14} />
+                      ))}
+                    </span>
+                    {parts.join(" · ")}
+                  </>
+                }
                 summaryAttention={waiting > 0}
                 open={open.agents}
                 onToggle={() => setOpen({ ...open, agents: !open.agents })}
               >
                 <div className="agent-list" data-testid="agent-tasks">
-                  {agentTasks.map((a) => (
+                  {rows.map((a) => (
                     <div className="agent-row" key={a.id} title={a.task}>
-                      {/* Seeded chip: OPE-259 swaps the glyph set in, no migration. */}
-                      <span className={`agent-ico seed-${(a.icon_seed ?? 0) % 8}`}>
-                        <Icon name="sparkle" size={11} />
-                      </span>
+                      <AgentGlyph seed={a.icon_seed ?? 0} size={18} />
                       <span className="agent-label">
                         <span className="agent-name">{a.label}</span>
                         <span className={"agent-sub" + (a.status === "waiting" ? " attention" : "")}>
-                          {a.status === "waiting"
-                            ? t("rail.agent_waiting")
-                            : a.status === "running"
-                              ? t("rail.agent_running")
-                              : a.status === "error"
-                                ? t("rail.agent_error")
-                                : a.status === "canceled"
-                                  ? t("rail.agent_canceled")
-                                  : relativeTime(a.finished || a.created, t)}
+                          {statusLine(a)}
                         </span>
                       </span>
                       <span className={"agent-dot " + a.status} />
                     </div>
                   ))}
+                  {grid.length > 0 && (
+                    <div className="agent-grid" data-testid="agent-grid">
+                      {grid.map((a) => (
+                        <span key={a.id} className="agent-grid-item" title={`${a.label} · ${statusLine(a)}`}>
+                          <AgentGlyph seed={a.icon_seed ?? 0} size={17} />
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </RailSection>
             );

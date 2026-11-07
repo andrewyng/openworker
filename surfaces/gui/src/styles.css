@@ -775,16 +775,31 @@ button.btn.danger { color: var(--accent); }
 .ctx-model { font-size: var(--fs-label); }
 .ctx-val { margin-left: auto; color: var(--faint); flex: none; }
 .ctx-note { font-size: var(--fs-label); color: var(--faint); }
-/* Subagents (OPE-257): active runs + done history. The seeded chip is the slot the
-   cute-icon set (OPE-259) fills in later — stable per task via icon_seed. */
+/* Subagents (OPE-257/259): active runs + done history, animal identity glyphs.
+   Bare one-color marks, eyes punched out so the surface shows through; each family
+   carries a light ink and a lifted dark ink. No warm colors — amber keeps its one
+   attention meaning. */
+.aglyph { flex: none; }
+.aglyph-f0 { color: #7c5fc0; } .aglyph-f1 { color: #b55a99; }
+.aglyph-f2 { color: #3f74b3; } .aglyph-f3 { color: #2f87a0; }
+.aglyph-f4 { color: #2f8f77; } .aglyph-f5 { color: #4f9456; }
+.aglyph-f6 { color: #5a66c7; } .aglyph-f7 { color: #64707f; }
+html[data-theme="dark"] .aglyph-f0 { color: #a98fe8; }
+html[data-theme="dark"] .aglyph-f1 { color: #dd8cc4; }
+html[data-theme="dark"] .aglyph-f2 { color: #7aa8dd; }
+html[data-theme="dark"] .aglyph-f3 { color: #6cc2d8; }
+html[data-theme="dark"] .aglyph-f4 { color: #67c2a8; }
+html[data-theme="dark"] .aglyph-f5 { color: #85c48b; }
+html[data-theme="dark"] .aglyph-f6 { color: #939ce8; }
+html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 .agent-list { display: flex; flex-direction: column; gap: 2px; }
 .agent-row { display: flex; gap: 9px; align-items: center; padding: 5px 2px; border-radius: 8px; }
-.agent-ico { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; flex: none; color: var(--ink); }
-.agent-ico.seed-0 { background: #e8ddf7; } .agent-ico.seed-1 { background: #f7dddd; }
-.agent-ico.seed-2 { background: #f7eedd; } .agent-ico.seed-3 { background: #ddeef7; }
-.agent-ico.seed-4 { background: #ddf7e4; } .agent-ico.seed-5 { background: #f7ddf0; }
-.agent-ico.seed-6 { background: #e4e7f7; } .agent-ico.seed-7 { background: #eef7dd; }
-html[data-theme="dark"] .agent-ico { color: #1c1c1f; }
+/* Collapsed-header chips: the five most recent runs, lined up before the count. */
+.agent-chips { display: inline-flex; gap: 3px; align-items: center; margin-right: 7px; vertical-align: -2px; }
+/* Done-history grid (more than ten runs): compressed glyphs, label on hover. */
+.agent-grid { display: flex; flex-wrap: wrap; gap: 7px 9px; padding: 8px 2px 2px; margin-top: 6px; border-top: 1px solid var(--line); }
+.agent-grid-item { opacity: 0.75; display: inline-flex; }
+.agent-grid-item:hover { opacity: 1; }
 .agent-label { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs-ui); font-weight: 500; color: var(--ink); overflow: hidden; }
 .agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-sub { font-size: var(--fs-label); color: var(--faint); flex: none; }

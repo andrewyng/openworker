@@ -109,8 +109,12 @@ describe("subagents section", () => {
     expect(head.textContent).toContain("1 waiting");
     expect(head.textContent).toContain("1 done");
     expect(head.querySelector(".rail-summary.attention")).not.toBeNull();
+    // Header chips: one animal glyph per run, derived from the stable seed.
+    expect(head.querySelectorAll(".agent-chips svg[data-glyph]").length).toBe(2);
     fireEvent.click(head);
     const list = screen.getByTestId("agent-tasks");
+    expect(list.querySelector('svg[data-glyph="puppy"]')).not.toBeNull(); // seed 1
+    expect(list.querySelector('svg[data-glyph="bunny"]')).not.toBeNull(); // seed 2
     expect(list.textContent).toContain("repo map");
     expect(list.textContent).toContain("marker run");
     expect(list.textContent).toContain("waiting on approval");
