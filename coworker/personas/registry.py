@@ -393,7 +393,9 @@ class PersonaRegistry:
         self.save()
 
     # -- install (third-party personas) -----------------------------------------
-    def install_from_dir(self, directory: str | Path) -> list[dict]:
+    def install_from_dir(
+        self, directory: str | Path, *, replace_skills: bool = False
+    ) -> list[dict]:
         """Install persona(s) from a local directory by **snapshotting** their manifests into our
         managed area (so the definition is stable, independent of the source dir). Returns a
         consent summary per persona; each lands **disabled + unsurfaced** pending the user's
@@ -414,7 +416,7 @@ class PersonaRegistry:
         for md in mds:
             m = load_manifest_file(md, builtin=False)  # validate before snapshotting
             replaces = self._replaces_of(m)
-            snapshot = self._snapshot(md, m.id)
+            snapshot = self._snapshot(md, m.id, replace_skills=replace_skills)
             installed = load_manifest_file(snapshot, builtin=False) if snapshot else m
             self._register_manifest(installed, builtin=False)
             # Consent rules (sharing v1): a fresh install always lands disabled pending
@@ -450,6 +452,10 @@ class PersonaRegistry:
             return None
         meta = self._installed_meta.get(incoming.id, {})
         grew = bool(capability_set(incoming) - capability_set(existing.manifest))
+        # The runtime treats an empty MCP list as unscoped. Clearing a previous
+        # allowlist can expose more servers and must not silently retain consent.
+        if existing.manifest.mcp and not incoming.mcp:
+            grew = True
         return {
             "version": meta.get("version") or existing.manifest.version or "",
             "installed_at": meta.get("installed_at", ""),
@@ -516,7 +522,9 @@ class PersonaRegistry:
                 f"no persona manifest found in {filename or 'the archive'}"
             )
 
-    def _snapshot(self, md: Path, persona_id: str) -> Optional[Path]:
+    def _snapshot(
+        self, md: Path, persona_id: str, *, replace_skills: bool = False
+    ) -> Optional[Path]:
         """Copy a manifest into the managed install area; return the snapshot path (or None if no
         managed area is configured, e.g. an ephemeral in-memory registry)."""
         if self.installed_dir is None:
@@ -528,6 +536,10 @@ class PersonaRegistry:
         # Bundle shape (OPE-58 / sharing v1): a `skills/` dir next to the manifest travels
         # with the snapshot, so a persona's skills stay stable independent of the source.
         src_skills = md.parent / "skills"
+        # The editor supplies the complete selected bundle. Remove stale skills so
+        # clearing its selection cannot re-enable every old skill (legacy empty=all).
+        if replace_skills and (dest_dir / "skills").is_dir():
+            shutil.rmtree(dest_dir / "skills")
         if src_skills.is_dir():
             shutil.copytree(src_skills, dest_dir / "skills", dirs_exist_ok=True)
         return dest

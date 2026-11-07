@@ -16,6 +16,7 @@ import { chooseFolder } from "../tauri";
 import type { SessionInfo } from "../types";
 import { Icon } from "./Icon";
 import { Toggle } from "./Toggle";
+import { PersonaEditor } from "./PersonaEditor";
 
 // Personas management (UX-035): grouped General/Security lists with ONE toggle per row
 // (enable implies picker); in-picker nuance, set-default, export and delete live on the
@@ -34,9 +35,11 @@ const QUIET_ROW =
 
 export function PersonasTab({
   onOpenPersona,
+  onTryPersona,
   machine,
 }: {
   onOpenPersona?: (id: string) => void;
+  onTryPersona?: (id: string) => void;
   // UX-046 machine scope: manage THIS machine's coworkers through the proxy.
   machine?: Machine | null;
 }) {
@@ -51,6 +54,7 @@ export function PersonasTab({
   const [consent, setConsent] = useState<PersonaConsent[] | null>(null);
   const [showUnshipped, setShowUnshipped] = useState(false);
   const [showInstall, setShowInstall] = useState(false);
+  const [editor, setEditor] = useState<{ templateId?: string; editingId?: string } | null>(null);
   // Disabling archives the persona's conversations (server-side), so when there are any we
   // arm an inline confirm (same two-step idiom as delete) instead of flipping immediately.
   const [confirmOff, setConfirmOff] = useState<string | null>(null);
@@ -171,6 +175,12 @@ export function PersonasTab({
                   <div className="text-body font-medium truncate">{p.name}</div>
                   <div className="text-meta text-faint truncate mt-0.5">{p.tagline}</div>
                 </div>
+                <button type="button" className="text-meta text-muted hover:text-ink shrink-0" onClick={() => setEditor({ templateId: p.id })} aria-label={t("persona_editor.copy_from", { name: p.name })}>
+                  {t("persona_editor.copy")}
+                </button>
+                {!p.builtin && <button type="button" className="text-meta text-muted hover:text-ink shrink-0" onClick={() => setEditor({ editingId: p.id })} aria-label={t("persona_editor.edit_named", { name: p.name })}>
+                  {t("persona_editor.edit_action")}
+                </button>}
                 {p.default ? (
                   /* The default coworker cannot be disabled or hidden — no toggle, no
                      configure; a quiet tag says why (owner 2026-08-21). It regains its
@@ -235,8 +245,22 @@ export function PersonasTab({
     );
   };
 
+  if (editor) return <PersonaEditor
+    personas={personas}
+    templateId={editor.templateId}
+    editingId={editor.editingId}
+    machineId={mid}
+    onClose={() => { setEditor(null); void reload(); }}
+    onSaved={setPersonas}
+    onTry={onTryPersona}
+  />;
+
   return (
     <div>
+      <div className="flex items-center justify-between gap-4 mt-5 rounded-xl2 border border-line bg-panel px-4 py-4">
+        <div><div className="text-ui font-medium">{t("persona_editor.create")}</div><p className="text-meta text-muted mt-1">{t("persona_editor.entry_hint")}</p></div>
+        <button type="button" className={BTN_ACCENT} onClick={() => setEditor({})}>{t("persona_editor.create")}</button>
+      </div>
       {index.cachedAt ? <CachedNote at={index.cachedAt} /> : null}
       {index.loading && !index.data ? (
         <LoadingRow

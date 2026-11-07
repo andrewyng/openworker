@@ -553,6 +553,61 @@ def create_app(manager: SessionManager) -> FastAPI:
             "connections": manager.session_connections_view(session_id, persona),
         }
 
+    @app.get("/v1/persona-editor")
+    def persona_editor_options() -> dict[str, Any]:
+        from ..catalog import CATALOG
+        from ..personas.manifest import VALID_MODES
+
+        return {
+            "capabilities": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "description": c.description,
+                    "risk": [r.value for r in c.risk],
+                }
+                for c in CATALOG.values()
+            ],
+            "connectors": [
+                {"id": c["name"], "name": c.get("title", c["name"])}
+                for c in manager.list_connectors()
+            ],
+            "mcp": [c["name"] for c in manager.list_mcp()],
+            "modes": sorted(VALID_MODES - {"auto"}),
+        }
+
+    @app.get("/v1/personas/{persona_id}/definition")
+    def persona_definition(persona_id: str) -> dict[str, Any]:
+        from ..personas.editor import definition_for
+
+        try:
+            definition = definition_for(
+                manager.personas,
+                persona_id,
+                [c["name"] for c in manager.list_connectors()],
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "definition": definition}
+
+    @app.post("/v1/persona-editor/preview")
+    def persona_editor_preview(body: dict) -> dict[str, Any]:
+        from ..personas.editor import preview_definition
+
+        try:
+            return preview_definition(manager.personas, body)
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/v1/persona-editor/save")
+    def persona_editor_save(body: dict) -> dict[str, Any]:
+        from ..personas.editor import save_definition
+
+        try:
+            return save_definition(manager.personas, body)
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+
     @app.post("/v1/personas/install")
     def install_persona(body: dict) -> dict[str, Any]:
         # Returns a consent summary per persona; they land disabled pending the user's approval
