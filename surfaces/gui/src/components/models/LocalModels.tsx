@@ -1,7 +1,7 @@
 // A local provider opened in place (UX-055): "Your system" laid out like the Mac's
 // About panel, then the models the server holds with size, tools, reasoning, how each
 // sits on this machine and the context it runs at. Tick = in the picker, ⚙ = the
-// model's settings, ✕ = out of the picker.
+// model's settings, ✕ = out of the picker, Make default = what new sessions start on.
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -10,6 +10,7 @@ import {
   getLocalModels,
   getSystemFacts,
   removeModel,
+  setDefaultModel,
   type LocalModelRow,
   type SystemFacts,
 } from "../../api";
@@ -119,6 +120,14 @@ export function LocalModelsTable({
     }
     onChanged();
   };
+  // The same action as the picker list's Make default, here where the user is looking
+  // (OPE-260: with every key removed, this table was the only live list and had no way
+  // to make one of its rows the default). Defaulting an unticked row ticks it too.
+  const makeDefault = async (row: LocalModelRow) => {
+    if (!inPicker(row.model)) await addModel(row.model);
+    await setDefaultModel(row.model);
+    onChanged();
+  };
   const fitLabel = (row: LocalModelRow) => {
     if (row.tools === false) return <span className="text-faint">{t("manage.fit_not_usable")}</span>;
     const cls = row.fit === "runs_well" ? "text-ok" : row.fit === "tight" || row.fit === "too_large" ? "text-warnInk" : "text-faint";
@@ -145,7 +154,7 @@ export function LocalModelsTable({
         </div>
       )}
       <div className="rounded-xl border border-line bg-panel">
-        <div className="grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_22px_22px] items-center gap-2.5 px-3.5 py-1.5 text-label text-faint">
+        <div className="grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_92px_22px_22px] items-center gap-2.5 px-3.5 py-1.5 text-label text-faint">
           <span />
           <span>{t("manage.col_model")}</span>
           <span>{t("manage.col_size")}</span>
@@ -155,6 +164,7 @@ export function LocalModelsTable({
           <span>{t("manage.col_context")}</span>
           <span />
           <span />
+          <span />
         </div>
         {rows.map((row) => {
           const usable = row.tools !== false;
@@ -162,10 +172,10 @@ export function LocalModelsTable({
           return (
             <div
               key={row.model}
-              className={"grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_22px_22px] items-center gap-2.5 px-3.5 py-2.5 border-t border-line" + (usable ? "" : " opacity-60")}
+              className={"grid grid-cols-[22px_1fr_56px_52px_72px_104px_52px_92px_22px_22px] items-center gap-2.5 px-3.5 py-2.5 border-t border-line" + (usable ? "" : " opacity-60")}
               data-testid={`local-model-${row.name}`}
             >
-              <input type="checkbox" checked={ticked} disabled={!usable || row.model === defaultModel} onChange={() => toggle(row)} />
+              <input type="checkbox" checked={ticked} disabled={!usable || row.model === defaultModel} title={row.model === defaultModel ? t("models.default_locked") : undefined} onChange={() => toggle(row)} />
               <span className="min-w-0">
                 <span className="block font-mono text-[12.5px] truncate" title={row.model}>{row.name}</span>
                 {!usable && <span className="block text-meta text-muted">{t("manage.no_tools_note")}</span>}
@@ -175,6 +185,15 @@ export function LocalModelsTable({
               <span className={"text-meta " + (row.thinking ? "text-ok" : "text-faint")}>{row.thinking ? `✓ ${t("manage.thinking_tag")}` : "—"}</span>
               <span className="text-meta">{fitLabel(row)}</span>
               <span className="text-meta text-muted">{fmtContext(row.context)}</span>
+              {row.model === defaultModel ? (
+                <span className="mlist-default justify-self-start" data-testid={`local-model-default-${row.name}`}>{t("models.default_badge")}</span>
+              ) : usable ? (
+                <button className="mlist-make" onClick={() => makeDefault(row)} data-testid={`local-model-make-default-${row.name}`}>
+                  {t("models.make_default")}
+                </button>
+              ) : (
+                <span />
+              )}
               {usable ? (
                 <button className="text-faint hover:text-ink" title={t("manage.configure_model")} onClick={() => onConfigure(row.model)} data-testid={`local-model-configure-${row.name}`}>
                   ⚙

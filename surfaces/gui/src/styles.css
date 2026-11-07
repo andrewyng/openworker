@@ -1076,11 +1076,13 @@ button.btn.danger { color: var(--accent); }
   background: var(--ink); color: var(--panel); font-size: var(--fs-label); font-weight: 600;
   padding: 2px 9px; border-radius: 999px; letter-spacing: 0.03em; flex: none;
 }
+/* Always visible, quiet until hovered (OPE-260: hidden-until-hover left users with no
+   visible way to make a model the default). */
 .mlist-make {
-  visibility: hidden; border: 1px solid var(--line-strong); background: var(--panel);
-  border-radius: 7px; padding: 3px 9px; font-size: var(--fs-meta); color: var(--muted); cursor: pointer; flex: none;
+  border: 1px solid var(--line); background: var(--panel);
+  border-radius: 7px; padding: 3px 9px; font-size: var(--fs-meta); color: var(--faint); cursor: pointer; flex: none;
 }
-.mlist-row:hover .mlist-make { visibility: visible; }
+.mlist-row:hover .mlist-make { color: var(--muted); border-color: var(--line-strong); }
 .mlist-make:hover { color: var(--ink); border-color: var(--ink); }
 .mlist-add { display: flex; gap: 8px; margin-top: 8px; }
 .mlist-add input {

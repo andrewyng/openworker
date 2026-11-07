@@ -118,6 +118,9 @@ interface Props {
   // False when the default model's provider has no key — the composer shows a "connect a model"
   // banner and routes sends to setup (preserving the draft) instead of dropping them.
   modelReady?: boolean;
+  // The backend's word on whether anything at all can run here; false forces the
+  // "connect a model" chip even when the list still names models (OPE-260).
+  anyModelReady?: boolean;
   onConnectModel?: () => void;
   onConfigureVoiceInput?: () => void;
   onSend: (text: string, attachments?: Attachment[], skill?: string) => void;
@@ -447,7 +450,17 @@ export function Composer(props: Props) {
     }
   };
 
-  const needsModel = props.modelReady === false;
+  // The session's model cannot run here: its provider has no key (modelReady false) or
+  // the machine no longer lists it (a provider whose key was removed). Whether that means
+  // "connect a model" or "pick another one" depends on what else can run (OPE-260): with
+  // runnable models in the list the picker stays, the current row is marked, and Send asks
+  // for a pick; only an empty list earns the chip that leads to Settings.
+  const currentUnavailable = props.modelReady === false || !!props.unavailableModels?.includes(props.model);
+  const otherRunnable =
+    props.anyModelReady !== false &&
+    (props.models || []).some((m) => m !== props.model && !props.unavailableModels?.includes(m));
+  const needsModel = currentUnavailable && !otherRunnable;
+  const mustPick = currentUnavailable && otherRunnable;
 
   const submit = () => {
     // While the "/" popup is open the draft is a query, not a message — never send it.
@@ -469,6 +482,8 @@ export function Composer(props: Props) {
       props.onConnectModel?.();
       return;
     }
+    // The current model cannot run but others can: keep the draft; the picker is right there.
+    if (mustPick) return;
     props.onSend(body, attachments, skill);
     setText("");
     setAttachments([]);
@@ -577,7 +592,7 @@ export function Composer(props: Props) {
       label: name,
       group: t(isLocalModel(m) ? "composer.model.group_local" : "composer.model.group_cloud"),
       meta: notes.filter(Boolean).join(" · "),
-      ...(props.unavailableModels?.includes(m)
+      ...(props.unavailableModels?.includes(m) || (m === props.model && currentUnavailable)
         ? { description: t("onmachine.composer.model_unavailable") }
         : {}),
     };
@@ -850,8 +865,11 @@ export function Composer(props: Props) {
                   : t("composer.model.connect")
               }
               aria-label={t("composer.model.none_aria")}
+              data-testid="connect-model-chip"
             >
-              <span className="pill-label">{t("composer.model.none")}</span>
+              {/* Reads as the action it is, not as a status (OPE-260: "No model" was not
+                  understood as something to click). */}
+              <span className="pill-label">{t("composer.model.connect")}</span>
               <span className="model-warn-ico" aria-hidden>⚠</span>
             </button>
           ) : modelsLoaded ? (
@@ -934,7 +952,7 @@ export function Composer(props: Props) {
               }
               onClick={submit}
               disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
-              title={needsModel ? t("composer.connect_to_send") : undefined}
+              title={needsModel ? t("composer.connect_to_send") : mustPick ? t("composer.pick_to_send") : undefined}
               aria-label={t("common.send")}
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

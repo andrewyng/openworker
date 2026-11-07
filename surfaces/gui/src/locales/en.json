@@ -154,6 +154,7 @@
     "attach_image": "Photo or image",
     "attach_other": "Other files",
     "connect_to_send": "Connect a model to send",
+    "pick_to_send": "Pick a model that can run here to send",
     "stop": "⏹ Stop",
     "mode_label": "Mode",
     "approvals_to_inbox": "Send approvals to the Inbox",
@@ -525,6 +526,7 @@
     "notice": {
       "max_iterations": "Stopped: max iterations reached.",
       "model_switched": "Model switched",
+      "model_auto_switched": "Switched to {{to}}: {{from}} is no longer available on this machine — its provider's key was removed, its server is not running, or it was taken out of the picker. Pick another model from the picker if you prefer.",
       "interrupted": "Interrupted.",
       "error": "Error: ",
       "context_compacted": "Context compacted",

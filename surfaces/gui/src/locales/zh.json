@@ -152,6 +152,7 @@
     "attach_image": "照片或图片",
     "attach_other": "其他文件",
     "connect_to_send": "连接模型后才能发送",
+    "pick_to_send": "请先选择一个可在此运行的模型再发送",
     "stop": "⏹ 停止",
     "mode_label": "模式",
     "approvals_to_inbox": "将审批请求发送到收件箱",
@@ -513,6 +514,7 @@
     "notice": {
       "max_iterations": "已停止：达到最大迭代次数。",
       "model_switched": "模型已切换",
+      "model_auto_switched": "已切换到 {{to}}：{{from}} 在本机已不可用 —— 其提供方的密钥已移除、服务未在运行，或该模型已从选择器中移除。如需其他模型，请在选择器中选择。",
       "interrupted": "已中断。",
       "error": "错误：",
       "context_compacted": "上下文已压缩",

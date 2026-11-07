@@ -1183,6 +1183,7 @@ export interface ModelSettings {
   audit_export?: AuditExportStatus;
   has_key: boolean;
   model_ready: boolean; // can the default model's provider actually run (any provider)?
+  any_model_ready?: boolean; // can ANY listed model run here (OPE-260; absent on older backends)
   source: "env" | "store" | null;
   onboarded: boolean;
   surfaces: SurfaceVisibility;
