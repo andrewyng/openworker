@@ -424,6 +424,9 @@ class TurnEngine:
         # secret-looking value into a file it is now sending.
         if getattr(permissions, "agent_file_has_secret", None) is None:
             permissions.agent_file_has_secret = self._agent_files.carries_secret
+        # Round-2 F-5: an upload the user approved as a plan step is a granted destination.
+        if getattr(permissions, "approved_plan_step", None) is None:
+            permissions.approved_plan_step = self._is_approved_plan_step
         # OPE-235: whether outside content (web, email, connectors, downloads) has entered
         # the agent's context this session; one of the reviewer's computed facts.
         self._external_read = False
@@ -1608,23 +1611,28 @@ class TurnEngine:
             )
         except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
             facts = []
-        if self._approved_plan:
-            # OPE-237: one fixed line, matched by code; the plan's text never travels.
-            # Only when the action IS a step: an action outside the plan gets exactly
-            # the facts it would get without one (a "not in the plan" line made the
-            # reviewer refuse harmless extras, found live 26 Oct 2026).
-            if plan_steps.match_step(
-                self._approved_plan,
-                tool_call.name,
-                tool_call.arguments or {},
-                resolve=self.permissions._candidate,
-                egress_host=self.permissions.egress_host,
-                # A command's paths are judged from the shell's folder (OPE-232); when it
-                # cannot be known, no shell action is a step.
-                shell_base=self.permissions.shell_cwd,
-            ):
-                facts.append(review_facts.PLAN_STEP)
+        # OPE-237: one fixed line, matched by code; the plan's text never travels.
+        # Only when the action IS a step: an action outside the plan gets exactly
+        # the facts it would get without one (a "not in the plan" line made the
+        # reviewer refuse harmless extras, found live 26 Oct 2026).
+        if self._is_approved_plan_step(tool_call.name, tool_call.arguments or {}):
+            facts.append(review_facts.PLAN_STEP)
         return {"facts": facts} if facts else {}
+
+    def _is_approved_plan_step(self, tool_name: str, arguments: dict[str, Any]) -> bool:
+        """Whether this exact call is a step of the plan the user approved (OPE-237)."""
+        if not self._approved_plan:
+            return False
+        return bool(plan_steps.match_step(
+            self._approved_plan,
+            tool_name,
+            arguments or {},
+            resolve=self.permissions._candidate,
+            egress_host=self.permissions.egress_host,
+            # A command's paths are judged from the shell's folder (OPE-232); when it
+            # cannot be known, no shell action is a step.
+            shell_base=self.permissions.shell_cwd,
+        ))
 
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
         """Fire one reviewer request per call that will escalate, all concurrently, and
