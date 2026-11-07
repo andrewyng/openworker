@@ -1,0 +1,31 @@
+{
+  "generatedImages": [
+    {
+      "file": "assets/meadow.png",
+      "method": "Built-in image_gen tool",
+      "prompt": "Use case: stylized-concept. Asset type: seamless tileable game ground texture. Create a square top-down albedo texture of soft mossy meadow grass for a warm storybook 3D adventure. Rich but restrained sage and olive green, fine hand-painted grass tufts, subtle tiny clover and muted earth variation. Flat evenly lit orthographic material swatch, no directional lighting or shadows, no perspective, no large flowers, no paths, no objects, no text, no border. Edges must tile seamlessly on both axes. High-quality painterly texture that remains gentle when repeated over large terrain."
+    },
+    {
+      "file": "assets/sky.png",
+      "method": "Built-in image_gen tool",
+      "prompt": "Use case: stylized-concept. Asset type: wide panoramic sky background texture for a warm storybook 3D exploration game. A luminous pale turquoise morning sky with soft ivory clouds and distant layered blue-green mountain silhouettes confined to the lowest quarter. Wide 2:1 landscape panorama, simple atmospheric painterly depth, warm honey sunlight near the horizon, no distinct sun disk. Gentle airy colors, sophisticated hand-painted environment art. No foreground objects, no buildings, no characters, no text or UI. Left and right edges visually compatible for wrapping around a sky dome. This will be behind actual 3D terrain, not a painted replacement for playable scenery."
+    }
+  ],
+  "natureModels": {
+    "author": "Kenney",
+    "pack": "Nature Kit",
+    "license": "CC0-1.0",
+    "source": "https://kenney.nl/assets/nature-kit",
+    "archiveSha256": "fa7974a0d342bfe63c38664ba9f8ec1a4aab8ea25f099bdc56870e33588c4d9d",
+    "files": [
+      "tree_detailed.glb",
+      "tree_pineRoundC.glb",
+      "mushroom_redGroup.glb",
+      "flower_purpleA.glb"
+    ],
+    "changes": "Original GLBs unchanged on disk. Runtime scales/clones models, corrects metallic leaves/bark to diffuse materials, recolors foliage and rounds each disconnected broadleaf canopy while retaining the imported branching structure.",
+    "licenseFile": "assets/kenney-license.txt"
+  },
+  "character": "Quaternius RobotExpressive; catalog metadata and CC0 notice in assets/library/",
+  "code": "Adventure expansion authored in this development session; generation.json records the earlier small live-agent pilot, not this expanded game's authorship."
+}

@@ -455,6 +455,7 @@ def build_engine(
     provider = provider or ProviderRouter(secrets, default_provider="openai")
     # Repo-focused personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
+    agent_task_registry = None
     if agent.subagents and ws is not None:
         registry.register_all(
             explorer_tools(
@@ -464,6 +465,18 @@ def build_engine(
                 model_settings=model_settings,
             )
         )
+        # Async subagents (OPE-254): the background variant of explore, plus the
+        # inherit mode whose approvals route through this session's own approver.
+        # The registry is bound to the engine below, once it exists.
+        from .tools.agent_tasks import agent_task_tools
+
+        _agent_tools, agent_task_registry = agent_task_tools(
+            workspace=ws,
+            provider=provider,
+            model=model,
+            model_settings=model_settings,
+        )
+        registry.register_all(_agent_tools)
     # Scheduling: opted-in surfaces with a workspace can set up scheduled tasks (origin = this
     # session). Code stays out (it fans out to explorers instead).
     if task_store is not None and ws is not None and agent.scheduling:
@@ -757,6 +770,11 @@ def build_engine(
         engine.compaction_settings = lambda: dict(_compaction_overrides)
     # OPE-237: in auto-approve, an approved plan's steps become reviewer evidence.
     engine.plan_approval = bool(config.auto_approve_plan_approval)
+    # Async subagents: the registry the spawn tools and the server's tasks endpoint
+    # share; bound late because the tools were registered before the engine existed.
+    if agent_task_registry is not None:
+        agent_task_registry.bind(engine)
+    engine.agent_tasks = agent_task_registry
     engine.executor = executor  # type: ignore[attr-defined]
     # OPE-232 / OPE-234: the read-only session grant and the auto-approve read-only tier
     # judge paths from the persistent shell's current folder, not the workspace folder it

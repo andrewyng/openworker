@@ -1,0 +1,23 @@
+{
+  "id": "neon-drift",
+  "version": "1.0.0",
+  "title": "Neon Drift",
+  "description": "Catch the light. Lose the heat. Drift through a midnight neon arena, collect 18 energy shards, and dash past relentless sentinels before the circuit closes.",
+  "engine": "canvas",
+  "entrypoint": "index.html",
+  "cover": "cover.svg",
+  "license": "MIT",
+  "tags": [
+    "Arcade",
+    "2D"
+  ],
+  "files": [
+    "index.html",
+    "styles.css",
+    "game.js",
+    "cover.svg",
+    "LICENSE.txt",
+    "hero.svg"
+  ],
+  "hero": "hero.svg"
+}

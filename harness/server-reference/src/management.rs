@@ -1,0 +1,785 @@
+//! Service management never runs tools in the API. Definitions select from the
+//! operator-installed bundle; controller and existing workers own all execution.
+use crate::{
+    http::{ApiError, App},
+    Config,
+};
+use anyhow::{ensure, Context, Result};
+use axum::{
+    extract::Path,
+    http::{HeaderMap, StatusCode},
+    Extension, Json,
+};
+use openworker_runtime::store::StateStore;
+use openworker_runtime::{
+    bundle::{digest, Bundle},
+    environment::{Management, Provider},
+    runtime::Runtime,
+};
+use openworker_store_postgres::{
+    service_catalog::{Admission, Entry, Profile, Release},
+    PostgresStore, SubmissionError,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+pub fn installation(config: &Config) -> Result<String> {
+    let base = config.load_bundle()?;
+    config.validate_git_grants()?;
+    config.validate_repository_grants()?;
+    let mut identity = json!({"bundle":base.digest,"runner":digest(&std::fs::read(&config.runner)?),"gateway":config.openshell.endpoint,"gatewayIdentity":config.openshell.identity,"workspace":config.openshell.workspace,"image":config.openshell.image});
+    if let Some(registry) = &base.registry_digest {
+        identity["registry"] = json!(registry);
+    }
+    if !config.openshell.git_grants.is_empty() {
+        identity["gitGrants"] = json!(config.openshell.git_grants);
+    }
+    if !config.repository_grants.is_empty() {
+        identity["repositoryGrants"] = json!(config.repository_grants);
+    }
+    Ok(digest(&serde_json::to_vec(&identity)?))
+}
+pub fn provider(
+    config: &Config,
+    profile: &Entry,
+) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
+    ensure!(
+        profile.installation == installation(config)?,
+        "Installed service bundle/provider changed; new release required"
+    );
+    let p: Profile =
+        serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
+    p.validate()?;
+    let c = config.profile_config(&p)?;
+    c.provider()
+}
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        let ty = e.file_type()?;
+        ensure!(!ty.is_symlink(), "Installed skill symlink rejected");
+        if ty.is_dir() {
+            copy_tree(&e.path(), &to.join(e.file_name()))?;
+        } else {
+            std::fs::copy(e.path(), to.join(e.file_name()))?;
+        }
+    }
+    Ok(())
+}
+/// Content-addressed installed bundle cache. Generated files contain no secrets.
+pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Result<Config> {
+    ensure!(
+        release.installation == installation(config)?
+            && release.installation == profile.installation,
+        "Release installation changed"
+    );
+    let r: Release =
+        serde_json::from_value(release.definition.clone()).map_err(anyhow::Error::from)?;
+    r.validate()?;
+    let p: Profile =
+        serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
+    p.validate()?;
+    ensure!(
+        r.runtime_profiles.contains(&p.id),
+        "Release/profile incompatible"
+    );
+    let base = config.load_bundle()?;
+    let mut manifest = base.manifest.clone();
+    manifest.id = format!("svc-{}", &release.digest[..24]);
+    manifest.name = r.id.clone();
+    manifest.version = release.digest.clone();
+    manifest.default_model = r.default_model;
+    manifest.limits = r.limits;
+    manifest.memory_scope = None;
+    let tools = base.tools.select(&r.tools)?;
+    let manifest_text = format!(
+        "---\n{}\n---\n{}\n",
+        serde_json::to_string(&manifest)?,
+        r.instructions
+    );
+    let tools_text = base.selection_text(&tools)?;
+    let dir = publish_bundle(config, &release.digest, &base, &manifest_text, &tools_text)?;
+    config.repository_grant(&p)?;
+    let mut c = config.profile_config(&p)?;
+    c.bundle = dir;
+    c.openshell.cpu = Some(p.cpu);
+    c.openshell.memory_mb = Some(p.memory_mb);
+    Ok(c)
+}
+/// Both published releases and scoped types use deterministic, verified files.
+pub(crate) fn publish_bundle(
+    config: &Config,
+    key: &str,
+    base: &Bundle,
+    manifest_text: &str,
+    tools_text: &str,
+) -> Result<std::path::PathBuf> {
+    ensure!(
+        key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit()),
+        "Invalid cache key"
+    );
+    let root = config.state_root.join("service-bundles");
+    std::fs::create_dir_all(&root)?;
+    let dir = root.join(key);
+    if !dir.exists() {
+        let tmp = root.join(openworker_runtime::id("prepare"));
+        std::fs::create_dir_all(tmp.join("coworker"))?;
+        std::fs::write(tmp.join("coworker/manifest.md"), manifest_text)?;
+        std::fs::write(tmp.join("tools.json"), tools_text)?;
+        if base.root.join("coworker/skills").exists() {
+            copy_tree(
+                &base.root.join("coworker/skills"),
+                &tmp.join("coworker/skills"),
+            )?;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &dir) {
+            std::fs::remove_dir_all(&tmp)?;
+            ensure!(dir.exists(), "Cannot publish generated bundle: {e}");
+        }
+    }
+    ensure!(
+        !std::fs::symlink_metadata(&dir)?.file_type().is_symlink(),
+        "Bundle cache symlink rejected"
+    );
+    ensure!(
+        std::fs::read_to_string(dir.join("coworker/manifest.md"))? == manifest_text
+            && std::fs::read_to_string(dir.join("tools.json"))? == tools_text,
+        "Installed release cache changed"
+    );
+    Ok(dir)
+}
+
+pub(crate) async fn put_profile(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(p): Json<Profile>,
+) -> Result<Json<Value>, ApiError> {
+    p.validate()?;
+    app.config.profile_config(&p)?;
+    Ok(Json(json!(app.store.catalog_put(
+        &crate::service::key(&app, &headers, "profile")?,
+        "profile",
+        json!(p),
+        &installation(&app.config)?
+    )?)))
+}
+pub(crate) async fn put_release(
+    Extension(app): Extension<App>,
+    headers: HeaderMap,
+    Json(r): Json<Release>,
+) -> Result<Json<Value>, ApiError> {
+    r.validate()?;
+    if app.service.as_ref().is_some_and(|s| s.agent == r.id) {
+        return Err(ApiError(SubmissionError::Conflict.into()));
+    }
+    let base = app.config.load_bundle()?;
+    if base.tools.select(&r.tools).is_err() {
+        return Err(ApiError(SubmissionError::InvalidRequest.into()));
+    }
+    for m in r
+        .default_model
+        .iter()
+        .chain(r.reviewer_model.iter())
+        .chain(&r.model_overrides)
+    {
+        m.validate()?;
+        app.runtime.connections.resolve(m)?;
+    }
+    for p in &r.runtime_profiles {
+        app.store.catalog_get("profile", p)?;
+    }
+    Ok(Json(json!(app.store.catalog_put(
+        &crate::service::key(&app, &headers, "release")?,
+        "release",
+        json!(r),
+        &installation(&app.config)?
+    )?)))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Activate {
+    pub alias: Option<String>,
+}
+pub(crate) async fn activate_profile(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(a): Json<Activate>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.catalog_activate(
+        &crate::service::key(&app, &headers, "activate-profile")?,
+        "profile",
+        &id,
+        a.alias
+    )?)))
+}
+pub(crate) async fn activate_release(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(a): Json<Activate>,
+) -> Result<Json<Value>, ApiError> {
+    if a.alias
+        .as_ref()
+        .is_some_and(|alias| app.service.as_ref().is_some_and(|s| s.agent == *alias))
+    {
+        return Err(ApiError(SubmissionError::Conflict.into()));
+    }
+    Ok(Json(json!(app.store.catalog_activate(
+        &crate::service::key(&app, &headers, "activate-release")?,
+        "release",
+        &id,
+        a.alias
+    )?)))
+}
+pub(crate) async fn get_profile(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.catalog_get("profile", &id)?)))
+}
+pub(crate) async fn get_environment(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(app.store.service_environment(&id)?))
+}
+pub(crate) async fn get_operation(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.service_operation(&id)?)))
+}
+pub(crate) async fn admit(
+    app: App,
+    headers: HeaderMap,
+    input: Admission,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    admit_kind(app, headers, input, "session").await
+}
+pub(crate) async fn admit_kind(
+    app: App,
+    headers: HeaderMap,
+    mut input: Admission,
+    kind: &str,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let release = app.store.catalog_get("release", &input.agent)?;
+    let r: Release =
+        serde_json::from_value(release.definition.clone()).map_err(anyhow::Error::from)?;
+    let implicit_default = input.runtime_profile.is_none()
+        && input.environment_id.is_none()
+        && r.default_runtime_profile.is_none();
+    let profile_id = if let Some(env) = &input.environment_id {
+        app.store.service_environment(env)?["runtimeProfile"]
+            .as_str()
+            .context("Environment profile missing")?
+            .to_owned()
+    } else {
+        input
+            .runtime_profile
+            .clone()
+            .or(r.default_runtime_profile)
+            .unwrap_or_else(|| "default".into())
+    };
+    let profile = match app.store.catalog_get("profile", &profile_id) {
+        Ok(p) => p,
+        Err(e)
+            if implicit_default
+                && profile_id == "default"
+                && e.downcast_ref::<SubmissionError>() == Some(&SubmissionError::NotFound) =>
+        {
+            let default = app
+                .service
+                .as_ref()
+                .and_then(|s| s.default_runtime_profile.as_ref())
+                .ok_or_else(|| ApiError(SubmissionError::InvalidRequest.into()))?;
+            app.store.catalog_get("profile", default)?
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let p: Profile =
+        serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
+    let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
+    let request = crate::service::key(&app, &headers, kind)?;
+    if let Some(text) = &input.initial_message {
+        input.initial_message =
+            Some(crate::service_safety::inspect(&app, None, &request, text).await?);
+    }
+    let op = app
+        .store
+        .service_admit(&request, input, release, profile, spec)?;
+    Ok((
+        if op.status == "complete" {
+            StatusCode::OK
+        } else {
+            StatusCode::ACCEPTED
+        },
+        Json(json!({"operation":op})),
+    ))
+}
+/// Private controller. A claim permits one create only; all subsequent visits
+/// inspect the original remote name/UID and never issue another create.
+pub async fn control_once(config: &Config, store: &PostgresStore) -> Result<bool> {
+    control_matching(config, store, &installation(config)?).await
+}
+async fn control_matching(config: &Config, store: &PostgresStore, installed: &str) -> Result<bool> {
+    let Some((op, create)) = store.service_claim_for(Some(installed))? else {
+        return Ok(false);
+    };
+    let work:Result<()>=async {
+        let rel=store.catalog_get("release",&op.release_id)?;let profile=store.catalog_get("profile",&op.profile_id)?;
+        let provider=provider(config,&profile)?;let mut env=store.clone().environment(&op.environment_id)?;
+        if op.status!="ready"{
+            let result=if create {provider.create(env.clone()).await}else{
+                let raw=env.id.strip_prefix("env_").context("Bad environment ID")?;
+                provider.bind_existing(&env,&format!("owr-{}",&raw[..15])).await
+            };
+            match result {Ok(binding)=>{env=store.complete_environment(&env.id,env.revision,Some(binding))?;store.service_update_operation(&op.id,"ready",None)?;},Err(_)=>{store.complete_environment(&env.id,env.revision,None)?;store.service_update_operation(&op.id,"unknown",Some("Provisioning outcome unknown; inspecting original environment only".into()))?;return Ok(());}}
+        }
+        provider.inspect(env.binding.clone().context("Environment not ready")?).await?;
+        let c=release_config(config,&rel,&profile)?;let rt=c.api_runtime(&format!("admit-{}",&op.id[3..19]),store.clone())?;
+        let input=store.service_input(&op.id)?;let r:Release=serde_json::from_value(rel.definition.clone())?;let p:Profile=serde_json::from_value(profile.definition.clone())?;
+        let mut parameters=json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":env.id,"name":input.name.unwrap_or(op.release_id),"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
+        if let Some(model)=input.model{parameters["model"]=json!(model);}
+        if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
+        let configured=store.service_operation_configuration(&op.id)?;parameters["compaction"]=json!(configured.configuration.compaction);
+        let session=rt.prepare_session(parameters)?;
+        let service=config.service.as_ref().context("Service config required")?;
+        let result=store.service_finish(&op.id,session,&service.id,&service.namespace);rt.shutdown().await?;result?;Ok(())
+    }.await;
+    if let Err(error) = work {
+        if error
+            .downcast_ref::<openworker_store_postgres::auth::Error>()
+            .is_some()
+        {
+            store.service_update_operation(
+                &op.id,
+                "failed",
+                Some("Admission authorization no longer valid".into()),
+            )?;
+        } else {
+            return Err(error);
+        }
+    }
+    Ok(true)
+}
+pub async fn controller(
+    config: Config,
+    store: PostgresStore,
+    stop: tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    config.require_execution()?;
+    let service = config
+        .service
+        .as_ref()
+        .context("Service configuration required")?;
+    service.validate()?;
+    store.bind_service(&service.id, &service.namespace)?;
+    let installed = installation(&config)?;
+    let mut type_cursor = String::new();
+    let mut placement_cursor = String::new();
+    // Bounded source I/O has its own task so a slow bundle cannot block
+    // cancellation, environment cleanup or other control-plane reconciliation.
+    // JoinSet aborts this task if its owning controller exits unexpectedly.
+    let mut source_tasks = tokio::task::JoinSet::new();
+    if let Some(artifacts) = config.artifacts.as_ref().map(|c| c.build()).transpose()? {
+        #[cfg(feature = "trusted-git")]
+        if !config.repository_grants.is_empty() {
+            let (c, s, i, a, cancel) = (
+                config.clone(),
+                store.clone(),
+                installed.clone(),
+                artifacts.clone(),
+                stop.clone(),
+            );
+            source_tasks.spawn(async move {while !cancel.is_cancelled(){if !crate::service_team_publications::prepare_once(&c,&s,&i,&a,&cancel).await?{tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}}}Ok::<_,anyhow::Error>(())});
+        }
+        let (config, store, installed, stop) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+        );
+        let (import_config, import_store, import_installed, import_stop, import_artifacts) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+            artifacts.clone(),
+        );
+        let (
+            submission_config,
+            submission_store,
+            submission_installed,
+            submission_stop,
+            submission_artifacts,
+        ) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+            artifacts.clone(),
+        );
+        let (integration_config, integration_store, integration_installed, integration_stop) = (
+            config.clone(),
+            store.clone(),
+            installed.clone(),
+            stop.clone(),
+        );
+        source_tasks.spawn(async move {
+            while !integration_stop.is_cancelled() {
+                if !crate::service_team_integrations::prepare_once(&integration_config,&integration_store,&integration_installed).await? {
+                    tokio::select!{_=integration_stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+        source_tasks.spawn(async move {
+            while !submission_stop.is_cancelled() {
+                if !crate::service_team_submissions::prepare_once(&submission_config,&submission_store,&submission_installed,Some(&submission_artifacts),&submission_stop).await? {
+                    tokio::select! {_=submission_stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+        source_tasks.spawn(async move {
+            while !stop.is_cancelled() {
+                if !crate::service_team_sources::prepare_once(&config, &store, &installed, Some(&artifacts), &stop).await? {
+                    tokio::select! { _=stop.cancelled()=>break, _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{} }
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+        source_tasks.spawn(async move {
+            while !import_stop.is_cancelled() {
+                if !crate::service_team_imports::prepare_once(&import_config,&import_store,&import_installed,&import_artifacts,&import_stop).await? {
+                    tokio::select! { _=import_stop.cancelled()=>break, _=tokio::time::sleep(std::time::Duration::from_millis(500))=>{} }
+                }
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+    }
+    while !stop.is_cancelled() {
+        crate::service_team_types::refresh(&config, &store, &installed, &mut type_cursor).await?;
+        crate::service_team_placements::refresh(&config, &store, &installed, &mut placement_cursor)
+            .await?;
+        if let Some(result) = source_tasks.try_join_next() {
+            result??;
+        }
+        crate::service_team_workspaces::prepare_once(&config, &store, &installed).await?;
+        delete_once(&config, &store, &installed).await?;
+        store.provision_agent_team_child_for(Some(&installed))?;
+        store.reconcile_stopped_agent_team()?;
+        store.reconcile_unstarted_retirement()?;
+        if !control_matching(&config, &store, &installed).await? {
+            tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{}}
+        }
+    }
+    source_tasks.shutdown().await;
+    Ok(())
+}
+
+pub fn selector(
+    config: &Config,
+    rt: &Arc<Runtime>,
+) -> Result<openworker_store_postgres::worker::Selector> {
+    let env = config.provider()?.spec(
+        openworker_runtime::environment::Sharing::Exclusive,
+        Management::Harness,
+    );
+    Ok(openworker_store_postgres::worker::Selector {
+        coworker: rt.coworker().into(),
+        bundle_digest: rt.execution_digest().into(),
+        backend: openworker_runtime::execution::Backend::Openshell,
+        scripted: config.scripted,
+        fallback_model: config.model.clone(),
+        model_provider: config.model_provider,
+        model_connections: config
+            .model_connections
+            .iter()
+            .map(|c| {
+                Ok((
+                    c.id.clone(),
+                    rt.connections
+                        .resolve(&openworker_runtime::connections::Choice::new(
+                            &c.id,
+                            "validation",
+                        ))?
+                        .identity,
+                ))
+            })
+            .collect::<Result<_>>()?,
+        environment_provider: Some(env.provider),
+        environment_identity: Some(env.provider_identity),
+        environment_profile: Some(env.profile_digest),
+    })
+}
+pub async fn worker(
+    config: Config,
+    store: PostgresStore,
+    slots: usize,
+    stop: tokio_util::sync::CancellationToken,
+) -> Result<()> {
+    worker_with_options(
+        config,
+        store,
+        slots,
+        stop,
+        tokio_util::sync::CancellationToken::new(),
+        "service-worker".into(),
+        None,
+        300,
+    )
+    .await
+}
+#[allow(clippy::too_many_arguments)] // Worker resource and shutdown ownership are explicit.
+pub async fn worker_with_options(
+    config: Config,
+    store: PostgresStore,
+    slots: usize,
+    stop: tokio_util::sync::CancellationToken,
+    abort: tokio_util::sync::CancellationToken,
+    node: String,
+    health_listen: Option<std::net::SocketAddr>,
+    drain_seconds: u64,
+) -> Result<()> {
+    use openworker_store_postgres::worker::{Catalog, Factory, Options, Worker};
+    let _abort_guard = abort.clone().drop_guard();
+    config.require_execution()?;
+    anyhow::ensure!(
+        health_listen.is_none_or(|a| a.ip().is_loopback()),
+        "Worker health must bind loopback"
+    );
+    anyhow::ensure!(
+        openworker_runtime::bundle::safe_name(&node),
+        "Invalid worker node name"
+    );
+    let provider = config.provider()?;
+    provider.check_gateway().await?;
+    let drain = openworker_store_postgres::worker::Drain::default();
+    let health = crate::readiness::Readiness::new(drain.clone());
+    let health_stop = tokio_util::sync::CancellationToken::new();
+    let _health_guard = health_stop.clone().drop_guard();
+    let health_server = if let Some(address) = health_listen {
+        let listener = tokio::net::TcpListener::bind(address).await?;
+        let router = health.router();
+        let done = health_stop.clone();
+        Some(tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(done.cancelled_owned())
+                .await
+        }))
+    } else {
+        None
+    };
+    let signal_stop = stop.clone();
+    let signal_abort = abort.clone();
+    let signal_drain = drain.clone();
+    let signal = tokio::spawn(async move {
+        tokio::select! {_=signal_stop.cancelled()=>signal_drain.request(),_=signal_abort.cancelled()=>{}}
+    });
+
+    let service = config
+        .service
+        .as_ref()
+        .context("Service configuration required")?;
+    service.validate()?;
+    store.bind_service(&service.id, &service.namespace)?;
+    let base = config.runtime("service-worker-base", store.clone())?;
+    let base_selector = selector(&config, &base)?;
+    base.shutdown().await?;
+    let cache = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::<
+        String,
+        (openworker_store_postgres::worker::Selector, Factory),
+    >::new()));
+    let cached = cache.clone();
+    let catalog: Catalog = Arc::new(move || Ok(cached.lock().unwrap().values().cloned().collect()));
+    // Slot connections must retain the process-owned instrumentation. Rebuilding
+    // only database credentials here silently disabled model/tool/turn recording
+    // for catalog-deployed agents, while the monitor still emitted storage spans.
+    let mut db = config.database()?;
+    db.telemetry = store.telemetry();
+    let default_config = config.clone();
+    let default_factory: Factory = Arc::new(move |sid, s| {
+        default_config.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
+    });
+    cache.lock().unwrap().insert(
+        "legacy".into(),
+        (base_selector.clone(), default_factory.clone()),
+    );
+    let work = Worker::new(
+        db,
+        base_selector.clone(),
+        Options {
+            slots,
+            ..Default::default()
+        },
+        default_factory,
+    )?
+    .with_catalog(catalog)
+    .run_with_drain(
+        drain.clone(),
+        abort.clone(),
+        std::time::Duration::from_secs(drain_seconds),
+    );
+    let installed = installation(&config)?;
+    let monitor = async {
+        let mut type_cursor = String::new();
+        while !abort.is_cancelled() {
+            provider.check_gateway().await?;
+            store.advertise_worker(
+                &node,
+                base_selector.clone(),
+                slots as u16,
+                drain.is_requested(),
+            )?;
+            health.checked();
+            let entries = store.catalog_list()?;
+            for release in entries
+                .iter()
+                .filter(|e| e.kind == "release" && e.activated && e.installation == installed)
+            {
+                let r: Release = serde_json::from_value(release.definition.clone())
+                    .map_err(anyhow::Error::from)?;
+                for pid in r.runtime_profiles {
+                    let key = format!("{}:{pid}", release.digest);
+                    if cache.lock().unwrap().contains_key(&key) {
+                        continue;
+                    }
+                    let profile = entries
+                        .iter()
+                        .find(|p| p.kind == "profile" && p.id == pid && p.activated)
+                        .context("Active profile missing")?;
+                    let c = release_config(&config, release, profile)?;
+                    let rt = c.runtime(
+                        &format!("template-{}", &digest(key.as_bytes())[..16]),
+                        store.clone(),
+                    )?;
+                    let select = selector(&c, &rt)?;
+                    rt.shutdown().await?;
+                    let factory: Factory = Arc::new(move |sid, s| {
+                        c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
+                    });
+                    cache.lock().unwrap().insert(key, (select, factory));
+                }
+            }
+            let page = store.service_team_type_page(&installed, &type_cursor, 8)?;
+            if page.is_empty() {
+                type_cursor.clear()
+            }
+            for team in page {
+                type_cursor = team.document.id.clone();
+                if !team.release.activated || !team.profile.activated {
+                    continue;
+                }
+                let Some(types) = &team.document.type_catalog else {
+                    continue;
+                };
+                for record in
+                    types.records.values().flatten().filter(|r| {
+                        r.status == openworker_runtime::team_type_catalog::Status::Approved
+                    })
+                {
+                    let runtime_id = record.runtime_id();
+                    if !store.service_team_type_ready(&team.document.id, &runtime_id)? {
+                        continue;
+                    }
+                    let mut profiles = std::collections::BTreeSet::from([team.profile.id.clone()]);
+                    if team.document.placement_selection {
+                        profiles.extend(types.ceiling.profiles.keys().cloned());
+                    }
+                    for pid in profiles {
+                        let key = format!("{runtime_id}:{pid}");
+                        if cache.lock().unwrap().contains_key(&key) {
+                            continue;
+                        }
+                        let Some(profile) = entries
+                            .iter()
+                            .find(|p| p.kind == "profile" && p.id == pid && p.activated)
+                        else {
+                            continue;
+                        };
+                        let c = crate::service_team_types::placed_config(
+                            &config, &team, record, profile,
+                        )?;
+                        let rt = c.runtime(
+                            &format!("private-{}", &digest(key.as_bytes())[..20]),
+                            store.clone(),
+                        )?;
+                        let select = selector(&c, &rt)?;
+                        rt.shutdown().await?;
+                        store.verify_service_team_type_runtime(
+                            &team.document.id,
+                            &runtime_id,
+                            &select.bundle_digest,
+                        )?;
+                        let factory: Factory = Arc::new(move |sid, s| {
+                            c.runtime(&format!("svc-{}", &digest(sid.as_bytes())[..16]), s)
+                        });
+                        cache.lock().unwrap().insert(key, (select, factory));
+                    }
+                }
+            }
+            tokio::select! {_=abort.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}}
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::pin!(work);
+    tokio::pin!(monitor);
+    let result = tokio::select! {result=&mut work=>result,result=&mut monitor=>{health.clear();abort.cancel();let joined=work.await;result.and(joined)}};
+    abort.cancel();
+    signal.abort();
+    health.clear();
+    health_stop.cancel();
+    if let Some(server) = health_server {
+        let _ = server.await;
+    }
+    result
+}
+
+/// The API records intent only; gateway credentials stay on private controllers.
+pub(crate) async fn delete_environment(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    app.store.service_environment(&id)?;
+    let key = crate::service::key(&app, &headers, &format!("delete-environment:{id}"))?;
+    let operation = &key[..32];
+    let (record, _) = app
+        .store
+        .begin_environment_delete(&id, operation, &app.actor)?;
+    if record.phase != openworker_runtime::environment::Phase::Deleted {
+        app.store.service_queue_delete(&id, operation)?;
+    }
+    Ok(Json(json!({"id":id,"phase":record.phase})))
+}
+async fn delete_once(config: &Config, store: &PostgresStore, installed: &str) -> Result<()> {
+    let Some((record, key, profile, fresh)) = store.service_claim_delete(installed)? else {
+        return Ok(());
+    };
+    let provider = provider(config, &store.catalog_get("profile", &profile)?)?;
+    let binding = record.binding.context("Environment binding missing")?;
+    // A lost connection is not retry permission. Only the first claim can delete;
+    // after that, read the original object's state and never delete a replacement.
+    let deleted = if fresh {
+        provider.delete(binding, key.clone()).await.is_ok()
+    } else {
+        provider.confirm_deleted(binding).await.unwrap_or(false)
+    };
+    if deleted {
+        store.complete_environment_delete(&record.id, &key, record.revision)?;
+    } else {
+        store.service_recheck_delete(&record.id)?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn get_release(
+    Extension(app): Extension<App>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(app.store.catalog_get("release", &id)?)))
+}

@@ -1,0 +1,1 @@
+{"server":{"id":"tools","program":"$OPENWORKER","args":["mcp-example","--workspace","$WORKSPACE"]},"bindings":{"read_file":{"server":"tools","tool":"read_file"},"write_file":{"server":"tools","tool":"write_file"},"run_shell":{"server":"tools","tool":"run_shell"}}}

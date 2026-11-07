@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Task Desk · OpenWorker</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <section id="login" class="login">
+      <div class="mark">o<span>↗</span></div>
+      <p class="eyebrow">OPENWORKER</p>
+      <h1>A little more<br />off your plate.</h1>
+      <p class="muted">Your workspace for work in motion.</p>
+      <form id="login-form">
+        <label for="key">Workspace access key</label
+        ><input
+          id="key"
+          type="password"
+          autocomplete="current-password"
+          required
+        /><button class="primary">Open your desk <span>→</span></button>
+        <p id="login-error" role="alert"></p>
+      </form>
+    </section>
+    <div id="app" class="shell" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="/">
+          <span class="brand-mark">o↗</span> Task Desk</a
+        >
+        <div class="workspace-label">YOUR WORKSPACE <span>01</span></div>
+        <button id="new-task" class="new-task">
+          ＋ <span>New task</span><kbd>N</kbd>
+        </button>
+        <div class="list-heading">Tasks <span id="count">0</span></div>
+        <nav id="tasks" aria-label="Tasks"></nav>
+        <button id="more" hidden>Load more</button>
+        <footer>
+          <div class="avatar">OW</div>
+          <div>
+            <strong>OpenWorker</strong><span id="connection">Connecting</span>
+          </div>
+          <button id="logout" aria-label="Sign out" title="Sign out">↗</button>
+        </footer>
+      </aside>
+      <main>
+        <header class="topbar">
+          <span
+            >Workspace <span class="slash">/</span>
+            <strong id="breadcrumb">Overview</strong></span
+          ><span id="mode"></span
+          ><span class="header-note">Make room for what matters.</span>
+        </header>
+        <div id="notice" role="status" hidden></div>
+        <section id="welcome">
+          <div class="welcome-copy">
+            <p class="eyebrow">A CLEAR DESK. A CLEARER DAY.</p>
+            <h1>What can we<br />take off your plate?</h1>
+            <p class="muted">Hand over a task. Stay in the loop.</p>
+          </div>
+          <form id="create-form" class="composer">
+            <label class="sr-only" for="prompt">Describe your task</label
+            ><textarea
+              id="prompt"
+              placeholder="Draft a launch checklist for our new app…"
+              maxlength="10000"
+              required
+            ></textarea>
+            <div>
+              <span>Details make the difference.</span
+              ><button class="primary" id="create-button">
+                Start task <span>↗</span>
+              </button>
+            </div>
+          </form>
+          <div class="suggestions">
+            <button
+              data-prompt="Create a concise launch checklist for a small web app. Include security checks, testing, rollout and a rollback plan. Save it as launch-checklist.md."
+            >
+              <span class="suggest-icon">☑</span><strong>Plan a launch</strong
+              ><span>A thoughtful checklist, ready to use.</span
+              ><i>↗</i></button
+            ><button
+              data-prompt="Create a sample CSV with five fictional project tasks, owners, due dates and statuses. Save it as tasks.csv, read it back, and summarize what you created."
+            >
+              <span class="suggest-icon">▤</span
+              ><strong>Organize the details</strong
+              ><span>Turn a loose idea into structured work.</span
+              ><i>↗</i></button
+            ><button
+              data-prompt="Write a short project handoff template in handoff.md, with goals, decisions, open questions and next steps. Read the file back to verify it."
+            >
+              <span class="suggest-icon">✧</span
+              ><strong>Prepare a handoff</strong
+              ><span>Give the next person a running start.</span><i>↗</i>
+            </button>
+          </div>
+          <div class="welcome-bottom">
+            <span class="small-dot"></span> Your work has a place to land.
+          </div>
+        </section>
+        <section id="detail" hidden>
+          <div class="detail-heading">
+            <div>
+              <p class="eyebrow">TASK</p>
+              <h1 id="task-title"></h1>
+              <span id="status" class="status"></span>
+            </div>
+            <button id="cancel" class="subtle">Stop task</button>
+          </div>
+          <div class="detail-grid">
+            <div class="conversation">
+              <div id="messages"></div>
+              <div id="delta" class="delta" hidden></div>
+              <div id="decisions"></div>
+              <form id="followup-form" class="composer compact">
+                <label class="sr-only" for="followup"
+                  >Follow-up instruction</label
+                ><textarea
+                  id="followup"
+                  placeholder="Add a detail or ask for a change…"
+                  maxlength="10000"
+                  required
+                ></textarea>
+                <div>
+                  <span id="turn-hint">Continue the conversation</span
+                  ><button id="send" class="primary">Send ↑</button>
+                </div>
+              </form>
+            </div>
+            <aside class="task-meta">
+              <section>
+                <div class="section-title">
+                  <h2>Results</h2>
+                  <button id="export" class="text-button" hidden>
+                    Save response ↓
+                  </button>
+                </div>
+                <div id="artifacts">
+                  <p class="muted">Results will appear here.</p>
+                </div>
+              </section>
+              <section>
+                <div class="section-title">
+                  <h2>Activity</h2>
+                  <span id="stream-state" class="live">Connecting</span>
+                </div>
+                <ol id="activity"></ol>
+              </section>
+              <p class="meta-foot">Powered by OpenWorker</p>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
