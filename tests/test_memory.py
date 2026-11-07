@@ -390,6 +390,94 @@ def test_memory_read_returns_bodies_and_missing_ids(tmp_path):
     assert result["missing"] == [999]
 
 
+def test_memory_read_hides_other_workspace_ids(tmp_path):
+    store = _store(tmp_path)
+    other = store.add(
+        "workspace A secret", scope=Scope.WORKSPACE, workspace="/proj/a"
+    )
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace="/proj/b"))
+
+    result = reg.execute("memory_read", {"memory_ids": [other.id, 999]})
+
+    assert result == {"memories": [], "missing": [other.id, 999]}
+
+
+def test_memory_update_cannot_change_other_workspace(tmp_path):
+    store = _store(tmp_path)
+    other = store.add(
+        "workspace A fact", scope=Scope.WORKSPACE, workspace="/proj/a"
+    )
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace="/proj/b"))
+
+    result = reg.execute(
+        "memory_update", {"memory_id": other.id, "content": "changed by B"}
+    )
+
+    assert result == {"updated": False, "error": f"no memory with id {other.id}"}
+    assert store.get(other.id).content == "workspace A fact"
+
+
+def test_memory_forget_cannot_delete_other_workspace(tmp_path):
+    store = _store(tmp_path)
+    other = store.add(
+        "workspace A fact", scope=Scope.WORKSPACE, workspace="/proj/a"
+    )
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace="/proj/b"))
+
+    result = reg.execute("memory_forget", {"memory_id": other.id})
+
+    assert result == {"deleted": False, "error": f"no memory with id {other.id}"}
+    assert store.get(other.id).content == "workspace A fact"
+
+
+def test_memory_tools_keep_global_memories_accessible(tmp_path):
+    store = _store(tmp_path)
+    global_item = store.add("global fact", scope=Scope.GLOBAL)
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace="/proj"))
+
+    assert reg.execute("memory_read", {"memory_ids": [global_item.id]})[
+        "memories"
+    ] == [{"id": global_item.id, "scope": "global", "content": "global fact"}]
+    assert reg.execute(
+        "memory_update", {"memory_id": global_item.id, "content": "updated global"}
+    ) == {"updated": True, "id": global_item.id}
+    assert reg.execute("memory_forget", {"memory_id": global_item.id}) == {
+        "deleted": True,
+        "id": global_item.id,
+    }
+
+
+def test_memory_tools_without_workspace_only_access_global_memories(tmp_path):
+    store = _store(tmp_path)
+    workspace_item = store.add(
+        "workspace fact", scope=Scope.WORKSPACE, workspace="/proj"
+    )
+    global_item = store.add("global fact", scope=Scope.GLOBAL)
+    reg = ToolRegistry()
+    reg.register_all(memory_tools(store, workspace=None))
+
+    result = reg.execute(
+        "memory_read", {"memory_ids": [workspace_item.id, global_item.id]}
+    )
+
+    assert result == {
+        "memories": [
+            {"id": global_item.id, "scope": "global", "content": "global fact"}
+        ],
+        "missing": [workspace_item.id],
+    }
+    assert reg.execute(
+        "memory_update", {"memory_id": workspace_item.id, "content": "blocked"}
+    )["updated"] is False
+    assert reg.execute("memory_forget", {"memory_id": workspace_item.id})[
+        "deleted"
+    ] is False
+
+
 # -- sessions -------------------------------------------------------------------
 
 
