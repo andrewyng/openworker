@@ -3125,7 +3125,19 @@ export interface FailedInARow {
 // machine's with each joined machine's (through the controller's proxy), and every
 // automation call goes to the machine its task came from, as sessions do.
 const automationMachines = new Map<string, string>();
-const automationBase = (id: string): string => engineBase(automationMachines.get(id) ?? null);
+// The map is filled by getAutomations(); a call made before the list ever loaded (a reload
+// straight into a remote automation's page) would route to the local engine and 404. So
+// an unknown id loads the list once first (OPE-261).
+async function automationBase(id: string): Promise<string> {
+  if (!automationMachines.has(id)) {
+    try {
+      await getAutomations();
+    } catch {
+      /* offline: fall through to the local engine, as before */
+    }
+  }
+  return engineBase(automationMachines.get(id) ?? null);
+}
 export function machineOfAutomation(id: string): string | null {
   return automationMachines.get(id) ?? null;
 }
@@ -3200,7 +3212,7 @@ export function connectEvents(
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${automationBase(id)}/v1/automations/${id}/seen`, { method: "POST" });
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${id}/seen`, { method: "POST" });
   return res.json();
 }
 
@@ -3223,7 +3235,7 @@ export async function createAutomation(payload: {
 }
 
 export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
-  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`);
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`);
   const body = await res.json();
   // A remote automation's run sessions live on its machine: route them there.
   const mid = automationMachines.get(id) ?? null;
@@ -3233,7 +3245,7 @@ export async function getAutomation(id: string): Promise<{ task: Automation; run
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
-  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
@@ -3242,7 +3254,7 @@ export async function updateAutomation(id: string, changes: Record<string, any>)
 }
 
 export async function deleteAutomation(id: string) {
-  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
   return res.json();
 }
 
@@ -3258,7 +3270,7 @@ export interface PreparedRun {
 
 /** Prepare a live manual run: returns the session to open + the opening prompt to send. */
 export async function runAutomation(id: string): Promise<PreparedRun> {
-  const res = await fetch(`${automationBase(id)}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
   const body = await res.json();
   if (body?.session_id) registerSessionMachine(body.session_id, automationMachines.get(id) ?? null);
   return body;
@@ -3267,7 +3279,7 @@ export async function runAutomation(id: string): Promise<PreparedRun> {
 /** Mark a manual run complete after its first turn finished. */
 export async function finalizeAutomationRun(id: string, runId: string) {
   const res = await fetch(
-    `${automationBase(id)}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
+    `${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
     { method: "POST" },
   );
   return res.json();

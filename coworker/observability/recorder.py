@@ -39,6 +39,29 @@ SCHEMA_VERSION = 1  # turn.schema_version: the record layout of format 1.x (§4,
 
 # The canonical order (recording-format.md section 4): the kind order used after start time
 # and the zero-length-first rule.
+class _StepMap(dict):
+    """The recorder's steps, stamped with a creation ordinal on insert: the tiebreak for
+    steps that started in the same millisecond (the canonical order's last word)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ordinals: dict[str, int] = {}
+        self._next = 0
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key not in self._ordinals:
+            self._next += 1
+            self._ordinals[key] = self._next
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: str) -> None:
+        super().__delitem__(key)
+        self._ordinals.pop(key, None)
+
+    def ordinal(self, step_id: str) -> int:
+        return self._ordinals.get(step_id, 0)
+
+
 KIND_ORDER = {
     "context": 0,
     "summary": 1,
@@ -224,7 +247,13 @@ class Recorder:
     def __init__(self, store: Optional["RecordingStore"] = None):
         self.store = store
         self.turns: dict[str, Turn] = {}
-        self.steps: dict[str, Step] = {}
+        self.steps: dict[str, Step] = _StepMap()
+        # Work to run after the lock is released (the Issues checks at a turn's end): the
+        # recorder's one lock is on every engine's hot path, so nothing slow runs under it.
+        self._after_fold: list[Callable[[], None]] = []
+        # Model steps that follow a same-millisecond tool step of their turn (see _key);
+        # recomputed before every sort.
+        self._late_models: set[str] = set()
         self._lock = threading.RLock()
         self._turn_count: dict[str, int] = {}  # session_id -> turns seen, for `seq`
         self._listeners: list[Callable[[dict[str, Any]], None]] = []
@@ -262,13 +291,20 @@ class Recorder:
     # -- the event sink (recording-format.md section 2.3) ----------------------------------
     def emit(self, ev: dict[str, Any]) -> None:
         """Fold one recording event. Never raises: recording must not break a turn."""
+        after: list[Callable[[], None]] = []
         try:
             with self._lock:
                 self._fold(ev)
                 listeners = list(self._listeners)
+                after, self._after_fold = self._after_fold, []
         except Exception:
             log.exception("recorder: could not fold %s", ev.get("type"))
             return
+        for fn in after:
+            try:
+                fn()
+            except Exception:
+                log.exception("recorder: deferred work failed")
         for fn in listeners:
             try:
                 fn(ev)
@@ -330,24 +366,28 @@ class Recorder:
                 s.duration_ms = max(0, turn.ended_at - s.started_at)
                 s.status, s.closed_by_turn = "interrupted", True
                 fill_unended(s.kind, s.attrs)
-        self._assign_seq()
+        # Only this turn is re-sequenced (seq restarts per turn, so other turns are
+        # untouched) — not every step in memory (OPE-261).
+        mine = self._assign_seq(turn.turn_id)
         self._write_turn(turn)
-        for s in self.steps.values():
-            if s.turn_id == turn.turn_id:
-                self._write_step(s)
-        self._check_turn(turn)
+        for s in mine:
+            self._write_step(s)
+        # The Issues checks run AFTER the lock is released: snapshot the records now.
+        turn_rec, step_recs = turn.record(), [s.record() for s in mine]
+        self._after_fold.append(lambda: self._check_turn(turn.turn_id, turn_rec, step_recs))
         self._forget_old_turns(ev["mono_ms"])
 
-    def _check_turn(self, turn: "Turn") -> None:
+    def _check_turn(self, turn_id: str, turn_rec: dict[str, Any],
+                    step_recs: list[dict[str, Any]]) -> None:
         """The Issues checks over the turn just ended (OB-3), stored with it as not yet seen.
-        A check never breaks the recording."""
+        Runs outside the recorder's lock on record snapshots. A check never breaks the
+        recording."""
         if self.store is None:
             return
         try:
             from . import signals
 
-            steps = [s.record() for s in self.steps.values() if s.turn_id == turn.turn_id]
-            self.store.write_issues(turn.turn_id, signals.check_turn(turn.record(), steps))
+            self.store.write_issues(turn_id, signals.check_turn(turn_rec, step_recs))
         except Exception:  # noqa: BLE001
             log.exception("recording: the Issues checks failed for a turn")
 
@@ -424,10 +464,8 @@ class Recorder:
         turn = self.turns.get(s.turn_id) if s.turn_id else None
         if turn is not None and turn.mono_end is not None:
             # A step of a turn that already ended (an after-turn call): place it in order now.
-            self._assign_seq()
-            for x in self.steps.values():
-                if x.turn_id == turn.turn_id:
-                    self._write_step(x)
+            for x in self._assign_seq(turn.turn_id):
+                self._write_step(x)
             if self.store is not None:
                 # A late step (the title call after the answer) counts in its turn (S3-03).
                 self.store.refresh_usage(turn.turn_id)
@@ -444,8 +482,21 @@ class Recorder:
         return (
             s.started_at,
             0 if s.duration_ms == 0 else 1,  # a zero-length step first
-            KIND_ORDER.get(s.kind, 9),
+            # Frozen format-1.0 kind order, with ONE causal correction (OPE-261): a model
+            # call created after a tool call in the same millisecond of its turn sorts
+            # with the tools, by creation order — a fast tool and the model call that
+            # followed it must never swap. Nothing else the corpus pins moves.
+            KIND_ORDER["tool"] if s.step_id in self._late_models else KIND_ORDER.get(s.kind, 9),
+            # Only the late model carries its creation ordinal: it lands after the tools
+            # of that millisecond, while tools keep ordering among themselves by call
+            # position (frozen), never by thread timing.
+            self.steps.ordinal(s.step_id) if s.step_id in self._late_models else 0,
             s.call_index or 0,
+            # Tool steps in the same millisecond at the same call position (consecutive
+            # single calls): creation order, never the name — otherwise `nope_tool` sorts
+            # ahead of the `read_file` that ran before it (a 50% flake in the Issues
+            # checks, OPE-261). Other kinds keep the frozen name order.
+            self.steps.ordinal(s.step_id) if s.kind == "tool" else 0,
             s.name,
             # Ties the key above leaves (two helpers starting at once, a live and a shadow
             # check of one call): the parent's call position, then call id, then shadow.
@@ -454,9 +505,31 @@ class Recorder:
             s.shadow,
         )
 
-    def _assign_seq(self) -> list[Step]:
+    def _mark_late_models(self) -> None:
+        first_tool: dict[tuple[Optional[str], int], int] = {}
+        for s in self.steps.values():
+            if s.kind == "tool":
+                k = (s.turn_id, s.started_at)
+                o = self.steps.ordinal(s.step_id)
+                if k not in first_tool or o < first_tool[k]:
+                    first_tool[k] = o
+        self._late_models = {
+            s.step_id for s in self.steps.values()
+            if s.kind == "model"
+            and first_tool.get((s.turn_id, s.started_at), 10**12) < self.steps.ordinal(s.step_id)
+        }
+
+    def _assign_seq(self, turn_id: Optional[str] = None) -> list[Step]:
         """Turns by (started_at, turn_id), each turn's steps in canonical order; then steps
-        with no known turn (proxy calls) by the same key. `seq` restarts at 1 in every turn."""
+        with no known turn (proxy calls) by the same key. `seq` restarts at 1 in every turn.
+        With `turn_id`, only that turn is re-sequenced (its steps, in order) — the per-turn
+        restart makes the other turns independent, so a turn's end never re-sorts them all."""
+        self._mark_late_models()
+        if turn_id is not None and turn_id in self.turns:
+            mine = sorted((s for s in self.steps.values() if s.turn_id == turn_id), key=self._key)
+            for i, s in enumerate(mine, 1):
+                s.seq = i
+            return mine
         by_turn: dict[Optional[str], list[Step]] = {}
         for s in self.steps.values():
             by_turn.setdefault(s.turn_id if s.turn_id in self.turns else None, []).append(s)
