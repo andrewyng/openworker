@@ -7266,18 +7266,36 @@ class SessionManager:
         with self._live_steps_lock:
             batch = self._live_steps.setdefault(session_id, [])
             batch.append(event)
-            first = len(batch) == 1
-        if first:
+            # Bounded: with no reader draining it, the batch can't grow without end.
+            if len(batch) > self.LIVE_STEP_BATCH_MAX:
+                del batch[: len(batch) - self.LIVE_STEP_BATCH_MAX]
+            # One flush in flight per session, tracked explicitly — not "the batch just
+            # went from empty to one" — so a scheduling failure is retried by the next
+            # event instead of stalling the session for good (OPE-261).
+            pending = getattr(self, "_live_flush_pending", None)
+            if pending is None:
+                pending = self._live_flush_pending = set()
+            schedule = session_id not in pending
+            if schedule:
+                pending.add(session_id)
+        if schedule:
             try:
                 loop.call_soon_threadsafe(
                     loop.call_later, self.LIVE_STEP_BATCH_S, self._send_live_steps, session_id
                 )
             except RuntimeError:
-                pass  # the loop is closed: the server is stopping
+                # The loop is closed or stale: let the next event try again (on a live loop).
+                with self._live_steps_lock:
+                    self._live_flush_pending.discard(session_id)
+
+    LIVE_STEP_BATCH_MAX = 500
 
     def _send_live_steps(self, session_id: str) -> None:
         with self._live_steps_lock:
             events = self._live_steps.pop(session_id, [])
+            pending = getattr(self, "_live_flush_pending", None)
+            if pending is not None:
+                pending.discard(session_id)
         if events and self.has_session_clients(session_id):
             asyncio.ensure_future(self.broadcast_session(session_id, {"type": "step", "events": events}))
 

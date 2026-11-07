@@ -48,8 +48,11 @@ def build_explorer_engine(
     model: str,
     model_settings: Optional[dict[str, Any]] = None,
     max_iterations: int = _CHILD_MAX_ITERATIONS,
+    audit_sink: Optional[Any] = None,
 ) -> TurnEngine:
-    """A child engine with the Code agent's read-only tools and a fresh context."""
+    """A child engine with the Code agent's read-only tools and a fresh context.
+    `audit_sink`: the parent's, so the child's reads land in the session's audit log
+    (the caller stamps `audit_context` with the child's identity)."""
     ws = str(Path(workspace).resolve())
     registry = ToolRegistry()
     # Read-only slice of the Code agent's toolset, with the same toolkit replacements
@@ -75,6 +78,7 @@ def build_explorer_engine(
         instructions=EXPLORER_INSTRUCTIONS,
         max_iterations=max_iterations,
         model_settings=model_settings,
+        audit_sink=audit_sink,
     )
 
 

@@ -235,6 +235,63 @@ async def test_registry_persists_runs_and_rehydrates_without_id_collisions(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_child_tool_calls_are_audited_under_the_parent_with_the_task_id(tmp_path):
+    """OPE-262: a child's reads land in the SESSION's audit log, stamped with its task id."""
+    from coworker.audit import AuditStore
+
+    store = AuditStore(tmp_path / "audit.db")
+    provider = DualRoleProvider({"task": "map the repo", "label": "audited run"})
+    engine, registry = _parent(tmp_path, provider)
+    engine.audit_sink = store.append
+    engine.audit_context = {"session_id": "sess-audit", "agent": "security", "workspace": str(tmp_path)}
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+
+    [e async for e in engine.run("go")]
+    assert await _wait_for(lambda: registry.snapshot() and registry.snapshot()[0]["status"] == "done")
+
+    rows = store.list(session_id="sess-audit", limit=200)
+    child_rows = [r for r in rows if r.get("subagent")]
+    assert child_rows, "the child's calls must reach the parent session's audit log"
+    assert {r["subagent"] for r in child_rows} == {registry.snapshot()[0]["id"]}
+    assert all(r["session_id"] == "sess-audit" for r in child_rows)
+    # The parent's own spawn_agent row stays unstamped: it is the parent acting.
+    assert any(r["tool"] == "spawn_agent" and not r.get("subagent") for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_child_transcript_is_persisted_pruned_and_purged(tmp_path):
+    """OPE-262: the child's full message log lives beside the run record, on demand."""
+    from coworker.tools.agent_tasks import AgentTaskStore, _KEEP_FINISHED
+
+    store = AgentTaskStore(tmp_path / "agent_tasks.json")
+    provider = DualRoleProvider({"task": "map the repo", "label": "kept run"})
+    engine, registry = _parent(tmp_path, provider)
+    registry.attach_store(store, "sess-t")
+    [e async for e in engine.run("go")]
+    assert await _wait_for(lambda: registry.snapshot() and registry.snapshot()[0]["status"] == "done")
+    task_id = registry.snapshot()[0]["id"]
+
+    transcript = store.read_transcript("sess-t", task_id)
+    assert transcript, "the finished child's transcript must be on disk"
+    assert transcript[0]["role"] == "system"  # the explorer's own instructions
+    assert any(m.get("role") == "assistant" and "all clear" in str(m.get("content")) for m in transcript)
+    assert store.read_transcript("sess-t", "agent-999") is None
+
+    # Retention: a run pruned past the finished cap loses its transcript file too.
+    rows = store.load("sess-t")
+    newer = time.time() + 60  # all NEWER than the real run, so the real run is what gets pruned
+    for i in range(_KEEP_FINISHED + 1):
+        rows.append({"id": f"agent-{100 + i}", "status": "done", "created": newer + i, "finished": newer + i})
+    store.put("sess-t", rows)
+    assert store.read_transcript("sess-t", task_id) is None
+
+    # Deleting the session purges whatever is left.
+    store.write_transcript("sess-t", "agent-150", [{"role": "user", "content": "x"}])
+    store.drop("sess-t")
+    assert store.read_transcript("sess-t", "agent-150") is None
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_a_running_child(tmp_path):
     class SlowChildProvider(DualRoleProvider):
         def complete(self, *, model, messages, tools=None, **settings):
