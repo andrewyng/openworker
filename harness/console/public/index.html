@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenWorker · Console</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="login" class="login">
+      <form id="login-form">
+        <div class="brand-mark">ow</div>
+        <p class="eyebrow">OPENWORKER</p>
+        <h1>Your agents.<br />One clear view.</h1>
+        <p class="muted">
+          Sign in to inspect sessions, decisions and the work they leave behind.
+        </p>
+        <label for="key">Console access key</label
+        ><input
+          id="key"
+          type="password"
+          autocomplete="current-password"
+          required
+          placeholder="Paste your local access key"
+        /><button class="primary" type="submit">
+          Open console <span>→</span>
+        </button>
+        <p id="login-error" role="alert"></p>
+        <p class="fine">
+          Your deployment’s key is in <code>private/console-key</code>.<br />The
+          browser never receives the harness API credential.
+        </p>
+      </form>
+      <div class="login-art" aria-hidden="true">
+        <div class="orbit o1"></div>
+        <div class="orbit o2"></div>
+        <div class="orbit o3"></div>
+        <div class="art-label">
+          <span class="dot"></span> Clarity at every step.
+        </div>
+      </div>
+    </div>
+    <div id="app" class="shell" hidden>
+      <aside class="sidebar">
+        <a href="#" class="wordmark"
+          ><span class="brand-mark small">ow</span> OpenWorker</a
+        >
+        <p class="nav-label">WORKSPACE</p>
+        <button class="nav active" id="sessions-nav">
+          <span>▤</span> Sessions
+          <span class="nav-count" id="nav-count">—</span></button
+        ><a class="nav" id="dashboards" hidden target="_blank" rel="noreferrer"
+          ><span>▥</span> Dashboards <span class="arrow">↗</span></a
+        >
+        <div class="sidebar-bottom">
+          <div class="read-label">
+            <span class="dot"></span> Observer access
+          </div>
+          <p>Inspect execution.<br />Keep control in your app.</p>
+          <button class="quiet" id="logout">Sign out <span>↗</span></button>
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <div>
+            <span class="muted">Workspace</span><span class="slash">/</span
+            ><span>Sessions</span>
+          </div>
+          <div class="top-actions">
+            <span id="connection" class="connection">Connecting…</span
+            ><button
+              id="refresh"
+              class="icon-button"
+              aria-label="Refresh sessions"
+            >
+              ↻
+            </button>
+          </div>
+        </header>
+        <section class="heading">
+          <div>
+            <p class="eyebrow">OPERATIONS</p>
+            <h1>Session explorer</h1>
+            <p class="muted">
+              Follow the work, from the first instruction to the final artifact.
+            </p>
+          </div>
+          <div class="summary">
+            <div>
+              <strong id="session-count">—</strong><span>In this view</span>
+            </div>
+            <div>
+              <strong id="waiting-count">—</strong><span>Need attention</span>
+            </div>
+          </div>
+        </section>
+        <div id="notice" class="notice" hidden role="status"></div>
+        <div class="workspace">
+          <section class="session-list">
+            <div class="list-head">
+              <h2>Sessions</h2>
+              <input
+                id="search"
+                type="search"
+                placeholder="Filter loaded sessions"
+                aria-label="Filter loaded sessions"
+              />
+            </div>
+            <div id="session-rows"></div>
+            <button id="more" class="load-more" hidden>
+              Load more sessions ↓
+            </button>
+          </section>
+          <section class="detail">
+            <div id="empty" class="empty">
+              <div class="empty-symbol">⌘</div>
+              <h2>A closer look at the work</h2>
+              <p>
+                Select a session to inspect its progress,<br />pending decisions
+                and saved artifacts.
+              </p>
+            </div>
+            <div id="selected" hidden>
+              <div class="detail-title">
+                <div>
+                  <div class="title-line">
+                    <h2 id="session-title"></h2>
+                    <span id="session-status" class="badge"></span>
+                  </div>
+                  <button
+                    id="copy-id"
+                    class="copy-id"
+                    title="Copy session ID"
+                  ></button>
+                </div>
+              </div>
+              <div class="facts">
+                <div><span>Coworker</span><strong id="coworker">—</strong></div>
+                <div><span>Model</span><strong id="model">—</strong></div>
+                <div>
+                  <span>Event cursor</span><strong id="cursor">—</strong>
+                </div>
+              </div>
+              <div class="tabs" role="tablist">
+                <button role="tab" aria-selected="true" data-tab="overview">
+                  Overview</button
+                ><button role="tab" aria-selected="false" data-tab="activity">
+                  Activity <span id="event-count">0</span></button
+                ><button role="tab" aria-selected="false" data-tab="artifacts">
+                  Artifacts <span id="artifact-count">0</span></button
+                ><span id="stream-state" class="stream-state"></span>
+              </div>
+              <div class="tab-content" id="panel-overview" role="tabpanel">
+                <div id="decisions"></div>
+                <div id="recovery"></div>
+                <div class="section-label">
+                  CONVERSATION <span id="mode"></span>
+                </div>
+                <div id="messages"></div>
+                <p id="truncated" class="fine" hidden>
+                  Showing the bounded recent conversation. Older messages are
+                  not included in this view.
+                </p>
+              </div>
+              <div
+                class="tab-content"
+                id="panel-activity"
+                role="tabpanel"
+                hidden
+              >
+                <div class="section-label">
+                  EXECUTION RECORD <span>Latest 80 events</span>
+                </div>
+                <div id="events"></div>
+              </div>
+              <div
+                class="tab-content"
+                id="panel-artifacts"
+                role="tabpanel"
+                hidden
+              >
+                <div class="section-label">
+                  SAVED OUTPUTS <span id="artifact-note"></span>
+                </div>
+                <div id="artifacts"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+        <footer>
+          OpenWorker Harness<span
+            >Session state is durable. Telemetry is best-effort.</span
+          >
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

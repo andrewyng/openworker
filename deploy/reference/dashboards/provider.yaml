@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: OpenWorker
+    folder: OpenWorker
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/openworker

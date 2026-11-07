@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>OpenWorker · Management</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <section id="login" class="login">
+      <div class="login-card">
+        <h1>OpenWorker</h1>
+        <p>Sign in to your service.</p>
+        <form id="login-form">
+          <label for="token">Service token</label
+          ><input
+            id="token"
+            type="password"
+            autocomplete="off"
+            required
+          /><button class="button primary" type="submit">Sign in</button>
+          <p id="login-error" role="alert"></p>
+        </form>
+      </div>
+    </section>
+    <div class="app-shell" id="app" hidden>
+      <aside class="sidebar" id="sidebar">
+        <a class="brand" href="#overview"
+          ><svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              transform="rotate(90 12 12)"
+              d="M12 1.8 13.35 9.66 20.83 6.9 14.7 12l6.13 5.1-7.48-2.76L12 22.2l-1.35-7.86-7.48 2.76L9.3 12 3.17 6.9l7.48 2.76L12 1.8Z"
+            /></svg
+          ><span>OpenWorker</span></a
+        ><button class="workspace" id="workspace">
+          <span class="workspace-icon">D</span
+          ><span
+            ><span id="workspace-name">Service</span
+            ><small>Workspace</small></span
+          ><span class="chevrons">⌃<br />⌄</span>
+        </button>
+        <nav id="nav" aria-label="Main navigation"></nav>
+        <div class="sidebar-bottom">
+          <a href="#settings" class="nav-link" id="settings-link"></a>
+          <div class="preview-note">
+            <span></span><span id="connection-label">Connected</span>
+          </div>
+        </div>
+      </aside>
+      <div class="surface">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button
+              class="icon-button mobile-menu"
+              id="menu-toggle"
+              aria-label="Toggle navigation"
+            ></button
+            ><span class="breadcrumb"
+              >Workspace <span>/</span>
+              <strong id="crumb">Overview</strong></span
+            >
+          </div>
+          <div class="topbar-right">
+            <button
+              class="search-trigger"
+              id="search-trigger"
+              aria-label="Search sessions and agents"
+            >
+              <span id="search-icon"></span><span>Search</span
+              ><kbd>⌘ K</kbd></button
+            ><span class="top-divider"></span
+            ><button
+              class="avatar"
+              id="profile-button"
+              aria-label="Workspace access"
+            >
+              OW
+            </button>
+          </div>
+        </header>
+        <main id="main" tabindex="-1"></main>
+        <footer class="page-footer">
+          <span>OpenWorker Service</span
+          ><span><span id="principal-label"></span></span>
+        </footer>
+      </div>
+    </div>
+    <dialog id="panel" class="drawer"><div id="panel-content"></div></dialog>
+    <dialog id="modal" class="modal"><div id="modal-content"></div></dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

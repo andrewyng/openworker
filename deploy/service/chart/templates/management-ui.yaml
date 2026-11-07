@@ -1,0 +1,56 @@
+{{- if .Values.managementUI.enabled }}
+{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" .Values.managementUI.image) }}{{ fail "managementUI.image must use a digest" }}{{ end }}
+{{- if not (hasPrefix "https://" .Values.managementUI.publicOrigin) }}{{ fail "managementUI.publicOrigin must be HTTPS" }}{{ end }}
+{{- if not (hasPrefix "https://" .Values.managementUI.serviceUrl) }}{{ fail "managementUI.serviceUrl must be HTTPS" }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: {{ .Release.Name }}-ui}
+data:
+  ui.json: |
+    {{- dict "host" "0.0.0.0" "port" 8080 "publicOrigin" .Values.managementUI.publicOrigin "serviceUrl" .Values.managementUI.serviceUrl "serviceId" .Values.config.service.id "namespace" .Values.config.service.namespace "sessionSeconds" 1800 | toPrettyJson | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: {{ .Release.Name }}-ui}
+spec:
+  # Browser tokens live only in this process. A restart requires sign-in again.
+  replicas: 1
+  strategy: {type: Recreate}
+  revisionHistoryLimit: 2
+  selector: {matchLabels: {app: {{ .Release.Name }}-ui}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}-ui}
+      annotations:
+        checksum/config: {{ .Values.managementUI | toJson | sha256sum | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
+      containers:
+        - name: ui
+          image: {{ .Values.managementUI.image | quote }}
+          ports: [{name: http, containerPort: 8080}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 500m, memory: 256Mi}}
+          readinessProbe: {tcpSocket: {port: http}}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            {{- if .Values.managementUI.caSecret }}
+            - {name: ca, mountPath: /trust, readOnly: true}
+          env: [{name: NODE_EXTRA_CA_CERTS, value: /trust/ca.crt}]
+            {{- end }}
+      volumes:
+        - name: config
+          configMap: {name: {{ .Release.Name }}-ui}
+        {{- if .Values.managementUI.caSecret }}
+        - name: ca
+          secret: {secretName: {{ .Values.managementUI.caSecret }}, items: [{key: ca.crt, path: ca.crt}]}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ .Release.Name }}-ui}
+spec:
+  selector: {app: {{ .Release.Name }}-ui}
+  ports: [{name: http, port: 80, targetPort: http}]
+{{- end }}

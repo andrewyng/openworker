@@ -1,0 +1,33 @@
+{
+  "id": "pip-garden",
+  "version": "2.1.0",
+  "title": "Pip's Adventure",
+  "description": "Mend a bridge. Follow a woodland trail. Bring a little light back to the world.",
+  "engine": "three",
+  "entrypoint": "index.html",
+  "license": "MIT",
+  "tags": ["Explore", "Animated 3D", "Cozy"],
+  "cover": "assets/adventure-cover.png",
+  "assets": ["pip-robot"],
+  "files": [
+    "index.html",
+    "LICENSE.txt",
+    "src/actor.js",
+    "src/adventure.js",
+    "src/adventure-input.js",
+    "src/adventure-world.js",
+    "src/journey.js",
+    "src/progress.js",
+    "styles/adventure.css",
+    "assets/meadow.png",
+    "assets/sky.png",
+    "assets/tree_detailed.glb",
+    "assets/tree_pineRoundC.glb",
+    "assets/mushroom_redGroup.glb",
+    "assets/flower_purpleA.glb",
+    "assets/kenney-license.txt",
+    "art-credits.json",
+    "assets/adventure-cover.png",
+    "generation.json"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "skybound-carrier",
+  "version": "1.0.0",
+  "title": "Skybound Carrier",
+  "description": "One precious parcel. A thousand meters above the clouds. Run, leap, and slide your way to the lighthouse.",
+  "engine": "three",
+  "entrypoint": "index.html",
+  "cover": "assets/sky.png",
+  "hero": "assets/sky.png",
+  "license": "MIT",
+  "tags": ["Adventure", "3D runner"],
+  "files": [
+    "index.html",
+    "styles.css",
+    "game.js",
+    "rules.js",
+    "config.json",
+    "assets/sky.png",
+    "assets/courier.glb",
+    "assets/collect.wav",
+    "assets/delivery.wav",
+    "assets/wind.wav",
+    "asset-credits.json",
+    "LICENSE.txt"
+  ]
+}

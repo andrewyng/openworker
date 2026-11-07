@@ -1,0 +1,8 @@
+---
+import DesktopPreview from '../../../layouts/DesktopPreview.astro';
+export function getStaticPaths() {
+ return ['apple','notion'].map(design=>({params:{design}}));
+}
+const {design}=Astro.params;
+---
+<DesktopPreview design={design}/>

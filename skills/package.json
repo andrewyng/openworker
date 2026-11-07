@@ -1,0 +1,19 @@
+{
+  "name": "@openworkerai/build-with-sdk-skills",
+  "version": "0.1.0-beta.2",
+  "description": "Install the OpenWorker app-building skill for Codex or Claude Code",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "build-with-sdk-skills": "install.mjs" },
+  "files": ["install.mjs", "openworker-apps", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test install.test.mjs package.test.mjs" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrewyng/openworker.git",
+    "directory": "skills"
+  },
+  "publishConfig": { "access": "public", "tag": "beta" },
+  "private": true,
+  "openworkerSdkVersion": "0.1.0-beta.1"
+}
