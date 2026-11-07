@@ -354,6 +354,11 @@ class TurnEngine:
         # into the tool message's `_display` sidecar, so the quiet provenance chips
         # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
         self._approval_origins: dict[str, dict[str, str]] = {}
+        # Per-call override for the denied-tool-result text, keyed by tool_call id. An
+        # approver that resolves a request itself (a subagent's expired approval wait)
+        # sets this before returning DENY, so the model reads WHY instead of the
+        # generic "denied by user" (OPE-255 ruling: the response must say it expired).
+        self._deny_notes: dict[str, str] = {}
         # OPE-232: set once a shell command has been cleared in the batch being authorized.
         # The batch runs only after every call is cleared, and the shell persists, so a
         # later command's folder is unknown from then on (see `current_shell_cwd`).
@@ -2194,7 +2199,8 @@ class TurnEngine:
             if outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
-                    "interrupted by user" if self._cancel.is_set() else "denied by user",
+                    self._deny_notes.pop(tool_call.id, None)
+                    or ("interrupted by user" if self._cancel.is_set() else "denied by user"),
                 )
                 self._approval_origins[tool_call.id] = {
                     "origin": "user",

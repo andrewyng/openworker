@@ -481,6 +481,14 @@ def create_app(manager: SessionManager) -> FastAPI:
             "attendance": manager.unattended.attendance(session_id),
         }
 
+    @app.get("/v1/sessions/{session_id}/tasks")
+    def get_session_tasks(session_id: str) -> dict[str, Any]:
+        # Async subagents (OPE-257): the Running section's registry view. In-memory,
+        # like the background shells — an evicted/never-built engine has no tasks.
+        engine = manager._engines.get(session_id)
+        reg = getattr(engine, "agent_tasks", None) if engine else None
+        return {"agents": reg.snapshot() if reg is not None else []}
+
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
         # Auto-Approve metering (§1.7): checks/verdicts/tokens from the durable audit rows.
