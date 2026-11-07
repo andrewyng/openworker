@@ -4,7 +4,7 @@ import { mkdir, lstat, realpath, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const source = dirname(fileURLToPath(import.meta.url));
-const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','agents/openai.yaml'];
+const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore','agents/openai.yaml'];
 export async function install({agent, project}) {
  if (!['codex','claude'].includes(agent) || !project) throw Error('Use --agent codex|claude --project /path/to/your-app');
  const pkg = JSON.parse(await readFile(join(source,'package.json'),'utf8'));
@@ -26,7 +26,7 @@ export async function install({agent, project}) {
   await writeFile(join(destination,name), content[index], {flag:'wx'});
  }
  await writeFile(join(destination,'references/installation.json'), JSON.stringify({
-  package:pkg.name, version:pkg.version, sdkPackage:'@openworkerai/harness-sdk', sdkVersion:pkg.version,
+  package:pkg.name, version:pkg.version, sdkPackage:'@openworkerai/harness-sdk', sdkVersion:pkg.openworkerSdkVersion,
  },null,2)+'\n');
  return destination;
 }

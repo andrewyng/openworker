@@ -38,8 +38,9 @@ test('packed installer works outside the checkout without SDK or native dependen
       assert.match(run(['--agent',agent,'--project',project]), /Installed:/);
       const dest = join(project,agent==='codex'?'.agents':'.claude','skills/openworker-apps');
       const metadata = JSON.parse(await readFile(join(dest,'references/installation.json'),'utf8'));
-      assert.equal(metadata.sdkVersion,pkg.version);
+      assert.equal(metadata.sdkVersion,pkg.openworkerSdkVersion);
       assert.equal(metadata.sdkPackage,'@openworkerai/harness-sdk');
+      assert.equal(metadata.version,pkg.version);
       for (const folder of ['', 'references', 'agents']) {
         for (const file of await readdir(join(dest,folder))) {
           if (!/\.(md|json|yaml)$/.test(file)) continue;

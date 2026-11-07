@@ -25,7 +25,8 @@ The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
 `@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
 skill into a Codex or Claude Code project. The skill package has no runtime or
-SDK dependency. To prepare just that archive without compiling Rust:
+SDK dependency. Its package version can advance independently;
+`openworkerSdkVersion` declares the compatible SDK release. To prepare just that archive without compiling Rust:
 
 ```sh
 node skills/prepare.mjs /absolute/new-skills-candidate

@@ -1,6 +1,6 @@
 {
   "name": "@openworkerai/build-with-sdk-skills",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Install the OpenWorker app-building skill for Codex or Claude Code",
   "type": "module",
   "license": "MIT",
@@ -14,5 +14,6 @@
     "directory": "skills"
   },
   "publishConfig": { "access": "public", "tag": "beta" },
-  "private": true
+  "private": true,
+  "openworkerSdkVersion": "0.1.0-beta.1"
 }

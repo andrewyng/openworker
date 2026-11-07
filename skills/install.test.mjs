@@ -14,7 +14,7 @@ for (const agent of ['codex','claude']) test(`install complete ${agent} skill; p
   const metadata=JSON.parse(await readFile(join(dest,'references/installation.json'),'utf8'));
   const pkg=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8'));
   assert.equal(metadata.sdkPackage,'@openworkerai/harness-sdk');
-  assert.equal(metadata.sdkVersion,pkg.version);
+  assert.equal(metadata.sdkVersion,pkg.openworkerSdkVersion);
   assert.equal(metadata.package,'@openworkerai/build-with-sdk-skills');
   assert.equal(metadata.checkout,undefined);
   await writeFile(join(dest,'SKILL.md'),'local customization');
