@@ -71,6 +71,7 @@ import { fullPersonaName, isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, teamUsage, usageFromMessages } from "./usage";
+import { canonicalModel, canonicalModels, coworkerModels } from "./modelNames";
 import { streamMode } from "./streamGate";
 import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
 import { isTauri, macosMajor, platformOS, startWindowDrag } from "./tauri";
@@ -847,16 +848,19 @@ export function App() {
   // fresh draft binds to the first entry this machine can run. Availability = the
   // machine's own selectable list (its keys, its Ollama); a draft on a remote machine
   // asks that machine's list, like the picker already does.
-  const personaModels = personaOf(agent)?.models ?? [];
+  // Ids are compared in canonical form (`canonicalModel`): a manifest's "openai:gpt-5.5"
+  // is the machine's "gpt-5.5".
+  const personaModels = canonicalModels(personaOf(agent)?.models ?? []);
   const selectableModels = machine ? machineSettings?.models || [] : models;
-  const pickerModels = personaModels.length ? personaModels : selectableModels;
-  const unavailableModels = personaModels.filter((m) => !selectableModels.includes(m));
+  const {
+    picker: pickerModels,
+    unavailable: unavailableModels,
+    bind: personaBind,
+  } = coworkerModels(personaModels, selectableModels, model);
   const selectableKey = selectableModels.join("|");
   useEffect(() => {
-    if (!personaModels.length || items.length > 0 || running) return;
-    if (personaModels.includes(model)) return;
-    const first = personaModels.find((m) => selectableModels.includes(m)) ?? personaModels[0];
-    if (first) changeModel(first);
+    if (items.length > 0 || running) return;
+    if (personaBind) changeModel(personaBind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, personas, items.length, running, selectableKey]);
 
@@ -2493,7 +2497,7 @@ export function App() {
                 (machine ? (machineSettings ? machineSettings.model_ready : true) : modelReady) &&
                 // A coworker bound to a model this machine cannot run shows the honest
                 // "No model" state, whatever the machine default says.
-                !(personaModels.length > 0 && unavailableModels.includes(model))
+                !(personaModels.length > 0 && unavailableModels.includes(canonicalModel(model)))
               }
               onConnectModel={openModelSetup}
               onOpenMemory={() => openSettings("memory")}

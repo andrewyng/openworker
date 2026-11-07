@@ -19,13 +19,37 @@ from .base import ProviderClient
 from .capabilities import capabilities_for
 from .registry import build_provider_client, get_descriptor
 
+# The provider a model id with no `provider:` prefix runs on.
+DEFAULT_PROVIDER = "openai"
+
+
+def canonical_model(model: str) -> str:
+    """The one spelling of a model id that the app compares and stores.
+
+    A prefix naming the default provider says nothing a bare id doesn't: `openai:gpt-5.5`
+    and `gpt-5.5` both run on OpenAI. The machine's model list spells OpenAI models bare,
+    while coworker manifests often write `openai:...`, so the prefix is dropped here.
+    Every other prefix (`anthropic:`, `ollama:` ...) is kept. The GUI applies the same
+    rule (`surfaces/gui/src/modelNames.ts`, `canonicalModel`).
+    """
+    model = (model or "").strip()
+    prefix = DEFAULT_PROVIDER + ":"
+    if model.startswith(prefix) and len(model) > len(prefix):
+        return model[len(prefix):]
+    return model
+
+
+def same_model(a: str, b: str) -> bool:
+    """Do two model ids name the same model (see `canonical_model`)?"""
+    return canonical_model(a) == canonical_model(b)
+
 
 class ProviderRouter(ProviderClient):
     def __init__(
         self,
         secrets: Any = None,
         *,
-        default_provider: str = "openai",
+        default_provider: str = DEFAULT_PROVIDER,
         on_use: Any = None,
     ) -> None:
         self._secrets = secrets
