@@ -166,6 +166,75 @@ async def test_expired_approval_is_declined_and_says_so(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_delivery_fires_through_the_server_hooks(tmp_path):
+    """The production path the first live run broke: registry.loop SET (the manager
+    wires it) and a deliver hook — the notice must land and the hook must fire."""
+    provider = DualRoleProvider({"task": "map the repo", "label": "hooked run"})
+    engine, registry = _parent(tmp_path, provider)
+    registry.loop = asyncio.get_running_loop()
+    delivered: list[tuple[str, dict]] = []
+    registry.deliver = lambda text, source: delivered.append((text, source))
+
+    [e async for e in engine.run("go")]
+    assert await _wait_for(lambda: bool(delivered))
+    text, source = delivered[0]
+    assert "child report: all clear" in text and source["title"] == "hooked run"
+    # The usage notice went through the loop (scheduled, so give it a beat).
+    assert await _wait_for(
+        lambda: any(m.get("role") == "notice" and m.get("kind") == "agent_task" for m in engine.messages)
+    )
+
+
+def test_store_marks_live_runs_lost_truncates_and_caps(tmp_path):
+    from coworker.tools.agent_tasks import AgentTaskStore, _KEEP_FINISHED
+
+    path = tmp_path / "agent_tasks.json"
+    store = AgentTaskStore(path)
+    rows = [
+        {"id": "agent-1", "label": "live one", "status": "running", "created": 1},
+        {"id": "agent-2", "label": "big report", "status": "done", "created": 2, "finished": 99_999, "report": "x" * 20_000},
+    ] + [
+        {"id": f"agent-{i}", "status": "done", "created": i, "finished": i}
+        for i in range(3, 3 + _KEEP_FINISHED + 10)
+    ]
+    store.put("s1", rows)
+
+    # A fresh store (the restart) reads the same file: the live run is honestly lost,
+    # the oversized report is truncated, and the finished list is capped at N.
+    reopened = AgentTaskStore(path)
+    out = reopened.load("s1")
+    lost = next(r for r in out if r["id"] == "agent-1")
+    assert lost["status"] == "error" and "restart" in lost["note"]
+    big = next(r for r in out if r["id"] == "agent-2")
+    assert len(big["report"]) < 9_000 and "truncated" in big["report"]
+    assert sum(1 for r in out if r["status"] == "done") <= _KEEP_FINISHED
+
+    reopened.drop("s1")
+    assert AgentTaskStore(path).load("s1") == []
+
+
+@pytest.mark.asyncio
+async def test_registry_persists_runs_and_rehydrates_without_id_collisions(tmp_path):
+    from coworker.tools.agent_tasks import AgentTaskStore
+
+    store = AgentTaskStore(tmp_path / "agent_tasks.json")
+    provider = DualRoleProvider({"task": "map the repo", "label": "first run"})
+    engine, registry = _parent(tmp_path, provider)
+    registry.attach_store(store, "sess-1")
+    [e async for e in engine.run("go")]
+    assert await _wait_for(lambda: store.load("sess-1") and store.load("sess-1")[0]["status"] == "done")
+
+    # A new registry (the rebuilt engine) rehydrates the history and keeps counting
+    # ABOVE it, so a fresh spawn never reuses agent-1.
+    _, registry2 = _parent(tmp_path, provider)
+    registry2.attach_store(store, "sess-1")
+    snap = registry2.snapshot()
+    assert snap and snap[0]["label"] == "first run" and snap[0]["status"] == "done"
+    t = registry2.new_task("second", "t", "read_only", None)
+    assert t.id != snap[0]["id"]
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_a_running_child(tmp_path):
     class SlowChildProvider(DualRoleProvider):
         def complete(self, *, model, messages, tools=None, **settings):

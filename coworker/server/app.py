@@ -483,11 +483,16 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.get("/v1/sessions/{session_id}/tasks")
     def get_session_tasks(session_id: str) -> dict[str, Any]:
-        # Async subagents (OPE-257): the Running section's registry view. In-memory,
-        # like the background shells — an evicted/never-built engine has no tasks.
+        # Async subagents (OPE-257): the Subagents section's registry view. A live
+        # engine answers from its registry; otherwise the supplemental record answers,
+        # so history shows before the session's first turn after a restart.
         engine = manager._engines.get(session_id)
         reg = getattr(engine, "agent_tasks", None) if engine else None
-        return {"agents": reg.snapshot() if reg is not None else []}
+        if reg is not None:
+            return {"agents": reg.snapshot()}
+        rows = manager.agent_task_store.load(session_id)
+        rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
+        return {"agents": [{k: v for k, v in r.items() if k != "report"} for r in rows]}
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:

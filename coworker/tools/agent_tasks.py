@@ -33,6 +33,8 @@ folds into the session's totals (OPE-258).
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -47,9 +49,77 @@ from .subagent import build_explorer_engine
 _MAX_ACTIVE = 3
 _CHILD_MAX_ITERATIONS = 25
 _MIN_APPROVAL_TIMEOUT = 60.0
-# How many distinct glyphs the GUI's icon set will hold (OPE-259): the seed is stable
-# per task so the follow-up icon PR needs no migration.
-_ICON_SEEDS = 16
+# Supplemental record (owner ruling 2026-11-07): last N finished runs per session,
+# reports truncated — the full text already reached the parent transcript at delivery.
+_KEEP_FINISHED = 50
+_REPORT_STORE_MAX = 8192
+
+
+class AgentTaskStore:
+    """`agent_tasks.json` — the supplemental session record for subagent runs, beside
+    the wake store. Written on every task transition (a subagent finishes BETWEEN turn
+    checkpoints, so riding the session record would leave it undurable until the next
+    save). One file, keyed by session id; atomic tmp-and-replace like WakeStore."""
+
+    def __init__(self, path: Optional[str | Path] = None) -> None:
+        self.path = Path(path) if path else None
+        self._lock = threading.Lock()
+        self._sessions: dict[str, list[dict[str, Any]]] = {}
+        if self.path and self.path.is_file():
+            try:
+                saved = json.loads(self.path.read_text(encoding="utf-8"))
+                self._sessions = {
+                    str(k): [dict(r) for r in v]
+                    for k, v in (saved.get("sessions") or {}).items()
+                }
+            except Exception:
+                self._sessions = {}
+
+    def _save(self) -> None:  # caller holds the lock
+        if not self.path:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps({"sessions": self._sessions}, indent=2), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def load(self, session_id: str) -> list[dict[str, Any]]:
+        """This session's persisted runs. A run persisted as live is honestly lost —
+        its engine died with the app — and is flipped to an error, not a phantom."""
+        with self._lock:
+            rows = [dict(r) for r in self._sessions.get(session_id, [])]
+        changed = False
+        for r in rows:
+            if r.get("status") in ("running", "waiting"):
+                r["status"] = "error"
+                r["note"] = "lost when the app restarted"
+                r.setdefault("finished", time.time())
+                changed = True
+        if changed:
+            self.put(session_id, rows)
+        return rows
+
+    def put(self, session_id: str, rows: list[dict[str, Any]]) -> None:
+        live = [r for r in rows if r.get("status") in ("running", "waiting")]
+        done = [r for r in rows if r.get("status") not in ("running", "waiting")]
+        done.sort(key=lambda r: r.get("finished") or r.get("created") or 0, reverse=True)
+        keep = live + done[:_KEEP_FINISHED]
+        for r in keep:
+            rep = r.get("report") or ""
+            if len(rep) > _REPORT_STORE_MAX:
+                r["report"] = (
+                    rep[:_REPORT_STORE_MAX]
+                    + "\n… (truncated in the store — the full report was delivered in the session)"
+                )
+        with self._lock:
+            self._sessions[session_id] = keep
+            self._save()
+
+    def drop(self, session_id: str) -> None:
+        with self._lock:
+            if session_id in self._sessions:
+                del self._sessions[session_id]
+                self._save()
 
 INHERIT_INSTRUCTIONS = """You are a background subagent of the main coworker, working inside the same \
 workspace with the same tools and the same permissions. The user sees your approval requests in the \
@@ -110,9 +180,53 @@ class AgentTaskRegistry:
         self.on_event: Optional[Callable[[dict[str, Any]], None]] = None
         # Resolves a parked Inbox card whose wait expired (prefixed tool_call_id).
         self.resolve_expired: Optional[Callable[[str], None]] = None
+        # The supplemental record (AgentTaskStore), manager-attached.
+        self.store: Optional[AgentTaskStore] = None
+        self.session_id: str = ""
 
     def bind(self, parent: TurnEngine) -> None:
         self.parent = parent
+
+    def attach_store(self, store: AgentTaskStore, session_id: str) -> None:
+        """Rehydrate this session's history (done rows only — a live run's engine
+        never survives a restart, and load() already marked those lost)."""
+        if self.store is store and self.session_id == session_id:
+            return
+        self.store, self.session_id = store, session_id
+        with self._lock:
+            known = set(self._tasks)
+            for row in store.load(session_id):
+                tid = str(row.get("id") or "")
+                if not tid or tid in known:
+                    continue
+                self._tasks[tid] = AgentTask(
+                    id=tid,
+                    label=str(row.get("label") or tid),
+                    task=str(row.get("task") or ""),
+                    mode=str(row.get("mode") or "read_only"),
+                    status=str(row.get("status") or "error"),
+                    report=str(row.get("report") or ""),
+                    note=str(row.get("note") or ""),
+                    created=float(row.get("created") or 0),
+                    finished=row.get("finished"),
+                    usage=dict(row.get("usage") or {}),
+                    icon_seed=int(row.get("icon_seed") or 0),
+                )
+                # Fresh ids must never collide with rehydrated ones.
+                try:
+                    self._counter = max(self._counter, int(tid.split("-")[-1]))
+                except ValueError:
+                    pass
+
+    def _persist(self) -> None:
+        if self.store is None or not self.session_id:
+            return
+        with self._lock:
+            rows = [{**t.snapshot(), "report": t.report} for t in self._tasks.values()]
+        try:
+            self.store.put(self.session_id, rows)
+        except Exception:
+            pass  # a persistence hiccup must never take a child run down
 
     def new_task(self, label: str, task: str, mode: str, timeout: Optional[float]) -> AgentTask:
         with self._lock:
@@ -122,7 +236,9 @@ class AgentTaskRegistry:
                 label=label,
                 task=task,
                 mode=mode,
-                icon_seed=self._counter % _ICON_SEEDS,
+                # Raw counter: the GUI derives shape (mod 10) and color family from it,
+                # so the full 10×8 identity space is usable and stable per run.
+                icon_seed=self._counter,
                 approval_timeout=timeout,
             )
             self._tasks[t.id] = t
@@ -143,6 +259,8 @@ class AgentTaskRegistry:
     # -- internals ---------------------------------------------------------------
 
     def _emit(self, kind: str, task: AgentTask) -> None:
+        # Every transition goes through here: persist first, then tell the GUI.
+        self._persist()
         if self.on_event:
             try:
                 self.on_event({"kind": kind, **task.snapshot()})
@@ -210,16 +328,21 @@ class AgentTaskRegistry:
         # turn saves, so usage_totals folds it exactly once (OPE-258).
         parent = self.parent
         if parent is not None:
-            summary = f"Subagent '{label}' {task.status}"
-            if self.loop is not None:
-                self.loop.call_soon_threadsafe(
-                    parent._append_notice, "agent_task", summary,
-                    **{"agent_task": task.id, "agent_usage": dict(task.usage)},
-                )
-            else:
-                parent._append_notice(
-                    "agent_task", summary, agent_task=task.id, agent_usage=dict(task.usage)
-                )
+            append = functools.partial(
+                parent._append_notice,
+                "agent_task",
+                f"Subagent '{label}' {task.status}",
+                agent_task=task.id,
+                agent_usage=dict(task.usage),
+            )
+            try:
+                # call_soon_threadsafe takes no callback kwargs — hence the partial.
+                if self.loop is not None:
+                    self.loop.call_soon_threadsafe(append)
+                else:
+                    append()
+            except Exception:
+                pass  # the usage notice must never block the report delivery below
         source = {"connector": "subagent", "title": label, "task_id": task.id}
         if self.deliver is not None:
             try:
@@ -392,8 +515,10 @@ def agent_task_tools(
             message (str): The follow-up or steering instruction.
         """
         t = registry.get(task_id)
-        if t is None or t.engine is None:
+        if t is None:
             return {"error": f"no such subagent task: {task_id}"}
+        if t.engine is None:
+            return {"error": "this subagent's context did not survive an app restart — spawn a new one"}
         framed = f"[Main agent] {message}"
         if t.status in ("running", "waiting"):
             if t.loop is not None:
@@ -416,9 +541,9 @@ def agent_task_tools(
             task_id (str): The id spawn_agent returned.
         """
         t = registry.get(task_id)
-        if t is None or t.engine is None:
+        if t is None:
             return {"error": f"no such subagent task: {task_id}"}
-        if t.status not in ("running", "waiting"):
+        if t.engine is None or t.status not in ("running", "waiting"):
             return {"task_id": t.id, "status": t.status, "note": "already finished"}
         if t.loop is not None:
             t.loop.call_soon_threadsafe(t.engine.request_interrupt)

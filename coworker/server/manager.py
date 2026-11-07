@@ -498,6 +498,11 @@ class SessionManager:
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
+        # Async subagents (OPE-253): the supplemental session record for subagent runs —
+        # written on task transitions, so a run that ends between turn checkpoints survives.
+        from ..tools.agent_tasks import AgentTaskStore
+
+        self.agent_task_store = AgentTaskStore(base / "agent_tasks.json")
         # Channel subscriptions (inbound): persisted (session_id, channel) records + a ring buffer
         # of recently-seen channel messages for get_channel_messages.
         self.subscriptions = SubscriptionStore(base / "subscriptions.json")
@@ -1039,6 +1044,7 @@ class SessionManager:
         if reg is None:
             return
         reg.loop = self._loop
+        reg.attach_store(self.agent_task_store, session_id)
 
         def deliver(text: str, source: dict) -> None:
             if self._loop is None:
@@ -8683,6 +8689,8 @@ class SessionManager:
         # ...and closes its pending Inbox items — an orphaned approval/question can never be
         # meaningfully answered (owner call, 2026-07-03).
         self.inbox.resolve_session(session_id)
+        # ...and its subagent-run history (the supplemental record dies with the session).
+        self.agent_task_store.drop(session_id)
         # ...and its scratch dir. STRICTLY scoped: only a directory inside scratch_base is
         # removed — a real project folder the user picked is never touched.
         if ok and record and record.workspace:
