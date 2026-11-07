@@ -1674,10 +1674,12 @@ class TurnEngine:
         }
         state = self.compaction_state
         if state is not None:
+            # Duck-typed on purpose: tests and embedders stub compaction_state with
+            # partial objects; the snapshot must degrade, never raise.
             snapshot["compaction"] = {
-                "created_at": state.created_at,
-                "messages": state.boundary_index,
-                "trimmed": state.trimmed,
+                "created_at": getattr(state, "created_at", None),
+                "messages": getattr(state, "boundary_index", None),
+                "trimmed": bool(getattr(state, "trimmed", False)),
             }
         return snapshot
 

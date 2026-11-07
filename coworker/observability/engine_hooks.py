@@ -225,11 +225,15 @@ class TurnRecording:
                    call_index: Optional[int] = None, parent_step_id: Optional[str] = None,
                    attrs: Optional[dict[str, Any]] = None,
                    content: Optional[dict[str, Any]] = None,
-                   turn_id: Any = CURRENT, shadow: bool = False) -> Optional[str]:
+                   turn_id: Any = CURRENT, shadow: bool = False,
+                   after_turn: Optional[bool] = None) -> Optional[str]:
         """`step_started`. The step belongs to the engine's current turn, or with `turn_id` to
         that turn: a step tagged with a turn that already ended is `after_turn` (§3.3, an
         after-turn title). A model step outside any turn is recorded with no turn; a tool
-        step outside a turn is not recorded."""
+        step outside a turn is not recorded. An explicit `after_turn` overrides the
+        has-the-turn-ended computation: a detached helper (a background subagent) marks its
+        steps after_turn from the start, so the turn-end sweep (§7.4) never closes a step
+        whose owner legitimately outlives the turn."""
         if not self.enabled:
             return None
         with self._lock:
@@ -248,6 +252,8 @@ class TurnRecording:
                 # Turns of one engine run one after another: another turn of this engine has
                 # ended, and so has this one once its end was sent.
                 after = tid is not None and (not same or self._ended)
+            if after_turn is not None:
+                after = bool(after_turn)
             step_id = new_ulid()
             ev = self._base("step_started", tid, sid)
             ev.update({"step_id": step_id, "parent_step_id": parent_step_id, "kind": kind,
@@ -497,9 +503,14 @@ class HelperRecording:
     # The helper's context is not the session's: no context step under the explore step.
     records_context = False
 
-    def __init__(self, parent: TurnRecording, parent_step_id: str, turn_id: Optional[str]) -> None:
+    def __init__(self, parent: TurnRecording, parent_step_id: str, turn_id: Optional[str],
+                 *, detached: bool = False) -> None:
         self.parent, self.parent_step_id = parent, parent_step_id
         self.turn_id = turn_id
+        # A detached helper (a background subagent, OPE-253) outlives the parent's turn:
+        # every one of its steps is after_turn so the §7.4 turn-end sweep never closes a
+        # step its owner is still running. Explore's synchronous helper stays attached.
+        self.detached = detached
         self.index = parent.helper_index(parent_step_id)
         self._lock = threading.Lock()
         self._kinds: dict[str, str] = {}  # the helper's open steps: step_id -> kind
@@ -556,6 +567,8 @@ class HelperRecording:
         kw.setdefault("parent_step_id", None)
         kw["parent_step_id"] = kw["parent_step_id"] or self.parent_step_id
         kw["turn_id"] = self.turn_id
+        if self.detached:
+            kw.setdefault("after_turn", True)
         step_id = self.parent.start_step(**kw)
         if step_id is not None:
             with self._lock:
