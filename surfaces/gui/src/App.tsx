@@ -58,6 +58,7 @@ import type {
   Item,
   SessionInfo,
   SessionUsage,
+  ContextInfo,
   TodoItem,
   WsEvent,
 } from "./types";
@@ -262,6 +263,11 @@ export function App() {
   const [preparingSandbox, setPreparingSandbox] = useState<string | null>(null);
   // OPE-218: which walls this session runs behind, for the header chip. From `ready`.
   const [sandboxInfo, setSandboxInfo] = useState<SessionSandbox | null>(null);
+  // Window occupancy for the rail's Context section (FB-015): from `ready` (so a
+  // reopened session has it before any turn) and refreshed by each assistant_message.
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
+  // Async subagents (OPE-257): bumped by agent_task events; the rail refetches its list.
+  const [agentTaskKey, setAgentTaskKey] = useState(0);
   // The server refused to build this session (its sandbox cannot be used) and closed the
   // socket for good: no reconnect strip, the error notice in the transcript says why.
   const [sessionRefused, setSessionRefused] = useState(false);
@@ -298,6 +304,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // Context occupancy is session-owned: drop it on switch, before `ready` refills it.
+  useEffect(() => setContextInfo(null), [sessionId]);
   // Remote homes (UX-045): which joined machine the CURRENT session runs on
   // (null = This Mac). Fixed at creation via the setup row's runs-on chip;
   // restored from the session row on select/resume. Routes the session socket
@@ -907,9 +915,14 @@ export function App() {
           // intro screen. Which wall the session runs behind belongs in the header (OPE-207).
           setPreparingSandbox(null);
           break;
+        case "agent_task":
+          // A subagent started/finished/is waiting — the rail refetches the registry.
+          setAgentTaskKey((k) => k + 1);
+          break;
         case "ready":
           setPreparingSandbox(null);
           setSandboxInfo(d.sandbox || null);
+          if (d.context) setContextInfo(d.context);
           setSessionRefused(false);
           setConnected(true);
           if (d.model) setModel(d.model);
@@ -964,6 +977,7 @@ export function App() {
           break;
         case "assistant_message": {
           if (d.usage) setUsage((u) => addTurnUsage(u, d.usage));
+          if (d.context) setContextInfo(d.context);
           // The event's reasoning is authoritative (covers background-delivered turns);
           // the local buffer is the fallback for older servers.
           const reasoning = d.reasoning || reasoningRef.current;
@@ -2622,6 +2636,11 @@ export function App() {
             scratchPrimary={tempWorkspace || !isProjectScoped(personaOf(agent))}
             openAccessKey={accessKey}
             onOpenIntegrations={() => openSettings("connectors")}
+            context={contextInfo}
+            sessionUsage={usage}
+            agentTaskKey={agentTaskKey}
+            machineName={curSession?.machine_name}
+            machineOffline={!!curSession?.machine_offline}
             sandbox={sandboxInfo}
             onSandbox={setSandboxInfo}
             onOpenSandboxSettings={() => openSettings("sandbox")}

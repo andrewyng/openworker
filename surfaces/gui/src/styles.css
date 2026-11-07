@@ -723,17 +723,91 @@ button.btn.danger { color: var(--accent); }
 .main.rail-open:has(.right-rail.artifact-mode) .main-chat { margin-right: var(--artifact-rail-w); }
 .main.rail-open:has(.right-rail.artifact-mode) .main-topbar { right: var(--artifact-rail-w); }
 .artifact-head { display: flex; justify-content: space-between; gap: 14px; align-items: center; }
-.rail-section { border-bottom: 1px solid var(--line); padding: 11px 0; }
+.rail-section { border-bottom: 1px solid var(--line); padding: 14px 0; }
 .rail-section-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; min-height: 24px; }
 .rail-section-toggle { flex: 1; display: flex; gap: 8px; align-items: center; cursor: pointer; font: inherit; font-size: var(--fs-ui); font-weight: 600; color: var(--ink); user-select: none; border: 0; background: transparent; padding: 0; text-align: left; }
 .rail-chev { color: var(--faint); flex: none; }
 .rail-mini-btn { width: 24px; height: 24px; display: grid; place-items: center; color: var(--muted); border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .rail-mini-btn:hover { color: var(--ink); background: var(--chrome-hover); }
-.rail-section-body { padding-top: 10px; }
-/* Seventeenth pass: a section header's maximum signal — a small count chip, amber only
-   when it carries attention states (blocked/review). */
-.rail-count { margin-left: auto; font-size: var(--fs-label); font-weight: 500; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; flex: none; }
-.rail-count.attention { background: var(--warn-soft); border-color: transparent; color: var(--warn-ink); }
+/* Header actions are quiet until the head is hovered or focused — the summary value is
+   the resting signal, not a button cluster. */
+.rail-section-head .rail-mini-btn { opacity: 0; transition: opacity 0.12s ease; }
+.rail-section-head:hover .rail-mini-btn,
+.rail-section-head:focus-within .rail-mini-btn { opacity: 1; }
+.rail-section-body { padding-top: 12px; }
+/* A section header's maximum signal: the right-aligned, muted summary value — the
+   collapsed header still answers "what's in here?". Amber only for attention states
+   (blocked/review); nothing in the rail shouts louder than this. */
+.rail-summary { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-label); font-weight: 400; color: var(--muted); }
+.rail-summary.attention { color: var(--warn-ink); }
+/* Environment: where this session runs — identity at a glance above the sections. */
+.rail-env { display: flex; flex-direction: column; gap: 9px; padding: 2px 0 16px; border-bottom: 1px solid var(--line); }
+.rail-env-row { display: flex; gap: 10px; align-items: center; min-height: 20px; color: var(--muted); font-size: var(--fs-ui); }
+.rail-env-main { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-env-sub { display: inline-flex; gap: 4px; align-items: center; color: var(--faint); font-size: var(--fs-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-env-tag { font-size: var(--fs-label); color: var(--warn-ink); }
+.rail-env-btn { border: 0; background: transparent; padding: 0; cursor: pointer; font: inherit; text-align: left; border-radius: 6px; }
+.rail-env-btn:hover .rail-env-main { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.rail-env-dot { width: 7px; height: 7px; border-radius: 999px; margin-left: auto; flex: none; }
+.rail-env-dot.ok { background: var(--ok-ink); }
+.rail-env-dot.warn { background: var(--warn-ink); }
+/* Context section (FB-015): the collapsed header carries % + a micro meter; the body is
+   the proportional breakdown. Quiet grays — color never means category, only attention. */
+.ctx-sum { display: inline-flex; gap: 7px; align-items: center; }
+.ctx-meter { width: 40px; height: 4px; border-radius: 999px; background: var(--paper); overflow: hidden; flex: none; }
+.ctx-meter-fill { display: block; height: 100%; border-radius: 999px; background: var(--muted); }
+.ctx-meter.warn .ctx-meter-fill { background: var(--warn-ink); }
+.ctx-panel { display: flex; flex-direction: column; gap: 10px; }
+.ctx-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.ctx-used { font-size: var(--fs-ui); font-weight: 550; color: var(--ink); }
+.ctx-pct { font-size: var(--fs-label); color: var(--faint); }
+.ctx-bar { display: flex; height: 6px; border-radius: 999px; background: var(--paper); overflow: hidden; }
+.ctx-seg { display: block; height: 100%; }
+.ctx-seg-system { background: var(--ink); opacity: 0.55; }
+.ctx-seg-tools { background: var(--ink); opacity: 0.32; }
+.ctx-seg-messages { background: var(--ink); opacity: 0.16; }
+.ctx-dot.ctx-seg-free { background: var(--paper); opacity: 1; }
+.ctx-rows, .ctx-models { display: flex; flex-direction: column; gap: 5px; }
+.ctx-models { border-top: 1px solid var(--line); padding-top: 8px; }
+.ctx-row { display: flex; gap: 8px; align-items: center; font-size: var(--fs-meta); }
+.ctx-dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.ctx-label { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-model { font-size: var(--fs-label); }
+.ctx-val { margin-left: auto; color: var(--faint); flex: none; }
+.ctx-note { font-size: var(--fs-label); color: var(--faint); }
+/* Subagents (OPE-257/259): active runs + done history, animal identity glyphs.
+   Bare one-color marks, eyes punched out so the surface shows through; each family
+   carries a light ink and a lifted dark ink. No warm colors — amber keeps its one
+   attention meaning. */
+.aglyph { flex: none; }
+.aglyph-f0 { color: #7c5fc0; } .aglyph-f1 { color: #b55a99; }
+.aglyph-f2 { color: #3f74b3; } .aglyph-f3 { color: #2f87a0; }
+.aglyph-f4 { color: #2f8f77; } .aglyph-f5 { color: #4f9456; }
+.aglyph-f6 { color: #5a66c7; } .aglyph-f7 { color: #64707f; }
+html[data-theme="dark"] .aglyph-f0 { color: #a98fe8; }
+html[data-theme="dark"] .aglyph-f1 { color: #dd8cc4; }
+html[data-theme="dark"] .aglyph-f2 { color: #7aa8dd; }
+html[data-theme="dark"] .aglyph-f3 { color: #6cc2d8; }
+html[data-theme="dark"] .aglyph-f4 { color: #67c2a8; }
+html[data-theme="dark"] .aglyph-f5 { color: #85c48b; }
+html[data-theme="dark"] .aglyph-f6 { color: #939ce8; }
+html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
+.agent-list { display: flex; flex-direction: column; gap: 2px; }
+.agent-row { display: flex; gap: 9px; align-items: center; padding: 5px 2px; border-radius: 8px; }
+/* Collapsed-header chips: the five most recent runs, lined up before the count. */
+.agent-chips { display: inline-flex; gap: 3px; align-items: center; margin-right: 7px; vertical-align: -2px; }
+/* Done-history grid (more than ten runs): compressed glyphs, label on hover. */
+.agent-grid { display: flex; flex-wrap: wrap; gap: 7px 9px; padding: 8px 2px 2px; margin-top: 6px; border-top: 1px solid var(--line); }
+.agent-grid-item { opacity: 0.75; display: inline-flex; }
+.agent-grid-item:hover { opacity: 1; }
+.agent-label { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--fs-ui); font-weight: 500; color: var(--ink); overflow: hidden; }
+.agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-sub { font-size: var(--fs-label); color: var(--faint); flex: none; }
+.agent-sub.attention { color: var(--warn-ink); }
+.agent-dot { width: 7px; height: 7px; border-radius: 999px; margin-left: auto; flex: none; background: var(--line-strong); }
+.agent-dot.running { background: var(--accent); }
+.agent-dot.waiting { background: var(--warn-ink); }
+.agent-dot.error { background: var(--danger-ink, #c33); }
 /* Journal + Access fold behind this quiet row (three primary sections max). */
 .rail-more-row { display: flex; gap: 8px; align-items: center; width: 100%; padding: 11px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; cursor: pointer; font: inherit; font-size: var(--fs-meta); color: var(--faint); text-align: left; }
 .rail-more-row:hover { color: var(--muted); }
