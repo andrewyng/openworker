@@ -199,7 +199,7 @@ def test_the_server_offers_and_adopts_a_local_servers_model(tmp_path, monkeypatc
 
 
 def test_thinking_switch_reaches_llama_cpp_and_vllm_as_template_kwargs(monkeypatch):
-    """Ollama reads `think`; llama.cpp and vLLM read the chat template's enable_thinking."""
+    """Ollama reads `think`; llama.cpp and vLLM read the chat template keys."""
     from coworker.providers import openai_provider
 
     sent = {}
@@ -207,14 +207,28 @@ def test_thinking_switch_reaches_llama_cpp_and_vllm_as_template_kwargs(monkeypat
     for name in local_server.LOCAL_SERVERS:
         client = get_descriptor(name).build({}, None)
         client.complete(model="m", messages=[], max_tokens=10, extra_body={"think": False})
-        assert sent["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+        assert sent["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False, "thinking": False}}
         assert sent["max_tokens"] == 10
         sent.clear()
         client.complete(model="m", messages=[])
         assert "extra_body" not in sent
     assert local_server.thinking_as_template_kwargs(
         {"extra_body": {"think": True, "chat_template_kwargs": {"x": 1}}}
-    ) == {"extra_body": {"chat_template_kwargs": {"x": 1, "enable_thinking": True}}}
+    ) == {"extra_body": {"chat_template_kwargs": {"x": 1, "enable_thinking": True, "thinking": True}}}
+
+
+def test_custom_openai_endpoint_sends_both_thinking_template_keys(monkeypatch):
+    """A custom Chat Completions endpoint (vLLM/SGLang/Azure) needs the same rewrite."""
+    from coworker.providers import openai_provider
+    from coworker.providers.registry import build_provider_client
+
+    sent = {}
+    monkeypatch.setattr(openai_provider.OpenAIProvider, "complete", lambda self, **kw: sent.update(kw) or "ok")
+    client = build_provider_client("openai", {"base_url": "http://127.0.0.1:8000/v1"}, None)
+    client.complete(model="deepseek-v4", messages=[], extra_body={"think": True})
+    assert sent["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": True, "thinking": True}
+    }
 
 
 def test_a_chat_template_with_enable_thinking_means_a_thinking_switch(monkeypatch):
