@@ -141,7 +141,10 @@
     "try_a_task": "试试一个任务",
     "suggest_tests": "运行测试套件并总结失败项。",
     "suggest_overview": "读项目并用 5 条要点给我一个概览。",
-    "suggest_fix_build": "找到并修复失败的构建。"
+    "suggest_fix_build": "找到并修复失败的构建。",
+    "code_suggest_map": "浏览这个仓库，给我一张主要组成部分的地图。",
+    "code_suggest_tests": "在新分支上运行测试套件并修复失败项。",
+    "code_suggest_review": "审查这个分支上的最新改动并指出风险。"
   },
   "composer": {
     "placeholder": "问问同事…",

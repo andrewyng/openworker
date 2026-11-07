@@ -143,7 +143,10 @@
     "try_a_task": "Try a task",
     "suggest_tests": "Run the test suite and summarize any failures.",
     "suggest_overview": "Read the project and give me a 5-bullet overview.",
-    "suggest_fix_build": "Find and fix the failing build."
+    "suggest_fix_build": "Find and fix the failing build.",
+    "code_suggest_map": "Explore this repo and give me a map of its main parts.",
+    "code_suggest_tests": "Run the test suite and fix what fails, on a new branch.",
+    "code_suggest_review": "Review the latest changes on this branch and flag any risks."
   },
   "composer": {
     "placeholder": "Ask the coworker…",

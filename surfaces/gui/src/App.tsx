@@ -138,6 +138,13 @@ const SUGGESTION_KEYS = [
   { ico: "✦", key: "hero.suggest_overview" },
   { ico: "↻", key: "hero.suggest_fix_build" },
 ];
+// The Code coworker's starters match its discipline (a worktree per task, explore first,
+// prove it with tests) — owner call 2026-11-07.
+const CODE_SUGGESTION_KEYS = [
+  { ico: "✦", key: "hero.code_suggest_map" },
+  { ico: "⚙", key: "hero.code_suggest_tests" },
+  { ico: "⑂", key: "hero.code_suggest_review" },
+];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
@@ -2406,7 +2413,7 @@ export function App() {
                     {(
                       <div className="suggestions">
                         <div className="suggest-head">{t("hero.try_a_task")}</div>
-                        {SUGGESTION_KEYS.map((s, i) => (
+                        {(agent === "code" ? CODE_SUGGESTION_KEYS : SUGGESTION_KEYS).map((s, i) => (
                           <div className="suggest" key={i} onClick={() => workspace && send(t(s.key))}>
                             <span className="ico">{s.ico}</span>
                             {t(s.key)}
