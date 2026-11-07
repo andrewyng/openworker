@@ -298,6 +298,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # A GUI websocket whose client stopped reading is dropped, and every open websocket can be
+    # aborted at shutdown, so neither holds the server up (ws_guard.py, T3-3).
+    from .ws_guard import WebsocketGuard
+
+    app.add_middleware(WebsocketGuard)
     app.state.manager = manager
 
     @app.get("/v1/capabilities")
