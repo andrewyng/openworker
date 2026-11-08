@@ -23,3 +23,8 @@ jobs:
       # No Rust build, Docker daemon, cloud credentials or model calls required.
       - name: Test SDK compatibility and standalone skill installation
         run: node --test skills/install.test.mjs skills/package.test.mjs harness/release/contract.test.mjs
+      - name: Compile skill examples against the SDK
+        run: |
+          npm --prefix harness/typescript-sdk ci
+          npm --prefix harness/typescript-sdk run build
+          node --test skills/snippets.test.mjs

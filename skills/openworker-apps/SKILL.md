@@ -11,6 +11,8 @@ Preserve their chosen UI framework, model and deployment target.
 ## Choose the track
 
 - Read [SDK integration](references/sdk.md) for the shared lifecycle and package contract.
+- For provider configuration, retry-safe streaming, reasoning display, migrated
+  history or changing turn preferences, read [Runtime options](references/runtime-options.md).
 - For desktop apps, read [Desktop](references/desktop.md).
 - For browser/server apps, read [Web](references/web.md).
 - For a Railway deployment, read [Railway](references/railway.md). Default to one

@@ -5,9 +5,8 @@ applications with the OpenWorker Harness SDK. It includes version-matched SDK
 snippets and separate Desktop/Web references. No OpenWorker checkout is required
 for the packaged skill, and installing it does not install the SDK or a runtime.
 
-**Release candidate:** `@openworkerai/build-with-sdk-skills@0.1.0-beta.2` is prepared
-locally. The new `--global` option and Railway guidance require this release;
-until it is published, use the local candidate instructions below to try them.
+This skill release targets SDK `0.1.0-beta.2`, including provider caching,
+attempt-aware streaming and per-turn session options.
 
 ## Install the skill
 
@@ -29,7 +28,7 @@ on Windows and macOS, leaves global settings alone, and refuses to overwrite an
 existing skill. Review/back up an existing installation before replacing it.
 `references/installation.json` records the matching SDK version, without local
 checkout paths or credentials. Use `sdkVersion` from that file for the SDK. Skill and SDK package versions may
-differ; this skill candidate targets SDK `0.1.0-beta.1`.
+differ; this skill release targets SDK `0.1.0-beta.2`.
 
 ### Across your projects
 
@@ -98,7 +97,7 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 Install the resulting archive into a temporary project or use it through npm exec:
 
 ```sh
-npm exec --package /absolute/new-skills-candidate/archives/openworkerai-build-with-sdk-skills-0.1.0-beta.2.tgz -- build-with-sdk-skills --agent codex --project /path/to/your-app
+npm exec --package /absolute/new-skills-candidate/archives/openworkerai-build-with-sdk-skills-0.1.0-beta.3.tgz -- build-with-sdk-skills --agent codex --project /path/to/your-app
 ```
 
 The preparer never publishes. Source package manifests remain private; staged

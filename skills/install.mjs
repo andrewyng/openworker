@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 const source = dirname(fileURLToPath(import.meta.url));
 const usage = 'build-with-sdk-skills --agent codex|claude (--project /path/to/your-app | --global)';
-const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore','agents/openai.yaml'];
+const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','references/runtime-options.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore','agents/openai.yaml'];
 function validate({agent, project, global: userWide = false}) {
  if (!['codex','claude'].includes(agent) || typeof userWide !== 'boolean' ||
      (project !== undefined && (typeof project !== 'string' || !project.trim())) ||
