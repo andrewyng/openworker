@@ -41,6 +41,7 @@ fn completed_tool_usage_and_history_roundtrip() {
     history
         .push(json!({"type":"function_call_output","call_id":"tool_1","output":"report contents"}));
     let request = anthropic::body("claude-test", "Instructions", &history, &[json!({"type":"function","name":"read_file","description":"read","parameters":{"type":"object"}})], 8192, None).unwrap();
+    assert_eq!(request["cache_control"], json!({"type":"ephemeral"}));
     assert_eq!(
         request["messages"][1]["content"][0]["input"]["path"],
         "report.txt"

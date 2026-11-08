@@ -72,6 +72,8 @@ struct Set {
     base_url: Option<String>,
     #[serde(default)]
     stream_usage: Option<bool>,
+    #[serde(default)]
+    prompt_caching: Option<bool>,
 }
 impl Manager {
     /// Trusted server bootstrap only; not exposed by the model or stdio protocol.
@@ -182,6 +184,17 @@ impl Manager {
                 "ALTER TABLE endpoints ADD COLUMN stream_usage INTEGER NOT NULL DEFAULT 1 CHECK(stream_usage IN (0,1))",
             )?;
         }
+        let has_prompt_caching = db
+            .prepare("PRAGMA table_info(endpoints)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "prompt_caching");
+        if !has_prompt_caching {
+            db.execute_batch(
+                "ALTER TABLE endpoints ADD COLUMN prompt_caching INTEGER NOT NULL DEFAULT 1 CHECK(prompt_caching IN (0,1))",
+            )?;
+        }
         Ok(Self {
             scope: root.canonicalize()?.to_string_lossy().into(),
             state: Mutex::new(State {
@@ -210,20 +223,21 @@ impl Manager {
         for row in rows {
             let (id, label, persistence, stored, provider) = row?;
             use rusqlite::OptionalExtension;
-            let endpoint: Option<(String, String, bool)> = state
+            let endpoint: Option<(String, String, bool, bool)> = state
                 .db
                 .query_row(
-                    "SELECT api,base_url,stream_usage FROM endpoints WHERE id=?1",
+                    "SELECT api,base_url,stream_usage,prompt_caching FROM endpoints WHERE id=?1",
                     [&id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .optional()?;
-            let (api, base_url, stream_usage) = endpoint
-                .map(|(a, b, usage)| {
+            let (api, base_url, stream_usage, prompt_caching) = endpoint
+                .map(|(a, b, usage, caching)| {
                     (
                         serde_json::from_str::<Value>(&a).unwrap_or(Value::Null),
                         b,
                         usage,
+                        caching,
                     )
                 })
                 .unwrap_or_else(|| {
@@ -232,11 +246,14 @@ impl Manager {
                     } else {
                         crate::model_api::Api::Responses
                     };
-                    (json!(api), api.default_url().into(), true)
+                    (json!(api), api.default_url().into(), true, true)
                 });
             connections.push(json!({"id":id,"name":id,"label":label,"provider":provider,"api":api,"base_url":base_url,"persistence":persistence,"configured":persistence=="none"||stored||state.memory.contains_key(&id)||state.tokens.get(&id).is_some_and(|t|t.ready())}));
             if api == "chat-completions" {
                 connections.last_mut().unwrap()["stream_usage"] = json!(stream_usage);
+            }
+            if api == "anthropic" {
+                connections.last_mut().unwrap()["prompt_caching"] = json!(prompt_caching);
             }
         }
         Ok(
@@ -260,6 +277,9 @@ impl Manager {
         }
         if input.stream_usage.is_some() && api != crate::model_api::Api::ChatCompletions {
             bail!("stream_usage is only supported for Chat Completions");
+        }
+        if input.prompt_caching.is_some() && api != crate::model_api::Api::Anthropic {
+            bail!("prompt_caching is only supported for Anthropic Messages");
         }
         let base_url =
             crate::model_api::base_url(input.base_url.as_deref().unwrap_or(api.default_url()))?;
@@ -352,8 +372,8 @@ impl Manager {
             ON CONFLICT(id) DO UPDATE SET label=excluded.label,persistence=excluded.persistence,secret=excluded.secret",
             params![input.id,input.label,crate::id("connection"),input.persistence,encrypted,input.provider.name()])?;
         transaction.execute(
-            "INSERT INTO endpoints(id,api,base_url,stream_usage) VALUES(?1,?2,?3,COALESCE(?4,1)) ON CONFLICT(id) DO UPDATE SET stream_usage=COALESCE(?4,endpoints.stream_usage)",
-            params![input.id, api_json, base_url, input.stream_usage],
+            "INSERT INTO endpoints(id,api,base_url,stream_usage,prompt_caching) VALUES(?1,?2,?3,COALESCE(?4,1),COALESCE(?5,1)) ON CONFLICT(id) DO UPDATE SET stream_usage=COALESCE(?4,endpoints.stream_usage),prompt_caching=COALESCE(?5,endpoints.prompt_caching)",
+            params![input.id, api_json, base_url, input.stream_usage, input.prompt_caching],
         )?;
         transaction.commit()?;
         #[cfg(target_os = "macos")]
@@ -607,6 +627,14 @@ impl Manager {
             |r| r.get(0),
         ).context("Selected model provider is missing or its identity changed")
     }
+    /// Anthropic automatic prompt caching is on unless explicitly disabled.
+    pub fn prompt_caching(&self, selected: &Selection) -> Result<bool> {
+        self.state.lock().unwrap().db.query_row(
+            "SELECT COALESCE(e.prompt_caching,1) FROM connections c LEFT JOIN endpoints e ON c.id=e.id WHERE c.id=?1 AND c.identity=?2",
+            params![selected.connection, selected.identity],
+            |r| r.get(0),
+        ).context("Selected model provider is missing or its identity changed")
+    }
     /// Harness-owned provider registration; never journal this secret-bearing request.
     pub fn set_provider(&self, value: Value) -> Result<Value> {
         #[derive(Deserialize)]
@@ -618,6 +646,8 @@ impl Manager {
             credentials: Option<Credentials>,
             #[serde(default)]
             stream_usage: Option<bool>,
+            #[serde(default)]
+            prompt_caching: Option<bool>,
             #[serde(default)]
             access_token_auth: bool,
         }
@@ -632,6 +662,9 @@ impl Manager {
         Choice::new(&input.name, "validation").validate()?;
         if input.stream_usage.is_some() && input.api != crate::model_api::Api::ChatCompletions {
             bail!("stream_usage is only supported for Chat Completions");
+        }
+        if input.prompt_caching.is_some() && input.api != crate::model_api::Api::Anthropic {
+            bail!("prompt_caching is only supported for Anthropic Messages");
         }
         anyhow::ensure!(
             !input.access_token_auth
@@ -691,6 +724,12 @@ impl Manager {
                         params![input.name, enabled],
                     )?;
                 }
+                if let Some(enabled) = input.prompt_caching {
+                    self.state.lock().unwrap().db.execute(
+                        "INSERT INTO endpoints(id,api,base_url,prompt_caching) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET prompt_caching=excluded.prompt_caching",
+                        params![input.name, serde_json::to_string(&input.api)?, base_url, enabled],
+                    )?;
+                }
                 return Ok(json!({"saved":true,"credentials_unchanged":true}));
             }
         }
@@ -712,7 +751,7 @@ impl Manager {
                 .into(),
             ),
         };
-        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"api_key":key,"persistence":storage}))
+        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"prompt_caching":input.prompt_caching,"api_key":key,"persistence":storage}))
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]

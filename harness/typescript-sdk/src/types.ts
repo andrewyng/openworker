@@ -47,6 +47,8 @@ export interface ModelProvider {
    * stream_options for servers that do not support it. Omit to preserve an
    * existing provider setting. Missing provider usage remains unknown. */
   streamUsage?: boolean;
+  /** Anthropic automatic prompt caching, enabled by default. False omits cache_control. */
+  promptCaching?: boolean;
   /** Memory-only bearer access tokens; mutually exclusive with credentials. */
   auth?: ProviderAuth;
   credentials?: (

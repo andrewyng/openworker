@@ -66,3 +66,38 @@ may never deliver its final accounting frame. Token counts alone also do not
 establish a dollar cost; apply the pricing for the chosen provider and model.
 The [OpenAI streaming contract](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 describes the optional final usage chunk.
+
+## Anthropic prompt caching
+
+Anthropic Messages requests enable automatic prompt caching by default using
+`cache_control: { type: "ephemeral" }`. The provider moves the cache breakpoint
+with the growing conversation, covering the reusable tool definitions, system
+instructions and history. The default lifetime is five minutes. A request below
+the provider's minimum cacheable length can still report zero cache reads.
+
+Disable it for a proxy that rejects this field, or when your application does
+not want caching:
+
+```typescript
+await harness.setModelProvider({
+  name: "Anthropic", api: "anthropic",
+  credentials: { apiKeyEnv: "ANTHROPIC_API_KEY", storage: "memory" },
+  promptCaching: false,
+});
+```
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::anthropic("Anthropic")
+        .credentials(Credentials::from_env("ANTHROPIC_API_KEY").memory_only())
+        .prompt_caching(false),
+).await?;
+```
+
+The choice persists across credential rotation and restart. Omission preserves
+an existing choice; `true` re-enables caching. The option is valid only for
+Anthropic Messages. There is no silent fallback or automatic request replay.
+`model_usage` reports cache reads and writes separately; total input tokens
+include both. Actual hit rates and cost depend on model, prefix stability,
+minimum prompt size and provider pricing. See
+[Anthropic's prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).

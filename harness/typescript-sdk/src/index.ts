@@ -392,6 +392,7 @@ export class Harness {
       api: provider.api,
       base_url: provider.baseUrl,
       stream_usage: provider.streamUsage,
+      prompt_caching: provider.promptCaching,
       access_token_auth: provider.auth ? true : undefined,
       credentials: credentials
         ? { api_key: apiKey, storage: credentials.storage ?? "secure" }

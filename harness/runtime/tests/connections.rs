@@ -313,6 +313,60 @@ fn chat_stream_usage_migrates_existing_endpoint_rows() {
 }
 
 #[test]
+fn anthropic_prompt_caching_is_durable_and_preserves_provider_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let m = Manager::open(root.path()).unwrap();
+    let config = json!({"name":"Claude","api":"anthropic","credentials":{"api_key":"fixture-key-one","storage":"memory"}});
+    m.set_provider(config.clone()).unwrap();
+    let selected = m.resolve(&Choice::new("Claude", "fixture")).unwrap();
+    assert!(m.prompt_caching(&selected).unwrap());
+    let mut disabled = config.clone();
+    disabled["prompt_caching"] = json!(false);
+    m.set_provider(disabled).unwrap();
+    let mut rotated = config;
+    rotated["credentials"]["api_key"] = json!("fixture-key-two");
+    m.set_provider(rotated).unwrap();
+    assert!(!m.prompt_caching(&selected).unwrap());
+    assert_eq!(&**m.key(&selected).unwrap(), "fixture-key-two");
+    drop(m);
+    let m = Manager::open(root.path()).unwrap();
+    m.set_provider(json!({"name":"Claude","api":"anthropic"}))
+        .unwrap();
+    assert!(!m.prompt_caching(&selected).unwrap());
+    assert_eq!(m.list().unwrap()["connections"][0]["prompt_caching"], false);
+    m.set_provider(json!({"name":"Claude","api":"anthropic","prompt_caching":true}))
+        .unwrap();
+    assert!(m.prompt_caching(&selected).unwrap());
+    for api in ["responses", "chat-completions"] {
+        assert!(m
+            .set_provider(json!({"name":"Wrong","api":api,"prompt_caching":false}))
+            .is_err());
+    }
+    m.remove("Claude").unwrap();
+    assert!(m.prompt_caching(&selected).is_err());
+}
+
+#[test]
+fn legacy_anthropic_connections_can_opt_out_without_replacing_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let db = rusqlite::Connection::open(root.path().join("model-connections.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE connections(id TEXT PRIMARY KEY,label TEXT NOT NULL,identity TEXT NOT NULL,persistence TEXT NOT NULL,secret BLOB,provider TEXT NOT NULL);
+         CREATE TABLE endpoints(id TEXT PRIMARY KEY,api TEXT NOT NULL,base_url TEXT NOT NULL);
+         INSERT INTO connections VALUES('Claude','Claude','legacy-identity','none',NULL,'anthropic');",
+    ).unwrap();
+    drop(db);
+    let m = Manager::open(root.path()).unwrap();
+    let selected = m.resolve(&Choice::new("Claude", "fixture")).unwrap();
+    assert!(m.prompt_caching(&selected).unwrap());
+    m.set_provider(json!({"name":"Claude","api":"anthropic","prompt_caching":false}))
+        .unwrap();
+    assert!(!m.prompt_caching(&selected).unwrap());
+    assert!(m.key(&selected).unwrap().is_empty());
+    assert_eq!(selected.identity, "legacy-identity");
+}
+
+#[test]
 fn stream_usage_rejects_other_apis_and_supports_access_token_providers() {
     let root = tempfile::tempdir().unwrap();
     let m = Manager::open(root.path()).unwrap();

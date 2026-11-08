@@ -30,6 +30,7 @@
     "test:tool-free": "npm run build && node --test --test-concurrency=1 test/tool-free.test.mjs",
     "test:openrouter-streaming": "npm run build && node --test test/openrouter-streaming.test.mjs",
     "test:chat-usage": "npm run build && node --test --test-concurrency=1 test/chat-usage.test.mjs",
+    "test:anthropic-caching": "npm run build && node --test --test-concurrency=1 test/anthropic-caching.test.mjs",
     "test:provider-auth": "npm run build && node --test test/provider-auth.test.mjs",
     "prepack": "npm run build",
     "test:service": "npm run build && node --test test/service.test.mjs",

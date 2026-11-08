@@ -49,6 +49,7 @@ pub struct ModelProvider {
     api: ModelApi,
     base_url: Option<String>,
     stream_usage: Option<bool>,
+    prompt_caching: Option<bool>,
     credentials: Option<Credentials>,
     pub(crate) access_auth: bool,
     pub(crate) refresh: Option<openworker_runtime::provider_auth::Refresh>,
@@ -69,6 +70,7 @@ impl ModelProvider {
             api,
             base_url: None,
             stream_usage: None,
+            prompt_caching: None,
             credentials: None,
             access_auth: false,
             refresh: None,
@@ -83,6 +85,12 @@ impl ModelProvider {
     /// Missing provider usage remains unknown; this does not estimate tokens.
     pub fn stream_usage(mut self, enabled: bool) -> Self {
         self.stream_usage = Some(enabled);
+        self
+    }
+    /// Anthropic automatic prompt caching (default true). Set false for a
+    /// proxy that rejects cache_control or when caching is not desired.
+    pub fn prompt_caching(mut self, enabled: bool) -> Self {
+        self.prompt_caching = Some(enabled);
         self
     }
     pub fn credentials(mut self, value: Credentials) -> Self {
@@ -115,6 +123,11 @@ impl ModelProvider {
         &self.name
     }
     pub(crate) fn wire(self) -> Result<Value> {
+        if self.prompt_caching.is_some() && self.api != ModelApi::Anthropic {
+            return Err(Error::InvalidInput(
+                "prompt_caching is only supported for Anthropic Messages".into(),
+            ));
+        }
         if self.stream_usage.is_some() && self.api != ModelApi::ChatCompletions {
             return Err(Error::InvalidInput(
                 "stream_usage is only supported for Chat Completions".into(),
@@ -129,6 +142,9 @@ impl ModelProvider {
         if let Some(enabled) = self.stream_usage {
             wire["stream_usage"] = json!(enabled);
         }
+        if let Some(enabled) = self.prompt_caching {
+            wire["prompt_caching"] = json!(enabled);
+        }
         if self.access_auth {
             wire["access_token_auth"] = json!(true);
         }
@@ -142,6 +158,30 @@ pub type Model = crate::ModelChoice;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anthropic_prompt_caching_override_is_explicit_and_api_scoped() {
+        assert!(ModelProvider::anthropic("Claude")
+            .wire()
+            .unwrap()
+            .get("prompt_caching")
+            .is_none());
+        assert_eq!(
+            ModelProvider::anthropic("Claude")
+                .prompt_caching(false)
+                .wire()
+                .unwrap()["prompt_caching"],
+            false
+        );
+        assert!(ModelProvider::chat_completions("Local")
+            .prompt_caching(false)
+            .wire()
+            .is_err());
+        assert!(ModelProvider::responses("OpenAI")
+            .prompt_caching(true)
+            .wire()
+            .is_err());
+    }
 
     #[test]
     fn chat_stream_usage_override_is_explicit_and_api_scoped() {

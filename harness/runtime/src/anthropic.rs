@@ -139,7 +139,10 @@ pub fn body(
         if t["type"] != "function" || !t["parameters"].is_object() { return Err(config()); }
         Ok(json!({"name":t["name"].as_str().ok_or_else(config)?,"description":t["description"].as_str().unwrap_or(""),"input_schema":t["parameters"]}))
     }).collect::<Result<Vec<_>,Error>>()?;
-    let mut body = json!({"model":model,"system":instructions,"messages":messages,"max_tokens":max_tokens,"stream":true});
+    // Automatic caching moves the breakpoint with the growing conversation.
+    // The provider decides eligibility/minimum prefix length; a request does
+    // not imply a cache hit. Applications can explicitly opt out per provider.
+    let mut body = json!({"model":model,"system":instructions,"messages":messages,"max_tokens":max_tokens,"stream":true,"cache_control":{"type":"ephemeral"}});
     if !definitions.is_empty() {
         body["tools"] = json!(definitions);
         body["tool_choice"] = json!({"type":"auto","disable_parallel_tool_use":true});

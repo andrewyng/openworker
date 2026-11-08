@@ -387,7 +387,7 @@ impl Model {
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
-            let body = crate::anthropic::body(
+            let mut body = crate::anthropic::body(
                 &self.name,
                 instructions,
                 history,
@@ -395,6 +395,11 @@ impl Model {
                 max_tokens,
                 format.as_ref(),
             )?;
+            if let Some((manager, selection)) = &self.connection {
+                if !manager.prompt_caching(selection)? {
+                    body.as_object_mut().unwrap().remove("cache_control");
+                }
+            }
             crate::anthropic::request(&client, &endpoint, key, body, tx).await?;
             return Ok(());
         }
