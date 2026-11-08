@@ -153,6 +153,7 @@
     "attach_other": "其他文件",
     "connect_to_send": "连接模型后才能发送",
     "stop": "⏹ 停止",
+    "stop_title": "停止 (Esc)",
     "mode_label": "模式",
     "approvals_to_inbox": "将审批请求发送到收件箱",
     "mode": {
