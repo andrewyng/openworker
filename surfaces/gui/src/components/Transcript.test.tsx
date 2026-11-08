@@ -411,12 +411,12 @@ describe("mode notice", () => {
     expect(screen.getByText("Context compacted").className).not.toContain("notice-block");
   });
 
-  it("offers the turn's steps from its answer", () => {
-    // UX-059 OB-1: a "Steps" link in each answer's footer, with the answer's time.
-    const onOpenSteps = vi.fn();
-    render(<Transcript items={[{ kind: "user", text: "hi", ts: 100 }, { kind: "assistant", text: "hello", ts: 105 }] as any}
-                       onApprove={() => {}} onOpenSteps={onOpenSteps} />);
-    fireEvent.click(screen.getByTestId("bubble-steps"));
-    expect(onOpenSteps).toHaveBeenCalledWith(105);
+  it("carries no trace link in the hover strip, and a user message is addressable by its id", () => {
+    // UX-060: the trace is reached from the turn footer and the rail's index; the hover
+    // strip keeps copy + time only. The rail's index scrolls to `#msg-<mid>`.
+    render(<Transcript items={[{ kind: "user", text: "hi", ts: 100, mid: "m1" }, { kind: "assistant", text: "hello", ts: 105 }] as any}
+                       onApprove={() => {}} onOpenSteps={vi.fn()} />);
+    expect(screen.queryByTestId("bubble-steps")).toBeNull();
+    expect(document.getElementById("msg-m1")?.textContent).toContain("hi");
   });
 });

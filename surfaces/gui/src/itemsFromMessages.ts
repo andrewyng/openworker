@@ -61,6 +61,8 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       if (typeof m._display === "string" && m._display) user.text = m._display;
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
+      // The server's message id: the trace index joins the message to its turn by it (UX-060).
+      if (typeof (m as any).mid === "string") user.mid = (m as any).mid;
       if (user.text || user.attachments?.length) items.push(user);
     } else if (m.role === "assistant") {
       if (m.content || m.reasoning)

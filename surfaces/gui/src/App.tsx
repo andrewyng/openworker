@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { traceRows, type TraceRow } from "./obs3";
 import { useTranslation } from "react-i18next";
 import {
   announceInboxUnlock,
@@ -1714,6 +1715,29 @@ export function App() {
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
   // Phase 3: open one recorded turn's Steps, in its own session (Usage's heaviest turns,
   // TeamView's events and evidence, an automation run's Steps).
+  // UX-060: the rail's trace index — one row per message of yours, joined to its recorded
+  // turn. Clicking a row goes to the message in the conversation and opens its trace.
+  const traceIndex = useMemo(
+    () => (agent === "chat" ? [] : traceRows(items as any, (footers?.turns || []).map((f) => ({
+      turn_id: f.turn_id, first_message_id: f.first_message_id, duration_ms: f.duration_ms,
+      status: f.status, issues: f.warn || 0,
+    })), running)),
+    [items, footers, running, agent],
+  );
+  const openTraceRow = (row: TraceRow) => {
+    {
+      const el = (row.mid && document.getElementById(`msg-${row.mid}`)) ||
+        document.querySelector<HTMLElement>(`[data-user-n="${row.n}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.remove("msg-flash");
+        void el.offsetWidth; // restart the animation when the same row is clicked twice
+        el.classList.add("msg-flash");
+        window.setTimeout(() => el.classList.remove("msg-flash"), 1600);
+      }
+    }
+    if (row.turnId && sessionId) openTurnSteps(sessionId, row.turnId);
+  };
   const openTurnSteps = (sid: string, turnId: string) => {
     const w = sessions.find((x) => x.session_id === sid);
     const open = () => {
@@ -2335,23 +2359,8 @@ export function App() {
             {surface === "session" && (
               <SandboxChip info={sandboxInfo} onOpenSettings={() => openSettings("sandbox")} />
             )}
-            {/* UX-059 OB-1: every step of each turn, and where the time and tokens went. */}
-            {surface === "session" && agent !== "chat" && (
-              <button
-                className={"topbar-steps-btn" + (stepsOpen ? " active" : "")}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => {
-                  setStepsOpen(!stepsOpen);
-                  setTeamViewOpen(false);
-                  setRailHidden(false);
-                }}
-                title={t("steps.open_title")}
-                aria-pressed={stepsOpen}
-                data-testid="steps-open"
-              >
-                <span>{t("steps.open_session")}</span>
-              </button>
-            )}
+            {/* The trace is reached from the rail's Trace index and each answer's footer
+                (UX-060) — no top-bar button. */}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
             {agent !== "chat" && (
@@ -2755,6 +2764,8 @@ export function App() {
             onOpenIntegrations={() => openSettings("connectors")}
             context={contextInfo}
             sessionUsage={usage}
+            traceRows={traceIndex}
+            onOpenTrace={openTraceRow}
             agentTaskKey={agentTaskKey}
             machineName={curSession?.machine_name}
             machineOffline={!!curSession?.machine_offline}

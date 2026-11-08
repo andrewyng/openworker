@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   approverPart,
+  traceRows,
+  turnTexts,
   comparable,
   footerParts,
   healthTone,
@@ -113,6 +115,52 @@ describe("the turn footer", () => {
     const noTimes = fs.map((f) => ({ ...f, started_at: undefined }));
     expect(turnForAnswer(noTimes, 1004, 1)?.turn_id).toBe("b");
     expect(turnForAnswer([], 1, 0)).toBeNull();
+  });
+
+  it("labels turns by the message that started them, not by splitting at answers (UX-060)", () => {
+    // Three quick turns a minute apart once read "(no message of yours)" twice: the split
+    // at `last_message_id` lost them. With `first_message_id` each turn names its message.
+    const items = [
+      { kind: "user", text: "What does greet.py do?", mid: "u1" }, { kind: "assistant", text: "It greets.", mid: "a1" },
+      { kind: "user", text: "List the files", mid: "u2" }, { kind: "assistant", text: "README, greet.py", mid: "a2" },
+      { kind: "user", text: "Latest commit?", mid: "u3" }, { kind: "assistant", text: "abc", mid: "a3" },
+    ] as any;
+    const texts = turnTexts([
+      { turn_id: "t1", first_message_id: "u1" }, { turn_id: "t2", first_message_id: "u2" }, { turn_id: "t3", first_message_id: "u3" },
+    ], items);
+    expect(texts.get("t1")?.user).toBe("What does greet.py do?");
+    expect(texts.get("t2")?.user).toBe("List the files");
+    expect(texts.get("t3")?.user).toBe("Latest commit?");
+    expect(texts.get("t3")?.answer).toBe("abc");
+    // Older recordings without first ids keep the answer split.
+    const old = turnTexts([{ turn_id: "t1", last_message_id: "a1" }, { turn_id: "t2", last_message_id: "a3" }], items);
+    expect(old.get("t1")?.user).toBe("What does greet.py do?");
+    expect(old.get("t2")?.user).toBe("List the files\nLatest commit?");
+  });
+
+  it("builds the trace index from your messages, joined to their turns (UX-060)", () => {
+    const items = [
+      { kind: "user", text: "First question here", mid: "u1" }, { kind: "assistant", text: "a", mid: "a1" },
+      { kind: "user", text: "Second one", mid: "u2" }, { kind: "assistant", text: "b", mid: "a2" },
+      { kind: "user", text: "Third, still running", mid: "u3" },
+    ] as any;
+    const rows = traceRows(items, [
+      { turn_id: "t1", first_message_id: "u1", duration_ms: 2600, issues: 2 },
+      { turn_id: "t2", first_message_id: "u2", duration_ms: 1200 },
+    ], true);
+    expect(rows.map((r) => [r.n, r.turnId, r.durationMs, r.issues, r.working])).toEqual([
+      [1, "t1", 2600, 2, false], [2, "t2", 1200, 0, false], [3, null, null, 0, true],
+    ]);
+    expect(rows[0].words).toBe("First question here");
+    // Not running: a message without a turn is a greyed row, not a live one.
+    expect(traceRows(items, [], false).map((r) => r.working)).toEqual([false, false, false]);
+    // Messages only: a turn the transcript cannot show (a wake) adds no row.
+    expect(traceRows(items, [{ turn_id: "w", first_message_id: null, duration_ms: 10 }]).length).toBe(3);
+    // Live messages (no id yet) pair with the unclaimed turns in order.
+    const live = items.map(({ mid, ...rest }: any) => rest);
+    expect(traceRows(live, [
+      { turn_id: "t1", first_message_id: "u1", duration_ms: 2600 }, { turn_id: "t2", first_message_id: "u2", duration_ms: 1200 },
+    ], true).map((r) => [r.turnId, r.working])).toEqual([["t1", false], ["t2", false], [null, true]]);
   });
 
   it("says where a rating went (§8.3)", () => {
