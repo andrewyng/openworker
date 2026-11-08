@@ -10,6 +10,11 @@ pub struct Model {
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
+    /// Opt-in forwarding of provider-supported display reasoning, never signatures.
+    pub stream_reasoning: bool,
+    /// A final turn-limit summary uses its small reserved output allowance,
+    /// without inheriting the working agent's thinking-generation configuration.
+    pub budget_summary: bool,
     pub connection: Option<(
         std::sync::Arc<crate::connections::Manager>,
         crate::connections::Selection,
@@ -31,6 +36,7 @@ pub type SampleHook = std::sync::Arc<
 pub type SummaryHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
 pub enum Progress {
     Delta(String),
+    Reasoning(crate::provider::ReasoningDelta),
     /// Internal measurement only; never authorizes partial provider output.
     OutputStarted,
     /// Latest cumulative provider snapshot, not a token increment.
@@ -94,6 +100,8 @@ impl Model {
             scripted,
             observation: None,
             content_withheld: false,
+            stream_reasoning: false,
+            budget_summary: false,
             connection: None,
             #[cfg(test)]
             sample_hook: None,
@@ -259,7 +267,7 @@ impl Model {
         span.metadata("gen_ai.request.model", &self.name);
         span.model_started();
         if !self.content_withheld {
-            span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":&history[history.len().saturating_sub(20)..]})).unwrap_or_default());
+            span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":public_items(&history[history.len().saturating_sub(20)..])})).unwrap_or_default());
         }
         let (inner, mut rx) = mpsc::channel(32);
         let future = request(inner);
@@ -277,6 +285,7 @@ impl Model {
             };
             match &progress {
                 Progress::Delta(text) if !text.is_empty() => span.first_output(),
+                Progress::Reasoning(delta) if !delta.text.is_empty() => span.first_output(),
                 Progress::OutputStarted => span.first_output(),
                 Progress::Usage(usage) => span.reported_usage(*usage),
                 Progress::Complete(completion) => {
@@ -301,7 +310,8 @@ impl Model {
                     }
                     if !self.content_withheld {
                         span.content("gen_ai.completion", || {
-                            serde_json::to_string(&completion.output).unwrap_or_default()
+                            serde_json::to_string(&public_items(&completion.output))
+                                .unwrap_or_default()
                         });
                     }
                 }
@@ -359,27 +369,48 @@ impl Model {
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
         if api == crate::model_api::Api::ChatCompletions {
-            let body = crate::chat_completions::body(
+            let binding = crate::chat_completions::replay_binding(
+                &endpoint,
+                &self.name,
+                self.connection
+                    .as_ref()
+                    .map(|(_, selection)| selection.identity.as_str()),
+            );
+            let google_compat = reqwest::Url::parse(&endpoint).is_ok_and(|url| {
+                url.host_str() == Some("generativelanguage.googleapis.com")
+                    && url.path().ends_with("/openai/chat/completions")
+            });
+            let mut body = crate::chat_completions::body_with_binding(
                 &self.name,
                 instructions,
                 history,
                 tools,
                 max_tokens,
                 format.as_ref(),
+                Some(&binding),
             )?;
+            // Some compatible/local servers reject stream_options. This is an
+            // explicit provider capability override, never an automatic retry
+            // that could repeat work after a partially received response.
+            if let Some((manager, selection)) = &self.connection {
+                if !manager.stream_usage(selection)? {
+                    body.as_object_mut().unwrap().remove("stream_options");
+                }
+            }
             crate::provider::request_decoded(
                 &client,
                 &endpoint,
                 key,
                 body,
                 tx,
-                crate::chat_completions::Decoder::default(),
+                crate::chat_completions::Decoder::with_binding(binding, google_compat),
             )
-            .await?;
+            .await
+            .map_err(|e| e.with_api(api))?;
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
-            let body = crate::anthropic::body(
+            let mut body = crate::anthropic::body(
                 &self.name,
                 instructions,
                 history,
@@ -387,10 +418,35 @@ impl Model {
                 max_tokens,
                 format.as_ref(),
             )?;
-            crate::anthropic::request(&client, &endpoint, key, body, tx).await?;
+            if let Some((manager, selection)) = &self.connection {
+                if !manager.prompt_caching(selection)? {
+                    body.as_object_mut().unwrap().remove("cache_control");
+                }
+            }
+            // Short probes, reviewers and compactors have separate small
+            // budgets; do not apply the agent's thinking generation budget.
+            if !self.budget_summary
+                && self
+                    .observation
+                    .as_ref()
+                    .is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main)
+            {
+                if let Some((manager, selection)) = &self.connection {
+                    if let Some(thinking) = manager.thinking(selection)? {
+                        if let Some(request) =
+                            thinking.request(max_tokens).map_err(|e| e.with_api(api))?
+                        {
+                            body["thinking"] = request;
+                        }
+                    }
+                }
+            }
+            crate::anthropic::request(&client, &endpoint, key, body, tx)
+                .await
+                .map_err(|e| e.with_api(api))?;
             return Ok(());
         }
-        if history.iter().any(|v| v["provider"] == "anthropic") {
+        if history.iter().any(|v| v.get("provider").is_some()) {
             bail!("Provider-private history cannot be sent to another provider");
         }
         let input = history
@@ -405,10 +461,15 @@ impl Model {
             })
             .collect::<Vec<_>>();
         let mut body = json!({"model":self.name,"instructions":instructions,"input":input,"tools":tools,"stream":true,"store":false,"include":["reasoning.encrypted_content"],"parallel_tool_calls":false,"max_output_tokens":max_tokens});
+        if self.stream_reasoning {
+            body["reasoning"] = json!({"summary":"auto"});
+        }
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx).await?;
+        crate::provider::request(&client, &endpoint, key, body, tx)
+            .await
+            .map_err(|e| e.with_api(api))?;
         Ok(())
     }
     pub async fn summarize(
@@ -520,7 +581,7 @@ impl Model {
                 r=&mut request,if !finished=>{r?;finished=true;},
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Complete(r))=>response=Some(r),
-                    Some(Progress::Delta(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
+                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
                 }
             }
         }
@@ -931,6 +992,16 @@ impl Model {
     }
 }
 
+/// Provider-private reasoning/signatures belong only to replay storage and the
+/// originating model. Even full-content exports must not expose this state.
+pub fn public_items(items: &[Value]) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|item| item["type"] != "reasoning")
+        .cloned()
+        .collect()
+}
+
 pub fn validate_output(output: &[Value]) -> Result<()> {
     if output.len() > 64 || serde_json::to_vec(output)?.len() > 512000 {
         bail!("Provider output exceeds checkpoint budget");
@@ -948,6 +1019,26 @@ pub fn validate_output(output: &[Value]) -> Result<()> {
                 bail!("Tool arguments must be an object");
             }
         }
+    }
+    Ok(())
+}
+
+/// A provider ID must not alias an earlier invocation in retained model context. Check
+/// before authorizing tools, not on the subsequent history replay after an
+/// action has already happened. Never interpret a repeated ID as a retry grant.
+pub(crate) fn validate_new_call_ids(history: &[Value], output: &[Value]) -> Result<()> {
+    let prior: std::collections::HashSet<_> = history
+        .iter()
+        .filter(|item| item["type"] == "function_call")
+        .filter_map(|item| item["call_id"].as_str())
+        .collect();
+    if output.iter().any(|item| {
+        item["type"] == "function_call"
+            && item["call_id"]
+                .as_str()
+                .is_some_and(|id| prior.contains(id))
+    }) {
+        return Err(crate::provider::Error::new(crate::provider::Failure::InvalidResponse).into());
     }
     Ok(())
 }

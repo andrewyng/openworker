@@ -61,10 +61,28 @@ For a guide that must only return text, set `tools: []`, `planning: false`,
 `memory: false` and `scheduling: false`. No implicit `ask_user` or `read_history`
 tools are exposed. See [Sessions and teams](../../docs/harness/guides/sessions.md).
 
+When the built-in `read_history` tool is available, its `after` and `offset`
+arguments are transcript positions, not journal event IDs. Start with
+`after: 0, offset: 0`, then pass each result's `next_index` as `after` and
+`next_offset` as `offset`. Stop when `has_more` is false. Invalid positions return
+an `invalid_history_cursor` tool error with reset guidance, allowing the model to
+correct the call in the same turn. Missing sessions and storage failures remain
+runtime errors. History excerpts never expose provider-private reasoning.
+
 No-key local providers use `api: 'chat-completions'` and an explicit `baseUrl`,
 such as `http://127.0.0.1:11434/v1`. Configure the provider before creating a live
 session. Use the agent's `defaultModel`, or override `model` in `newSession()`.
 The resolved selection survives restart. Endpoint/API changes require a new name.
+
+Use `session.send(text, { instructionAddendum, limits })` for trusted application
+context and output limits that apply to only this turn. `limits.maxOutputTokensPerCall`
+defaults to 8,192 and is distinct from the total `maxOutputTokens` turn budget.
+Use `agent.newSession({ initialHistory })` to import a completed portable
+conversation without replaying its tools. `builtinTools: { askUser: false,
+readHistory: false }` on an agent suppresses those implicit tools even when the
+agent has application tools. See [session options and migration](../../docs/harness/guides/sessions.md)
+for full examples, validation limits and compatibility rules. These options need
+an updated native runtime; the client rejects unsupported hosts explicitly.
 
 `Harness.start()` accepts optional executable/state paths, `appId`,
 `sessions: { persist, directory }`, `scratch: { directory }`,
@@ -109,6 +127,19 @@ authorize and constrain what they capture. Plain JSON return values are unchange
 
 ## Chat Completions streaming compatibility
 
+Google Gemini's compatible endpoint supports signed tool conversations; the
+harness preserves provider-private thought signatures across tool results and
+restart. See [Gemini tool conversations](../../docs/harness/guides/providers.md#gemini-tool-conversations).
+Anthropic Messages enables automatic prompt caching by default; use
+`promptCaching: false` to opt out. See [Anthropic prompt caching](../../docs/harness/guides/providers.md#anthropic-prompt-caching).
+
+The harness requests streaming token usage by default. Set `streamUsage: false`
+on `setModelProvider({ api: "chat-completions", ... })` only when a compatible
+server rejects `stream_options`. This persisted setting survives credential
+rotation; omitting it during re-registration preserves the existing choice.
+Missing usage remains unknown, not zero. See
+[streaming token usage](../../docs/harness/guides/providers.md#streaming-token-usage).
+
 For partner proxies with short-lived bearer JWTs, use `auth.getToken` and
 `harness.updateProviderCredentials()`. See [models and credentials](../../docs/harness/guides/providers.md) for provider setup.
 This requires rebuilding the native harness; access tokens stay in memory.
@@ -127,6 +158,39 @@ not text deltas. Keep partial output grouped by attempt and handle failed/retrie
 attempts separately; do not blindly concatenate a failed attempt into its retry.
 The game-builder starter's existing UI displays progress and completed messages;
 incremental-text rendering is a separate UI improvement.
+
+For typed attempt events, opt-in reasoning display, optional attempt buffering and
+safe provider diagnostics, see [Streaming and retries](../../docs/harness/guides/streaming.md).
+`AttemptOutput` provides a bounded UI projection that removes failed candidates.
+
+Application tools receive `context.callId`. Tool-start and tool-finish summaries
+expose that same ID as `item.summary.callId`; the raw journal uses
+`item.event.data.call_id`. Use it to correlate calls, including repeated calls to
+the same tool. The runtime records `tool_started` before executing the callback,
+but callback delivery and journal consumption are independent: your callback can
+run before your event iterator observes that record. Do not make a callback wait
+for the UI to consume `tool_started`.
+
+Providers may reuse call IDs in later turns. Upsert UI entries by
+`(sessionId, turnId, callId)` from either channel. A late start event
+should enrich an existing entry without resetting an already finished status:
+
+```ts
+// In the application's tool callback:
+toolRows.upsert(context.sessionId, context.turnId, context.callId, { label: "Showing preview" });
+
+// In the application's run event loop:
+const summary = item.summary;
+if (summary?.type === "tool_started" || summary?.type === "tool_finished") {
+  toolRows.upsert(item.sessionId, item.event.turn_id, summary.callId, {
+    tool: summary.tool,
+    ...(summary.type === "tool_finished" ? { status: "finished" } : {}),
+  });
+}
+```
+
+`toolRows` above represents your UI state store, not an SDK object. The same IDs
+are preserved when you consume the journal after the run has already completed.
 
 To run the synthetic OpenRouter compatibility tests against a built native host:
 

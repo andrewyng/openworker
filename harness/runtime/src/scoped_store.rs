@@ -286,6 +286,20 @@ impl StateStore for ScopedStore {
             .unwrap()
             .accept_with_safety(sid, key, text, limits, safety)
     }
+    fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+        context: crate::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .accept_with_context(sid, key, text, limits, safety, context)
+    }
     fn cursor(&self, sid: &str) -> Result<i64> {
         self.inner.lock().unwrap().cursor(sid)
     }

@@ -115,6 +115,60 @@ fn telemetry() -> (Telemetry, Controller, Arc<Mutex<Vec<Record>>>) {
     .unwrap();
     (t, c, rows)
 }
+
+#[tokio::test]
+async fn full_content_exports_exclude_google_replay_signatures() {
+    use openworker_runtime::{model::Progress, provider::Completion};
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (t, c) = Telemetry::start_with_content(
+        CaptureSink(rows.clone()),
+        128,
+        ContentPolicy {
+            capture: Capture::Full,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let manager = Arc::new(Manager::open(root.path()).unwrap());
+    let signed_tool = sse(vec![
+        json!({"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"app__lookup","arguments":"{}"},"extra_content":{"google":{"thought_signature":"OPAQUE_TOOL_SIGNATURE"}}}]},"finish_reason":"stop"}]}),
+    ]) + "data: [DONE]\n\n";
+    let signed_text = sse(vec![
+        json!({"choices":[{"index":0,"delta":{"content":"Public answer","extra_content":{"google":{"thought_signature":"OPAQUE_TEXT_SIGNATURE"}}},"finish_reason":"stop"}]}),
+    ]) + "data: [DONE]\n\n";
+    let (url, server) = endpoint(vec![(200, signed_tool), (200, signed_text)]).await;
+    let m = model(&manager, "chat-completions", &url, &t, ModelPurpose::Main);
+    async fn complete(model: &Model, history: &[Value]) -> Completion {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        let collect = async {
+            let mut completion = None;
+            while let Some(progress) = rx.recv().await {
+                if let Progress::Complete(value) = progress {
+                    completion = Some(value);
+                }
+            }
+            completion.unwrap()
+        };
+        let (result, completion) =
+            tokio::join!(model.next("Instructions", history, &[], tx), collect);
+        result.unwrap();
+        completion
+    }
+    let mut history = vec![json!({"role":"user","content":"Public question"})];
+    history.extend(complete(&m, &history).await.output);
+    history.push(json!({"type":"function_call_output","call_id":"call-1","output":"available"}));
+    let second = complete(&m, &history).await;
+    assert!(serde_json::to_string(&second.output)
+        .unwrap()
+        .contains("OPAQUE_TEXT_SIGNATURE"));
+    server.await.unwrap();
+    assert!(c.shutdown(Duration::from_secs(3)));
+    let exported = format!("{:?}", rows.lock().unwrap());
+    assert!(!exported.contains("OPAQUE_"));
+    assert!(exported.contains("Public answer"));
+    assert!(exported.contains("Public question"));
+}
 #[tokio::test]
 async fn all_real_model_purposes_keep_usage_once_and_share_turn() {
     let (t, c, rows) = telemetry();

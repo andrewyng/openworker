@@ -230,12 +230,20 @@ async fn exercise(api: Api, managed: bool) {
     let mut release = Some(release);
     while let Some(event) = events.next().await {
         match event.unwrap() {
-            RunEvent::Other(event) if event.kind == "assistant_delta" => {
+            RunEvent::TextDelta {
+                session_id,
+                turn_id,
+                attempt_id,
+                text,
+            } => {
+                assert_eq!(session_id, session.id());
+                assert!(turn_id.is_some());
+                assert!(!attempt_id.is_empty());
                 if let Some(release) = release.take() {
                     assert!(!finished.load(Ordering::SeqCst));
                     release.send(()).unwrap();
                 }
-                deltas.push_str(event.data["text"].as_str().unwrap());
+                deltas.push_str(&text);
             }
             RunEvent::ToolStarted { .. }
             | RunEvent::ToolFinished { .. }

@@ -729,7 +729,7 @@ impl Database {
             .query_one("SELECT count(*) FROM history WHERE session_id=$1", &[&sid])?
             .get(0);
         if after > total as usize {
-            bail!("Invalid history cursor");
+            return Err(openworker_runtime::store::HistoryCursorError::Index.into());
         }
         let mut items = vec![];
         let mut bytes = 0;
@@ -794,6 +794,19 @@ impl Database {
         limits: Option<openworker_runtime::budget::Limits>,
         safety: Option<openworker_runtime::safety::Config>,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_context(sid, key, text, limits, safety, Default::default())
+    }
+    pub fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        safety: Option<openworker_runtime::safety::Config>,
+        context: openworker_runtime::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        context.validate()?;
+        let context_digest = context.digest()?;
         if let Some(config) = &safety {
             config.validate()?;
         }
@@ -820,6 +833,11 @@ impl Database {
                 return Err(crate::SubmissionError::Conflict.into());
             }
             if row.get::<_, String>(2) != "queued" {
+                let old_context_digest = tx.query_opt("SELECT data->>'context_digest' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1", &[&sid,&tid])?.and_then(|r|r.get::<_,Option<String>>(0)).unwrap_or(openworker_runtime::turn_options::Context::default().digest()?);
+                anyhow::ensure!(
+                    old_context_digest == context_digest,
+                    "Submission ID reused with different turn context"
+                );
                 let original=tx.query_opt("SELECT data->'safety' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1",&[&sid,&tid])?.and_then(|r|r.get::<_,Option<Value>>(0)).filter(|v|!v.is_null());
                 anyhow::ensure!(
                     original == safety.as_ref().map(serde_json::to_value).transpose()?,
@@ -827,6 +845,9 @@ impl Database {
                 );
                 if s.turn.as_ref().is_none_or(|t| t.id != tid) {
                     s.turn = Some(Turn {
+                        provider_error: None,
+                        instruction_addendum: context.instruction_addendum.clone(),
+                        output: context.output.clone(),
                         pending_safety_result: None,
                         safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
                         safety_retries: 0,
@@ -911,6 +932,9 @@ impl Database {
         }
         openworker_runtime::safety::reconcile_pending_result(&mut s);
         s.turn = Some(Turn {
+            provider_error: None,
+            instruction_addendum: context.instruction_addendum.clone(),
+            output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
             safety_retries: 0,
@@ -942,7 +966,7 @@ impl Database {
             &self.owner,
             epoch,
             "turn_accepted",
-            json!({"safety":safety}),
+            json!({"safety":safety,"context_digest":context_digest}),
         )?;
         tx.commit()?;
         s.storage_revision += 1;
@@ -1059,7 +1083,7 @@ pub(crate) fn excerpt(page: Value, offset: usize) -> Result<Value> {
     let raw = serde_json::to_string(&first["item"])?;
     let count = raw.chars().count();
     if offset > count {
-        bail!("Invalid transcript character offset");
+        return Err(openworker_runtime::store::HistoryCursorError::Offset.into());
     }
     let text = raw.chars().skip(offset).take(8000).collect::<String>();
     let next = offset + text.chars().count();
@@ -1067,6 +1091,27 @@ pub(crate) fn excerpt(page: Value, offset: usize) -> Result<Value> {
     Ok(
         json!({"index":index,"offset":offset,"text":text,"item_complete":next==count,"next_index":if next==count{index+1}else{index},"next_offset":if next==count{0}else{next},"has_more":next<count||index+1<page["total_items"].as_u64().unwrap()}),
     )
+}
+
+#[cfg(test)]
+mod history_cursor_tests {
+    use super::*;
+
+    #[test]
+    fn transcript_offset_errors_preserve_the_shared_input_error_type() {
+        let page =
+            json!({"items":[{"index":0,"item":{"role":"user","content":"🌱"}}],"total_items":1});
+        let error = excerpt(page.clone(), 100000).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+            Some(&openworker_runtime::store::HistoryCursorError::Offset)
+        );
+        let value = excerpt(page, 0).unwrap();
+        assert!(value["text"].as_str().unwrap().contains('🌱'));
+        assert_eq!(value["next_index"], 1);
+        assert_eq!(value["next_offset"], 0);
+        assert_eq!(value["has_more"], false);
+    }
 }
 
 #[cfg(test)]

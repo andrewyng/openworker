@@ -123,6 +123,7 @@ pub struct RunResult {
     pub cursor: i64,
     /// Team board at the end of the run, for sessions with subagents.
     pub board: Option<Value>,
+    pub provider_error: Option<openworker_runtime::provider::Diagnostic>,
 }
 impl RunResult {
     fn from_wire(v: &Value) -> Self {
@@ -144,6 +145,7 @@ impl RunResult {
             submission_id: v["submission_id"].as_str().map(str::to_owned),
             cursor: v["cursor"].as_i64().unwrap_or(0),
             board: v.get("board").filter(|b| !b.is_null()).cloned(),
+            provider_error: serde_json::from_value(v["provider_error"].clone()).ok(),
         }
     }
 }
@@ -151,6 +153,45 @@ impl RunResult {
 /// Progress while a run is streaming.
 #[derive(Clone, Debug)]
 pub enum RunEvent {
+    AttemptStarted {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        attempt: u32,
+    },
+    AttemptFinished {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        status: String,
+        failure: Option<openworker_runtime::provider::Failure>,
+    },
+    TextDelta {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        text: String,
+    },
+    ReasoningDelta {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        kind: openworker_runtime::provider::ReasoningKind,
+        text: String,
+        block_index: u64,
+    },
+    ModelActivity {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        elapsed_ms: u64,
+    },
+    ProviderError {
+        session_id: String,
+        turn_id: Option<String>,
+        attempt_id: String,
+        diagnostic: openworker_runtime::provider::Diagnostic,
+    },
     /// Named-team events retain both instance and definition identities.
     TeamActivity {
         agent_id: String,
@@ -166,10 +207,16 @@ pub enum RunEvent {
     ToolStarted {
         agent: String,
         tool: String,
+        /// Correlates with application ToolContext::call_id and the raw journal.
+        call_id: String,
+        /// Scope call IDs to their turn; providers may reuse IDs in later turns.
+        turn_id: Option<String>,
     },
     ToolFinished {
         agent: String,
         tool: String,
+        call_id: String,
+        turn_id: Option<String>,
     },
     /// The host approved a call because the agent's `interrupt_on` excludes it.
     AutoApproved {
@@ -199,8 +246,66 @@ impl RunEvent {
         }
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
         let summary = &item["summary"];
+        let session_id = item["event"]["session_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let turn_id = item["event"]["turn_id"].as_str().map(str::to_owned);
+        let attempt_id = || {
+            summary["attempt_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        };
         let tool = || summary["tool"].as_str().unwrap_or_default().to_owned();
+        // Older hosts omit this from summaries, but retain it in the journal.
+        let call_id = || {
+            summary["call_id"]
+                .as_str()
+                .or_else(|| item["event"]["data"]["call_id"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
         Some(match summary["type"].as_str() {
+            Some("model_attempt_started") => RunEvent::AttemptStarted {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                attempt: summary["attempt"].as_u64()? as u32,
+            },
+            Some("model_attempt_finished") => RunEvent::AttemptFinished {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                status: summary["status"].as_str()?.into(),
+                failure: serde_json::from_value(summary["kind"].clone()).ok(),
+            },
+            Some("assistant_delta") => RunEvent::TextDelta {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                text: summary["text"].as_str()?.into(),
+            },
+            Some("reasoning_delta") => RunEvent::ReasoningDelta {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                kind: serde_json::from_value(summary["kind"].clone()).ok()?,
+                text: summary["text"].as_str()?.into(),
+                block_index: summary["block_index"].as_u64()?,
+            },
+            Some("model_activity") => RunEvent::ModelActivity {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                elapsed_ms: summary["elapsed_ms"].as_u64()?,
+            },
+            Some("provider_error") => RunEvent::ProviderError {
+                session_id,
+                turn_id,
+                attempt_id: attempt_id(),
+                diagnostic: serde_json::from_value(summary["diagnostic"].clone()).ok()?,
+            },
             Some("message") => RunEvent::Message {
                 agent,
                 text: summary["text"].as_str().unwrap_or_default().to_owned(),
@@ -208,10 +313,14 @@ impl RunEvent {
             Some("tool_started") => RunEvent::ToolStarted {
                 agent,
                 tool: tool(),
+                call_id: call_id(),
+                turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("tool_finished") => RunEvent::ToolFinished {
                 agent,
                 tool: tool(),
+                call_id: call_id(),
+                turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("auto_approved") => RunEvent::AutoApproved {
                 agent,
@@ -341,6 +450,23 @@ impl Session {
         Ok(())
     }
     pub async fn send_with_options(&self, text: &str, options: crate::TurnOptions) -> Result<Run> {
+        if options
+            .limits
+            .as_ref()
+            .is_some_and(|l| l.max_output_tokens_per_call != 8192)
+            && self.client.info()["capabilities"]["per_call_output_limit"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure per-call output limits".into(),
+            ));
+        }
+        if (options.instruction_addendum.is_some() || options.output.is_some())
+            && self.client.info()["capabilities"]["turn_context"] != true
+        {
+            return Err(Error::Setup(
+                "Host does not support turn context; update the runtime".into(),
+            ));
+        }
         let id = options
             .submission_id
             .unwrap_or_else(|| openworker_runtime::id("sub"));
@@ -349,7 +475,14 @@ impl Session {
                 "This harness build does not support guardrails".into(),
             ));
         }
-        let started=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety})).await?;
+        let mut parameters = json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety});
+        if let Some(addendum) = options.instruction_addendum {
+            parameters["instruction_addendum"] = json!(addendum);
+        }
+        if let Some(output) = options.output {
+            parameters["output"] = json!(output);
+        }
+        let started = self.client.request("session/send", parameters).await?;
         Ok(Run {
             session: self.clone(),
             submission: id,
@@ -400,6 +533,15 @@ impl Session {
         text: &str,
         limits: Option<super::TurnLimits>,
     ) -> Result<Run> {
+        if limits
+            .as_ref()
+            .is_some_and(|l| l.max_output_tokens_per_call != 8192)
+            && self.client.info()["capabilities"]["per_call_output_limit"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure per-call output limits".into(),
+            ));
+        }
         if limits.is_some() && self.client.info()["capabilities"]["turn_limits"] != true {
             return Err(crate::Error::Setup(
                 "Host does not support turn limits".into(),
@@ -443,6 +585,13 @@ impl Session {
         Self::create_options(client, options).await
     }
     pub(crate) async fn create_options(client: HarnessClient, options: Value) -> Result<Self> {
+        if options.get("initial_history").is_some()
+            && client.info()["capabilities"]["initial_history"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to import conversation history".into(),
+            ));
+        }
         if options.get("auto_skip_questions").is_some()
             && client.info()["capabilities"]["sdk_question_policy"] != true
         {
@@ -734,5 +883,85 @@ mod tests {
         let o = RunEvent::from_wire(&json!({"agent":"a","summary":null,
             "event":{"event_id":3,"session_id":"s","turn_id":null,"type":"compacted","data":{}}}));
         assert!(matches!(o, Some(RunEvent::Other(e)) if e.event_id == 3));
+    }
+
+    #[test]
+    fn tool_events_preserve_call_identity_from_current_and_older_hosts() {
+        for from_summary in [false, true] {
+            for kind in ["tool_started", "tool_finished"] {
+                let mut item = json!({"agent":"builder",
+                    "summary":{"type":kind,"tool":"app__preview"},
+                    "event":{"data":{"call_id":"call-preview"}}});
+                if from_summary {
+                    item["summary"]["call_id"] = json!("call-preview");
+                }
+                let mapped = RunEvent::from_wire(&item).unwrap();
+                match mapped {
+                    RunEvent::ToolStarted { call_id, tool, .. }
+                    | RunEvent::ToolFinished { call_id, tool, .. } => {
+                        assert_eq!(call_id, "call-preview");
+                        assert_eq!(tool, "app__preview");
+                    }
+                    other => panic!("unexpected tool event: {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_call_ids_keep_distinct_turns() {
+        for kind in ["tool_started", "tool_finished"] {
+            let mut keys = Vec::new();
+            for turn in [Some("turn-one"), Some("turn-two"), None] {
+                let item = json!({"agent":"builder",
+                    "summary":{"type":kind,"tool":"app__preview","call_id":"call-preview"},
+                    "event":{"turn_id":turn,"data":{"call_id":"call-preview"}}});
+                match RunEvent::from_wire(&item).unwrap() {
+                    RunEvent::ToolStarted {
+                        call_id, turn_id, ..
+                    }
+                    | RunEvent::ToolFinished {
+                        call_id, turn_id, ..
+                    } => {
+                        assert_eq!(turn_id.as_deref(), turn);
+                        keys.push((turn_id, call_id));
+                    }
+                    other => panic!("unexpected tool event: {other:?}"),
+                }
+            }
+            assert_ne!(keys[0], keys[1]);
+            assert_eq!(keys[0].1, keys[1].1);
+            assert!(keys[2].0.is_none());
+        }
+    }
+
+    #[test]
+    fn attempt_reasoning_and_provider_diagnostics_are_typed() {
+        let event = json!({"session_id":"s","turn_id":"t","data":{}});
+        let item = |summary: Value| json!({"agent":"a","event":event,"summary":summary});
+        assert!(
+            matches!(RunEvent::from_wire(&item(json!({"type":"model_attempt_started","attempt_id":"a1","attempt":1}))),Some(RunEvent::AttemptStarted{attempt:1,attempt_id,..}) if attempt_id=="a1")
+        );
+        assert!(matches!(
+            RunEvent::from_wire(&item(
+                json!({"type":"model_attempt_finished","attempt_id":"a1","status":"failed","kind":"incomplete_stream"})
+            )),
+            Some(RunEvent::AttemptFinished {
+                failure: Some(openworker_runtime::provider::Failure::IncompleteStream),
+                ..
+            })
+        ));
+        assert!(
+            matches!(RunEvent::from_wire(&item(json!({"type":"reasoning_delta","attempt_id":"a1","kind":"summary","text":"display","block_index":0}))),Some(RunEvent::ReasoningDelta{kind:openworker_runtime::provider::ReasoningKind::Summary,text,..}) if text=="display")
+        );
+        let diagnostic = json!({"category":"authentication","retryable":false,"http_status":401,"request_id":"req_fixture","api":"responses","code":"invalid_api_key"});
+        assert!(
+            matches!(RunEvent::from_wire(&item(json!({"type":"provider_error","attempt_id":"a1","diagnostic":diagnostic}))),Some(RunEvent::ProviderError{diagnostic,..}) if diagnostic.http_status==Some(401))
+        );
+        let result = RunResult::from_wire(&json!({"status":"failed","provider_error":diagnostic}));
+        assert_eq!(
+            result.provider_error.unwrap().request_id.as_deref(),
+            Some("req_fixture")
+        );
     }
 }

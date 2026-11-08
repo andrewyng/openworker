@@ -227,6 +227,7 @@ jobs:
           npm --prefix typescript-sdk test
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents
+          node --test --test-concurrency=2 --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs typescript-sdk/test/anthropic-caching.test.mjs typescript-sdk/test/gemini-compat.test.mjs typescript-sdk/test/session-options.test.mjs typescript-sdk/test/stream-events.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
       - name: Starter and partner packaging
@@ -283,5 +284,6 @@ jobs:
         run: |
           cargo test --locked -p openworker-runtime -- --test-threads=1
           cargo test --locked -p openworker-telemetry --features otlp
+          cargo test --locked -p openworker-store-postgres --test store imported_history_and_turn_context_ -- --ignored --test-threads=1
       - name: Shared PostgreSQL team contract
         run: cargo test --locked -p openworker-store-postgres --features test-support --test team_contract --test agent_team_contract --test agent_team_worker -- --ignored --test-threads=1

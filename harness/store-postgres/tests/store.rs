@@ -84,6 +84,123 @@ fn exercise(store: &mut dyn StateStore) {
         events.last().unwrap().event_id
     );
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn imported_history_and_turn_context_survive_postgres_atomicity_and_takeover() {
+    use openworker_runtime::history_import::{canonical, HistoryItem};
+    use openworker_runtime::turn_options::{Context, OutputOptions};
+    let (config, mut owner) = fixture();
+    let mut s = session("s_import");
+    s.history = canonical(&[
+        HistoryItem::User {
+            text: "Earlier request".into(),
+        },
+        HistoryItem::ToolCall {
+            call_id: "old".into(),
+            name: "app__lookup".into(),
+            arguments: json!({}),
+        },
+        HistoryItem::ToolResult {
+            call_id: "old".into(),
+            output: "done".into(),
+        },
+    ])
+    .unwrap();
+    let mut sql = admin(&config);
+    sql.batch_execute("CREATE FUNCTION reject_import_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$; CREATE TRIGGER reject_import_event BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION reject_import_event();").unwrap();
+    assert!(owner.save(&s, "session_created", json!({})).is_err());
+    assert_eq!(
+        sql.query_one("SELECT count(*) FROM sessions", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    assert_eq!(
+        sql.query_one("SELECT count(*) FROM history", &[])
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    sql.batch_execute(
+        "DROP TRIGGER reject_import_event ON events; DROP FUNCTION reject_import_event();",
+    )
+    .unwrap();
+    // A database fault deliberately fences this adapter. Reconcile rollback
+    // through the independent admin connection above, then reconnect rather
+    // than reusing a writer whose outcome was uncertain.
+    assert!(owner.get(&s.id).is_err());
+    drop(owner);
+    let mut owner = PostgresStore::open(config.clone()).unwrap();
+    owner.save(&s, "session_created", json!({})).unwrap();
+    assert!(owner.get(&s.id).unwrap().turn.is_none());
+    let context = Context {
+        instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
+        output: OutputOptions {
+            reasoning: true,
+            buffer_attempts: true,
+        },
+    };
+    owner
+        .accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(
+        !owner
+            .accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+            .unwrap()
+            .1
+    );
+    assert!(owner.accept(&s.id, "first", "New request").is_err());
+    owner.release(&s.id).unwrap();
+    drop(owner);
+    let mut replacement = PostgresStore::open(config).unwrap();
+    replacement.claim(&s.id).unwrap();
+    let mut restored = replacement.get(&s.id).unwrap();
+    assert_eq!(restored.history[..3], s.history);
+    assert_eq!(
+        restored.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert_eq!(restored.turn.as_ref().unwrap().output, context.output);
+    assert!(!replacement
+        .history_page(&s.id, 0)
+        .unwrap()
+        .to_string()
+        .contains("TURN_PRIVATE_CONTEXT"));
+    assert!(
+        !serde_json::to_string(&replacement.events(&s.id, 0).unwrap())
+            .unwrap()
+            .contains("TURN_PRIVATE_CONTEXT")
+    );
+    restored.turn.as_mut().unwrap().status = "completed".into();
+    replacement
+        .save(&restored, "turn_completed", json!({"status":"completed"}))
+        .unwrap();
+    let (next, _, _) = replacement.accept(&s.id, "next", "Next request").unwrap();
+    assert!(next.turn.as_ref().unwrap().instruction_addendum.is_none());
+    assert_eq!(next.turn.as_ref().unwrap().output, OutputOptions::default());
+    let (old, fresh, _) = replacement
+        .accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(!fresh);
+    assert_eq!(
+        old.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert!(replacement
+        .accept_with_context(
+            &s.id,
+            "first",
+            "New request",
+            None,
+            None,
+            Context {
+                output: OutputOptions::default(),
+                ..context
+            }
+        )
+        .is_err());
+}
 #[test]
 #[ignore = "requires isolated OW_PG_TEST_URL"]
 fn sqlite_postgres_domain_conformance() {

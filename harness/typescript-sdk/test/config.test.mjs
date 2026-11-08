@@ -5,6 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOptions, hostConfig, agentWire } from "../dist/config.js";
 
+test("built-in controls are omitted by default and preserve explicit false", () => {
+  const base={id:"guide",instructions:"Help",tools:["app.lookup"]};
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(agentWire(base))),"builtin_tools"),false);
+  const configured=JSON.parse(JSON.stringify(agentWire({...base,builtinTools:{askUser:false,readHistory:false},limits:{maxModelCalls:4,maxOutputTokens:60000,maxOutputTokensPerCall:24000}})));
+  assert.deepEqual(configured.builtin_tools,{askUser:false,readHistory:false});
+  assert.equal(configured.limits.maxOutputTokensPerCall,24000);
+});
+
 test("trusted coworker packages preserve policy and server registration", () => {
   const root = join(tmpdir(), "ow-package-config");
   const paths = {

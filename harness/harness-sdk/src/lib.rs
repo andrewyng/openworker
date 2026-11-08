@@ -20,8 +20,15 @@ pub use agents::{
 };
 pub use agents::{Run, Session, SessionInput, TurnLimits};
 pub use desktop::{DesktopOptions, SessionOptions, TurnOptions};
+pub use openworker_runtime::history_import::HistoryItem;
+pub use openworker_runtime::package::BuiltinTools;
+pub use openworker_runtime::turn_options::OutputOptions;
 mod transport;
 pub use host::{CoworkerConfig, HostConfig, HostProcessConfig, Storage};
+pub use openworker_runtime::anthropic::Thinking as AnthropicThinking;
+pub use openworker_runtime::provider::{
+    Diagnostic as ProviderDiagnostic, Failure as ProviderFailure, ReasoningKind,
+};
 pub use openworker_runtime::provider_auth::{AccessToken, Reason as TokenRefreshReason};
 pub use openworker_runtime::team_service::{Command as TeamCommand, Create as TeamCreate};
 pub use openworker_runtime::teams::{Member as TeamMember, Role as TeamRole};
@@ -78,6 +85,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     InvalidInput(String),
     Remote(String),
+    Provider(openworker_runtime::provider::Diagnostic),
     Setup(String),
     Unavailable,
     /// May have committed or started. Reconcile durable IDs; do not blindly retry.
@@ -88,6 +96,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidInput(s) | Self::Remote(s) | Self::Setup(s) => f.write_str(s),
+            Self::Provider(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
             Self::Unavailable => f.write_str("Harness unavailable or recovering; request not sent"),
             Self::OutcomeUnknown => f.write_str("Harness response lost; execution outcome unknown. Reconcile saved session before retrying."),
             Self::Closed => f.write_str("Harness client closed"),

@@ -9,23 +9,37 @@ use serde::{Deserialize, Serialize};
 pub struct Limits {
     pub max_model_calls: u32,
     pub max_output_tokens: u64,
+    /// Per working-model call, further clamped to the remaining turn budget.
+    #[serde(default = "per_call_tokens", skip_serializing_if = "default_per_call")]
+    pub max_output_tokens_per_call: u32,
     #[serde(default = "summary_tokens")]
     pub summary_tokens: u32,
 }
 fn summary_tokens() -> u32 {
     512
 }
+fn per_call_tokens() -> u32 {
+    8192
+}
+fn default_per_call(value: &u32) -> bool {
+    *value == per_call_tokens()
+}
 impl Default for Limits {
     fn default() -> Self {
         Self {
             max_model_calls: 100,
             max_output_tokens: 256000,
+            max_output_tokens_per_call: per_call_tokens(),
             summary_tokens: 512,
         }
     }
 }
 impl Limits {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=1_000_000).contains(&self.max_output_tokens_per_call),
+            "maxOutputTokensPerCall must be 1..1000000"
+        );
         ensure!(
             (1..=10000).contains(&self.max_model_calls),
             "maxModelCalls must be 1..10000"
@@ -74,7 +88,7 @@ impl State {
         }
     }
     pub fn reserve(&mut self, summary: bool) -> Result<u32> {
-        self.reserve_up_to(summary, 8192)
+        self.reserve_up_to(summary, self.limits.max_output_tokens_per_call)
     }
     pub fn reserve_up_to(&mut self, summary: bool, cap: u32) -> Result<u32> {
         let remaining = self
@@ -109,6 +123,39 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    #[test]
+    fn per_call_limit_is_distinct_from_total_and_summary_reserve() {
+        let limits = Limits {
+            max_output_tokens: 30000,
+            max_output_tokens_per_call: 24000,
+            summary_tokens: 512,
+            ..Default::default()
+        };
+        let mut state = State::new(Some(&limits), None).unwrap();
+        assert_eq!(state.reserve(false).unwrap(), 24000);
+        state.settle(24000, Some(23000));
+        assert_eq!(state.reserve(false).unwrap(), 6488);
+        state.settle(6488, None);
+        assert_eq!(state.reason(), Some("output_token_limit"));
+        assert_eq!(state.reserve(true).unwrap(), 512);
+        assert_eq!(state.charged_output_tokens, 30000);
+    }
+    #[test]
+    fn per_call_default_preserves_old_serialized_limits() {
+        let old = json!({"maxModelCalls":100,"maxOutputTokens":256000,"summaryTokens":512});
+        let limits: Limits = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(limits.max_output_tokens_per_call, 8192);
+        assert_eq!(serde_json::to_value(limits).unwrap(), old);
+        for cap in [0, 1_000_001] {
+            assert!(Limits {
+                max_output_tokens_per_call: cap,
+                ..Default::default()
+            }
+            .validate()
+            .is_err());
+        }
+    }
     #[test]
     fn reserve_summary_inside_total_and_charge_unknown() {
         let mut s = State::new(
@@ -117,6 +164,7 @@ mod tests {
                 max_model_calls: 3,
                 max_output_tokens: 1024,
                 summary_tokens: 256,
+                ..Default::default()
             }),
         )
         .unwrap();

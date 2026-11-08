@@ -61,6 +61,7 @@ pub(crate) fn manifest(agent: &Agent, role: Option<Role>) -> Result<String> {
         team_role: role,
         default_model: agent.model.clone(),
         limits: agent.limits.clone(),
+        builtin_tools: agent.builtin_tools.clone(),
     };
     // JSON is a YAML subset, so the engine's frontmatter parser accepts it and
     // no prompt text can be misread as manifest keys.
@@ -137,6 +138,27 @@ fn count_files(dir: &Path) -> std::io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omitted_session_options_preserve_existing_manifest_shape() {
+        let agent = Agent::new("stable")
+            .instructions("Stable instructions.")
+            .limits(super::super::TurnLimits::default());
+        let text = manifest(&agent, None).unwrap();
+        assert!(!text.contains("builtin_tools"));
+        assert!(!text.contains("maxOutputTokensPerCall"));
+        let parsed = openworker_runtime::package::parse(&text).unwrap().0;
+        assert!(parsed.builtin_tools.is_none());
+        assert_eq!(parsed.limits.unwrap().max_output_tokens_per_call, 8192);
+        let changed = agent.builtin_tools(crate::BuiltinTools {
+            ask_user: Some(false),
+            read_history: Some(false),
+        });
+        let parsed = openworker_runtime::package::parse(&manifest(&changed, None).unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(parsed.builtin_tools.unwrap().read_history, Some(false));
+    }
 
     fn agent() -> Agent {
         Agent::new("helper")
