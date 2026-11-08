@@ -391,6 +391,7 @@ export class Harness {
       name: provider.name,
       api: provider.api,
       base_url: provider.baseUrl,
+      stream_usage: provider.streamUsage,
       access_token_auth: provider.auth ? true : undefined,
       credentials: credentials
         ? { api_key: apiKey, storage: credentials.storage ?? "secure" }
@@ -1038,6 +1039,13 @@ export class RunStream implements AsyncIterable<RunEvent> {
         if (!Number.isSafeInteger(event.event_id))
           throw new HarnessError("Protocol", "Invalid journal cursor");
         this.saved[sid] = Number(event.event_id);
+        let summary = (item.summary ?? null) as RunEvent["summary"];
+        if (summary?.type === "tool_started" || summary?.type === "tool_finished") {
+          const wireSummary = record(item.summary);
+          // Older hosts retain the ID in the journal but omit it from summaries.
+          const callId = wireSummary.call_id ?? record(event.data).call_id;
+          summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+        }
         yield {
           agent: String(item.agent),
           ...(typeof item.agent_id === "string"
@@ -1046,7 +1054,7 @@ export class RunStream implements AsyncIterable<RunEvent> {
           ...(typeof item.team_id === "string" ? { teamId: item.team_id } : {}),
           sessionId: sid,
           event: event as unknown as RunEvent["event"],
-          summary: (item.summary ?? null) as RunEvent["summary"],
+          summary,
         };
       }
       cursors = state.cursors as Cursors;

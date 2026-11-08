@@ -251,6 +251,104 @@ fn provider_endpoint_is_immutable_and_local_models_need_no_fake_key() {
     assert!(m.endpoint(&selected).is_err());
 }
 
+#[test]
+fn chat_stream_usage_defaults_on_and_opt_out_survives_rotation_and_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let m = Manager::open(root.path()).unwrap();
+    let config =
+        json!({"name":"Local","api":"chat-completions","base_url":"http://127.0.0.1:11434/v1"});
+    m.set_provider(config.clone()).unwrap();
+    let selected = m.resolve(&Choice::new("Local", "fixture")).unwrap();
+    assert!(m.stream_usage(&selected).unwrap());
+    assert_eq!(m.list().unwrap()["connections"][0]["stream_usage"], true);
+
+    let mut disabled = config.clone();
+    disabled["stream_usage"] = json!(false);
+    m.set_provider(disabled).unwrap();
+    m.set_provider(config.clone()).unwrap();
+    assert!(!m.stream_usage(&selected).unwrap());
+    let mut rotated = config.clone();
+    rotated["credentials"] = json!({"api_key":"fixture-key-only","storage":"memory"});
+    m.set_provider(rotated).unwrap();
+    assert!(!m.stream_usage(&selected).unwrap());
+    assert_eq!(&**m.key(&selected).unwrap(), "fixture-key-only");
+    drop(m);
+
+    let m = Manager::open(root.path()).unwrap();
+    assert!(!m.stream_usage(&selected).unwrap());
+    assert_eq!(m.list().unwrap()["connections"][0]["stream_usage"], false);
+    let mut enabled = config.clone();
+    enabled["stream_usage"] = json!(true);
+    m.set_provider(enabled).unwrap();
+    assert!(m.stream_usage(&selected).unwrap());
+    let mut invalid = config.clone();
+    invalid["stream_usage"] = json!("false");
+    assert!(m.set_provider(invalid).is_err());
+    assert!(m.stream_usage(&selected).unwrap());
+    m.remove("Local").unwrap();
+    m.set_provider(config).unwrap();
+    assert!(m.stream_usage(&selected).is_err());
+}
+
+#[test]
+fn chat_stream_usage_migrates_existing_endpoint_rows() {
+    let root = tempfile::tempdir().unwrap();
+    let db = rusqlite::Connection::open(root.path().join("model-connections.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE connections(id TEXT PRIMARY KEY,label TEXT NOT NULL,identity TEXT NOT NULL,persistence TEXT NOT NULL,secret BLOB,provider TEXT NOT NULL);
+         CREATE TABLE endpoints(id TEXT PRIMARY KEY,api TEXT NOT NULL,base_url TEXT NOT NULL);
+         INSERT INTO connections VALUES('Local','Local','legacy-identity','none',NULL,'openai');
+         INSERT INTO endpoints VALUES('Local','\"chat-completions\"','http://127.0.0.1:11434/v1');",
+    ).unwrap();
+    drop(db);
+    let m = Manager::open(root.path()).unwrap();
+    let selected = m.resolve(&Choice::new("Local", "fixture")).unwrap();
+    assert!(m.stream_usage(&selected).unwrap());
+    assert_eq!(selected.identity, "legacy-identity");
+    drop(m);
+    assert!(Manager::open(root.path())
+        .unwrap()
+        .stream_usage(&selected)
+        .unwrap());
+}
+
+#[test]
+fn stream_usage_rejects_other_apis_and_supports_access_token_providers() {
+    let root = tempfile::tempdir().unwrap();
+    let m = Manager::open(root.path()).unwrap();
+    for api in ["responses", "anthropic"] {
+        assert!(m
+            .set_provider(json!({"name":"Wrong","api":api,"stream_usage":false}))
+            .is_err());
+        let mut settings = key("Wrong", "fixture-key-only", "memory");
+        settings["api"] = json!(api);
+        settings["provider"] = json!(if api == "anthropic" {
+            "anthropic"
+        } else {
+            "openai"
+        });
+        settings["stream_usage"] = json!(false);
+        assert!(m.set(settings).is_err());
+    }
+    let config = json!({"name":"Proxy","api":"chat-completions","base_url":"https://proxy.example/v1","access_token_auth":true,"stream_usage":false});
+    m.set_provider(config.clone()).unwrap();
+    m.update_access_token(
+        "Proxy",
+        openworker_runtime::provider_auth::AccessToken::new(
+            "fixture-access-token",
+            openworker_runtime::provider_auth::now() + 3600,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let selected = m.resolve(&Choice::new("Proxy", "fixture")).unwrap();
+    assert!(!m.stream_usage(&selected).unwrap());
+    let mut unchanged = config;
+    unchanged.as_object_mut().unwrap().remove("stream_usage");
+    m.set_provider(unchanged).unwrap();
+    assert!(!m.stream_usage(&selected).unwrap());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "Explicit qualification: writes a disposable macOS Keychain item"]

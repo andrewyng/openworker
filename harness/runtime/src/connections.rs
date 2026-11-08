@@ -70,6 +70,8 @@ struct Set {
     api: Option<crate::model_api::Api>,
     #[serde(default)]
     base_url: Option<String>,
+    #[serde(default)]
+    stream_usage: Option<bool>,
 }
 impl Manager {
     /// Trusted server bootstrap only; not exposed by the model or stdio protocol.
@@ -169,6 +171,17 @@ impl Manager {
             )?;
         }
         db.execute_batch("CREATE TABLE IF NOT EXISTS endpoints(id TEXT PRIMARY KEY, api TEXT NOT NULL, base_url TEXT NOT NULL);")?;
+        let has_stream_usage = db
+            .prepare("PRAGMA table_info(endpoints)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "stream_usage");
+        if !has_stream_usage {
+            db.execute_batch(
+                "ALTER TABLE endpoints ADD COLUMN stream_usage INTEGER NOT NULL DEFAULT 1 CHECK(stream_usage IN (0,1))",
+            )?;
+        }
         Ok(Self {
             scope: root.canonicalize()?.to_string_lossy().into(),
             state: Mutex::new(State {
@@ -197,25 +210,34 @@ impl Manager {
         for row in rows {
             let (id, label, persistence, stored, provider) = row?;
             use rusqlite::OptionalExtension;
-            let endpoint: Option<(String, String)> = state
+            let endpoint: Option<(String, String, bool)> = state
                 .db
                 .query_row(
-                    "SELECT api,base_url FROM endpoints WHERE id=?1",
+                    "SELECT api,base_url,stream_usage FROM endpoints WHERE id=?1",
                     [&id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()?;
-            let (api, base_url) = endpoint
-                .map(|(a, b)| (serde_json::from_str::<Value>(&a).unwrap_or(Value::Null), b))
+            let (api, base_url, stream_usage) = endpoint
+                .map(|(a, b, usage)| {
+                    (
+                        serde_json::from_str::<Value>(&a).unwrap_or(Value::Null),
+                        b,
+                        usage,
+                    )
+                })
                 .unwrap_or_else(|| {
                     let api = if provider == "anthropic" {
                         crate::model_api::Api::Anthropic
                     } else {
                         crate::model_api::Api::Responses
                     };
-                    (json!(api), api.default_url().into())
+                    (json!(api), api.default_url().into(), true)
                 });
             connections.push(json!({"id":id,"name":id,"label":label,"provider":provider,"api":api,"base_url":base_url,"persistence":persistence,"configured":persistence=="none"||stored||state.memory.contains_key(&id)||state.tokens.get(&id).is_some_and(|t|t.ready())}));
+            if api == "chat-completions" {
+                connections.last_mut().unwrap()["stream_usage"] = json!(stream_usage);
+            }
         }
         Ok(
             json!({"connections":connections,"secure_storage_available":cfg!(any(windows,target_os="macos"))}),
@@ -235,6 +257,9 @@ impl Manager {
             });
         if api.kind() != input.provider {
             bail!("API and provider transport disagree");
+        }
+        if input.stream_usage.is_some() && api != crate::model_api::Api::ChatCompletions {
+            bail!("stream_usage is only supported for Chat Completions");
         }
         let base_url =
             crate::model_api::base_url(input.base_url.as_deref().unwrap_or(api.default_url()))?;
@@ -327,8 +352,8 @@ impl Manager {
             ON CONFLICT(id) DO UPDATE SET label=excluded.label,persistence=excluded.persistence,secret=excluded.secret",
             params![input.id,input.label,crate::id("connection"),input.persistence,encrypted,input.provider.name()])?;
         transaction.execute(
-            "INSERT OR IGNORE INTO endpoints(id,api,base_url) VALUES(?1,?2,?3)",
-            params![input.id, api_json, base_url],
+            "INSERT INTO endpoints(id,api,base_url,stream_usage) VALUES(?1,?2,?3,COALESCE(?4,1)) ON CONFLICT(id) DO UPDATE SET stream_usage=COALESCE(?4,endpoints.stream_usage)",
+            params![input.id, api_json, base_url, input.stream_usage],
         )?;
         transaction.commit()?;
         #[cfg(target_os = "macos")]
@@ -573,6 +598,15 @@ impl Manager {
         };
         Ok((api, format!("{base}/{}", api.path())))
     }
+    /// Whether a Chat Completions connection requests streaming token usage.
+    /// Defaults to true for existing connections and survives credential rotation.
+    pub fn stream_usage(&self, selected: &Selection) -> Result<bool> {
+        self.state.lock().unwrap().db.query_row(
+            "SELECT COALESCE(e.stream_usage,1) FROM connections c LEFT JOIN endpoints e ON c.id=e.id WHERE c.id=?1 AND c.identity=?2",
+            params![selected.connection, selected.identity],
+            |r| r.get(0),
+        ).context("Selected model provider is missing or its identity changed")
+    }
     /// Harness-owned provider registration; never journal this secret-bearing request.
     pub fn set_provider(&self, value: Value) -> Result<Value> {
         #[derive(Deserialize)]
@@ -582,6 +616,8 @@ impl Manager {
             api: crate::model_api::Api,
             base_url: Option<String>,
             credentials: Option<Credentials>,
+            #[serde(default)]
+            stream_usage: Option<bool>,
             #[serde(default)]
             access_token_auth: bool,
         }
@@ -594,6 +630,9 @@ impl Manager {
         let input: Input = serde_json::from_value(value)
             .map_err(|_| anyhow::anyhow!("Invalid model provider configuration"))?;
         Choice::new(&input.name, "validation").validate()?;
+        if input.stream_usage.is_some() && input.api != crate::model_api::Api::ChatCompletions {
+            bail!("stream_usage is only supported for Chat Completions");
+        }
         anyhow::ensure!(
             !input.access_token_auth
                 || (input.credentials.is_none()
@@ -646,6 +685,12 @@ impl Manager {
                         self.register_access_auth(&input.name, None)?;
                     }
                 }
+                if let Some(enabled) = input.stream_usage {
+                    self.state.lock().unwrap().db.execute(
+                        "UPDATE endpoints SET stream_usage=?2 WHERE id=?1",
+                        params![input.name, enabled],
+                    )?;
+                }
                 return Ok(json!({"saved":true,"credentials_unchanged":true}));
             }
         }
@@ -667,7 +712,7 @@ impl Manager {
                 .into(),
             ),
         };
-        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"api_key":key,"persistence":storage}))
+        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"api_key":key,"persistence":storage}))
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]

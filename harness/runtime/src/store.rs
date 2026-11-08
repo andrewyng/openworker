@@ -5,6 +5,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{fs::OpenOptions, path::Path};
 
+/// A caller-selected transcript position is invalid. Storage adapters preserve
+/// this type so tools can request a corrected cursor without hiding I/O errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryCursorError {
+    Index,
+    Offset,
+}
+impl std::fmt::Display for HistoryCursorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Index => "Invalid history cursor",
+            Self::Offset => "Invalid transcript character offset",
+        })
+    }
+}
+impl std::error::Error for HistoryCursorError {}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Interaction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -686,7 +703,7 @@ impl Store {
             |r| r.get(0),
         )?;
         if after > total {
-            bail!("Invalid history cursor");
+            return Err(HistoryCursorError::Index.into());
         }
         let mut q = self.db.prepare(
             "SELECT seq,data FROM history WHERE session_id=? AND seq>=? ORDER BY seq LIMIT 100",
@@ -736,7 +753,7 @@ impl Store {
         let raw = serde_json::to_string(&first["item"])?;
         let count = raw.chars().count();
         if offset > count {
-            bail!("Invalid transcript character offset");
+            return Err(HistoryCursorError::Offset.into());
         }
         let text = raw.chars().skip(offset).take(8000).collect::<String>();
         let next = offset + text.chars().count();

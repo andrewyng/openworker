@@ -729,7 +729,7 @@ impl Database {
             .query_one("SELECT count(*) FROM history WHERE session_id=$1", &[&sid])?
             .get(0);
         if after > total as usize {
-            bail!("Invalid history cursor");
+            return Err(openworker_runtime::store::HistoryCursorError::Index.into());
         }
         let mut items = vec![];
         let mut bytes = 0;
@@ -1059,7 +1059,7 @@ pub(crate) fn excerpt(page: Value, offset: usize) -> Result<Value> {
     let raw = serde_json::to_string(&first["item"])?;
     let count = raw.chars().count();
     if offset > count {
-        bail!("Invalid transcript character offset");
+        return Err(openworker_runtime::store::HistoryCursorError::Offset.into());
     }
     let text = raw.chars().skip(offset).take(8000).collect::<String>();
     let next = offset + text.chars().count();
@@ -1067,6 +1067,27 @@ pub(crate) fn excerpt(page: Value, offset: usize) -> Result<Value> {
     Ok(
         json!({"index":index,"offset":offset,"text":text,"item_complete":next==count,"next_index":if next==count{index+1}else{index},"next_offset":if next==count{0}else{next},"has_more":next<count||index+1<page["total_items"].as_u64().unwrap()}),
     )
+}
+
+#[cfg(test)]
+mod history_cursor_tests {
+    use super::*;
+
+    #[test]
+    fn transcript_offset_errors_preserve_the_shared_input_error_type() {
+        let page =
+            json!({"items":[{"index":0,"item":{"role":"user","content":"🌱"}}],"total_items":1});
+        let error = excerpt(page.clone(), 100000).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+            Some(&openworker_runtime::store::HistoryCursorError::Offset)
+        );
+        let value = excerpt(page, 0).unwrap();
+        assert!(value["text"].as_str().unwrap().contains('🌱'));
+        assert_eq!(value["next_index"], 1);
+        assert_eq!(value["next_offset"], 0);
+        assert_eq!(value["has_more"], false);
+    }
 }
 
 #[cfg(test)]

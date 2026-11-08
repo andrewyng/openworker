@@ -359,7 +359,7 @@ impl Model {
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
         if api == crate::model_api::Api::ChatCompletions {
-            let body = crate::chat_completions::body(
+            let mut body = crate::chat_completions::body(
                 &self.name,
                 instructions,
                 history,
@@ -367,6 +367,14 @@ impl Model {
                 max_tokens,
                 format.as_ref(),
             )?;
+            // Some compatible/local servers reject stream_options. This is an
+            // explicit provider capability override, never an automatic retry
+            // that could repeat work after a partially received response.
+            if let Some((manager, selection)) = &self.connection {
+                if !manager.stream_usage(selection)? {
+                    body.as_object_mut().unwrap().remove("stream_options");
+                }
+            }
             crate::provider::request_decoded(
                 &client,
                 &endpoint,

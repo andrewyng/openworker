@@ -4,7 +4,7 @@
 ))]
 use futures_util::StreamExt;
 use openworker_sdk::{
-    agents::{Response, RunStatus},
+    agents::{Response, RunEvent, RunStatus},
     *,
 };
 use serde_json::json;
@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -55,6 +55,105 @@ async fn register(h: &Harness, count: Arc<AtomicUsize>) {
     .await
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn callback_ids_match_delayed_raw_and_typed_tool_events() {
+    // Exercise both application callback transports with the same-name tool
+    // called twice. Event consumption deliberately starts after execution ends.
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured = calls.clone();
+        h.register_tools(
+            "app",
+            [Tool::new("preview")
+                .description("Record callback identity.")
+                .handler(move |_, context| {
+                    let captured = captured.clone();
+                    async move {
+                        captured.lock().unwrap().push(context.call_id);
+                        Ok(json!({"shown":true}))
+                    }
+                })],
+        )
+        .await
+        .unwrap();
+        let agent = h
+            .create_agent(
+                Agent::new("builder")
+                    .instructions("Use preview.")
+                    .tool("app.preview")
+                    .approvals(Approvals::Never),
+            )
+            .await
+            .unwrap();
+        let session = agent.new_session().await.unwrap();
+        let run = session
+            .send(format!(
+                "TEST_RESOURCE_GRANTS {}",
+                json!([
+                    {"name":"app__preview","arguments":{}},
+                    {"name":"app__preview","arguments":{}}
+                ])
+            ))
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), run.result())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, RunStatus::Completed);
+        let ids = calls.lock().unwrap().clone();
+        assert_eq!(ids.len(), 2);
+        assert!(!ids[0].is_empty());
+        assert_ne!(ids[0], ids[1]);
+
+        let raw = h
+            .client()
+            .request(
+                "run/wait",
+                json!({
+                    "session_id":session.id(), "submission_id":run.id(),
+                    "cursors":{(session.id()):0}, "wait_ms":0, "max_events":1000
+                }),
+            )
+            .await
+            .unwrap();
+        let mut raw_started = Vec::new();
+        let mut raw_finished = Vec::new();
+        for item in raw["events"].as_array().unwrap() {
+            let kind = item["event"]["type"].as_str().unwrap();
+            if kind == "tool_started" || kind == "tool_finished" {
+                let id = item["event"]["data"]["call_id"].as_str().unwrap();
+                assert_eq!(item["summary"]["call_id"], id);
+                if kind == "tool_started" {
+                    raw_started.push(id.to_owned());
+                } else {
+                    raw_finished.push(id.to_owned());
+                }
+            }
+        }
+        assert_eq!(raw_started, ids);
+        assert_eq!(raw_finished, ids);
+
+        let mut started = Vec::new();
+        let mut finished = Vec::new();
+        let mut events = run.events();
+        while let Some(event) = events.next().await {
+            match event.unwrap() {
+                RunEvent::ToolStarted { call_id, .. } => started.push(call_id),
+                RunEvent::ToolFinished { call_id, .. } => finished.push(call_id),
+                _ => {}
+            }
+        }
+        assert_eq!(started, ids);
+        assert_eq!(finished, ids);
+        h.shutdown().await.unwrap();
+    }
+}
+
 async fn exercise(process: bool, postgres: bool, persist: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();

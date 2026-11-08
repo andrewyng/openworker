@@ -43,6 +43,10 @@ export interface ModelProvider {
   name: string;
   api: "responses" | "chat-completions" | "anthropic";
   baseUrl?: string;
+  /** Chat Completions only. Request streaming usage by default; false omits
+   * stream_options for servers that do not support it. Omit to preserve an
+   * existing provider setting. Missing provider usage remains unknown. */
+  streamUsage?: boolean;
   /** Memory-only bearer access tokens; mutually exclusive with credentials. */
   auth?: ProviderAuth;
   credentials?: (
@@ -56,6 +60,7 @@ export interface ModelProvider {
 export interface ToolContext {
   sessionId: string;
   turnId: string;
+  /** Scope with sessionId and turnId; callbacks may arrive before event consumption. */
   callId: string;
   workspace: string;
   signal: AbortSignal;
@@ -287,7 +292,13 @@ export interface RunEvent {
     | (
         | { type: "message"; text: string }
         | {
-            type: "tool_started" | "tool_finished" | "auto_approved";
+            type: "tool_started" | "tool_finished";
+            tool: string;
+            /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
+            callId: string;
+          }
+        | {
+            type: "auto_approved";
             tool: string;
           }
         | { type: "plan_updated"; plan: Json }

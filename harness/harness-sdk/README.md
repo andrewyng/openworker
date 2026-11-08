@@ -82,6 +82,11 @@ installed model ID. Providers are shared by this harness; sessions pin the resol
 provider identity, API, endpoint and model. Rotation preserves that identity;
 changing API/endpoint requires a new name. No model fallback is performed.
 
+Chat Completions requests streaming usage by default. For a compatible server
+that rejects `stream_options`, add `.stream_usage(false)` to its `ModelProvider`.
+The setting persists across restart and key rotation. Missing usage is unknown,
+not zero; see [streaming token usage](../../docs/harness/guides/providers.md#streaming-token-usage).
+
 Windows uses DPAPI and macOS uses Keychain for secure credentials. On Linux,
 choose `.memory_only()` explicitly or use server-managed credentials; there is no
 plaintext fallback. Keys never belong in agent definitions. Re-register callback

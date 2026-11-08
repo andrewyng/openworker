@@ -46,6 +46,19 @@ mod safety_tests;
 mod skills_tests;
 type Clients = BTreeMap<String, Arc<AsyncMutex<Client>>>;
 
+fn read_history_result(result: Result<Value>) -> Result<Value> {
+    match result {
+        Err(error) if error.is::<crate::store::HistoryCursorError>() => {
+            // Only a known caller-input error is recoverable. Do not turn
+            // missing sessions, corrupted history or failed storage into text.
+            Ok(
+                json!({"isError":true,"code":"invalid_history_cursor","message":"The transcript cursor or character offset is invalid. Start again with after=0, offset=0, then follow next_index and next_offset from each result. Do not use event IDs as transcript cursors.","retry_from":{"after":0,"offset":0}}),
+            )
+        }
+        other => other,
+    }
+}
+
 pub struct Runtime {
     #[cfg(feature = "guardrails")]
     observers_started: AtomicBool,
@@ -2872,7 +2885,7 @@ impl Runtime {
                             self.bundle
                                 .skill_call(&s.skills, alias, &args, s.execution_backend)?
                         } else if alias == "read_history" {
-                            self.store.lock().unwrap().transcript_excerpt(
+                            read_history_result(self.store.lock().unwrap().transcript_excerpt(
                                 sid,
                                 usize::try_from(
                                     args["after"].as_u64().context("Invalid history index")?,
@@ -2880,7 +2893,7 @@ impl Runtime {
                                 usize::try_from(
                                     args["offset"].as_u64().context("Invalid history offset")?,
                                 )?,
-                            )?
+                            ))?
                         } else {
                             let binding = &self.bundle.tools.bindings[alias];
                             if interaction.server.as_deref() != Some(&binding.server)

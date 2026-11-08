@@ -322,7 +322,12 @@ fn history_pages_advance_across_private_items_without_disclosing_them() {
     assert_eq!(second["has_more"], false);
     assert!(!second.to_string().contains("PRIVATE"));
     assert!(second.to_string().contains("visible"));
-    assert!(db.history_page(&s.id, 104).is_err());
+    assert_eq!(
+        db.history_page(&s.id, 104)
+            .unwrap_err()
+            .downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+        Some(&openworker_runtime::store::HistoryCursorError::Index)
+    );
 }
 
 #[test]
@@ -347,8 +352,16 @@ fn transcript_excerpts_are_scoped_bounded_and_preserve_unicode() {
         serde_json::from_str::<serde_json::Value>(&joined).unwrap()["content"],
         "🌱".repeat(10000)
     );
-    assert!(db.transcript_excerpt("other", 0, 0).is_err());
-    assert!(db.transcript_excerpt(&s.id, 0, 100000).is_err());
+    assert!(!db
+        .transcript_excerpt("other", 0, 0)
+        .unwrap_err()
+        .is::<openworker_runtime::store::HistoryCursorError>());
+    assert_eq!(
+        db.transcript_excerpt(&s.id, 0, 100000)
+            .unwrap_err()
+            .downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+        Some(&openworker_runtime::store::HistoryCursorError::Offset)
+    );
 }
 
 #[test]

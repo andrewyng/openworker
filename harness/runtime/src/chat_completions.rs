@@ -96,8 +96,7 @@ pub fn body(
     }).collect::<Result<Vec<_>,_>>()?;
     // The compatible/local API (including Ollama) accepts max_tokens. Models
     // requiring OpenAI's newer reasoning contract should use Responses instead.
-    let mut result =
-        json!({"model":model,"messages":messages,"stream":true,"max_tokens":max_tokens});
+    let mut result = json!({"model":model,"messages":messages,"stream":true,"stream_options":{"include_usage":true},"max_tokens":max_tokens});
     if !definitions.is_empty() {
         result["tools"] = json!(definitions);
         result["parallel_tool_calls"] = json!(false);
@@ -299,6 +298,20 @@ impl StreamDecoder for Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn requests_usage_for_streamed_completions() {
+        let request = body(
+            "fixture",
+            "Instructions",
+            &[json!({"role":"user","content":"Hello"})],
+            &[],
+            100,
+            None,
+        )
+        .unwrap();
+        assert_eq!(request["stream"], true);
+        assert_eq!(request["stream_options"], json!({"include_usage":true}));
+    }
     fn chunk(delta: Value, reason: Value) -> Value {
         json!({"id":"c1","choices":[{"index":0,"delta":delta,"finish_reason":reason}]})
     }

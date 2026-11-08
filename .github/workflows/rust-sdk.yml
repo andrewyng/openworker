@@ -227,6 +227,7 @@ jobs:
           npm --prefix typescript-sdk test
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents
+          node --test --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
       - name: Starter and partner packaging

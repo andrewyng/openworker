@@ -1078,6 +1078,7 @@ fn stream_item(agent: &str, e: Event) -> Value {
         "tool_started" | "tool_finished" => Some(json!({
             "type": e.kind,
             "tool": e.data["name"].as_str().or_else(|| e.data["call"]["name"].as_str()),
+            "call_id": e.data["call_id"].as_str().or_else(|| e.data["call"]["call_id"].as_str()),
         })),
         "plan_updated" => Some(json!({"type": "plan_updated", "plan": e.data["plan"]})),
         _ => None,
@@ -1092,6 +1093,23 @@ fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_summaries_retain_journal_call_identity() {
+        for kind in ["tool_started", "tool_finished"] {
+            let event = Event {
+                event_id: 17,
+                session_id: "session".into(),
+                turn_id: Some("turn".into()),
+                kind: kind.into(),
+                data: json!({"name":"app__preview","call_id":"call-preview"}),
+            };
+            let item = stream_item("builder", event);
+            assert_eq!(item["summary"]["type"], kind);
+            assert_eq!(item["summary"]["call_id"], "call-preview");
+            assert_eq!(item["summary"]["call_id"], item["event"]["data"]["call_id"]);
+        }
+    }
 
     #[test]
     fn interruption_shapes() {

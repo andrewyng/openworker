@@ -11,7 +11,7 @@ import { Harness } from "../dist/index.js";
 const options = { skip: !process.env.OW_TS_TEST_HOST, timeout: 60000 };
 async function setup(t, mode) {
   const root = await mkdtemp(join(tmpdir(), "ow-openrouter-stream-"));
-  const state = { effects: 0, requests: 0, finished: false };
+  const state = { effects: 0, requests: 0, finished: false, callbackIds: [], callbackContexts: [] };
   let release;
   const gate = new Promise((r) => {
     release = r;
@@ -31,8 +31,9 @@ async function setup(t, mode) {
     state.requests++;
     assert.equal(req.headers.authorization, undefined);
     assert.equal(input.stream, true);
-    const tool =
-      mode !== "text" && !input.messages.some((m) => m.role === "tool");
+    const latestUser = input.messages.findLastIndex((m) => m.role === "user");
+    const tool = mode !== "text" &&
+      !input.messages.slice(latestUser + 1).some((m) => m.role === "tool");
     const reason = tool ? "tool_calls" : "stop";
     const id = `gen-fixture-${state.requests}`;
     const chunk = (delta, finish_reason = null) => ({
@@ -114,8 +115,11 @@ async function setup(t, mode) {
           required: ["label"],
           additionalProperties: false,
         },
-        execute: async (args) => {
+        execute: async (args, context) => {
           assert.deepEqual(args, { label: "ok" });
+          assert.ok(context.callId);
+          state.callbackIds.push(context.callId);
+          state.callbackContexts.push({ sessionId: context.sessionId, turnId: context.turnId, callId: context.callId });
           state.effects++;
           return { shown: true };
         },
@@ -175,11 +179,64 @@ test(
     assert.equal((await run.result()).status, "completed");
     assert.equal(state.effects, 1);
     assert.equal(state.requests, 2);
-    for await (const _ of run.events()) {
+    // Consume the journal only after the callback and run finish. Callback
+    // delivery must not depend on the UI already observing tool_started.
+    const toolEvents = [];
+    for await (const item of run.events()) {
+      if (["tool_started", "tool_finished"].includes(item.event.type)) {
+        assert.equal(item.summary.type, item.event.type);
+        assert.equal(item.summary.callId, item.event.data.call_id);
+        assert.equal(item.summary.callId, state.callbackIds[0]);
+        toolEvents.push(item.event.type);
+      }
     }
+    assert.deepEqual(toolEvents, ["tool_started", "tool_finished"]);
+    assert.deepEqual(state.callbackIds, ["call-preview"]);
     assert.equal((await run.result()).status, "completed");
     assert.equal(state.effects, 1);
     assert.equal(state.requests, 2);
+  },
+);
+test(
+  "Repeated provider call IDs remain distinguishable when strict history validation fails",
+  options,
+  async (t) => {
+    const { session, state } = await setup(t, "tool");
+    const keys = [];
+    for (let turn = 0; turn < 2; turn++) {
+      const run = await session.send(`Show the preview for turn ${turn + 1}.`);
+      const pending = await run.result();
+      assert.equal(pending.status, "interrupted");
+      await session.send({
+        type: "approval",
+        interactionId: pending.interruptions[0].id,
+        decision: "once",
+      });
+      // Existing strict history validation rejects replay of the second
+      // duplicate provider ID before sending another model request. The tool
+      // has already executed: its UI entry must still belong to this turn,
+      // and no callback should be replayed while handling the failed run.
+      assert.equal((await run.result()).status, turn === 0 ? "completed" : "failed");
+      const callback = state.callbackContexts[turn];
+      assert.equal(callback.callId, "call-preview");
+      assert.ok(callback.turnId);
+      const key = JSON.stringify([callback.sessionId, callback.turnId, callback.callId]);
+      keys.push(key);
+      const kinds = [];
+      // The terminal turn is replayed only after its callback already ran.
+      for await (const item of run.events()) {
+        if (["tool_started", "tool_finished"].includes(item.event.type)) {
+          assert.equal(item.summary.callId, item.event.data.call_id);
+          assert.equal(JSON.stringify([item.sessionId, item.event.turn_id, item.summary.callId]), key);
+          kinds.push(item.event.type);
+        }
+      }
+      assert.deepEqual(kinds, ["tool_started", "tool_finished"]);
+    }
+    assert.equal(state.effects, 2);
+    assert.equal(state.requests, 3);
+    assert.deepEqual(state.callbackIds, ["call-preview", "call-preview"]);
+    assert.notEqual(keys[0], keys[1]);
   },
 );
 for (const mode of ["late-content", "conflicting-reason", "choice-error"])

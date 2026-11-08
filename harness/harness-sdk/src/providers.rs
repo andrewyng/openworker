@@ -48,6 +48,7 @@ pub struct ModelProvider {
     name: String,
     api: ModelApi,
     base_url: Option<String>,
+    stream_usage: Option<bool>,
     credentials: Option<Credentials>,
     pub(crate) access_auth: bool,
     pub(crate) refresh: Option<openworker_runtime::provider_auth::Refresh>,
@@ -67,6 +68,7 @@ impl ModelProvider {
             name: name.into(),
             api,
             base_url: None,
+            stream_usage: None,
             credentials: None,
             access_auth: false,
             refresh: None,
@@ -74,6 +76,13 @@ impl ModelProvider {
     }
     pub fn base_url(mut self, value: impl Into<String>) -> Self {
         self.base_url = Some(value.into());
+        self
+    }
+    /// Request token usage in Chat Completions streams (default true).
+    /// Set false only for a compatible server that rejects stream_options.
+    /// Missing provider usage remains unknown; this does not estimate tokens.
+    pub fn stream_usage(mut self, enabled: bool) -> Self {
+        self.stream_usage = Some(enabled);
         self
     }
     pub fn credentials(mut self, value: Credentials) -> Self {
@@ -106,12 +115,20 @@ impl ModelProvider {
         &self.name
     }
     pub(crate) fn wire(self) -> Result<Value> {
+        if self.stream_usage.is_some() && self.api != ModelApi::ChatCompletions {
+            return Err(Error::InvalidInput(
+                "stream_usage is only supported for Chat Completions".into(),
+            ));
+        }
         if self.access_auth && self.credentials.is_some() {
             return Err(Error::InvalidInput(
                 "Use access tokens or static credentials, not both".into(),
             ));
         }
         let mut wire = json!({"name":self.name,"api":self.api,"base_url":self.base_url,"credentials":self.credentials.map(Credentials::wire).transpose()?});
+        if let Some(enabled) = self.stream_usage {
+            wire["stream_usage"] = json!(enabled);
+        }
         if self.access_auth {
             wire["access_token_auth"] = json!(true);
         }
@@ -121,3 +138,27 @@ impl ModelProvider {
 
 /// A provider name and exact model ID, resolved and pinned when a session starts.
 pub type Model = crate::ModelChoice;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_stream_usage_override_is_explicit_and_api_scoped() {
+        let default = ModelProvider::chat_completions("Local").wire().unwrap();
+        assert!(default.get("stream_usage").is_none());
+        let disabled = ModelProvider::chat_completions("Local")
+            .stream_usage(false)
+            .wire()
+            .unwrap();
+        assert_eq!(disabled["stream_usage"], false);
+        assert!(ModelProvider::responses("OpenAI")
+            .stream_usage(false)
+            .wire()
+            .is_err());
+        assert!(ModelProvider::anthropic("Claude")
+            .stream_usage(true)
+            .wire()
+            .is_err());
+    }
+}

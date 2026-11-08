@@ -166,10 +166,16 @@ pub enum RunEvent {
     ToolStarted {
         agent: String,
         tool: String,
+        /// Correlates with application ToolContext::call_id and the raw journal.
+        call_id: String,
+        /// Scope call IDs to their turn; providers may reuse IDs in later turns.
+        turn_id: Option<String>,
     },
     ToolFinished {
         agent: String,
         tool: String,
+        call_id: String,
+        turn_id: Option<String>,
     },
     /// The host approved a call because the agent's `interrupt_on` excludes it.
     AutoApproved {
@@ -200,6 +206,14 @@ impl RunEvent {
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
         let summary = &item["summary"];
         let tool = || summary["tool"].as_str().unwrap_or_default().to_owned();
+        // Older hosts omit this from summaries, but retain it in the journal.
+        let call_id = || {
+            summary["call_id"]
+                .as_str()
+                .or_else(|| item["event"]["data"]["call_id"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
         Some(match summary["type"].as_str() {
             Some("message") => RunEvent::Message {
                 agent,
@@ -208,10 +222,14 @@ impl RunEvent {
             Some("tool_started") => RunEvent::ToolStarted {
                 agent,
                 tool: tool(),
+                call_id: call_id(),
+                turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("tool_finished") => RunEvent::ToolFinished {
                 agent,
                 tool: tool(),
+                call_id: call_id(),
+                turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("auto_approved") => RunEvent::AutoApproved {
                 agent,
@@ -734,5 +752,55 @@ mod tests {
         let o = RunEvent::from_wire(&json!({"agent":"a","summary":null,
             "event":{"event_id":3,"session_id":"s","turn_id":null,"type":"compacted","data":{}}}));
         assert!(matches!(o, Some(RunEvent::Other(e)) if e.event_id == 3));
+    }
+
+    #[test]
+    fn tool_events_preserve_call_identity_from_current_and_older_hosts() {
+        for from_summary in [false, true] {
+            for kind in ["tool_started", "tool_finished"] {
+                let mut item = json!({"agent":"builder",
+                    "summary":{"type":kind,"tool":"app__preview"},
+                    "event":{"data":{"call_id":"call-preview"}}});
+                if from_summary {
+                    item["summary"]["call_id"] = json!("call-preview");
+                }
+                let mapped = RunEvent::from_wire(&item).unwrap();
+                match mapped {
+                    RunEvent::ToolStarted { call_id, tool, .. }
+                    | RunEvent::ToolFinished { call_id, tool, .. } => {
+                        assert_eq!(call_id, "call-preview");
+                        assert_eq!(tool, "app__preview");
+                    }
+                    other => panic!("unexpected tool event: {other:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_call_ids_keep_distinct_turns() {
+        for kind in ["tool_started", "tool_finished"] {
+            let mut keys = Vec::new();
+            for turn in [Some("turn-one"), Some("turn-two"), None] {
+                let item = json!({"agent":"builder",
+                    "summary":{"type":kind,"tool":"app__preview","call_id":"call-preview"},
+                    "event":{"turn_id":turn,"data":{"call_id":"call-preview"}}});
+                match RunEvent::from_wire(&item).unwrap() {
+                    RunEvent::ToolStarted {
+                        call_id, turn_id, ..
+                    }
+                    | RunEvent::ToolFinished {
+                        call_id, turn_id, ..
+                    } => {
+                        assert_eq!(turn_id.as_deref(), turn);
+                        keys.push((turn_id, call_id));
+                    }
+                    other => panic!("unexpected tool event: {other:?}"),
+                }
+            }
+            assert_ne!(keys[0], keys[1]);
+            assert_eq!(keys[0].1, keys[1].1);
+            assert!(keys[2].0.is_none());
+        }
     }
 }
