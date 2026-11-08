@@ -780,6 +780,15 @@ impl Runtime {
                     }
                 }
             }
+            if result.as_ref().is_some_and(|value| value.is_ok()) {
+                if let Some(response) = &completed {
+                    if let Err(error) =
+                        crate::model::validate_new_call_ids(history, &response.output)
+                    {
+                        result = Some(Err(error));
+                    }
+                }
+            }
             if let Some(u) = completed
                 .as_ref()
                 .and_then(|c: &crate::provider::Completion| c.usage.as_ref())

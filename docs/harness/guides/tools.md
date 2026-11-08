@@ -39,7 +39,7 @@ turn ID and call ID from either channel. Do not wait inside a callback for the U
 the start event, and do not let a late start reset a completed entry. This also
 works when reading saved events after the run has finished.
 
-Chat Completions history currently rejects reused provider call IDs before the
-next model request. A tool may already have completed when this happens; a failed
-turn does not mean its tool actions were undone. The correlation fields help your
-UI preserve that distinction.
+A provider response that reuses a call ID from retained model context is rejected
+before dispatching that new call. Earlier completed actions remain completed; a
+failed later turn does not undo them. The correlation fields help your UI
+preserve that distinction.

@@ -173,6 +173,56 @@ fn read_history_does_not_disguise_storage_or_session_failures() {
 }
 
 #[tokio::test]
+async fn reused_provider_call_id_is_rejected_before_a_second_tool_action() {
+    let (_tmp, rt, sid) = fixture(model(|_, _| plan(0), 1), None).await;
+    rt.update(&sid, "test_tools_bound", json!({}), |s| {
+        s.schema_digest = Some("duplicate-id-test".into());
+        s.permissions.mode = Mode::Bypass;
+        Ok(())
+    })
+    .unwrap();
+    let error = rt
+        .drive(&sid, Default::default(), vec![crate::planning::schema()])
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<crate::provider::Error>().unwrap().kind,
+        crate::provider::Failure::InvalidResponse
+    );
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    assert_eq!(
+        rt.store
+            .lock()
+            .unwrap()
+            .get(&sid)
+            .unwrap()
+            .plan
+            .unwrap()
+            .revision,
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "plan_updated")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "model_attempt_started")
+            .count(),
+        2
+    );
+    assert!(events
+        .iter()
+        .any(|event| event.kind == "model_attempt_finished"
+            && event.data["status"] == "failed"
+            && event.data["kind"] == "invalid_response"));
+}
+
+#[tokio::test]
 async fn a_turn_can_finish_after_more_than_twenty_model_calls() {
     let (_tmp, rt, sid) = fixture(
         model(

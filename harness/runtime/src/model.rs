@@ -965,6 +965,26 @@ pub fn validate_output(output: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// A provider ID must not alias an earlier invocation in retained model context. Check
+/// before authorizing tools, not on the subsequent history replay after an
+/// action has already happened. Never interpret a repeated ID as a retry grant.
+pub(crate) fn validate_new_call_ids(history: &[Value], output: &[Value]) -> Result<()> {
+    let prior: std::collections::HashSet<_> = history
+        .iter()
+        .filter(|item| item["type"] == "function_call")
+        .filter_map(|item| item["call_id"].as_str())
+        .collect();
+    if output.iter().any(|item| {
+        item["type"] == "function_call"
+            && item["call_id"]
+                .as_str()
+                .is_some_and(|id| prior.contains(id))
+    }) {
+        return Err(crate::provider::Error::new(crate::provider::Failure::InvalidResponse).into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod inbox_fixture_tests {
     use super::*;

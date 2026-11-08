@@ -198,45 +198,29 @@ test(
   },
 );
 test(
-  "Repeated provider call IDs remain distinguishable when strict history validation fails",
+  "Repeated provider call IDs are rejected before another tool can execute",
   options,
   async (t) => {
     const { session, state } = await setup(t, "tool");
-    const keys = [];
-    for (let turn = 0; turn < 2; turn++) {
-      const run = await session.send(`Show the preview for turn ${turn + 1}.`);
-      const pending = await run.result();
-      assert.equal(pending.status, "interrupted");
-      await session.send({
-        type: "approval",
-        interactionId: pending.interruptions[0].id,
-        decision: "once",
-      });
-      // Existing strict history validation rejects replay of the second
-      // duplicate provider ID before sending another model request. The tool
-      // has already executed: its UI entry must still belong to this turn,
-      // and no callback should be replayed while handling the failed run.
-      assert.equal((await run.result()).status, turn === 0 ? "completed" : "failed");
-      const callback = state.callbackContexts[turn];
-      assert.equal(callback.callId, "call-preview");
-      assert.ok(callback.turnId);
-      const key = JSON.stringify([callback.sessionId, callback.turnId, callback.callId]);
-      keys.push(key);
-      const kinds = [];
-      // The terminal turn is replayed only after its callback already ran.
-      for await (const item of run.events()) {
-        if (["tool_started", "tool_finished"].includes(item.event.type)) {
-          assert.equal(item.summary.callId, item.event.data.call_id);
-          assert.equal(JSON.stringify([item.sessionId, item.event.turn_id, item.summary.callId]), key);
-          kinds.push(item.event.type);
-        }
-      }
-      assert.deepEqual(kinds, ["tool_started", "tool_finished"]);
-    }
-    assert.equal(state.effects, 2);
-    assert.equal(state.requests, 3);
-    assert.deepEqual(state.callbackIds, ["call-preview", "call-preview"]);
-    assert.notEqual(keys[0], keys[1]);
+    const first = await session.send("Show the first preview.");
+    const pending = await first.result();
+    assert.equal(pending.status, "interrupted");
+    await session.send({
+      type: "approval", interactionId: pending.interruptions[0].id, decision: "once",
+    });
+    assert.equal((await first.result()).status, "completed");
+    assert.equal(state.effects, 1);
+    const second = await session.send("Show another preview.");
+    const result = await second.result();
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.interruptions, []);
+    const events = [];
+    for await (const item of second.events()) events.push(item.event);
+    assert.ok(events.some((event) => event.type === "model_attempt_finished" && event.data.status === "failed"));
+    assert.equal(events.filter((event) => event.type === "tool_started").length, 0);
+    assert.equal(state.effects, 1, "Do not dispatch an ambiguous invocation or replay the first one");
+    assert.equal(state.requests, 3, "Invalid output must not automatically retry");
+    assert.deepEqual(state.callbackIds, ["call-preview"]);
   },
 );
 for (const mode of ["late-content", "conflicting-reason", "choice-error"])
