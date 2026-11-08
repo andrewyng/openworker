@@ -3,6 +3,7 @@ export * from "./safety.js";
 import { Service, type ServiceOptions } from "./service.js";
 export * from "./service.js";
 export * from "./coding.js";
+export * from "./attempt-output.js";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { Transport } from "./transport.js";
@@ -12,6 +13,7 @@ import {
   ToolImageResult,
   checkMemberErrors,
   record,
+  providerDiagnostic,
   HarnessError,
   type HarnessOptions,
   type SessionRef,
@@ -70,6 +72,7 @@ function resultOf(value: unknown): RunResult {
     interruptions: v.interruptions.map(interruptionOf),
     submissionId: v.submission_id as string | null,
     failure: typeof v.failure === "string" ? v.failure : undefined,
+    providerError: providerDiagnostic(v.provider_error),
     cursor: Number(v.cursor),
     board: (v.board ?? null) as Json,
   };
@@ -393,6 +396,7 @@ export class Harness {
       base_url: provider.baseUrl,
       stream_usage: provider.streamUsage,
       prompt_caching: provider.promptCaching,
+      thinking: provider.thinking,
       access_token_auth: provider.auth ? true : undefined,
       credentials: credentials
         ? { api_key: apiKey, storage: credentials.storage ?? "secure" }
@@ -1060,6 +1064,22 @@ export class RunStream implements AsyncIterable<RunEvent> {
           // Older hosts retain the ID in the journal but omit it from summaries.
           const callId = wireSummary.call_id ?? record(event.data).call_id;
           summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+        }
+        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
+          const wire = record(item.summary);
+          const attemptId = String(wire.attempt_id ?? "");
+          switch (summary.type) {
+            case "model_attempt_started": summary = { type:summary.type, attemptId, attempt:Number(wire.attempt) }; break;
+            case "model_attempt_finished": summary = { type:summary.type, attemptId, status:wire.status as "completed" | "failed" | "interrupted", failure:typeof wire.kind === "string" ? wire.kind as import("./types.js").ProviderFailure : undefined }; break;
+            case "assistant_delta": summary = { type:summary.type, attemptId, text:String(wire.text ?? "") }; break;
+            case "reasoning_delta": summary = { type:summary.type, attemptId, kind:wire.kind as "summary" | "thinking", text:String(wire.text ?? ""), blockIndex:Number(wire.block_index) }; break;
+            case "model_activity": summary = { type:summary.type, attemptId, elapsedMs:Number(wire.elapsed_ms) }; break;
+            case "provider_error": {
+              const diagnostic = providerDiagnostic(wire.diagnostic);
+              summary = diagnostic ? { type:summary.type, attemptId, diagnostic } : null;
+              break;
+            }
+          }
         }
         yield {
           agent: String(item.agent),

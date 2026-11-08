@@ -10,6 +10,8 @@ pub struct Model {
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
+    /// Opt-in forwarding of provider-supported display reasoning, never signatures.
+    pub stream_reasoning: bool,
     pub connection: Option<(
         std::sync::Arc<crate::connections::Manager>,
         crate::connections::Selection,
@@ -31,6 +33,7 @@ pub type SampleHook = std::sync::Arc<
 pub type SummaryHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
 pub enum Progress {
     Delta(String),
+    Reasoning(crate::provider::ReasoningDelta),
     /// Internal measurement only; never authorizes partial provider output.
     OutputStarted,
     /// Latest cumulative provider snapshot, not a token increment.
@@ -94,6 +97,7 @@ impl Model {
             scripted,
             observation: None,
             content_withheld: false,
+            stream_reasoning: false,
             connection: None,
             #[cfg(test)]
             sample_hook: None,
@@ -277,6 +281,7 @@ impl Model {
             };
             match &progress {
                 Progress::Delta(text) if !text.is_empty() => span.first_output(),
+                Progress::Reasoning(delta) if !delta.text.is_empty() => span.first_output(),
                 Progress::OutputStarted => span.first_output(),
                 Progress::Usage(usage) => span.reported_usage(*usage),
                 Progress::Complete(completion) => {
@@ -396,7 +401,7 @@ impl Model {
                 tx,
                 crate::chat_completions::Decoder::with_binding(binding, google_compat),
             )
-            .await?;
+            .await.map_err(|e| e.with_api(api))?;
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
@@ -413,7 +418,16 @@ impl Model {
                     body.as_object_mut().unwrap().remove("cache_control");
                 }
             }
-            crate::anthropic::request(&client, &endpoint, key, body, tx).await?;
+            // Short probes, reviewers and compactors have separate small
+            // budgets; do not apply the agent's thinking generation budget.
+            if self.observation.as_ref().is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main) {
+                if let Some((manager, selection)) = &self.connection {
+                    if let Some(thinking) = manager.thinking(selection)? {
+                        body["thinking"] = thinking.request(max_tokens).map_err(|e|e.with_api(api))?;
+                    }
+                }
+            }
+            crate::anthropic::request(&client, &endpoint, key, body, tx).await.map_err(|e| e.with_api(api))?;
             return Ok(());
         }
         if history.iter().any(|v| v.get("provider").is_some()) {
@@ -431,10 +445,11 @@ impl Model {
             })
             .collect::<Vec<_>>();
         let mut body = json!({"model":self.name,"instructions":instructions,"input":input,"tools":tools,"stream":true,"store":false,"include":["reasoning.encrypted_content"],"parallel_tool_calls":false,"max_output_tokens":max_tokens});
+        if self.stream_reasoning { body["reasoning"] = json!({"summary":"auto"}); }
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx).await?;
+        crate::provider::request(&client, &endpoint, key, body, tx).await.map_err(|e| e.with_api(api))?;
         Ok(())
     }
     pub async fn summarize(
@@ -546,7 +561,7 @@ impl Model {
                 r=&mut request,if !finished=>{r?;finished=true;},
                 p=rx.recv(),if !closed=>match p {
                     Some(Progress::Complete(r))=>response=Some(r),
-                    Some(Progress::Delta(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
+                    Some(Progress::Delta(_)|Progress::Reasoning(_)|Progress::OutputStarted|Progress::Usage(_))=>{},None=>closed=true
                 }
             }
         }

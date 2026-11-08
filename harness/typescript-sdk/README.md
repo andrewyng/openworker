@@ -159,6 +159,10 @@ attempts separately; do not blindly concatenate a failed attempt into its retry.
 The game-builder starter's existing UI displays progress and completed messages;
 incremental-text rendering is a separate UI improvement.
 
+For typed attempt events, opt-in reasoning display, optional attempt buffering and
+safe provider diagnostics, see [Streaming and retries](../../docs/harness/guides/streaming.md).
+`AttemptOutput` provides a bounded UI projection that removes failed candidates.
+
 Application tools receive `context.callId`. Tool-start and tool-finish summaries
 expose that same ID as `item.summary.callId`; the raw journal uses
 `item.event.data.call_id`. Use it to correlate calls, including repeated calls to

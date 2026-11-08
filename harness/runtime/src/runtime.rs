@@ -595,6 +595,10 @@ impl Runtime {
                     .iter()
                     .any(|h| h.when == crate::safety::HookPhase::BeforeTool);
             model.content_withheld = guarded_output;
+            let output_options = &s.turn.as_ref().context("No current turn")?.output;
+            model.stream_reasoning = output_options.reasoning && !guarded_output;
+            let buffer_attempts = output_options.buffer_attempts;
+            let show_reasoning = model.stream_reasoning;
             let mut instructions = self.bundle.instructions_for(&s.skills, &s.loaded_skills);
             if let Some(addendum) = s
                 .turn
@@ -777,12 +781,36 @@ impl Runtime {
             let mut result = None;
             let mut closed = false;
             let mut reported_output = None;
+            let attempt_started = tokio::time::Instant::now();
+            let mut heartbeat = tokio::time::interval_at(
+                attempt_started + std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(5),
+            );
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut reasoning = Vec::<crate::provider::ReasoningDelta>::new();
+            let mut reasoning_bytes = 0usize;
+            let mut reasoning_limited = false;
             while result.is_none() || !closed {
                 tokio::select! {
                     r=&mut request,if result.is_none()=>{result=Some(r);},
+                    _=heartbeat.tick(),if result.is_none()=>{
+                        self.progress(sid,"model_activity",json!({"attempt_id":id,"phase":"waiting_for_model","elapsed_ms":attempt_started.elapsed().as_millis() as u64}))?;
+                    },
                     p=rx.recv(),if !closed=>match p {
                         Some(Progress::Delta(text))=>{
-                            if !guarded_output {let e=self.store.lock().unwrap().attempt_delta(sid,&id,&text)?;self.publish(e);}
+                            if !guarded_output && !buffer_attempts {let e=self.store.lock().unwrap().attempt_delta(sid,&id,&text)?;self.publish(e);}
+                        },
+                        Some(Progress::Reasoning(delta))=>{
+                            if show_reasoning && !delta.text.is_empty() {
+                                if reasoning_bytes.saturating_add(delta.text.len()) <= 65536 {
+                                    reasoning_bytes += delta.text.len();
+                                    if buffer_attempts { reasoning.push(delta); }
+                                    else { self.progress(sid,"reasoning_delta",json!({"attempt_id":id,"kind":delta.kind,"text":delta.text,"block_index":delta.block_index}))?; }
+                                } else if !reasoning_limited {
+                                    reasoning_limited = true;
+                                    self.progress(sid,"reasoning_display_limited",json!({"attempt_id":id,"max_bytes":65536}))?;
+                                }
+                            }
                         },
                         Some(Progress::Usage(u))=>{reported_output=u.output;},
                         Some(Progress::OutputStarted)=>{},
@@ -829,6 +857,21 @@ impl Runtime {
             match result.unwrap() {
                 Ok(()) => {
                     let response = completed.context("Missing completed provider output")?;
+                    if buffer_attempts && !guarded_output {
+                        for delta in reasoning {
+                            self.progress(sid,"reasoning_delta",json!({"attempt_id":id,"kind":delta.kind,"text":delta.text,"block_index":delta.block_index}))?;
+                        }
+                        for item in &response.output {
+                            if item["type"] == "message" {
+                                for part in item["content"].as_array().into_iter().flatten() {
+                                    if let Some(text) = part["text"].as_str() {
+                                        let e = self.store.lock().unwrap().attempt_delta(sid,&id,text)?;
+                                        self.publish(e);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let event =
                         self.store
                             .lock()
@@ -839,6 +882,9 @@ impl Runtime {
                 }
                 Err(error) => {
                     let failure = error.downcast_ref::<crate::provider::Error>();
+                    if let Some(failure) = failure {
+                        self.progress(sid,"provider_error",json!({"attempt_id":id,"diagnostic":failure.diagnostic()}))?;
+                    }
                     let event = self.store.lock().unwrap().finish_attempt(
                         sid,
                         &id,
@@ -1756,6 +1802,7 @@ impl Runtime {
                     }
                 }
                 if let Err(e) = result {
+                    let provider_error = e.downcast_ref::<crate::provider::Error>().map(|e| e.diagnostic());
                     let status = if e.is::<safety::Unavailable>() {
                         "waiting_safety"
                     } else if e.is::<safety::Blocked>() {
@@ -1775,10 +1822,11 @@ impl Runtime {
                         } else {
                             "turn_completed"
                         },
-                        json!({"status":status,"error":e.to_string()}),
+                        json!({"status":status,"error":e.to_string(),"provider_error":provider_error}),
                         |s| {
                             if let Some(t) = &mut s.turn {
                                 t.status = status.into();
+                                t.provider_error = provider_error.clone();
                             }
                             Ok(())
                         },

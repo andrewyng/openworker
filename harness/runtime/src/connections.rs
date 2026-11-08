@@ -74,6 +74,8 @@ struct Set {
     stream_usage: Option<bool>,
     #[serde(default)]
     prompt_caching: Option<bool>,
+    #[serde(default)]
+    thinking: Option<crate::anthropic::Thinking>,
 }
 impl Manager {
     /// Trusted server bootstrap only; not exposed by the model or stdio protocol.
@@ -173,6 +175,7 @@ impl Manager {
             )?;
         }
         db.execute_batch("CREATE TABLE IF NOT EXISTS endpoints(id TEXT PRIMARY KEY, api TEXT NOT NULL, base_url TEXT NOT NULL);")?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS thinking_options(id TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
         let has_stream_usage = db
             .prepare("PRAGMA table_info(endpoints)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -254,6 +257,8 @@ impl Manager {
             }
             if api == "anthropic" {
                 connections.last_mut().unwrap()["prompt_caching"] = json!(prompt_caching);
+                let thinking: Option<String> = state.db.query_row("SELECT value FROM thinking_options WHERE id=?1", [&id], |r|r.get(0)).optional()?;
+                if let Some(value) = thinking { connections.last_mut().unwrap()["thinking"] = serde_json::from_str(&value)?; }
             }
         }
         Ok(
@@ -280,6 +285,10 @@ impl Manager {
         }
         if input.prompt_caching.is_some() && api != crate::model_api::Api::Anthropic {
             bail!("prompt_caching is only supported for Anthropic Messages");
+        }
+        if let Some(thinking) = &input.thinking {
+            anyhow::ensure!(api == crate::model_api::Api::Anthropic, "thinking is only supported for Anthropic");
+            thinking.validate()?;
         }
         let base_url =
             crate::model_api::base_url(input.base_url.as_deref().unwrap_or(api.default_url()))?;
@@ -375,6 +384,9 @@ impl Manager {
             "INSERT INTO endpoints(id,api,base_url,stream_usage,prompt_caching) VALUES(?1,?2,?3,COALESCE(?4,1),COALESCE(?5,1)) ON CONFLICT(id) DO UPDATE SET stream_usage=COALESCE(?4,endpoints.stream_usage),prompt_caching=COALESCE(?5,endpoints.prompt_caching)",
             params![input.id, api_json, base_url, input.stream_usage, input.prompt_caching],
         )?;
+        if let Some(thinking) = input.thinking {
+            transaction.execute("INSERT INTO thinking_options(id,value) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value", params![input.id,serde_json::to_string(&thinking)?])?;
+        }
         transaction.commit()?;
         #[cfg(target_os = "macos")]
         if was_secure && input.persistence != "secure" {
@@ -410,6 +422,7 @@ impl Manager {
         state
             .db
             .execute("DELETE FROM endpoints WHERE id=?1", [id])?;
+        state.db.execute("DELETE FROM thinking_options WHERE id=?1", [id])?;
         Ok(json!({"removed":true}))
     }
     pub fn defaults(&self) -> Result<Defaults> {
@@ -635,6 +648,12 @@ impl Manager {
             |r| r.get(0),
         ).context("Selected model provider is missing or its identity changed")
     }
+    pub fn thinking(&self, selected: &Selection) -> Result<Option<crate::anthropic::Thinking>> {
+        let value: Option<String> = self.state.lock().unwrap().db.query_row(
+            "SELECT t.value FROM connections c LEFT JOIN thinking_options t ON c.id=t.id WHERE c.id=?1 AND c.identity=?2",
+            params![selected.connection, selected.identity], |r|r.get(0))?;
+        value.map(|v|serde_json::from_str(&v).map_err(Into::into)).transpose()
+    }
     /// Harness-owned provider registration; never journal this secret-bearing request.
     pub fn set_provider(&self, value: Value) -> Result<Value> {
         #[derive(Deserialize)]
@@ -648,6 +667,8 @@ impl Manager {
             stream_usage: Option<bool>,
             #[serde(default)]
             prompt_caching: Option<bool>,
+            #[serde(default)]
+            thinking: Option<crate::anthropic::Thinking>,
             #[serde(default)]
             access_token_auth: bool,
         }
@@ -665,6 +686,10 @@ impl Manager {
         }
         if input.prompt_caching.is_some() && input.api != crate::model_api::Api::Anthropic {
             bail!("prompt_caching is only supported for Anthropic Messages");
+        }
+        if let Some(thinking) = &input.thinking {
+            anyhow::ensure!(input.api == crate::model_api::Api::Anthropic, "thinking is only supported for Anthropic");
+            thinking.validate()?;
         }
         anyhow::ensure!(
             !input.access_token_auth
@@ -730,6 +755,9 @@ impl Manager {
                         params![input.name, serde_json::to_string(&input.api)?, base_url, enabled],
                     )?;
                 }
+                if let Some(thinking) = input.thinking {
+                    self.state.lock().unwrap().db.execute("INSERT INTO thinking_options(id,value) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET value=excluded.value", params![input.name,serde_json::to_string(&thinking)?])?;
+                }
                 return Ok(json!({"saved":true,"credentials_unchanged":true}));
             }
         }
@@ -751,7 +779,7 @@ impl Manager {
                 .into(),
             ),
         };
-        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"prompt_caching":input.prompt_caching,"api_key":key,"persistence":storage}))
+        self.set(json!({"id":input.name,"label":input.name,"provider":input.api.kind(),"api":input.api,"base_url":base_url,"stream_usage":input.stream_usage,"prompt_caching":input.prompt_caching,"thinking":input.thinking,"api_key":key,"persistence":storage}))
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]

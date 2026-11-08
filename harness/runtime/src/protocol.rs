@@ -132,7 +132,7 @@ pub async fn serve_endpoint(rt: impl Endpoint + 'static) -> Result<()> {
                             if method=="session/attach"{subscribed.insert(p["session_id"].as_str().unwrap().to_owned());}
                             Ok::<_,anyhow::Error>(result)
                         }.await;
-                        match result{Ok(result)=>json!({"jsonrpc":"2.0","id":id,"result":result}),Err(e)=>json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":e.to_string()}})}
+                        match result{Ok(result)=>json!({"jsonrpc":"2.0","id":id,"result":result}),Err(e)=>json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":e.to_string(),"provider_error":e.downcast_ref::<crate::provider::Error>().map(|e|e.diagnostic())}})}
                     }
                 }
             },

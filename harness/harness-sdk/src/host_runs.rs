@@ -985,6 +985,7 @@ impl Host {
                 }));
                 if status == "failed" && cached.is_none() {
                     out["failure"] = lead_turn["status"].clone();
+                    out["provider_error"] = lead_turn["provider_error"].clone();
                 }
                 if cached.is_none() && status != "running" && status != "interrupted" {
                     if let Some(r) = record.as_mut() {
@@ -1084,6 +1085,12 @@ fn final_output(snapshot: &Value) -> Value {
 /// A journal event plus a small typed summary SDKs can map directly.
 fn stream_item(agent: &str, e: Event) -> Value {
     let summary = match e.kind.as_str() {
+        "model_attempt_started" | "model_attempt_finished" | "assistant_delta"
+        | "reasoning_delta" | "model_activity" | "provider_error" => {
+            let mut summary = e.data.clone();
+            summary["type"] = json!(e.kind);
+            Some(summary)
+        }
         "interaction_resolved" => (e.data["origin"] == "app_policy")
             .then(|| json!({"type": "auto_approved", "tool": e.data["tool"]})),
         "assistant_message" => {

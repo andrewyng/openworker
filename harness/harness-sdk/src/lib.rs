@@ -36,6 +36,8 @@ pub use openworker_telemetry::otlp::{
 /// Opt-in prompt/tool content in telemetry (off by default).
 pub use openworker_telemetry::{Capture, ContentPolicy};
 pub use providers::{Credentials, Model, ModelApi, ModelProvider};
+pub use openworker_runtime::anthropic::Thinking as AnthropicThinking;
+pub use openworker_runtime::provider::{Diagnostic as ProviderDiagnostic, Failure as ProviderFailure, ReasoningKind};
 
 pub enum EmbeddedConfig {
     Local(RuntimeConfig),
@@ -81,6 +83,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     InvalidInput(String),
     Remote(String),
+    Provider(openworker_runtime::provider::Diagnostic),
     Setup(String),
     Unavailable,
     /// May have committed or started. Reconcile durable IDs; do not blindly retry.
@@ -91,6 +94,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidInput(s) | Self::Remote(s) | Self::Setup(s) => f.write_str(s),
+            Self::Provider(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
             Self::Unavailable => f.write_str("Harness unavailable or recovering; request not sent"),
             Self::OutcomeUnknown => f.write_str("Harness response lost; execution outcome unknown. Reconcile saved session before retrying."),
             Self::Closed => f.write_str("Harness client closed"),

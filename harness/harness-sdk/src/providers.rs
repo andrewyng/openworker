@@ -50,6 +50,7 @@ pub struct ModelProvider {
     base_url: Option<String>,
     stream_usage: Option<bool>,
     prompt_caching: Option<bool>,
+    thinking: Option<openworker_runtime::anthropic::Thinking>,
     credentials: Option<Credentials>,
     pub(crate) access_auth: bool,
     pub(crate) refresh: Option<openworker_runtime::provider_auth::Refresh>,
@@ -71,6 +72,7 @@ impl ModelProvider {
             base_url: None,
             stream_usage: None,
             prompt_caching: None,
+            thinking: None,
             credentials: None,
             access_auth: false,
             refresh: None,
@@ -91,6 +93,11 @@ impl ModelProvider {
     /// proxy that rejects cache_control or when caching is not desired.
     pub fn prompt_caching(mut self, enabled: bool) -> Self {
         self.prompt_caching = Some(enabled);
+        self
+    }
+    /// Explicit Anthropic generation mode; choose one supported by your model.
+    pub fn thinking(mut self, thinking: openworker_runtime::anthropic::Thinking) -> Self {
+        self.thinking = Some(thinking);
         self
     }
     pub fn credentials(mut self, value: Credentials) -> Self {
@@ -128,6 +135,10 @@ impl ModelProvider {
                 "prompt_caching is only supported for Anthropic Messages".into(),
             ));
         }
+        if let Some(thinking) = &self.thinking {
+            if self.api != ModelApi::Anthropic { return Err(Error::InvalidInput("thinking is only supported for Anthropic".into())); }
+            thinking.validate().map_err(|e|Error::InvalidInput(e.to_string()))?;
+        }
         if self.stream_usage.is_some() && self.api != ModelApi::ChatCompletions {
             return Err(Error::InvalidInput(
                 "stream_usage is only supported for Chat Completions".into(),
@@ -145,6 +156,7 @@ impl ModelProvider {
         if let Some(enabled) = self.prompt_caching {
             wire["prompt_caching"] = json!(enabled);
         }
+        if let Some(thinking) = self.thinking { wire["thinking"] = json!(thinking); }
         if self.access_auth {
             wire["access_token_auth"] = json!(true);
         }

@@ -4,10 +4,10 @@ use crate::provider::{Completion, Error, Failure, StreamDecoder, Usage};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 fn invalid() -> Error {
-    Error::new(Failure::InvalidResponse)
+    Error::new(Failure::InvalidResponse).with_code("invalid_chat_completion")
 }
 fn config() -> Error {
-    Error::new(Failure::Configuration)
+    Error::new(Failure::Configuration).with_code("invalid_chat_request_history")
 }
 
 const GOOGLE_PRIVATE: &str = "google-chat-completions";
@@ -227,6 +227,7 @@ pub struct Decoder {
     accounting_tail: bool,
     usage: Option<Usage>,
     bytes: usize,
+    reasoning: Option<crate::provider::ReasoningDelta>,
     binding: Option<String>,
     google_compat: bool,
     message_signature: Option<String>,
@@ -347,6 +348,16 @@ impl Decoder {
             }
             None => None,
         };
+        let reasoning_content = delta.get("reasoning_content").filter(|v| !v.is_null());
+        let reasoning = delta.get("reasoning").filter(|v| !v.is_null());
+        if reasoning_content.zip(reasoning).is_some_and(|(a,b)|a != b) { return Err(invalid()); }
+        if let Some(text) = reasoning_content.or(reasoning) {
+            self.reasoning = Some(crate::provider::ReasoningDelta {
+                kind: crate::provider::ReasoningKind::Thinking,
+                text: text.as_str().ok_or_else(invalid)?.to_owned(),
+                block_index: 0,
+            });
+        }
         if let Some(calls) = delta.get("tool_calls") {
             for c in calls.as_array().ok_or_else(invalid)? {
                 let signature = google_signature(c)?;
@@ -378,7 +389,7 @@ impl Decoder {
                     }
                     self.calls.keys().next_back().map_or(0, |index| index + 1)
                 } else {
-                    c["index"].as_u64().ok_or_else(invalid)?
+                    c["index"].as_u64().ok_or_else(|| invalid().with_code("invalid_tool_call_index"))?
                 };
                 if index >= 64 || c.get("type").is_some_and(|v| v != "function") {
                     return Err(invalid());
@@ -429,6 +440,7 @@ impl Decoder {
     }
 }
 impl StreamDecoder for Decoder {
+    fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> { self.reasoning.take() }
     fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
         self.usage.as_ref().map(Usage::reported)
     }

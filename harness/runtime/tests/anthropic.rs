@@ -142,6 +142,28 @@ fn private_thinking_is_retained_but_not_streamed_and_foreign_history_is_rejected
     history[1] = json!({"type":"reasoning","encrypted_content":"OPENAI_ONLY"});
     assert!(anthropic::body("test", "system", &history, &[], 1024, None).is_err());
 }
+
+#[test]
+fn display_thinking_is_separate_from_answer_and_never_includes_signatures() {
+    let mut d=Decoder::default();d.event(&start()).unwrap();
+    d.event(&json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}})).unwrap();
+    assert!(d.event(&json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Display text"}})).unwrap().is_none());
+    let text=d.take_reasoning().unwrap();assert_eq!(text.text,"Display text");
+    d.event(&json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SECRET_SIGNATURE"}})).unwrap();
+    assert!(d.take_reasoning().is_none());
+    d.event(&json!({"type":"content_block_stop","index":0})).unwrap();
+    d.event(&json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"SECRET_REDACTED"}})).unwrap();
+    assert!(d.take_reasoning().is_none());
+}
+
+#[test]
+fn thinking_generation_configuration_is_explicit_and_budgeted() {
+    use openworker_runtime::anthropic::Thinking;
+    assert_eq!(Thinking::Adaptive.request(4096).unwrap(),json!({"type":"adaptive"}));
+    assert_eq!(Thinking::Enabled{budget_tokens:1024}.request(4096).unwrap(),json!({"type":"enabled","budget_tokens":1024}));
+    assert!(Thinking::Enabled{budget_tokens:1024}.request(1024).is_err());
+    assert!(Thinking::Enabled{budget_tokens:5}.validate().is_err());
+}
 #[test]
 fn input_pairing_images_denials_and_structured_reviewer_format() {
     let history = vec![

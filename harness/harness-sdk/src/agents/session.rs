@@ -123,6 +123,7 @@ pub struct RunResult {
     pub cursor: i64,
     /// Team board at the end of the run, for sessions with subagents.
     pub board: Option<Value>,
+    pub provider_error: Option<openworker_runtime::provider::Diagnostic>,
 }
 impl RunResult {
     fn from_wire(v: &Value) -> Self {
@@ -144,6 +145,7 @@ impl RunResult {
             submission_id: v["submission_id"].as_str().map(str::to_owned),
             cursor: v["cursor"].as_i64().unwrap_or(0),
             board: v.get("board").filter(|b| !b.is_null()).cloned(),
+            provider_error: serde_json::from_value(v["provider_error"].clone()).ok(),
         }
     }
 }
@@ -151,6 +153,12 @@ impl RunResult {
 /// Progress while a run is streaming.
 #[derive(Clone, Debug)]
 pub enum RunEvent {
+    AttemptStarted { session_id: String, turn_id: Option<String>, attempt_id: String, attempt: u32 },
+    AttemptFinished { session_id: String, turn_id: Option<String>, attempt_id: String, status: String, failure: Option<openworker_runtime::provider::Failure> },
+    TextDelta { session_id: String, turn_id: Option<String>, attempt_id: String, text: String },
+    ReasoningDelta { session_id: String, turn_id: Option<String>, attempt_id: String, kind: openworker_runtime::provider::ReasoningKind, text: String, block_index: u64 },
+    ModelActivity { session_id: String, turn_id: Option<String>, attempt_id: String, elapsed_ms: u64 },
+    ProviderError { session_id: String, turn_id: Option<String>, attempt_id: String, diagnostic: openworker_runtime::provider::Diagnostic },
     /// Named-team events retain both instance and definition identities.
     TeamActivity {
         agent_id: String,
@@ -205,6 +213,9 @@ impl RunEvent {
         }
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
         let summary = &item["summary"];
+        let session_id = item["event"]["session_id"].as_str().unwrap_or_default().to_owned();
+        let turn_id = item["event"]["turn_id"].as_str().map(str::to_owned);
+        let attempt_id = || summary["attempt_id"].as_str().unwrap_or_default().to_owned();
         let tool = || summary["tool"].as_str().unwrap_or_default().to_owned();
         // Older hosts omit this from summaries, but retain it in the journal.
         let call_id = || {
@@ -215,6 +226,12 @@ impl RunEvent {
                 .to_owned()
         };
         Some(match summary["type"].as_str() {
+            Some("model_attempt_started") => RunEvent::AttemptStarted { session_id, turn_id, attempt_id:attempt_id(), attempt:summary["attempt"].as_u64()? as u32 },
+            Some("model_attempt_finished") => RunEvent::AttemptFinished { session_id, turn_id, attempt_id:attempt_id(), status:summary["status"].as_str()?.into(), failure:serde_json::from_value(summary["kind"].clone()).ok() },
+            Some("assistant_delta") => RunEvent::TextDelta { session_id, turn_id, attempt_id:attempt_id(), text:summary["text"].as_str()?.into() },
+            Some("reasoning_delta") => RunEvent::ReasoningDelta { session_id, turn_id, attempt_id:attempt_id(), kind:serde_json::from_value(summary["kind"].clone()).ok()?, text:summary["text"].as_str()?.into(), block_index:summary["block_index"].as_u64()? },
+            Some("model_activity") => RunEvent::ModelActivity { session_id, turn_id, attempt_id:attempt_id(), elapsed_ms:summary["elapsed_ms"].as_u64()? },
+            Some("provider_error") => RunEvent::ProviderError { session_id, turn_id, attempt_id:attempt_id(), diagnostic:serde_json::from_value(summary["diagnostic"].clone()).ok()? },
             Some("message") => RunEvent::Message {
                 agent,
                 text: summary["text"].as_str().unwrap_or_default().to_owned(),
@@ -842,5 +859,18 @@ mod tests {
             assert_eq!(keys[0].1, keys[1].1);
             assert!(keys[2].0.is_none());
         }
+    }
+
+    #[test]
+    fn attempt_reasoning_and_provider_diagnostics_are_typed() {
+        let event=json!({"session_id":"s","turn_id":"t","data":{}});
+        let item=|summary:Value|json!({"agent":"a","event":event,"summary":summary});
+        assert!(matches!(RunEvent::from_wire(&item(json!({"type":"model_attempt_started","attempt_id":"a1","attempt":1}))),Some(RunEvent::AttemptStarted{attempt:1,attempt_id,..}) if attempt_id=="a1"));
+        assert!(matches!(RunEvent::from_wire(&item(json!({"type":"model_attempt_finished","attempt_id":"a1","status":"failed","kind":"incomplete_stream"}))),Some(RunEvent::AttemptFinished{failure:Some(openworker_runtime::provider::Failure::IncompleteStream),..})));
+        assert!(matches!(RunEvent::from_wire(&item(json!({"type":"reasoning_delta","attempt_id":"a1","kind":"summary","text":"display","block_index":0}))),Some(RunEvent::ReasoningDelta{kind:openworker_runtime::provider::ReasoningKind::Summary,text,..}) if text=="display"));
+        let diagnostic=json!({"category":"authentication","retryable":false,"http_status":401,"request_id":"req_fixture","api":"responses","code":"invalid_api_key"});
+        assert!(matches!(RunEvent::from_wire(&item(json!({"type":"provider_error","attempt_id":"a1","diagnostic":diagnostic}))),Some(RunEvent::ProviderError{diagnostic,..}) if diagnostic.http_status==Some(401)));
+        let result=RunResult::from_wire(&json!({"status":"failed","provider_error":diagnostic}));
+        assert_eq!(result.provider_error.unwrap().request_id.as_deref(),Some("req_fixture"));
     }
 }

@@ -41,6 +41,18 @@ pub enum Failure {
     Configuration,
     SafetyBlocked,
 }
+#[derive(Clone, Debug)]
+pub struct Error {
+    pub kind: Failure,
+    pub retry_after: Option<u64>,
+    /// Set only on an HTTP rejection, never on an error inside a stream.
+    pub http_status: Option<u16>,
+    pub request_id: Option<String>,
+    pub api: Option<crate::model_api::Api>,
+    /// Fixed parser code or an allowlisted upstream code; never arbitrary text.
+    pub code: Option<&'static str>,
+}
+
 /// Safe structured context. Never contains request/response bodies or credentials.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,20 +68,30 @@ pub struct Diagnostic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }
-#[derive(Clone, Debug)]
-pub struct Error {
-    pub kind: Failure,
-    pub retry_after: Option<u64>,
-    /// Set only on an HTTP rejection, never on an error inside a stream.
-    pub http_status: Option<u16>,
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Provider {:?}", self.category)?;
+        if let Some(status) = self.http_status { write!(f, " (HTTP {status})")?; }
+        if let Some(id) = &self.request_id { write!(f, "; request {id}")?; }
+        if let Some(code) = &self.code { write!(f, "; {code}")?; }
+        Ok(())
+    }
+}
+
+/// Request IDs are identifiers, not arbitrary upstream diagnostic text.
+pub(crate) fn request_id(headers: &reqwest::header::HeaderMap, key: &str) -> Option<String> {
+    ["x-request-id", "request-id"].into_iter().find_map(|name| {
+        let id = headers.get(name)?.to_str().ok()?;
+        (!id.is_empty() && id.len() <= 128
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b))
+            && !id.starts_with("sk-") && (key.is_empty() || !id.contains(key)))
+            .then(|| id.to_owned())
+    })
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Provider {:?}; no tool actions accepted from this attempt",
-            self.kind
-        )
+        write!(f, "{}; no tool actions accepted from this attempt", self.diagnostic())
     }
 }
 impl std::error::Error for Error {}
@@ -79,8 +101,20 @@ impl Error {
             kind,
             retry_after: None,
             http_status: None,
+            request_id: None,
+            api: None,
+            code: match kind { Failure::InvalidResponse=>Some("invalid_response"), Failure::IncompleteStream=>Some("incomplete_stream"), _=>None },
         }
     }
+    pub fn diagnostic(&self) -> Diagnostic {
+        Diagnostic { category:self.kind, retryable:self.retryable(), http_status:self.http_status,
+            request_id:self.request_id.clone(), api:self.api, code:self.code.map(str::to_owned) }
+    }
+    pub fn with_api(mut self, api: crate::model_api::Api) -> Self {
+        self.api = Some(api);
+        self
+    }
+    pub fn with_code(mut self, code: &'static str) -> Self { self.code=Some(code);self }
     pub fn retryable(&self) -> bool {
         matches!(
             self.kind,
@@ -89,6 +123,55 @@ impl Error {
                 | Failure::Transport
                 | Failure::IncompleteStream
         ) && self.retry_after.is_none_or(|s| s <= 30)
+    }
+}
+
+pub(crate) fn upstream_code(value: &Value) -> Option<&'static str> {
+    const CODES:&[&str]=&["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED"];
+    CODES.iter().copied().find(|code| value["code"]==*code || value["type"]==*code || value["status"]==*code)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="snake_case")]
+pub enum ReasoningKind { Summary, Thinking }
+
+/// Provider-designated display text only. Opaque signatures never enter this type.
+#[derive(Clone, Debug)]
+pub struct ReasoningDelta {
+    pub kind: ReasoningKind,
+    pub text: String,
+    pub block_index: u64,
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn safe_diagnostics_exclude_credentials_and_unbounded_header_text() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for value in ["sk-secret-token", "Bearer token", "arbitrary\ttext", "credential-sentinel"] {
+            headers.insert("x-request-id",value.parse().unwrap());
+            assert!(request_id(&headers,"credential-sentinel").is_none());
+        }
+        headers.insert("x-request-id","req_fixture-123".parse().unwrap());
+        assert_eq!(request_id(&headers,"credential-sentinel").as_deref(),Some("req_fixture-123"));
+        let mut e=Error::new(Failure::RateLimit).with_api(crate::model_api::Api::Responses);
+        e.http_status=Some(429);e.request_id=request_id(&headers,"");
+        assert_eq!(serde_json::to_value(e.diagnostic()).unwrap(),json!({"category":"rate_limit","retryable":true,"http_status":429,"request_id":"req_fixture-123","api":"responses"}));
+    }
+    #[test]
+    fn responses_only_exposes_designated_summary_deltas() {
+        let mut d=Decoder::default();
+        for event in [json!({"type":"response.reasoning_text.delta","delta":"hidden"}),json!({"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"opaque"}})] {
+            assert!(d.event(&event).unwrap().is_none());
+            assert!(d.take_reasoning().is_none());
+        }
+        d.event(&json!({"type":"response.reasoning_summary_text.delta","delta":"Display summary","output_index":0})).unwrap();
+        let delta=d.take_reasoning().unwrap();
+        assert_eq!(delta.kind,ReasoningKind::Summary);
+        assert_eq!(delta.text,"Display summary");
+        assert!(d.take_reasoning().is_none());
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -175,6 +258,7 @@ pub struct Decoder {
     completion: Option<Completion>,
     reported: Option<Usage>,
     output_started: bool,
+    reasoning: Option<ReasoningDelta>,
 }
 impl Decoder {
     pub fn event(&mut self, event: &Value) -> Result<Option<String>, Error> {
@@ -201,6 +285,14 @@ impl Decoder {
             return Err(Error::new(Failure::InvalidResponse));
         }
         match event["type"].as_str().unwrap_or("") {
+            "response.reasoning_summary_text.delta" => {
+                self.reasoning = Some(ReasoningDelta {
+                    kind: ReasoningKind::Summary,
+                    text: event["delta"].as_str().ok_or_else(|| Error::new(Failure::InvalidResponse))?.to_owned(),
+                    block_index: event["output_index"].as_u64().ok_or_else(|| Error::new(Failure::InvalidResponse))?,
+                });
+                Ok(None)
+            }
             "response.output_text.delta" => Ok(Some(
                 event["delta"]
                     .as_str()
@@ -287,8 +379,10 @@ pub(crate) trait StreamDecoder {
     fn output_started(&self) -> bool {
         false
     }
+    fn take_reasoning(&mut self) -> Option<ReasoningDelta> { None }
 }
 impl StreamDecoder for Decoder {
+    fn take_reasoning(&mut self) -> Option<ReasoningDelta> { self.reasoning.take() }
     fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
         self.reported.as_ref().map(Usage::reported)
     }
@@ -323,6 +417,7 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
         .map_err(|_| Error::new(Failure::Transport))?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        let request_id = request_id(response.headers(), key);
         let retry_after = response
             .headers()
             .get("retry-after")
@@ -331,7 +426,7 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
         let mut stream = response.bytes_stream();
         let mut bytes = vec![];
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| Error::new(classify(status, "")))?;
+            let chunk = chunk.map_err(|_| Error { kind:classify(status,""),retry_after,http_status:Some(status),request_id:request_id.clone(),api:None,code:Some("http_error_body_unavailable") })?;
             if bytes.len() + chunk.len() > 16384 {
                 break;
             }
@@ -342,6 +437,9 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
             kind: classify(status, error["error"]["code"].as_str().unwrap_or("")),
             retry_after,
             http_status: Some(status),
+            request_id,
+            api: None,
+            code: upstream_code(&error["error"]),
         });
     }
     let mut stream = response.bytes_stream();
@@ -369,7 +467,7 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
                 continue;
             }
             let event: Value =
-                serde_json::from_str(data).map_err(|_| Error::new(Failure::InvalidResponse))?;
+                serde_json::from_str(data).map_err(|_| Error::new(Failure::InvalidResponse).with_code("invalid_stream_json"))?;
             let decoded = decoder.event(&event);
             if let Some(usage) = decoder
                 .usage_report()
@@ -381,6 +479,9 @@ pub(crate) async fn request_decoded<D: StreamDecoder>(
                 previous_usage = Some(usage);
             }
             let decoded = decoded?;
+            if let Some(delta) = decoder.take_reasoning() {
+                tx.send(Progress::Reasoning(delta)).await.map_err(|_| Error::new(Failure::Transport))?;
+            }
             if !first_sent && decoder.output_started() {
                 tx.send(Progress::OutputStarted)
                     .await

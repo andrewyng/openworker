@@ -27,6 +27,9 @@ and [guardrails guide](guardrails.md).
 A compatible endpoint does not guarantee equivalent tool or image behavior;
 qualify the specific model/configuration used by your application.
 
+See [Streaming and retries](streaming.md) for provider reasoning display, explicit
+Anthropic thinking settings and structured failure diagnostics.
+
 ## Streaming token usage
 
 Chat Completions providers request `stream_options: { include_usage: true }` by
