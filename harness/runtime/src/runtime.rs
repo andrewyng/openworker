@@ -865,7 +865,11 @@ impl Runtime {
                             if item["type"] == "message" {
                                 for part in item["content"].as_array().into_iter().flatten() {
                                     if let Some(text) = part["text"].as_str() {
-                                        let e = self.store.lock().unwrap().attempt_delta(sid,&id,text)?;
+                                        let e = self
+                                            .store
+                                            .lock()
+                                            .unwrap()
+                                            .attempt_delta(sid, &id, text)?;
                                         self.publish(e);
                                     }
                                 }
@@ -883,7 +887,11 @@ impl Runtime {
                 Err(error) => {
                     let failure = error.downcast_ref::<crate::provider::Error>();
                     if let Some(failure) = failure {
-                        self.progress(sid,"provider_error",json!({"attempt_id":id,"diagnostic":failure.diagnostic()}))?;
+                        self.progress(
+                            sid,
+                            "provider_error",
+                            json!({"attempt_id":id,"diagnostic":failure.diagnostic()}),
+                        )?;
                     }
                     let event = self.store.lock().unwrap().finish_attempt(
                         sid,

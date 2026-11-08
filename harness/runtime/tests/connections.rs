@@ -293,23 +293,43 @@ fn chat_stream_usage_defaults_on_and_opt_out_survives_rotation_and_restart() {
 #[test]
 fn anthropic_thinking_is_explicit_validated_and_persisted() {
     use openworker_runtime::anthropic::Thinking;
-    let root=tempfile::tempdir().unwrap();
-    let m=Manager::open(root.path()).unwrap();
-    let config=json!({"name":"Claude","api":"anthropic","base_url":"https://api.anthropic.com/v1"});
+    let root = tempfile::tempdir().unwrap();
+    let m = Manager::open(root.path()).unwrap();
+    let config =
+        json!({"name":"Claude","api":"anthropic","base_url":"https://api.anthropic.com/v1"});
     m.set_provider(config.clone()).unwrap();
-    let selected=m.resolve(&Choice::new("Claude","fixture")).unwrap();
+    let selected = m.resolve(&Choice::new("Claude", "fixture")).unwrap();
     assert!(m.thinking(&selected).unwrap().is_none());
-    let mut enabled=config.clone();enabled["thinking"]=json!({"type":"enabled","budgetTokens":2048});
-    m.set_provider(enabled).unwrap();m.set_provider(config.clone()).unwrap();
-    assert_eq!(m.thinking(&selected).unwrap(),Some(Thinking::Enabled{budget_tokens:2048}));
-    let mut invalid=config.clone();invalid["thinking"]=json!({"type":"enabled","budgetTokens":2});
+    let mut enabled = config.clone();
+    enabled["thinking"] = json!({"type":"enabled","budgetTokens":2048});
+    m.set_provider(enabled).unwrap();
+    m.set_provider(config.clone()).unwrap();
+    assert_eq!(
+        m.thinking(&selected).unwrap(),
+        Some(Thinking::Enabled {
+            budget_tokens: 2048
+        })
+    );
+    let mut invalid = config.clone();
+    invalid["thinking"] = json!({"type":"enabled","budgetTokens":2});
     assert!(m.set_provider(invalid).is_err());
-    drop(m);let m=Manager::open(root.path()).unwrap();
-    assert_eq!(m.thinking(&selected).unwrap(),Some(Thinking::Enabled{budget_tokens:2048}));
-    assert!(m.set_provider(json!({"name":"Wrong","api":"responses","thinking":{"type":"adaptive"}})).is_err());
-    let mut disabled=config;disabled["thinking"]=json!({"type":"disabled"});m.set_provider(disabled).unwrap();
-    assert_eq!(m.thinking(&selected).unwrap(),Some(Thinking::Disabled));
-    m.remove("Claude").unwrap();assert!(m.thinking(&selected).is_err());
+    drop(m);
+    let m = Manager::open(root.path()).unwrap();
+    assert_eq!(
+        m.thinking(&selected).unwrap(),
+        Some(Thinking::Enabled {
+            budget_tokens: 2048
+        })
+    );
+    assert!(m
+        .set_provider(json!({"name":"Wrong","api":"responses","thinking":{"type":"adaptive"}}))
+        .is_err());
+    let mut disabled = config;
+    disabled["thinking"] = json!({"type":"disabled"});
+    m.set_provider(disabled).unwrap();
+    assert_eq!(m.thinking(&selected).unwrap(), Some(Thinking::Disabled));
+    m.remove("Claude").unwrap();
+    assert!(m.thinking(&selected).is_err());
 }
 
 #[test]

@@ -1085,8 +1085,12 @@ fn final_output(snapshot: &Value) -> Value {
 /// A journal event plus a small typed summary SDKs can map directly.
 fn stream_item(agent: &str, e: Event) -> Value {
     let summary = match e.kind.as_str() {
-        "model_attempt_started" | "model_attempt_finished" | "assistant_delta"
-        | "reasoning_delta" | "model_activity" | "provider_error" => {
+        "model_attempt_started"
+        | "model_attempt_finished"
+        | "assistant_delta"
+        | "reasoning_delta"
+        | "model_activity"
+        | "provider_error" => {
             let mut summary = e.data.clone();
             summary["type"] = json!(e.kind);
             Some(summary)

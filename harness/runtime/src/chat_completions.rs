@@ -350,7 +350,12 @@ impl Decoder {
         };
         let reasoning_content = delta.get("reasoning_content").filter(|v| !v.is_null());
         let reasoning = delta.get("reasoning").filter(|v| !v.is_null());
-        if reasoning_content.zip(reasoning).is_some_and(|(a,b)|a != b) { return Err(invalid()); }
+        if reasoning_content
+            .zip(reasoning)
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(invalid());
+        }
         if let Some(text) = reasoning_content.or(reasoning) {
             self.reasoning = Some(crate::provider::ReasoningDelta {
                 kind: crate::provider::ReasoningKind::Thinking,
@@ -389,7 +394,9 @@ impl Decoder {
                     }
                     self.calls.keys().next_back().map_or(0, |index| index + 1)
                 } else {
-                    c["index"].as_u64().ok_or_else(|| invalid().with_code("invalid_tool_call_index"))?
+                    c["index"]
+                        .as_u64()
+                        .ok_or_else(|| invalid().with_code("invalid_tool_call_index"))?
                 };
                 if index >= 64 || c.get("type").is_some_and(|v| v != "function") {
                     return Err(invalid());
@@ -440,7 +447,9 @@ impl Decoder {
     }
 }
 impl StreamDecoder for Decoder {
-    fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> { self.reasoning.take() }
+    fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> {
+        self.reasoning.take()
+    }
     fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
         self.usage.as_ref().map(Usage::reported)
     }

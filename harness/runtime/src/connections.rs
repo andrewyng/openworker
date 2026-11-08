@@ -257,8 +257,17 @@ impl Manager {
             }
             if api == "anthropic" {
                 connections.last_mut().unwrap()["prompt_caching"] = json!(prompt_caching);
-                let thinking: Option<String> = state.db.query_row("SELECT value FROM thinking_options WHERE id=?1", [&id], |r|r.get(0)).optional()?;
-                if let Some(value) = thinking { connections.last_mut().unwrap()["thinking"] = serde_json::from_str(&value)?; }
+                let thinking: Option<String> = state
+                    .db
+                    .query_row(
+                        "SELECT value FROM thinking_options WHERE id=?1",
+                        [&id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(value) = thinking {
+                    connections.last_mut().unwrap()["thinking"] = serde_json::from_str(&value)?;
+                }
             }
         }
         Ok(
@@ -287,7 +296,10 @@ impl Manager {
             bail!("prompt_caching is only supported for Anthropic Messages");
         }
         if let Some(thinking) = &input.thinking {
-            anyhow::ensure!(api == crate::model_api::Api::Anthropic, "thinking is only supported for Anthropic");
+            anyhow::ensure!(
+                api == crate::model_api::Api::Anthropic,
+                "thinking is only supported for Anthropic"
+            );
             thinking.validate()?;
         }
         let base_url =
@@ -422,7 +434,9 @@ impl Manager {
         state
             .db
             .execute("DELETE FROM endpoints WHERE id=?1", [id])?;
-        state.db.execute("DELETE FROM thinking_options WHERE id=?1", [id])?;
+        state
+            .db
+            .execute("DELETE FROM thinking_options WHERE id=?1", [id])?;
         Ok(json!({"removed":true}))
     }
     pub fn defaults(&self) -> Result<Defaults> {
@@ -652,7 +666,9 @@ impl Manager {
         let value: Option<String> = self.state.lock().unwrap().db.query_row(
             "SELECT t.value FROM connections c LEFT JOIN thinking_options t ON c.id=t.id WHERE c.id=?1 AND c.identity=?2",
             params![selected.connection, selected.identity], |r|r.get(0))?;
-        value.map(|v|serde_json::from_str(&v).map_err(Into::into)).transpose()
+        value
+            .map(|v| serde_json::from_str(&v).map_err(Into::into))
+            .transpose()
     }
     /// Harness-owned provider registration; never journal this secret-bearing request.
     pub fn set_provider(&self, value: Value) -> Result<Value> {
@@ -688,7 +704,10 @@ impl Manager {
             bail!("prompt_caching is only supported for Anthropic Messages");
         }
         if let Some(thinking) = &input.thinking {
-            anyhow::ensure!(input.api == crate::model_api::Api::Anthropic, "thinking is only supported for Anthropic");
+            anyhow::ensure!(
+                input.api == crate::model_api::Api::Anthropic,
+                "thinking is only supported for Anthropic"
+            );
             thinking.validate()?;
         }
         anyhow::ensure!(

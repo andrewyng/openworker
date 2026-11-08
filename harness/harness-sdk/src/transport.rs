@@ -387,7 +387,11 @@ impl Backend {
                             return Err(Error::OutcomeUnknown);
                         }
                         if let Some(message) = v["error"]["message"].as_str() {
-                            if let Ok(diagnostic) = serde_json::from_value::<openworker_runtime::provider::Diagnostic>(v["error"]["provider_error"].clone()) {
+                            if let Ok(diagnostic) =
+                                serde_json::from_value::<openworker_runtime::provider::Diagnostic>(
+                                    v["error"]["provider_error"].clone(),
+                                )
+                            {
                                 return Err(Error::Provider(diagnostic));
                             }
                             return Err(Error::Remote(message.into()));

@@ -25,6 +25,10 @@ pub use openworker_runtime::package::BuiltinTools;
 pub use openworker_runtime::turn_options::OutputOptions;
 mod transport;
 pub use host::{CoworkerConfig, HostConfig, HostProcessConfig, Storage};
+pub use openworker_runtime::anthropic::Thinking as AnthropicThinking;
+pub use openworker_runtime::provider::{
+    Diagnostic as ProviderDiagnostic, Failure as ProviderFailure, ReasoningKind,
+};
 pub use openworker_runtime::provider_auth::{AccessToken, Reason as TokenRefreshReason};
 pub use openworker_runtime::team_service::{Command as TeamCommand, Create as TeamCreate};
 pub use openworker_runtime::teams::{Member as TeamMember, Role as TeamRole};
@@ -36,8 +40,6 @@ pub use openworker_telemetry::otlp::{
 /// Opt-in prompt/tool content in telemetry (off by default).
 pub use openworker_telemetry::{Capture, ContentPolicy};
 pub use providers::{Credentials, Model, ModelApi, ModelProvider};
-pub use openworker_runtime::anthropic::Thinking as AnthropicThinking;
-pub use openworker_runtime::provider::{Diagnostic as ProviderDiagnostic, Failure as ProviderFailure, ReasoningKind};
 
 pub enum EmbeddedConfig {
     Local(RuntimeConfig),

@@ -136,8 +136,14 @@ impl ModelProvider {
             ));
         }
         if let Some(thinking) = &self.thinking {
-            if self.api != ModelApi::Anthropic { return Err(Error::InvalidInput("thinking is only supported for Anthropic".into())); }
-            thinking.validate().map_err(|e|Error::InvalidInput(e.to_string()))?;
+            if self.api != ModelApi::Anthropic {
+                return Err(Error::InvalidInput(
+                    "thinking is only supported for Anthropic".into(),
+                ));
+            }
+            thinking
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
         }
         if self.stream_usage.is_some() && self.api != ModelApi::ChatCompletions {
             return Err(Error::InvalidInput(
@@ -156,7 +162,9 @@ impl ModelProvider {
         if let Some(enabled) = self.prompt_caching {
             wire["prompt_caching"] = json!(enabled);
         }
-        if let Some(thinking) = self.thinking { wire["thinking"] = json!(thinking); }
+        if let Some(thinking) = self.thinking {
+            wire["thinking"] = json!(thinking);
+        }
         if self.access_auth {
             wire["access_token_auth"] = json!(true);
         }

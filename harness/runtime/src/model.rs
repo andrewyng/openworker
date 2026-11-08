@@ -401,7 +401,8 @@ impl Model {
                 tx,
                 crate::chat_completions::Decoder::with_binding(binding, google_compat),
             )
-            .await.map_err(|e| e.with_api(api))?;
+            .await
+            .map_err(|e| e.with_api(api))?;
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
@@ -420,14 +421,21 @@ impl Model {
             }
             // Short probes, reviewers and compactors have separate small
             // budgets; do not apply the agent's thinking generation budget.
-            if self.observation.as_ref().is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main) {
+            if self
+                .observation
+                .as_ref()
+                .is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main)
+            {
                 if let Some((manager, selection)) = &self.connection {
                     if let Some(thinking) = manager.thinking(selection)? {
-                        body["thinking"] = thinking.request(max_tokens).map_err(|e|e.with_api(api))?;
+                        body["thinking"] =
+                            thinking.request(max_tokens).map_err(|e| e.with_api(api))?;
                     }
                 }
             }
-            crate::anthropic::request(&client, &endpoint, key, body, tx).await.map_err(|e| e.with_api(api))?;
+            crate::anthropic::request(&client, &endpoint, key, body, tx)
+                .await
+                .map_err(|e| e.with_api(api))?;
             return Ok(());
         }
         if history.iter().any(|v| v.get("provider").is_some()) {
@@ -445,11 +453,15 @@ impl Model {
             })
             .collect::<Vec<_>>();
         let mut body = json!({"model":self.name,"instructions":instructions,"input":input,"tools":tools,"stream":true,"store":false,"include":["reasoning.encrypted_content"],"parallel_tool_calls":false,"max_output_tokens":max_tokens});
-        if self.stream_reasoning { body["reasoning"] = json!({"summary":"auto"}); }
+        if self.stream_reasoning {
+            body["reasoning"] = json!({"summary":"auto"});
+        }
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx).await.map_err(|e| e.with_api(api))?;
+        crate::provider::request(&client, &endpoint, key, body, tx)
+            .await
+            .map_err(|e| e.with_api(api))?;
         Ok(())
     }
     pub async fn summarize(

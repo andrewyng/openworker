@@ -323,7 +323,11 @@ export class Transport {
           clearTimeout(p.timer);
           if (frame.error) {
             // Do not reflect untrusted diagnostics, tool arguments or credentials in errors.
-            const diagnostic = providerDiagnostic(frame.error.provider_error);
+            const diagnostic = providerDiagnostic(
+              typeof frame.error === "object" && "provider_error" in frame.error
+                ? frame.error.provider_error
+                : undefined,
+            );
             p.reject(
               new HarnessError(
                 "Remote",

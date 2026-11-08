@@ -4,25 +4,55 @@ use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
 async fn reasoning_is_opt_in_and_protected_output_never_streams_candidates() {
-    for (enabled, protected) in [(false,false),(true,false),(true,true)] {
+    for (enabled, protected) in [(false, false), (true, false), (true, true)] {
         let mut model = Model::new("fixture".into(), true);
-        model.sample_hook = Some(Arc::new(|_,_,tx|Box::pin(async move {
-            tx.send(Progress::Reasoning(crate::provider::ReasoningDelta { kind:crate::provider::ReasoningKind::Summary,text:"DISPLAY_SENTINEL".into(),block_index:0 })).await.unwrap();
-            tx.send(Progress::Delta("answer".into())).await.unwrap();
-            tx.send(Progress::Complete(Completion { output:vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]})],usage:None })).await.unwrap();
-            Ok(())
-        })));
-        let (_tmp,rt,sid) = fixture(model,true).await;
-        rt.update(&sid,"configure",json!({}),|s| {
+        model.sample_hook = Some(Arc::new(|_, _, tx| {
+            Box::pin(async move {
+                tx.send(Progress::Reasoning(crate::provider::ReasoningDelta {
+                    kind: crate::provider::ReasoningKind::Summary,
+                    text: "DISPLAY_SENTINEL".into(),
+                    block_index: 0,
+                }))
+                .await
+                .unwrap();
+                tx.send(Progress::Delta("answer".into())).await.unwrap();
+                tx.send(Progress::Complete(Completion { output:vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]})],usage:None })).await.unwrap();
+                Ok(())
+            })
+        }));
+        let (_tmp, rt, sid) = fixture(model, true).await;
+        rt.update(&sid, "configure", json!({}), |s| {
             s.turn.as_mut().unwrap().output.reasoning = enabled;
-            if protected { s.turn.as_mut().unwrap().safety.guardrails.model_output.push(crate::safety::Rule::regex("check","forbidden",crate::safety::Action::Block)); }
+            if protected {
+                s.turn
+                    .as_mut()
+                    .unwrap()
+                    .safety
+                    .guardrails
+                    .model_output
+                    .push(crate::safety::Rule::regex(
+                        "check",
+                        "forbidden",
+                        crate::safety::Action::Block,
+                    ));
+            }
             Ok(())
-        }).unwrap();
-        rt.sample(&sid,&[],&[]).await.unwrap();
-        let events = rt.store.lock().unwrap().events(&sid,0).unwrap();
-        assert_eq!(events.iter().any(|e|e.kind=="reasoning_delta"),enabled && !protected);
-        if !enabled || protected { assert!(!serde_json::to_string(&events).unwrap().contains("DISPLAY_SENTINEL")); }
-        if protected { assert!(!events.iter().any(|e|e.kind=="assistant_delta")); }
+        })
+        .unwrap();
+        rt.sample(&sid, &[], &[]).await.unwrap();
+        let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+        assert_eq!(
+            events.iter().any(|e| e.kind == "reasoning_delta"),
+            enabled && !protected
+        );
+        if !enabled || protected {
+            assert!(!serde_json::to_string(&events)
+                .unwrap()
+                .contains("DISPLAY_SENTINEL"));
+        }
+        if protected {
+            assert!(!events.iter().any(|e| e.kind == "assistant_delta"));
+        }
     }
 }
 
@@ -30,49 +60,101 @@ async fn reasoning_is_opt_in_and_protected_output_never_streams_candidates() {
 async fn buffered_attempts_discard_failed_text_and_reasoning() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
-    let mut model = Model::new("fixture".into(),true);
-    model.sample_hook = Some(Arc::new(move |_,_,tx| {
-        let failed = seen.fetch_add(1,Ordering::SeqCst)==0;
+    let mut model = Model::new("fixture".into(), true);
+    model.sample_hook = Some(Arc::new(move |_, _, tx| {
+        let failed = seen.fetch_add(1, Ordering::SeqCst) == 0;
         Box::pin(async move {
-            let text = if failed {"FAILED_CANDIDATE"} else {"accepted"};
+            let text = if failed {
+                "FAILED_CANDIDATE"
+            } else {
+                "accepted"
+            };
             tx.send(Progress::Delta(text.into())).await.unwrap();
-            tx.send(Progress::Reasoning(crate::provider::ReasoningDelta {kind:crate::provider::ReasoningKind::Summary,text:text.into(),block_index:0})).await.unwrap();
-            if failed { return Err(Error::new(Failure::IncompleteStream).into()); }
+            tx.send(Progress::Reasoning(crate::provider::ReasoningDelta {
+                kind: crate::provider::ReasoningKind::Summary,
+                text: text.into(),
+                block_index: 0,
+            }))
+            .await
+            .unwrap();
+            if failed {
+                return Err(Error::new(Failure::IncompleteStream).into());
+            }
             tx.send(Progress::Complete(Completion {output:vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]})],usage:None})).await.unwrap();
             Ok(())
         })
     }));
-    let (_tmp,rt,sid)=fixture(model,true).await;
-    rt.update(&sid,"configure",json!({}),|s| { let o=&mut s.turn.as_mut().unwrap().output;o.reasoning=true;o.buffer_attempts=true;Ok(()) }).unwrap();
-    rt.sample(&sid,&[],&[]).await.unwrap();
-    let events=rt.store.lock().unwrap().events(&sid,0).unwrap();
-    assert!(!serde_json::to_string(&events).unwrap().contains("FAILED_CANDIDATE"));
-    assert_eq!(events.iter().filter(|e|e.kind=="assistant_delta").count(),1);
-    assert_eq!(events.iter().filter(|e|e.kind=="reasoning_delta").count(),1);
-    let finished:Vec<_>=events.iter().filter(|e|e.kind=="model_attempt_finished").collect();
-    assert_eq!(finished.len(),2);
-    assert_eq!(finished[0].data["status"],"failed");
-    assert_eq!(finished[1].data["status"],"completed");
-    assert_ne!(finished[0].data["attempt_id"],finished[1].data["attempt_id"]);
+    let (_tmp, rt, sid) = fixture(model, true).await;
+    rt.update(&sid, "configure", json!({}), |s| {
+        let o = &mut s.turn.as_mut().unwrap().output;
+        o.reasoning = true;
+        o.buffer_attempts = true;
+        Ok(())
+    })
+    .unwrap();
+    rt.sample(&sid, &[], &[]).await.unwrap();
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    assert!(!serde_json::to_string(&events)
+        .unwrap()
+        .contains("FAILED_CANDIDATE"));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "assistant_delta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "reasoning_delta")
+            .count(),
+        1
+    );
+    let finished: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "model_attempt_finished")
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert_eq!(finished[0].data["status"], "failed");
+    assert_eq!(finished[1].data["status"], "completed");
+    assert_ne!(
+        finished[0].data["attempt_id"],
+        finished[1].data["attempt_id"]
+    );
 }
 
 #[tokio::test]
 async fn long_model_call_emits_bounded_truthful_activity() {
-    let mut model=Model::new("fixture".into(),true);
-    model.sample_hook=Some(Arc::new(|_,_,tx|Box::pin(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(5100)).await;
-        tx.send(Progress::Complete(Completion {output:vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"ready"}]})],usage:None})).await.unwrap();
-        Ok(())
-    })));
-    let (_tmp,rt,sid)=fixture(model,true).await;
-    tokio::time::timeout(std::time::Duration::from_secs(10),rt.sample(&sid,&[],&[])).await.unwrap().unwrap();
-    let events=rt.store.lock().unwrap().events(&sid,0).unwrap();
-    let ticks:Vec<_>=events.iter().filter(|e|e.kind=="model_activity").collect();
-    assert_eq!(ticks.len(),1);
-    assert_eq!(ticks[0].data["phase"],"waiting_for_model");
-    assert!(ticks[0].data["elapsed_ms"].as_u64().unwrap()>=5000);
-    let end=events.iter().find(|e|e.kind=="model_attempt_finished").unwrap();
-    assert!(ticks[0].event_id<end.event_id);
+    let mut model = Model::new("fixture".into(), true);
+    model.sample_hook = Some(Arc::new(|_, _, tx| {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(5100)).await;
+            tx.send(Progress::Complete(Completion {output:vec![json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"ready"}]})],usage:None})).await.unwrap();
+            Ok(())
+        })
+    }));
+    let (_tmp, rt, sid) = fixture(model, true).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        rt.sample(&sid, &[], &[]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    let ticks: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "model_activity")
+        .collect();
+    assert_eq!(ticks.len(), 1);
+    assert_eq!(ticks[0].data["phase"], "waiting_for_model");
+    assert!(ticks[0].data["elapsed_ms"].as_u64().unwrap() >= 5000);
+    let end = events
+        .iter()
+        .find(|e| e.kind == "model_attempt_finished")
+        .unwrap();
+    assert!(ticks[0].event_id < end.event_id);
 }
 
 #[tokio::test]
@@ -621,9 +703,9 @@ async fn repeated_transient_failure_stops_after_three_attempts() {
                 kind: Failure::Transient,
                 retry_after: Some(0),
                 http_status: None,
-                    request_id: None,
-                    api: None,
-                    code: None,
+                request_id: None,
+                api: None,
+                code: None,
             }
             .into())
         })
@@ -656,9 +738,9 @@ async fn retry_backoff_is_cancellable_without_another_request() {
                 kind: Failure::RateLimit,
                 retry_after: Some(30),
                 http_status: None,
-                    request_id: None,
-                    api: None,
-                    code: None,
+                request_id: None,
+                api: None,
+                code: None,
             }
             .into())
         })

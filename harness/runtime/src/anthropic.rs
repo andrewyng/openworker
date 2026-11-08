@@ -10,16 +10,22 @@ use tokio::sync::mpsc;
 
 /// Explicit generation configuration; display is controlled separately per turn.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag="type",rename_all="snake_case",deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Thinking {
     Disabled,
     Adaptive,
-    Enabled { #[serde(rename="budgetTokens")] budget_tokens: u32 },
+    Enabled {
+        #[serde(rename = "budgetTokens")]
+        budget_tokens: u32,
+    },
 }
 impl Thinking {
     pub fn validate(&self) -> anyhow::Result<()> {
         if let Self::Enabled { budget_tokens } = self {
-            anyhow::ensure!((1024..=1_000_000).contains(budget_tokens), "Thinking budget must be between 1024 and 1000000 tokens");
+            anyhow::ensure!(
+                (1024..=1_000_000).contains(budget_tokens),
+                "Thinking budget must be between 1024 and 1000000 tokens"
+            );
         }
         Ok(())
     }
@@ -29,7 +35,9 @@ impl Thinking {
             Self::Disabled => json!({"type":"disabled"}),
             Self::Adaptive => json!({"type":"adaptive"}),
             Self::Enabled { budget_tokens } => {
-                if *budget_tokens as usize >= max_tokens { return Err(config()); }
+                if *budget_tokens as usize >= max_tokens {
+                    return Err(config());
+                }
                 json!({"type":"enabled","budget_tokens":budget_tokens})
             }
         })
@@ -202,7 +210,9 @@ pub struct Decoder {
     reasoning: Option<crate::provider::ReasoningDelta>,
 }
 impl Decoder {
-    pub fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> { self.reasoning.take() }
+    pub fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> {
+        self.reasoning.take()
+    }
     fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
         self.input_known.then(|| {
             let mut u = self.usage.reported();
@@ -469,7 +479,14 @@ pub async fn request(
     if !(200..300).contains(&status) {
         let mut bytes = vec![];
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| Error {kind:classify(status,&Value::Null),retry_after,http_status:Some(status),request_id:request_id.clone(),api:Some(crate::model_api::Api::Anthropic),code:Some("http_error_body_unavailable")})?;
+            let chunk = chunk.map_err(|_| Error {
+                kind: classify(status, &Value::Null),
+                retry_after,
+                http_status: Some(status),
+                request_id: request_id.clone(),
+                api: Some(crate::model_api::Api::Anthropic),
+                code: Some("http_error_body_unavailable"),
+            })?;
             if bytes.len() + chunk.len() > 16384 {
                 break;
             }
@@ -514,7 +531,9 @@ pub async fn request(
                 }
                 let decoded = decoded?;
                 if let Some(delta) = decoder.take_reasoning() {
-                    tx.send(Progress::Reasoning(delta)).await.map_err(|_| Error::new(Failure::Transport))?;
+                    tx.send(Progress::Reasoning(delta))
+                        .await
+                        .map_err(|_| Error::new(Failure::Transport))?;
                 }
                 if !first_sent && decoder.output_started() {
                     tx.send(Progress::OutputStarted)

@@ -131,27 +131,35 @@ async fn real_http_parser_handles_rate_limit_and_truncated_stream() {
 
 #[tokio::test]
 async fn http_diagnostics_retain_status_and_request_id_without_upstream_body() {
-    let body=r#"{"error":{"code":"invalid_api_key","message":"secret=BODY_SENTINEL"}}"#;
+    let body = r#"{"error":{"code":"invalid_api_key","message":"secret=BODY_SENTINEL"}}"#;
     let (url,server)=http_once(&format!("HTTP/1.1 401 Unauthorized\r\nX-Request-ID: req_fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body)).await;
-    let (tx,_)=mpsc::channel(10);
-    let e=provider::request(&reqwest::Client::new(),&url,"KEY_SENTINEL",json!({}),tx).await.unwrap_err();
+    let (tx, _) = mpsc::channel(10);
+    let e = provider::request(&reqwest::Client::new(), &url, "KEY_SENTINEL", json!({}), tx)
+        .await
+        .unwrap_err();
     server.await.unwrap();
-    assert_eq!(e.http_status,Some(401));
-    assert_eq!(e.request_id.as_deref(),Some("req_fixture"));
+    assert_eq!(e.http_status, Some(401));
+    assert_eq!(e.request_id.as_deref(), Some("req_fixture"));
     assert!(!e.retryable());
-    for text in [e.to_string(),serde_json::to_string(&e.diagnostic()).unwrap()] {
-        assert!(!text.contains("BODY_SENTINEL"));assert!(!text.contains("KEY_SENTINEL"));
+    for text in [
+        e.to_string(),
+        serde_json::to_string(&e.diagnostic()).unwrap(),
+    ] {
+        assert!(!text.contains("BODY_SENTINEL"));
+        assert!(!text.contains("KEY_SENTINEL"));
     }
 }
 
 #[tokio::test]
 async fn broken_http_error_body_keeps_known_status_and_request_id() {
     let (url,server)=http_once("HTTP/1.1 401 Unauthorized\r\nX-Request-ID: req_broken\r\nContent-Length: 999\r\nConnection: close\r\n\r\npartial").await;
-    let (tx,_)=mpsc::channel(10);
-    let error=provider::request(&reqwest::Client::new(),&url,"test-only",json!({}),tx).await.unwrap_err();
+    let (tx, _) = mpsc::channel(10);
+    let error = provider::request(&reqwest::Client::new(), &url, "test-only", json!({}), tx)
+        .await
+        .unwrap_err();
     server.await.unwrap();
-    assert_eq!(error.http_status,Some(401));
-    assert_eq!(error.request_id.as_deref(),Some("req_broken"));
-    assert_eq!(error.code,Some("http_error_body_unavailable"));
-    assert_eq!(error.kind,Failure::Authentication);
+    assert_eq!(error.http_status, Some(401));
+    assert_eq!(error.request_id.as_deref(), Some("req_broken"));
+    assert_eq!(error.code, Some("http_error_body_unavailable"));
+    assert_eq!(error.kind, Failure::Authentication);
 }
