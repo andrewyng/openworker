@@ -1066,16 +1066,15 @@ html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 .task-card:hover .task-card-act { opacity: 1; color: var(--accent); }
 .task-card.gated .task-card-act { opacity: 1; color: var(--accent); }
 
-/* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden; the Steps
-   button (UX-059 OB-1) looks the same */
-.topbar-artifacts-btn, .topbar-steps-btn {
+/* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden. */
+.topbar-artifacts-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 5px 10px; margin-right: 6px;
   border: 1px solid var(--line-strong); border-radius: 8px;
   background: var(--panel); color: var(--muted); cursor: pointer;
   font: inherit; font-size: var(--fs-ui);
 }
-.topbar-artifacts-btn:hover, .topbar-steps-btn:hover { color: var(--ink); border-color: var(--accent); }
+.topbar-artifacts-btn:hover { color: var(--ink); border-color: var(--accent); }
 .topbar-artifacts-count {
   /* Neutral count (owner call 2026-08-21): a passive tally is not a primary action,
      an active state, or a live signal — the accent budget says no cobalt here. */
@@ -2589,6 +2588,40 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .steps-railbody { flex:1; min-height:0; overflow:auto; padding:6px 0; }
 .steps-split { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) min(520px, 62%); }
 .steps-split .steps-list { border-right:1px solid var(--line); }
+/* UX-060: the open trace takes the artifact-reading width and keeps the trace index as its
+   left column, so the index in the rail never disappears — it gains a detail pane. The
+   team-view rule above sets a narrower width; this one, later, wins for the trace. */
+.main:has(.steps-panel) { --artifact-rail-w: var(--team-rail-w, min(62vw, 960px)); }
+.main:has(.steps-panel.inspecting) { --artifact-rail-w: min(78vw, 1180px); }
+/* Full width (the stretch icon left of ✕): the rail takes the whole content area; the
+   conversation is hidden, the left nav untouched. Last, so it wins over every width above. */
+.main.rail-open:has(.right-rail.artifact-mode.stretched) { --artifact-rail-w: 100%; }
+.steps-panel.indexed { flex-direction: row; }
+.steps-index-col { flex: 0 0 236px; min-width: 0; border-right: 1px solid var(--line); overflow-y: auto; padding: 10px 6px; }
+.steps-index-col .trace-index { padding: 0; }
+.steps-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* The trace index rows (rail section and the panel's column share them). */
+.trace-index { display: flex; flex-direction: column; gap: 1px; }
+.trace-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: var(--fs-ui); text-align: left; padding: 5px 6px; border-radius: 7px; cursor: pointer; }
+.trace-row:hover { background: var(--paper); }
+.trace-row.current { background: var(--paper); }
+.trace-row.current .trace-n { color: var(--ink); font-weight: 600; }
+.trace-row.none .trace-words { color: var(--muted); }
+.trace-n { flex: none; min-width: 16px; font-size: var(--fs-label); color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+.trace-row { align-items: flex-start; }
+.trace-row .trace-n, .trace-row .trace-glance, .trace-row .trace-dot { margin-top: 2px; }
+/* One line at rest; hovering lets the message run to three lines (the rows below slide,
+   they do not jump); the panel's column has room for two at rest. */
+.trace-words { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-height: 1.4; max-height: 1.4em; transition: max-height .18s ease; overflow-wrap: anywhere; }
+.trace-row:hover .trace-words, .trace-row:focus-visible .trace-words { -webkit-line-clamp: 3; max-height: 4.2em; }
+.steps-index-col .trace-words { -webkit-line-clamp: 2; max-height: 2.8em; }
+.steps-index-col .trace-row:hover .trace-words, .steps-index-col .trace-row:focus-visible .trace-words { -webkit-line-clamp: 3; max-height: 4.2em; }
+.trace-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
+.trace-glance { flex: none; font-size: var(--fs-label); color: var(--faint); font-variant-numeric: tabular-nums; }
+.trace-glance.live { color: var(--muted); }
+/* A row's click lands on its message: a short highlight, then nothing. */
+@keyframes msg-flash { 0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.msg-flash > .bubble-user { animation: msg-flash 1.5s ease-out; }
 
 /* The timeline (OB-1): one row per step on the turn's time axis. */
 .steps-timeline { display:flex; flex-direction:column; }

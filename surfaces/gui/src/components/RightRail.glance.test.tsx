@@ -162,3 +162,30 @@ describe("header summaries", () => {
     expect(head.querySelector(".rail-summary.attention")).not.toBeNull();
   });
 });
+
+describe("the Trace section (UX-060)", () => {
+  const rows = [
+    { n: 1, mid: "u1", words: "What does greet.py do?", turnId: "t1", durationMs: 2600, issues: 2, working: false },
+    { n: 2, mid: "u2", words: "List the files", turnId: "t2", durationMs: 1200, issues: 0, working: false },
+    { n: 3, mid: "u3", words: "Latest commit?", turnId: null, durationMs: null, issues: 0, working: true },
+  ];
+
+  it("is the one way into the trace: turns and issues on the header, a row per message", () => {
+    const onOpenTrace = vi.fn();
+    render(<RightRail {...baseProps} traceRows={rows} onOpenTrace={onOpenTrace} />);
+    const head = screen.getByTestId("rail-toggle-trace");
+    expect(head.textContent).toContain("3 turns");
+    expect(head.textContent).toContain("2 issues");
+    fireEvent.click(head);
+    expect(screen.getByTestId("trace-row-1").textContent).toContain("What does greet.py do?");
+    expect(screen.getByTestId("trace-row-1").textContent).toContain("2.6s");
+    expect(screen.getByTestId("trace-row-3").textContent).toContain("Working…");
+    fireEvent.click(screen.getByTestId("trace-row-2"));
+    expect(onOpenTrace).toHaveBeenCalledWith(expect.objectContaining({ turnId: "t2", mid: "u2" }));
+  });
+
+  it("renders nothing before the first message", () => {
+    render(<RightRail {...baseProps} traceRows={[]} onOpenTrace={() => {}} />);
+    expect(screen.queryByTestId("rail-toggle-trace")).toBeNull();
+  });
+});

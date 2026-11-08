@@ -39,7 +39,9 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
-function BubbleMeta({ text, ts, align, onOpenSteps }: { text: string; ts?: number; align: "left" | "right"; onOpenSteps?: (ts?: number) => void }) {
+// The trace itself is reached from the turn footer and the rail's Trace index (UX-060), so
+// this strip carries no third link to it.
+function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
@@ -74,17 +76,6 @@ function BubbleMeta({ text, ts, align, onOpenSteps }: { text: string; ts?: numbe
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
             {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
           </span>
-        )}
-        {onOpenSteps && (
-          // UX-059 OB-1: the turn's steps, from its answer.
-          <button
-            className="cursor-pointer hover:text-muted"
-            data-testid="bubble-steps"
-            title={t("steps.open_title")}
-            onClick={() => onOpenSteps(ts)}
-          >
-            {t("steps.open")}
-          </button>
         )}
       </div>
     </div>
@@ -649,6 +640,9 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
       />
     );
   };
+  // UX-060: the n-th message of yours, so the trace index can land on it before the
+  // message has a server id (a live send). `data-user-n` on each user bubble.
+  let userN = 0;
   return (
     <div className="transcript">
       {blocks.map((block, bi) => {
@@ -680,7 +674,8 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
             return <TeamCreatedLine key={bi} workers={item.workers} />;
           case "user":
             return (
-              <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>
+              <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}
+                   id={item.mid ? `msg-${item.mid}` : undefined} data-mid={item.mid} data-user-n={++userN}>
                 <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-body leading-relaxed whitespace-pre-wrap">
                   {item.attachments && item.attachments.length > 0 && (
                     <div className="bubble-attachments">
@@ -711,7 +706,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
                 <div className="who">{t("transcript.who_assistant")}</div>
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
-                <BubbleMeta text={item.text} ts={item.ts} align="left" onOpenSteps={onOpenSteps} />
+                <BubbleMeta text={item.text} ts={item.ts} align="left" />
                 {footerFor(bi, item)}
               </div>
             );

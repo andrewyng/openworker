@@ -289,7 +289,7 @@ function filesOf(args: any): string[] {
  * previous turn's last message to its own (`last_message_id`, the answer's `mid`). A turn with
  * no answer yet (running, or cut off) gets what is left at the end when it is the last one. */
 export function turnTexts(
-  turns: { turn_id: string; last_message_id?: string | null }[],
+  turns: { turn_id: string; first_message_id?: string | null; last_message_id?: string | null }[],
   items: ConvItem[],
 ): Map<string, TurnText> {
   const at = new Map<string, number>();
@@ -309,6 +309,18 @@ export function turnTexts(
     }
     out.set(tid, part);
   };
+  // UX-060: a turn knows the message that started it (`first_message_id`); when every turn
+  // does, its part runs from there to the next turn's start. Splitting at answers (below)
+  // mislabelled turns a minute apart, so it is only the fallback for older recordings.
+  const starts = turns.map((tn) => (tn.first_message_id != null ? at.get(tn.first_message_id) : undefined));
+  if (turns.length > 0 && starts.every((s) => s != null)) {
+    turns.forEach((tn, k) => {
+      const from = starts[k] as number;
+      const to = k + 1 < turns.length ? (starts[k + 1] as number) : items.length;
+      fill(tn.turn_id, from, Math.max(from, to));
+    });
+    return out;
+  }
   let start = 0;
   turns.forEach((tn, k) => {
     const end = tn.last_message_id != null ? at.get(tn.last_message_id) : undefined;
@@ -320,6 +332,58 @@ export function turnTexts(
     }
   });
   return out;
+}
+
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  if (ms > 0 && ms < 100) return "<0.1s";
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+// -- the trace index (UX-060) -------------------------------------------------------------------
+/** One row per message of yours, joined to the turn it started by the turn's
+ * `first_message_id`. Rows come from the transcript alone, so a message whose turn was never
+ * recorded still has one (greyed, no trace); the last one shows "Working…" while a turn runs. */
+export interface TraceRow {
+  n: number;
+  mid?: string;
+  words: string;
+  turnId: string | null;
+  durationMs: number | null;
+  issues: number;
+  working: boolean;
+}
+
+export function traceRows(
+  items: { kind: string; text?: string; mid?: string }[],
+  turns: { turn_id: string; first_message_id?: string | null; duration_ms: number | null; status?: string; issues?: number }[],
+  running = false,
+): TraceRow[] {
+  const byFirst = new Map<string, (typeof turns)[number]>();
+  for (const tn of turns) if (tn.first_message_id) byFirst.set(tn.first_message_id, tn);
+  const users = items.filter((it) => it.kind === "user");
+  // A message sent in this window has no id until the session is reopened; those pair
+  // with the turns no id claimed, in order — one message, one turn.
+  const claimed = new Set(users.map((it) => it.mid).filter((m): m is string => !!m && byFirst.has(m)));
+  const spare = turns.filter((tn) => tn.first_message_id && !claimed.has(tn.first_message_id));
+  return users.map((it, i) => {
+    const tn = it.mid && byFirst.has(it.mid) ? byFirst.get(it.mid) : it.mid ? undefined : spare.shift();
+    const last = i === users.length - 1;
+    const working = tn ? tn.duration_ms == null && (tn.status === "running" || (last && running)) : last && running;
+    return {
+      n: i + 1,
+      mid: it.mid,
+      words: firstWords(it.text || "", 60),
+      turnId: tn?.turn_id ?? null,
+      durationMs: tn?.duration_ms ?? null,
+      issues: tn?.issues ?? 0,
+      working,
+    };
+  });
 }
 
 /** Whether a turn matches the list's search: its number, what you asked, the answer, tool

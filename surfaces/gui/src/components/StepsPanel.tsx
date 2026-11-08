@@ -23,8 +23,10 @@ import {
 } from "../api";
 import { formatTokens } from "../usage";
 import { canonicalModel } from "../modelNames";
-import { turnTexts, wakeKey } from "../obs3";
+import { formatDuration, traceRows, turnTexts, wakeKey } from "../obs3";
 import { TurnList, TurnStrip } from "./TurnPicker";
+import { TraceIndex } from "./TraceIndex";
+import { StretchButton } from "../railStretch";
 
 type T = (k: string, o?: any) => string;
 
@@ -40,15 +42,7 @@ export function wakeLine(turn: RecordedTurn, t: T): string | null {
 }
 
 /** 0.1s, 3.4s, 41s, 2m 14s: the panel's one duration format. */
-export function formatDuration(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return "—";
-  if (ms > 0 && ms < 100) return "<0.1s";
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
-  return s ? `${m}m ${s}s` : `${m}m`;
-}
+export { formatDuration };
 
 /** A moment in the turn as the mock writes it: 00:52.1 */
 function clock(ms: number): string {
@@ -533,14 +527,33 @@ export function StepsPanel({
     </div>
   );
 
+  // UX-060: the trace index as the panel's left column — the same rows as the rail's
+  // Trace section, the shown turn marked. Rows are messages of yours, so a session with
+  // none (an automation's turns) keeps the single-column panel.
+  const index = useMemo(() => traceRows(conversation, (turns || []).map((tn) => ({
+    turn_id: tn.turn_id, first_message_id: tn.first_message_id, duration_ms: tn.duration_ms,
+    status: tn.status, issues: tn.issues?.warn || 0,
+  }))), [conversation, turns]);
+  const indexed = index.length > 0 && !!turns && turns.length > 0;
   return (
-    <div className={"team-view steps-panel" + (inspecting ? " inspecting" : "")} data-testid="steps-panel"
+    <div className={"team-view steps-panel" + (inspecting ? " inspecting" : "") + (indexed ? " indexed" : "")} data-testid="steps-panel"
       tabIndex={-1} onKeyDown={onKeyDown}>
+      {indexed && (
+        <aside className="steps-index-col" data-testid="steps-index">
+          <TraceIndex rows={index} current={turn?.turn_id} testId="steps-index-rows"
+            onPick={(row) => {
+              const i = turns!.findIndex((tn) => tn.turn_id === row.turnId);
+              if (i >= 0) { setTurnIdx(i); setTab("timeline"); setSelected(null); }
+            }} />
+        </aside>
+      )}
+      <div className="steps-main">
       <div className="steps-railhead">
         <div className="steps-railhead-title">
           <strong>{t("steps.title")}</strong>
           {picker}
           <span className="steps-sp" />
+          <StretchButton className="steps-close" labels={{ stretch: t("rail.stretch"), unstretch: t("rail.unstretch") }} />
           <button className="steps-close" aria-label={t("steps.close")} onClick={onClose}>✕</button>
         </div>
         {turns && turns.length > 0 && turnIdx != null && (
@@ -636,6 +649,7 @@ export function StepsPanel({
           />
         </div>
       )}
+      </div>
     </div>
   );
 }
