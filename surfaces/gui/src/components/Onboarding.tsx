@@ -49,7 +49,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
   // Ready = a saved key, a proven keyless runtime, or a completed OAuth sign-in
   // (subscription providers set signed_in, not configured+needs_key).
   const anyReady =
-    ps.providers.some((p) => (p.configured && p.needs_key) || (p.auth === "oauth" && p.signed_in)) ||
+    ps.providers.some((p) => (p.configured && p.needs_key) || (p.auth === "oauth" && p.signed_in) || !!p.availability?.available) ||
     ps.keylessOk.size > 0;
   // In the form with typed-but-untested input, Next verifies+saves first (tester
   // catch 2026-07-12: a manual Test-then-Continue two-step reads as a puzzle).

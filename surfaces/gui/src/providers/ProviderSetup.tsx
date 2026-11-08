@@ -266,6 +266,16 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   };
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.availability) {
+      return (
+        <span
+          className={"block text-meta font-medium truncate " + (p.availability.available ? "text-ok" : "text-warnInk")}
+          title={p.availability.detail || undefined}
+        >
+          {t(p.availability.available ? "provider.apple_available" : "provider.apple_unavailable")}
+        </span>
+      );
+    }
     if (p.auth === "oauth") {
       // The card keeps just the state — the account email truncated badly at card
       // width (owner-hit 2026-08-21); the detail pane shows who is signed in.
@@ -689,6 +699,13 @@ export function ProviderForm({
             {t("provider.create_key_at", { label: KEY_HELP[sel].labelKey ? t(KEY_HELP[sel].labelKey) : KEY_HELP[sel].label })} ↗
           </button>{" "}
           {t("provider.takes_a_minute")}
+        </p>
+      )}
+      {info?.name === "apple" && (
+        <p className="text-meta text-faint mt-2">
+          {info.availability?.available
+            ? t("provider.apple_ready")
+            : info.availability?.detail || t("provider.apple_unavailable_detail")}
         </p>
       )}
       {!guided && info && !info.needs_key && info.auth !== "oauth" && LOCAL_HELP[info.name] && (

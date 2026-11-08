@@ -566,6 +566,32 @@ def test_custom_provider_verify_applies_endpoint_transport_policy(tmp_path, monk
     assert "localhost or a private IP" in checked["error"]
 
 
+def test_manager_exposes_apple_runtime_availability(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "coworker.providers.apple_foundation_provider.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(
+            available=False,
+            code="unsupported_os",
+            detail="Requires macOS 26",
+            context_size=None,
+        ),
+    )
+    from coworker.server.manager import SessionManager
+
+    apple = {
+        p["name"]: p for p in SessionManager(data_dir=tmp_path).get_providers()
+    }["apple"]
+    assert apple["configured"] is False
+    assert apple["kind"] == "local" and apple["alive"] is False
+    assert apple["availability"] == {
+        "available": False,
+        "code": "unsupported_os",
+        "detail": "Requires macOS 26",
+        "context_size": None,
+    }
+
+
 def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.
@@ -576,6 +602,10 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     for d in provider_descriptors():  # ambient dev-shell keys must not leak in
         if d.env_key:
             monkeypatch.delenv(d.env_key, raising=False)
+    monkeypatch.setattr(
+        "coworker.providers.apple_foundation_provider.AppleFoundationProvider.availability",
+        lambda self: SimpleNamespace(available=False),
+    )
     from coworker.server.manager import SessionManager
 
     # `ollama:*` selectability is an HTTP probe of a local server; pin it so this test

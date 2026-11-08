@@ -12,7 +12,7 @@
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
 #     build-only deps:
 #       python3 -m venv .venv
-#       .venv/bin/pip install -e '.[bedrock,openshell]' pyinstaller tzdata typer
+#       .venv/bin/pip install -e '.[bedrock,openshell,apple-foundation-models]' pyinstaller tzdata typer
 #     `typer` is needed only at BUILD time: PyInstaller walks the `mcp` package and
 #     `mcp.cli` calls sys.exit() at import if typer is absent, which aborts the freeze.
 #     (aisuite installs like any other dependency — git-pinned in pyproject.toml.)
@@ -49,6 +49,11 @@ APP="OpenWorker"
 VERSION="$(node -p "require('$GUI/src-tauri/tauri.conf.json').version")"
 TRIPLE="$(rustc -vV | sed -n 's/host: //p')"   # e.g. aarch64-apple-darwin
 ARCH="${TRIPLE%%-*}"
+# The Apple Silicon sidecar contains the optional, prebuilt Apple bridge.  The SDK
+# is never imported on unsupported machines, but it must be collected and signed
+# when producing an arm64 distributable.  Intel builds leave it out.
+if [ "$ARCH" = "aarch64" ]; then APPLE_FM_DEFAULT=1; else APPLE_FM_DEFAULT=0; fi
+export COWORKER_APPLE_FOUNDATION_MODELS="${COWORKER_APPLE_FOUNDATION_MODELS:-$APPLE_FM_DEFAULT}"
 
 # CI keychain bootstrap: on a fresh runner the Developer ID cert exists only as the
 # APPLE_CERTIFICATE secret (base64 .p12) — import it into a throwaway keychain so the
