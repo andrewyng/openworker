@@ -8,6 +8,7 @@ The session saves its resolved model. Unavailable models fail explicitly.
 |---|---|---|
 | OpenAI | Responses | `name: "OpenAI", api: "responses"` |
 | Anthropic | Native Messages | `name: "Anthropic", api: "anthropic"` |
+| Google Gemini | Google OpenAI-compatible Chat Completions | Google's `/v1beta/openai` base URL and a Gemini API key |
 | OpenRouter or a compatible proxy | Chat Completions | Custom `baseUrl` and credentials |
 | Ollama / vLLM | Chat Completions | Local base URL and an installed model ID |
 
@@ -101,3 +102,49 @@ Anthropic Messages. There is no silent fallback or automatic request replay.
 include both. Actual hit rates and cost depend on model, prefix stability,
 minimum prompt size and provider pricing. See
 [Anthropic's prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
+## Gemini tool conversations
+
+Register Google's compatible endpoint and choose a model available to your
+Google account. The SDK manages streamed tool calls and their follow-up requests:
+
+```typescript
+await harness.setModelProvider({
+  name: "Gemini",
+  api: "chat-completions",
+  baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+  credentials: { apiKeyEnv: "GEMINI_API_KEY", storage: "memory" },
+});
+const agent = harness.createAgent({
+  name: "assistant",
+  instructions: "Use the application's lookup tool to answer the user.",
+  tools: ["app.lookup"], // Register this application tool first.
+  defaultModel: { provider: "Gemini", name: "gemini-3.8-flash" },
+});
+```
+
+```rust,ignore
+harness.set_model_provider(
+    ModelProvider::chat_completions("Gemini")
+        .base_url("https://generativelanguage.googleapis.com/v1beta/openai")
+        .credentials(Credentials::from_env("GEMINI_API_KEY").memory_only()),
+).await?;
+```
+
+Google's opaque thought signatures are preserved in durable provider-private
+history and replayed unchanged on the corresponding tool call or assistant
+message. They survive host restart and credential rotation. They do not appear
+in application tool arguments, display history, reasoning text, or telemetry
+content—even when full-content telemetry is enabled.
+
+Private replay state is bound to the connection identity, API, endpoint and
+model. Sending it to another connection/model is rejected; the harness does not
+invent signatures or bypass Google's signature validation. Use a fresh session
+when changing providers. A provider-side proxy must preserve Google's
+`extra_content.google.thought_signature` fields for this flow to work.
+
+The compatible adapter accepts Google's complete tool calls without an `index`,
+as well as indexed argument fragments. It never guesses how to combine partial
+unindexed calls, and incomplete streams cannot authorize tool execution.
+See [Google's compatibility guide](https://ai.google.dev/gemini-api/docs/openai)
+and [thought signature requirements](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).

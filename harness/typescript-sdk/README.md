@@ -117,6 +117,12 @@ authorize and constrain what they capture. Plain JSON return values are unchange
 
 ## Chat Completions streaming compatibility
 
+Google Gemini's compatible endpoint supports signed tool conversations; the
+harness preserves provider-private thought signatures across tool results and
+restart. See [Gemini tool conversations](../../docs/harness/guides/providers.md#gemini-tool-conversations).
+Anthropic Messages enables automatic prompt caching by default; use
+`promptCaching: false` to opt out. See [Anthropic prompt caching](../../docs/harness/guides/providers.md#anthropic-prompt-caching).
+
 The harness requests streaming token usage by default. Set `streamUsage: false`
 on `setModelProvider({ api: "chat-completions", ... })` only when a compatible
 server rejects `stream_options`. This persisted setting survives credential

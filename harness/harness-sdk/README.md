@@ -87,6 +87,11 @@ that rejects `stream_options`, add `.stream_usage(false)` to its `ModelProvider`
 The setting persists across restart and key rotation. Missing usage is unknown,
 not zero; see [streaming token usage](../../docs/harness/guides/providers.md#streaming-token-usage).
 
+Anthropic Messages enables automatic prompt caching by default. Set
+`.prompt_caching(false)` on its `ModelProvider` to opt out. Google Gemini uses
+the Chat Completions adapter with private thought-signature replay; see
+[models and credentials](../../docs/harness/guides/providers.md).
+
 Windows uses DPAPI and macOS uses Keychain for secure credentials. On Linux,
 choose `.memory_only()` explicitly or use server-managed credentials; there is no
 plaintext fallback. Keys never belong in agent definitions. Re-register callback

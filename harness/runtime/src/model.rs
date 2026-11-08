@@ -259,7 +259,7 @@ impl Model {
         span.metadata("gen_ai.request.model", &self.name);
         span.model_started();
         if !self.content_withheld {
-            span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":&history[history.len().saturating_sub(20)..]})).unwrap_or_default());
+            span.content_tail("gen_ai.prompt",||serde_json::to_string(&json!({"instructions":instructions,"history":public_items(&history[history.len().saturating_sub(20)..])})).unwrap_or_default());
         }
         let (inner, mut rx) = mpsc::channel(32);
         let future = request(inner);
@@ -301,7 +301,8 @@ impl Model {
                     }
                     if !self.content_withheld {
                         span.content("gen_ai.completion", || {
-                            serde_json::to_string(&completion.output).unwrap_or_default()
+                            serde_json::to_string(&public_items(&completion.output))
+                                .unwrap_or_default()
                         });
                     }
                 }
@@ -359,13 +360,25 @@ impl Model {
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
         if api == crate::model_api::Api::ChatCompletions {
-            let mut body = crate::chat_completions::body(
+            let binding = crate::chat_completions::replay_binding(
+                &endpoint,
+                &self.name,
+                self.connection
+                    .as_ref()
+                    .map(|(_, selection)| selection.identity.as_str()),
+            );
+            let google_compat = reqwest::Url::parse(&endpoint).is_ok_and(|url| {
+                url.host_str() == Some("generativelanguage.googleapis.com")
+                    && url.path().ends_with("/openai/chat/completions")
+            });
+            let mut body = crate::chat_completions::body_with_binding(
                 &self.name,
                 instructions,
                 history,
                 tools,
                 max_tokens,
                 format.as_ref(),
+                Some(&binding),
             )?;
             // Some compatible/local servers reject stream_options. This is an
             // explicit provider capability override, never an automatic retry
@@ -381,7 +394,7 @@ impl Model {
                 key,
                 body,
                 tx,
-                crate::chat_completions::Decoder::default(),
+                crate::chat_completions::Decoder::with_binding(binding, google_compat),
             )
             .await?;
             return Ok(());
@@ -403,7 +416,7 @@ impl Model {
             crate::anthropic::request(&client, &endpoint, key, body, tx).await?;
             return Ok(());
         }
-        if history.iter().any(|v| v["provider"] == "anthropic") {
+        if history.iter().any(|v| v.get("provider").is_some()) {
             bail!("Provider-private history cannot be sent to another provider");
         }
         let input = history
@@ -942,6 +955,16 @@ impl Model {
         .await?;
         Ok(())
     }
+}
+
+/// Provider-private reasoning/signatures belong only to replay storage and the
+/// originating model. Even full-content exports must not expose this state.
+pub fn public_items(items: &[Value]) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|item| item["type"] != "reasoning")
+        .cloned()
+        .collect()
 }
 
 pub fn validate_output(output: &[Value]) -> Result<()> {

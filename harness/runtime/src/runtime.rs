@@ -645,8 +645,9 @@ impl Runtime {
             } else if summary {
                 instructions.push_str("\nThe configured turn budget is exhausted. No tools may execute. Return a short plain-language response (at most 120 words) telling the user the configured limit was reached, what was actually completed, and what is incomplete. Do not claim failed/unknown tools succeeded. Do not request tools or continue the task.");
             }
-            let request_text =
-                serde_json::to_string(&json!({"instructions":instructions,"history":history}))?;
+            let request_text = serde_json::to_string(
+                &json!({"instructions":instructions,"history":crate::model::public_items(history)}),
+            )?;
             let (_, blocked) = self
                 .check_content(
                     sid,

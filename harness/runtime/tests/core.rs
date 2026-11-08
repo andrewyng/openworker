@@ -331,6 +331,40 @@ fn history_pages_advance_across_private_items_without_disclosing_them() {
 }
 
 #[test]
+fn google_signatures_survive_storage_but_never_enter_display_history() {
+    use openworker_runtime::provider::StreamDecoder;
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut s = session();
+    let mut decoder =
+        openworker_runtime::chat_completions::Decoder::with_binding("binding".into(), true);
+    decoder.event(&json!({"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"app__lookup","arguments":"{}"},"extra_content":{"google":{"thought_signature":"OPAQUE_PRIVATE"}}}]},"finish_reason":"stop"}]})).unwrap();
+    decoder.done().unwrap();
+    s.history.extend(decoder.finish().unwrap().output);
+    s.history
+        .push(json!({"type":"function_call_output","call_id":"call-1","output":"available"}));
+    db.save(&s, "created", json!({})).unwrap();
+    drop(db);
+    let db = Store::open(dir.path()).unwrap();
+    let raw = db.get(&s.id).unwrap().history;
+    assert!(serde_json::to_string(&raw)
+        .unwrap()
+        .contains("OPAQUE_PRIVATE"));
+    assert!(!db
+        .history_page(&s.id, 0)
+        .unwrap()
+        .to_string()
+        .contains("OPAQUE_PRIVATE"));
+    let excerpt = db.transcript_excerpt(&s.id, 0, 0).unwrap();
+    assert!(!excerpt.to_string().contains("OPAQUE_PRIVATE"));
+    assert!(excerpt.to_string().contains("app__lookup"));
+    let summary = openworker_runtime::compaction::logical(&raw);
+    assert!(!serde_json::to_string(&summary)
+        .unwrap()
+        .contains("OPAQUE_PRIVATE"));
+}
+
+#[test]
 fn transcript_excerpts_are_scoped_bounded_and_preserve_unicode() {
     let dir = tempfile::tempdir().unwrap();
     let mut db = Store::open(dir.path()).unwrap();

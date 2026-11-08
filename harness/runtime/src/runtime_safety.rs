@@ -224,8 +224,13 @@ impl Runtime {
                 });
                 continue;
             }
-            if protects_output || sanitized != text {
-                completion.output.retain(|v| v["type"] != "message");
+            if sanitized != text {
+                // Preserve untouched message boundaries and opaque replay
+                // metadata. A rewritten text has no valid original signature;
+                // text signatures are optional and must not be fabricated.
+                completion.output.retain(|v| {
+                    v["type"] != "message" && !crate::chat_completions::message_signature(v)
+                });
                 if !sanitized.is_empty() {
                     completion.output.insert(0,json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":sanitized}]}));
                 }
