@@ -29,6 +29,7 @@ export type EventType =
   | "export_notice"
   | "memory_saved"
   | "agent_task"
+  | "workspace_changed"
   | "compacting"
   | "compacted"
   | "continuation"

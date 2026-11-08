@@ -119,6 +119,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN actor TEXT",
             "ALTER TABLE sessions ADD COLUMN usage TEXT",
             "ALTER TABLE sessions ADD COLUMN spawn TEXT",
+            "ALTER TABLE sessions ADD COLUMN worktree TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -465,7 +466,18 @@ class ConversationStore:
             ),
             usage=_load_grants(row["usage"] if "usage" in row.keys() else None),
             spawn=_load_grants(row["spawn"] if "spawn" in row.keys() else None),
+            worktree=_load_grants(row["worktree"] if "worktree" in row.keys() else None),
         )
+
+    def set_worktree(self, session_id: str, worktree: dict) -> None:
+        """Persist the feature worktree `start_worktree` moved this session into (Code
+        coworker, 2026-11-07). Like `spawn`, the per-turn upsert never names this column."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET worktree = ? WHERE session_id = ?",
+                (json.dumps(worktree or {}), session_id),
+            )
+            self._conn.commit()
 
     def set_spawn(self, session_id: str, spawn: dict) -> None:
         """Persist what a configuration started this session with (spec §10). Like
@@ -548,6 +560,7 @@ class ConversationStore:
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
                 usage=_load_grants(r["usage"] if "usage" in r.keys() else None),
                 spawn=_load_grants(r["spawn"] if "spawn" in r.keys() else None),
+                worktree=_load_grants(r["worktree"] if "worktree" in r.keys() else None),
             )
             for r in rows
         ]

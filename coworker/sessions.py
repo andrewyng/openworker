@@ -56,6 +56,11 @@ class SessionRecord:
     # user's standing rules for this session only; `worktree` is removed on archive
     # or delete (the clone stays). {} for every other session.
     spawn: dict[str, Any] = field(default_factory=dict)
+    # Feature worktree (Code coworker, 2026-11-07): the record `start_worktree` left —
+    # {path, branch, base, start, fetched, repo_root, location, created, setup,
+    # warnings}. {} when the session works in place. Cleaned up on archive/delete by
+    # policy (never while dirty; the branch always stays).
+    worktree: dict[str, Any] = field(default_factory=dict)
 
 
 USAGE_FIELDS = ("input", "output", "cache_read", "cache_write")

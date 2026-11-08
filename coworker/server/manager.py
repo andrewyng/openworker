@@ -1012,6 +1012,9 @@ class SessionManager:
             extra_tools=[
                 *(extra_tools or []),
                 *self._team_tools_for(session_id, ag, record, ws),
+                # The Code coworker's feature worktrees (2026-11-07): policy-driven, so
+                # the model never runs `git worktree` by hand.
+                *(self._worktree_tools(session_id) if ag.name == "code" else []),
             ]
             or None,
             secrets=self.secrets,
@@ -5548,6 +5551,7 @@ class SessionManager:
             "auto_approve_reviewer": self.auto_approve_reviewer(),
             # Whether each decision-model reviewer has a key (env or saved), never the key.
             "auto_approve_reviewer_keys": self.reviewer_key_status(),
+            **self.worktree_settings_payload(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -5934,6 +5938,218 @@ class SessionManager:
         self._prefs["onboarded"] = bool(value)
         self._save_prefs()
         return {"ok": True, "onboarded": bool(value)}
+
+    # -- feature worktrees (Code coworker, owner ruling 2026-11-07) ----------------------
+    def worktree_settings(self, workspace: Optional[str] = None):
+        """The effective settings: global `worktree_*` prefs overlaid with the repo's
+        override (keyed by project key — shared by every worktree of one repo)."""
+        from .. import worktrees as wt
+        from ..projects import project_key
+
+        key = project_key(workspace) if workspace else None
+        return wt.settings_from_prefs(self._prefs, key)
+
+    def worktree_settings_payload(self) -> dict[str, Any]:
+        from .. import worktrees as wt
+
+        return {
+            **wt.settings_from_prefs(self._prefs).payload(),
+            "worktree_overrides": dict(self._prefs.get("worktree_overrides") or {}),
+        }
+
+    def set_worktree_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        from .. import worktrees as wt
+
+        try:
+            changes = wt.validate_settings(body)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        for k, v in changes.items():
+            self._prefs[f"worktree_{k}"] = v
+        self._save_prefs()
+        return {"ok": True, **self.get_settings()}
+
+    def set_worktree_override(self, path: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """Per-repo override, keyed by the repo's project key; an empty body clears it."""
+        from .. import worktrees as wt
+        from ..projects import project_key
+
+        if not path:
+            return {"ok": False, "error": "a repo path is needed"}
+        key = project_key(path)
+        overrides = dict(self._prefs.get("worktree_overrides") or {})
+        if not settings:
+            overrides.pop(key, None)
+        else:
+            try:
+                overrides[key] = wt.validate_settings(settings)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        self._prefs["worktree_overrides"] = overrides
+        self._save_prefs()
+        return {"ok": True, "key": key, **self.get_settings()}
+
+    def session_branch(self, session_id: str) -> Optional[str]:
+        engine = self._engines.get(session_id)
+        executor = getattr(engine, "executor", None) if engine else None
+        cwd = getattr(executor, "cwd", None)
+        return _git_branch(Path(cwd)) if cwd else None
+
+    def session_worktree(self, session_id: str) -> Optional[dict[str, Any]]:
+        record = self.session_store.load(session_id)
+        return dict(record.worktree) if record and record.worktree else None
+
+    def start_worktree(self, session_id: str, task: str) -> dict[str, Any]:
+        """Create the task's feature worktree by policy and move the session into it —
+        roots, shell cwd, persisted workspace — like promote_workspace, but for a real
+        repo. The engine rebuilds after the turn (relative anchoring, git tools, env
+        snapshot follow the new primary); until then the shell is already there."""
+        from .. import worktrees as wt
+
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"ok": False, "error": "no live session"}
+        executor = getattr(engine, "executor", None)
+        cwd = str(executor.cwd) if executor is not None and getattr(executor, "cwd", None) else None
+        if not cwd:
+            return {"ok": False, "error": "this session has no working folder"}
+        record = self.session_store.load(session_id)
+        existing = (record.worktree if record else None) or {}
+        if existing.get("path") and Path(cwd).resolve() == Path(str(existing["path"])).resolve():
+            return {"ok": True, "already": True, **existing,
+                    "note": "this session already works in its feature worktree"}
+        root = wt.repo_root(cwd)
+        if root is None:
+            return {"ok": False, "error": "this folder is not a git repository — work in place and say so"}
+        if any(p.name == "worktrees" and p.parent.name == ".openworker" for p in Path(cwd).resolve().parents):
+            return {"ok": False, "error": "this session is already inside a feature worktree"}
+        settings = self.worktree_settings(str(root))
+        try:
+            # A session resumed after cleanup gets its own branch back, not a fresh one.
+            if existing.get("removed") and existing.get("branch"):
+                try:
+                    info = wt.reattach_worktree(root, existing, settings)
+                except wt.WorktreeError:
+                    info = wt.create_worktree(root, task, settings)
+            else:
+                info = wt.create_worktree(root, task, settings)
+        except wt.WorktreeError as exc:
+            return {"ok": False, "error": str(exc)}
+        resolved = Path(info["path"]).resolve()
+        roots = getattr(engine, "roots", None)
+        if roots is not None:
+            # The worktree becomes the writable primary; the original checkout stays
+            # readable but is no longer writable — "never edit the checkout in place"
+            # is enforced by the roots, not by hoping the model remembers.
+            kept = []
+            for r in roots:
+                if r.path == resolved:
+                    continue
+                if Path(str(r.path)).resolve() == root.resolve():
+                    kept.append(RootDir(path=r.path, writable=False, label=r.label))
+                else:
+                    kept.append(r)
+            roots[:] = [RootDir(path=resolved, writable=True, label="worktree"), *kept]
+        try:
+            res = executor.run(f"cd {shlex.quote(str(resolved))}", timeout=15)
+            if res.get("exit_code") != 0:
+                executor.cwd = str(resolved)
+        except Exception:
+            executor.cwd = str(resolved)
+        self.save(session_id, engine)
+        self.session_store.set_worktree(session_id, info)
+        self.session_store.touch_workspace(str(resolved))
+        self._promotion_rebuild.add(session_id)
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": "workspace_changed", "data": {
+                    "workspace": str(resolved), "branch": info["branch"], "worktree": info}}),
+                self._loop,
+            )
+        return {"ok": True, **info}
+
+    def _worktree_tools(self, session_id: str) -> list[Any]:
+        """`start_worktree` for the Code coworker (engine-side policy, not model-side git)."""
+        import aisuite as ai
+
+        def start_worktree(task: str) -> dict:
+            """Create this task's own feature worktree on a fresh branch and move this
+            session into it, following the user's worktree settings (location, branch
+            prefix, fetch-first, setup command). Call it once at the start of any change
+            beyond a trivial fix, before editing. Returns the worktree path, branch and
+            base. In this turn, the shell is already in the worktree but `git_status` /
+            `git_diff` / `git_log` keep pointing at the original checkout until your next
+            turn — use `run_shell` for git until then. If the folder is not a git repo it
+            says so: then work in place.
+
+            Args:
+                task (str): What the feature or fix is, in a few words — it names the
+                    branch (e.g. "add login page" → <prefix>add-login-page).
+            """
+            res = self.start_worktree(session_id, task)
+            if not res.get("ok"):
+                return {"error": res.get("error", "could not create a worktree")}
+            out = {k: res[k] for k in ("path", "branch", "base", "start", "fetched") if k in res}
+            if res.get("warnings"):
+                out["warnings"] = res["warnings"]
+            if res.get("setup"):
+                out["setup"] = {"exit_code": res["setup"].get("exit_code"), "output": res["setup"].get("output", "")[-600:]}
+            if res.get("already"):
+                out["note"] = res.get("note")
+            else:
+                out["note"] = ("the session now works in this worktree; this turn, use run_shell for "
+                               "git — the git tools re-point at your next turn")
+            return out
+
+        return [ai.tool(start_worktree, metadata=ai.ToolMetadata(
+            category="git", risk_level="medium", capabilities=["write"], requires_approval=True))]
+
+    def _remove_feature_worktree(self, session_id: str, record=None) -> None:
+        """Policy cleanup (owner ruling 2026-11-07): on archive/delete, remove the session's
+        feature worktree when settings say so — never one with uncommitted changes; the
+        branch always stays."""
+        from .. import worktrees as wt
+
+        record = record if record is not None else self.session_store.load(session_id)
+        info = (record.worktree if record else {}) or {}
+        path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
+        if not path or not root or info.get("removed"):
+            return
+        if not self.worktree_settings(root).cleanup_on_archive:
+            return
+        try:
+            removed = wt.remove_worktree(root, path)  # False when dirty: left alone on purpose
+        except Exception:
+            removed = False
+        if removed:
+            self._mark_worktree_removed(record, info)
+
+    def _mark_worktree_removed(self, record, info: dict[str, Any]) -> None:
+        """The folder is gone (cleanup, or the person deleted it): the session lives in the
+        repo root again, remembers its branch, and any live engine is dropped so the next
+        connect rebuilds there instead of in a folder that no longer exists."""
+        root = str(info.get("repo_root") or "")
+        if record is not None and root:
+            record.workspace = root
+            self.session_store.save(record, touch=False)
+        self.session_store.set_worktree(record.session_id, {**info, "removed": True})
+        self._drop_engine(record.session_id)
+
+    def resolve_missing_worktree(self, session_id: str, workspace: Optional[str]) -> Optional[str]:
+        """Called when a session socket opens: a workspace that was this session's feature
+        worktree and no longer exists becomes the repo root (and the record is repaired), so
+        a reopened session connects instead of failing "no valid workspace" forever."""
+        record = self.session_store.load(session_id)
+        info = (record.worktree if record else {}) or {}
+        path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
+        if not path or not root or Path(path).is_dir() or not Path(root).is_dir():
+            return workspace
+        asked = workspace or (record.workspace if record else "")
+        if not asked or Path(asked) != Path(path):
+            return workspace
+        if not info.get("removed") or (record and record.workspace == path):
+            self._mark_worktree_removed(record, info)
+        return root
 
     def set_scratch_base(self, path: str) -> dict[str, Any]:
         """Set + persist the common area where each Cowork conversation's scratch directory is
@@ -9819,6 +10035,7 @@ class SessionManager:
         ok = self.session_store.set_flags(session_id, pinned=pinned, archived=archived)
         if ok and archived:
             self._remove_spawn_worktree(session_id)
+            self._remove_feature_worktree(session_id)
         return {"ok": ok, "session_id": session_id}
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
@@ -9834,6 +10051,7 @@ class SessionManager:
                 pass
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
+        self._remove_feature_worktree(session_id, record)
         ok = self.session_store.delete(session_id)
         # ...and its recorded turns and steps (observability §11, the session-delete cascade).
         self.recorder.delete_session(session_id)

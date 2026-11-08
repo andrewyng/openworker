@@ -1207,6 +1207,14 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  // Feature worktrees (Code coworker): present on servers from 2026-11-07.
+  worktree_location?: "in_repo" | "sibling" | "custom";
+  worktree_custom_dir?: string;
+  worktree_branch_prefix?: string;
+  worktree_fetch_first?: boolean;
+  worktree_cleanup_on_archive?: boolean;
+  worktree_prune_days?: number;
+  worktree_setup_command?: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older
@@ -1474,6 +1482,32 @@ export async function setSessionsPeek(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessions_peek: n }),
+  });
+  return res.json();
+}
+
+// Feature worktrees (Code coworker, 2026-11-07): where they go, how branches are named,
+// fetch-first, cleanup, and the optional per-repo setup command.
+export interface WorktreeSettings {
+  worktree_location: "in_repo" | "sibling" | "custom";
+  worktree_custom_dir: string;
+  worktree_branch_prefix: string;
+  worktree_fetch_first: boolean;
+  worktree_cleanup_on_archive: boolean;
+  worktree_prune_days: number;
+  worktree_setup_command: string;
+}
+
+export async function setWorktreeSettings(
+  changes: Partial<{
+    location: string; custom_dir: string; branch_prefix: string; fetch_first: boolean;
+    cleanup_on_archive: boolean; prune_days: number; setup_command: string;
+  }>,
+): Promise<{ ok: boolean; error?: string } & Partial<WorktreeSettings>> {
+  const res = await fetch(`${httpBase()}/v1/settings/worktrees`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
   });
   return res.json();
 }
