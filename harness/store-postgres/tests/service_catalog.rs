@@ -287,6 +287,7 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
         max_model_calls: 1,
         max_output_tokens: 2048,
         summary_tokens: 512,
+        ..Default::default()
     });
     assert!(u
         .service_admit("empty-limits", input.clone(), r.clone(), p.clone(), spec())

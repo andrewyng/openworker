@@ -53,6 +53,102 @@ fn session() -> Session {
 }
 
 #[test]
+fn imported_history_and_turn_context_are_atomic_and_durable() {
+    use openworker_runtime::history_import::{canonical, HistoryItem};
+    use openworker_runtime::turn_options::{Context, OutputOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut s = session();
+    s.history = canonical(&[
+        HistoryItem::User {
+            text: "Previous request".into(),
+        },
+        HistoryItem::ToolCall {
+            call_id: "old".into(),
+            name: "app__lookup".into(),
+            arguments: json!({}),
+        },
+        HistoryItem::ToolResult {
+            call_id: "old".into(),
+            output: "done".into(),
+        },
+    ])
+    .unwrap();
+    let sql = rusqlite::Connection::open(dir.path().join("runtime.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON events WHEN NEW.kind='session_created' BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+    assert!(db.save(&s, "session_created", json!({})).is_err());
+    assert!(db.list().unwrap().is_empty());
+    assert_eq!(
+        sql.query_row("SELECT COUNT(*) FROM history", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    sql.execute_batch("DROP TRIGGER fail_import;").unwrap();
+    db.save(&s, "session_created", json!({})).unwrap();
+    assert!(db.get(&s.id).unwrap().turn.is_none());
+    let context = Context {
+        instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
+        output: OutputOptions {
+            reasoning: true,
+            buffer_attempts: true,
+        },
+    };
+    db.accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(
+        !db.accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+            .unwrap()
+            .1
+    );
+    assert!(db.accept(&s.id, "first", "New request").is_err());
+    drop(sql);
+    drop(db);
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut restored = db.get(&s.id).unwrap();
+    assert_eq!(restored.history[..3], s.history);
+    assert_eq!(
+        restored.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert_eq!(restored.turn.as_ref().unwrap().output, context.output);
+    assert!(!db
+        .history_page(&s.id, 0)
+        .unwrap()
+        .to_string()
+        .contains("TURN_PRIVATE_CONTEXT"));
+    assert!(!serde_json::to_string(&db.events(&s.id, 0).unwrap())
+        .unwrap()
+        .contains("TURN_PRIVATE_CONTEXT"));
+    restored.turn.as_mut().unwrap().status = "completed".into();
+    db.save(&restored, "turn_completed", json!({"status":"completed"}))
+        .unwrap();
+    let (next, _, _) = db.accept(&s.id, "next", "Next request").unwrap();
+    assert!(next.turn.as_ref().unwrap().instruction_addendum.is_none());
+    assert_eq!(next.turn.as_ref().unwrap().output, OutputOptions::default());
+    let (old, fresh, _) = db
+        .accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(!fresh);
+    assert_eq!(
+        old.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert!(db
+        .accept_with_context(
+            &s.id,
+            "first",
+            "New request",
+            None,
+            None,
+            Context {
+                output: OutputOptions::default(),
+                ..context
+            }
+        )
+        .is_err());
+}
+
+#[test]
 fn submissions_are_idempotent_and_conflicts_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = Store::open(tmp.path()).unwrap();

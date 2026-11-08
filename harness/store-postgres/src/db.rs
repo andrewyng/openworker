@@ -794,6 +794,19 @@ impl Database {
         limits: Option<openworker_runtime::budget::Limits>,
         safety: Option<openworker_runtime::safety::Config>,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_context(sid, key, text, limits, safety, Default::default())
+    }
+    pub fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        safety: Option<openworker_runtime::safety::Config>,
+        context: openworker_runtime::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        context.validate()?;
+        let context_digest = context.digest()?;
         if let Some(config) = &safety {
             config.validate()?;
         }
@@ -820,6 +833,11 @@ impl Database {
                 return Err(crate::SubmissionError::Conflict.into());
             }
             if row.get::<_, String>(2) != "queued" {
+                let old_context_digest = tx.query_opt("SELECT data->>'context_digest' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1", &[&sid,&tid])?.and_then(|r|r.get::<_,Option<String>>(0)).unwrap_or(openworker_runtime::turn_options::Context::default().digest()?);
+                anyhow::ensure!(
+                    old_context_digest == context_digest,
+                    "Submission ID reused with different turn context"
+                );
                 let original=tx.query_opt("SELECT data->'safety' FROM events WHERE session_id=$1 AND turn_id=$2 AND kind='turn_accepted' ORDER BY cursor LIMIT 1",&[&sid,&tid])?.and_then(|r|r.get::<_,Option<Value>>(0)).filter(|v|!v.is_null());
                 anyhow::ensure!(
                     original == safety.as_ref().map(serde_json::to_value).transpose()?,
@@ -827,6 +845,9 @@ impl Database {
                 );
                 if s.turn.as_ref().is_none_or(|t| t.id != tid) {
                     s.turn = Some(Turn {
+                        provider_error: None,
+                        instruction_addendum: context.instruction_addendum.clone(),
+                        output: context.output.clone(),
                         pending_safety_result: None,
                         safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
                         safety_retries: 0,
@@ -911,6 +932,9 @@ impl Database {
         }
         openworker_runtime::safety::reconcile_pending_result(&mut s);
         s.turn = Some(Turn {
+            provider_error: None,
+            instruction_addendum: context.instruction_addendum.clone(),
+            output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
             safety_retries: 0,
@@ -942,7 +966,7 @@ impl Database {
             &self.owner,
             epoch,
             "turn_accepted",
-            json!({"safety":safety}),
+            json!({"safety":safety,"context_digest":context_digest}),
         )?;
         tx.commit()?;
         s.storage_revision += 1;

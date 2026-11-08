@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[derive(Default, Clone, Serialize)]
 pub struct SessionOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
+    initial_history: Option<Vec<crate::HistoryItem>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     safety: Option<crate::guardrails::Config>,
     #[serde(skip_serializing_if = "Option::is_none")]
     compliance: Option<openworker_runtime::compliance::Config>,
@@ -18,6 +20,11 @@ pub struct SessionOptions {
     auto_skip_questions: Option<bool>,
 }
 impl SessionOptions {
+    /// Seed a new session with a complete portable transcript. No tool runs.
+    pub fn initial_history(mut self, history: Vec<crate::HistoryItem>) -> Self {
+        self.initial_history = Some(history);
+        self
+    }
     pub fn compliance(mut self, config: openworker_runtime::compliance::Config) -> Self {
         self.compliance = Some(config);
         self
@@ -135,4 +142,7 @@ pub struct TurnOptions {
     pub submission_id: Option<String>,
     pub limits: Option<crate::TurnLimits>,
     pub safety: Option<crate::guardrails::Config>,
+    /// Trusted application instructions for this turn only, not user text.
+    pub instruction_addendum: Option<String>,
+    pub output: Option<crate::OutputOptions>,
 }

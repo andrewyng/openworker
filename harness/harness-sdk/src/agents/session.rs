@@ -359,6 +359,23 @@ impl Session {
         Ok(())
     }
     pub async fn send_with_options(&self, text: &str, options: crate::TurnOptions) -> Result<Run> {
+        if options
+            .limits
+            .as_ref()
+            .is_some_and(|l| l.max_output_tokens_per_call != 8192)
+            && self.client.info()["capabilities"]["per_call_output_limit"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure per-call output limits".into(),
+            ));
+        }
+        if (options.instruction_addendum.is_some() || options.output.is_some())
+            && self.client.info()["capabilities"]["turn_context"] != true
+        {
+            return Err(Error::Setup(
+                "Host does not support turn context; update the runtime".into(),
+            ));
+        }
         let id = options
             .submission_id
             .unwrap_or_else(|| openworker_runtime::id("sub"));
@@ -367,7 +384,14 @@ impl Session {
                 "This harness build does not support guardrails".into(),
             ));
         }
-        let started=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety})).await?;
+        let mut parameters = json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety});
+        if let Some(addendum) = options.instruction_addendum {
+            parameters["instruction_addendum"] = json!(addendum);
+        }
+        if let Some(output) = options.output {
+            parameters["output"] = json!(output);
+        }
+        let started = self.client.request("session/send", parameters).await?;
         Ok(Run {
             session: self.clone(),
             submission: id,
@@ -418,6 +442,15 @@ impl Session {
         text: &str,
         limits: Option<super::TurnLimits>,
     ) -> Result<Run> {
+        if limits
+            .as_ref()
+            .is_some_and(|l| l.max_output_tokens_per_call != 8192)
+            && self.client.info()["capabilities"]["per_call_output_limit"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure per-call output limits".into(),
+            ));
+        }
         if limits.is_some() && self.client.info()["capabilities"]["turn_limits"] != true {
             return Err(crate::Error::Setup(
                 "Host does not support turn limits".into(),
@@ -461,6 +494,13 @@ impl Session {
         Self::create_options(client, options).await
     }
     pub(crate) async fn create_options(client: HarnessClient, options: Value) -> Result<Self> {
+        if options.get("initial_history").is_some()
+            && client.info()["capabilities"]["initial_history"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to import conversation history".into(),
+            ));
+        }
         if options.get("auto_skip_questions").is_some()
             && client.info()["capabilities"]["sdk_question_policy"] != true
         {

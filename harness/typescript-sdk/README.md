@@ -74,6 +74,16 @@ such as `http://127.0.0.1:11434/v1`. Configure the provider before creating a li
 session. Use the agent's `defaultModel`, or override `model` in `newSession()`.
 The resolved selection survives restart. Endpoint/API changes require a new name.
 
+Use `session.send(text, { instructionAddendum, limits })` for trusted application
+context and output limits that apply to only this turn. `limits.maxOutputTokensPerCall`
+defaults to 8,192 and is distinct from the total `maxOutputTokens` turn budget.
+Use `agent.newSession({ initialHistory })` to import a completed portable
+conversation without replaying its tools. `builtinTools: { askUser: false,
+readHistory: false }` on an agent suppresses those implicit tools even when the
+agent has application tools. See [session options and migration](../../docs/harness/guides/sessions.md)
+for full examples, validation limits and compatibility rules. These options need
+an updated native runtime; the client rejects unsupported hosts explicitly.
+
 `Harness.start()` accepts optional executable/state paths, `appId`,
 `sessions: { persist, directory }`, `scratch: { directory }`,
 `compaction: { triggerAtContextFraction, contextWindow }`, `modelProviders` and

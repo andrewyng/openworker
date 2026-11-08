@@ -32,6 +32,7 @@
     "test:chat-usage": "npm run build && node --test --test-concurrency=1 test/chat-usage.test.mjs",
     "test:anthropic-caching": "npm run build && node --test --test-concurrency=1 test/anthropic-caching.test.mjs",
     "test:gemini-compat": "npm run build && node --test --test-concurrency=1 test/gemini-compat.test.mjs",
+    "test:session-options": "npm run build && node --test --test-concurrency=1 test/session-options.test.mjs",
     "test:provider-auth": "npm run build && node --test test/provider-auth.test.mjs",
     "prepack": "npm run build",
     "test:service": "npm run build && node --test test/service.test.mjs",

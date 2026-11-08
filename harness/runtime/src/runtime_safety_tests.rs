@@ -171,6 +171,78 @@ impl crate::safety::Handler for Deny {
         Box::pin(async { Ok(crate::safety::Decision::block("PUBLICATION_BLOCKED")) })
     }
 }
+
+#[tokio::test]
+async fn application_instruction_addendum_is_checked_before_the_model() {
+    use crate::safety::{HandlerRef, Hook, HookPhase};
+    struct Inspect;
+    impl crate::safety::Handler for Inspect {
+        fn call(
+            &self,
+            c: crate::safety::Context,
+            _: CancellationToken,
+        ) -> crate::safety::CheckFuture<'_> {
+            Box::pin(async move {
+                assert_eq!(c.phase, crate::safety::Phase::ModelInput);
+                assert!(c.text.contains("BLOCKED_APPLICATION_CONTEXT"));
+                Ok(crate::safety::Decision::block(
+                    "APPLICATION_CONTEXT_BLOCKED",
+                ))
+            })
+        }
+    }
+    let reference = HandlerRef {
+        name: "inspect-context".into(),
+        version: "1".into(),
+    };
+    let config = Config {
+        hooks: vec![Hook {
+            name: "inspect-context".into(),
+            version: "1".into(),
+            when: HookPhase::BeforeModel,
+            tools: vec![],
+            handler: reference.clone(),
+            timeout_ms: 100,
+        }],
+        ..Default::default()
+    };
+    let seen = Arc::new(AtomicUsize::new(0));
+    let (_tmp, rt, sid) = fixture(config, fake(vec!["must not run"], seen.clone())).await;
+    rt.safety_handlers
+        .register(reference, Arc::new(Inspect))
+        .unwrap();
+    rt.store
+        .lock()
+        .unwrap()
+        .accept_with_context(
+            &sid,
+            "context",
+            "hello",
+            None,
+            None,
+            crate::turn_options::Context {
+                instruction_addendum: Some("BLOCKED_APPLICATION_CONTEXT".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let history = rt.store.lock().unwrap().get(&sid).unwrap().history;
+    assert!(rt
+        .sample(&sid, &history, &[])
+        .await
+        .unwrap_err()
+        .is::<super::safety::Blocked>());
+    assert_eq!(seen.load(Ordering::SeqCst), 0);
+    assert!(rt.store.lock().unwrap().attempts(&sid).unwrap().is_empty());
+    assert!(!rt
+        .store
+        .lock()
+        .unwrap()
+        .history_page(&sid, 0)
+        .unwrap()
+        .to_string()
+        .contains("BLOCKED_APPLICATION_CONTEXT"));
+}
 #[tokio::test]
 async fn hook_blocks_tool_in_bypass_and_returns_safe_unexecuted_result_to_model() {
     use crate::safety::{HandlerRef, Hook, HookPhase};

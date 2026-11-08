@@ -50,6 +50,12 @@ pub struct Interaction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_error: Option<crate::provider::Diagnostic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_addendum: Option<String>,
+    #[serde(default)]
+    pub output: crate::turn_options::OutputOptions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_safety_result: Option<Value>,
     #[serde(default)]
     pub safety: crate::safety::Config,
@@ -395,6 +401,21 @@ pub trait StateStore: Send {
             "Storage adapter does not support turn safety overrides"
         );
         self.accept_with_limits(sid, key, text, limits)
+    }
+    fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+        context: crate::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        anyhow::ensure!(
+            context == Default::default(),
+            "Storage adapter does not support turn context"
+        );
+        self.accept_with_safety(sid, key, text, limits, safety)
     }
     fn cursor(&self, sid: &str) -> Result<i64>;
     fn has_submission(&self, sid: &str, key: &str) -> Result<bool>;
@@ -789,6 +810,19 @@ impl Store {
         limits: Option<crate::budget::Limits>,
         safety: Option<crate::safety::Config>,
     ) -> Result<(Session, bool, Option<Event>)> {
+        self.accept_with_context(sid, key, text, limits, safety, Default::default())
+    }
+    pub fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+        context: crate::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        context.validate()?;
+        let context_digest = context.digest()?;
         if let Some(config) = &safety {
             config.validate()?;
         }
@@ -805,7 +839,14 @@ impl Store {
         if let Ok((old, tid)) = existing {
             let requested:Option<crate::budget::Limits>=self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",[&tid],|r|r.get::<_,String>(0)).optional()?.map(|raw|->Result<_>{Ok(serde_json::from_str::<Value>(&raw)?["limits"].clone())}).transpose()?.map(serde_json::from_value).transpose()?.flatten();
             let requested_safety:Option<crate::safety::Config>=self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",[&tid],|r|r.get::<_,String>(0)).optional()?.map(|raw|->Result<_>{Ok(serde_json::from_str::<Value>(&raw)?["safety"].clone())}).transpose()?.filter(|v|!v.is_null()).map(serde_json::from_value).transpose()?;
-            if old != text || requested != limits || requested_safety != safety {
+            let old_context_digest = self.db.query_row("SELECT data FROM events WHERE turn_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1", [&tid], |r| r.get::<_, String>(0)).optional()?
+                .map(|raw| -> Result<_> { Ok(serde_json::from_str::<Value>(&raw)?["context_digest"].as_str().map(str::to_owned)) }).transpose()?.flatten()
+                .unwrap_or(crate::turn_options::Context::default().digest()?);
+            if old != text
+                || requested != limits
+                || requested_safety != safety
+                || old_context_digest != context_digest
+            {
                 bail!("Submission ID reused with different text");
             }
             if s.turn.as_ref().is_some_and(|t| t.id == tid) {
@@ -815,6 +856,9 @@ impl Store {
             let event: Value = serde_json::from_str(&raw)?;
             // Return the original durable identity without altering current session state.
             s.turn = Some(Turn {
+                provider_error: None,
+                instruction_addendum: context.instruction_addendum.clone(),
+                output: context.output.clone(),
                 pending_safety_result: None,
                 safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
                 safety_retries: 0,
@@ -873,6 +917,9 @@ impl Store {
             member.waiting = None;
         }
         s.turn = Some(Turn {
+            provider_error: None,
+            instruction_addendum: context.instruction_addendum.clone(),
+            output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
             safety_retries: 0,
@@ -908,7 +955,8 @@ impl Store {
                 sid,
                 tid,
                 "turn_accepted",
-                json!({"limits":limits,"safety":safety}).to_string()
+                json!({"limits":limits,"safety":safety,"context_digest":context_digest})
+                    .to_string()
             ],
         )?;
         let e = Event {
@@ -916,7 +964,7 @@ impl Store {
             session_id: sid.into(),
             turn_id: Some(tid),
             kind: "turn_accepted".into(),
-            data: json!({"limits":limits,"safety":safety}),
+            data: json!({"limits":limits,"safety":safety,"context_digest":context_digest}),
         };
         tx.commit()?;
         Ok((s, true, Some(e)))
@@ -1184,6 +1232,17 @@ impl StateStore for Store {
         safety: Option<crate::safety::Config>,
     ) -> Result<(Session, bool, Option<Event>)> {
         Store::accept_with_safety(self, sid, key, text, limits, safety)
+    }
+    fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<crate::budget::Limits>,
+        safety: Option<crate::safety::Config>,
+        context: crate::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        Store::accept_with_context(self, sid, key, text, limits, safety, context)
     }
     fn cursor(&self, sid: &str) -> Result<i64> {
         Store::cursor(self, sid)

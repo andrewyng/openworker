@@ -57,6 +57,160 @@ async fn register(h: &Harness, count: Arc<AtomicUsize>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn portable_history_turn_options_and_builtin_optouts_cross_both_transports() {
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        let effects = Arc::new(AtomicUsize::new(0));
+        register(&h, effects.clone()).await;
+        let agent = h
+            .create_agent(
+                Agent::new("migration")
+                    .instructions("Help with names.")
+                    .tool("app.preview")
+                    .builtin_tools(BuiltinTools {
+                        ask_user: Some(false),
+                        read_history: Some(false),
+                    })
+                    .approvals(Approvals::Never)
+                    .limits(TurnLimits {
+                        max_output_tokens: 100000,
+                        max_output_tokens_per_call: 24000,
+                        ..Default::default()
+                    }),
+            )
+            .await
+            .unwrap();
+        let history = vec![
+            HistoryItem::User {
+                text: "Old request".into(),
+            },
+            HistoryItem::ToolCall {
+                call_id: "old-call".into(),
+                name: "app__preview".into(),
+                arguments: json!({}),
+            },
+            HistoryItem::ToolResult {
+                call_id: "old-call".into(),
+                output: "Previously displayed".into(),
+            },
+            HistoryItem::Assistant {
+                text: "Done previously".into(),
+            },
+        ];
+        let before = h.client().request("session/list", json!({})).await.unwrap();
+        assert!(agent
+            .new_session_with(SessionOptions::default().initial_history(vec![
+                HistoryItem::ToolResult {
+                    call_id: "orphan".into(),
+                    output: "bad".into()
+                }
+            ]))
+            .await
+            .is_err());
+        assert_eq!(
+            h.client().request("session/list", json!({})).await.unwrap(),
+            before
+        );
+        let session = agent
+            .new_session_with(SessionOptions::default().initial_history(history))
+            .await
+            .unwrap();
+        assert_eq!(effects.load(Ordering::SeqCst), 0);
+        let text = format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__preview","arguments":{}}])
+        );
+        let options = TurnOptions {
+            submission_id: Some("preferences".into()),
+            instruction_addendum: Some("Prefer .ai; $40 budget".into()),
+            output: Some(OutputOptions::default()),
+            ..Default::default()
+        };
+        let result = session
+            .send_with_options(&text, options.clone())
+            .await
+            .unwrap()
+            .result()
+            .await
+            .unwrap();
+        assert_eq!(result.status, RunStatus::Completed);
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let snap = session.snapshot().await.unwrap();
+        assert_eq!(
+            snap["turn"]["instruction_addendum"],
+            "Prefer .ai; $40 budget"
+        );
+        assert_eq!(
+            snap["turn"]["budget"]["limits"]["maxOutputTokensPerCall"],
+            24000
+        );
+        let page = h
+            .client()
+            .request("history/read", json!({"session_id":session.id(),"after":0}))
+            .await
+            .unwrap();
+        assert!(page.to_string().contains("old-call"));
+        assert!(!page.to_string().contains("Prefer .ai"));
+        assert_eq!(
+            session
+                .send_with_options(&text, options.clone())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    instruction_addendum: Some("Different".into()),
+                    ..options
+                }
+            )
+            .await
+            .is_err());
+        assert_eq!(
+            session
+                .send_with_limits(
+                    "TEST_RESOURCE_GRANTS []",
+                    TurnLimits {
+                        max_output_tokens: 2048,
+                        max_output_tokens_per_call: 128,
+                        ..Default::default()
+                    }
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert!(session.snapshot().await.unwrap()["turn"]["instruction_addendum"].is_null());
+        for name in ["read_history", "ask_user"] {
+            let s = agent.new_session().await.unwrap();
+            let request = format!(
+                "TEST_RESOURCE_GRANTS {}",
+                json!([{"name":name,"arguments":{}}])
+            );
+            assert!(matches!(
+                s.run(&request).await.unwrap().status,
+                RunStatus::Failed(_)
+            ));
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        h.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn callback_ids_match_delayed_raw_and_typed_tool_events() {
     // Exercise both application callback transports with the same-name tool
     // called twice. Event consumption deliberately starts after execution ends.

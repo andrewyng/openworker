@@ -553,6 +553,8 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
+      throw new HarnessError("Setup", "Update the host to import conversation history");
     if (
       options.autoSkipQuestions !== undefined &&
       this.capabilities.sdk_question_policy !== true
@@ -574,6 +576,7 @@ export class Harness {
         safety: await this.safetyOptions(options),
         compliance: options.compliance,
         auto_skip_questions: options.autoSkipQuestions,
+        initial_history: options.initialHistory,
         name: options.name,
         ...(options.model
           ? {
@@ -644,6 +647,11 @@ export class AgentHandle {
     void this.registration.catch(() => {});
   }
   private async register(definition: AgentDefinition): Promise<void> {
+    const definitions = [definition, ...(definition.subagents ?? [])];
+    if (definitions.some(a => a.builtinTools !== undefined) && this.harness.capabilities.builtin_tools !== true)
+      throw new HarnessError("Setup", "Update the host to configure built-in tools");
+    if (definitions.some(a => a.limits?.maxOutputTokensPerCall !== undefined) && this.harness.capabilities.per_call_output_limit !== true)
+      throw new HarnessError("Setup", "Update the host to configure per-call output limits");
     if (this.harness.capabilities.dynamic_agents !== true)
       throw new HarnessError("Setup", "Host does not support dynamic agents");
     const { name, defaultModel, ...rest } = definition;
@@ -771,12 +779,16 @@ export class Session {
     options: RunOptions = {},
   ): Promise<Run | { accepted: true; runId: string | null }> {
     aborted(options.signal);
+    if ((options.instructionAddendum !== undefined || options.output !== undefined) && this.harness.capabilities.turn_context !== true)
+      throw new HarnessError("Setup", "Update the host to configure turn context");
+    if (options.limits?.maxOutputTokensPerCall !== undefined && this.harness.capabilities.per_call_output_limit !== true)
+      throw new HarnessError("Setup", "Update the host to configure per-call output limits");
     if (options.limits && this.harness.capabilities.turn_limits !== true) {
       throw new HarnessError("Setup", "Host does not support turn limits");
     }
     const value = typeof input === "string" ? { text: input } : input;
     const control = value.type === "approval" || value.type === "answer";
-    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions)) {
+    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
       throw new HarnessError(
         "InvalidInput",
         "Limits apply only to new message turns",
@@ -810,6 +822,8 @@ export class Session {
         submission_id: submissionId,
         input: wire,
         limits: options.limits,
+        instruction_addendum: options.instructionAddendum,
+        output: options.output,
         safety: control?undefined:await this.harness.safetyOptions(options),
       }),
     );

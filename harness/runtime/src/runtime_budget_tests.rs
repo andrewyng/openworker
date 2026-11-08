@@ -68,6 +68,82 @@ fn model(f: impl Fn(usize, String) -> Value + Send + Sync + 'static, output: u64
 }
 
 #[tokio::test]
+async fn instruction_addendum_applies_to_retries_and_tool_followups_only_in_its_turn() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let mut m = Model::new("context-test".into(), true);
+    m.sample_hook = Some(Arc::new(move |instructions, history, tx| {
+        let n = seen.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(instructions.contains("TURN_ONLY_PREFERENCE"), n < 3);
+        assert!(!serde_json::to_string(&history)
+            .unwrap()
+            .contains("TURN_ONLY_PREFERENCE"));
+        Box::pin(async move {
+            if n == 0 {
+                return Err(
+                    crate::provider::Error::new(crate::provider::Failure::Transient).into(),
+                );
+            }
+            tx.send(Progress::Complete(Completion {
+                output: vec![if n == 1 { plan(0) } else { message("Finished") }],
+                usage: Some(Usage {
+                    output_tokens: 1,
+                    ..Default::default()
+                }),
+            }))
+            .await
+            .unwrap();
+            Ok(())
+        })
+    }));
+    let (_tmp, rt, sid) = fixture(m, None).await;
+    rt.update(&sid, "turn_completed", json!({"status":"completed"}), |s| {
+        s.turn.as_mut().unwrap().status = "completed".into();
+        Ok(())
+    })
+    .unwrap();
+    rt.store
+        .lock()
+        .unwrap()
+        .accept_with_context(
+            &sid,
+            "context",
+            "Find a name",
+            None,
+            None,
+            crate::turn_options::Context {
+                instruction_addendum: Some("TURN_ONLY_PREFERENCE".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    rt.drive(&sid, Default::default(), vec![crate::planning::schema()])
+        .await
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    rt.store
+        .lock()
+        .unwrap()
+        .accept(&sid, "next", "Another request")
+        .unwrap();
+    rt.drive(&sid, Default::default(), vec![crate::planning::schema()])
+        .await
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        rt.store
+            .lock()
+            .unwrap()
+            .get(&sid)
+            .unwrap()
+            .turn
+            .unwrap()
+            .status,
+        "completed"
+    );
+}
+
+#[tokio::test]
 async fn read_history_recovers_from_invalid_cursor_and_offset_in_the_same_turn() {
     for invalid in [
         json!({"after":999999,"offset":0}),
@@ -306,6 +382,7 @@ async fn output_exhaustion_reserves_a_summary_within_the_total() {
             max_model_calls: 10,
             max_output_tokens: 768,
             summary_tokens: 128,
+            ..Default::default()
         }),
     )
     .await;
@@ -476,6 +553,7 @@ async fn incomplete_usage_cannot_refund_a_reserved_output_allowance() {
             max_model_calls: 20,
             max_output_tokens: 1024,
             summary_tokens: 256,
+            ..Default::default()
         }),
     )
     .await;

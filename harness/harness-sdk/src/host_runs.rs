@@ -93,6 +93,8 @@ impl Host {
         let _run_admission = self.run_admission.lock().await;
         let sid = text(p, "session_id")?;
         let submission = text(p, "submission_id")?;
+        let context = openworker_runtime::turn_options::Context::from_request(p)?;
+        let context_digest = context.digest()?;
         let raw_input = openworker_runtime::runtime::text(p, "text", 32000)?;
         let coworker = self.store.lock().unwrap().metadata(sid)?.coworker;
         let safety = p
@@ -119,6 +121,13 @@ impl Host {
                     && record["limits"] == p["limits"]
                     && record["safety"] == p["safety"],
                 "Submission ID reused with different text"
+            );
+            ensure!(
+                record["context_digest"]
+                    .as_str()
+                    .unwrap_or(&openworker_runtime::turn_options::Context::default().digest()?)
+                    == context_digest,
+                "Submission ID reused with different turn context"
             );
             if !record["turn"].is_null() || record.get("result").is_some() {
                 return Ok(json!({"submission_id":submission,"turn":record["turn"],
@@ -147,7 +156,7 @@ impl Host {
             for (s, _) in &members {
                 cursors.insert(s.clone(), json!(self.store.lock().unwrap().cursor(s)?));
             }
-            let record = json!({"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"cursors":cursors,"turn":null});
+            let record = json!({"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"context_digest":context_digest,"cursors":cursors,"turn":null});
             // The original cursors and input survive even a lost start response.
             self.save_run(sid, &record)?;
             record
@@ -155,7 +164,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"]}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"output":context.output}),
             )
             .await;
         match started {
@@ -275,6 +284,8 @@ impl Host {
                 "submission_id",
                 "input",
                 "limits",
+                "instruction_addendum",
+                "output",
                 "safety"
             ]
             .contains(&k.as_str()))),
@@ -308,8 +319,13 @@ impl Host {
             "Safety overrides apply only to new turns"
         );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"]})).await;
+            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"output":p["output"]})).await;
         }
+        ensure!(
+            p.get("instruction_addendum").is_none_or(Value::is_null)
+                && p.get("output").is_none_or(Value::is_null),
+            "Turn context applies only to new message turns"
+        );
         let target = input
             .get("target_session_id")
             .map(|v| v.as_str().context("Invalid target session"))
@@ -490,6 +506,8 @@ impl Host {
     }
 
     async fn agent_session(&self, p: &Value) -> Result<Value> {
+        // Reject malformed imports before creating scratch directories/sessions.
+        openworker_runtime::history_import::from_request(p.get("initial_history"))?;
         ensure!(
             p.get("auto_skip_questions").is_none_or(Value::is_boolean),
             "auto_skip_questions must be a boolean"
@@ -566,6 +584,9 @@ impl Host {
             }
             // A lead's override does not silently replace each worker's default.
             if id == agent {
+                if let Some(history) = p.get("initial_history") {
+                    options["initial_history"] = history.clone();
+                }
                 if let Some(model) = p.get("model") {
                     options["model"] = model.clone();
                 }

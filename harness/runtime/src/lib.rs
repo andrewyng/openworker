@@ -15,6 +15,7 @@ mod environment_client;
 #[cfg(not(windows))]
 pub mod environment_openshell;
 pub mod execution;
+pub mod history_import;
 pub mod http_mcp;
 #[cfg(not(windows))]
 pub mod io;
@@ -54,6 +55,7 @@ pub mod team_workspace_defaults;
 pub mod teams;
 mod tool_images;
 pub mod tool_policy;
+pub mod turn_options;
 pub use openworker_telemetry as telemetry;
 
 pub const PROTOCOL_VERSION: &str = "0.1";

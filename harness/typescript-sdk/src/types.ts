@@ -99,12 +99,15 @@ export type Approvals =
 
 /** Definitions are fixed at host startup. Tools are qualified registered names. */
 export interface TurnLimits {
+  /** Per working-model call; default 8192. Still bounded by maxOutputTokens. */
+  maxOutputTokensPerCall?: number;
   maxModelCalls: number;
   maxOutputTokens: number;
   /** Reserved inside maxOutputTokens for one additional tool-free summary. Default 512. */
   summaryTokens?: number;
 }
 export interface Agent {
+  builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
   id: string;
   name?: string;
@@ -139,6 +142,8 @@ export interface Model {
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
 export interface SessionOptions extends SafetyOptions {
+  /** Completed portable transcript only. Imported calls never execute. */
+  initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
   /** Overrides the agent default for this new session. */
   autoSkipQuestions?: boolean;
@@ -242,6 +247,9 @@ export interface RunResult {
 }
 export type Cursors = Record<string, number>;
 export interface RunOptions extends SafetyOptions {
+  /** Trusted application instructions for this turn only, separate from user text. */
+  instructionAddendum?: string;
+  output?: OutputOptions;
   limits?: TurnLimits;
   /** Persist before sending if the application must survive a crash. */
   submissionId?: string;
@@ -249,6 +257,14 @@ export interface RunOptions extends SafetyOptions {
   signal?: AbortSignal;
 }
 export type MessageInput = string | { type?: "message"; text: string };
+export interface OutputOptions {
+  reasoning?: boolean;
+  bufferAttempts?: boolean;
+}
+export type HistoryItem =
+  | { type: "user" | "assistant"; text: string }
+  | { type: "tool_call"; callId: string; name: string; arguments: Record<string, Json> }
+  | { type: "tool_result"; callId: string; output: string };
 export type ControlInput =
   | {
       type: "approval";
