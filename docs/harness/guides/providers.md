@@ -146,6 +146,12 @@ invent signatures or bypass Google's signature validation. Use a fresh session
 when changing providers. A provider-side proxy must preserve Google's
 `extra_content.google.thought_signature` fields for this flow to work.
 
+If a guardrail blocks or changes arguments in a signed tool-call batch, the
+harness discards that candidate before any tool runs and asks the model for a
+fresh compliant response. This uses the existing `blockedOutputOptions.maxRetries`
+limit; exhausting it stops the turn. It never pairs modified arguments with an
+old signature or keeps denied arguments in conversation history.
+
 The compatible adapter accepts Google's complete tool calls without an `index`,
 as well as indexed argument fragments. It never guesses how to combine partial
 unindexed calls, and incomplete streams cannot authorize tool execution.

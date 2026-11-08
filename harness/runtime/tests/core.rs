@@ -428,15 +428,15 @@ fn history_pages_advance_across_private_items_without_disclosing_them() {
 
 #[test]
 fn google_signatures_survive_storage_but_never_enter_display_history() {
-    use openworker_runtime::provider::StreamDecoder;
     let dir = tempfile::tempdir().unwrap();
     let mut db = Store::open(dir.path()).unwrap();
     let mut s = session();
-    let mut decoder =
-        openworker_runtime::chat_completions::Decoder::with_binding("binding".into(), true);
-    decoder.event(&json!({"choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","function":{"name":"app__lookup","arguments":"{}"},"extra_content":{"google":{"thought_signature":"OPAQUE_PRIVATE"}}}]},"finish_reason":"stop"}]})).unwrap();
-    decoder.done().unwrap();
-    s.history.extend(decoder.finish().unwrap().output);
+    // Adapter unit tests validate generation; this test checks durable storage
+    // and public views without exposing the private transport decoder trait.
+    s.history.extend([
+        json!({"type":"reasoning","provider":"google-chat-completions","binding":"binding","block":{"type":"thought_signature","target":"tool_call","id":"call-1","signature":"OPAQUE_PRIVATE"}}),
+        json!({"type":"function_call","call_id":"call-1","name":"app__lookup","arguments":"{}"}),
+    ]);
     s.history
         .push(json!({"type":"function_call_output","call_id":"call-1","output":"available"}));
     db.save(&s, "created", json!({})).unwrap();

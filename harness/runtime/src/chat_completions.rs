@@ -49,6 +49,17 @@ pub fn message_signature(item: &Value) -> bool {
         && item["block"]["target"] == "message"
 }
 
+pub(crate) fn signed_tool_id(item: &Value) -> Option<&str> {
+    if item["type"] == "reasoning"
+        && item["provider"] == GOOGLE_PRIVATE
+        && item["block"]["target"] == "tool_call"
+    {
+        item["block"]["id"].as_str()
+    } else {
+        None
+    }
+}
+
 fn content(value: &Value) -> Result<Value, Error> {
     if value.is_string() {
         return Ok(value.clone());
