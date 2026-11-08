@@ -102,6 +102,40 @@ def test_archive_removes_a_clean_worktree_but_keeps_a_dirty_one(tmp_path, repo, 
     # The branch is still there.
     out = subprocess.run(["git", "branch", "--list", res["branch"]], cwd=repo, capture_output=True, text=True).stdout
     assert res["branch"] in out
+    # The session lives in the repo root again (no "no valid workspace" loop on reopen),
+    # remembers its branch, and its engine was dropped so the next connect rebuilds.
+    record = mgr.session_store.load(sid)
+    assert Path(record.workspace) == repo
+    assert record.worktree["removed"] is True and record.worktree["branch"] == res["branch"]
+    assert sid not in mgr._engines
+
+
+def test_a_resumed_session_gets_its_branch_back(tmp_path, repo, monkeypatch):
+    mgr, sid, engine = _manager_with_session(tmp_path, repo, monkeypatch)
+    first = mgr.start_worktree(sid, "resume me")
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "wip"], cwd=first["path"], check=True)
+    mgr.set_session_flags(sid, archived=True)
+    assert not Path(first["path"]).exists()
+    # Back in the repo root; the next start_worktree reattaches the same branch.
+    mgr._engines[sid] = engine
+    engine.executor.cwd = str(repo)
+    again = mgr.start_worktree(sid, "something else entirely")
+    assert again["ok"] and again.get("reattached") and again["branch"] == first["branch"]
+    assert Path(again["path"]).is_dir()
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=again["path"], capture_output=True, text=True).stdout
+    assert "wip" in log
+
+
+def test_connect_repairs_a_session_whose_worktree_folder_vanished(tmp_path, repo, monkeypatch):
+    mgr, sid, engine = _manager_with_session(tmp_path, repo, monkeypatch)
+    res = mgr.start_worktree(sid, "vanishing act")
+    subprocess.run(["git", "worktree", "remove", "--force", res["path"]], cwd=repo, check=True)
+    # The GUI asks for the folder it last knew; the server answers with the repo root.
+    assert Path(mgr.resolve_missing_worktree(sid, res["path"])) == repo
+    record = mgr.session_store.load(sid)
+    assert Path(record.workspace) == repo and record.worktree["removed"] is True
+    # An unrelated workspace request is left alone.
+    assert mgr.resolve_missing_worktree(sid, str(tmp_path)) == str(tmp_path)
 
 
 def test_worktree_settings_round_trip_and_repo_override(tmp_path, repo):

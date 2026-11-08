@@ -234,20 +234,7 @@ def create_worktree(root: Path, task: str, s: WorktreeSettings) -> dict[str, Any
         raise WorktreeError(f"git could not create the worktree: {err.strip()[:200]}")
     if s.location == "in_repo":
         ensure_excluded(root)
-    setup: Optional[dict[str, Any]] = None
-    if s.setup_command:
-        try:
-            proc = subprocess.run(
-                s.setup_command, shell=True, cwd=str(path), capture_output=True, text=True,
-                timeout=_SETUP_TIMEOUT_S, env={**os.environ},
-            )
-            tail = (proc.stdout + proc.stderr)[-1500:]
-            setup = {"command": s.setup_command, "exit_code": proc.returncode, "output": tail}
-            if proc.returncode != 0:
-                warnings.append(f"the setup command exited {proc.returncode}")
-        except subprocess.TimeoutExpired:
-            setup = {"command": s.setup_command, "exit_code": None, "output": "timed out"}
-            warnings.append("the setup command timed out")
+    setup = _run_setup(path, s, warnings)
     return {
         "path": str(path),
         "branch": branch,
@@ -260,6 +247,54 @@ def create_worktree(root: Path, task: str, s: WorktreeSettings) -> dict[str, Any
         "setup": setup,
         "warnings": warnings,
     }
+
+
+def reattach_worktree(root: Path, previous: dict[str, Any], s: WorktreeSettings) -> dict[str, Any]:
+    """A session resumed after its worktree was removed (archive cleanup) gets the SAME
+    branch back in a fresh worktree — its commits are still there; only the folder went."""
+    branch = str(previous.get("branch") or "")
+    if not branch or not _branch_exists(root, branch):
+        raise WorktreeError(f"branch {branch or '?'} no longer exists")
+    warnings: list[str] = []
+    slug = Path(str(previous.get("path") or branch.rsplit("/", 1)[-1])).name
+    path = plan_path(root, slug, s)
+    if path.exists():
+        _, path = _unique(root, "", path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _, err = _git(["-C", str(root), "worktree", "add", str(path), branch], timeout=_FETCH_TIMEOUT_S)
+    if err:
+        raise WorktreeError(f"git could not re-create the worktree: {err.strip()[:200]}")
+    if s.location == "in_repo":
+        ensure_excluded(root)
+    setup = _run_setup(path, s, warnings)
+    return {
+        **{k: previous[k] for k in ("base", "start", "fetched") if k in previous},
+        "path": str(path),
+        "branch": branch,
+        "repo_root": str(root),
+        "location": s.location,
+        "created": time.time(),
+        "reattached": True,
+        "setup": setup,
+        "warnings": warnings,
+    }
+
+
+def _run_setup(path: Path, s: WorktreeSettings, warnings: list[str]) -> Optional[dict[str, Any]]:
+    if not s.setup_command:
+        return None
+    try:
+        proc = subprocess.run(
+            s.setup_command, shell=True, cwd=str(path), capture_output=True, text=True,
+            timeout=_SETUP_TIMEOUT_S, env={**os.environ},
+        )
+        tail = (proc.stdout + proc.stderr)[-1500:]
+        if proc.returncode != 0:
+            warnings.append(f"the setup command exited {proc.returncode}")
+        return {"command": s.setup_command, "exit_code": proc.returncode, "output": tail}
+    except subprocess.TimeoutExpired:
+        warnings.append("the setup command timed out")
+        return {"command": s.setup_command, "exit_code": None, "output": "timed out"}
 
 
 def is_clean(path: str | Path) -> bool:

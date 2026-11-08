@@ -6025,7 +6025,14 @@ class SessionManager:
             return {"ok": False, "error": "this session is already inside a feature worktree"}
         settings = self.worktree_settings(str(root))
         try:
-            info = wt.create_worktree(root, task, settings)
+            # A session resumed after cleanup gets its own branch back, not a fresh one.
+            if existing.get("removed") and existing.get("branch"):
+                try:
+                    info = wt.reattach_worktree(root, existing, settings)
+                except wt.WorktreeError:
+                    info = wt.create_worktree(root, task, settings)
+            else:
+                info = wt.create_worktree(root, task, settings)
         except wt.WorktreeError as exc:
             return {"ok": False, "error": str(exc)}
         resolved = Path(info["path"]).resolve()
@@ -6106,14 +6113,43 @@ class SessionManager:
         record = record if record is not None else self.session_store.load(session_id)
         info = (record.worktree if record else {}) or {}
         path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
-        if not path or not root:
+        if not path or not root or info.get("removed"):
             return
         if not self.worktree_settings(root).cleanup_on_archive:
             return
         try:
-            wt.remove_worktree(root, path)  # False when dirty: left alone on purpose
+            removed = wt.remove_worktree(root, path)  # False when dirty: left alone on purpose
         except Exception:
-            pass
+            removed = False
+        if removed:
+            self._mark_worktree_removed(record, info)
+
+    def _mark_worktree_removed(self, record, info: dict[str, Any]) -> None:
+        """The folder is gone (cleanup, or the person deleted it): the session lives in the
+        repo root again, remembers its branch, and any live engine is dropped so the next
+        connect rebuilds there instead of in a folder that no longer exists."""
+        root = str(info.get("repo_root") or "")
+        if record is not None and root:
+            record.workspace = root
+            self.session_store.save(record, touch=False)
+        self.session_store.set_worktree(record.session_id, {**info, "removed": True})
+        self._drop_engine(record.session_id)
+
+    def resolve_missing_worktree(self, session_id: str, workspace: Optional[str]) -> Optional[str]:
+        """Called when a session socket opens: a workspace that was this session's feature
+        worktree and no longer exists becomes the repo root (and the record is repaired), so
+        a reopened session connects instead of failing "no valid workspace" forever."""
+        record = self.session_store.load(session_id)
+        info = (record.worktree if record else {}) or {}
+        path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
+        if not path or not root or Path(path).is_dir() or not Path(root).is_dir():
+            return workspace
+        asked = workspace or (record.workspace if record else "")
+        if not asked or Path(asked) != Path(path):
+            return workspace
+        if not info.get("removed") or (record and record.workspace == path):
+            self._mark_worktree_removed(record, info)
+        return root
 
     def set_scratch_base(self, path: str) -> dict[str, Any]:
         """Set + persist the common area where each Cowork conversation's scratch directory is

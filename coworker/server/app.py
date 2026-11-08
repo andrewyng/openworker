@@ -3262,6 +3262,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                 manager.inbox.resolve(pend[0].id, resolution, by=viewer_actor)
 
         workspace = ws.query_params.get("workspace")
+        # A feature worktree that no longer exists (archive cleanup, a hand delete) means
+        # the repo root — never a "no valid workspace" close the client would retry forever.
+        workspace = manager.resolve_missing_worktree(session_id, workspace)
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
