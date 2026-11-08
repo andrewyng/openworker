@@ -1,6 +1,6 @@
 # OpenWorker Harness SDK (development API)
 
-Registry candidate: **0.1.0-beta.1**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+Registry candidate: **0.1.0-beta.2**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
 
 One Rust client, two deployment backends, the same native engine. This is a beta
 crate with an explicit SDK/runtime compatibility contract. It is distinct

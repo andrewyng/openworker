@@ -72,27 +72,33 @@ Create one session for a conversation. Keep distinct documents, projects and use
 separate according to the application's ownership rules.
 
 ```typescript
+import { AttemptOutput } from '@openworkerai/harness-sdk';
+
 const session = await agent.newSession();
+const display = new AttemptOutput();
 const run = await session.send('Source data:\n' + sourceText + '\n\nSummarize it.');
 for await (const item of run.events()) {
-  if (item.event.type === 'assistant_delta') {
-    const data = item.event.data as { text?: string };
-    if (typeof data.text === 'string') emitText(data.text);
-  }
+  display.apply(item);
+  renderText(display.text); // Replace the displayed text; do not append.
 }
 const result = await run.result();
 if (result.status !== 'completed') {
+  display.interrupt();
+  renderText(display.text);
   throw new Error(`Run ended: ${result.status}`);
 }
 // result.finalOutput is the final text. Do not append it to already streamed
 // text a second time; use it to replace/reconcile the displayed answer.
 ```
 
-`emitText` and `sourceText` belong to the application. Handle pending approval or
+`renderText` and `sourceText` belong to the application. Handle pending approval or
 question interactions when enabling tools. A closed stream is not proof of a
 successful run. Use `session.cancel()` for Stop, and call `harness.shutdown()`
 once when the application exits. Retain `session.reference()` when the product
 needs to resume a durable conversation via `agent.resumeSession(reference)`.
+
+For reasoning display, output buffering, provider usage and turn options, read
+[Runtime options](runtime-options.md).
 
 ## More APIs
 

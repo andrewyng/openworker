@@ -1,6 +1,6 @@
 # OpenWorker TypeScript Harness SDK
 
-Registry candidate: **0.1.0-beta.1**. After publication, install with `npm install @openworkerai/harness-sdk@0.1.0-beta.1`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
+Registry candidate: **0.1.0-beta.2**. After publication, install with `npm install @openworkerai/harness-sdk@0.1.0-beta.2`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
 
 Beta API, Node.js 20+, ESM. Registry-ready source/tarball distribution. The Rust host owns model/tool execution, policy, persistence,
 agent teams and run semantics. This package owns typed APIs and a managed private
@@ -259,7 +259,7 @@ prefer shared providers and the desktop facade above.
 After publication:
 
 ```sh
-npm install @openworkerai/harness-sdk@0.1.0-beta.1
+npm install @openworkerai/harness-sdk@0.1.0-beta.2
 ```
 
 The client installs the matching `@openworkerai/harness-runtime-<platform>-<arch>`
@@ -271,8 +271,8 @@ helper outside ASAR; `resolveRuntimeExecutable()` returns its installed path.
 Before publication, install the prepared client and your platform archive together:
 
 ```sh
-npm install /absolute/release/openworkerai-harness-sdk-0.1.0-beta.1.tgz \
-  /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.1.tgz
+npm install /absolute/release/openworkerai-harness-sdk-0.1.0-beta.2.tgz \
+  /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.2.tgz
 ```
 
 Choose the actual platform/architecture. The source manifest intentionally remains
