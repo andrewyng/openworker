@@ -369,6 +369,8 @@
     "trace_issues_other": "{{count}} issues",
     "trace_no_trace": "no trace",
     "trace_row_title": "Go to this message and open its trace",
+    "stretch": "Full width",
+    "unstretch": "Back to the side",
     "agents_title": "Subagents",
     "agents_running_one": "{{count}} running",
     "agents_running_other": "{{count}} running",

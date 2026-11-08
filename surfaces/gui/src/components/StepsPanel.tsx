@@ -26,6 +26,7 @@ import { canonicalModel } from "../modelNames";
 import { formatDuration, traceRows, turnTexts, wakeKey } from "../obs3";
 import { TurnList, TurnStrip } from "./TurnPicker";
 import { TraceIndex } from "./TraceIndex";
+import { StretchButton } from "../railStretch";
 
 type T = (k: string, o?: any) => string;
 
@@ -552,6 +553,7 @@ export function StepsPanel({
           <strong>{t("steps.title")}</strong>
           {picker}
           <span className="steps-sp" />
+          <StretchButton className="steps-close" labels={{ stretch: t("rail.stretch"), unstretch: t("rail.unstretch") }} />
           <button className="steps-close" aria-label={t("steps.close")} onClick={onClose}>✕</button>
         </div>
         {turns && turns.length > 0 && turnIdx != null && (

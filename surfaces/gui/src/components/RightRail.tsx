@@ -27,6 +27,7 @@ import { TeamRail } from "./TeamRail";
 import type { TeamSummary } from "../teamView";
 import type { TraceRow } from "../obs3";
 import { TraceIndex } from "./TraceIndex";
+import { RailStretchContext, StretchButton, useRailStretchState } from "../railStretch";
 import type { WorkerFilter } from "../teamRoster";
 
 import { Icon } from "./Icon";
@@ -163,6 +164,8 @@ export function RightRail({
   onOpenTrace,
 }: Props) {
   const { t } = useTranslation();
+  // UX-060: full width for the rail's wide form (trace, artifact), remembered per device.
+  const stretch = useRailStretchState();
   // Seventeenth pass: every panel starts collapsed and nothing auto-expands — a count
   // chip is the maximum signal. One exception survives (solo sessions only): Progress
   // still auto-opens the first time a live turn has todos.
@@ -355,8 +358,9 @@ export function RightRail({
   if (!active) return null;
 
   return (
-    <aside className={"right-rail" + (selected || teamView ? " artifact-mode" : "")}>
-      {teamView && <div className="team-resize-handle" role="separator" aria-label={t("teamview.resize")} aria-orientation="vertical" tabIndex={0}
+    <RailStretchContext.Provider value={stretch}>
+    <aside className={"right-rail" + (selected || teamView ? " artifact-mode" : "") + ((selected || teamView) && stretch.stretched ? " stretched" : "")}>
+      {teamView && !stretch.stretched && <div className="team-resize-handle" role="separator" aria-label={t("teamview.resize")} aria-orientation="vertical" tabIndex={0}
         onKeyDown={e => { if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return; e.preventDefault(); const width = e.currentTarget.parentElement!.getBoundingClientRect().width + (e.key === "ArrowLeft" ? 32 : -32); document.documentElement.style.setProperty("--team-rail-w", Math.min(window.innerWidth * .75, Math.max(320, width)) + "px"); }}
         onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); }}
         onPointerMove={e => { if (e.currentTarget.hasPointerCapture(e.pointerId)) document.documentElement.style.setProperty("--team-rail-w", Math.min(window.innerWidth * .75, Math.max(320, window.innerWidth - e.clientX)) + "px"); }}
@@ -699,6 +703,7 @@ export function RightRail({
         </>
       )}
     </aside>
+    </RailStretchContext.Provider>
   );
 }
 
@@ -869,6 +874,7 @@ function ArtifactViewer({
           <div className="artifact-path">{artifact.path}</div>
         </div>
         <div className="rail-actions">
+          <StretchButton className="artifact-icon-btn" labels={{ stretch: t("rail.stretch"), unstretch: t("rail.unstretch") }} />
           {isHtml && (
             <button
               className="artifact-icon-btn"

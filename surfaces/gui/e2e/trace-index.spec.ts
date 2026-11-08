@@ -80,3 +80,43 @@ test("a row goes to its message and opens the trace on that turn, index beside i
   await panel.getByTestId("trace-row-3").click();
   await expect(panel.getByTestId("steps-turn")).toContainText("Turn 3 of 3");
 });
+
+test("the stretch icon left of ✕ takes the trace to full width and back, and is remembered", async ({ page }) => {
+  await seedTrace(page);
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  await page.getByTestId("rail-toggle-trace").click();
+  await page.getByTestId("trace-row-1").click();
+  const panel = page.getByTestId("steps-panel");
+  await expect(panel).toBeVisible();
+  const main = await page.locator(".main").boundingBox();
+  const side = await page.locator(".right-rail").boundingBox();
+  expect(side!.width).toBeLessThan(main!.width - 100);
+
+  await panel.getByTestId("rail-stretch").click();
+  await expect.poll(async () => (await page.locator(".right-rail").boundingBox())!.width).toBeGreaterThan(main!.width - 4);
+  await expect(panel.getByTestId("rail-stretch")).toHaveAttribute("aria-pressed", "true");
+
+  // Reopening keeps the choice; the icon brings the rail back to the side.
+  await page.reload();
+  await page.getByText("Draft the launch note").first().click();
+  await page.getByTestId("rail-toggle-trace").click();
+  await page.getByTestId("trace-row-1").click();
+  await expect.poll(async () => (await page.locator(".right-rail").boundingBox())!.width).toBeGreaterThan(main!.width - 4);
+  await page.getByTestId("steps-panel").getByTestId("rail-stretch").click();
+  await expect.poll(async () => (await page.locator(".right-rail").boundingBox())!.width).toBeLessThan(main!.width - 100);
+});
+
+test("hovering a row lets the message run to three lines", async ({ page }) => {
+  await seedSessionMessages(page, SESSION, [
+    { role: "user", content: "A much longer question that certainly does not fit on one line of a narrow rail, because it keeps going on about the details of the thing being asked for.", ts: TS, mid: "u1" },
+    { role: "assistant", content: "ok", ts: TS + 1, mid: "a1" },
+  ]);
+  await page.goto("/");
+  await page.getByText("Draft the launch note").first().click();
+  await page.getByTestId("rail-toggle-trace").click();
+  const words = page.getByTestId("trace-row-1").locator(".trace-words");
+  const rest = (await words.boundingBox())!.height;
+  await page.getByTestId("trace-row-1").hover();
+  await expect.poll(async () => (await words.boundingBox())!.height).toBeGreaterThan(rest * 1.8);
+});

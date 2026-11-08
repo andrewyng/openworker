@@ -2593,6 +2593,9 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
    team-view rule above sets a narrower width; this one, later, wins for the trace. */
 .main:has(.steps-panel) { --artifact-rail-w: var(--team-rail-w, min(62vw, 960px)); }
 .main:has(.steps-panel.inspecting) { --artifact-rail-w: min(78vw, 1180px); }
+/* Full width (the stretch icon left of ✕): the rail takes the whole content area; the
+   conversation is hidden, the left nav untouched. Last, so it wins over every width above. */
+.main.rail-open:has(.right-rail.artifact-mode.stretched) { --artifact-rail-w: 100%; }
 .steps-panel.indexed { flex-direction: row; }
 .steps-index-col { flex: 0 0 236px; min-width: 0; border-right: 1px solid var(--line); overflow-y: auto; padding: 10px 6px; }
 .steps-index-col .trace-index { padding: 0; }
@@ -2605,7 +2608,14 @@ html[data-theme="dark"] { --bar-model:#4c8dff; --bar-tool:#3fb8ad; --bar-wait:#3
 .trace-row.current .trace-n { color: var(--ink); font-weight: 600; }
 .trace-row.none .trace-words { color: var(--muted); }
 .trace-n { flex: none; min-width: 16px; font-size: var(--fs-label); color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
-.trace-words { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-row { align-items: flex-start; }
+.trace-row .trace-n, .trace-row .trace-glance, .trace-row .trace-dot { margin-top: 2px; }
+/* One line at rest; hovering lets the message run to three lines (the rows below slide,
+   they do not jump); the panel's column has room for two at rest. */
+.trace-words { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-height: 1.4; max-height: 1.4em; transition: max-height .18s ease; overflow-wrap: anywhere; }
+.trace-row:hover .trace-words, .trace-row:focus-visible .trace-words { -webkit-line-clamp: 3; max-height: 4.2em; }
+.steps-index-col .trace-words { -webkit-line-clamp: 2; max-height: 2.8em; }
+.steps-index-col .trace-row:hover .trace-words, .steps-index-col .trace-row:focus-visible .trace-words { -webkit-line-clamp: 3; max-height: 4.2em; }
 .trace-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b; }
 .trace-glance { flex: none; font-size: var(--fs-label); color: var(--faint); font-variant-numeric: tabular-nums; }
 .trace-glance.live { color: var(--muted); }
