@@ -570,7 +570,8 @@ impl Runtime {
         feedback: Option<&str>,
     ) -> Result<crate::provider::Completion> {
         let started = tokio::time::Instant::now();
-        for number in 1..=if summary { 1 } else { 3 } {
+        let max_attempts = if summary { 1 } else { 3 };
+        for number in 1..=max_attempts {
             if started.elapsed().as_secs() >= 240 {
                 return Err(
                     crate::provider::Error::new(crate::provider::Failure::Transport).into(),
@@ -596,7 +597,8 @@ impl Runtime {
                     .any(|h| h.when == crate::safety::HookPhase::BeforeTool);
             model.content_withheld = guarded_output;
             let output_options = &s.turn.as_ref().context("No current turn")?.output;
-            model.stream_reasoning = output_options.reasoning && !guarded_output;
+            model.budget_summary = summary;
+            model.stream_reasoning = output_options.reasoning && !guarded_output && !summary;
             let buffer_attempts = output_options.buffer_attempts;
             let show_reasoning = model.stream_reasoning;
             let mut instructions = self.bundle.instructions_for(&s.skills, &s.loaded_skills);
@@ -911,7 +913,7 @@ impl Runtime {
                             },
                         )?;
                     }
-                    if number == 3
+                    if number == max_attempts
                         || !failure.is_some_and(|e| e.retryable())
                         || started.elapsed().as_secs() >= 240
                     {

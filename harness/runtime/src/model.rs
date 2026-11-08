@@ -12,6 +12,9 @@ pub struct Model {
     pub content_withheld: bool,
     /// Opt-in forwarding of provider-supported display reasoning, never signatures.
     pub stream_reasoning: bool,
+    /// A final turn-limit summary uses its small reserved output allowance,
+    /// without inheriting the working agent's thinking-generation configuration.
+    pub budget_summary: bool,
     pub connection: Option<(
         std::sync::Arc<crate::connections::Manager>,
         crate::connections::Selection,
@@ -98,6 +101,7 @@ impl Model {
             observation: None,
             content_withheld: false,
             stream_reasoning: false,
+            budget_summary: false,
             connection: None,
             #[cfg(test)]
             sample_hook: None,
@@ -421,15 +425,19 @@ impl Model {
             }
             // Short probes, reviewers and compactors have separate small
             // budgets; do not apply the agent's thinking generation budget.
-            if self
-                .observation
-                .as_ref()
-                .is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main)
+            if !self.budget_summary
+                && self
+                    .observation
+                    .as_ref()
+                    .is_some_and(|c| c.purpose == crate::telemetry::ModelPurpose::Main)
             {
                 if let Some((manager, selection)) = &self.connection {
                     if let Some(thinking) = manager.thinking(selection)? {
-                        body["thinking"] =
-                            thinking.request(max_tokens).map_err(|e| e.with_api(api))?;
+                        if let Some(request) =
+                            thinking.request(max_tokens).map_err(|e| e.with_api(api))?
+                        {
+                            body["thinking"] = request;
+                        }
                     }
                 }
             }

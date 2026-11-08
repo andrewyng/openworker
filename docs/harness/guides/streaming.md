@@ -78,11 +78,21 @@ await harness.setModelProvider({
 
 Rust uses `ModelProvider::anthropic("Claude").thinking(AnthropicThinking::Adaptive)`
 or `AnthropicThinking::Enabled { budget_tokens: 2048 }`. An enabled budget must
-be at least 1,024 tokens and smaller than the current call's output limit. These
-settings apply to main agent calls, not short connection probes, compactors or
-reviewers. Omitted settings preserve an existing choice; explicitly use
-`{ type: "disabled" }` to disable thinking generation. Provider configuration
-persists across restart and credential rotation.
+be at least 1,024 tokens. The configured value is a ceiling: the harness clamps
+it below the current call's output limit. If the remaining allowance cannot fit
+the minimum thinking budget plus an answer token, the request omits that manual
+thinking configuration. Final turn-limit summaries also omit the agent's thinking
+configuration so the small summary reserve is not rejected by a larger manual
+budget. Prior thinking/signature blocks are still replayed unchanged.
+
+These settings apply to working-agent calls, not connection probes, compactors,
+reviewers or final turn-limit summaries. Omitting a request setting uses the
+provider/model default; it does not guarantee thinking is disabled on models where
+thinking is always on. Output limits remain hard ceilings. Omitted settings during
+provider registration preserve an existing choice. Use `{ type: "disabled" }`
+only for models that support it; some adaptive-only models reject that mode.
+Provider configuration persists across restart and credential rotation. See
+[Anthropic's model-specific thinking rules](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
 
 Output guardrails and blocking output/tool hooks suppress candidate reasoning as
 well as candidate answer text, including for agents without tools. Display

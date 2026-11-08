@@ -126,6 +126,12 @@ fn imported_history_and_turn_context_survive_postgres_atomicity_and_takeover() {
         "DROP TRIGGER reject_import_event ON events; DROP FUNCTION reject_import_event();",
     )
     .unwrap();
+    // A database fault deliberately fences this adapter. Reconcile rollback
+    // through the independent admin connection above, then reconnect rather
+    // than reusing a writer whose outcome was uncertain.
+    assert!(owner.get(&s.id).is_err());
+    drop(owner);
+    let mut owner = PostgresStore::open(config.clone()).unwrap();
     owner.save(&s, "session_created", json!({})).unwrap();
     assert!(owner.get(&s.id).unwrap().turn.is_none());
     let context = Context {

@@ -14,7 +14,8 @@ unknown, inspect its status before retrying it.
 Use `instructionAddendum` in TypeScript, or `TurnOptions.instruction_addendum` in
 Rust, for application-owned preferences that change between turns. The addendum
 accompanies every model call and retry in that turn, survives recovery, and is
-checked by model-input guardrails/hooks. It is stored with the turn rather than
+included in the assembled request inspected by before-model hooks. User-input
+guardrails apply to the user message, not this application-owned field. It is stored with the turn rather than
 as user transcript text. It expires for the next turn. Keep user-supplied text in
 the user message; an addendum does not grant tools, approvals or sandbox access.
 
@@ -68,6 +69,11 @@ transcript to the portable fields rather than passing raw provider JSON. If a
 provider requires signed reasoning metadata to replay an old tool call, resume
 the original harness session or import a text-only conversation summary instead.
 An import never restores permission grants or an in-progress operation.
+
+Import validates structure and bounds; it does not retroactively run user-input
+guardrails or tool-result hooks over the old transcript. The application must
+sanitize migrated content before import. Before-model hooks can inspect the
+assembled request, including imported history, before the next model call.
 
 ## Approvals and questions
 

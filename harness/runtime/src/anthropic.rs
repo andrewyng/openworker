@@ -29,18 +29,22 @@ impl Thinking {
         }
         Ok(())
     }
-    pub fn request(&self, max_tokens: usize) -> Result<Value, Error> {
+    /// Output limits take precedence over manual thinking allowances. Return
+    /// None below the manual minimum rather than sending an invalid request or
+    /// forcing `disabled`, which some adaptive-only models reject.
+    pub fn request(&self, max_tokens: usize) -> Result<Option<Value>, Error> {
         self.validate().map_err(|_| config())?;
-        Ok(match self {
+        Ok(Some(match self {
             Self::Disabled => json!({"type":"disabled"}),
             Self::Adaptive => json!({"type":"adaptive"}),
             Self::Enabled { budget_tokens } => {
-                if *budget_tokens as usize >= max_tokens {
-                    return Err(config());
+                let budget_tokens = (*budget_tokens as usize).min(max_tokens.saturating_sub(1));
+                if budget_tokens < 1024 {
+                    return Ok(None);
                 }
                 json!({"type":"enabled","budget_tokens":budget_tokens})
             }
-        })
+        }))
     }
 }
 

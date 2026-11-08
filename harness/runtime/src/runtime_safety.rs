@@ -152,12 +152,13 @@ impl Runtime {
                 .check_content(sid, &config, Phase::ModelOutput, text.clone(), None, None)
                 .await?;
             let mut rejected_calls = vec![];
-            // Google may sign only the first call in a parallel batch. Treat
-            // every call in that candidate as part of the signed response.
-            let signed = completion
-                .output
-                .iter()
-                .any(|item| crate::chat_completions::signed_tool_id(item).is_some());
+            // Google may sign the first text part or only the first call in a
+            // parallel batch. Every call in either candidate belongs to that
+            // signed response; no sibling call may be silently rewritten.
+            let signed = completion.output.iter().any(|item| {
+                crate::chat_completions::signed_tool_id(item).is_some()
+                    || crate::chat_completions::message_signature(item)
+            });
             if blocked.is_none() {
                 for call in completion
                     .output

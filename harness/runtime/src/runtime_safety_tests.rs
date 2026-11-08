@@ -93,7 +93,9 @@ fn signed_tool_config(action: Action) -> Config {
 #[tokio::test]
 async fn signed_tool_redaction_and_denial_discard_candidate_with_bounded_retry() {
     for action in [Action::redact(), Action::Block] {
-        for recovers in [true, false] {
+        for (recovers, message_level) in
+            [(true, false), (false, false), (true, true), (false, true)]
+        {
             let seen = Arc::new(AtomicUsize::new(0));
             let count = seen.clone();
             let mut model = Model::new("test".into(), true);
@@ -111,6 +113,16 @@ async fn signed_tool_redaction_and_denial_discard_candidate_with_bounded_retry()
                     // Only the first call is signed; an unsafe parallel sibling
                     // must also cause the entire candidate to be discarded.
                     let mut batch = signed_write("{\"path\":\"safe.txt\",\"content\":\"safe\"}");
+                    if message_level {
+                        // Some Google models sign the first text part instead
+                        // of a function call. The following tools remain part
+                        // of the same signed candidate.
+                        batch[0]["block"]["target"] = json!("message");
+                        batch[0]["block"]["id"] = json!("signed-message");
+                        let mut text = message("I will write both files.");
+                        text["id"] = json!("signed-message");
+                        batch.insert(1, text);
+                    }
                     batch.push(json!({"type":"function_call","name":"write_file","call_id":"parallel-call","arguments":"{\"path\":\"no-write.txt\",\"content\":\"SECRET_SENTINEL\"}"}));
                     batch
                 };

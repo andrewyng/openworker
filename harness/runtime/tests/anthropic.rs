@@ -164,7 +164,7 @@ fn thinking_generation_configuration_is_explicit_and_budgeted() {
     use openworker_runtime::anthropic::Thinking;
     assert_eq!(
         Thinking::Adaptive.request(4096).unwrap(),
-        json!({"type":"adaptive"})
+        Some(json!({"type":"adaptive"}))
     );
     assert_eq!(
         Thinking::Enabled {
@@ -172,13 +172,32 @@ fn thinking_generation_configuration_is_explicit_and_budgeted() {
         }
         .request(4096)
         .unwrap(),
-        json!({"type":"enabled","budget_tokens":1024})
+        Some(json!({"type":"enabled","budget_tokens":1024}))
     );
-    assert!(Thinking::Enabled {
-        budget_tokens: 1024
-    }
-    .request(1024)
-    .is_err());
+    assert_eq!(
+        Thinking::Enabled {
+            budget_tokens: 1024
+        }
+        .request(1024)
+        .unwrap(),
+        None
+    );
+    assert_eq!(
+        Thinking::Enabled {
+            budget_tokens: 4096
+        }
+        .request(2048)
+        .unwrap(),
+        Some(json!({"type":"enabled","budget_tokens":2047}))
+    );
+    assert_eq!(
+        Thinking::Enabled {
+            budget_tokens: 4096
+        }
+        .request(1025)
+        .unwrap(),
+        Some(json!({"type":"enabled","budget_tokens":1024}))
+    );
     assert!(Thinking::Enabled { budget_tokens: 5 }.validate().is_err());
 }
 #[test]

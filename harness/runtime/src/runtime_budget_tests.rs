@@ -68,6 +68,170 @@ fn model(f: impl Fn(usize, String) -> Value + Send + Sync + 'static, output: u64
 }
 
 #[tokio::test]
+async fn budget_summary_transport_failure_returns_error_without_retry_or_panic() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let mut m = Model::new("summary-error".into(), true);
+    m.sample_hook = Some(Arc::new(move |_, _, _| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(crate::provider::Error::new(crate::provider::Failure::Transport).into())
+        })
+    }));
+    let (_tmp, rt, sid) = fixture(m, None).await;
+    let history = rt.store.lock().unwrap().get(&sid).unwrap().history;
+    let error = rt.sample_mode(&sid, &history, &[], true).await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<crate::provider::Error>().unwrap().kind,
+        crate::provider::Failure::Transport
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    assert!(!events.iter().any(|e| e.kind == "model_retrying"));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.kind == "model_attempt_finished" && e.data["status"] == "failed")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn anthropic_work_and_summary_requests_respect_remaining_budget_and_keep_replay_blocks() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for total in [2048, 1024] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for index in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut raw = vec![];
+                let mut chunk = [0; 4096];
+                let body: Value = loop {
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert!(n > 0);
+                    raw.extend_from_slice(&chunk[..n]);
+                    assert!(raw.len() < 1_000_000);
+                    if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&raw[..end]).to_ascii_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length: "))
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if raw.len() >= end + 4 + length {
+                            break serde_json::from_slice(&raw[end + 4..end + 4 + length]).unwrap();
+                        }
+                    }
+                };
+                if index == 0 {
+                    assert_eq!(body["max_tokens"], total - 512);
+                    if total == 2048 {
+                        assert_eq!(
+                            body["thinking"],
+                            json!({"type":"enabled","budget_tokens":1535})
+                        );
+                    } else {
+                        assert!(body.get("thinking").is_none());
+                    }
+                } else {
+                    assert_eq!(body["max_tokens"], 512);
+                    assert!(
+                        body.get("thinking").is_none(),
+                        "Reserved summary must not inherit manual thinking budget"
+                    );
+                    assert!(body
+                        .get("tools")
+                        .is_none_or(|v| v.as_array().is_some_and(Vec::is_empty)));
+                    let prior = body["messages"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .flat_map(|m| m["content"].as_array().into_iter().flatten())
+                        .find(|b| b["type"] == "thinking")
+                        .unwrap();
+                    assert_eq!(
+                        prior,
+                        &json!({"type":"thinking","thinking":"PRIVATE_REPLAY","signature":"signature-retained"})
+                    );
+                }
+                let mut events = vec![
+                    json!({"type":"message_start","message":{"id":format!("r-{index}"),"role":"assistant","content":[],"usage":{"input_tokens":20,"output_tokens":0}}}),
+                ];
+                if index == 0 {
+                    events.push(json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"PRIVATE_REPLAY","signature":"signature-retained"}}));
+                    events.push(json!({"type":"content_block_stop","index":0}));
+                    events.push(json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"bounded-plan","name":"update_plan","input":{"expected_revision":0,"explanation":"Plan","steps":[{"id":"work","description":"Find a name","status":"in_progress"}]}}}));
+                    events.push(json!({"type":"content_block_stop","index":1}));
+                } else {
+                    events.push(json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}));
+                    events.push(json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Stopped at the configured limit; name lookup is incomplete."}}));
+                    events.push(json!({"type":"content_block_stop","index":0}));
+                }
+                events.push(json!({"type":"message_delta","delta":{"stop_reason":if index==0 {"tool_use"} else {"end_turn"}},"usage":{"output_tokens":10}}));
+                events.push(json!({"type":"message_stop"}));
+                let stream = events
+                    .iter()
+                    .map(|e| format!("data: {e}\n\n"))
+                    .collect::<String>();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{stream}",stream.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let (_tmp, rt, sid) = fixture(
+            Model::new("claude-fixture".into(), false)
+                .with_provider(crate::provider::Kind::Anthropic),
+            Some(Limits {
+                max_model_calls: 1,
+                max_output_tokens: total as u64,
+                summary_tokens: 512,
+                ..Default::default()
+            }),
+        )
+        .await;
+        rt.connections.set_provider(json!({"name":"Fixture","api":"anthropic","base_url":endpoint,"credentials":{"api_key":"fixture-key","storage":"memory"},"thinking":{"type":"enabled","budgetTokens":4096}})).unwrap();
+        let selection = rt
+            .connections
+            .resolve(&crate::connections::Choice::new(
+                "Fixture",
+                "claude-fixture",
+            ))
+            .unwrap();
+        rt.update(&sid, "model_bound", json!({}), |s| {
+            s.model_selection = Some(selection);
+            Ok(())
+        })
+        .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            rt.drive(&sid, Default::default(), vec![crate::planning::schema()]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let s = rt.store.lock().unwrap().get(&sid).unwrap();
+        assert_eq!(s.turn.as_ref().unwrap().status, "completed");
+        assert_eq!(
+            s.turn.as_ref().unwrap().budget.stop_reason.as_deref(),
+            Some("model_call_limit")
+        );
+        assert_eq!(
+            s.history.last().unwrap()["content"][0]["text"],
+            "Stopped at the configured limit; name lookup is incomplete."
+        );
+        assert!(
+            s.plan.is_none(),
+            "The work call stopped before its queued tool executed"
+        );
+    }
+}
+
+#[tokio::test]
 async fn instruction_addendum_applies_to_retries_and_tool_followups_only_in_its_turn() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
