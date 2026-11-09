@@ -159,6 +159,22 @@ describe("Atlas Cloud provider presentation", () => {
   });
 });
 
+describe("Standard Compute provider presentation", () => {
+  it("links to the Standard Compute API key page", () => {
+    expect(KEY_HELP.standardcompute).toEqual({
+      url: "https://standardcompute.com/dashboard/api-keys",
+      label: "standardcompute.com",
+    });
+  });
+
+  it("wears the bundled Standard Compute mark", () => {
+    const { container } = render(
+      <ProviderMark name="standardcompute" title="Standard Compute" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});
+
 describe("Azure OpenAI provider presentation", () => {
   it("renders the endpoint as a plain required row, not the custom-endpoint disclosure", () => {
     render(<ProviderForm ps={makePs({}, vi.fn(), AZURE)} tp="t" />);
