@@ -1469,7 +1469,7 @@
     "catalog_tag_context": "{{size}} context",
     "catalog_tag_unverified": "unverified",
     "catalog_tag_not_on_key": "not on this key",
-    "catalog_unverified_help": "Unverified: nobody has checked this model's facts yet. It runs with safe defaults, and the app lowers its window if the provider refuses a long prompt. Set the window under the model's settings if you know it.",
+    "catalog_unverified_help": "Unverified: nobody has checked this model's facts yet. It runs with safe defaults, and the app lowers its window if the provider refuses a long prompt. If you know the window, tick the model, then click its name to set it.",
     "catalog_did_you_mean": "Did you mean:",
     "azure_deployment_help": "On Azure the model id is your deployment name — add each deployment you want to use, as named in the Azure or Foundry portal.",
     "one_click_coming": "One-click sign-in is coming soon — connect manually below for now:",

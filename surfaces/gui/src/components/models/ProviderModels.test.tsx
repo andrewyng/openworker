@@ -1,8 +1,8 @@
 // OPE-252 layer 1: a keyed provider's page lists what its own model list says the key can
-// call, merged with the curated rows — New since last check, Recommended, All models —
-// with tick-to-add, the facts' provenance, "not on this key", Refresh, and a typed id the
-// key cannot call refused with the closest ids. A provider without a list falls back to
-// the curated checklist.
+// call, merged with the curated rows — one list, models new since the last check on top —
+// with tick-to-add, the facts' provenance, "not on this key", Refresh, a ticked row's name
+// opening the model's settings, and a typed id the key cannot call refused with the closest
+// ids. A provider without a list falls back to the curated checklist.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -44,8 +44,8 @@ const SETTINGS = {
 
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-function renderPanel(onChanged = vi.fn()) {
-  render(<ProviderModels provider="openrouter" knownProviders={["openai", "openrouter"]} suggested={["z-ai/glm-5.2"]} settings={SETTINGS} onChanged={onChanged} />);
+function renderPanel(onChanged = vi.fn(), onConfigure?: (model: string) => void) {
+  render(<ProviderModels provider="openrouter" knownProviders={["openai", "openrouter"]} suggested={["z-ai/glm-5.2"]} settings={SETTINGS} onChanged={onChanged} onConfigure={onConfigure} />);
   return onChanged;
 }
 
@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("ProviderModels with a live listing", () => {
-  it("asks the provider once on open and lays the rows out in three sections with their facts", async () => {
+  it("asks the provider once on open and lays the rows out in one list with their facts", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
     renderPanel();
     expect(screen.getByTestId("provider-models-loading").textContent).toContain("Checking which models");
@@ -84,6 +84,31 @@ describe("ProviderModels with a live listing", () => {
     // the default row is ticked and locked
     const glm = screen.getByTestId("catalog-row-z-ai/glm-5.2").querySelector("input") as HTMLInputElement;
     expect(glm.checked && glm.disabled).toBe(true);
+  });
+
+  it("a ticked row's name opens the model's settings without unticking it; an unticked row's name is plain text", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
+    const onConfigure = vi.fn();
+    renderPanel(vi.fn(), onConfigure);
+    await flush();
+    const kimi = screen.getByTestId("catalog-configure-moonshotai/kimi-k3");
+    expect(kimi.tagName).toBe("BUTTON");
+    expect(kimi.getAttribute("title")).toBe("Settings for this model");
+    fireEvent.click(kimi);
+    expect(onConfigure).toHaveBeenCalledWith("openrouter:moonshotai/kimi-k3");
+    expect(removeModel).not.toHaveBeenCalled();
+    expect((screen.getByTestId("catalog-row-moonshotai/kimi-k3").querySelector("input") as HTMLInputElement).checked).toBe(true);
+    // not ticked: nothing to configure yet, so the name is not a button
+    expect(screen.queryByTestId("catalog-configure-openai/gpt-6-astra")).toBeNull();
+    expect(screen.getByTestId("catalog-row-openai/gpt-6-astra").querySelector(".mlist-name")!.tagName).toBe("SPAN");
+  });
+
+  it("without a settings opener (no dialog on this page) every name is plain text", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
+    renderPanel();
+    await flush();
+    expect(screen.queryByTestId("catalog-configure-moonshotai/kimi-k3")).toBeNull();
+    expect(screen.getByTestId("catalog-row-moonshotai/kimi-k3").querySelector(".mlist-name")!.tagName).toBe("SPAN");
   });
 
   it("tick adds the routed id, untick removes it, and the page learns the new picker", async () => {
