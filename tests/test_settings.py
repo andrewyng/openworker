@@ -232,7 +232,7 @@ def test_ollama_default_ready_tracks_liveness(tmp_path, monkeypatch):
 def test_ollama_adopts_first_pulled_model(tmp_path, monkeypatch):
     """Saving Ollama with only a non-recommended model pulled still yields a runnable default."""
     manager = _ollama_manager(tmp_path, monkeypatch)
-    assert manager.get_settings()["model_ready"] is False
+    assert manager.model_selectable(manager.model) is False  # the built-in default cannot run
     assert manager.adopt_provider_default("ollama") == "ollama:qwen2.5:7b-instruct"
     settings = manager.get_settings()
     assert settings["model"] == "ollama:qwen2.5:7b-instruct"

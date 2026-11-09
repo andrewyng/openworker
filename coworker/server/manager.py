@@ -370,6 +370,10 @@ class SessionManager:
             str(Path(workspace).expanduser().resolve()) if workspace else None
         )
         self.model = model
+        # The default nobody chose: config's model until prefs name one. While the default
+        # is only this guess, a settings read may swap it for a model that runs here.
+        self._builtin_default = model
+        self._default_is_guess = True
         self.mode = mode
         self.provider = provider
         # The dangerous mode is never offered by the desktop app: a session may run in it
@@ -494,6 +498,7 @@ class SessionManager:
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
+            self._default_is_guess = False
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
         from ..pdf_support import set_fallback_mode
@@ -4870,7 +4875,11 @@ class SessionManager:
             added = f"{name}:{suggested[0]}"
         if added:
             self.add_model(added)
-        if added and not self.model_selectable(self.model):
+        # A default that works is never stolen, with one exception: a guess that moved off
+        # the built-in id (`_guess_default`) is a stopgap, and the first key's recommended
+        # model is what the user came for.
+        stopgap = self._default_is_guess and self.model != self._builtin_default
+        if added and (stopgap or not self.model_selectable(self.model)):
             self.set_default_model(added)
             return added
         return None
@@ -4948,6 +4957,22 @@ class SessionManager:
                 self.set_default_model(candidate)
                 return candidate
         return None
+
+    def _guess_default(self) -> None:
+        """While nobody has chosen a default, it follows what can run: the built-in
+        `gpt-5.6-sol` is a guess, and a fresh install with no key and Ollama up should not
+        sit on it with five runnable models next to it (seen 2026-11-09 testing OPE-260).
+        The guess is recomputed on every settings read and never persisted: the first key
+        that arrives still takes over (`adopt_provider_default`), unticking it just moves
+        it on, and when nothing can run it falls back to the built-in id so the composer's
+        chip stays honest. A default the user set (`set_default_model`) is never touched
+        here; Remove key and sign-out move that one, and say so."""
+        if not self._default_is_guess or self.model_selectable(self.model):
+            return
+        self.model = next(
+            (m for m in self._selectable_models() if self.model_selectable(m)),
+            self._builtin_default,
+        )
 
     def provider_signin_changed(self, name: str) -> Optional[str]:
         """The OAuth providers (OpenRouter account, ChatGPT subscription) sign in and out
@@ -5499,7 +5524,7 @@ class SessionManager:
         model = (model or "").strip()
         if not model:
             return {"ok": False, "error": "empty model"}
-        if model == self.model:
+        if model == self.model and not self._default_is_guess:
             return {
                 "ok": False,
                 "error": "the default model stays in the picker; make another model the default first",
@@ -5513,6 +5538,10 @@ class SessionManager:
             if model not in hidden:
                 self._prefs["hidden_models"] = [*hidden, model]
         self._save_prefs()
+        if model == self.model:
+            # Only a guessed default gets here: unticking it hands the guess back to
+            # `_guess_default`, which picks the next runnable row (hidden ones stay out).
+            self.model = self._builtin_default
         return {"ok": True, **self.get_settings()}
 
     def _is_live_local_model(self, model: str) -> bool:
@@ -5566,6 +5595,7 @@ class SessionManager:
         # (it's hidden behind the "No model" state until a provider is connected anyway).
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
+        self._guess_default()
         selectable = self._selectable_models()
         if self.model not in selectable:
             selectable.insert(0, self.model)
@@ -5962,6 +5992,7 @@ class SessionManager:
             return {"ok": False, "error": "empty model"}
         self.model = model
         self._prefs["default_model"] = model
+        self._default_is_guess = False
         self._save_prefs()
         _model_config.set(model, {"default": True})
         return {"ok": True, **self.get_settings()}

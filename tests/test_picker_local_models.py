@@ -261,9 +261,14 @@ def test_the_moved_default_skips_hidden_rows(tmp_path, monkeypatch):
 
 
 def test_any_model_ready_says_whether_anything_can_run(tmp_path, monkeypatch):
+    """A default the user chose stays even when its key is gone (Remove key moves it,
+    a settings read does not); the flags tell the composer what to draw."""
     manager, live = _manager(tmp_path, monkeypatch)
-    manager.model = "anthropic:claude-fable-5"  # a default nobody can run
+    _store_key(manager, "anthropic")
+    manager.set_default_model("anthropic:claude-fable-5")
+    manager.secrets.delete("provider:anthropic")  # the key went without Remove key
     settings = manager.get_settings()
+    assert settings["model"] == "anthropic:claude-fable-5"
     assert settings["model_ready"] is False
     assert settings["any_model_ready"] is True  # the Ollama rows
     assert {"ollama:qwen3:0.6b", "ollama:llama3.2:3b"} <= set(settings["models"])
@@ -273,6 +278,69 @@ def test_any_model_ready_says_whether_anything_can_run(tmp_path, monkeypatch):
     assert settings["model_ready"] is False
     assert settings["any_model_ready"] is False
     assert settings["models"] == ["anthropic:claude-fable-5"]  # the default alone, for the chip
+
+
+# -- the default nobody chose follows what can run --------------------------------------
+
+
+def test_a_fresh_install_with_no_key_and_ollama_up_starts_on_an_ollama_model(tmp_path, monkeypatch):
+    """Seen 2026-11-09: a fresh state showed GPT-5.6 Sol as the default with no key while
+    five Ollama models could run. The built-in default is a guess; a settings read
+    replaces it with a model that runs here, without writing it down as a choice."""
+    manager, _ = _manager(tmp_path, monkeypatch)
+    assert manager.model == "gpt-5.6-sol"  # the built-in default, nobody's choice
+    settings = manager.get_settings()
+    assert settings["model"] == "ollama:qwen3:0.6b" and settings["model_ready"] is True
+    assert "default_model" not in manager._prefs
+
+
+def test_the_guess_falls_back_to_the_built_in_default_when_nothing_runs(tmp_path, monkeypatch):
+    manager, live = _manager(tmp_path, monkeypatch)
+    assert manager.get_settings()["model"] == "ollama:qwen3:0.6b"
+    live["alive"] = False
+    settings = manager.get_settings()
+    assert settings["model"] == "gpt-5.6-sol" and settings["model_ready"] is False
+    live["alive"] = True
+    assert manager.get_settings()["model"] == "ollama:qwen3:0.6b"
+
+
+def test_the_first_key_still_takes_over_from_a_guessed_ollama_default(tmp_path, monkeypatch):
+    """The guess must not block `adopt_provider_default`: a user who adds their first
+    key expects that provider's recommended model, not the tiny local model the guess
+    landed on."""
+    manager, _ = _manager(tmp_path, monkeypatch)
+    assert manager.get_settings()["model"] == "ollama:qwen3:0.6b"
+    _store_key(manager, "anthropic")
+    assert manager.adopt_provider_default("anthropic") == "anthropic:claude-fable-5"
+    assert manager._prefs["default_model"] == "anthropic:claude-fable-5"
+    # ...and that choice is then never stolen, by a second key or by a settings read.
+    _store_key(manager, "openai")
+    assert manager.adopt_provider_default("openai") is None
+    assert manager.get_settings()["model"] == "anthropic:claude-fable-5"
+
+
+def test_unticking_the_guessed_default_moves_the_guess_on(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path, monkeypatch)
+    assert manager.get_settings()["model"] == "ollama:qwen3:0.6b"
+    res = manager.remove_model("ollama:qwen3:0.6b")
+    assert res["ok"] is True
+    assert res["model"] == "ollama:llama3.2:3b"
+    assert "ollama:qwen3:0.6b" not in res["models"]
+
+
+def test_a_default_that_runs_is_never_moved_by_a_settings_read(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path, monkeypatch)
+    _store_key(manager, "anthropic")
+    manager.set_default_model("anthropic:claude-fable-5")
+    for _ in range(2):
+        assert manager.get_settings()["model"] == "anthropic:claude-fable-5"
+
+
+def test_a_chosen_default_survives_a_restart_as_chosen(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path, monkeypatch)
+    manager.set_default_model("ollama:llama3.2:3b")
+    again = SessionManager(data_dir=tmp_path / "data")
+    assert again.model == "ollama:llama3.2:3b" and again._default_is_guess is False
 
 
 def test_any_model_ready_is_true_whenever_the_default_runs(tmp_path, monkeypatch):
