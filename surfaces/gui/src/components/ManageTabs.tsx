@@ -294,8 +294,10 @@ export function ModelsTab() {
               suggested={info?.suggested_models || []}
               settings={settings}
               onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
+              onConfigure={(m) => setDialog(m)}
             />
           )}
+          {dialogEl}
         </div>
       ) : (
         // Unconfigured providers still show their curated models as a read-only preview — what a

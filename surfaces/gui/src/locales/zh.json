@@ -1439,7 +1439,7 @@
     "catalog_tag_context": "{{size}} 上下文",
     "catalog_tag_unverified": "未核实",
     "catalog_tag_not_on_key": "不在此密钥上",
-    "catalog_unverified_help": "未核实：尚无人核对此模型的参数。它以保守默认值运行；若提供方拒绝过长的提示，应用会自动调低其上下文窗口。如果你知道窗口大小，可在模型设置中设定。",
+    "catalog_unverified_help": "未核实：尚无人核对此模型的参数。它以保守默认值运行；若提供方拒绝过长的提示，应用会自动调低其上下文窗口。如果你知道窗口大小，请勾选该模型，再点击其名称进行设定。",
     "catalog_did_you_mean": "你是指：",
     "azure_deployment_help": "在 Azure 上，模型 ID 就是你的部署名称——按 Azure 或 Foundry 门户中的名称，逐个添加你要使用的部署。",
     "one_click_coming": "一键登录即将推出 —— 目前请在下方手动连接：",

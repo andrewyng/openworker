@@ -46,12 +46,16 @@ export function ProviderModels({
   suggested,
   settings,
   onChanged,
+  onConfigure,
 }: {
   provider: string;
   knownProviders: string[];
   suggested: string[]; // the curated bare ids, for the fallback checklist
   settings: ModelSettings;
   onChanged: (next: { models: string[]; model: string }) => void;
+  // Opens the model's settings (its window, for one): a ticked row's name is the way there,
+  // the only one on this page (owner, 2026-11-09: the unverified note pointed nowhere).
+  onConfigure?: (model: string) => void;
 }) {
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
@@ -216,7 +220,22 @@ export function ProviderModels({
             title={isDefault ? t("models.default_locked") : undefined}
             onChange={(e) => void tick(row, e.target.checked)}
           />
-          <span className="mlist-name" title={row.model}>{row.label}</span>
+          {row.in_picker && onConfigure ? (
+            <button
+              type="button"
+              className="mlist-name text-left hover:underline underline-offset-2"
+              title={t("manage.configure_model")}
+              data-testid={`catalog-configure-${row.id}`}
+              onClick={(e) => {
+                e.preventDefault(); // the name sits in the checkbox's label: open settings, do not untick
+                onConfigure(row.model);
+              }}
+            >
+              {row.label}
+            </button>
+          ) : (
+            <span className="mlist-name" title={row.model}>{row.label}</span>
+          )}
           {tags.length > 0 && (
             <span className="text-meta text-muted shrink-0 flex gap-2" data-testid={`catalog-tags-${row.id}`}>
               {tags.map((g) => <span key={g.key} className={g.tone || ""} title={g.title}>{g.text}</span>)}
