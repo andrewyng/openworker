@@ -5626,11 +5626,25 @@ class SessionManager:
                 return str(i)
         return None
 
+    def _label_suffix(self, name: str) -> str:
+        """How the reviewed rows of this provider name it after the dot ("Google",
+        "Anthropic", "via OpenRouter"), so a row from the provider's own list reads the
+        same way; the descriptor's title when the provider has no reviewed row."""
+        from ..providers.matrix import MATRIX, full_id, models_for_provider
+
+        for bare in models_for_provider(name):
+            label = MATRIX[full_id(name, bare)].label
+            if " · " in label:
+                return label.split(" · ", 1)[1]
+        d = get_descriptor(name, self.secrets)
+        return d.title if d else name
+
     def _catalog_rows(self, name: str, entry: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
         from ..providers.matrix import MATRIX, full_id, models_for_provider
 
         d = get_descriptor(name, self.secrets)
         rec = d.recommended_model if d else None
+        suffix = self._label_suffix(name)
         picker = set(self._curated_models())
         live = (entry or {}).get("models") or {}
         live_ids = [str(i) for i in (entry or {}).get("ids") or []]
@@ -5661,7 +5675,7 @@ class SessionManager:
             rows.append({
                 "id": bare,
                 "model": full,
-                "label": cat.label if cat else (lm.get("name") or bare),
+                "label": cat.label if cat else f"{lm.get('name') or bare} · {suffix}",
                 "context": context,
                 "tools": cat.caps.tools if cat else lm.get("tools"),
                 "vision": cat.caps.vision if cat else lm.get("vision"),
@@ -5711,10 +5725,12 @@ class SessionManager:
         facts: dict[str, dict[str, Any]] = {}
         picker = set(self._curated_models())
         for provider, entry in self._load_catalogs().items():
+            suffix = self._label_suffix(provider)
             for bare, lm in ((entry or {}).get("models") or {}).items():
                 full = full_id(provider, bare)
                 if full in picker and full not in MATRIX and isinstance(lm, dict):
                     facts[full] = {k: lm.get(k) for k in ("name", "context", "tools", "vision") if lm.get(k) is not None}
+                    facts[full]["label"] = f"{lm.get('name') or bare} · {suffix}"
         try:
             live_models.write_facts(facts)
         except OSError:
@@ -5785,8 +5801,8 @@ class SessionManager:
         verification: dict[str, str] = {}
         for mid in selectable:
             facts = live_facts.get(mid) or {}
-            if mid not in labels and facts.get("name"):
-                labels[mid] = str(facts["name"])
+            if mid not in labels and (facts.get("label") or facts.get("name")):
+                labels[mid] = str(facts.get("label") or facts["name"])
             if mid not in windows and facts.get("context"):
                 windows[mid] = int(facts["context"])
             provider = self._model_provider(mid)
