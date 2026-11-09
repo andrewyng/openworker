@@ -1244,6 +1244,10 @@ export interface ModelSettings {
   // {full id → context window in tokens}, verified matrix entries only — drives the
   // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
   model_context_windows?: Record<string, number>;
+  // Where each picker model's facts come from (OPE-252): "catalog" (our reviewed list),
+  // "provider" (its own model list), "local" (the server), or "unverified" (safe defaults
+  // the user may correct). Absent on an older backend.
+  model_verification?: Record<string, "catalog" | "provider" | "local" | "unverified">;
   // Token savings (PDF attachments): fallback for models without native PDF support,
   // and attach-time thresholds. Optional so the GUI is robust to an older backend.
   pdf_fallback?: "text" | "images";
@@ -2593,7 +2597,9 @@ export async function setDefaultModel(
   return res.json();
 }
 
-export async function addModel(model: string): Promise<ModelSettings & { ok: boolean; error?: string }> {
+export async function addModel(
+  model: string,
+): Promise<ModelSettings & { ok: boolean; error?: string; reason?: "not_on_key"; suggestions?: string[] }> {
   const res = await fetch(`${httpBase()}/v1/settings/models/add`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2725,6 +2731,9 @@ export interface ProviderInfo {
   // into, or an API key. Absent on an older backend → treated as an API key.
   kind?: "local" | "subscription" | "api_key";
   is_custom?: boolean; // user-created OpenAI-compatible provider
+  // Models the provider's own list gained since the check before (OPE-252); the card
+  // shows the count. Absent on an older backend.
+  new_models?: number;
   // Local servers only: whether the server answers right now (cached probe).
   alive?: boolean;
   // llama.cpp on a Mac (UX-057): OpenWorker can set it up and run it, and what it runs.
@@ -2914,6 +2923,43 @@ export interface LocalModelRow {
   context_from: "user" | "machine" | "server";
   fit: "runs_well" | "tight" | "too_large" | "cloud" | "unknown";
   recommendation: string | null;
+}
+
+// -- the provider's own model list, with the user's key (OPE-252 layer 1) --------------
+export interface ProviderCatalogRow {
+  id: string; // the provider's bare id
+  model: string; // the routed id (bare for OpenAI, `provider:id` otherwise)
+  label: string;
+  context: number | null;
+  tools: boolean | null;
+  vision: boolean | null;
+  released: string | null; // ISO date when the listing says
+  in_picker: boolean;
+  recommended: boolean;
+  new: boolean; // gained since the check before
+  on_key: boolean | null; // null = no listing to tell
+  verified: "catalog" | "provider" | "unverified";
+}
+
+export interface ProviderCatalog {
+  ok: boolean;
+  provider: string;
+  configured: boolean;
+  listing: "live" | "none" | "error";
+  reason?: string; // listing "none": why there is no list
+  error?: string | null; // a failed ask (the rows are the last good list, or the curated ones)
+  fetched_at?: number | null;
+  count?: number;
+  rows: ProviderCatalogRow[];
+  new: string[];
+  not_on_key: string[]; // picker models this key cannot call
+}
+
+export async function getProviderCatalog(provider: string, refresh = false): Promise<ProviderCatalog> {
+  const url = `${httpBase()}/v1/providers/${encodeURIComponent(provider)}/catalog${refresh ? "?refresh=true" : ""}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function getLocalModels(

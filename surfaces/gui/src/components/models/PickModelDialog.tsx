@@ -81,6 +81,11 @@ export function PickModelDialog({
   const [loadFailed, setLoadFailed] = useState(false);
   const [reload, setReload] = useState(0);
   const fixedContext = provider?.name === "llamacpp" || provider?.name === "vllm";
+  // A cloud model the reviewed catalog does not know (OPE-252): its window came from the
+  // provider's own list or from nowhere; either way the user may set it here.
+  const verification = model ? settings.model_verification?.[model] : undefined;
+  const cloudWindowEditable = !isLocal && !!model && verification !== undefined && verification !== "catalog" && verification !== "local";
+  const listedWindow = model ? settings.model_context_windows?.[model] || null : null;
 
   // Step 2: the models the chosen provider offers. Also read when the dialog opens on
   // step 3 for a local model, since the settings need the model's own facts.
@@ -145,7 +150,7 @@ export function PickModelDialog({
       compaction_threshold_pct: draft.compaction_threshold_pct ?? null,
       default: !!draft.default,
     };
-    if (isLocal && !fixedContext) values.context_size = draft.context_size ?? null;
+    if ((isLocal && !fixedContext) || cloudWindowEditable) values.context_size = draft.context_size ?? null;
     const saved = await setModelConfig(model, values);
     if (!saved.ok) {
       setError(saved.error || "");
@@ -331,6 +336,10 @@ export function PickModelDialog({
                         recNote(draft.context_size === machineContext || !draft.context_size ? "recommended" : "user", rec?.context_for_agents ? t("pick.maker_suggests", { ctx: fmtContext(rec.context_for_agents) }) : ""))}
                     {fixedContext && row?.context &&
                       setting("context", t("pick.context_size"), <span className="text-ui text-muted">{fmtContext(row.context)}</span>, t("pick.set_at_start"))}
+                    {cloudWindowEditable &&
+                      setting("context", t("pick.context_size"),
+                        select("context", String(draft.context_size || listedWindow || ""), [{ v: "", label: t("pick.context_unknown") }, ...CONTEXT_STEPS.map((c) => ({ v: String(c), label: fmtContext(c) }))], (v) => setDraft((d) => ({ ...d, context_size: v ? Number(v) : undefined }))),
+                        verification === "provider" ? t("pick.context_from_provider") : t("pick.context_unverified"))}
                     {setting("reply", t("pick.longest_reply"),
                       select("reply", String(draft.max_output_tokens || ""), [{ v: "", label: t("pick.provider_default") }, ...REPLY_STEPS.map((c) => ({ v: String(c), label: `${fmtContext(c)} ${t("pick.tokens")}` }))], (v) => setDraft((d) => ({ ...d, max_output_tokens: v ? Number(v) : undefined }))),
                       recNote(rec?.max_output_tokens && draft.max_output_tokens === rec.max_output_tokens ? "recommended" : undefined))}

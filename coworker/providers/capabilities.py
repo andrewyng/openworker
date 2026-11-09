@@ -19,6 +19,19 @@ def capabilities_for(model: str) -> ModelCapabilities:
     if entry is not None:
         return entry.caps
 
+    # What the provider's own model list said about a picker model the catalog does not
+    # know (OPE-252): tool and image support when the listing carries them.
+    from .live_models import facts_for
+
+    facts = facts_for(model)
+    if facts.get("tools") is not None or facts.get("vision") is not None:
+        return ModelCapabilities(
+            tools=facts.get("tools") is not False,
+            vision=bool(facts.get("vision")),
+            parallel_tool_calls=True,
+            streaming=True,
+        )
+
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
 

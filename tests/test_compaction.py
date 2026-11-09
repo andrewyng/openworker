@@ -19,6 +19,7 @@ from coworker.compaction import (
     extract_user_messages,
     extract_working_state,
     is_context_overflow,
+    overflow_limit,
     pick_boundary,
     should_compact,
     summarize_span,
@@ -371,6 +372,19 @@ def test_is_context_overflow():
     assert is_context_overflow(Exception("Prompt is too long: 210000 tokens > limit"))
     assert not is_context_overflow(Exception("rate limit exceeded"))
     assert not is_context_overflow(Exception("connection reset"))
+
+
+def test_overflow_limit_reads_the_figure_the_provider_names():
+    """OPE-252: the provider's own refusal is the one source that is never wrong about its
+    limit; the engine saves it as the model's window."""
+    assert overflow_limit(Exception("Error code: 400 - This model's maximum context length is 128000 tokens. However, your messages resulted in 130123 tokens.")) == 128_000
+    assert overflow_limit(Exception("prompt is too long: 213456 tokens > 200000 maximum")) == 200_000
+    assert overflow_limit(Exception("the prompt is longer than the context length of only 32768 tokens")) == 32_768
+    assert overflow_limit(Exception("Input length exceeds the maximum context length of 1,048,576")) == 1_048_576
+    assert overflow_limit(Exception("request exceeds the limit of 400,000 tokens")) == 400_000
+    assert overflow_limit(Exception("context_length_exceeded")) is None  # no figure
+    assert overflow_limit(Exception("maximum context length is 12 tokens")) is None  # not a window
+    assert overflow_limit(Exception("rate limit exceeded")) is None
 
 
 def test_user_messages_pin_the_first_and_budget_the_rest():

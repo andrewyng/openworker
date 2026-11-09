@@ -85,6 +85,12 @@ export function ProviderGroups({
           ) : (
             ps.statusFor(p, { lastUsed: true })
           )}
+          {connected && (p.new_models || 0) > 0 && (
+            // Models the provider added since the last check of its own list (OPE-252).
+            <span className="block text-meta text-ok font-medium truncate" data-testid={`${tp}-new-${p.name}`}>
+              {t("provider.new_count", { count: p.new_models })}
+            </span>
+          )}
         </span>
         <span className="text-faint text-body">›</span>
       </button>

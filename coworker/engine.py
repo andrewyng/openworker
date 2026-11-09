@@ -1401,6 +1401,7 @@ class TurnEngine:
                 # is progress-guarded: each pass moves the boundary forward or gives up,
                 # so a model that keeps overflowing still terminates in the error path.
                 if _compaction.is_context_overflow(exc) and not self._cancel.is_set():
+                    self._learn_window_from(exc)
                     yield Event(EventType.COMPACTING, {})
                     notice = await self._compact_now(force=True)
                     if notice:
@@ -1586,6 +1587,31 @@ class TurnEngine:
                 self._yield_for_wake = False
 
     # -- auto-compaction (OPE-27) ------------------------------------------------
+    def _learn_window_from(self, exc: BaseException) -> None:
+        """The provider's overflow error named its limit and our window was unknown or
+        larger: save the limit as this model's context window (model_config), so the
+        next turn compacts before the provider refuses (OPE-252 self-correction). A
+        window that was already at or below the limit is left alone."""
+        limit = _compaction.overflow_limit(exc)
+        if not limit:
+            return
+        window = self._compaction_config().get("context_window")
+        if window and window <= limit:
+            return
+        from . import model_config
+
+        _saved, problem = model_config.set(self.model, {"context_size": limit})
+        if problem:
+            return
+        logger.warning(
+            "model %s: the provider refused %s and named %d tokens as its limit; saved as the "
+            "model's context window (was %s)",
+            self.model,
+            "the prompt",
+            limit,
+            window or "unknown",
+        )
+
     def _compaction_config(self) -> dict[str, Any]:
         from . import model_config
 
@@ -1597,9 +1623,12 @@ class TurnEngine:
         if saved_pct:
             cfg["threshold_pct"] = saved_pct
         if not cfg.get("context_window"):
+            from .providers.live_models import context_window_for as _live_window
             from .providers.matrix import model_context_windows
 
-            cfg["context_window"] = model_context_windows().get(self.model) or saved_window
+            # A window the user saved (or the overflow learner stored) beats the catalog;
+            # the catalog beats what the provider's own list said (OPE-252).
+            cfg["context_window"] = saved_window or model_context_windows().get(self.model) or _live_window(self.model)
             if not cfg["context_window"]:
                 # Ollama's window is the num_ctx we send (providers/ollama_context.py),
                 # not the 128k guess — compact before that window context-shifts.
