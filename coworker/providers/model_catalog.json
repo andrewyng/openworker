@@ -1,0 +1,984 @@
+{
+  "schema": 1,
+  "serial": "2026.11.07.1",
+  "generated": "2026-11-07",
+  "providers": {
+    "openai": {
+      "note": "GPT-5.6 (2026-07-09): the number is the generation, Sol/Terra/Luna are capability tiers; bare gpt-5.6 aliases to Sol server-side, so only the explicit tier ids are listed. Rolling out: accounts without access get a friendly error (providers/errors.py).",
+      "models": {
+        "gpt-5.6-sol": {
+          "label": "GPT-5.6 Sol · OpenAI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 400000
+        },
+        "gpt-5.6-terra": {
+          "label": "GPT-5.6 Terra · OpenAI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 400000
+        },
+        "gpt-5.6-luna": {
+          "label": "GPT-5.6 Luna · OpenAI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 400000
+        },
+        "gpt-5.5": {
+          "label": "GPT-5.5 · OpenAI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 400000
+        }
+      }
+    },
+    "openai-codex": {
+      "note": "ChatGPT-subscription catalog (the openai-codex OAuth provider), curated to the ids the subscription backend serves. Vision per the vendor's model docs; PDF unverified over this backend, so it falls back locally via pdf_support.py. Sol is rate-limited on Plus, full on Pro.",
+      "models": {
+        "gpt-5.6-sol": {
+          "label": "GPT-5.6 Sol · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.6-terra": {
+          "label": "GPT-5.6 Terra · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.6-luna": {
+          "label": "GPT-5.6 Luna · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.2-codex": {
+          "label": "GPT-5.2 Codex · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.2": {
+          "label": "GPT-5.2 · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.1-codex": {
+          "label": "GPT-5.1 Codex · ChatGPT plan",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        },
+        "gpt-5.1-codex-mini": {
+          "label": "GPT-5.1 Codex Mini · ChatGPT plan",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 400000,
+          "pinned": [
+            "pdf"
+          ],
+          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
+        }
+      }
+    },
+    "anthropic": {
+      "note": "platform.claude.com/docs/en/models/overview, read 2026-09-08: 1M context is the default and only size on the Claude 5 generation, 128K max output. Mythos 5.1 is approved-orgs-only and stays out of a public picker. Claude 4.5/4.6 rows are kept for comparability with published evaluations (OPE-170).",
+      "models": {
+        "claude-fable-5-1": {
+          "label": "Claude Fable 5.1 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-opus-5": {
+          "label": "Claude Opus 5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-sonnet-5": {
+          "label": "Claude Sonnet 5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-fable-5": {
+          "label": "Claude Fable 5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-opus-4-8": {
+          "label": "Claude Opus 4.8 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude-sonnet-4-6": {
+          "label": "Claude Sonnet 4.6 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude-haiku-4-5": {
+          "label": "Claude Haiku 4.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude-opus-4-6": {
+          "label": "Claude Opus 4.6 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude-opus-4-5": {
+          "label": "Claude Opus 4.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude-sonnet-4-5": {
+          "label": "Claude Sonnet 4.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        }
+      }
+    },
+    "gemini": {
+      "note": "Gemini 3 needs thought signatures in tool loops (carried via the _gemini message sidecar, gemini_provider.py). Ids from the vendor catalog, 2026-07-22.",
+      "models": {
+        "gemini-3.1-pro-preview": {
+          "label": "Gemini 3.1 Pro · Google",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "gemini-3.6-flash": {
+          "label": "Gemini 3.6 Flash · Google",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "gemini-2.5-pro": {
+          "label": "Gemini 2.5 Pro · Google",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "gemini-2.5-flash": {
+          "label": "Gemini 2.5 Flash · Google",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "ark": {
+      "note": "BytePlus Ark Responses API, verified 2026-08-14. Kept separate from Volcengine Agent Plan: endpoints, credentials, regions and catalogs are not interchangeable.",
+      "models": {
+        "dola-seed-evolving-latest-version": {
+          "label": "Dola Seed Evolving · BytePlus Ark",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        },
+        "dola-seed-2-1-turbo-260628": {
+          "label": "Dola Seed 2.1 Turbo · BytePlus Ark",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        }
+      }
+    },
+    "ark-agent-plan-cn": {
+      "note": "Volcengine Ark Agent Plan Responses API, verified 2026-08-14.",
+      "models": {
+        "doubao-seed-evolving": {
+          "label": "Doubao Seed Evolving · Volcengine Agent Plan",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        },
+        "doubao-seed-2.1-turbo": {
+          "label": "Doubao Seed 2.1 Turbo · Volcengine Agent Plan",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        }
+      }
+    },
+    "meta": {
+      "note": "Muse Spark (Meta Model API, public preview 2026-07-09): multimodal + tools over the OpenAI-compatible surface. PDF unverified over compat; falls back via pdf_support.py.",
+      "models": {
+        "muse-spark-1.1": {
+          "label": "Muse Spark 1.1 · Meta",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": null,
+          "note": "Vision yes; PDF unverified over compat; window not verified against a vendor spec."
+        }
+      }
+    },
+    "zai": {
+      "note": "docs.z.ai, read 2026-09-08: GLM-5.2 has a 1M window and 128K output. The earlier 128,000 compacted it at 102,400 (OPE-170).",
+      "models": {
+        "glm-5.2": {
+          "label": "GLM-5.2 · Z AI",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000,
+          "note": "docs.z.ai (read 2026-09-08): 1M context, 128K output; the earlier 128,000 compacted it at 102,400 (OPE-170)."
+        }
+      }
+    },
+    "deepseek": {
+      "note": "DeepSeek's native API exposes the full 1M context for both V4 variants (official model table, 2026-08-10).",
+      "models": {
+        "deepseek-v4-flash": {
+          "label": "DeepSeek V4 Flash · DeepSeek",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "deepseek-v4-pro": {
+          "label": "DeepSeek V4 Pro · DeepSeek",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
+    "kimi": {
+      "note": "Moonshot's native API.",
+      "models": {
+        "kimi-k2.6": {
+          "label": "Kimi K2.6 · Moonshot",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        }
+      }
+    },
+    "minimax": {
+      "note": "Window not re-checked against the vendor spec: the meter hides and compaction uses the 128k guess.",
+      "models": {
+        "MiniMax-M2.5": {
+          "label": "MiniMax M2.5 · MiniMax",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": null,
+          "note": "Window not verified against a vendor spec (OPE-170 known-unverified recommendation)."
+        }
+      }
+    },
+    "qwen": {
+      "note": "Model Studio lists qwen3.8-max with a 1,000,000 window (read 2026-10-17); it is multimodal per Alibaba's model card, unlike the text-only qwen3-max, so it needs its own row (the qwen prefix heuristic in capabilities.py says vision=False). PDF unverified over compat.",
+      "models": {
+        "qwen3-max": {
+          "label": "Qwen3 Max · Alibaba",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        },
+        "qwen3.8-max": {
+          "label": "Qwen3.8 Max · Alibaba",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
+    "xai": {
+      "note": "xAI's native API.",
+      "models": {
+        "grok-4.3": {
+          "label": "Grok 4.3 · xAI",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        }
+      }
+    },
+    "mistral": {
+      "note": "Mistral's native API.",
+      "models": {
+        "mistral-large-latest": {
+          "label": "Mistral Large · Mistral",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 128000
+        }
+      }
+    },
+    "upstage": {
+      "note": "console.upstage.ai/docs/models/solar-pro-4 and /solar-mini-4, read 2026-10-25: 512K context, 128K output, tool calling. The ids are aliases that track the newest version; solar-pro3 retired 2026-10-30.",
+      "models": {
+        "solar-pro4": {
+          "label": "Solar Pro 4 · Upstage",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 512000
+        },
+        "solar-mini4": {
+          "label": "Solar Mini 4 · Upstage",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 512000
+        }
+      }
+    },
+    "cerebras": {
+      "note": "inference-docs.cerebras.ai/models/openai-oss: tool calling listed; 65k tokens on the free tier, 131k paid. The paid window is stored.",
+      "models": {
+        "gpt-oss-120b": {
+          "label": "GPT-OSS 120B · via Cerebras",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 131072,
+          "note": "The paid tier's 131k window; the free tier serves 65k.",
+          "pinned": [
+            "context"
+          ]
+        }
+      }
+    },
+    "huggingface": {
+      "note": "router.huggingface.co/v1/models (public listing) reports supports_tools=true and context_length 1048576 for GLM-5.2 at its providers.",
+      "models": {
+        "zai-org/GLM-5.2": {
+          "label": "GLM-5.2 · via Hugging Face",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "cohere": {
+      "note": "docs.cohere.com/docs/models lists command-a-plus-05-2026 at 128k; the tool-use guide and the Compatibility API docs use this id.",
+      "models": {
+        "command-a-plus-05-2026": {
+          "label": "Command A+ · Cohere",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 128000
+        }
+      }
+    },
+    "siliconflow": {
+      "note": "siliconflow.com/blog/glm-5-2-api-guide: 1M-token context (pricing table: 1049K); tool calling among the listed workflows.",
+      "models": {
+        "zai-org/GLM-5.2": {
+          "label": "GLM-5.2 · via SiliconFlow",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "sambanova": {
+      "note": "Ids and windows are the context_length values api.sambanova.ai/v1/models reports (keyless, read 2026-10-25). The two 128k rows are the production tier; MiniMax M3.1 Flash is what the catalogue serves in place of the M2.7/M3 previews.",
+      "models": {
+        "Meta-Llama-3.3-70B-Instruct": {
+          "label": "Llama 3.3 70B · SambaNova",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 131072
+        },
+        "DeepSeek-V3.1": {
+          "label": "DeepSeek V3.1 · SambaNova",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 131072
+        },
+        "MiniMax-M3.1-Flash": {
+          "label": "MiniMax M3.1 Flash · SambaNova",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "atlascloud": {
+      "note": "api.atlascloud.ai/v1/models (keyless, read 2026-10-25): context_length 1,048,576, supported_features lists tools. The API is the only listing for it.",
+      "models": {
+        "zai-org/glm-5.2": {
+          "label": "GLM-5.2 · via Atlas Cloud",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "novita": {
+      "note": "api.novita.ai/openai/v1/models (keyless, read 2026-10-25): context_size 1,048,576, features lists function-calling.",
+      "models": {
+        "zai-org/glm-5.2": {
+          "label": "GLM-5.2 · via Novita",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "together": {
+      "note": "Windows are Together's /v1/models context_length values, read 2026-09-08 (exact per model; GLM-5.2 really is 1,048,575). Together's serverless DeepSeek V4 Pro exposes 512K, not the model-level 1M. Kimi K3 has native vision; PDF unverified over compat.",
+      "models": {
+        "thinkingmachines/Inkling": {
+          "label": "Inkling · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": null,
+          "note": "Window not verified against a vendor spec; the meter hides."
+        },
+        "zai-org/GLM-5.2": {
+          "label": "GLM-5.2 · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048575,
+          "note": "Together's /v1/models reports exactly 1,048,575 (read 2026-09-08)."
+        },
+        "moonshotai/Kimi-K3": {
+          "label": "Kimi K3 · via Together",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576,
+          "note": "Native vision; PDF unverified over the compat surface (falls back via pdf_support.py)."
+        },
+        "moonshotai/Kimi-K2.7-Code": {
+          "label": "Kimi K2.7 Code · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 262144
+        },
+        "moonshotai/Kimi-K2.6": {
+          "label": "Kimi K2.6 · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 262144
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "label": "DeepSeek V4 Pro · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 512000,
+          "note": "Together's serverless deployment exposes 512K, not the model-level 1M.",
+          "pinned": [
+            "context"
+          ]
+        },
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
+          "label": "Llama 4 Maverick · via Together",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
+    "fireworks": {
+      "note": "fireworks.ai model pages: glm-5p2 (read 2026-09-08) and deepseek-v4-pro (read 2026-10-17) list 1040k tokens, a little under the model-level 1M.",
+      "models": {
+        "accounts/fireworks/models/glm-5p2": {
+          "label": "GLM-5.2 · via Fireworks",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1040000,
+          "pinned": [
+            "context"
+          ],
+          "note": "fireworks.ai/models/fireworks/glm-5p2 lists 1040k tokens (read 2026-09-08)."
+        },
+        "accounts/fireworks/models/kimi-k2p6": {
+          "label": "Kimi K2.6 · via Fireworks",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        },
+        "accounts/fireworks/models/deepseek-v4-pro": {
+          "label": "DeepSeek V4 Pro · via Fireworks",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1040000,
+          "pinned": [
+            "context"
+          ],
+          "note": "fireworks.ai/models/fireworks/deepseek-v4-pro lists 1040k tokens (read 2026-10-17)."
+        },
+        "accounts/fireworks/models/llama4-maverick-instruct-basic": {
+          "label": "Llama 4 Maverick · via Fireworks",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
+    "openrouter": {
+      "note": "Lowercase <lab>/<model> slugs. Kimi K2.6/K3 and Llama 4 Maverick declare image input (architecture.input_modalities, 2026-08-09); PDF unverified over compat. Nemotron: paid endpoints only, the :free variants are left out (they log and may train on inputs, 1,000 requests/day); Ultra is sized for BaseTen, the pinned host (202,800), not the model-level 262,144 (OPE-215). GLM 5.3 is sized for the Z.AI host (1,048,576 ctx, 131,072 max output). stealth/ox-alpha is a temporary lab preview; keep it until OpenRouter retires it. The signed-in openrouter-account provider mirrors every row here at load time; do not list it separately.",
+      "models": {
+        "z-ai/glm-5.2": {
+          "label": "GLM-5.2 · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "moonshotai/kimi-k3": {
+          "label": "Kimi K3 · via OpenRouter",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "moonshotai/kimi-k2.6": {
+          "label": "Kimi K2.6 · via OpenRouter",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        },
+        "deepseek/deepseek-v4-pro": {
+          "label": "DeepSeek V4 Pro · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "meta-llama/llama-4-maverick": {
+          "label": "Llama 4 Maverick · via OpenRouter",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b": {
+          "label": "Nemotron 3 Ultra · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 202800,
+          "note": "Sized for BaseTen, the host a pinned run uses (202,800), not the model-level 262,144 (OPE-215).",
+          "pinned": [
+            "context"
+          ]
+        },
+        "nvidia/nemotron-3.5-lightning": {
+          "label": "Nemotron 3.5 Lightning · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 262144
+        },
+        "z-ai/glm-5.3": {
+          "label": "GLM 5.3 · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576,
+          "note": "Sized for the Z.AI host a pinned run uses (1,048,576 ctx, 131,072 max output; OPE-215).",
+          "pinned": [
+            "context"
+          ]
+        },
+        "stealth/ox-alpha": {
+          "label": "Ox Alpha · via OpenRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576,
+          "note": "Temporary cloaked lab preview; expect the slug to vanish when the real model ships."
+        }
+      }
+    },
+    "orcarouter": {
+      "note": "api.orcarouter.ai/v1/models (keyless, read 2026-10-25): context_length 1,000,000 and 1,048,576; both list tools; Sonnet 5 declares image input, PDF unverified over compat.",
+      "models": {
+        "anthropic/claude-sonnet-5": {
+          "label": "Claude Sonnet 5 · via OrcaRouter",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "deepseek/deepseek-v4-pro": {
+          "label": "DeepSeek V4 Pro · via OrcaRouter",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "nvidia": {
+      "note": "integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25); windows from the build.nvidia.com model pages the same day (1M for all three). Text-only.",
+      "models": {
+        "nvidia/nemotron-3-super-120b-a12b": {
+          "label": "Nemotron 3 Super · via NVIDIA",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b": {
+          "label": "Nemotron 3 Ultra · via NVIDIA",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "nvidia/nemotron-3.5-lightning-30b-a3b": {
+          "label": "Nemotron 3.5 Lightning · via NVIDIA",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        }
+      }
+    },
+    "bedrock": {
+      "note": "Ids carry a family segment (claude/ = native Anthropic path, other/ = Converse) plus AWS's -v<n>:<m> suffix; some regions need the us./eu. inference-profile prefix, which custom add-model accepts. Claude 5 ids from the AWS model cards, read 2026-10-25 (no version suffix; 1M context, image input, tool use). Nemotron Super 3 was live-verified on Converse 2026-07-26: it emits tool calls one at a time, so parallel stays off.",
+      "models": {
+        "claude/anthropic.claude-fable-5": {
+          "label": "Claude Fable 5 · AWS Bedrock",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude/anthropic.claude-opus-5": {
+          "label": "Claude Opus 5 · AWS Bedrock",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude/anthropic.claude-sonnet-5": {
+          "label": "Claude Sonnet 5 · AWS Bedrock",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude/anthropic.claude-sonnet-4-6-v1:0": {
+          "label": "Claude Sonnet 4.6 · AWS Bedrock",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude/anthropic.claude-haiku-4-5-v1:0": {
+          "label": "Claude Haiku 4.5 · AWS Bedrock",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "other/amazon.nova-2-pro-v1:0": {
+          "label": "Nova 2 Pro · AWS Bedrock",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 300000
+        },
+        "other/meta.llama4-maverick-17b-instruct-v1:0": {
+          "label": "Llama 4 Maverick · AWS Bedrock",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "other/mistral.mistral-large-3-v1:0": {
+          "label": "Mistral Large 3 · AWS Bedrock",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 128000
+        },
+        "other/nvidia.nemotron-super-3-120b": {
+          "label": "Nemotron Super 3 120B · AWS Bedrock",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": false,
+          "context": null,
+          "note": "Live-verified on Converse 2026-07-26; asked for two tool calls it emits them one at a time, so parallel stays off. Window unverified."
+        }
+      }
+    },
+    "vertex": {
+      "note": "Ids carry a family segment (gemini/ and claude/ = native paths, openweight/ = the MaaS OpenAI-compatible endpoint, publisher segment kept).",
+      "models": {
+        "gemini/gemini-3.1-pro-preview": {
+          "label": "Gemini 3.1 Pro · Vertex AI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "gemini/gemini-3.6-flash": {
+          "label": "Gemini 3.6 Flash · Vertex AI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "claude/claude-sonnet-4-6": {
+          "label": "Claude Sonnet 4.6 · Vertex AI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "claude/claude-haiku-4-5": {
+          "label": "Claude Haiku 4.5 · Vertex AI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 200000
+        },
+        "openweight/meta/llama-4-maverick-17b-128e-instruct-maas": {
+          "label": "Llama 4 Maverick · Vertex AI",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": {
+          "label": "Qwen3 Coder · Vertex AI",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 256000
+        }
+      }
+    },
+    "nebius": {
+      "note": "tokenfactory.nebius.com/api/public/models_info (read 2026-10-25): max_model_len 1,048,576 for both; function_calling listed.",
+      "models": {
+        "zai-org/GLM-5.2": {
+          "label": "GLM-5.2 · via Nebius",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "label": "DeepSeek V4 Pro · via Nebius",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
+        }
+      }
+    },
+    "groq": {
+      "note": "console.groq.com/docs/models production table, read 2026-10-25: 131,072 context each. docs/tool-use, same day: all three take tools; only Llama 3.3 does parallel tool use.",
+      "models": {
+        "llama-3.3-70b-versatile": {
+          "label": "Llama 3.3 70B Versatile · via Groq",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 131072
+        },
+        "openai/gpt-oss-120b": {
+          "label": "GPT-OSS 120B · via Groq",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": false,
+          "context": 131072,
+          "note": "Takes tools; no parallel tool use (console.groq.com/docs/tool-use, read 2026-10-25)."
+        },
+        "openai/gpt-oss-20b": {
+          "label": "GPT-OSS 20B · via Groq",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": false,
+          "context": 131072,
+          "note": "Takes tools; no parallel tool use (console.groq.com/docs/tool-use, read 2026-10-25)."
+        }
+      }
+    }
+  }
+}
