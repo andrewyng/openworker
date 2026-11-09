@@ -370,6 +370,111 @@ def test_refresh_never_touches_manual_profiles(secrets, config, monkeypatch):
     assert secrets.get("gmail:default")["access_token"] == "manual"
 
 
+# --- a refused renewal is not retried on every call (OPE-265) ---------------------------
+
+
+def _expired_session(secrets, refresh_token="rt-1"):
+    secrets.put(
+        cloud.CLOUD_AUTH_PROFILE,
+        {"access_token": "stale", "refresh_token": refresh_token, "expires": time.time() - 10},
+    )
+
+
+@pytest.fixture
+def no_refusals(monkeypatch):
+    monkeypatch.setattr(cloud, "_refused_renewals", {})
+
+
+def test_a_refused_renewal_is_not_asked_again_inside_the_window(secrets, config, monkeypatch, no_refusals):
+    """Seen 2026-11-09: a desktop with a stale sign-in posted the same refused refresh
+    on every GET /v1/cloud/machines, 2.5 s each, and Settings queued behind them."""
+    _expired_session(secrets)
+    posts: list[dict] = []
+
+    def fake_post(url, data=None, **kw):
+        posts.append(data)
+        return FakeResponse(403, {"error": "invalid_grant"})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert len(posts) == 1
+    assert posts[0]["refresh_token"] == "rt-1"
+
+
+def test_the_renewal_is_asked_again_once_the_window_has_passed(secrets, config, monkeypatch, no_refusals):
+    _expired_session(secrets)
+    posts: list[dict] = []
+    monkeypatch.setattr(cloud.httpx, "post", lambda url, data=None, **kw: (posts.append(data), FakeResponse(403, {}))[1])
+    now = time.time()
+    monkeypatch.setattr(cloud, "_now", lambda: now)
+    cloud.fresh_access_token(secrets, config)
+    monkeypatch.setattr(cloud, "_now", lambda: now + cloud._REFUSED_RENEWAL_TTL - 1)
+    cloud.fresh_access_token(secrets, config)
+    assert len(posts) == 1
+    monkeypatch.setattr(cloud, "_now", lambda: now + cloud._REFUSED_RENEWAL_TTL + 1)
+    cloud.fresh_access_token(secrets, config)
+    assert len(posts) == 2
+
+
+def test_a_new_sign_in_is_tried_at_once(secrets, config, monkeypatch, no_refusals):
+    """The memo is per refresh token: signing in again stores a new one, and the first
+    call with it must not inherit the old token's pause."""
+    _expired_session(secrets, "rt-old")
+    posts: list[dict] = []
+
+    def fake_post(url, data=None, **kw):
+        posts.append(data)
+        if data["refresh_token"] == "rt-old":
+            return FakeResponse(403, {})
+        return FakeResponse(200, {"access_token": "fresh", "refresh_token": "rt-new", "expires_in": 3600})
+
+    monkeypatch.setattr(cloud.httpx, "post", fake_post)
+    assert cloud.fresh_access_token(secrets, config) is None
+    _expired_session(secrets, "rt-new")  # what a new sign-in (and its later expiry) leaves
+    assert cloud.fresh_access_token(secrets, config) == "fresh"
+    assert [p["refresh_token"] for p in posts] == ["rt-old", "rt-new"]
+
+
+def test_a_renewal_that_succeeds_clears_the_memo(secrets, config, monkeypatch, no_refusals):
+    """Refused once (a blip at the auth service), renewed after the window: the token
+    is served from the store afterwards and the memo holds nothing for it."""
+    _expired_session(secrets)
+    answers = [FakeResponse(503, {}), FakeResponse(200, {"access_token": "fresh", "refresh_token": "rt-1", "expires_in": 3600})]
+    monkeypatch.setattr(cloud.httpx, "post", lambda url, data=None, **kw: answers.pop(0))
+    now = time.time()
+    monkeypatch.setattr(cloud, "_now", lambda: now)
+    assert cloud.fresh_access_token(secrets, config) is None
+    monkeypatch.setattr(cloud, "_now", lambda: now + cloud._REFUSED_RENEWAL_TTL + 1)
+    assert cloud.fresh_access_token(secrets, config) == "fresh"
+    assert cloud._refused_renewals == {}
+    assert cloud.fresh_access_token(secrets, config) == "fresh"  # from the store, no post left to answer
+
+
+def test_an_unreachable_auth_service_answers_none_and_backs_off(secrets, config, monkeypatch, no_refusals):
+    """Before: the exception escaped `fresh_access_token`, so the cloud machines route
+    failed instead of answering `expired`. Now: no token, and no retry storm."""
+    _expired_session(secrets)
+    calls = {"n": 0}
+
+    def boom(url, **kw):
+        calls["n"] += 1
+        raise cloud.httpx.ConnectError("no route")
+
+    monkeypatch.setattr(cloud.httpx, "post", boom)
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert cloud.fresh_access_token(secrets, config) is None
+    assert calls["n"] == 1
+
+
+def test_a_valid_token_is_served_without_consulting_the_memo(secrets, config, monkeypatch, no_refusals):
+    cloud._refused_renewals["rt-1"] = time.time()
+    secrets.put(cloud.CLOUD_AUTH_PROFILE, {"access_token": "live", "refresh_token": "rt-1", "expires": time.time() + 600})
+    monkeypatch.setattr(cloud.httpx, "post", lambda *a, **k: pytest.fail("no post expected"))
+    assert cloud.fresh_access_token(secrets, config) == "live"
+
+
 def test_fresh_profile_not_refreshed(secrets, config, monkeypatch):
     _signed_in(secrets)
     secrets.put(

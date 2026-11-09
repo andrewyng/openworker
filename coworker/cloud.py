@@ -226,14 +226,37 @@ def logout(secrets: SecretStore) -> dict[str, Any]:
     return {"ok": True, "signed_in": False}
 
 
+# A renewal the auth service refused (or that never got through) is not asked again
+# for this long, per refresh token. Without it every GET /v1/cloud/machines on a desktop
+# with a stale sign-in posted the same refused refresh (2.5 s each, one at a time under
+# the store lock, several per GUI refresh) and the Settings pages queued behind them
+# (OPE-265, 2026-11-09). A new sign-in stores a new refresh token and is tried at once.
+_REFUSED_RENEWAL_TTL = 300.0
+_refused_renewals: dict[str, float] = {}
+
+
+def _renewal_refused_recently(refresh_token: str) -> bool:
+    at = _refused_renewals.get(refresh_token)
+    if at is None:
+        return False
+    if _now() - at < _REFUSED_RENEWAL_TTL:
+        return True
+    del _refused_renewals[refresh_token]
+    return False
+
+
 def fresh_access_token(secrets: SecretStore, config: Config) -> Optional[str]:
     """Valid cloud session token, silently refreshed near expiry; None when
-    signed out or the session can't be renewed (GUI shows "sign in again")."""
+    signed out or the session can't be renewed (GUI shows "sign in again").
+    A refused renewal is remembered for `_REFUSED_RENEWAL_TTL` so the callers that
+    poll (the cloud machines proxy, status) do not pay a network round trip each."""
     profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
     if not profile.get("access_token"):
         return None
     if float(profile.get("expires") or 0) > _now():
         return profile["access_token"]
+    if _renewal_refused_recently(str(profile.get("refresh_token") or "")):
+        return None
     # One renewal at a time, across processes (the app and each `openworker run` share
     # this store). Read again inside the lock: whoever got here first has renewed it, and
     # a second renewal with the refresh token it replaced could cancel the session.
@@ -243,19 +266,30 @@ def fresh_access_token(secrets: SecretStore, config: Config) -> Optional[str]:
             return None
         if float(profile.get("expires") or 0) > _now():
             return profile["access_token"]
-        if not profile.get("refresh_token"):
+        refresh_token = profile.get("refresh_token")
+        if not refresh_token:
             return None
-        resp = httpx.post(
-            f"https://{config.cloud_auth_domain}/oauth/token",
-            data={
-                "grant_type": "refresh_token",
-                "client_id": config.cloud_client_id,
-                "refresh_token": profile["refresh_token"],
-            },
-            timeout=15,
-        )
+        if _renewal_refused_recently(refresh_token):
+            return None  # another process was refused while we waited for the lock
+        try:
+            resp = httpx.post(
+                f"https://{config.cloud_auth_domain}/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": config.cloud_client_id,
+                    "refresh_token": refresh_token,
+                },
+                timeout=15,
+            )
+        except httpx.HTTPError:
+            # The auth service could not be reached: the same answer as a refusal for
+            # the callers (no token), and the same pause before the next attempt.
+            _refused_renewals[refresh_token] = _now()
+            return None
         if resp.status_code != 200:
+            _refused_renewals[refresh_token] = _now()
             return None
+        _refused_renewals.pop(refresh_token, None)
         _store_cloud_tokens(secrets, resp.json())
         return (secrets.get(CLOUD_AUTH_PROFILE) or {}).get("access_token")
 
