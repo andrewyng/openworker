@@ -5581,6 +5581,7 @@ class SessionManager:
                 entry = {
                     "fetched_at": now,
                     "ids": ids,
+                    "all_ids": listing.all_ids or ids,
                     "seen": seen,
                     "new": [i for i in ids if i not in seen_set],
                     "models": {m.id: live_models.as_dict(m) for m in listing.models},
@@ -5690,7 +5691,9 @@ class SessionManager:
         if not ids:
             return None
         _prov, bare = split_id(model)
-        if self._listed(bare, ids) is not None:
+        # Typed by hand, any id the provider lists is on the key, chat model or not (an
+        # image or music model is not offered in the list, but it is not refused either).
+        if self._listed(bare, [str(i) for i in entry.get("all_ids") or ids]) is not None:
             return None
         close = difflib.get_close_matches(bare, ids, n=3, cutoff=0.5)
         return {

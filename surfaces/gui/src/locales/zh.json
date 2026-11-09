@@ -1437,8 +1437,6 @@
     "catalog_tag_images_pdf": "图片 + PDF",
     "catalog_tag_context_title": "上下文窗口：{{tokens}} 个 token。来自我们的审核列表或提供方自己的列表，从不猜测。",
     "catalog_tag_context": "{{size}} 上下文",
-    "catalog_also_on_key": "此密钥还可用",
-    "catalog_reviewed": "OpenWorker 已审核",
     "catalog_tag_unverified": "未核实",
     "catalog_tag_not_on_key": "不在此密钥上",
     "catalog_unverified_help": "未核实：尚无人核对此模型的参数。它以保守默认值运行；若提供方拒绝过长的提示，应用会自动调低其上下文窗口。如果你知道窗口大小，可在模型设置中设定。",

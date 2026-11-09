@@ -114,14 +114,27 @@ def test_anthropic_shape_uses_display_names_and_iso_dates():
     ]
 
 
-def test_gemini_shape_strips_the_prefix_and_keeps_generate_content_models_only():
+def test_gemini_shape_strips_the_prefix_and_keeps_language_models_only():
+    """Google serves image, music, video and robotics models through generateContent too
+    (seen 2026-11-09 with a real key: Nano Banana Pro, Lyria 3.5, Veo, Robotics-ER); the
+    method alone does not tell, the names and ids do."""
+    gc = ["generateContent", "countTokens"]
     rows = live_models.parse_listing("gemini", {"models": [
-        {"name": "models/gemini-3-pro", "displayName": "Gemini 3 Pro", "inputTokenLimit": 2_097_152, "outputTokenLimit": 65_536,
-         "supportedGenerationMethods": ["generateContent", "countTokens"]},
+        {"name": "models/gemini-3-pro", "displayName": "Gemini 3 Pro", "inputTokenLimit": 2_097_152, "outputTokenLimit": 65_536, "supportedGenerationMethods": gc},
+        {"name": "models/gemma-4-31b-it", "displayName": "Gemma 4 31B IT", "inputTokenLimit": 262_144, "supportedGenerationMethods": gc},
         {"name": "models/text-embedding-005", "displayName": "Embedding", "supportedGenerationMethods": ["embedContent"]},
         {"name": "models/imagen-4", "displayName": "Imagen", "supportedGenerationMethods": ["predict"]},
+        {"name": "models/gemini-3-pro-image-preview", "displayName": "Nano Banana Pro", "inputTokenLimit": 131_072, "supportedGenerationMethods": gc},
+        {"name": "models/lyria-3-5", "displayName": "Lyria 3.5", "inputTokenLimit": 1_048_576, "supportedGenerationMethods": gc},
+        {"name": "models/veo-4", "displayName": "Veo 4", "supportedGenerationMethods": gc},
+        {"name": "models/gemini-robotics-er-2-preview", "displayName": "Gemini Robotics-ER 2 Preview", "inputTokenLimit": 131_072, "supportedGenerationMethods": gc},
+        {"name": "models/gemini-3-flash-live", "displayName": "Gemini 3 Flash Live", "supportedGenerationMethods": ["bidiGenerateContent"]},
+        {"name": "models/gemini-3-flash-tts", "displayName": "Gemini 3 Flash TTS", "supportedGenerationMethods": gc},
     ]})
-    assert [(r.id, r.name, r.context) for r in rows] == [("gemini-3-pro", "Gemini 3 Pro", 2_097_152)]
+    assert sorted((r.id, r.name, r.context) for r in rows) == [
+        ("gemini-3-pro", "Gemini 3 Pro", 2_097_152),
+        ("gemma-4-31b-it", "Gemma 4 31B IT", 262_144),
+    ]
 
 
 def test_openrouter_shape_carries_context_tools_and_images():
@@ -375,6 +388,16 @@ def test_add_model_accepts_an_id_the_key_lists_whatever_its_case(manager, fake_p
     assert manager.add_model("openrouter:openai/gpt-6-astra")["ok"] is True
     assert manager.add_model("openrouter:OpenAI/GPT-6-Astra")["ok"] is True
     assert "openrouter:openai/gpt-6-astra" in manager.get_settings()["models"]
+
+
+def test_a_listed_non_chat_model_is_not_offered_but_not_refused_either(manager, fake_provider):
+    """Owner's question 2026-11-09: image and music models are not coworker models, so
+    the list leaves them out; a user who types one by hand is not told the key lacks it."""
+    _key(manager)
+    out = manager.provider_catalog("openrouter")
+    assert "openai/text-embedding-4" not in {r["id"] for r in out["rows"]}
+    assert manager.add_model("openrouter:openai/text-embedding-4")["ok"] is True
+    assert manager.add_model("openrouter:openai/text-embedding-9")["ok"] is False
 
 
 def test_add_model_is_not_gated_without_a_listing(manager, fake_provider):

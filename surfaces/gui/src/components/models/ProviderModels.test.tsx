@@ -65,12 +65,11 @@ describe("ProviderModels with a live listing", () => {
     expect(getProviderCatalog).toHaveBeenCalledWith("openrouter", false);
     expect(screen.getByTestId("catalog-status").textContent).toContain("4 models on this key");
     expect(screen.getByTestId("catalog-new").textContent).toContain("Brand New");
-    expect(screen.getByTestId("catalog-recommended").textContent).toContain("GLM-5.2");
-    expect(screen.getByTestId("catalog-recommended").textContent).toContain("Kimi K3");
-    const all = screen.getByTestId("catalog-all").textContent || "";
-    expect(all).toContain("GPT-6 Astra");
-    expect(all).toContain("Mystery");
-    expect(all).not.toContain("Brand New");
+    const list = screen.getByTestId("catalog-list");
+    const names = Array.from(list.querySelectorAll(".mlist-name")).map((n) => n.textContent);
+    expect(names).toEqual(["GLM-5.2 · via OpenRouter", "OpenAI: GPT-6 Astra", "Mystery", "Kimi K3 · via OpenRouter"]); // the backend's order, one list
+    expect(list.textContent).not.toContain("Brand New");
+    expect(screen.queryByText("Reviewed by OpenWorker")).toBeNull();
     // the facts and where they came from
     expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("new");
     expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("922K context");
@@ -80,8 +79,6 @@ describe("ProviderModels with a live listing", () => {
     expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).not.toContain("PDF");
     expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("images + PDF");
     expect(screen.getByTestId("catalog-tags-lab/mystery").textContent).toContain("unverified");
-    expect(screen.getByTestId("catalog-recommended").textContent).toContain("Reviewed by OpenWorker");
-    expect(screen.getByTestId("catalog-all").textContent).toContain("Also on your key");
     expect(screen.getByTestId("catalog-tags-moonshotai/kimi-k3").textContent).toContain("not on this key");
     expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked models are not on this key");
     // the default row is ticked and locked
@@ -128,7 +125,7 @@ describe("ProviderModels with a live listing", () => {
     fireEvent.click(screen.getByTestId("catalog-refresh"));
     await waitFor(() => expect(getProviderCatalog).toHaveBeenLastCalledWith("openrouter", true));
     await waitFor(() => expect(screen.getByTestId("catalog-error").textContent).toContain("HTTP 503"));
-    expect(screen.getByTestId("catalog-recommended").textContent).toContain("GLM-5.2");
+    expect(screen.getByTestId("catalog-list").textContent).toContain("GLM-5.2");
   });
 
   it("search narrows every section and long lists fold", async () => {
@@ -136,12 +133,12 @@ describe("ProviderModels with a live listing", () => {
     vi.mocked(getProviderCatalog).mockResolvedValue({ ...LIVE, rows: [...LIVE.rows, ...many] });
     renderPanel();
     await flush();
-    expect(screen.getByTestId("catalog-all").querySelectorAll(".mlist-row").length).toBe(12);
-    expect(screen.getByTestId("catalog-show-all").textContent).toContain("Show all 22");
+    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(12);
+    expect(screen.getByTestId("catalog-show-all").textContent).toContain("Show all 24");
     fireEvent.click(screen.getByTestId("catalog-show-all"));
-    expect(screen.getByTestId("catalog-all").querySelectorAll(".mlist-row").length).toBe(22);
+    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(24);
     fireEvent.change(screen.getByTestId("catalog-search"), { target: { value: "astra" } });
-    expect(screen.getByTestId("catalog-all").querySelectorAll(".mlist-row").length).toBe(1);
+    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(1);
     expect(screen.queryByTestId("catalog-new")).toBeNull();
   });
 });
