@@ -89,12 +89,14 @@ export function ProviderModels({
 
   const rows = catalog?.rows || [];
   const q = query.trim().toLowerCase();
+  // One list (owner's call 2026-11-09: no reviewed-versus-rest split): the rows the
+  // backend ordered, reviewed first, then the provider's own newest first. Models the
+  // provider added since the last check sit above it under their own heading.
   const sections = useMemo(() => {
     const match = (r: ProviderCatalogRow) => !q || r.id.toLowerCase().includes(q) || r.label.toLowerCase().includes(q);
     const fresh = rows.filter((r) => r.new && match(r));
-    const recommended = rows.filter((r) => !r.new && (r.recommended || r.verified === "catalog") && match(r));
-    const rest = rows.filter((r) => !r.new && !(r.recommended || r.verified === "catalog") && match(r));
-    return { fresh, recommended, rest };
+    const rest = rows.filter((r) => !r.new && match(r));
+    return { fresh, rest };
   }, [rows, q]);
 
   const setRow = (model: string, patch: Partial<ProviderCatalogRow>) =>
@@ -230,12 +232,12 @@ export function ProviderModels({
     );
   };
 
-  const section = (title: string, items: ProviderCatalogRow[], testid: string, foldable = false) => {
+  const section = (title: string | null, items: ProviderCatalogRow[], testid: string, foldable = false) => {
     if (!items.length) return null;
     const shown = foldable && !showAll && !q ? items.slice(0, FOLD) : items;
     return (
       <div className="mt-3" data-testid={testid}>
-        <div className="text-meta font-semibold text-muted uppercase tracking-wide mb-1">{title}</div>
+        {title && <div className="text-meta font-semibold text-muted uppercase tracking-wide mb-1">{title}</div>}
         <div className="mlist">{shown.map(rowEl)}</div>
         {foldable && !q && items.length > FOLD && (
           <button className="text-meta text-muted underline underline-offset-2 hover:text-ink mt-1" onClick={() => setShowAll((v) => !v)} data-testid="catalog-show-all">
@@ -268,8 +270,7 @@ export function ProviderModels({
         <p className="text-meta text-muted mt-1" data-testid="catalog-not-on-key">{t("manage.catalog_not_on_key_help", { count: catalog.not_on_key.length })}</p>
       )}
       {section(t("manage.catalog_new_since"), sections.fresh, "catalog-new")}
-      {section(t("manage.catalog_reviewed"), sections.recommended, "catalog-recommended")}
-      {section(t("manage.catalog_also_on_key"), sections.rest, "catalog-all", true)}
+      {section(null, sections.rest, "catalog-list", true)}
       {rows.some((r) => r.verified === "unverified" && r.in_picker) && (
         <p className="text-meta text-muted mt-2" data-testid="catalog-unverified-help">{t("manage.catalog_unverified_help")}</p>
       )}

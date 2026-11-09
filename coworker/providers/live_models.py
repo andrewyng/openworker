@@ -23,7 +23,7 @@ import json
 import os
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,9 +40,14 @@ NO_LISTING: dict[str, str] = {
     "ark-agent-plan-cn": "BytePlus Ark publishes no model list; the curated rows are shown.",
 }
 
-# Ids that are not chat models whatever the provider says (embeddings, speech, images,
-# moderation, rerankers); a picker row for them would only fail in a session.
-_NOT_CHAT = ("embed", "tts", "whisper", "dall-e", "moderation", "rerank", "transcri", "image-", "-image", "audio", "sora", "realtime")
+# Ids and names that are not chat models whatever the provider says: embeddings, speech,
+# image / music / video generators, robotics, moderation, rerankers. Google serves several
+# of these through the same generateContent method as its language models (Nano Banana
+# draws, Lyria composes, Veo films, Robotics-ER drives), so the method alone does not tell.
+_NOT_CHAT = (
+    "embed", "tts", "whisper", "dall-e", "moderation", "rerank", "transcri", "image-", "-image", "imagen",
+    "audio", "sora", "realtime", "banana", "lyria", "veo", "music", "video", "robotics", "-live", "aqa",
+)
 
 
 @dataclass(frozen=True)
@@ -59,9 +64,12 @@ class LiveModel:
 class Listing:
     provider: str
     ok: bool
-    models: list[LiveModel]
+    models: list[LiveModel]  # the chat models, what the page lists
     error: Optional[str] = None
     status: Optional[int] = None
+    # Every id the provider listed, chat or not: an image or music model is not offered
+    # as a coworker's model, but a user who types its id is not told the key lacks it.
+    all_ids: list[str] = field(default_factory=list)
 
 
 # -- the request ---------------------------------------------------------------------------
@@ -165,10 +173,11 @@ def _row(name: str, item: dict[str, Any]) -> Optional[LiveModel]:
     kind = item.get("type")
     if isinstance(kind, str) and kind not in ("chat", "model", "language", "llm"):
         return None  # Together: image / embedding / audio rows
-    lowered = model_id.lower()
-    if any(mark in lowered for mark in _NOT_CHAT):
-        return None
     display = item.get("display_name") or item.get("displayName")
+    lowered = model_id.lower()
+    shown = display.lower() if isinstance(display, str) else ""
+    if any(mark in lowered or mark in shown for mark in _NOT_CHAT):
+        return None
     if not isinstance(display, str) or not display.strip():
         display = item.get("name") if isinstance(item.get("name"), str) and item.get("name") != raw_id else None
     tools: Optional[bool] = None
@@ -195,18 +204,38 @@ def _row(name: str, item: dict[str, Any]) -> Optional[LiveModel]:
     )
 
 
-def parse_listing(name: str, payload: Any) -> list[LiveModel]:
-    """The chat models in a provider's answer, newest first. Tolerant of the three shapes
-    in use: {"data": [...]} (OpenAI and most), {"models": [...]} (Gemini, Cohere), a bare
-    list (Together)."""
+def _items(payload: Any) -> list[Any]:
     if isinstance(payload, dict):
         items = payload.get("data")
         if not isinstance(items, list):
             items = payload.get("models")
     else:
         items = payload
-    if not isinstance(items, list):
-        return []
+    return items if isinstance(items, list) else []
+
+
+def listed_ids(name: str, payload: Any) -> list[str]:
+    """Every model id in the answer, chat or not, in the provider's order."""
+    out: list[str] = []
+    for item in _items(payload):
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("id") if isinstance(item.get("id"), str) else item.get("name")
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            continue
+        model_id = raw_id.strip()
+        if name == "gemini" and model_id.startswith("models/"):
+            model_id = model_id[len("models/"):]
+        if model_id not in out:
+            out.append(model_id)
+    return out
+
+
+def parse_listing(name: str, payload: Any) -> list[LiveModel]:
+    """The chat models in a provider's answer, newest first. Tolerant of the three shapes
+    in use: {"data": [...]} (OpenAI and most), {"models": [...]} (Gemini, Cohere), a bare
+    list (Together)."""
+    items = _items(payload)
     rows: dict[str, LiveModel] = {}
     for item in items:
         if not isinstance(item, dict):
@@ -242,7 +271,7 @@ def fetch(name: str, profile: dict[str, Any], descriptor: Any, *, timeout: float
         payload = resp.json()
     except ValueError:
         return Listing(name, False, [], error="The provider's model list was not JSON.", status=resp.status_code)
-    return Listing(name, True, parse_listing(name, payload), status=resp.status_code)
+    return Listing(name, True, parse_listing(name, payload), status=resp.status_code, all_ids=listed_ids(name, payload))
 
 
 # -- facts the rest of the app can read without the manager --------------------------------

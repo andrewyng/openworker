@@ -1467,8 +1467,6 @@
     "catalog_tag_images_pdf": "images + PDF",
     "catalog_tag_context_title": "Context window: {{tokens}} tokens. From our reviewed list or the provider's own list, never a guess.",
     "catalog_tag_context": "{{size}} context",
-    "catalog_also_on_key": "Also on your key",
-    "catalog_reviewed": "Reviewed by OpenWorker",
     "catalog_tag_unverified": "unverified",
     "catalog_tag_not_on_key": "not on this key",
     "catalog_unverified_help": "Unverified: nobody has checked this model's facts yet. It runs with safe defaults, and the app lowers its window if the provider refuses a long prompt. Set the window under the model's settings if you know it.",
