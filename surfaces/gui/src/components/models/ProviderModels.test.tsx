@@ -73,7 +73,9 @@ describe("ProviderModels with a live listing", () => {
     expect(all).not.toContain("Brand New");
     // the facts and where they came from
     expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("new");
-    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("900K");
+    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("922K");
+    expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("262K");
+    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("1M");
     expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("images");
     expect(screen.getByTestId("catalog-tags-lab/mystery").textContent).toContain("unverified");
     expect(screen.getByTestId("catalog-tags-moonshotai/kimi-k3").textContent).toContain("not on this key");

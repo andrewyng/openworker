@@ -5606,6 +5606,25 @@ class SessionManager:
             "count": len(live_ids),
         }
 
+    # Anthropic (and a few others) list dated ids, `claude-haiku-4-5-20251001`, while the
+    # undated `claude-haiku-4-5` is what the API accepts and what the catalog carries. The
+    # dated id is the same model: it folds into the undated row and counts as on the key.
+    _DATED_ID = re.compile(r"-\d{8}$")
+
+    @classmethod
+    def _alias_base(cls, bare: str) -> str:
+        return cls._DATED_ID.sub("", bare)
+
+    def _listed(self, bare: str, ids: list[str]) -> Optional[str]:
+        """The listing's id for `bare` (exact, case-insensitive, or its dated twin), or None."""
+        key = bare.lower()
+        base = self._alias_base(key)
+        for i in ids:
+            low = str(i).lower()
+            if low == key or self._alias_base(low) == base:
+                return str(i)
+        return None
+
     def _catalog_rows(self, name: str, entry: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
         from ..providers.matrix import MATRIX, full_id, models_for_provider
 
@@ -5613,10 +5632,13 @@ class SessionManager:
         rec = d.recommended_model if d else None
         picker = set(self._curated_models())
         live = (entry or {}).get("models") or {}
-        live_ids = list((entry or {}).get("ids") or [])
-        live_lower = {str(i).lower(): str(i) for i in live_ids}
+        live_ids = [str(i) for i in (entry or {}).get("ids") or []]
         new = set((entry or {}).get("new") or [])
-        order = [*[i for i in live_ids if i in new], *([rec] if rec else []), *models_for_provider(name), *live_ids]
+        curated = list(models_for_provider(name))
+        curated_bases = {self._alias_base(c.lower()): c for c in curated}
+        # a dated live id whose undated twin is a curated row shows as that row
+        folded = {i: curated_bases[self._alias_base(i.lower())] for i in live_ids if self._alias_base(i.lower()) in curated_bases and i.lower() not in {c.lower() for c in curated}}
+        order = [*[folded.get(i, i) for i in live_ids if i in new], *([rec] if rec else []), *curated, *[folded.get(i, i) for i in live_ids]]
         rows: list[dict[str, Any]] = []
         done: set[str] = set()
         for bare in order:
@@ -5626,7 +5648,8 @@ class SessionManager:
             done.add(key)
             full = full_id(name, bare)
             cat = MATRIX.get(full)
-            lm = live.get(bare) or live.get(live_lower.get(key, "")) or {}
+            listed = self._listed(bare, live_ids) if live_ids else None
+            lm = (live.get(listed) if listed else None) or {}
             context = cat.context_window if cat else lm.get("context")
             if cat:
                 verified = "catalog"
@@ -5644,8 +5667,8 @@ class SessionManager:
                 "released": lm.get("created"),
                 "in_picker": full in picker,
                 "recommended": bare == rec,
-                "new": bare in new,
-                "on_key": (key in live_lower) if live_ids else None,
+                "new": bare in new or (listed in new if listed else False),
+                "on_key": (listed is not None) if live_ids else None,
                 "verified": verified,
             })
         return rows
@@ -5666,8 +5689,7 @@ class SessionManager:
         if not ids:
             return None
         _prov, bare = split_id(model)
-        lowered = {i.lower(): i for i in ids}
-        if bare.lower() in lowered:
+        if self._listed(bare, ids) is not None:
             return None
         close = difflib.get_close_matches(bare, ids, n=3, cutoff=0.5)
         return {

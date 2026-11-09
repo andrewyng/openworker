@@ -17,9 +17,19 @@ import {
   type ProviderCatalogRow,
 } from "../../api";
 import { ModelChecklist } from "../ModelChecklist";
-import { fmtContext } from "./LocalModels";
 
 const FOLD = 12;
+
+// Cloud windows are decimal figures (200,000; 922,000; 1,048,576): show them as the vendor
+// writes them, not in the power-of-two steps local servers use.
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    const text = m >= 10 || Math.abs(m - Math.round(m)) < 0.06 ? String(Math.round(m)) : m.toFixed(1);
+    return `${text}M`;
+  }
+  return `${Math.round(n / 1000)}K`;
+}
 
 function ago(epoch: number | null | undefined, t: (k: string, o?: Record<string, unknown>) => string): string {
   if (!epoch) return "";
@@ -188,7 +198,7 @@ export function ProviderModels({
   const rowEl = (row: ProviderCatalogRow) => {
     const isDefault = row.model === settings.model;
     const tags: { key: string; text: string; tone?: string }[] = [];
-    if (row.context) tags.push({ key: "ctx", text: fmtContext(row.context) });
+    if (row.context) tags.push({ key: "ctx", text: fmtTokens(row.context) });
     if (row.vision) tags.push({ key: "img", text: t("manage.catalog_tag_images") });
     if (row.new) tags.push({ key: "new", text: t("manage.catalog_tag_new"), tone: "text-ok" });
     if (row.verified === "unverified") tags.push({ key: "unv", text: t("manage.catalog_tag_unverified"), tone: "text-warnInk" });
