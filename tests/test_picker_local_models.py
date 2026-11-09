@@ -191,6 +191,39 @@ def test_when_nothing_can_run_the_default_stays_and_the_chip_is_honest(tmp_path,
     assert settings["any_model_ready"] is False
 
 
+def test_signing_out_of_the_openrouter_account_moves_the_default_too(tmp_path, monkeypatch):
+    """Seen 2026-11-09: the account providers sign out through their own routes, not
+    Remove key, so the default stayed on a model nobody could run."""
+    manager, _ = _manager(tmp_path, monkeypatch)
+    _store_key(manager, "openrouter-account")  # what a sign-in leaves behind: a key
+    manager.set_default_model("openrouter-account:z-ai/glm-5.2")
+    assert manager.get_settings()["model_ready"] is True
+
+    manager.secrets.delete("provider:openrouter-account")  # what disconnect() does
+    assert manager.provider_signin_changed("openrouter-account") == "ollama:qwen3:0.6b"
+    settings = manager.get_settings()
+    assert settings["model"] == "ollama:qwen3:0.6b" and settings["model_ready"] is True
+
+
+def test_signing_out_of_the_chatgpt_subscription_moves_the_default_too(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path, monkeypatch)
+    _store_key(manager, "openai-codex")
+    manager.set_default_model("openai-codex:gpt-5.6-sol")
+    assert manager.get_settings()["model_ready"] is True
+
+    out = manager.codex_signout()
+    assert out["ok"] is True and out["default_model"] == "ollama:qwen3:0.6b"
+    assert manager.get_settings()["model"] == "ollama:qwen3:0.6b"
+
+
+def test_a_sign_in_moves_nothing(tmp_path, monkeypatch):
+    manager, _ = _manager(tmp_path, monkeypatch)
+    manager.set_default_model("ollama:llama3.2:3b")
+    _store_key(manager, "openrouter-account")
+    assert manager.provider_signin_changed("openrouter-account") is None
+    assert manager.get_settings()["model"] == "ollama:llama3.2:3b"
+
+
 def test_a_default_on_another_provider_is_left_alone(tmp_path, monkeypatch):
     manager, _ = _manager(tmp_path, monkeypatch)
     _store_key(manager, "anthropic")

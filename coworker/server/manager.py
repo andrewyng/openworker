@@ -4949,6 +4949,17 @@ class SessionManager:
                 return candidate
         return None
 
+    def provider_signin_changed(self, name: str) -> Optional[str]:
+        """The OAuth providers (OpenRouter account, ChatGPT subscription) sign in and out
+        without passing through set/remove key, so their sign-out never reached the re-pick
+        above and the composer sat on the signed-out default (seen 2026-11-09 testing
+        OPE-260). A sign-out now moves the default like Remove key does; a sign-in moves
+        nothing. Returns the new default when it moved."""
+        self._refresh_provider(name)
+        if self._provider_configured(name):
+            return None
+        return self._repick_default_after_removal(name)
+
     # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
     def begin_codex_signin(self) -> None:
         """Flag `authorizing` BEFORE the background sign-in task starts, so the GUI's
@@ -4998,8 +5009,11 @@ class SessionManager:
 
         had_tokens = codex_auth.CodexTokenStore(self.secrets).clear()
         self._codex_error = None
-        self._refresh_provider("openai-codex")
-        return {"ok": True, "had_tokens": had_tokens}
+        moved = self.provider_signin_changed("openai-codex")
+        out: dict[str, Any] = {"ok": True, "had_tokens": had_tokens}
+        if moved:
+            out["default_model"] = moved
+        return out
 
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
