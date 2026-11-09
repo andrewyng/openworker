@@ -1,0 +1,75 @@
+{
+ "buckets_by_turn": {
+  "sess_A:turn_1": {
+   "auto_approver": 0,
+   "model": 5000,
+   "other": 0,
+   "other_shown": false,
+   "summary": 0,
+   "tools": 0,
+   "total": 5000,
+   "waiting": 0
+  },
+  "sess_B:turn_1": {
+   "auto_approver": 0,
+   "model": 2000,
+   "other": 0,
+   "other_shown": false,
+   "summary": 0,
+   "tools": 0,
+   "total": 2000,
+   "waiting": 0
+  }
+ },
+ "usage": {
+  "at_least": false,
+  "auto_approver_checks_not_reported": 0,
+  "by_model": {
+   "anthropic:claude-sonnet-5": 3300,
+   "x (title)": 312
+  },
+  "by_purpose": {
+   "main": 3300,
+   "title": 312
+  },
+  "cache_share": 0.0,
+  "failed_calls": 0,
+  "overflow_calls": 0,
+  "pill": 3612,
+  "unreported_calls": 0
+ },
+ "usage_by_session": {
+  "sess_A": {
+   "at_least": false,
+   "auto_approver_checks_not_reported": 0,
+   "by_model": {
+    "anthropic:claude-sonnet-5": 1100,
+    "x (title)": 312
+   },
+   "by_purpose": {
+    "main": 1100,
+    "title": 312
+   },
+   "cache_share": 0.0,
+   "failed_calls": 0,
+   "overflow_calls": 0,
+   "pill": 1412,
+   "unreported_calls": 0
+  },
+  "sess_B": {
+   "at_least": false,
+   "auto_approver_checks_not_reported": 0,
+   "by_model": {
+    "anthropic:claude-sonnet-5": 2200
+   },
+   "by_purpose": {
+    "main": 2200
+   },
+   "cache_share": 0.0,
+   "failed_calls": 0,
+   "overflow_calls": 0,
+   "pill": 2200,
+   "unreported_calls": 0
+  }
+ }
+}

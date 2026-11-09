@@ -3,6 +3,7 @@ export * from "./safety.js";
 import { Service, type ServiceOptions } from "./service.js";
 export * from "./service.js";
 export * from "./coding.js";
+export * from "./attempt-output.js";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { Transport } from "./transport.js";
@@ -12,6 +13,7 @@ import {
   ToolImageResult,
   checkMemberErrors,
   record,
+  providerDiagnostic,
   HarnessError,
   type HarnessOptions,
   type SessionRef,
@@ -70,6 +72,7 @@ function resultOf(value: unknown): RunResult {
     interruptions: v.interruptions.map(interruptionOf),
     submissionId: v.submission_id as string | null,
     failure: typeof v.failure === "string" ? v.failure : undefined,
+    providerError: providerDiagnostic(v.provider_error),
     cursor: Number(v.cursor),
     board: (v.board ?? null) as Json,
   };
@@ -391,6 +394,9 @@ export class Harness {
       name: provider.name,
       api: provider.api,
       base_url: provider.baseUrl,
+      stream_usage: provider.streamUsage,
+      prompt_caching: provider.promptCaching,
+      thinking: provider.thinking,
       access_token_auth: provider.auth ? true : undefined,
       credentials: credentials
         ? { api_key: apiKey, storage: credentials.storage ?? "secure" }
@@ -551,6 +557,8 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
+      throw new HarnessError("Setup", "Update the host to import conversation history");
     if (
       options.autoSkipQuestions !== undefined &&
       this.capabilities.sdk_question_policy !== true
@@ -572,6 +580,7 @@ export class Harness {
         safety: await this.safetyOptions(options),
         compliance: options.compliance,
         auto_skip_questions: options.autoSkipQuestions,
+        initial_history: options.initialHistory,
         name: options.name,
         ...(options.model
           ? {
@@ -642,6 +651,11 @@ export class AgentHandle {
     void this.registration.catch(() => {});
   }
   private async register(definition: AgentDefinition): Promise<void> {
+    const definitions = [definition, ...(definition.subagents ?? [])];
+    if (definitions.some(a => a.builtinTools !== undefined) && this.harness.capabilities.builtin_tools !== true)
+      throw new HarnessError("Setup", "Update the host to configure built-in tools");
+    if (definitions.some(a => a.limits?.maxOutputTokensPerCall !== undefined) && this.harness.capabilities.per_call_output_limit !== true)
+      throw new HarnessError("Setup", "Update the host to configure per-call output limits");
     if (this.harness.capabilities.dynamic_agents !== true)
       throw new HarnessError("Setup", "Host does not support dynamic agents");
     const { name, defaultModel, ...rest } = definition;
@@ -769,12 +783,16 @@ export class Session {
     options: RunOptions = {},
   ): Promise<Run | { accepted: true; runId: string | null }> {
     aborted(options.signal);
+    if ((options.instructionAddendum !== undefined || options.output !== undefined) && this.harness.capabilities.turn_context !== true)
+      throw new HarnessError("Setup", "Update the host to configure turn context");
+    if (options.limits?.maxOutputTokensPerCall !== undefined && this.harness.capabilities.per_call_output_limit !== true)
+      throw new HarnessError("Setup", "Update the host to configure per-call output limits");
     if (options.limits && this.harness.capabilities.turn_limits !== true) {
       throw new HarnessError("Setup", "Host does not support turn limits");
     }
     const value = typeof input === "string" ? { text: input } : input;
     const control = value.type === "approval" || value.type === "answer";
-    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions)) {
+    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
       throw new HarnessError(
         "InvalidInput",
         "Limits apply only to new message turns",
@@ -808,6 +826,8 @@ export class Session {
         submission_id: submissionId,
         input: wire,
         limits: options.limits,
+        instruction_addendum: options.instructionAddendum,
+        output: options.output,
         safety: control?undefined:await this.harness.safetyOptions(options),
       }),
     );
@@ -1038,6 +1058,29 @@ export class RunStream implements AsyncIterable<RunEvent> {
         if (!Number.isSafeInteger(event.event_id))
           throw new HarnessError("Protocol", "Invalid journal cursor");
         this.saved[sid] = Number(event.event_id);
+        let summary = (item.summary ?? null) as RunEvent["summary"];
+        if (summary?.type === "tool_started" || summary?.type === "tool_finished") {
+          const wireSummary = record(item.summary);
+          // Older hosts retain the ID in the journal but omit it from summaries.
+          const callId = wireSummary.call_id ?? record(event.data).call_id;
+          summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+        }
+        if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
+          const wire = record(item.summary);
+          const attemptId = String(wire.attempt_id ?? "");
+          switch (summary.type) {
+            case "model_attempt_started": summary = { type:summary.type, attemptId, attempt:Number(wire.attempt) }; break;
+            case "model_attempt_finished": summary = { type:summary.type, attemptId, status:wire.status as "completed" | "failed" | "interrupted", failure:typeof wire.kind === "string" ? wire.kind as import("./types.js").ProviderFailure : undefined }; break;
+            case "assistant_delta": summary = { type:summary.type, attemptId, text:String(wire.text ?? "") }; break;
+            case "reasoning_delta": summary = { type:summary.type, attemptId, kind:wire.kind as "summary" | "thinking", text:String(wire.text ?? ""), blockIndex:Number(wire.block_index) }; break;
+            case "model_activity": summary = { type:summary.type, attemptId, elapsedMs:Number(wire.elapsed_ms) }; break;
+            case "provider_error": {
+              const diagnostic = providerDiagnostic(wire.diagnostic);
+              summary = diagnostic ? { type:summary.type, attemptId, diagnostic } : null;
+              break;
+            }
+          }
+        }
         yield {
           agent: String(item.agent),
           ...(typeof item.agent_id === "string"
@@ -1046,7 +1089,7 @@ export class RunStream implements AsyncIterable<RunEvent> {
           ...(typeof item.team_id === "string" ? { teamId: item.team_id } : {}),
           sessionId: sid,
           event: event as unknown as RunEvent["event"],
-          summary: (item.summary ?? null) as RunEvent["summary"],
+          summary,
         };
       }
       cursors = state.cursors as Cursors;

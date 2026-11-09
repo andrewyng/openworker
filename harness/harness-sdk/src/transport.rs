@@ -6,6 +6,13 @@ use tokio::{
     process::{Child, ChildStdin},
 };
 
+fn provider_error(error: anyhow::Error) -> Error {
+    match error.downcast_ref::<openworker_runtime::provider::Error>() {
+        Some(error) => Error::Provider(error.diagnostic()),
+        None => Error::Remote(error.to_string()),
+    }
+}
+
 pub(crate) enum Backend {
     Host {
         host: Arc<crate::host::Host>,
@@ -342,7 +349,7 @@ impl Backend {
                 tokio::pin!(request);
                 loop {
                     tokio::select! {
-                        result=&mut request=>break result.map_err(|e|Error::Remote(e.to_string())),
+                        result=&mut request=>break result.map_err(provider_error),
                         value=application.recv()=>{let value=value.map_err(|_|Error::OutcomeUnknown)?;let _=sink.send(Notification::Application(value));},
                     }
                 }
@@ -350,7 +357,7 @@ impl Backend {
             Self::Embedded { runtime, .. } => runtime
                 .dispatch(method, params)
                 .await
-                .map_err(|e| Error::Remote(e.to_string())),
+                .map_err(provider_error),
             Self::Process(p) => {
                 p.next_id += 1;
                 let id = p.next_id;
@@ -380,6 +387,13 @@ impl Backend {
                             return Err(Error::OutcomeUnknown);
                         }
                         if let Some(message) = v["error"]["message"].as_str() {
+                            if let Ok(diagnostic) =
+                                serde_json::from_value::<openworker_runtime::provider::Diagnostic>(
+                                    v["error"]["provider_error"].clone(),
+                                )
+                            {
+                                return Err(Error::Provider(diagnostic));
+                            }
                             return Err(Error::Remote(message.into()));
                         }
                         return v.get("result").cloned().ok_or(Error::OutcomeUnknown);

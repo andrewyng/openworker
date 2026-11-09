@@ -58,6 +58,8 @@ impl Tool {
 pub struct ToolContext {
     pub session_id: String,
     pub turn_id: String,
+    /// Matches tool-start/finish RunEvent IDs. Callback delivery can precede
+    /// the application's consumption of the already-recorded journal event.
     pub call_id: String,
     pub workspace: std::path::PathBuf,
     cancel: CancellationToken,

@@ -1,0 +1,109 @@
+{
+ "turns": [
+  {
+   "turn_id": "T00002270",
+   "session_id": "edge-14",
+   "seq": 1,
+   "kind": "run",
+   "trigger": "user",
+   "started_at": 1793181600000,
+   "duration_ms": 5000,
+   "status": "completed",
+   "incomplete": false,
+   "approval_mode": "interactive",
+   "attended": true,
+   "reviewer": {
+    "active": false,
+    "shadow": false,
+    "kind": null,
+    "model": null
+   },
+   "stamp": {
+    "machine": {
+     "kind": "this_machine",
+     "id": null,
+     "name": "laptop",
+     "app_version": "0.3.0"
+    },
+    "model": {
+     "id": "model-x",
+     "kind": "api_key",
+     "provider_title": "Provider X"
+    },
+    "sandbox": {
+     "provider": "direct",
+     "enforcement": "none",
+     "expected": false
+    },
+    "persona_fp": "a1b2c3",
+    "persona_id": "general"
+   },
+   "first_message_id": null,
+   "last_message_id": null,
+   "schema_version": 1,
+   "max_iterations": 150,
+   "wake": {
+    "kinds": [],
+    "item_ids": [],
+    "board_seq": null,
+    "batched": null,
+    "deferred": null,
+    "by": null,
+    "reason": "user"
+   }
+  },
+  {
+   "turn_id": "T00002271",
+   "session_id": "edge-14",
+   "seq": 2,
+   "kind": "run",
+   "trigger": "user",
+   "started_at": 1793185200000,
+   "duration_ms": 5000,
+   "status": "completed",
+   "incomplete": false,
+   "approval_mode": "interactive",
+   "attended": true,
+   "reviewer": {
+    "active": false,
+    "shadow": false,
+    "kind": null,
+    "model": null
+   },
+   "stamp": {
+    "machine": {
+     "kind": "this_machine",
+     "id": null,
+     "name": "laptop",
+     "app_version": "0.3.0"
+    },
+    "model": {
+     "id": "model-x",
+     "kind": "api_key",
+     "provider_title": "Provider X"
+    },
+    "sandbox": {
+     "provider": "direct",
+     "enforcement": "none",
+     "expected": false
+    },
+    "persona_fp": "a1b2c3",
+    "persona_id": "general"
+   },
+   "first_message_id": null,
+   "last_message_id": null,
+   "schema_version": 1,
+   "max_iterations": 150,
+   "wake": {
+    "kinds": [],
+    "item_ids": [],
+    "board_seq": null,
+    "batched": null,
+    "deferred": null,
+    "by": null,
+    "reason": "user"
+   }
+  }
+ ],
+ "steps": []
+}

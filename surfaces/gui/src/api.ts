@@ -10,6 +10,7 @@ import {
   toolResponseMessage,
 } from "./cardPayloads";
 import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
+import type { DayBoundary, FeedbackWhere, RollupGroup, TurnFeedback, TurnFooter } from "./obs3";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -623,6 +624,25 @@ export async function getRoots(sessionId: string): Promise<RootInfo[]> {
   return (await res.json()).roots ?? [];
 }
 
+// -- async subagents (OPE-257): the Running section's registry view ----------
+export interface AgentTaskInfo {
+  id: string;
+  label: string;
+  task: string;
+  mode: string; // "read_only" | "inherit"
+  status: string; // running | waiting | done | error | canceled
+  note?: string;
+  created: number;
+  finished?: number | null;
+  usage?: Record<string, { input: number; output: number; cache_read: number; cache_write: number; turns: number }>;
+  icon_seed?: number;
+}
+
+export async function getAgentTasks(sessionId: string): Promise<AgentTaskInfo[]> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/tasks`);
+  return (await res.json()).agents ?? [];
+}
+
 export async function addRoot(
   sessionId: string,
   path: string,
@@ -1188,6 +1208,14 @@ export interface ModelSettings {
   onboarded: boolean;
   surfaces: SurfaceVisibility;
   scratch_base: string;
+  // Feature worktrees (Code coworker): present on servers from 2026-11-07.
+  worktree_location?: "in_repo" | "sibling" | "custom";
+  worktree_custom_dir?: string;
+  worktree_branch_prefix?: string;
+  worktree_fetch_first?: boolean;
+  worktree_cleanup_on_archive?: boolean;
+  worktree_prune_days?: number;
+  worktree_setup_command?: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
   // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
   // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older
@@ -1455,6 +1483,32 @@ export async function setSessionsPeek(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessions_peek: n }),
+  });
+  return res.json();
+}
+
+// Feature worktrees (Code coworker, 2026-11-07): where they go, how branches are named,
+// fetch-first, cleanup, and the optional per-repo setup command.
+export interface WorktreeSettings {
+  worktree_location: "in_repo" | "sibling" | "custom";
+  worktree_custom_dir: string;
+  worktree_branch_prefix: string;
+  worktree_fetch_first: boolean;
+  worktree_cleanup_on_archive: boolean;
+  worktree_prune_days: number;
+  worktree_setup_command: string;
+}
+
+export async function setWorktreeSettings(
+  changes: Partial<{
+    location: string; custom_dir: string; branch_prefix: string; fetch_first: boolean;
+    cleanup_on_archive: boolean; prune_days: number; setup_command: string;
+  }>,
+): Promise<{ ok: boolean; error?: string } & Partial<WorktreeSettings>> {
+  const res = await fetch(`${httpBase()}/v1/settings/worktrees`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
   });
   return res.json();
 }
@@ -2348,6 +2402,101 @@ export async function setSandboxSettings(
   return res.json();
 }
 
+// OB-6: Settings ▸ Machine ▸ Observability — where recordings go and what they include, on
+// the machine that ran the work. Keys and header values are write-only: answers carry
+// masked hints ("pk-lf-••••••••3a91"), never a value.
+export type ObservabilityDestination =
+  | { kind: "off" }
+  | { kind: "langfuse"; host: string }
+  | { kind: "otlp"; url: string; header_names: string[] };
+export interface ObservabilityInclude {
+  messages: boolean;
+  tool_io: boolean;
+  context: boolean;
+  names: boolean;
+}
+export interface ObservabilitySettings {
+  record: boolean;
+  retention_days: 7 | 30 | 90;
+  destination: ObservabilityDestination;
+  include: ObservabilityInclude;
+  secrets: { public_key?: string; secret_key?: string; headers?: Record<string, string> };
+  managed: { by: string; name: string; at: string } | null;
+  notice: string | null;
+}
+export interface ObservabilitySecretsIn {
+  public_key?: string;
+  secret_key?: string;
+  headers?: Record<string, string>;
+}
+export interface ObservabilityStatus {
+  state: "off" | "sending" | "retrying" | "failed" | "managed";
+  last_sent_at: number | null; // seconds
+  sent: number;
+  sent_today: number;
+  failed: number;
+  dropped: number;
+  last_error: string;
+  // Model calls outside any session today (through this machine's model address; F-4).
+  outside_today?: { calls: number; tokens: number };
+}
+
+export async function getObservabilitySettings(machineId?: string | null): Promise<ObservabilitySettings> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/settings`);
+  return res.json();
+}
+
+export async function setObservabilitySettings(
+  patch: Partial<Pick<ObservabilitySettings, "record" | "retention_days" | "destination">> & {
+    include?: Partial<ObservabilityInclude>;
+    secrets?: ObservabilitySecretsIn;
+  },
+  machineId?: string | null,
+): Promise<{ ok: boolean; error?: string } & Partial<ObservabilitySettings>> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return res.json();
+}
+
+export async function getObservabilityStatus(machineId?: string | null): Promise<ObservabilityStatus> {
+  // "Today" is your day, even for a machine in another time zone (Phase 3 TD3-2).
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/status?day_start_ms=${midnight.getTime()}`);
+  return res.json();
+}
+
+export async function sendObservabilityTest(
+  machineId?: string | null,
+): Promise<{ ok: boolean; status: number; text: string; ms?: number }> {
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/test`, { method: "POST" });
+  return res.json();
+}
+
+/** One session's recording, content included, as a file the browser saves. */
+export async function downloadSessionRecording(sessionId: string, machineId?: string | null): Promise<boolean> {
+  const res = await fetch(`${engineBase(machineId)}/v1/sessions/${encodeURIComponent(sessionId)}/recording`);
+  if (!res.ok) return false;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `recording-${sessionId.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
+/** A machine's sessions (id and title), for picking one recording to save. */
+export async function getMachineSessions(machineId?: string | null): Promise<{ session_id: string; title?: string | null }[]> {
+  const res = await fetch(`${engineBase(machineId)}/v1/sessions`);
+  return (await res.json()).sessions ?? [];
+}
+
 // OPE-207: the readiness checklist behind Settings ▸ Sandbox (the rows `openworker machine
 // sandbox status` prints, with a key and whether the app may fix each one itself), and
 // the guided setup job that walks it on the machine where sessions run.
@@ -2969,6 +3118,9 @@ export interface Automation {
   // without asking. `entry` is the raw record entry — the revoke handle; `target` is
   // null for legacy name-only entries.
   always_allowed: { entry: string; tool: string; target: string | null }[];
+  // Phase 3 (E26c): a joined machine's automation, listed beside this machine's.
+  machine_id?: string | null;
+  machine_name?: string;
 }
 
 export interface AutomationRun {
@@ -2982,11 +3134,77 @@ export interface AutomationRun {
   artifacts: string[];
   error: string | null;
   trigger: string;
+  // OB-18 (Phase 3): from the run's own recorded turns. Absent on older engines.
+  turns?: number;
+  total?: number | null;
+  at_least?: boolean;
+  active_ms?: number | null;
+  duration_ms?: number | null;
+  warn?: number | null;
+  checks?: string[];
+  check_titles?: string[];
+  health?: "ok" | "failed" | "skipped" | "did_not_finish" | "unknown";
+  first_turn_id?: string | null;
+  first_turn_seq?: number | null;
+}
+
+export interface FailedInARow {
+  count: number;
+  last_error: string | null;
+  run_id?: string;
+  session_id?: string;
+  turn_id?: string | null;
+}
+
+// Phase 3 (E26c, V3-16): automations live on the machine that runs them. The list joins this
+// machine's with each joined machine's (through the controller's proxy), and every
+// automation call goes to the machine its task came from, as sessions do.
+const automationMachines = new Map<string, string>();
+// The map is filled by getAutomations(); a call made before the list ever loaded (a reload
+// straight into a remote automation's page) would route to the local engine and 404. So
+// an unknown id loads the list once first (OPE-261).
+async function automationBase(id: string): Promise<string> {
+  if (!automationMachines.has(id)) {
+    try {
+      await getAutomations();
+    } catch {
+      /* offline: fall through to the local engine, as before */
+    }
+  }
+  return engineBase(automationMachines.get(id) ?? null);
+}
+export function machineOfAutomation(id: string): string | null {
+  return automationMachines.get(id) ?? null;
+}
+
+async function machineAutomations(m: Machine): Promise<Automation[]> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 4000); // an offline machine must not hold the list
+  try {
+    const res = await fetch(`${engineBase(m.id)}/v1/automations`, { signal: ctl.signal });
+    if (!res.ok) return [];
+    const tasks: Automation[] = (await res.json()).tasks ?? [];
+    return tasks.map((t) => ({ ...t, machine_id: m.id, machine_name: m.name }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getAutomations(): Promise<Automation[]> {
   const res = await fetch(`${httpBase()}/v1/automations`);
-  return (await res.json()).tasks ?? [];
+  const local: Automation[] = (await res.json()).tasks ?? [];
+  let machines: Machine[] = [];
+  try {
+    machines = ((await getMachines()).machines || []).filter((m) => m.connected);
+  } catch {
+    machines = [];
+  }
+  const remote = (await Promise.all(machines.map(machineAutomations))).flat();
+  for (const t of local) automationMachines.delete(t.id);
+  for (const t of remote) if (t.machine_id) automationMachines.set(t.id, t.machine_id);
+  return [...local, ...remote];
 }
 
 // Fired after any automation mutation the sidebar should reflect immediately
@@ -3029,7 +3247,7 @@ export function connectEvents(
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${httpBase()}/v1/automations/${id}/seen`, { method: "POST" });
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${id}/seen`, { method: "POST" });
   return res.json();
 }
 
@@ -3051,13 +3269,18 @@ export async function createAutomation(payload: {
   return res.json();
 }
 
-export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[] }> {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
-  return res.json();
+export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`);
+  const body = await res.json();
+  // A remote automation's run sessions live on its machine: route them there.
+  const mid = automationMachines.get(id) ?? null;
+  for (const r of body.runs || []) if (r.session_id) registerSessionMachine(r.session_id, mid);
+  if (body.task && mid) body.task = { ...body.task, machine_id: mid };
+  return body;
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
@@ -3066,7 +3289,7 @@ export async function updateAutomation(id: string, changes: Record<string, any>)
 }
 
 export async function deleteAutomation(id: string) {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
   return res.json();
 }
 
@@ -3082,14 +3305,16 @@ export interface PreparedRun {
 
 /** Prepare a live manual run: returns the session to open + the opening prompt to send. */
 export async function runAutomation(id: string): Promise<PreparedRun> {
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
-  return res.json();
+  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
+  const body = await res.json();
+  if (body?.session_id) registerSessionMachine(body.session_id, automationMachines.get(id) ?? null);
+  return body;
 }
 
 /** Mark a manual run complete after its first turn finished. */
 export async function finalizeAutomationRun(id: string, runId: string) {
   const res = await fetch(
-    `${httpBase()}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
+    `${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
     { method: "POST" },
   );
   return res.json();
@@ -4385,4 +4610,327 @@ export async function forgetConnectorOnMachine(sourceMachineId: string, name: st
     { method: "POST" },
   );
   return res.json();
+}
+
+// -- Observability (Phase 1): recorded turns and steps of a session ----------------------------
+// Served by the engine (technical design §12); `sessionApiBase` reaches a remote machine's
+// session through the machine proxy, like the transcript.
+
+export interface RecordedTurn {
+  turn_id: string;
+  seq: number;
+  kind: string;
+  trigger: string;
+  status: string;
+  started_at: number;
+  duration_ms: number | null;
+  stamp: Record<string, any>;
+  buckets: Record<string, any>;
+  usage: Record<string, any>;
+  // The approval mode and auto-approver at turn start (UX-059 OB-1 header pill).
+  approval_mode?: string | null;
+  attended?: boolean | null;
+  reviewer?: { active?: boolean; shadow?: boolean; kind?: string | null; model?: string | null } | null;
+  // OB-3: how many issues the turn's checks found (warnings count on the tab).
+  issues?: { warn: number; info: number };
+  // OB-7: team workers' turns this (lead) turn woke, worked out on read. Display only.
+  workers?: RecordedWorkerRow[];
+  // Format 1.3 (OB-17): why the turn started; absent before 1.3.
+  wake?: { reason?: string; kinds?: string[]; item_ids?: string[]; board_seq?: number | null; batched?: number | null;
+    deferred?: { by: string; ms: number } | null; by?: string | null } | null;
+  automation?: { task_id: string; run_id: string; trigger: string } | null;
+  // The turn's first and last message ids, and its warning checks (T3-14: the turn list
+  // finds a turn's part of the conversation by the answer's id, and searches issue titles).
+  first_message_id?: string | null;
+  last_message_id?: string | null;
+  issue_checks?: string[];
+}
+
+// One worker turn under a lead's turn (OB-7). `tokens` are the worker's own, never the lead's.
+export interface RecordedWorkerRow {
+  session_id: string;
+  turn_id: string;
+  seq: number | null;
+  name: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: string;
+  tokens: number;
+  at_least: boolean;
+  team_id: string | null;
+  item_ids: string[];
+  via: string | null;
+}
+
+// One turn's Issues (OB-3): what the checks in signals.yaml found, what was fine, what did not
+// apply. `text` is the engine's English sentence; `facts` what it was built from.
+export interface TurnIssue {
+  check: string;
+  severity: "warn" | "info";
+  step_id: string | null;
+  step_seq: number | null;
+  text: string;
+  facts: Record<string, any>;
+}
+export interface TurnIssues {
+  turn_id: string;
+  signals_version?: string;
+  warn: number;
+  info: number;
+  seen?: boolean;
+  issues: TurnIssue[];
+  fine: { check: string; text: string; facts?: Record<string, any> }[];
+  not_checked: { check: string; text: string; facts?: Record<string, any> }[];
+}
+
+export interface RecordedStep {
+  step_id: string;
+  turn_id: string | null;
+  parent_step_id: string | null;
+  seq: number | null;
+  kind: string;
+  name: string;
+  started_at: number;
+  duration_ms: number | null;
+  status: string;
+  call_id: string | null;
+  message_id: string | null;
+  shadow: boolean;
+  after_turn: boolean;
+  attrs: Record<string, any>;
+  content?: Record<string, any>;
+}
+
+async function recordingGet(sessionId: string, path: string): Promise<any> {
+  const res = await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}${path}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getRecordedTurns(sessionId: string): Promise<RecordedTurn[]> {
+  return (await recordingGet(sessionId, "/turns")).turns ?? [];
+}
+
+export async function getTurnSteps(sessionId: string, turnId: string): Promise<RecordedStep[]> {
+  return (await recordingGet(sessionId, `/turns/${encodeURIComponent(turnId)}/steps`)).steps ?? [];
+}
+
+export async function getStepDetail(sessionId: string, stepId: string): Promise<any> {
+  return (await recordingGet(sessionId, `/steps/${encodeURIComponent(stepId)}`)).step ?? null;
+}
+
+export async function getRecordedUsage(sessionId: string): Promise<any> {
+  return recordingGet(sessionId, "/usage");
+}
+
+export async function getTurnIssues(sessionId: string, turnId: string): Promise<TurnIssues | null> {
+  const r = await recordingGet(sessionId, `/turns/${encodeURIComponent(turnId)}/issues`);
+  return r && Array.isArray(r.issues) ? (r as TurnIssues) : null;
+}
+
+/** Opening a session's Issues clears its amber ring in the sidebar (TD2-4). */
+export async function markIssuesSeen(sessionId: string): Promise<void> {
+  await fetch(`${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/issues/seen`, { method: "POST" });
+}
+
+// -- Observability Phase 3: rollups over many turns (technical-design.md §4) -------------------
+// Every rollup goes to the machine that ran the work; the desktop sends its own local day
+// boundaries (TD3-2). Tokens only.
+
+export interface UsageRollup {
+  groups: RollupGroup[];
+  no_turn: { calls: number; total: number };
+  not_checked: number;
+  kept_from: number | null;
+  turns?: number;
+  deleted_session_turns?: number;
+  names?: Record<string, string>;
+  automations?: Record<string, string>;
+  machine?: { kind?: string; id?: string | null; name?: string };
+  // E28: a remote machine's last answer, served by the desktop while the machine is offline.
+  cached?: { as_of: number } | null;
+}
+
+export async function getUsageRollup(
+  q: { from: number; to: number; days?: DayBoundary[]; group?: string; persona_id?: string },
+  machineId?: string | null,
+): Promise<UsageRollup> {
+  const p = new URLSearchParams({ from: String(q.from), to: String(q.to), group: q.group || "all" });
+  if (q.days?.length) p.set("days", JSON.stringify(q.days));
+  if (q.persona_id) p.set("persona_id", q.persona_id);
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/rollup?${p}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface HeavyTurn {
+  turn_id: string;
+  session_id: string;
+  title: string | null;
+  seq: number | null;
+  session_deleted: boolean;
+  persona_id: string | null;
+  model_ids: string[];
+  total: number;
+  at_least: boolean;
+  active_ms: number | null;
+  status: string;
+  found_open: boolean;
+  warn: number | null;
+  checks: string[];
+  started_at: number;
+  run_id?: string | null;
+  task_id?: string | null;
+}
+
+export async function getHeaviestTurns(from: number, to: number, machineId?: string | null, limit = 20,
+                                       personaId?: string | null): Promise<{ turns: HeavyTurn[]; names?: Record<string, string> }> {
+  const p = new URLSearchParams({ from: String(from), to: String(to), order: "tokens", limit: String(limit) });
+  if (personaId) p.set("persona_id", personaId);
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/turns?${p}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface ApproverCounts {
+  checks: number;
+  allowed: number;
+  asked: number;
+  blocked: number;
+  could_not_run: number;
+  median_ms: number | null;
+}
+export interface ApproverStrip extends ApproverCounts {
+  overridden: number;
+  tokens: number;
+  shadow_checks: number;
+  // T3-6: each reviewer's own overrides and model tokens (live checks only; the strip's
+  // `tokens` total has the shadow checks too)
+  by_reviewer: (ApproverCounts & { kind: string; overridden?: number; tokens?: number })[];
+  shown: boolean;
+}
+
+// T3-10: the Ratings card on Usage (counts, reasons, and the turns rated 👎)
+export interface RatedDownTurn {
+  turn_id: string;
+  session_id: string;
+  title: string | null;
+  seq: number | null;
+  session_deleted: boolean;
+  persona_id: string | null;
+  started_at: number;
+  reasons: string[];
+  note: string | null;
+  auto_approved: number;
+}
+export interface RatingsSummary {
+  up: number;
+  down: number;
+  reasons: Record<string, number>;
+  down_turns: RatedDownTurn[];
+  more: number;
+  names?: Record<string, string>;
+}
+
+export async function getRatings(from: number, to: number, personaId?: string | null): Promise<RatingsSummary> {
+  const who = personaId ? `&persona_id=${encodeURIComponent(personaId)}` : "";
+  const res = await fetch(`${engineBase(null)}/v1/observability/ratings?from=${from}&to=${to}${who}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getApproverStrip(from: number, to: number, machineId?: string | null,
+                                       personaId?: string | null): Promise<ApproverStrip> {
+  const who = personaId ? `&persona_id=${encodeURIComponent(personaId)}` : "";
+  const res = await fetch(`${engineBase(machineId)}/v1/observability/approver?from=${from}&to=${to}${who}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// OB-5: the numbers under each answer, and its rating.
+export async function getSessionFooters(sessionId: string): Promise<{ turns: TurnFooter[]; recording: boolean; where?: FeedbackWhere }> {
+  return recordingGet(sessionId, "/footers");
+}
+
+export async function putTurnFeedback(
+  sessionId: string,
+  turnId: string,
+  body: { rating: "up" | "down" | null; reasons?: string[]; note?: string },
+): Promise<{ feedback: TurnFeedback | null; where: FeedbackWhere; error?: string }> {
+  const res = await fetch(
+    `${sessionApiBase(sessionId)}/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/feedback`,
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// OB-15: "How it's been doing", one row per coworker version, on the machine it lives on.
+export interface VersionFileChange {
+  path: string;
+  kind: "added" | "removed" | "edited";
+  lines?: number;
+  skill?: string;
+  from_version?: string | null;
+  to_version?: string | null;
+}
+export interface DoingRow {
+  fp: string | null;
+  current: boolean;
+  unknown_version: boolean;
+  first_seen: number | null;
+  last_seen: number | null;
+  before_kept: boolean;
+  runs: number;
+  automation_runs: number;
+  turns: number;
+  checked: number;
+  with_warn: number;
+  not_checked: number;
+  median_tokens: number | null;
+  at_least: boolean;
+  approvals_per_run: number | null;
+  up: number;
+  down: number;
+  too_few: boolean;
+  models: string[];
+  changed: { from: string; files: VersionFileChange[] } | null;
+  model_line?: { kind: "first" | "unchanged" | "changed" | "several"; models?: string[]; from?: string; to?: string };
+  /** T3-15: the version's number, oldest first ("v1") */
+  version_n?: number | null;
+}
+export interface PersonaDoing {
+  persona_id: string;
+  kept_from: number | null;
+  min_runs: number;
+  rows: DoingRow[];
+  total: number;
+  runs: number;
+}
+
+export async function getPersonaDoing(personaId: string, machineId?: string | null, days = 30): Promise<PersonaDoing> {
+  const res = await fetch(`${engineBase(machineId)}/v1/personas/${encodeURIComponent(personaId)}/doing?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function getPersonaVersionDiff(
+  personaId: string, from: string, to: string, machineId?: string | null,
+): Promise<{ files: (VersionFileChange & { diff: string })[]; error?: string }> {
+  const p = new URLSearchParams({ from, to });
+  const res = await fetch(`${engineBase(machineId)}/v1/personas/${encodeURIComponent(personaId)}/versions/diff?${p}`);
+  return res.json();
+}
+
+/** A recorded step by its tool call id (an evidence link, OB-16): the session's turns are
+ * searched newest first. Null when the call was not recorded. */
+export async function findStepByCall(sessionId: string, callId: string): Promise<{ step: RecordedStep; turn: RecordedTurn } | null> {
+  const turns = await getRecordedTurns(sessionId);
+  for (const turn of [...turns].reverse()) {
+    const steps = await getTurnSteps(sessionId, turn.turn_id);
+    const step = steps.find((s) => s.call_id === callId && s.kind === "tool");
+    if (step) return { step, turn };
+  }
+  return null;
 }

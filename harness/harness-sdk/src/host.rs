@@ -1027,6 +1027,10 @@ impl Host {
                 );
                 c.insert("compliance".into(), json!(cfg!(feature = "compliance")));
                 c.insert("turn_limits".into(), json!(true));
+                c.insert("turn_context".into(), json!(true));
+                c.insert("initial_history".into(), json!(true));
+                c.insert("builtin_tools".into(), json!(true));
+                c.insert("per_call_output_limit".into(), json!(true));
                 c.insert("agent_runs".into(), json!(true));
                 c.insert(
                     "agent_teams".into(),

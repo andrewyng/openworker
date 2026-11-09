@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 import aisuite as ai
 
+from ..observability.engine_hooks import HelperRecording, current_tool_run
+from ..observability.provider_view import tag as tag_provider
 from ..engine import TurnEngine
 from ..events import EventType
 from ..permissions import Mode, PermissionEngine
@@ -46,8 +48,11 @@ def build_explorer_engine(
     model: str,
     model_settings: Optional[dict[str, Any]] = None,
     max_iterations: int = _CHILD_MAX_ITERATIONS,
+    audit_sink: Optional[Any] = None,
 ) -> TurnEngine:
-    """A child engine with the Code agent's read-only tools and a fresh context."""
+    """A child engine with the Code agent's read-only tools and a fresh context.
+    `audit_sink`: the parent's, so the child's reads land in the session's audit log
+    (the caller stamps `audit_context` with the child's identity)."""
     ws = str(Path(workspace).resolve())
     registry = ToolRegistry()
     # Read-only slice of the Code agent's toolset, with the same toolkit replacements
@@ -73,6 +78,7 @@ def build_explorer_engine(
         instructions=EXPLORER_INSTRUCTIONS,
         max_iterations=max_iterations,
         model_settings=model_settings,
+        audit_sink=audit_sink,
     )
 
 
@@ -96,12 +102,24 @@ def explorer_tools(
             task (str): The research question, with any constraints and the expected
                 shape of the report.
         """
+        # Observability E6: the helper's model and tool calls are recorded under this
+        # `explore` step, on the parent's turn, with purpose `helper`.
+        # Its model calls go through the helper's recording too, which counts them (E6b).
+        run = current_tool_run()
+        helper_provider = provider
+        helper: Optional[HelperRecording] = None
+        if run is not None and run.step_id is not None:
+            helper = HelperRecording(run.recording, run.step_id, run.turn_id)
+            helper_provider = tag_provider(run.view, purpose="helper", parent=run.step_id,
+                                           turn=run.turn_id, sink=helper)
         engine = build_explorer_engine(
             workspace=workspace,
-            provider=provider,
+            provider=helper_provider,
             model=model,
             model_settings=model_settings,
         )
+        if helper is not None:
+            engine._obs = helper
 
         async def _run() -> tuple[str, str]:
             report, status = "", "unknown"
@@ -115,7 +133,13 @@ def explorer_tools(
             return report, status
 
         # Tools execute in a worker thread (no running loop), so asyncio.run is safe.
-        report, status = asyncio.run(_run())
+        report, status = "", "error"
+        try:
+            report, status = asyncio.run(_run())
+        finally:
+            if helper is not None:
+                # E6b: what the helper did, on the explore step, for display only.
+                run.recording.update_step(run.step_id, attrs={"helper": helper.summary(status)})
         if not report:
             return {"error": f"explorer produced no report (status: {status})"}
         result: dict[str, Any] = {"report": report}

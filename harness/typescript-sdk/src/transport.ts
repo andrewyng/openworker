@@ -10,6 +10,7 @@ import {
   HarnessOptions,
   ResolvedHarnessOptions,
   record,
+  providerDiagnostic,
   type ConnectionState,
 } from "./types.js";
 
@@ -322,10 +323,16 @@ export class Transport {
           clearTimeout(p.timer);
           if (frame.error) {
             // Do not reflect untrusted diagnostics, tool arguments or credentials in errors.
+            const diagnostic = providerDiagnostic(
+              typeof frame.error === "object" && "provider_error" in frame.error
+                ? frame.error.provider_error
+                : undefined,
+            );
             p.reject(
               new HarnessError(
                 "Remote",
-                "Harness rejected the request; inspect its configuration or durable session state",
+                diagnostic ? `Provider ${diagnostic.category}${diagnostic.httpStatus ? ` (HTTP ${diagnostic.httpStatus})` : ""}` : "Harness rejected the request; inspect its configuration or durable session state",
+                diagnostic ? { providerError: diagnostic } : undefined,
               ),
             );
           } else p.resolve(frame.result);

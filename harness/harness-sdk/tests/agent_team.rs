@@ -147,6 +147,7 @@ async fn aggregate_limit_returns_a_bounded_summary_instead_of_failing_the_run() 
             max_model_calls: 1,
             max_output_tokens: 1024,
             summary_tokens: 512,
+            ..Default::default()
         });
         let team = h.new_team("lead", &work, options).await.unwrap();
         let result = team.lead().run(&plan(json!([

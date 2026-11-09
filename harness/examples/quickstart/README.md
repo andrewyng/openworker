@@ -21,7 +21,7 @@ npm run web
 
 Run one command per terminal. The web app opens at http://127.0.0.1:4352/ . The model credentials stay in Electron's main process or the web server. They are never forwarded to the renderer/browser.
 
-The source example uses a local SDK dependency until publication. Once `0.1.0-beta.1` is published, applications can install `@openworkerai/harness-sdk@0.1.0-beta.1` from npm, including its matching native package, instead of using this checkout and executable override.
+The source example uses a local SDK dependency until publication. Once `0.1.0-beta.2` is published, applications can install `@openworkerai/harness-sdk@0.1.0-beta.2` from npm, including its matching native package, instead of using this checkout and executable override.
 
 ## Desktop packaging
 
@@ -62,7 +62,7 @@ node scripts/export-context.mjs code /path/to/project /tmp/context.json
 cargo run --manifest-path rust/Cargo.toml -- /tmp/context.json 'Explain the main components.'
 ```
 
-The Rust crate uses a local path for this source checkout. For registry use after publication, replace it with `openworker-sdk = "=0.1.0-beta.1"`. A UI can embed this lifecycle and render its event stream.
+The Rust crate uses a local path for this source checkout. For registry use after publication, replace it with `openworker-sdk = "=0.1.0-beta.2"`. A UI can embed this lifecycle and render its event stream.
 
 ## Verification
 

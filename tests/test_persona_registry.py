@@ -36,14 +36,16 @@ def test_release_lineup(tmp_path, monkeypatch):
     reg = _reg(tmp_path)
     # 2026-09-04: the Reviewer (a solo PR reviewer for the GitHub configurations) ships
     # too. The SWE Lead is held back for 0.3.0 (owner, 2026-09-29: not fully tested yet).
+    # 2026-11-07: Code is the dedicated coding agent beside the everyday Coworker, so it
+    # ships surfaced and enabled (superseding the 2026-08-21 lineup for Code only).
     assert [e["name"] for e in reg.sidebar()] == [
-        "cowork", "cloud-posture", "dep-audit", "reviewer", "security",
+        "cowork", "code", "cloud-posture", "dep-audit", "reviewer", "security",
     ]
     listed = {p["id"]: p for p in reg.list_all()}
     assert set(listed) == {
         "cowork", "code", "cloud-posture", "dep-audit", "reviewer", "security",
     }
-    assert listed["code"]["enabled"] is False and listed["code"]["surfaced"] is False
+    assert listed["code"]["enabled"] is True and listed["code"]["surfaced"] is True
     assert listed["cloud-posture"]["group"] == "security"
     assert listed["cowork"]["group"] == "general"
     # Enabling Code from Settings puts it in the picker (enable implies surface).
@@ -66,13 +68,13 @@ def test_sidebar_defaults_to_surfaced_builtins(tmp_path, internal):
     reg = _reg(tmp_path)
     sidebar = reg.sidebar()
     ids = [e["name"] for e in sidebar]
-    # Built-ins ship enabled (UX-029: the coworker picker is their front door) except
-    # Code (owner 2026-08-21). Installed personas remain opt-in.
+    # Built-ins ship enabled (UX-029: the coworker picker is their front door), Code
+    # included since 2026-11-07. Installed personas remain opt-in.
     assert ids[0] == "cowork"
     # Leads surface (the user's entry to a team — "the team IS the lead"); team
     # workers never do.
     assert set(ids) == {
-        "cowork", "ops", "security", "cloud-posture", "dep-audit", "reviewer",
+        "cowork", "code", "ops", "security", "cloud-posture", "dep-audit", "reviewer",
         "swe-lead", "devsecops-lead", "devops-lead", "triage-lead",
     }
     assert not any(
@@ -89,15 +91,15 @@ def test_sidebar_defaults_to_surfaced_builtins(tmp_path, internal):
     assert "security" not in [e["name"] for e in reg.sidebar()]
 
 
-def test_code_ships_disabled_but_recoverable(tmp_path):
+def test_code_ships_enabled_and_a_user_can_still_switch_it_off(tmp_path):
     reg = _reg(tmp_path)
-    # Code ships disabled + unsurfaced (owner call 2026-08-21): OpenWorker leads the
-    # launch, Code stays one checkbox away as the plain work-in-my-repo persona.
-    assert reg.is_enabled("code") is False
-    assert reg.is_surfaced("code") is False
+    # Owner call 2026-11-07: Code is a first-class coworker. The user's explicit choice
+    # still wins — switching it off hides it, and it keeps resolving for live sessions.
+    assert reg.is_enabled("code") is True
+    assert reg.is_surfaced("code") is True
+    reg.set_enabled("code", False)
+    assert "code" not in [e["name"] for e in reg.sidebar()]
     assert reg.agent("code").name == "code"  # live sessions keep resolving
-    reg.set_enabled("code", True)
-    assert "code" in [e["name"] for e in reg.sidebar()]
 
 
 def test_chat_gone_resolves_to_default(tmp_path):

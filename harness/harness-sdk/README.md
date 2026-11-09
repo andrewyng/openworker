@@ -1,6 +1,6 @@
 # OpenWorker Harness SDK (development API)
 
-Registry candidate: **0.1.0-beta.1**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+Registry candidate: **0.1.0-beta.2**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
 
 One Rust client, two deployment backends, the same native engine. This is a beta
 crate with an explicit SDK/runtime compatibility contract. It is distinct
@@ -82,6 +82,16 @@ installed model ID. Providers are shared by this harness; sessions pin the resol
 provider identity, API, endpoint and model. Rotation preserves that identity;
 changing API/endpoint requires a new name. No model fallback is performed.
 
+Chat Completions requests streaming usage by default. For a compatible server
+that rejects `stream_options`, add `.stream_usage(false)` to its `ModelProvider`.
+The setting persists across restart and key rotation. Missing usage is unknown,
+not zero; see [streaming token usage](../../docs/harness/guides/providers.md#streaming-token-usage).
+
+Anthropic Messages enables automatic prompt caching by default. Set
+`.prompt_caching(false)` on its `ModelProvider` to opt out. Google Gemini uses
+the Chat Completions adapter with private thought-signature replay; see
+[models and credentials](../../docs/harness/guides/providers.md).
+
 Windows uses DPAPI and macOS uses Keychain for secure credentials. On Linux,
 choose `.memory_only()` explicitly or use server-managed credentials; there is no
 plaintext fallback. Keys never belong in agent definitions. Re-register callback
@@ -93,9 +103,48 @@ for explicit controls. A plain string is always a user message, never an approva
 Use `agent.resume_session(saved_reference)` after restart. Dropping an event stream
 does not cancel a run; call `session.cancel()` explicitly.
 
+## Turn context and conversation migration
+
+```rust,no_run
+use openworker_sdk::{Agent, BuiltinTools, Harness, HistoryItem, Model,
+    SessionOptions, TurnLimits, TurnOptions};
+# async fn migration(harness: &Harness) -> anyhow::Result<()> {
+// Register app.lookup and the provider before this example.
+let agent = harness.create_agent(Agent::new("naming")
+    .instructions("Help the user choose a name.")
+    .tool("app.lookup")
+    .builtin_tools(BuiltinTools { ask_user: Some(false), read_history: Some(false) })
+    .default_model(Model::new("OpenAI", "YOUR_MODEL_ID"))).await?;
+let session = agent.new_session_with(SessionOptions::default().initial_history(vec![
+    HistoryItem::User { text: "Find a short name.".into() },
+    HistoryItem::Assistant { text: "You liked Atlas.".into() },
+])).await?;
+let run = session.send_with_options("Suggest another name.", TurnOptions {
+    submission_id: Some("naming-turn-42".into()),
+    instruction_addendum: Some("Prefer .ai domains. Budget: $40.".into()),
+    limits: Some(TurnLimits {
+        max_model_calls: 8, max_output_tokens: 60000,
+        max_output_tokens_per_call: 24000, summary_tokens: 512,
+    }),
+    ..Default::default()
+}).await?;
+let result = run.result().await?;
+# Ok(()) }
+```
+
+An instruction addendum is trusted application context for one turn, including
+retries and recovery. It is not user transcript text and does not grant authority.
+The 8,192-token per-call default can be changed independently of the total turn
+budget; the remaining budget and summary reserve still apply. Imported histories
+are validated and saved atomically, and imported tools never execute. See
+[session options](../../docs/harness/guides/sessions.md) for the portable import
+format, limits, provider metadata restrictions and built-in tool defaults.
+Use an updated native runtime with these APIs; a TypeScript-only update cannot
+add host capabilities. Unchanged definitions with omitted options stay compatible.
+
 ## Lower-level and compatibility examples
 
-Current limits: 16 profiles per host, one subagent level, and 1–64 selected tools
+Current limits: 16 profiles per host, one subagent level, and 0–64 selected tools
 per agent. Callback descriptors are immutable and bounded to 128 per host; changed
 tool semantics should use a new qualified name/version. Callback outputs are JSON,
 not binary streams. Timers and steering are explicitly unsupported in `state()`.

@@ -108,7 +108,18 @@ export function ProviderGroups({
           data-testid="provider-search"
         />
       </label>
-      {shown.length === 0 && <p className="text-meta text-faint mb-6" data-testid="provider-search-empty">{t("manage.no_providers_match")}</p>}
+      {/* T3-2: while the list is on its way, or when it could not be read, say that, not
+          "No providers match." (which reads as if the search found nothing) */}
+      {ps.providersState === "loading" && ps.providers.length === 0 ? (
+        <p className="text-meta text-faint mb-6" data-testid="provider-loading">{t("manage.providers_loading")}</p>
+      ) : ps.providersState === "failed" && ps.providers.length === 0 ? (
+        <p className="text-meta text-danger mb-6" data-testid="provider-load-failed">
+          {t("manage.providers_failed")}{" "}
+          <button className="underline" data-testid="provider-load-retry" onClick={() => void ps.refreshProviders()}>{t("manage.providers_retry")}</button>
+        </p>
+      ) : (
+        shown.length === 0 && <p className="text-meta text-faint mb-6" data-testid="provider-search-empty">{t("manage.no_providers_match")}</p>
+      )}
       {KINDS.map((kind) => {
         const inKind = shown.filter((p) => providerKind(p) === kind);
         if (inKind.length === 0) return null;

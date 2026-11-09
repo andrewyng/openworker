@@ -2,6 +2,17 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Omitted values retain the historical behavior: session tools accompany a
+/// nonempty selected tool catalog. Explicit true may enable a session tool.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct BuiltinTools {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ask_user: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_history: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -37,6 +48,8 @@ pub struct Manifest {
     pub default_model: Option<crate::connections::Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<crate::budget::Limits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_tools: Option<BuiltinTools>,
 }
 fn one() -> u32 {
     1

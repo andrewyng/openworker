@@ -68,6 +68,145 @@ fn no_leak(rt: &Runtime, sid: &str) {
     }
 }
 
+fn signed_write(arguments: &str) -> Vec<Value> {
+    vec![
+        json!({"type":"reasoning","provider":"google-chat-completions","binding":"fixture-binding","block":{"type":"thought_signature","target":"tool_call","id":"signed-call","signature":"OPAQUE_SIGNED_CALL"}}),
+        json!({"type":"function_call","name":"write_file","call_id":"signed-call","arguments":arguments}),
+    ]
+}
+fn write_schema() -> Value {
+    json!({"type":"function","name":"write_file","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}})
+}
+fn signed_tool_config(action: Action) -> Config {
+    Config {
+        guardrails: Guardrails {
+            tool_calls: vec![crate::safety::ToolRules {
+                tools: vec!["example-tools.write_file".into()],
+                rules: vec![Rule::regex("tool-secret", "SECRET_[A-Z]+", action)],
+            }],
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn signed_tool_redaction_and_denial_discard_candidate_with_bounded_retry() {
+    for action in [Action::redact(), Action::Block] {
+        for (recovers, message_level) in
+            [(true, false), (false, false), (true, true), (false, true)]
+        {
+            let seen = Arc::new(AtomicUsize::new(0));
+            let count = seen.clone();
+            let mut model = Model::new("test".into(), true);
+            model.sample_hook = Some(Arc::new(move |instructions, history, tx| {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let raw = serde_json::to_string(&history).unwrap();
+                assert!(!raw.contains("SECRET_SENTINEL"));
+                assert!(!raw.contains("OPAQUE_SIGNED_CALL"));
+                if n > 0 {
+                    assert!(instructions.contains("application policy"));
+                }
+                let output = if n > 0 && recovers {
+                    vec![message("I can offer a safe alternative.")]
+                } else {
+                    // Only the first call is signed; an unsafe parallel sibling
+                    // must also cause the entire candidate to be discarded.
+                    let mut batch = signed_write("{\"path\":\"safe.txt\",\"content\":\"safe\"}");
+                    if message_level {
+                        // Some Google models sign the first text part instead
+                        // of a function call. The following tools remain part
+                        // of the same signed candidate.
+                        batch[0]["block"]["target"] = json!("message");
+                        batch[0]["block"]["id"] = json!("signed-message");
+                        let mut text = message("I will write both files.");
+                        text["id"] = json!("signed-message");
+                        batch.insert(1, text);
+                    }
+                    batch.push(json!({"type":"function_call","name":"write_file","call_id":"parallel-call","arguments":"{\"path\":\"no-write.txt\",\"content\":\"SECRET_SENTINEL\"}"}));
+                    batch
+                };
+                Box::pin(async move {
+                    tx.send(Progress::Complete(crate::provider::Completion {
+                        output,
+                        usage: Some(crate::provider::Usage {
+                            output_tokens: 10,
+                            ..Default::default()
+                        }),
+                    }))
+                    .await
+                    .unwrap();
+                    Ok(())
+                })
+            }));
+            let (tmp, rt, sid) = fixture(signed_tool_config(action.clone()), model).await;
+            rt.store
+                .lock()
+                .unwrap()
+                .accept(&sid, "signed-check", "write a file")
+                .unwrap();
+            let result = rt
+                .drive(&sid, Default::default(), vec![write_schema()])
+                .await;
+            if recovers {
+                result.unwrap();
+            } else {
+                assert!(result.unwrap_err().is::<safety::Blocked>());
+            }
+            assert_eq!(seen.load(Ordering::SeqCst), 2);
+            assert!(!tmp.path().join("work/safe.txt").exists());
+            assert!(!tmp.path().join("work/no-write.txt").exists());
+            no_leak(&rt, &sid);
+            let db = rt.store.lock().unwrap();
+            assert!(!serde_json::to_string(&db.get(&sid).unwrap().history)
+                .unwrap()
+                .contains("OPAQUE_SIGNED_CALL"));
+            let events = db.events(&sid, 0).unwrap();
+            assert!(!events.iter().any(|e| e.kind == "tool_started"));
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| e.kind == "safety_output_retry")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn allowed_signed_tool_arguments_keep_the_exact_original_encoding() {
+    let arguments = "{ \"path\": \"safe.txt\", \"content\": \"safe\" }";
+    let mut model = Model::new("test".into(), true);
+    model.sample_hook = Some(Arc::new(move |_, _, tx| {
+        Box::pin(async move {
+            tx.send(Progress::Complete(crate::provider::Completion {
+                output: signed_write(arguments),
+                usage: Some(crate::provider::Usage {
+                    output_tokens: 10,
+                    ..Default::default()
+                }),
+            }))
+            .await
+            .unwrap();
+            Ok(())
+        })
+    }));
+    let (_tmp, rt, sid) = fixture(signed_tool_config(Action::redact()), model).await;
+    rt.store
+        .lock()
+        .unwrap()
+        .accept(&sid, "signed-pass", "write a file")
+        .unwrap();
+    let history = rt.store.lock().unwrap().get(&sid).unwrap().history;
+    let completion = rt.sample(&sid, &history, &[write_schema()]).await.unwrap();
+    assert_eq!(
+        completion.output[0]["block"]["signature"],
+        "OPAQUE_SIGNED_CALL"
+    );
+    assert_eq!(completion.output[1]["arguments"], arguments);
+}
+
 #[tokio::test]
 async fn user_block_precedes_admission_and_never_enters_history() {
     let seen = Arc::new(AtomicUsize::new(0));
@@ -170,6 +309,78 @@ impl crate::safety::Handler for Deny {
     ) -> crate::safety::CheckFuture<'_> {
         Box::pin(async { Ok(crate::safety::Decision::block("PUBLICATION_BLOCKED")) })
     }
+}
+
+#[tokio::test]
+async fn application_instruction_addendum_is_checked_before_the_model() {
+    use crate::safety::{HandlerRef, Hook, HookPhase};
+    struct Inspect;
+    impl crate::safety::Handler for Inspect {
+        fn call(
+            &self,
+            c: crate::safety::Context,
+            _: CancellationToken,
+        ) -> crate::safety::CheckFuture<'_> {
+            Box::pin(async move {
+                assert_eq!(c.phase, crate::safety::Phase::ModelInput);
+                assert!(c.text.contains("BLOCKED_APPLICATION_CONTEXT"));
+                Ok(crate::safety::Decision::block(
+                    "APPLICATION_CONTEXT_BLOCKED",
+                ))
+            })
+        }
+    }
+    let reference = HandlerRef {
+        name: "inspect-context".into(),
+        version: "1".into(),
+    };
+    let config = Config {
+        hooks: vec![Hook {
+            name: "inspect-context".into(),
+            version: "1".into(),
+            when: HookPhase::BeforeModel,
+            tools: vec![],
+            handler: reference.clone(),
+            timeout_ms: 100,
+        }],
+        ..Default::default()
+    };
+    let seen = Arc::new(AtomicUsize::new(0));
+    let (_tmp, rt, sid) = fixture(config, fake(vec!["must not run"], seen.clone())).await;
+    rt.safety_handlers
+        .register(reference, Arc::new(Inspect))
+        .unwrap();
+    rt.store
+        .lock()
+        .unwrap()
+        .accept_with_context(
+            &sid,
+            "context",
+            "hello",
+            None,
+            None,
+            crate::turn_options::Context {
+                instruction_addendum: Some("BLOCKED_APPLICATION_CONTEXT".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let history = rt.store.lock().unwrap().get(&sid).unwrap().history;
+    assert!(rt
+        .sample(&sid, &history, &[])
+        .await
+        .unwrap_err()
+        .is::<super::safety::Blocked>());
+    assert_eq!(seen.load(Ordering::SeqCst), 0);
+    assert!(rt.store.lock().unwrap().attempts(&sid).unwrap().is_empty());
+    assert!(!rt
+        .store
+        .lock()
+        .unwrap()
+        .history_page(&sid, 0)
+        .unwrap()
+        .to_string()
+        .contains("BLOCKED_APPLICATION_CONTEXT"));
 }
 #[tokio::test]
 async fn hook_blocks_tool_in_bypass_and_returns_safe_unexecuted_result_to_model() {

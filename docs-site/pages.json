@@ -24,6 +24,10 @@
     "slug": "sessions"
   },
   {
+    "source": "docs/harness/guides/streaming.md",
+    "slug": "streaming"
+  },
+  {
     "source": "docs/harness/guides/guardrails.md",
     "slug": "guardrails"
   },

@@ -28,6 +28,7 @@ from .environment import environment_context
 from .memory import (
     MemoryStore,
     Scope,
+    format_memories,
     format_user_rules,
     memory_tools,
     render_memory_block,
@@ -36,6 +37,7 @@ from .permissions import Mode, PermissionEngine
 from .project import load_agents_md
 from . import session_facts
 from .roots import RootDir, normalize_roots, render_context
+from .observability.provider_view import tag as tag_provider
 from .providers import ProviderClient, ProviderRouter
 from .overrides import RiskOverrideStore
 from .secrets import SecretStore, state_dir
@@ -50,7 +52,7 @@ from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
 from .sandbox import inside as _openshell
 from .sandbox.selection import select as select_sandbox
-from .sandbox.workspace import open_workspace
+from .sandbox.workspace import open_workspace, provider_name as _sandbox_provider_name
 from .tools.todo import TodoList
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
@@ -455,6 +457,7 @@ def build_engine(
     provider = provider or ProviderRouter(secrets, default_provider="openai")
     # Repo-focused personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
+    agent_task_registry = None
     if agent.subagents and ws is not None:
         registry.register_all(
             explorer_tools(
@@ -464,6 +467,18 @@ def build_engine(
                 model_settings=model_settings,
             )
         )
+        # Async subagents (OPE-254): the background variant of explore, plus the
+        # inherit mode whose approvals route through this session's own approver.
+        # The registry is bound to the engine below, once it exists.
+        from .tools.agent_tasks import agent_task_tools
+
+        _agent_tools, agent_task_registry = agent_task_tools(
+            workspace=ws,
+            provider=provider,
+            model=model,
+            model_settings=model_settings,
+        )
+        registry.register_all(_agent_tools)
     # Scheduling: opted-in surfaces with a workspace can set up scheduled tasks (origin = this
     # session). Code stays out (it fans out to explorers instead).
     if task_store is not None and ws is not None and agent.scheduling:
@@ -486,6 +501,9 @@ def build_engine(
     # sleep_until all come from here.
     registry.register_all(clock_tools())
 
+    _remembered: list = []
+    _memory_mode = "full"
+    _agents_md_count = 0
     instructions = f"{agent.system_prompt}\n\n{_NARRATION_GUIDANCE}\n\n{_FIRST_CONTACT_GUIDANCE}"
     if agent.team == "lead":
         from .teams.proposals import PROPOSAL_GUIDANCE
@@ -518,15 +536,15 @@ def build_engine(
     if ws is not None:
         instructions = f"{instructions}\n\n{environment_context(ws)}"
         conventions = load_agents_md(ws)
+        _agents_md_count = conventions.count(" AGENTS.md>\n") if conventions else 0
         if conventions:
             instructions = f"{instructions}\n\n{conventions}"
 
     # The user's own standing instructions, read once here: like the memories below,
     # they're session-stable knowledge. Edits apply to NEW conversations (the Settings
     # copy says exactly that), never mid-conversation.
-    rules_block = format_user_rules(
-        (user_rules() if callable(user_rules) else user_rules) or ""
-    )
+    _rules_text = (user_rules() if callable(user_rules) else user_rules) or ""
+    rules_block = format_user_rules(_rules_text)
     if rules_block:
         instructions = f"{instructions}\n\n{rules_block}"
 
@@ -561,7 +579,9 @@ def build_engine(
         remembered = memory_store.list(scope=Scope.GLOBAL)
         if mem_ws is not None:
             remembered += memory_store.list(scope=Scope.WORKSPACE, workspace=mem_ws)
+        _remembered = remembered
         block = render_memory_block(remembered)
+        _memory_mode = "index" if block and block != format_memories(remembered) else "full"
         if block:
             instructions = f"{instructions}\n\n{block}"
 
@@ -697,6 +717,10 @@ def build_engine(
         skills_ctx = skill_catalog_text(skill_loader, allowed=allowed)
         if skills_ctx:
             parts.append(skills_ctx)
+        if eng is not None:
+            # The menu the model is offered this turn, for the recording (observability §5.6).
+            eng.skills_offered = [c["name"] for c in skill_loader.catalog()
+                                  if allowed is None or c["name"] in allowed]
         # Disable countermand (§3): instructions already loaded into this conversation keep
         # steering the model even after the skill is turned off/deleted — history can't be
         # un-read. So a loaded-but-no-longer-available skill gets an explicit stop note,
@@ -757,6 +781,11 @@ def build_engine(
         engine.compaction_settings = lambda: dict(_compaction_overrides)
     # OPE-237: in auto-approve, an approved plan's steps become reviewer evidence.
     engine.plan_approval = bool(config.auto_approve_plan_approval)
+    # Async subagents: the registry the spawn tools and the server's tasks endpoint
+    # share; bound late because the tools were registered before the engine existed.
+    if agent_task_registry is not None:
+        agent_task_registry.bind(engine)
+    engine.agent_tasks = agent_task_registry
     engine.executor = executor  # type: ignore[attr-defined]
     # OPE-232 / OPE-234: the read-only session grant and the auto-approve read-only tier
     # judge paths from the persistent shell's current folder, not the workspace folder it
@@ -764,6 +793,11 @@ def build_engine(
     if executor is not None:
         engine.permissions.shell_cwd = engine.current_shell_cwd
     engine.sandbox_workspace = sandbox_workspace  # type: ignore[attr-defined]
+    if sandbox_workspace is not None and hasattr(sandbox_workspace, "observer"):
+        sandbox_workspace.observer = engine.on_sandbox  # setup step and restarts (OB-13)
+    # Whether this machine has a sandbox switched on (stamp.sandbox.expected, format 1.2), for
+    # the "ran without the sandbox" check: the setting, whatever this session ended up using.
+    engine.sandbox_expected = _sandbox_provider_name(config.sandbox_provider) != "direct"
     # OPE-219: a sandboxed session with "Only the sites you allow" holds its web tools to
     # the same list as its commands. They run in this process, outside the sandbox, so the
     # permission engine is the wall for them. No sandbox, or "Allow everything": no wall.
@@ -876,7 +910,7 @@ def build_engine(
         )
         engine.reviewer = make_auto_reviewer(
             choice,
-            provider=provider,
+            provider=tag_provider(engine.provider, purpose="auto_approver"),
             model=model,
             known_world=engine.session_facts.world.render() + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(engine.runtime_facts),
         )
@@ -885,6 +919,35 @@ def build_engine(
         # attached but the LIVE path stays off unless the live feature flag is also on
         # and the session is in Mode.AUTO_APPROVE. Shadow verdicts never clear actions.
         engine.reviewer_shadow = bool(shadow_on)
+    # Observability E16 / E5: which version of the coworker this is, and what the session's
+    # system prompt was built from (counts and ids, never the text).
+    try:
+        from .observability.stamps import persona_fingerprint
+
+        engine.persona_fp = persona_fingerprint(
+            agent.name, agent.system_prompt, [Path(d) for d in (extra_skill_dirs or [])]
+        )
+    except Exception:  # noqa: BLE001
+        engine.persona_fp = None
+    # 1.3: which coworker this is (E25a) and the scans it promises (E17c); the files its
+    # fingerprint covers, so the machine can keep this version for "What changed" (E25c).
+    engine.persona_id = agent.name
+    engine.persona_title = getattr(agent, "title", None) or agent.name
+    engine.persona_coverage = list(getattr(agent, "coverage", ()) or ())
+    try:
+        from .observability.stamps import persona_files
+
+        engine.persona_files = persona_files(agent.system_prompt, [Path(d) for d in (extra_skill_dirs or [])])
+    except Exception:  # noqa: BLE001
+        engine.persona_files = {}
+    engine.context_facts = {
+        "memories": [getattr(m, "id", None) for m in (_remembered or [])],
+        "memory_mode": _memory_mode,
+        # Each non-empty line of your instructions is one rule, with or without a dash
+        # (fix list F-5: only "-" lines were counted, so plain lines recorded 0).
+        "rules": len([ln for ln in _rules_text.splitlines() if ln.strip()]),
+        "agents_md": _agents_md_count,
+    }
     engine.audit_context = {
         "session_id": session_id or "",
         "agent": agent.name,

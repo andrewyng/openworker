@@ -790,6 +790,18 @@ impl StateStore for PostgresStore {
         let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
         self.call(move |d| d.accept_with_safety(&sid, &key, &text, limits, safety))
     }
+    fn accept_with_context(
+        &mut self,
+        sid: &str,
+        key: &str,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        safety: Option<openworker_runtime::safety::Config>,
+        context: openworker_runtime::turn_options::Context,
+    ) -> Result<(Session, bool, Option<Event>)> {
+        let (sid, key, text) = (sid.to_owned(), key.to_owned(), text.to_owned());
+        self.call(move |d| d.accept_with_context(&sid, &key, &text, limits, safety, context))
+    }
     fn cursor(&self, sid: &str) -> Result<i64> {
         let sid = sid.to_owned();
         self.call(move |d| d.cursor(&sid))

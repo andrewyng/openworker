@@ -8,11 +8,51 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::mpsc;
 
+/// Explicit generation configuration; display is controlled separately per turn.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Thinking {
+    Disabled,
+    Adaptive,
+    Enabled {
+        #[serde(rename = "budgetTokens")]
+        budget_tokens: u32,
+    },
+}
+impl Thinking {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Self::Enabled { budget_tokens } = self {
+            anyhow::ensure!(
+                (1024..=1_000_000).contains(budget_tokens),
+                "Thinking budget must be between 1024 and 1000000 tokens"
+            );
+        }
+        Ok(())
+    }
+    /// Output limits take precedence over manual thinking allowances. Return
+    /// None below the manual minimum rather than sending an invalid request or
+    /// forcing `disabled`, which some adaptive-only models reject.
+    pub fn request(&self, max_tokens: usize) -> Result<Option<Value>, Error> {
+        self.validate().map_err(|_| config())?;
+        Ok(Some(match self {
+            Self::Disabled => json!({"type":"disabled"}),
+            Self::Adaptive => json!({"type":"adaptive"}),
+            Self::Enabled { budget_tokens } => {
+                let budget_tokens = (*budget_tokens as usize).min(max_tokens.saturating_sub(1));
+                if budget_tokens < 1024 {
+                    return Ok(None);
+                }
+                json!({"type":"enabled","budget_tokens":budget_tokens})
+            }
+        }))
+    }
+}
+
 fn invalid() -> Error {
-    Error::new(Failure::InvalidResponse)
+    Error::new(Failure::InvalidResponse).with_code("invalid_anthropic_message")
 }
 fn config() -> Error {
-    Error::new(Failure::Configuration)
+    Error::new(Failure::Configuration).with_code("invalid_anthropic_request")
 }
 
 fn append(messages: &mut Vec<Value>, role: &str, blocks: Vec<Value>) {
@@ -139,7 +179,10 @@ pub fn body(
         if t["type"] != "function" || !t["parameters"].is_object() { return Err(config()); }
         Ok(json!({"name":t["name"].as_str().ok_or_else(config)?,"description":t["description"].as_str().unwrap_or(""),"input_schema":t["parameters"]}))
     }).collect::<Result<Vec<_>,Error>>()?;
-    let mut body = json!({"model":model,"system":instructions,"messages":messages,"max_tokens":max_tokens,"stream":true});
+    // Automatic caching moves the breakpoint with the growing conversation.
+    // The provider decides eligibility/minimum prefix length; a request does
+    // not imply a cache hit. Applications can explicitly opt out per provider.
+    let mut body = json!({"model":model,"system":instructions,"messages":messages,"max_tokens":max_tokens,"stream":true,"cache_control":{"type":"ephemeral"}});
     if !definitions.is_empty() {
         body["tools"] = json!(definitions);
         body["tool_choice"] = json!({"type":"auto","disable_parallel_tool_use":true});
@@ -168,8 +211,12 @@ pub struct Decoder {
     usage: Usage,
     output_known: bool,
     input_known: bool,
+    reasoning: Option<crate::provider::ReasoningDelta>,
 }
 impl Decoder {
+    pub fn take_reasoning(&mut self) -> Option<crate::provider::ReasoningDelta> {
+        self.reasoning.take()
+    }
     fn usage_report(&self) -> Option<crate::telemetry::TokenUsage> {
         self.input_known.then(|| {
             let mut u = self.usage.reported();
@@ -292,6 +339,13 @@ impl Decoder {
                 }
                 if field == "text" {
                     return Ok(Some(fragment.into()));
+                }
+                if field == "thinking" {
+                    self.reasoning = Some(crate::provider::ReasoningDelta {
+                        kind: crate::provider::ReasoningKind::Thinking,
+                        text: fragment.into(),
+                        block_index: e["index"].as_u64().ok_or_else(invalid)?,
+                    });
                 }
             }
             Some("content_block_stop") => {
@@ -419,6 +473,7 @@ pub async fn request(
         .await
         .map_err(|_| Error::new(Failure::Transport))?;
     let status = response.status().as_u16();
+    let request_id = crate::provider::request_id(response.headers(), key);
     let retry_after = response
         .headers()
         .get("retry-after")
@@ -428,7 +483,14 @@ pub async fn request(
     if !(200..300).contains(&status) {
         let mut bytes = vec![];
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| Error::new(classify(status, &Value::Null)))?;
+            let chunk = chunk.map_err(|_| Error {
+                kind: classify(status, &Value::Null),
+                retry_after,
+                http_status: Some(status),
+                request_id: request_id.clone(),
+                api: Some(crate::model_api::Api::Anthropic),
+                code: Some("http_error_body_unavailable"),
+            })?;
             if bytes.len() + chunk.len() > 16384 {
                 break;
             }
@@ -437,6 +499,9 @@ pub async fn request(
         let error: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         return Err(Error {
             http_status: Some(status),
+            request_id,
+            api: Some(crate::model_api::Api::Anthropic),
+            code: crate::provider::upstream_code(&error["error"]),
             kind: classify(status, &error["error"]),
             retry_after,
         });
@@ -469,6 +534,11 @@ pub async fn request(
                     previous_usage = Some(usage);
                 }
                 let decoded = decoded?;
+                if let Some(delta) = decoder.take_reasoning() {
+                    tx.send(Progress::Reasoning(delta))
+                        .await
+                        .map_err(|_| Error::new(Failure::Transport))?;
+                }
                 if !first_sent && decoder.output_started() {
                     tx.send(Progress::OutputStarted)
                         .await

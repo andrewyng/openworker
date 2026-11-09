@@ -234,6 +234,24 @@ impl Harness {
     }
     /// Register an agent after startup. Exact repeats are safe; changes need a new ID.
     pub async fn create_agent(&self, definition: Agent) -> Result<AgentHandle> {
+        for a in std::iter::once(&definition).chain(definition.subagents.iter()) {
+            if a.builtin_tools.is_some()
+                && self.client.info()["capabilities"]["builtin_tools"] != true
+            {
+                return Err(Error::Setup(
+                    "Update the host to configure built-in tools".into(),
+                ));
+            }
+            if a.limits
+                .as_ref()
+                .is_some_and(|l| l.max_output_tokens_per_call != 8192)
+                && self.client.info()["capabilities"]["per_call_output_limit"] != true
+            {
+                return Err(Error::Setup(
+                    "Update the host to configure per-call output limits".into(),
+                ));
+            }
+        }
         if self.client.info()["capabilities"]["dynamic_agents"] != true {
             return Err(Error::Setup("Host does not support dynamic agents".into()));
         }

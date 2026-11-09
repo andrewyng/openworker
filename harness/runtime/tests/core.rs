@@ -53,6 +53,102 @@ fn session() -> Session {
 }
 
 #[test]
+fn imported_history_and_turn_context_are_atomic_and_durable() {
+    use openworker_runtime::history_import::{canonical, HistoryItem};
+    use openworker_runtime::turn_options::{Context, OutputOptions};
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut s = session();
+    s.history = canonical(&[
+        HistoryItem::User {
+            text: "Previous request".into(),
+        },
+        HistoryItem::ToolCall {
+            call_id: "old".into(),
+            name: "app__lookup".into(),
+            arguments: json!({}),
+        },
+        HistoryItem::ToolResult {
+            call_id: "old".into(),
+            output: "done".into(),
+        },
+    ])
+    .unwrap();
+    let sql = rusqlite::Connection::open(dir.path().join("runtime.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON events WHEN NEW.kind='session_created' BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
+    assert!(db.save(&s, "session_created", json!({})).is_err());
+    assert!(db.list().unwrap().is_empty());
+    assert_eq!(
+        sql.query_row("SELECT COUNT(*) FROM history", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    sql.execute_batch("DROP TRIGGER fail_import;").unwrap();
+    db.save(&s, "session_created", json!({})).unwrap();
+    assert!(db.get(&s.id).unwrap().turn.is_none());
+    let context = Context {
+        instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
+        output: OutputOptions {
+            reasoning: true,
+            buffer_attempts: true,
+        },
+    };
+    db.accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(
+        !db.accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+            .unwrap()
+            .1
+    );
+    assert!(db.accept(&s.id, "first", "New request").is_err());
+    drop(sql);
+    drop(db);
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut restored = db.get(&s.id).unwrap();
+    assert_eq!(restored.history[..3], s.history);
+    assert_eq!(
+        restored.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert_eq!(restored.turn.as_ref().unwrap().output, context.output);
+    assert!(!db
+        .history_page(&s.id, 0)
+        .unwrap()
+        .to_string()
+        .contains("TURN_PRIVATE_CONTEXT"));
+    assert!(!serde_json::to_string(&db.events(&s.id, 0).unwrap())
+        .unwrap()
+        .contains("TURN_PRIVATE_CONTEXT"));
+    restored.turn.as_mut().unwrap().status = "completed".into();
+    db.save(&restored, "turn_completed", json!({"status":"completed"}))
+        .unwrap();
+    let (next, _, _) = db.accept(&s.id, "next", "Next request").unwrap();
+    assert!(next.turn.as_ref().unwrap().instruction_addendum.is_none());
+    assert_eq!(next.turn.as_ref().unwrap().output, OutputOptions::default());
+    let (old, fresh, _) = db
+        .accept_with_context(&s.id, "first", "New request", None, None, context.clone())
+        .unwrap();
+    assert!(!fresh);
+    assert_eq!(
+        old.turn.as_ref().unwrap().instruction_addendum,
+        context.instruction_addendum
+    );
+    assert!(db
+        .accept_with_context(
+            &s.id,
+            "first",
+            "New request",
+            None,
+            None,
+            Context {
+                output: OutputOptions::default(),
+                ..context
+            }
+        )
+        .is_err());
+}
+
+#[test]
 fn submissions_are_idempotent_and_conflicts_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let mut db = Store::open(tmp.path()).unwrap();
@@ -322,7 +418,46 @@ fn history_pages_advance_across_private_items_without_disclosing_them() {
     assert_eq!(second["has_more"], false);
     assert!(!second.to_string().contains("PRIVATE"));
     assert!(second.to_string().contains("visible"));
-    assert!(db.history_page(&s.id, 104).is_err());
+    assert_eq!(
+        db.history_page(&s.id, 104)
+            .unwrap_err()
+            .downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+        Some(&openworker_runtime::store::HistoryCursorError::Index)
+    );
+}
+
+#[test]
+fn google_signatures_survive_storage_but_never_enter_display_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Store::open(dir.path()).unwrap();
+    let mut s = session();
+    // Adapter unit tests validate generation; this test checks durable storage
+    // and public views without exposing the private transport decoder trait.
+    s.history.extend([
+        json!({"type":"reasoning","provider":"google-chat-completions","binding":"binding","block":{"type":"thought_signature","target":"tool_call","id":"call-1","signature":"OPAQUE_PRIVATE"}}),
+        json!({"type":"function_call","call_id":"call-1","name":"app__lookup","arguments":"{}"}),
+    ]);
+    s.history
+        .push(json!({"type":"function_call_output","call_id":"call-1","output":"available"}));
+    db.save(&s, "created", json!({})).unwrap();
+    drop(db);
+    let db = Store::open(dir.path()).unwrap();
+    let raw = db.get(&s.id).unwrap().history;
+    assert!(serde_json::to_string(&raw)
+        .unwrap()
+        .contains("OPAQUE_PRIVATE"));
+    assert!(!db
+        .history_page(&s.id, 0)
+        .unwrap()
+        .to_string()
+        .contains("OPAQUE_PRIVATE"));
+    let excerpt = db.transcript_excerpt(&s.id, 0, 0).unwrap();
+    assert!(!excerpt.to_string().contains("OPAQUE_PRIVATE"));
+    assert!(excerpt.to_string().contains("app__lookup"));
+    let summary = openworker_runtime::compaction::logical(&raw);
+    assert!(!serde_json::to_string(&summary)
+        .unwrap()
+        .contains("OPAQUE_PRIVATE"));
 }
 
 #[test]
@@ -347,8 +482,16 @@ fn transcript_excerpts_are_scoped_bounded_and_preserve_unicode() {
         serde_json::from_str::<serde_json::Value>(&joined).unwrap()["content"],
         "🌱".repeat(10000)
     );
-    assert!(db.transcript_excerpt("other", 0, 0).is_err());
-    assert!(db.transcript_excerpt(&s.id, 0, 100000).is_err());
+    assert!(!db
+        .transcript_excerpt("other", 0, 0)
+        .unwrap_err()
+        .is::<openworker_runtime::store::HistoryCursorError>());
+    assert_eq!(
+        db.transcript_excerpt(&s.id, 0, 100000)
+            .unwrap_err()
+            .downcast_ref::<openworker_runtime::store::HistoryCursorError>(),
+        Some(&openworker_runtime::store::HistoryCursorError::Offset)
+    );
 }
 
 #[test]

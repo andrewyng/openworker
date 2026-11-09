@@ -134,6 +134,8 @@ pub struct Agent {
     pub(crate) instructions: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) limits: Option<TurnLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) builtin_tools: Option<openworker_runtime::package::BuiltinTools>,
     #[serde(default)]
     pub(crate) tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,6 +179,7 @@ impl Agent {
             description: String::new(),
             instructions: String::new(),
             limits: None,
+            builtin_tools: None,
             tools: vec![],
             model: None,
             provider: ProviderKind::Openai,
@@ -195,6 +198,11 @@ impl Agent {
     }
     pub fn limits(mut self, limits: TurnLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+    /// Select implicit session tools independently of application tools.
+    pub fn builtin_tools(mut self, tools: openworker_runtime::package::BuiltinTools) -> Self {
+        self.builtin_tools = Some(tools);
         self
     }
     pub fn id(&self) -> &str {

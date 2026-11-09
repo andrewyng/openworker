@@ -106,6 +106,12 @@ def build_app(workspace: str | None, model: str, mode: str):
         model=model,
         mode=Mode(mode),
     )
+    if _ENGINE_LOCK is not None:
+        # Turns an earlier run left open (crash, restart mid-turn) are closed as unknown
+        # (observability TD-12). Only with the engine lock: a second server on the same
+        # folder may have turns running right now.
+        manager.recordings_store.close_open_turns()
+        manager.start_background_checks()  # stale manual runs, Issues re-check (P3-3, P3-4)
     return create_app(manager)
 
 
@@ -222,10 +228,19 @@ def main(argv=None) -> None:
 
         _exit_when_orphaned()
         _warn_if_state_shared()
+        from .ws_guard import GuardedServer
+
         app = build_app(args.cwd, args.model, args.mode)
-        uvicorn.run(
+        # GuardedServer: uvicorn's server, but it aborts the websockets still open before it
+        # waits for connections at shutdown, so Ctrl+C never hangs on a tab that stopped
+        # reading (ws_guard.py, T3-3).
+        config = uvicorn.Config(
             app, host=args.host, port=args.port, ws_max_size=_WS_MAX_FRAME_BYTES
         )
+        try:
+            GuardedServer(config).run()
+        except KeyboardInterrupt:
+            pass  # as uvicorn.run: the signal is raised again once the server has stopped
     finally:
         if generated_token_path is not None:
             generated_token_path.unlink(missing_ok=True)

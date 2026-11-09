@@ -21,7 +21,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
 
 from .. import model_config as _model_config
@@ -43,6 +43,17 @@ from ..teams.store import WORKER_WAITING
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
+from ..observability import Recorder, RecordingStore
+from ..observability import read_api as recording_api
+from ..observability import signals as recording_signals
+from ..observability import rollups as recording_rollups
+from ..observability import stamps as _obs_stamps
+from ..observability import usage_api
+from ..observability import scopes as _obs_scopes
+from ..observability.export import ObservabilityExport
+from ..observability.engine_hooks import note_team
+from ..observability.provider_view import RecordingProvider, tag as tag_provider
+from ..remote.audit_export import load_policy
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -92,6 +103,7 @@ from ..providers import (
     verify_provider_key,
 )
 from ..providers.local_server import LOCAL_SERVERS
+from ..providers.router import DEFAULT_PROVIDER, canonical_model
 from ..providers.registry import CUSTOM_PROVIDERS_PROFILE, DEFAULT_OLLAMA_URL
 from ..secrets import SecretStore, state_dir
 from ..sessions import SessionRecord, usage_totals
@@ -381,7 +393,18 @@ class SessionManager:
         # level, outside the memory table; read at engine build time.
         self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "coworker.db")
+        # Observability (Phase 1, E7): recorded turns and steps, in their own file next to
+        # coworker.db so they can be pruned and reset on their own.
+        self.recordings_store = RecordingStore.beside(base)
+        self.recorder = Recorder(store=self.recordings_store)
+        # Live: the same recording events go to the session's sockets, batched (§12).
+        self._live_steps: dict[str, list[dict[str, Any]]] = {}
+        self._live_steps_lock = threading.Lock()
+        self._live_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.recorder.add_listener(self._forward_recording_event)
         self.session_store = ConversationStore(base)
+        # Phase 3: the usage ledger's stand-in coworker id for turns recorded before 1.3.
+        self.recordings_store.persona_of = self.session_store.agent_of
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
@@ -418,6 +441,27 @@ class SessionManager:
         self._autotitle_sig: dict[str, int] = {}
         self.workspace_trust = WorkspaceTrustStore()
         self.secrets = SecretStore()
+        # OB-6: record on or off, keep for, and sending recordings to Langfuse or an
+        # OpenTelemetry endpoint. Settings live in the machine's state folder (beside the
+        # secrets), never in a project. Off by default: then no exporter exists at all.
+        self.observability = ObservabilityExport(
+            self.secrets.path.parent, self.secrets, self.recordings_store,
+            session_title=self.session_store.display_title,
+        )
+        self.observability.apply_policy(load_policy(self.secrets.path.parent))
+        self.recorder.add_listener(self._export_on_turn_end)
+        # Phase 3: the series and task checks, off the turn's own thread, one at a time.
+        import concurrent.futures
+
+        self._scope_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="obs-scopes")
+        # T3-3: set when the app stops, so the start-up checks stop between sessions
+        self._obs_closing = threading.Event()
+        self.recorder.add_listener(self._scopes_on_turn_end)
+        # P3B-5: a team's Phase 3 numbers and task checks, kept until a member's recording,
+        # the board or the journal changes (team_id -> what they were worked out from, result).
+        self._team_obs_cache: dict[str, tuple[Any, Any]] = {}
+        self._team_checked: dict[str, Any] = {}
+        self._team_obs_lock = threading.Lock()
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
         # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
@@ -425,6 +469,10 @@ class SessionManager:
             self.provider = ProviderRouter(
                 self.secrets, default_provider="openai", on_use=self._note_provider_use
             )
+        # Observability (E2): every model call goes through one recording wrapper; each
+        # caller tags its own view (engine, summary, reviewer, title, proxy).
+        if not isinstance(self.provider, RecordingProvider):
+            self.provider = RecordingProvider(self.provider, recorder=self.recorder)
         self.mcp = MCPManager(secrets=self.secrets)
         # OAuth MCP servers with a sign-in in flight / their last connect error —
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
@@ -482,6 +530,10 @@ class SessionManager:
         self._team_inflight: set[str] = set()
         self._team_batch_deadlines: dict[str, float] = {}
         self._team_batch_handles: dict[str, Any] = {}
+        # Observability 1.3 (E18c): team deliveries held back, by session: (why, since), and
+        # the hour each team's wake cap was last recorded on its board.
+        self._team_held: dict[str, tuple[str, float]] = {}
+        self._team_cap_noted: dict[str, str] = {}
         self._activity_acknowledged: set[str] = set()
         # Lead-session last-turn timestamps for the check-in backstop (monotonic-ish
         # wall clock; restart resets the clock rather than firing a wake storm).
@@ -495,9 +547,15 @@ class SessionManager:
         # Inbox (cross-session human-attention queue), routing (named inboxes + Slack/Telegram
         # bindings), the Unattended toggle, and self-wake records.
         self.inbox = InboxStore(base / "inbox.json")
+        self.inbox.on_change = self._inbox_item_changed
         self.inbox_routing = InboxRouting(base / "inbox_routing.json")
         self.unattended = UnattendedRegistry(base / "unattended.json")
         self.wakes = WakeStore(base / "wakes.json")
+        # Async subagents (OPE-253): the supplemental session record for subagent runs —
+        # written on task transitions, so a run that ends between turn checkpoints survives.
+        from ..tools.agent_tasks import AgentTaskStore
+
+        self.agent_task_store = AgentTaskStore(base / "agent_tasks.json")
         # Channel subscriptions (inbound): persisted (session_id, channel) records + a ring buffer
         # of recently-seen channel messages for get_channel_messages.
         self.subscriptions = SubscriptionStore(base / "subscriptions.json")
@@ -859,6 +917,7 @@ class SessionManager:
                 engine.team_approver = team_approver
             if items_approver is not None:
                 engine.items_approver = items_approver
+            self._wire_agent_tasks(session_id, engine)
             return engine
 
         record = self.session_store.load(session_id)
@@ -953,6 +1012,9 @@ class SessionManager:
             extra_tools=[
                 *(extra_tools or []),
                 *self._team_tools_for(session_id, ag, record, ws),
+                # The Code coworker's feature worktrees (2026-11-07): policy-driven, so
+                # the model never runs `git worktree` by hand.
+                *(self._worktree_tools(session_id) if ag.name == "code" else []),
             ]
             or None,
             secrets=self.secrets,
@@ -1001,6 +1063,11 @@ class SessionManager:
             auto_approve_shadow=self.auto_approve_shadow(),
             auto_approve_reviewer=self.auto_approve_reviewer(),
         )
+        # Observability (E1): this engine's turns and steps go to the server's recorder,
+        # unless recording is off on this machine (OB-6): then new engines record nothing.
+        engine.recorder = self.recorder if self.observability.settings.record else None
+        self._note_persona_version(engine)
+        engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         engine.delegated_approval = lambda args: self.worker_review_context(session_id, args)
         engine.reviewer_context = lambda: self.approval_context(session_id)
         engine.reviewer_owner_history = lambda: self.approval_owner_history(session_id, engine)
@@ -1023,10 +1090,47 @@ class SessionManager:
             engine.compaction_state = CompactionState.from_dict(record.compaction)
         engine.compaction_settings = self.compaction_settings
         self._engines[session_id] = engine
+        if not self._session_clients.get(session_id):
+            self._note_watching(session_id, False)  # built with no window open (a schedule, a wake)
         self.sync_worker_mode(session_id, engine)  # §11.6: approvals follow the lead
+        self._wire_agent_tasks(session_id, engine)
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
         return engine
+
+    def _wire_agent_tasks(self, session_id: str, engine: TurnEngine) -> None:
+        """Hook a session's async-subagent registry (OPE-254) to the server: the loop
+        its inherit children run on, report delivery through deliver_to_session (steer
+        when busy, background turn when idle), live agent_task events for the rail,
+        and expiry resolution for a parked card whose approval wait timed out."""
+        reg = getattr(engine, "agent_tasks", None)
+        if reg is None:
+            return
+        reg.loop = self._loop
+        reg.attach_store(self.agent_task_store, session_id)
+
+        def deliver(text: str, source: dict) -> None:
+            if self._loop is None:
+                raise RuntimeError("agent-task delivery needs the server loop")
+            asyncio.run_coroutine_threadsafe(
+                self.deliver_to_session(session_id, text, source=source), self._loop
+            )
+
+        def on_event(payload: dict) -> None:
+            if self._loop is None:
+                return
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": "agent_task", "data": payload}),
+                self._loop,
+            )
+
+        def resolve_expired(tool_call_id: str) -> None:
+            item = self.inbox.for_tool_call(session_id, tool_call_id)
+            if item is not None:
+                # First-responder-wins: a no-op if the human answered in the same instant.
+                self.inbox.resolve(item.id, "expired", by="timeout")
+
+        reg.deliver, reg.on_event, reg.resolve_expired = deliver, on_event, resolve_expired
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
         """Phase 5 telemetry, fired once per brand-new session on a background thread
@@ -1292,7 +1396,7 @@ class SessionManager:
         elif engine.reviewer is None or getattr(engine, "reviewer_choice", "session") != choice:
             from ..decision_reviewer import make_auto_reviewer
             engine.reviewer = make_auto_reviewer(
-                choice, provider=engine.provider, model=engine.model,
+                choice, provider=tag_provider(engine.provider, purpose="auto_approver"), model=engine.model,
                 known_world=(engine.session_facts.world.render() if engine.session_facts else "") + "\nRUNTIME FACTS (availability, not access grants)\n" + json.dumps(getattr(engine, "runtime_facts", {})),
             )
             engine.reviewer_choice = choice
@@ -1310,6 +1414,8 @@ class SessionManager:
             return {"error": "this session does not lead a team"}
         handle = (worker or "").strip().lower()
         member = next((w for w in team.workers if w.actor == handle), None)
+        # Ids on the lead's `decide_worker_call` step (OB-7); nothing outside a recorded call.
+        note_team(team.team_id, worker_session_id=member.session_id if member else None)
         if member is None:
             return {"error": f"no worker named '{worker}' on this team"}
         item = self.inbox.get(call_id)
@@ -1998,8 +2104,25 @@ class SessionManager:
         if engine is None or not hasattr(engine, "resume"):
             return
         self.mark_running(item.session_id)
+        # 1.3 (E18a): the resume is an answered card. Who answered: a lead's decision is
+        # recorded as `lead:...`/`agent:...`, a person's as their name or nothing.
+        current = self.inbox.get(item.id) if getattr(item, "id", None) else None
+        by_raw = str(getattr(current or item, "resolved_by", "") or "")
+        by = "lead" if by_raw.startswith(("lead", "agent")) else "user"
+        # P3B-7 (TD3-23): the resume finishes the turn that asked, so when that turn was an
+        # automation run's own, the resumed turn is the run's too: its tokens and health count
+        # in the run's row. The card is the latest turn's (the turn stopped at it); a follow-up
+        # typed into the run's session later carries no `automation`, and neither does its resume.
+        automation = None
+        if item.session_id.startswith("__run__"):
+            try:
+                automation = self.recordings_store.last_turn_automation(item.session_id)
+            except Exception:  # noqa: BLE001 - a recording fact never blocks the resume
+                logger.exception("could not tell whether %s resumes a run's turn", item.session_id)
         try:
-            async for _event in engine.resume():
+            async for _event in engine.resume(trigger="user", team=self._team_stamp(item.session_id), wake={
+                    "reason": "answer", "by": by, "board_seq": self._board_seq(item.session_id)},
+                    automation=automation):
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -2685,7 +2808,105 @@ class SessionManager:
             return {"error": "team not found"}
         if self._board_space(team.lead_session) != team.space:
             return {"error": "the lead's board binding has changed"}
-        return make_summary(self, team, time.time())
+        out = make_summary(self, team, time.time())
+        # Phase 3 (OB-17, E19c): why each team turn started, from the ledger of every member
+        # session (its total equals their pills), and the team events that used to be silent.
+        # Worked out again only when something they read has changed (P3B-5).
+        try:
+            out.update(self._team_obs(team))
+            cov = out["coverage"]
+            by_session = {team.lead_session: team.lead_actor, **{w.session_id: w.actor for w in team.workers}}
+            codes = {name: list(sc.get("findings_exit") or []) for name, sc in
+                     ((recording_signals.signals().get("scanners") or {}).get("list") or {}).items()}
+            for it in out.get("items") or []:
+                c = cov.get(str(it.get("id")))
+                if c is None:
+                    continue
+                # The shape the item card reads (OB-16): scans by name and area, each with
+                # its turn and step, and the findings with their evidence links.
+                it["coverage"] = {
+                    "promised": c["promised"], "issues": c["issues"], "fine": c["fine"], "report": c["report"],
+                    "scans": [{"scanner": sc["scanner"]["name"], "area": sc["area"], "exit_code": sc["exit_code"],
+                               "ok": not sc["failed"], "found_something": sc["found_something"],
+                               "session_id": sc["session_id"], "turn_id": sc["turn_id"], "turn_seq": sc["turn_seq"],
+                               "step_seq": sc["seq"], "step_id": sc["step_id"],
+                               "result_sha256": sc["result_sha256"], "actor": by_session.get(sc["session_id"])}
+                              for sc in c["scans"]]}
+                fix = c.get("fix") or {}
+                it["findings"] = [{"id": f["seq"], "severity": f.get("severity"), "evidence": f.get("evidence") or [],
+                                   "step_call_id": f.get("step_call_id"), "session_id": f.get("session_id"),
+                                   "author": f.get("author"), "fixed_by": fix.get("fixed_by"),
+                                   "verified_by": fix.get("verified_by"),
+                                   # each scanner's "found something" exit codes (signals.yaml),
+                                   # so the card words a non-zero exit right (M3-R9)
+                                   "findings_exit": codes} for f in c["findings"]]
+        except Exception:  # noqa: BLE001 - the split never hides the rest of the summary
+            logger.exception("could not work out team %s wakes", team_id)
+            out.setdefault("wakes", [])
+            out.setdefault("events", [])
+        return out
+
+    def _team_inputs(self, team) -> dict[str, Any]:
+        """What a team's Phase 3 numbers and task checks are worked out from, read once: the
+        board, its items, and a mark of everything they depend on (P3B-5). The mark is the
+        members' write counts, the board's last event, the journal's last entry and the items
+        themselves; when it is unchanged, so is the answer."""
+        from ..teams.summary import all_events
+
+        members = {w.actor: w.session_id for w in team.workers}
+        sids = [team.lead_session, *members.values()]
+        board = list(all_events(self.team_store, team.space))
+        items = self.team_store.list_items(team.space, self._user_actor())
+        js = self.journal_store
+        with js._lock:
+            row = js._conn.execute("SELECT MAX(seq) AS m FROM journal_entries WHERE space = ?",
+                                   (team.space,)).fetchone()
+        mark = (tuple(sids), self.recordings_store.generation(sids), len(board),
+                board[-1]["seq"] if board else None, row["m"] if row else None,
+                json.dumps(items, sort_keys=True, default=str))
+        return {"members": members, "sids": sids, "board": board, "items": items, "mark": mark}
+
+    def _team_obs(self, team) -> dict[str, Any]:
+        """A team's wakes, events, wake gate and per-item coverage, kept until its inputs
+        change: a refresh of an idle team rereads only the board and the counts (P3B-5)."""
+        inputs = self._team_inputs(team)
+        with self._team_obs_lock:
+            hit = self._team_obs_cache.get(team.team_id)
+        if hit is not None and hit[0] == inputs["mark"]:
+            return hit[1]
+        members, sids, board, items = inputs["members"], inputs["sids"], inputs["board"], inputs["items"]
+        turns = self.recordings_store.team_turns(sids)
+        links = []
+        for item in items:
+            for link in item.get("links") or []:
+                if link.get("kind") == "blocked_by" and link.get("item") is not None:
+                    links.append((int(link["item"]), int(item["id"])))
+        res: dict[str, Any] = {
+            "wakes": usage_api.team_wakes(self.recordings_store, sids),
+            "events": usage_api.team_events(self.recordings_store, lead_session=team.lead_session,
+                                            worker_sessions=members, board_events=board, links=links,
+                                            turns=turns),
+            "wake_explained": self._wake_explained(sids, turns),
+        }
+        # OB-16: "Coverage for this task" on each item a coworker that declares coverage
+        # worked on, with its findings' evidence links.
+        cov = {}
+        for item in items:
+            c = self.item_coverage(team, item, board, turns=turns)
+            if c is not None:
+                cov[str(item["id"])] = c
+        res["coverage"] = cov
+        with self._team_obs_lock:
+            self._team_obs_cache[team.team_id] = (inputs["mark"], res)
+        return res
+
+    def _wake_explained(self, session_ids: list[str],
+                        rows: Optional[list[dict[str, Any]]] = None) -> dict[str, int]:
+        """The 95% gate on a real team (V3-08): team turns, and those whose wake is known."""
+        rows = self.recordings_store.team_turns(session_ids) if rows is None else rows
+        team_rows = [t for t in rows if (t.get("stamp") or {}).get("team")]
+        known = sum(1 for t in team_rows if (t.get("wake") or {}).get("reason") not in (None, "unknown"))
+        return {"turns": len(team_rows), "explained": known}
 
     def session_board(self, session_id: str) -> dict[str, Any]:
         """The session's board: items grouped by the workspace-keyed space. Empty
@@ -2839,6 +3060,20 @@ class SessionManager:
                 persona=agent.name,
                 session_id=session_id,
             )
+        def team_identity():
+            # Resolve live membership, never a model-supplied team/board id.
+            team = self.teams.for_lead_session(session_id)
+            if team is None:
+                member = self.teams.for_worker_session(session_id)
+                if member is not None and member[1].actor == actor.id:
+                    team = member[0]
+            return team.team_id if team is not None and team.space == space else ""
+
+        def worker_session(worker_actor: str) -> Optional[str]:
+            # The session of a worker on this session's team, for the step's ids (OB-7).
+            team = self.teams.get(team_identity())
+            return next((w.session_id for w in (team.workers if team else []) if w.actor == worker_actor), None)
+
         tools = board_tools(
             self.team_store,
             space=space,
@@ -2848,19 +3083,14 @@ class SessionManager:
             # added or revoked since this engine was built. No engine => no access.
             roots=lambda: getattr(self._engines.get(session_id), "roots", []),
             on_change=self.kick_team_tick,
+            team_id=team_identity,
+            worker_session=worker_session,
         ) + journal_tools(
-            self.journal_store, actor=actor, space=space
+            self.journal_store, actor=actor, space=space,
+            scan_evidence=lambda item, _sid=session_id, _space=space, _actor=actor.id:
+                self._scan_evidence(_sid, _space, _actor, item),
         )
         from ..teams.artifacts import artifact_tools
-
-        def team_identity():
-            # Resolve live membership, never a model-supplied team/board id.
-            team = self.teams.for_lead_session(session_id)
-            if team is None:
-                member = self.teams.for_worker_session(session_id)
-                if member is not None and member[1].actor == actor.id:
-                    team = member[0]
-            return team.team_id if team is not None and team.space == space else ""
 
         tools += artifact_tools(self.team_store, self.attachment_store, space=space,
             actor=actor, roots=lambda: getattr(self._engines.get(session_id), "roots", []),
@@ -2889,6 +3119,7 @@ class SessionManager:
             team, handle, actor = manager._chat_identity(session_id, role)
             if team is None:
                 return {"error": "this session is not part of a team"}
+            note_team(team.team_id, item_id=record_on_item)
             if not team.chat_enabled or not team.chat_group:
                 return {"error": "team chat is not enabled for this team"}
             try:
@@ -3018,6 +3249,7 @@ class SessionManager:
             if team is None:
                 return {"error": "no team yet — propose one with propose_team first"}
             match = next((w for w in team.workers if w.actor == worker), None)
+            note_team(team.team_id, worker_session_id=match.session_id if match else None)
             if match is None:
                 return {
                     "error": f"no worker '{worker}' on this team",
@@ -3204,6 +3436,146 @@ class SessionManager:
             ),
         }
 
+    def _woken_by(self, session_id: str, source: Optional[dict[str, Any]], wake=None) -> Optional[dict[str, Any]]:
+        """A team worker's turn: who woke it (observability 1.2, OB-7). `via` is `steer` for the
+        lead's `steer_worker`, `timer` for a timer, `mention` for a wake made only of team-chat
+        lines, else `board`. `item_ids` are the items the wake's rows name. A lead's own turns
+        have none: nothing above the lead woke it."""
+        found = self.teams.for_worker_session(session_id)
+        if found is None:
+            return None
+        team = found[0]
+        source = source or {}
+        rows = list((source.get("board") or {}).get("rows") or [])
+        if source.get("connector") == "team":
+            via = "steer"
+        elif source.get("connector") == "board" and rows and all(r.get("kind") == "chat" for r in rows):
+            via = "mention"
+        elif source.get("connector") == "board":
+            via = "board"
+        else:
+            via = "timer" if wake is not None else "board"
+        item_ids: list[str] = []
+        for row in rows:
+            item = row.get("item")
+            if item is not None and str(item) not in item_ids:
+                item_ids.append(str(item))
+        return {"lead_session_id": team.lead_session, "team_id": team.team_id,
+                "item_ids": item_ids, "via": via}
+
+    # -- observability 1.3: why a turn started (OB-17, Phase 3 §11.3) --------------------------
+    # One reason per turn, the first of this order when a wake carries several kinds of
+    # board row (TD3-18); every kind is kept in `kinds`.
+    WAKE_PRIORITY = ("blocker", "worker_waiting", "review", "assigned", "prereq_done", "board", "mention")
+
+    def _team_stamp(self, session_id: str) -> Optional[dict[str, Any]]:
+        """`stamp.team` (1.3, E18b): the team and role of a member's session, else None."""
+        team = self.teams.for_lead_session(session_id)
+        if team is not None:
+            return {"team_id": team.team_id, "role": "lead"}
+        found = self.teams.for_worker_session(session_id)
+        if found is not None:
+            return {"team_id": found[0].team_id, "role": "worker"}
+        return None
+
+    def _board_seq(self, session_id: str) -> Optional[int]:
+        """The team board's sequence number (its watermark) now; None outside a team."""
+        team = self.teams.for_lead_session(session_id)
+        if team is None:
+            found = self.teams.for_worker_session(session_id)
+            team = found[0] if found is not None else None
+        if team is None:
+            return None
+        try:
+            with self.team_store._lock:
+                row = self.team_store._conn.execute(
+                    "SELECT watermark FROM team_meta WHERE space = ?", (team.space,)).fetchone()
+            return int(row[0]) if row is not None else 0
+        except Exception:  # noqa: BLE001 - a recording fact never breaks a delivery
+            return None
+
+    @classmethod
+    def _wake_from_rows(cls, rows: list[dict[str, Any]], *, is_lead: bool) -> tuple[str, list[str], list[str]]:
+        """(reason, kinds, item_ids) of a board delivery's rows (TD3-18)."""
+        kinds: list[str] = []
+        items: list[str] = []
+        reasons: set[str] = set()
+        for r in rows:
+            k = r.get("kind")
+            if k and k not in kinds:
+                kinds.append(k)
+            if r.get("item") is not None and str(r["item"]) not in items:
+                items.append(str(r["item"]))
+            if k == "moved":
+                to = r.get("to")
+                reasons.add("blocker" if to == "blocked" else "review" if to == "review"
+                            else "prereq_done" if to == "done" and not is_lead else "board")
+            elif k == "waiting":
+                reasons.add("worker_waiting")
+            elif k in ("assigned", "claimed"):
+                reasons.add("assigned")
+            elif k == "chat":
+                reasons.add("mention")
+            elif k:
+                reasons.add("board")
+        reason = next((r for r in cls.WAKE_PRIORITY if r in reasons), "unknown")
+        if reasons == {"mention"}:
+            reason = "mention"
+        return reason, [k for k in kinds if k in ("assigned", "moved", "filed", "claimed", "waiting", "comment", "chat")], items
+
+    def _note_held(self, session_id: str, by: str) -> None:
+        """A team delivery held back (cap, busy, batch window, stopped): the time it was first
+        held, so the turn that finally runs says how long it waited (`wake.deferred`, E18c)."""
+        self._team_held.setdefault(session_id, (by, time.time()))
+
+    def _turn_wake(self, session_id: str, *, source: Optional[dict[str, Any]], wake=None,
+                   trigger: str, rows: Optional[list[dict[str, Any]]] = None,
+                   wake_info: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """`turn.wake` (1.3, E18a) for a delivered turn."""
+        info = dict(wake_info or {})
+        is_lead = self.teams.for_lead_session(session_id) is not None
+        kinds: list[str] = []
+        items: list[str] = [str(x) for x in info.get("item_ids") or []]
+        if info.get("reason"):
+            reason = info["reason"]
+        elif (source or {}).get("connector") == "team":
+            reason = "steer"
+        elif (source or {}).get("connector") == "board" and rows:
+            reason, kinds, row_items = self._wake_from_rows(rows, is_lead=is_lead)
+            items = items or row_items
+        elif wake is not None:
+            reason = "timer" if getattr(wake, "kind", None) == "timer" else "wake_on"
+        elif (source or {}).get("connector") == "board":
+            reason = "board"
+        elif trigger == "schedule":
+            reason = "schedule"
+        else:
+            reason = "channel"
+        held = self._team_held.pop(session_id, None)
+        deferred = info.get("deferred")
+        if deferred is None and held is not None:
+            deferred = {"by": held[0], "ms": max(0, int((time.time() - held[1]) * 1000))}
+        return {"reason": reason, "kinds": kinds, "item_ids": items,
+                "board_seq": self._board_seq(session_id), "batched": info.get("batched"),
+                "deferred": deferred, "by": info.get("by")}
+
+    def _note_wake_cap(self, team) -> None:
+        """The first time a team hits its wake cap in an hour: one board event,
+        `wake_cap_reached`, that wakes nobody (E18c, TD3-19, TD3-22)."""
+        from datetime import datetime, timezone
+
+        hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+        if self._team_cap_noted.get(team.team_id) == hour:
+            return
+        self._team_cap_noted[team.team_id] = hour
+        held = sorted(sid for sid, (by, _t) in self._team_held.items() if by == "cap")
+        try:
+            self.team_store.append_event(
+                team.space, "wake_cap_reached", self._user_actor(),
+                payload={"hour": hour, "count": self.TEAM_WAKE_CAP_PER_HOUR, "held": held})
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record the wake cap for team %s", team.team_id)
+
     def kick_team_tick(self) -> None:
         """Nudge the wake plumbing from outside the turn loop — e.g. after an
         external board client writes through the `/v1/board` API, so a review or a
@@ -3296,7 +3668,8 @@ class SessionManager:
         async def _deliver() -> None:
             try:
                 accepted = await self.deliver_to_session(
-                    sid, message, source=self._board_source(team, message)
+                    sid, message, source=self._board_source(team, message),
+                    wake_info={"reason": "watchdog", "item_ids": [str(x[0]) for x in stalled]},
                 )
                 if accepted:
                     self._team_watchdog_alerted[sid] = stalled
@@ -3369,6 +3742,7 @@ class SessionManager:
             if page["has_more"]:
                 self.kick_team_tick()
             return 0
+        batched_before = session_id in self._team_batch_deadlines
         if is_lead:
             deadline = self._team_batch_deadlines.setdefault(session_id, time.monotonic() + self.TEAM_BATCH_SECONDS)
             urgent = any(r.get("needs_attention") or r.get("kind") in ("waiting", "assigned")
@@ -3381,19 +3755,28 @@ class SessionManager:
                         self._team_batch_handles.pop(session_id, None)
                         asyncio.create_task(self.team_tick())
                     self._team_batch_handles[session_id] = loop.call_later(max(0, deadline - time.monotonic()), flush)
+                self._note_held(session_id, "batch")
                 return 0
         if self.is_running(session_id) or session_id in self._team_inflight:
+            self._note_held(session_id, "busy")
             return 0  # it will drain on its next turn end / next tick
         if not self.teams.count_wake(team.team_id, cap=self.TEAM_WAKE_CAP_PER_HOUR):
             logger.warning("team %s paused for budget this hour", team.team_id)
+            self._team_held[session_id] = ("cap", self._team_held.get(session_id, ("cap", time.time()))[1])
+            self._note_wake_cap(team)
             return 0
         self._clear_team_batch(session_id)
         self._team_inflight.add(session_id)
         source = self._board_source(team, message, rows=rows)
+        # 1.3: rows the 2 s review window gathered (a lead whose batch window ran first).
+        wake_info = {"batched": len(rows)} if is_lead and batched_before else {}
 
         async def _deliver() -> None:
             try:
-                await self.deliver_to_session(session_id, message, source=source)
+                accepted = await self.deliver_to_session(session_id, message, source=source, wake_info=wake_info)
+                if not accepted:
+                    # TD3-22: a wake counts against the cap only once it is delivered.
+                    self.teams.refund_wake(team.team_id)
                 # Cursors are acknowledged with the persisted incoming turn, not
                 # after model completion. A user turn can consume this batch first.
             finally:
@@ -4203,7 +4586,9 @@ class SessionManager:
         non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
-        for d in provider_descriptors(self.secrets):
+        descriptors = provider_descriptors(self.secrets)
+        self._warm_local_probes([d.name for d in descriptors if d.kind == "local"])
+        for d in descriptors:
             profile = self.secrets.get(f"provider:{d.name}") or {}
             configured = descriptor_configured(d, profile)
             values = {
@@ -4381,6 +4766,28 @@ class SessionManager:
         "cohere": ["command-a-plus-05-2026"],
         "siliconflow": ["zai-org/GLM-5.2"],
     }
+
+    def _warm_local_probes(self, names: list[str]) -> None:
+        """Ask the local model servers at the same time (T3-2): each answer is cached (30 s
+        for liveness, 60 s for the models), so the loop in get_providers reads the caches
+        instead of waiting on each server in turn. Best-effort: a probe that fails here is
+        tried again, alone, by the loop."""
+        if len(names) < 2:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        def probe(name: str) -> None:
+            try:
+                self._suggested_models(name)
+                if name == "ollama":
+                    self._ollama_alive()
+                else:
+                    self._local_server_alive(name)
+            except Exception:  # noqa: BLE001 - the loop asks again and shows what it gets
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(8, len(names)), thread_name_prefix="provider-probe") as pool:
+            list(pool.map(probe, names))
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
@@ -4648,7 +5055,7 @@ class SessionManager:
             prefix = model.split(":", 1)[0]
             if get_descriptor(prefix, self.secrets) is not None:
                 return prefix
-        return "openai"
+        return DEFAULT_PROVIDER
 
     def _provider_configured(self, name: str) -> bool:
         d = get_descriptor(name, self.secrets)
@@ -4706,7 +5113,9 @@ class SessionManager:
         try:
             import httpx
 
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
+            from ..providers.local_server import probe_timeout
+
+            alive = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 0.8)).status_code == 200
         except Exception:
             alive = False
         self._ollama_alive_cache = (now, alive)
@@ -4805,14 +5214,17 @@ class SessionManager:
         from ..providers import local_server
 
         now = time.monotonic()
-        cache = getattr(self, "_local_alive_cache", None) or {}
+        # One dict, updated in place: get_providers asks several servers at once (T3-2), and
+        # each thread putting back its own copy lost the others' answers.
+        cache = getattr(self, "_local_alive_cache", None)
+        if cache is None:
+            cache = self.__dict__.setdefault("_local_alive_cache", {})
         hit = cache.get(name)
         if hit and now - hit[0] < 30:
             return hit[1]
         profile = self.secrets.get(f"provider:{name}") or {}
         alive = local_server.alive(name, profile.get("base_url"), profile.get("api_key"))
         cache[name] = (now, alive)
-        self._local_alive_cache = cache
         return alive
 
     def _local_server_models(self, name: str) -> list[str]:
@@ -4891,11 +5303,15 @@ class SessionManager:
         """The model a session of `persona_id` runs on (spec §4). No list: the requested
         model or the machine default, as before. A list: the requested model when it is
         on the list, else the first entry this machine can run, else the first entry
-        (unrunnable — the composer shows its honest "No model" state)."""
-        allowed = self.persona_models(persona_id)
-        requested = (requested or "").strip()
+        (unrunnable — the composer shows its honest "No model" state).
+
+        Ids are compared and returned in their canonical form (`canonical_model`), so a
+        list entry `openai:gpt-5.5` matches a requested `gpt-5.5`, and the session records
+        one name per model."""
+        allowed = list(dict.fromkeys(canonical_model(m) for m in self.persona_models(persona_id)))
+        requested = canonical_model(requested or "")
         if not allowed:
-            return requested or self.model
+            return requested or canonical_model(self.model)
         if requested in allowed:
             return requested
         available = [m for m in allowed if self.model_selectable(m)]
@@ -4914,8 +5330,11 @@ class SessionManager:
         from ..providers.matrix import model_labels
 
         labels = model_labels()
-        allowed = self.persona_models(persona_id)
-        human_pick, lead_pick = (human_pick or "").strip(), (lead_pick or "").strip()
+        # Canonical ids (`canonical_model`): `openai:gpt-5.5` and `gpt-5.5` are one model,
+        # and the worker's session records it under one name.
+        allowed = list(dict.fromkeys(canonical_model(m) for m in self.persona_models(persona_id)))
+        human_pick, lead_pick = canonical_model(human_pick or ""), canonical_model(lead_pick or "")
+        lead_model = canonical_model(lead_model or "")
         if human_pick and self.model_selectable(human_pick):
             return human_pick, ""
         if lead_pick and (not allowed or lead_pick in allowed) and self.model_selectable(lead_pick):
@@ -4923,7 +5342,7 @@ class SessionManager:
         runnable = [m for m in allowed if self.model_selectable(m)]
         if runnable:
             return runnable[0], ""
-        fallback = lead_model if lead_model and self.model_selectable(lead_model) else self.model
+        fallback = lead_model if lead_model and self.model_selectable(lead_model) else canonical_model(self.model)
         if not allowed:
             return fallback, ""
         entry = self.personas.get(persona_id)
@@ -5180,6 +5599,7 @@ class SessionManager:
             "auto_approve_reviewer": self.auto_approve_reviewer(),
             # Whether each decision-model reviewer has a key (env or saved), never the key.
             "auto_approve_reviewer_keys": self.reviewer_key_status(),
+            **self.worktree_settings_payload(),
             "scratch_base": self._prefs.get("scratch_base")
             or self.DEFAULT_SCRATCH_BASE,
             # Real on-disk secrets location, so the UI shows the OS-native path instead of a
@@ -5566,6 +5986,218 @@ class SessionManager:
         self._prefs["onboarded"] = bool(value)
         self._save_prefs()
         return {"ok": True, "onboarded": bool(value)}
+
+    # -- feature worktrees (Code coworker, owner ruling 2026-11-07) ----------------------
+    def worktree_settings(self, workspace: Optional[str] = None):
+        """The effective settings: global `worktree_*` prefs overlaid with the repo's
+        override (keyed by project key — shared by every worktree of one repo)."""
+        from .. import worktrees as wt
+        from ..projects import project_key
+
+        key = project_key(workspace) if workspace else None
+        return wt.settings_from_prefs(self._prefs, key)
+
+    def worktree_settings_payload(self) -> dict[str, Any]:
+        from .. import worktrees as wt
+
+        return {
+            **wt.settings_from_prefs(self._prefs).payload(),
+            "worktree_overrides": dict(self._prefs.get("worktree_overrides") or {}),
+        }
+
+    def set_worktree_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        from .. import worktrees as wt
+
+        try:
+            changes = wt.validate_settings(body)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        for k, v in changes.items():
+            self._prefs[f"worktree_{k}"] = v
+        self._save_prefs()
+        return {"ok": True, **self.get_settings()}
+
+    def set_worktree_override(self, path: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """Per-repo override, keyed by the repo's project key; an empty body clears it."""
+        from .. import worktrees as wt
+        from ..projects import project_key
+
+        if not path:
+            return {"ok": False, "error": "a repo path is needed"}
+        key = project_key(path)
+        overrides = dict(self._prefs.get("worktree_overrides") or {})
+        if not settings:
+            overrides.pop(key, None)
+        else:
+            try:
+                overrides[key] = wt.validate_settings(settings)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        self._prefs["worktree_overrides"] = overrides
+        self._save_prefs()
+        return {"ok": True, "key": key, **self.get_settings()}
+
+    def session_branch(self, session_id: str) -> Optional[str]:
+        engine = self._engines.get(session_id)
+        executor = getattr(engine, "executor", None) if engine else None
+        cwd = getattr(executor, "cwd", None)
+        return _git_branch(Path(cwd)) if cwd else None
+
+    def session_worktree(self, session_id: str) -> Optional[dict[str, Any]]:
+        record = self.session_store.load(session_id)
+        return dict(record.worktree) if record and record.worktree else None
+
+    def start_worktree(self, session_id: str, task: str) -> dict[str, Any]:
+        """Create the task's feature worktree by policy and move the session into it —
+        roots, shell cwd, persisted workspace — like promote_workspace, but for a real
+        repo. The engine rebuilds after the turn (relative anchoring, git tools, env
+        snapshot follow the new primary); until then the shell is already there."""
+        from .. import worktrees as wt
+
+        engine = self._engines.get(session_id)
+        if engine is None:
+            return {"ok": False, "error": "no live session"}
+        executor = getattr(engine, "executor", None)
+        cwd = str(executor.cwd) if executor is not None and getattr(executor, "cwd", None) else None
+        if not cwd:
+            return {"ok": False, "error": "this session has no working folder"}
+        record = self.session_store.load(session_id)
+        existing = (record.worktree if record else None) or {}
+        if existing.get("path") and Path(cwd).resolve() == Path(str(existing["path"])).resolve():
+            return {"ok": True, "already": True, **existing,
+                    "note": "this session already works in its feature worktree"}
+        root = wt.repo_root(cwd)
+        if root is None:
+            return {"ok": False, "error": "this folder is not a git repository — work in place and say so"}
+        if any(p.name == "worktrees" and p.parent.name == ".openworker" for p in Path(cwd).resolve().parents):
+            return {"ok": False, "error": "this session is already inside a feature worktree"}
+        settings = self.worktree_settings(str(root))
+        try:
+            # A session resumed after cleanup gets its own branch back, not a fresh one.
+            if existing.get("removed") and existing.get("branch"):
+                try:
+                    info = wt.reattach_worktree(root, existing, settings)
+                except wt.WorktreeError:
+                    info = wt.create_worktree(root, task, settings)
+            else:
+                info = wt.create_worktree(root, task, settings)
+        except wt.WorktreeError as exc:
+            return {"ok": False, "error": str(exc)}
+        resolved = Path(info["path"]).resolve()
+        roots = getattr(engine, "roots", None)
+        if roots is not None:
+            # The worktree becomes the writable primary; the original checkout stays
+            # readable but is no longer writable — "never edit the checkout in place"
+            # is enforced by the roots, not by hoping the model remembers.
+            kept = []
+            for r in roots:
+                if r.path == resolved:
+                    continue
+                if Path(str(r.path)).resolve() == root.resolve():
+                    kept.append(RootDir(path=r.path, writable=False, label=r.label))
+                else:
+                    kept.append(r)
+            roots[:] = [RootDir(path=resolved, writable=True, label="worktree"), *kept]
+        try:
+            res = executor.run(f"cd {shlex.quote(str(resolved))}", timeout=15)
+            if res.get("exit_code") != 0:
+                executor.cwd = str(resolved)
+        except Exception:
+            executor.cwd = str(resolved)
+        self.save(session_id, engine)
+        self.session_store.set_worktree(session_id, info)
+        self.session_store.touch_workspace(str(resolved))
+        self._promotion_rebuild.add(session_id)
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_session(session_id, {"type": "workspace_changed", "data": {
+                    "workspace": str(resolved), "branch": info["branch"], "worktree": info}}),
+                self._loop,
+            )
+        return {"ok": True, **info}
+
+    def _worktree_tools(self, session_id: str) -> list[Any]:
+        """`start_worktree` for the Code coworker (engine-side policy, not model-side git)."""
+        import aisuite as ai
+
+        def start_worktree(task: str) -> dict:
+            """Create this task's own feature worktree on a fresh branch and move this
+            session into it, following the user's worktree settings (location, branch
+            prefix, fetch-first, setup command). Call it once at the start of any change
+            beyond a trivial fix, before editing. Returns the worktree path, branch and
+            base. In this turn, the shell is already in the worktree but `git_status` /
+            `git_diff` / `git_log` keep pointing at the original checkout until your next
+            turn — use `run_shell` for git until then. If the folder is not a git repo it
+            says so: then work in place.
+
+            Args:
+                task (str): What the feature or fix is, in a few words — it names the
+                    branch (e.g. "add login page" → <prefix>add-login-page).
+            """
+            res = self.start_worktree(session_id, task)
+            if not res.get("ok"):
+                return {"error": res.get("error", "could not create a worktree")}
+            out = {k: res[k] for k in ("path", "branch", "base", "start", "fetched") if k in res}
+            if res.get("warnings"):
+                out["warnings"] = res["warnings"]
+            if res.get("setup"):
+                out["setup"] = {"exit_code": res["setup"].get("exit_code"), "output": res["setup"].get("output", "")[-600:]}
+            if res.get("already"):
+                out["note"] = res.get("note")
+            else:
+                out["note"] = ("the session now works in this worktree; this turn, use run_shell for "
+                               "git — the git tools re-point at your next turn")
+            return out
+
+        return [ai.tool(start_worktree, metadata=ai.ToolMetadata(
+            category="git", risk_level="medium", capabilities=["write"], requires_approval=True))]
+
+    def _remove_feature_worktree(self, session_id: str, record=None) -> None:
+        """Policy cleanup (owner ruling 2026-11-07): on archive/delete, remove the session's
+        feature worktree when settings say so — never one with uncommitted changes; the
+        branch always stays."""
+        from .. import worktrees as wt
+
+        record = record if record is not None else self.session_store.load(session_id)
+        info = (record.worktree if record else {}) or {}
+        path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
+        if not path or not root or info.get("removed"):
+            return
+        if not self.worktree_settings(root).cleanup_on_archive:
+            return
+        try:
+            removed = wt.remove_worktree(root, path)  # False when dirty: left alone on purpose
+        except Exception:
+            removed = False
+        if removed:
+            self._mark_worktree_removed(record, info)
+
+    def _mark_worktree_removed(self, record, info: dict[str, Any]) -> None:
+        """The folder is gone (cleanup, or the person deleted it): the session lives in the
+        repo root again, remembers its branch, and any live engine is dropped so the next
+        connect rebuilds there instead of in a folder that no longer exists."""
+        root = str(info.get("repo_root") or "")
+        if record is not None and root:
+            record.workspace = root
+            self.session_store.save(record, touch=False)
+        self.session_store.set_worktree(record.session_id, {**info, "removed": True})
+        self._drop_engine(record.session_id)
+
+    def resolve_missing_worktree(self, session_id: str, workspace: Optional[str]) -> Optional[str]:
+        """Called when a session socket opens: a workspace that was this session's feature
+        worktree and no longer exists becomes the repo root (and the record is repaired), so
+        a reopened session connects instead of failing "no valid workspace" forever."""
+        record = self.session_store.load(session_id)
+        info = (record.worktree if record else {}) or {}
+        path, root = str(info.get("path") or ""), str(info.get("repo_root") or "")
+        if not path or not root or Path(path).is_dir() or not Path(root).is_dir():
+            return workspace
+        asked = workspace or (record.workspace if record else "")
+        if not asked or Path(asked) != Path(path):
+            return workspace
+        if not info.get("removed") or (record and record.workspace == path):
+            self._mark_worktree_removed(record, info)
+        return root
 
     def set_scratch_base(self, path: str) -> dict[str, Any]:
         """Set + persist the common area where each Cowork conversation's scratch directory is
@@ -6289,7 +6921,10 @@ class SessionManager:
                 self.unregister_event_client(cb)
 
     def register_session_client(self, session_id: str, send_cb: Any) -> None:
+        first = not self._session_clients.get(session_id)
         self._session_clients.setdefault(session_id, set()).add(send_cb)
+        if first:
+            self._note_watching(session_id, True)
 
     def unregister_session_client(self, session_id: str, send_cb: Any) -> None:
         clients = self._session_clients.get(session_id)
@@ -6297,6 +6932,19 @@ class SessionManager:
             clients.discard(send_cb)
             if not clients:
                 self._session_clients.pop(session_id, None)
+                self._note_watching(session_id, False)
+
+    def _note_watching(self, session_id: str, watching: bool) -> None:
+        """The session's viewers went from none to one or from one to none (OB-14): while
+        none, its turns get a `nobody_watching` gap. A local window and a desktop reaching
+        this machine through the controller open the same socket, so both count."""
+        recording = getattr(self._engines.get(session_id), "_obs", None)
+        condition = getattr(recording, "condition", None)
+        if condition is not None:
+            try:
+                condition("nobody_watching", not watching)
+            except Exception:  # noqa: BLE001 - a recording never breaks a socket
+                logger.exception("observability: could not note who is watching %s", session_id)
 
     # -- session actor (spec §Fleet under the org) --------------------------------
     def note_session_actor(self, session_id: str, actor: str) -> None:
@@ -6342,6 +6990,587 @@ class SessionManager:
     def has_session_clients(self, session_id: str) -> bool:
         return bool(self._session_clients.get(session_id))
 
+    # -- observability: reading recordings (§12) -------------------------------------------
+    LIVE_STEP_BATCH_S = 0.1
+
+    def recording_turns(self, session_id: str) -> dict[str, Any]:
+        rec = self.recordings_store.load_recording(session_id)
+        issues = self._recording_issues(session_id, rec)
+        turns = recording_api.turns(rec)
+        workers = self._recording_worker_rows(session_id, turns)
+        for t in turns:
+            r = issues.get(t["turn_id"]) or {}
+            t["issues"] = {"warn": int(r.get("warn") or 0), "info": int(r.get("info") or 0)}
+            # T3-14: which checks warned, so the turn list can be searched by issue title
+            t["issue_checks"] = sorted({i.get("check") for i in r.get("issues") or []
+                                        if i.get("severity") == "warn" and i.get("check")})
+            if workers.get(t["turn_id"]):
+                t["workers"] = workers[t["turn_id"]]
+        return {"turns": turns}
+
+    def _recording_worker_rows(self, session_id: str, turns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        """A team lead's worker rows (OB-7): its workers' turns that it woke, under the lead
+        turn each started in. The worker's name comes from the team record."""
+        if not turns:
+            return {}
+        found = self.recordings_store.worker_turns(session_id, since_ms=min(t["started_at"] for t in turns))
+        if not found:
+            return {}
+
+        def name(worker_session_id: str) -> Optional[str]:
+            member = self.teams.for_worker_session(worker_session_id)
+            return member[1].actor if member is not None else None
+
+        return recording_api.worker_rows(turns, found, names=name)
+
+    def recording_turn_issues(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        """The Issues tab of one turn (OB-3): its issues, the checks that were fine, the ones
+        not run here, and the signals.yaml version that made them."""
+        rec = self.recordings_store.load_recording(session_id)
+        found = self._recording_issues(session_id, rec).get(turn_id)
+        if found is None:
+            return {"turn_id": turn_id, "error": "no such turn"}
+        return {"turn_id": turn_id, **found}
+
+    def mark_recording_issues_seen(self, session_id: str) -> dict[str, Any]:
+        self.recordings_store.mark_issues_seen(session_id)
+        return {"ok": True}
+
+    def _recording_issues(self, session_id: str, rec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Each finished turn's stored Issues result. A turn with none (it ended before this
+        version), or one made by an older signals.yaml, is checked again now and stored; a
+        result worked out now for an old turn is stored as seen (TD2-2, TD2-4)."""
+        stored = self.recordings_store.read_issues(session_id)
+        current = recording_signals.version()
+        steps_of: dict[str, list[dict[str, Any]]] = {}
+        for s in rec.get("steps") or []:
+            steps_of.setdefault(s.get("turn_id"), []).append(s)
+        out: dict[str, dict[str, Any]] = {}
+        for t in rec.get("turns") or []:
+            if t.get("status") in (None, "running"):
+                continue
+            have = stored.get(t["turn_id"])
+            if have is not None and have.get("signals_version") == current:
+                out[t["turn_id"]] = have
+                continue
+            result = recording_signals.check_turn(t, steps_of.get(t["turn_id"], []))
+            if have is not None:
+                # Series and task results are worked out at turn end over more than this
+                # turn; a re-check of the turn alone keeps them (Phase 3).
+                kept = [i for i in have.get("issues") or [] if i.get("check") in self.SCOPE_CHECKS]
+                if kept:
+                    result["issues"] += kept
+                    result["warn"] = sum(1 for i in result["issues"] if i.get("severity") == "warn")
+                    result["info"] = sum(1 for i in result["issues"] if i.get("severity") == "info")
+            seen = True if have is None else bool(have.get("seen"))
+            self.recordings_store.write_issues(t["turn_id"], result, seen=seen)
+            out[t["turn_id"]] = {**result, "seen": seen}
+        return out
+
+    def recording_turn_steps(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        rec = self.recordings_store.load_recording(session_id)
+        return {"steps": recording_api.turn_steps(rec, turn_id)}
+
+    def recording_step(self, session_id: str, step_id: str) -> dict[str, Any]:
+        rec = self.recordings_store.load_recording(session_id)
+        found = recording_api.step(
+            rec, step_id, get_piece=self.recordings_store.get_piece,
+            messages=self.session_messages(session_id),
+            audit_rows=lambda call_id: self.audit_store.list(session_id=session_id, call_id=call_id),
+        )
+        return {"step": found} if found is not None else {"step": None, "error": "no such step"}
+
+    def recording_usage(self, session_id: str) -> dict[str, Any]:
+        return recording_api.usage(self.recordings_store.load_recording(session_id), session_id)
+
+    # -- observability Phase 3: series and task checks (TD3-17, E17e, E18d, E26d) --------------
+    # They are pure functions (`observability.scopes`) of more than one turn. At each turn's
+    # end the series or task the turn belongs to is worked out again, and every result is
+    # stored with the turn whose step it points at, as Phase 2's are, replacing what that
+    # series or task said before. So the amber dot and the Issues tab carry them.
+    SCOPE_CHECKS = frozenset(_obs_scopes.SERIES_CHECKS + _obs_scopes.TASK_CHECKS)
+
+    def _scopes_on_turn_end(self, event: dict[str, Any]) -> None:
+        if event.get("type") != "turn_ended":
+            return
+        tid = event.get("turn_id")
+        sid = event.get("session_id")
+        if not tid or not sid:
+            return
+        try:
+            self._scope_pool.submit(self.run_scope_checks, sid, tid)
+        except RuntimeError:
+            pass  # shutting down
+
+    def run_scope_checks(self, session_id: str, turn_id: str) -> None:
+        """The series and task checks for the series or task this turn belongs to."""
+        try:
+            store = self.recordings_store
+            store.flush()
+            loaded = store.load_turn(turn_id)
+            if loaded is None:
+                return
+            turn, _steps = loaded
+            stamp = turn.get("stamp") or {}
+            team = stamp.get("team") or {}
+            if team.get("role") == "lead":
+                self._scope_lead_polling(session_id)
+            if team.get("team_id"):
+                self._scope_team_tasks(team["team_id"])
+            if turn.get("automation"):
+                self._scope_failed_in_a_row(turn["automation"]["task_id"])
+            if stamp.get("persona_coverage") and not team:
+                self._scope_solo_coverage(session_id, list(stamp["persona_coverage"]))
+        except Exception:  # noqa: BLE001 - a check never breaks anything else
+            logger.exception("series and task checks failed for %s", turn_id)
+
+    def _store_scope_issues(self, turn_ids: Iterable[str], found: dict[str, list[dict[str, Any]]],
+                            checks: Iterable[str]) -> None:
+        """Replace, on each of `turn_ids`, the issues of `checks` with what `found` says."""
+        checks = set(checks)
+        store = self.recordings_store
+        for tid in dict.fromkeys(list(turn_ids) + list(found)):
+            have = store.read_turn_issues(tid)
+            if have is None:
+                continue  # never checked yet: the re-check will store it with these
+            seen = bool(have.pop("seen", False))
+            keep = [i for i in have.get("issues") or [] if i.get("check") not in checks]
+            new = found.get(tid, [])
+            old = [i for i in have.get("issues") or [] if i.get("check") in checks]
+            if [(i["check"], i.get("text")) for i in old] == [(i["check"], i.get("text")) for i in new]:
+                continue
+            result = {**have, "issues": keep + [{k: v for k, v in i.items() if k != "turn_id"} for i in new]}
+            result["warn"] = sum(1 for i in result["issues"] if i.get("severity") == "warn")
+            result["info"] = sum(1 for i in result["issues"] if i.get("severity") == "info")
+            fine = [f for f in result.get("fine") or [] if f.get("check") not in checks]
+            result["fine"] = fine
+            added = {(i["check"], i.get("text")) for i in new} - {(i["check"], i.get("text")) for i in old}
+            store.write_issues(tid, result, seen=seen and not added)
+
+    def _first_step(self, turn_id: str) -> Optional[dict[str, Any]]:
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None:
+            return None
+        top = [s for s in loaded[1] if s.get("parent_step_id") is None and not s.get("shadow")]
+        return {**top[0], "turn_id": turn_id} if top else {"step_id": None, "seq": None, "turn_id": turn_id}
+
+    def _last_step(self, turn_id: str) -> Optional[dict[str, Any]]:
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None:
+            return None
+        top = [s for s in loaded[1] if s.get("parent_step_id") is None and not s.get("shadow")
+               and not s.get("after_turn")]
+        return {**top[-1], "turn_id": turn_id} if top else {"step_id": None, "seq": None, "turn_id": turn_id}
+
+    def _scope_lead_polling(self, lead_session: str) -> None:
+        rows = self.recordings_store.team_turns([lead_session])
+        series = [{"id": t["turn_id"], "wake": t.get("wake")} for t in rows if t["status"] not in (None, "running")]
+        found: dict[str, list] = {}
+        for i in _obs_scopes.lead_polling_issues(series, {t["id"]: self._first_step(t["id"]) for t in series[-60:]}):
+            found.setdefault(i["turn_id"] or i["facts"]["to"], []).append(i)
+        self._store_scope_issues([t["id"] for t in series], found, ["lead_polling"])
+
+    def _scope_failed_in_a_row(self, task_id: str) -> None:
+        detail = self.get_automation(task_id)
+        banner = detail.get("failed_in_a_row")
+        runs = detail.get("runs") or []
+        turn_ids = [r["first_turn_id"] for r in runs if r.get("first_turn_id")]
+        found: dict[str, list] = {}
+        if banner and banner.get("turn_id"):
+            series = [{"health": "failed" if r["health"] in ("failed", "did_not_finish") else r["health"],
+                       "error": r.get("error") or (r.get("check_titles") or [None])[0]}
+                      for r in sorted(runs, key=lambda x: x.get("started_at") or 0)]
+            issue = _obs_scopes.failed_in_a_row_issue(series, self._first_step(banner["turn_id"]))
+            if issue is not None:
+                found[banner["turn_id"]] = [issue]
+        self._store_scope_issues(turn_ids, found, ["failed_in_a_row"])
+
+    def _scope_solo_coverage(self, session_id: str, promised: list[str]) -> None:
+        """A coworker working alone: its task is the session. Only the scan checks apply (no
+        board, no report, no journal), on the session's last turn."""
+        rows = self.recordings_store.team_turns([session_id])
+        done = [t for t in rows if t["status"] not in (None, "running")]
+        if not done:
+            return
+        last = done[-1]["turn_id"]
+        scans = self.recordings_store.scan_steps(session_id)
+        task = {"promised": promised, "steps": [{"id": s["step_id"], "scanner": s["scanner"],
+                                                  "exit_code": s["exit_code"]} for s in scans]}
+        by_id = {s["step_id"]: s for s in scans}
+        issues = [i for i in _obs_scopes.coverage_issues(task, handoff=self._last_step(last), steps_by_id=by_id)
+                  if i["check"] in ("scan_missing", "scanner_failed")]
+        found: dict[str, list] = {}
+        for i in issues:
+            found.setdefault(i.get("turn_id") or last, []).append(i)
+        self._store_scope_issues([t["turn_id"] for t in done], found, ["scan_missing", "scanner_failed"])
+
+    def item_coverage(self, team, item: dict[str, Any], events: list[dict[str, Any]], *,
+                      turns: Optional[list[dict[str, Any]]] = None) -> Optional[dict[str, Any]]:
+        """"Coverage for this task" (OB-16, §10): a board item of a worker that declares
+        coverage, its scans across the item's sessions, the hand-off's report, its findings
+        with their evidence, and the fix it verifies. None when nobody on it promised a scan.
+        `turns`: the members' turns, when the caller has read them already (P3B-5)."""
+        by_actor = {w.actor: w.session_id for w in team.workers}
+        by_actor[team.lead_actor] = team.lead_session
+        mine = [e for e in events if e.get("item_id") == item["id"]]
+        assignees = [str((e.get("payload") or {}).get("assignee") or "") for e in mine if e["kind"] == "item_assigned"]
+        sessions = [by_actor[a] for a in dict.fromkeys(assignees) if a in by_actor]
+        if item.get("assignee") in by_actor and by_actor[item["assignee"]] not in sessions:
+            sessions.append(by_actor[item["assignee"]])
+        if not sessions:
+            return None
+        promised: list[str] = []
+        mine_turns = ([t for t in turns if t["session_id"] in sessions] if turns is not None
+                      else self.recordings_store.team_turns(sessions))
+        for t in mine_turns:
+            for a in (t.get("stamp") or {}).get("persona_coverage") or []:
+                if a not in promised:
+                    promised.append(a)
+        if not promised:
+            return None
+        since = min([usage_api._ts_ms(e.get("ts")) or 0 for e in mine if e["kind"] == "item_assigned"] or [0])
+        scans = self.recordings_store.scan_steps(sessions, since_ms=since)
+        handoffs = [e for e in mine if e["kind"] == "item_transitioned" and (e.get("payload") or {}).get("to") in ("review", "done")]
+        report = next(((e.get("payload") or {}).get("coverage") for e in reversed(handoffs)
+                       if (e.get("payload") or {}).get("coverage")), None)
+        findings = self._item_findings(item["id"], team.space)
+        fix = None
+        verifies = [l for l in item.get("links") or [] if l.get("kind") == "verifies"]
+        if verifies:
+            target = verifies[0]["item"]
+            fixed_by = next((e["actor"] for e in reversed(events) if e.get("item_id") == target
+                             and e["kind"] == "item_transitioned" and (e.get("payload") or {}).get("to") == "review"), None)
+            verified_by = next((e["actor"] for e in reversed(handoffs)), item.get("assignee"))
+            fix = {"item": target, "fixed_by": fixed_by, "verified_by": verified_by}
+        task = {"promised": promised, "report": report, "fix": fix,
+                "findings": [{"id": f["seq"], "severity": f.get("severity"), "evidence": f.get("evidence")} for f in findings],
+                "steps": [{"id": s["step_id"], "scanner": s["scanner"], "exit_code": s["exit_code"]} for s in scans]}
+        handoff = None
+        if handoffs:
+            h = handoffs[-1]
+            sid = by_actor.get(h["actor"])
+            handoff = self._handoff_step(sid, usage_api._ts_ms(h.get("ts"))) if sid else None
+        issues = _obs_scopes.coverage_issues(task, handoff=handoff, steps_by_id={s["step_id"]: s for s in scans})
+        fine = _obs_scopes.coverage_fine(task)
+        fired = {i["check"] for i in issues}
+        lst = (recording_signals.signals().get("scanners") or {}).get("list") or {}
+        return {
+            "item": item["id"], "promised": promised, "report": report, "handed_off": bool(handoffs),
+            "scans": [{**s, "area": (lst.get(s["scanner"]["name"]) or {}).get("area"),
+                       "found_something": s["exit_code"] not in (0, None)
+                       and s["exit_code"] in ((lst.get(s["scanner"]["name"]) or {}).get("findings_exit") or []),
+                       "failed": s["exit_code"] not in (0, None)
+                       and s["exit_code"] not in ((lst.get(s["scanner"]["name"]) or {}).get("findings_exit") or [])}
+                      for s in scans],
+            "findings": findings, "fix": fix, "issues": issues,
+            "fine": [{"check": c, "text": t} for c, t in fine.items() if c not in fired],
+        }
+
+    def _item_findings(self, item_id: int, space: str) -> list[dict[str, Any]]:
+        """The journal findings about an item, with the step that wrote each and its evidence
+        links (E17a). Read-only, by item and space; the hash chain is not touched."""
+        js = self.journal_store
+        with js._lock:
+            rows = js._conn.execute(
+                "SELECT * FROM journal_entries WHERE item_id = ? AND space = ? AND kind = 'finding' ORDER BY seq",
+                (item_id, space)).fetchall()
+        from ..teams.journal import _row_to_entry
+
+        out = []
+        for r in rows:
+            e = _row_to_entry(r)
+            out.append({"seq": e["seq"], "case": e.get("case_id"), "author": e.get("author"),
+                        "session_id": e.get("session_id"), "severity": e.get("severity"),
+                        "entities": e.get("entities") or [], "step_call_id": e.get("step_call_id"),
+                        "evidence": e.get("evidence"), "ts": e.get("ts")})
+        return out
+
+    def _handoff_step(self, session_id: str, at_ms: Optional[int]) -> Optional[dict[str, Any]]:
+        """The `transition` tool step that handed the item off: the last one of the session at
+        or before the board event's time."""
+        # One indexed read, not the whole recording (P3B-5).
+        return self.recordings_store.last_tool_step(session_id, "transition",
+                                                    before_ms=None if at_ms is None else at_ms + 1000)
+
+    def _scope_team_tasks(self, team_id: str) -> None:
+        """A team's task checks: coverage of each handed-off item of a worker that declares
+        coverage, the same approval asked twice, and items reviewed before a prerequisite."""
+        team = self.teams.get(team_id)
+        if team is None:
+            return
+        inputs = self._team_inputs(team)
+        with self._team_obs_lock:
+            if self._team_checked.get(team_id) == inputs["mark"]:
+                return  # nothing the checks read has changed since the last run (P3B-5)
+        events, sids, items = inputs["board"], inputs["sids"], inputs["items"]
+        turns = self.recordings_store.team_turns(sids)
+        found: dict[str, list] = {}
+        for item in items:
+            cov = self.item_coverage(team, item, events, turns=turns)
+            if cov is None or not cov["handed_off"]:
+                continue
+            for i in cov["issues"]:
+                if i.get("turn_id"):
+                    found.setdefault(i["turn_id"], []).append(i)
+        cards = self.recordings_store.team_approval_cards(sids)
+        for i in _obs_scopes.same_approval_issues(cards):
+            if i.get("turn_id"):
+                found.setdefault(i["turn_id"], []).append(i)
+        links = []
+        for item in items:
+            for link in item.get("links") or []:
+                if link.get("kind") == "blocked_by":
+                    links.append((int(link["item"]), int(item["id"])))
+        transitions = [{"seq": e["seq"], "item": e.get("item_id"), "to": (e.get("payload") or {}).get("to"),
+                        "actor": e.get("actor"), "ts": e.get("ts")} for e in events if e["kind"] == "item_transitioned"]
+        by_actor = {w.actor: w.session_id for w in team.workers}
+        by_actor[team.lead_actor] = team.lead_session
+        for i in _obs_scopes.reviewed_before_prereq_issues(transitions, links):
+            e = next((x for x in transitions if x["seq"] == i["facts"]["at_seq"]), None)
+            sid = by_actor.get(e["actor"]) if e else None
+            step = self._handoff_step(sid, usage_api._ts_ms(e["ts"])) if sid else None
+            if step and step.get("turn_id"):
+                i.update({"step_id": step["step_id"], "step_seq": step["seq"], "turn_id": step["turn_id"]})
+                found.setdefault(step["turn_id"], []).append(i)
+        turn_ids = [t["turn_id"] for t in turns]
+        self._store_scope_issues(turn_ids, found, list(_obs_scopes.TASK_CHECKS))
+        # Storing the issues bumps the members' write counts: the mark to compare next time is
+        # the one after this run's own writes.
+        with self._team_obs_lock:
+            self._team_checked[team_id] = self._team_inputs(team)["mark"]
+
+    # -- observability Phase 3: rollups over many turns (E24b, E24c, E26b, E27a) ---------------
+    def usage_names(self) -> dict[str, str]:
+        """Coworker names by id, for the Usage page: the installed coworkers, else the name
+        kept with the coworker's last seen version (a deleted or renamed one, M3-R1)."""
+        names: dict[str, str] = {}
+        for v in self.recordings_store.persona_versions():
+            if v.get("name"):
+                names[v["persona_id"]] = v["name"]
+        try:
+            for entry in self.personas.list_all():
+                pid = entry.get("id")
+                if pid:
+                    names[pid] = entry.get("name") or pid
+        except Exception:  # noqa: BLE001
+            logger.exception("could not list coworkers for the Usage page")
+        return names
+
+    def usage_rollup(self, *, start: int, end: int, group: list[str], days: list,
+                     where: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        out = usage_api.rollup(self.recordings_store, start=start, end=end, group=group, days=days, where=where)
+        out["names"] = self.usage_names()
+        out["machine"] = _obs_stamps.machine_stamp()
+        tasks = {t.id: t.title for t in self.task_store.list()}
+        out["automations"] = tasks
+        return out
+
+    def usage_heaviest(self, *, start: int, end: int, limit: int = 20,
+                       persona_id: Optional[str] = None) -> dict[str, Any]:
+        out = usage_api.heaviest(self.recordings_store, start=start, end=end, limit=limit,
+                                 title_of=self.session_store.display_title, persona_id=persona_id)
+        out["names"] = self.usage_names()
+        return out
+
+    def usage_approver(self, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
+        return usage_api.approver(self.recordings_store, start=start, end=end, persona_id=persona_id)
+
+    def usage_ratings(self, *, start: int, end: int, persona_id: Optional[str] = None) -> dict[str, Any]:
+        """The Ratings card on Usage (T3-10)."""
+        out = usage_api.ratings(self.recordings_store, start=start, end=end, persona_id=persona_id,
+                                title_of=self.session_store.display_title)
+        out["names"] = self.usage_names()
+        return out
+
+    def current_persona_fp(self, persona_id: str) -> Optional[str]:
+        """The coworker's fingerprint now, worked out as the session build does (E16)."""
+        entry = self.personas.get(persona_id)
+        if entry is None:
+            return None
+        try:
+            # T3-15 (d): from the built agent, as the session does (agent.py). A coworker built
+            # in code (the default, OpenWorker) has no manifest, so reading the manifest's
+            # prompt gave it no current version at all.
+            agent = entry.agent()
+            skill_dir = self.persona_skill_scope(persona_id)[0]
+            return _obs_stamps.persona_fingerprint(agent.name, agent.system_prompt,
+                                                   [skill_dir] if skill_dir is not None else [])
+        except Exception:  # noqa: BLE001
+            return None
+
+    def persona_doing(self, persona_id: str, *, days: int = 30, end: Optional[int] = None) -> dict[str, Any]:
+        """OB-15: "How it's been doing", one row per fingerprint, this machine only."""
+        end = int(time.time() * 1000) if end is None else int(end)
+        start = end - max(1, min(int(days), 90)) * 24 * 60 * 60 * 1000
+        return usage_api.persona_doing(self.recordings_store, persona_id, start=start, end=end,
+                                       current_fp=self.current_persona_fp(persona_id))
+
+    def persona_version_diff(self, persona_id: str, fp_from: str, fp_to: str) -> dict[str, Any]:
+        return usage_api.version_diff(self.recordings_store, persona_id, fp_from, fp_to)
+
+    FEEDBACK_REASONS = ("wrong_answer", "too_slow", "did_unasked", "did_not_finish", "other")
+
+    def turn_feedback(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        fb = self.recordings_store.get_feedback(turn_id)
+        if fb is not None and fb.get("session_id") != session_id:
+            fb = None
+        return {"feedback": fb, "where": self.observability.feedback_destination(note=bool(fb and fb["content"]["note"]))}
+
+    def put_turn_feedback(self, session_id: str, turn_id: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """OB-5 (E27a): store a turn's rating on this machine, replacing any earlier one. The
+        auto-approved tool steps of the turn at this moment go with it (the "did something I
+        didn't ask" link to the auto-approver). A rating with `rating: null` is removed."""
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None or loaded[0].get("session_id") != session_id:
+            return 404, {"error": "no such turn"}
+        rating = body.get("rating")
+        if rating is None:
+            self.recordings_store.delete_feedback(turn_id)
+            return 200, {"feedback": None, "where": self.observability.feedback_destination(note=False)}
+        if rating not in ("up", "down"):
+            return 400, {"error": "rating must be up or down"}
+        reasons = [r for r in dict.fromkeys(body.get("reasons") or []) if r in self.FEEDBACK_REASONS]
+        if len(reasons) != len(list(dict.fromkeys(body.get("reasons") or []))):
+            return 400, {"error": f"reasons must be among {list(self.FEEDBACK_REASONS)}"}
+        note = body.get("note")
+        note = str(note).strip()[:4000] if note else None
+        auto = [s["step_id"] for s in loaded[1] if s.get("kind") == "tool" and s.get("parent_step_id") is None
+                and ((s.get("attrs") or {}).get("decision") or {}).get("origin") == "reviewer"]
+        fb = self.recordings_store.put_feedback({"turn_id": turn_id, "session_id": session_id, "rating": rating,
+                                                 "reasons": reasons, "note": note or None, "auto_approved": auto})
+        self.observability.wake()
+        return 200, {"feedback": fb, "where": self.observability.feedback_destination(note=bool(note))}
+
+    def turn_footer(self, session_id: str, turn_id: str) -> dict[str, Any]:
+        """OB-5: the numbers under an answer, from the turn's own steps: time, tokens ("this
+        turn"), warnings, auto-approved steps and approval cards shown (by `for_call_id`)."""
+        loaded = self.recordings_store.load_turn(turn_id)
+        if loaded is None or loaded[0].get("session_id") != session_id:
+            return {"turn": None}
+        turn, steps = loaded
+        n = recording_rollups.turn_numbers(turn, steps, self.recordings_store.read_turn_issues(turn_id))
+        cards = {(s.get("attrs") or {}).get("for_call_id") for s in steps if s.get("kind") == "wait"
+                 and (s.get("attrs") or {}).get("kind") == "approval" and (s.get("attrs") or {}).get("for_call_id")}
+        return {"turn": {"turn_id": turn_id, "seq": turn.get("seq"), "status": turn.get("status"),
+                         "duration_ms": turn.get("duration_ms"), "active_ms": n["active_ms"],
+                         "total": n["total"], "at_least": n["at_least"], "warn": n["warn"],
+                         "auto_approved": len(n["auto_approved"]), "asked": len(cards),
+                         "live_checks": len(n["checks"])},
+                "feedback": self.recordings_store.get_feedback(turn_id),
+                "recording": bool(self.observability.settings.record)}
+
+    def session_footers(self, session_id: str) -> dict[str, Any]:
+        """Every turn's footer numbers in one call, for the chat view (OB-5)."""
+        rec = self.recordings_store.load_recording(session_id)
+        issues = self.recordings_store.read_issues(session_id)
+        fbs = {f["turn_id"]: f for f in self.recordings_store.session_feedback(session_id)}
+        steps_of: dict[str, list] = {}
+        for s in rec.get("steps") or []:
+            steps_of.setdefault(s.get("turn_id"), []).append(s)
+        out = []
+        for t in rec.get("turns") or []:
+            steps = steps_of.get(t["turn_id"], [])
+            n = recording_rollups.turn_numbers(t, steps, issues.get(t["turn_id"]))
+            cards = {(s.get("attrs") or {}).get("for_call_id") for s in steps if s.get("kind") == "wait"
+                     and (s.get("attrs") or {}).get("kind") == "approval" and (s.get("attrs") or {}).get("for_call_id")}
+            out.append({"turn_id": t["turn_id"], "seq": t.get("seq"), "status": t.get("status"),
+                        "started_at": t.get("started_at"), "first_message_id": t.get("first_message_id"), "last_message_id": t.get("last_message_id"),
+                        "duration_ms": t.get("duration_ms"), "active_ms": n["active_ms"], "total": n["total"],
+                        "at_least": n["at_least"], "warn": n["warn"], "auto_approved": len(n["auto_approved"]),
+                        "asked": len(cards), "live_checks": len(n["checks"]),
+                        "wake": t.get("wake"), "feedback": fbs.get(t["turn_id"])})
+        return {"turns": out, "recording": bool(self.observability.settings.record),
+                "where": self.observability.feedback_destination(note=False)}
+
+    # -- observability: export and its settings (OB-6, phase-2 design §10) ------------------
+    def _export_on_turn_end(self, event: dict[str, Any]) -> None:
+        """A turn ended: the exporter sends soon. A late step (the session title) goes with
+        the exporter's next pass, within its flush interval."""
+        if event.get("type") == "turn_ended":
+            self.observability.wake()
+
+    def apply_org_policy(self, policy: dict[str, Any]) -> None:
+        """The org policy changed: its `observability_export` field manages the page."""
+        self.observability.apply_policy(policy)
+
+    def recording_file(self, session_id: str) -> dict[str, Any]:
+        """Everything recorded for one session, content included, in the shape the read
+        endpoints serve: turns, each turn's steps, and each step in full (§10.6)."""
+        rec = self.recordings_store.load_recording(session_id)
+        messages = self.session_messages(session_id)
+        details = {}
+        for s in rec.get("steps") or []:
+            details[s["step_id"]] = {"step": recording_api.step(
+                rec, s["step_id"], get_piece=self.recordings_store.get_piece, messages=messages,
+                audit_rows=lambda call_id: self.audit_store.list(session_id=session_id, call_id=call_id))}
+        return {
+            "format": "openworker-recording", "version": "1.3", "session_id": session_id,
+            "exported_at": int(time.time() * 1000),
+            "turns": recording_api.turns(rec),
+            "steps": {t["turn_id"]: recording_api.turn_steps(rec, t["turn_id"]) for t in rec.get("turns") or []},
+            "details": details,
+            # 1.3: the ratings of its turns, the note in content (recording-format §3.12).
+            "feedback": self.recordings_store.session_feedback(session_id),
+        }
+
+    def _forward_recording_event(self, event: dict[str, Any]) -> None:
+        """Queue one recording event for the session's sockets; a batch goes out every
+        100 ms as `{"type": "step", "events": [...]}`, so a burst of steps does not flood
+        the connection (P-5). Older app versions ignore the unknown type."""
+        session_id = event.get("session_id")
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()  # a turn's start runs on the server's loop
+            except RuntimeError:
+                loop = self._live_loop
+        if not session_id or loop is None:
+            return
+        self._live_loop = loop
+        with self._live_steps_lock:
+            batch = self._live_steps.setdefault(session_id, [])
+            batch.append(event)
+            # Bounded: with no reader draining it, the batch can't grow without end.
+            if len(batch) > self.LIVE_STEP_BATCH_MAX:
+                del batch[: len(batch) - self.LIVE_STEP_BATCH_MAX]
+            # One flush in flight per session, tracked explicitly — not "the batch just
+            # went from empty to one" — so a scheduling failure is retried by the next
+            # event instead of stalling the session for good (OPE-261).
+            pending = getattr(self, "_live_flush_pending", None)
+            if pending is None:
+                pending = self._live_flush_pending = set()
+            schedule = session_id not in pending
+            if schedule:
+                pending.add(session_id)
+        if schedule:
+            try:
+                loop.call_soon_threadsafe(
+                    loop.call_later, self.LIVE_STEP_BATCH_S, self._send_live_steps, session_id
+                )
+            except RuntimeError:
+                # The loop is closed or stale: let the next event try again (on a live loop).
+                with self._live_steps_lock:
+                    self._live_flush_pending.discard(session_id)
+
+    LIVE_STEP_BATCH_MAX = 500
+
+    def _send_live_steps(self, session_id: str) -> None:
+        with self._live_steps_lock:
+            events = self._live_steps.pop(session_id, [])
+            pending = getattr(self, "_live_flush_pending", None)
+            if pending is not None:
+                pending.discard(session_id)
+        if events and self.has_session_clients(session_id):
+            asyncio.ensure_future(self.broadcast_session(session_id, {"type": "step", "events": events}))
+
+    def _inbox_item_changed(self, item: Any) -> None:
+        """A card was added or moved to the Inbox: tell the waiting engine where it is shown
+        (observability §5.4, a wait step's `where`)."""
+        engine = self._engines.get(item.session_id)
+        note = getattr(engine, "note_wait_where", None)
+        if note is not None and item.tool_call_id:
+            note(item.tool_call_id, "inbox" if item.visibility == VIS_INBOX else "session")
+
     async def promote_pending_prompts(self, session_id: str) -> int:
         """The last viewer left while the agent waits on an inline prompt: move it to the
         Inbox and mirror it, so the question is visible somewhere (see
@@ -6372,6 +7601,9 @@ class SessionManager:
         if message.get("type") in {"turn_start", "iteration_end", "permission_required", "turn_done"}:
             self.persist_session(session_id)
             self.reconcile_activity_receipts(session_id)
+        if message.get("type") == "turn_done" and session_id.startswith("__run__"):
+            # A manual run is done when its turn is, whether or not a window is open (P3-3).
+            self._finish_manual_run(session_id)
         data = message.get("data") or {}
         if message.get("type") == "team_proposed":
             message = {**message, "data": {**data, **self.team_card_extras(session_id, data.get("members") or [])}}
@@ -6430,6 +7662,11 @@ class SessionManager:
             logger.debug("sandbox reap at start failed", exc_info=True)
 
     async def aclose(self) -> None:
+        # T3-3: the Phase 3 background work stops before the stores close. The scope pool's
+        # thread is not a daemon, so Python waits for it at exit, and it would run every
+        # queued check on a closed store first; the start-up checks stop between sessions.
+        self._obs_closing.set()
+        self._scope_pool.shutdown(wait=False, cancel_futures=True)
         # Sandboxes first: each holds a container or a sandboxed process that nobody else
         # would remove once this server is gone.
         await asyncio.to_thread(self._close_all_sandboxes)
@@ -6440,6 +7677,8 @@ class SessionManager:
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
+        self.observability.close()
+        self.recordings_store.close()
         from ..providers import llamacpp_setup
 
         llamacpp_setup.runner().shutdown()
@@ -7002,6 +8241,11 @@ class SessionManager:
                 [d] if (d := self.persona_skill_scope(task.agent)[0]) is not None else None
             ),
         )
+        # Observability (E1): this engine's turns and steps go to the server's recorder,
+        # unless recording is off on this machine (OB-6): then new engines record nothing.
+        engine.recorder = self.recorder if self.observability.settings.record else None
+        self._note_persona_version(engine)
+        engine.resolver_of = lambda call_id, _sid=session_id: self.inbox.resolver_of(_sid, call_id)
         self._seed_task_permissions(engine, task)
         return engine
 
@@ -7233,7 +8477,8 @@ class SessionManager:
         await self.deliver_to_session(wake.session_id, message, wake=wake)
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None
+        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None,
+        wake_info: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -7249,6 +8494,7 @@ class SessionManager:
         if wake is not None and wake not in self.wakes.pending(session_id):
             return False  # user/board activity won the scheduled-task race
         if board_delivery and session_id in self.wakes.stopped_sessions:
+            self._note_held(session_id, "stopped")
             return False
         if board_delivery and not self._pending_board_context(session_id)[0]:
             # Backstop messages are not feed deliveries.
@@ -7256,6 +8502,8 @@ class SessionManager:
                 return False
         if not self.try_mark_running(session_id):
             if board_delivery or wake is not None:
+                if board_delivery:
+                    self._note_held(session_id, "busy")
                 return False  # defer; never inject routine wakes into a running turn
             activity = self.prepare_activity(session_id, "user activity")
             engine.queue_steering(message, source, activity)
@@ -7273,7 +8521,24 @@ class SessionManager:
                     # semantics intact while grouping check-ins in the transcript.
                     source = self._board_source(team, message, rows=activity["board_rows"])
                     source["board"]["check_in"] = True
-            async for event in engine.run(message, source=source, activity=activity):
+            # Who started the turn (observability §4): board activity, a lead's steering and
+            # team timers (a lead's or a worker's) wake a team; any other session's timer is a
+            # schedule; anything else came from a channel. Steering arrives as the `team`
+            # connector (`steer_worker`); it was recorded as `channel` (V2-30).
+            if board_delivery or (source or {}).get("connector") == "team":
+                trigger = "team_wake"
+            elif wake is not None:
+                in_team = (self.teams.for_lead_session(session_id) is not None
+                           or self.teams.for_worker_session(session_id) is not None)
+                trigger = "team_wake" if in_team else "schedule"
+            else:
+                trigger = "channel"
+            woken_by = self._woken_by(session_id, source, wake) if trigger == "team_wake" else None
+            turn_wake = self._turn_wake(session_id, source=source, wake=wake, trigger=trigger,
+                                        rows=activity.get("board_rows") or (source or {}).get("board", {}).get("rows"),
+                                        wake_info=wake_info)
+            async for event in engine.run(message, source=source, activity=activity, trigger=trigger,
+                                          woken_by=woken_by, wake=turn_wake, team=self._team_stamp(session_id)):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(
@@ -7848,7 +9113,12 @@ class SessionManager:
                 "scheduled tasks.\n\n"
                 f"{task.instructions}"
             )
-            async for _event in engine.run(opening):
+            # 1.3 (E26a): the run's own trigger (`catch_up` was recorded as `schedule`
+            # before), on the run's own turn and as its wake reason.
+            run_trigger = "catch_up" if trigger in ("catchup", "catch_up") else "schedule"
+            async for _event in engine.run(opening, trigger="schedule", wake={"reason": run_trigger},
+                                           automation={"task_id": task.id, "run_id": run.run_id,
+                                                       "trigger": run_trigger}):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
@@ -7944,10 +9214,18 @@ class SessionManager:
         task = self.task_store.get(task_id)
         if task is None:
             return {"error": "not found"}
-        return {
-            "task": task.public(),
-            "runs": [r.to_dict() for r in self.task_store.runs(task_id)],
-        }
+        runs = [r.to_dict() for r in self.task_store.runs(task_id)]
+        # Phase 3 (OB-18, E26b): each run's tokens, time and issues from its own turns, its
+        # health, and the "failed N runs in a row" banner.
+        try:
+            titles = {cid: c.get("title", cid) for cid, c in (recording_signals.signals().get("checks") or {}).items()}
+            health = usage_api.automation_runs(self.recordings_store, task_id, runs,
+                                               now_ms=int(time.time() * 1000), titles=titles)
+            runs, banner = health["runs"], health["failed_in_a_row"]
+        except Exception:  # noqa: BLE001
+            logger.exception("could not work out run health of %s", task_id)
+            banner = None
+        return {"task": task.public(), "runs": runs, "failed_in_a_row": banner}
 
     def create_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create an automation directly from the GUI (the "New automation" / template flow).
@@ -8057,6 +9335,139 @@ class SessionManager:
                 f"or modify any scheduled tasks.\n\n{task.instructions}"
             ),
         }
+
+    def _scan_evidence(self, session_id: str, space: str, actor_id: str, item: Optional[int]) -> list[dict[str, str]]:
+        """A finding's default evidence (E17a, TD3-15): the successful-or-findings scan steps of
+        the same session, run since the item was assigned to this actor (or, with no item, in
+        the session), as `[{session_id, call_id}]`. Built differently from the design: every
+        scan since assignment, not only those whose area matches the finding's entities
+        (entities are free text; matching them to an area would be a guess)."""
+        since = 0
+        if item is not None and space:
+            try:
+                for e in self.team_store.events(space, item_id=int(item)):
+                    if e["kind"] == "item_assigned" and (e.get("payload") or {}).get("assignee") == actor_id:
+                        since = usage_api._ts_ms(e.get("ts")) or since
+            except Exception:  # noqa: BLE001
+                since = 0
+        out = []
+        for s in self.recordings_store.scan_steps(session_id, since_ms=since):
+            out.append({"session_id": session_id, "call_id": s["call_id"]})
+        return out
+
+    def _note_persona_version(self, engine: TurnEngine) -> None:
+        """Keep this coworker version the first time its fingerprint is seen (E25c): name,
+        file list and file copies, for OB-15's "What changed" and "Show diff". Local only."""
+        pid, fp = getattr(engine, "persona_id", None), getattr(engine, "persona_fp", None)
+        if not pid or not fp or not self.observability.settings.record:
+            return
+        try:
+            self.recordings_store.note_persona_version(
+                pid, fp, getattr(engine, "persona_title", None), getattr(engine, "persona_files", None) or {})
+        except Exception:  # noqa: BLE001 - a version note never breaks a session build
+            logger.exception("could not note coworker version %s/%s", pid, fp)
+
+    def user_turn_facts(self, session_id: str) -> dict[str, Any]:
+        """What a turn typed or sent by a person records besides `trigger: user` (1.3): the team
+        stamp of a team member's session, and for the first turn of a manual automation run,
+        `automation` with trigger `manual` and wake reason `manual` (E26a). A follow-up
+        typed into a run's session later carries neither (TD3-23)."""
+        facts: dict[str, Any] = {"team": self._team_stamp(session_id)}
+        if session_id.startswith("__run__"):
+            try:
+                run = self.task_store.find_run(session_id[len("__run__"):])
+                if (run is not None and run.trigger == "manual" and run.status == "running"
+                        and self.recordings_store.turn_count(session_id) == 0):
+                    facts["automation"] = {"task_id": run.task_id, "run_id": run.run_id, "trigger": "manual"}
+                    facts["wake"] = {"reason": "manual"}
+            except Exception:  # noqa: BLE001 - a recording fact never blocks a turn
+                logger.exception("could not tell whether %s is a manual run", session_id)
+        return facts
+
+    def _finish_manual_run(self, session_id: str) -> None:
+        """Close the manual run whose session this is, once its turn ended (P3-3). The desktop
+        used to be the only caller of `finalize_manual_run`, so a run whose window closed first
+        stayed "running" for good. Calling it twice is harmless."""
+        try:
+            run = self.task_store.find_run(session_id[len("__run__"):])
+            if run is not None and run.trigger == "manual" and run.status == "running":
+                self.finalize_manual_run(run.task_id, run.run_id)
+        except Exception:  # noqa: BLE001 - closing the run must never break the turn's events
+            logger.exception("could not close manual run of %s", session_id)
+
+    def finish_stale_manual_runs(self) -> int:
+        """At start: close the manual runs an earlier run of the app left "running" (P3-3).
+        One whose turn finished is closed as usual; one whose turn the app's stop cut short
+        (closed as `unknown` at start) is marked failed. A run with no turn yet is left as is.
+        Returns how many were closed."""
+        closed = 0
+        for task in self.task_store.list():
+            for run in self.task_store.runs(task.id):
+                if run.trigger != "manual" or run.status != "running":
+                    continue
+                turns = [t for t in (self.recordings_store.load_recording(run.session_id).get("turns") or [])
+                         if t.get("status") not in (None, "running")]
+                if not turns:
+                    continue
+                if turns[-1].get("status") == "unknown":
+                    run.status, run.error, run.finished_at = "error", "The app stopped before the run finished", _epoch()
+                    self.task_store.add_run(run)
+                    task.last_run, task.last_status = run.finished_at, "error"
+                    task.run_count += 1
+                    self.task_store.save(task)
+                else:
+                    self.finalize_manual_run(task.id, run.run_id)
+                closed += 1
+        return closed
+
+    def recheck_issues(self) -> int:
+        """Work out the Issues result of every finished turn that has none, or one from an
+        older `signals.yaml`, so the sidebar's warnings are right before anyone opens the
+        session (P3-4, Phase 3 TD3-8). A result worked out here is stored as seen: an old turn
+        never lights the dot. Returns how many sessions were checked."""
+        sids = self.recordings_store.sessions_needing_check(recording_signals.version())
+        for sid in sids:
+            if self._obs_closing.is_set():
+                break  # the app is stopping; the rest are checked at the next start
+            try:
+                self._recording_issues(sid, self.recordings_store.load_recording(sid))
+            except Exception:  # noqa: BLE001 - one bad recording must not stop the rest
+                logger.exception("could not re-check issues of %s", sid)
+        return len(sids)
+
+    def backfill_usage(self, batch: int = 200) -> int:
+        """Ledger rows for finished turns recorded before Phase 3 (TD3-8): worked out from their
+        steps, in batches, so the Usage page's numbers reach back as far as the recordings do.
+        Returns how many turns were filled."""
+        done, last = 0, None
+        while True:
+            ids = self.recordings_store.turns_without_usage(limit=batch)
+            if not ids or ids == last:
+                return done  # nothing left, or a batch that cannot be written (logged)
+            last = ids
+            if self._obs_closing.is_set():
+                return done  # the app is stopping; the rest are filled at the next start
+            for tid in ids:
+                self.recordings_store.refresh_usage(tid)
+            self.recordings_store.flush()
+            done += len(ids)
+            if len(ids) < batch:
+                return done
+            time.sleep(0.05)
+
+    def start_background_checks(self) -> threading.Thread:
+        """At start, after the open turns are closed: close stale manual runs and re-check
+        Issues, in a background thread so the app is usable at once (P3-3, P3-4)."""
+        def work() -> None:
+            for job in (self.finish_stale_manual_runs, self.recheck_issues, self.backfill_usage):
+                try:
+                    job()
+                except Exception:  # noqa: BLE001
+                    logger.exception("background check %s failed", job.__name__)
+
+        t = threading.Thread(target=work, name="observability-recheck", daemon=True)
+        t.start()
+        return t
 
     def finalize_manual_run(self, task_id: str, run_id: str) -> dict[str, Any]:
         """Mark a manual run complete once its first turn finished (the WS already saved the
@@ -8225,8 +9636,11 @@ class SessionManager:
         self._autotitle_inflight.add(session_id)
         # Retain the task: the loop holds only a weak ref, and a GC'd task would both
         # kill the title mid-flight and strand the inflight guard.
+        # The title call is recorded on the turn running now, or the one that just ended
+        # (observability §3.3): captured here, not when the call starts.
+        turn_id = getattr(getattr(engine, "_obs", None), "turn_id", None)
         task = loop.create_task(
-            self._generate_autotitle(session_id, engine, openers, assistant)
+            self._generate_autotitle(session_id, engine, openers, assistant, turn_id=turn_id)
         )
         self._autotitle_tasks.add(task)
         task.add_done_callback(self._autotitle_tasks.discard)
@@ -8237,6 +9651,7 @@ class SessionManager:
         engine: TurnEngine,
         openers: list[str],
         assistant: str = "",
+        turn_id: Optional[str] = None,
     ) -> None:
         """One cheap non-streaming completion on the session's own provider/model. Every
         failure (provider error, empty, absurdly long) is swallowed — the title_from
@@ -8255,9 +9670,11 @@ class SessionManager:
                     ),
                 },
             ]
+            # Tagged so the recording files these calls under "title" (observability).
+            titler = tag_provider(engine.provider, purpose="title", turn=turn_id)
             try:
                 turn = await asyncio.to_thread(
-                    engine.provider.complete,
+                    titler.complete,
                     model=engine.model,
                     messages=messages,
                     temperature=0.2,
@@ -8280,7 +9697,7 @@ class SessionManager:
                     raise
                 logger.info("autotitle for %s: retrying without reasoning effort (%s)", session_id, exc)
                 turn = await asyncio.to_thread(
-                    engine.provider.complete,
+                    titler.complete,
                     model=engine.model,
                     messages=messages,
                     temperature=0.2,
@@ -8666,6 +10083,7 @@ class SessionManager:
         ok = self.session_store.set_flags(session_id, pinned=pinned, archived=archived)
         if ok and archived:
             self._remove_spawn_worktree(session_id)
+            self._remove_feature_worktree(session_id)
         return {"ok": ok, "session_id": session_id}
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
@@ -8681,7 +10099,10 @@ class SessionManager:
                 pass
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
+        self._remove_feature_worktree(session_id, record)
         ok = self.session_store.delete(session_id)
+        # ...and its recorded turns and steps (observability §11, the session-delete cascade).
+        self.recorder.delete_session(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
         held = [sub.channel for sub in self.subscriptions.for_session(session_id)]
         self.subscriptions.remove_session(session_id)
@@ -8696,6 +10117,8 @@ class SessionManager:
         # ...and closes its pending Inbox items — an orphaned approval/question can never be
         # meaningfully answered (owner call, 2026-07-03).
         self.inbox.resolve_session(session_id)
+        # ...and its subagent-run history (the supplemental record dies with the session).
+        self.agent_task_store.drop(session_id)
         # ...and its scratch dir. STRICTLY scoped: only a directory inside scratch_base is
         # removed — a real project folder the user picked is never touched.
         if ok and record and record.workspace:
@@ -8739,7 +10162,9 @@ class SessionManager:
 
     # -- provider proxy ---------------------------------------------------------
     def provider_complete(self, model, messages, tools=None):
-        return self.provider.complete(model=model, messages=messages, tools=tools)
+        return tag_provider(self.provider, purpose="proxy", turn=None).complete(
+            model=model, messages=messages, tools=tools
+        )
 
     def _refresh_provider(self, name: Optional[str] = None) -> None:
         """Drop the router's cached client(s) so the next turn rebuilds with fresh config.
@@ -8751,6 +10176,10 @@ class SessionManager:
     # -- read models ------------------------------------------------------------
     def list_sessions(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
         ws = self.resolve_workspace(workspace) if workspace else None
+        try:
+            unseen_issues = self.recordings_store.unseen_warnings()
+        except Exception:  # noqa: BLE001 - the dot never breaks the list
+            unseen_issues = {}
         return [
             {
                 "session_id": r.session_id,
@@ -8773,6 +10202,8 @@ class SessionManager:
                 # session → persona → footer Inbox). Liveness = working (in-flight turn) /
                 # sleeping (a self-wake is pending) / idle — a count-less dot that never bubbles.
                 "attention": len(self.inbox.pending(session_id=r.session_id)),
+                # OB-3: warnings in turns whose Issues you have not opened (the amber dot).
+                "issues_unseen": unseen_issues.get(r.session_id, 0),
                 "liveness": self._session_liveness(r.session_id),
                 # When sleeping: the next timer fire (ISO) — drives the "sleeping
                 # until…" strip so a scheduled agent never reads as a dead one.

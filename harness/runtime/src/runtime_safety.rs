@@ -148,10 +148,17 @@ impl Runtime {
                 .filter_map(|v| v["text"].as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
-            let (sanitized, blocked) = self
+            let (sanitized, mut blocked) = self
                 .check_content(sid, &config, Phase::ModelOutput, text.clone(), None, None)
                 .await?;
             let mut rejected_calls = vec![];
+            // Google may sign the first text part or only the first call in a
+            // parallel batch. Every call in either candidate belongs to that
+            // signed response; no sibling call may be silently rewritten.
+            let signed = completion.output.iter().any(|item| {
+                crate::chat_completions::signed_tool_id(item).is_some()
+                    || crate::chat_completions::message_signature(item)
+            });
             if blocked.is_none() {
                 for call in completion
                     .output
@@ -182,7 +189,7 @@ impl Runtime {
                             Phase::ToolCall,
                             args.to_string(),
                             Some(qualified),
-                            Some(args),
+                            Some(args.clone()),
                             call["call_id"].as_str().map(String::from),
                         )
                         .await?;
@@ -191,6 +198,17 @@ impl Runtime {
                         feedback_to_model,
                     }) = decision
                     {
+                        if signed {
+                            // A required signature belongs to the untouched
+                            // provider call. Neither persist denied arguments
+                            // nor mutate the signed call. Discard this whole
+                            // candidate and use the existing bounded retry.
+                            blocked = Some(Decision::Block {
+                                code,
+                                feedback_to_model,
+                            });
+                            break;
+                        }
                         call["arguments"] = json!("{}");
                         rejected_calls.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":json!({"isError":true,"executed":false,"code":code,"message":feedback_to_model}).to_string()}));
                         continue;
@@ -198,7 +216,16 @@ impl Runtime {
                     let checked: Value = serde_json::from_str(&checked).map_err(|_| Blocked)?;
                     validate_arguments(&schema["parameters"], &checked).map_err(|_| Blocked)?;
                     permissions::hard_check_session(&self.bundle, &session, alias, &checked)?;
-                    call["arguments"] = json!(checked.to_string());
+                    if signed {
+                        if checked != args {
+                            blocked = Some(Decision::block("SIGNED_TOOL_REWRITE"));
+                            break;
+                        }
+                        // Even harmless JSON reformatting is unnecessary: keep
+                        // the original arguments paired with their signature.
+                    } else {
+                        call["arguments"] = json!(checked.to_string());
+                    }
                 }
             }
             if let Some(decision) = blocked {
@@ -224,8 +251,13 @@ impl Runtime {
                 });
                 continue;
             }
-            if protects_output || sanitized != text {
-                completion.output.retain(|v| v["type"] != "message");
+            if sanitized != text {
+                // Preserve untouched message boundaries and opaque replay
+                // metadata. A rewritten text has no valid original signature;
+                // text signatures are optional and must not be fabricated.
+                completion.output.retain(|v| {
+                    v["type"] != "message" && !crate::chat_completions::message_signature(v)
+                });
                 if !sanitized.is_empty() {
                     completion.output.insert(0,json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":sanitized}]}));
                 }

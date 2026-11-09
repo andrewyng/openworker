@@ -43,6 +43,15 @@ export interface ModelProvider {
   name: string;
   api: "responses" | "chat-completions" | "anthropic";
   baseUrl?: string;
+  /** Chat Completions only. Request streaming usage by default; false omits
+   * stream_options for servers that do not support it. Omit to preserve an
+   * existing provider setting. Missing provider usage remains unknown. */
+  streamUsage?: boolean;
+  /** Anthropic automatic prompt caching, enabled by default. False omits cache_control. */
+  promptCaching?: boolean;
+  /** Anthropic generation mode. Choose a mode supported by the configured model.
+   * Display requires per-turn output.reasoning; omission preserves existing settings. */
+  thinking?: { type: "disabled" } | { type: "adaptive" } | { type: "enabled"; budgetTokens: number };
   /** Memory-only bearer access tokens; mutually exclusive with credentials. */
   auth?: ProviderAuth;
   credentials?: (
@@ -56,6 +65,7 @@ export interface ModelProvider {
 export interface ToolContext {
   sessionId: string;
   turnId: string;
+  /** Scope with sessionId and turnId; callbacks may arrive before event consumption. */
   callId: string;
   workspace: string;
   signal: AbortSignal;
@@ -92,12 +102,15 @@ export type Approvals =
 
 /** Definitions are fixed at host startup. Tools are qualified registered names. */
 export interface TurnLimits {
+  /** Per working-model call; default 8192. Still bounded by maxOutputTokens. */
+  maxOutputTokensPerCall?: number;
   maxModelCalls: number;
   maxOutputTokens: number;
   /** Reserved inside maxOutputTokens for one additional tool-free summary. Default 512. */
   summaryTokens?: number;
 }
 export interface Agent {
+  builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
   id: string;
   name?: string;
@@ -132,6 +145,8 @@ export interface Model {
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
 export interface SessionOptions extends SafetyOptions {
+  /** Completed portable transcript only. Imported calls never execute. */
+  initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
   /** Overrides the agent default for this new session. */
   autoSkipQuestions?: boolean;
@@ -230,11 +245,15 @@ export interface RunResult {
   interruptions: Interruption[];
   submissionId: string | null;
   failure?: string;
+  providerError?: ProviderDiagnostic;
   cursor: number;
   board: Json | null;
 }
 export type Cursors = Record<string, number>;
 export interface RunOptions extends SafetyOptions {
+  /** Trusted application instructions for this turn only, separate from user text. */
+  instructionAddendum?: string;
+  output?: OutputOptions;
   limits?: TurnLimits;
   /** Persist before sending if the application must survive a crash. */
   submissionId?: string;
@@ -242,6 +261,14 @@ export interface RunOptions extends SafetyOptions {
   signal?: AbortSignal;
 }
 export type MessageInput = string | { type?: "message"; text: string };
+export interface OutputOptions {
+  reasoning?: boolean;
+  bufferAttempts?: boolean;
+}
+export type HistoryItem =
+  | { type: "user" | "assistant"; text: string }
+  | { type: "tool_call"; callId: string; name: string; arguments: Record<string, Json> }
+  | { type: "tool_result"; callId: string; output: string };
 export type ControlInput =
   | {
       type: "approval";
@@ -286,8 +313,20 @@ export interface RunEvent {
   summary:
     | (
         | { type: "message"; text: string }
+        | { type: "model_attempt_started"; attemptId: string; attempt: number }
+        | { type: "model_attempt_finished"; attemptId: string; status: "completed" | "failed" | "interrupted"; failure?: ProviderFailure }
+        | { type: "assistant_delta"; attemptId: string; text: string }
+        | { type: "reasoning_delta"; attemptId: string; kind: "summary" | "thinking"; text: string; blockIndex: number }
+        | { type: "model_activity"; attemptId: string; elapsedMs: number }
+        | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
-            type: "tool_started" | "tool_finished" | "auto_approved";
+            type: "tool_started" | "tool_finished";
+            tool: string;
+            /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
+            callId: string;
+          }
+        | {
+            type: "auto_approved";
             tool: string;
           }
         | { type: "plan_updated"; plan: Json }
@@ -348,11 +387,37 @@ export class HarnessError extends Error {
       sessionId?: string;
       submissionId?: string;
       requestId?: string;
+      providerError?: ProviderDiagnostic;
     },
   ) {
     super(message);
     this.name = "HarnessError";
   }
+}
+
+export type ProviderFailure = "rate_limit" | "transient" | "transport" | "incomplete_stream" | "invalid_response" | "context_overflow" | "truncated" | "authentication" | "configuration" | "safety_blocked";
+export interface ProviderDiagnostic {
+  category: ProviderFailure;
+  retryable: boolean;
+  httpStatus?: number;
+  requestId?: string;
+  api?: "responses" | "chat-completions" | "anthropic";
+  /** Fixed parser code or allowlisted upstream code, not upstream message text. */
+  code?: string;
+}
+/** Parse only the structured safe fields; never reflect arbitrary remote text. */
+export function providerDiagnostic(value: unknown): ProviderDiagnostic | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const categories = ["rate_limit", "transient", "transport", "incomplete_stream", "invalid_response", "context_overflow", "truncated", "authentication", "configuration", "safety_blocked"];
+  if (!categories.includes(String(v.category)) || typeof v.retryable !== "boolean") return undefined;
+  return {
+    category: v.category as ProviderFailure, retryable: v.retryable,
+    ...(Number.isInteger(v.http_status) && Number(v.http_status) >= 100 && Number(v.http_status) <= 599 ? { httpStatus: Number(v.http_status) } : {}),
+    ...(typeof v.request_id === "string" && /^[a-zA-Z0-9_:-]{1,128}$/.test(v.request_id) && !v.request_id.startsWith("sk-") ? { requestId: v.request_id } : {}),
+    ...(["responses", "chat-completions", "anthropic"].includes(String(v.api)) ? { api: v.api as ProviderDiagnostic["api"] } : {}),
+    ...(["invalid_api_key","authentication_error","permission_error","invalid_request_error","rate_limit_exceeded","rate_limit_error","insufficient_quota","context_length_exceeded","server_error","api_error","overloaded_error","misalignment_policy_violation","RESOURCE_EXHAUSTED","INVALID_ARGUMENT","UNAUTHENTICATED","PERMISSION_DENIED","http_error_body_unavailable","invalid_response","incomplete_stream","invalid_stream_json","invalid_anthropic_message","invalid_anthropic_request","invalid_chat_completion","invalid_chat_request_history","invalid_tool_call_index"].includes(String(v.code)) ? {code:String(v.code)} : {}),
+  };
 }
 
 export function record(v: unknown): Record<string, unknown> {

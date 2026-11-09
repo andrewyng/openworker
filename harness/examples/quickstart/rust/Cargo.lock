@@ -1556,7 +1556,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-artifacts"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-compliance"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "serde",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-guardrails"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-runtime"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1641,7 +1641,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-sdk"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-store-postgres"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "native-tls",
@@ -1681,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-telemetry"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "openworker-tools"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "serde",

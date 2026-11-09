@@ -491,6 +491,7 @@ fn turn_limits_survive_queue_and_bind_idempotency() {
         max_model_calls: 2,
         max_output_tokens: 2048,
         summary_tokens: 256,
+        ..Default::default()
     });
     let receipt = api.submit_turn(request.clone()).unwrap();
     assert_eq!(
