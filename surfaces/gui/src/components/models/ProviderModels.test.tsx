@@ -20,14 +20,14 @@ import { ProviderModels } from "./ProviderModels";
 
 const row = (over: Partial<ProviderCatalogRow>): ProviderCatalogRow => ({
   id: "x", model: "openrouter:x", label: "X", context: null, tools: null, vision: null, released: null,
-  in_picker: false, recommended: false, new: false, on_key: true, verified: "unverified", ...over,
+  pdf: null, in_picker: false, recommended: false, new: false, on_key: true, verified: "unverified", ...over,
 });
 
 const LIVE: ProviderCatalog = {
   ok: true, provider: "openrouter", configured: true, listing: "live", fetched_at: Math.floor(Date.now() / 1000) - 30, count: 4,
   rows: [
     row({ id: "lab/brand-new", model: "openrouter:lab/brand-new", label: "Brand New", new: true, context: 262144 }),
-    row({ id: "z-ai/glm-5.2", model: "openrouter:z-ai/glm-5.2", label: "GLM-5.2 · via OpenRouter", verified: "catalog", recommended: true, in_picker: true, context: 1048576 }),
+    row({ id: "z-ai/glm-5.2", model: "openrouter:z-ai/glm-5.2", label: "GLM-5.2 · via OpenRouter", verified: "catalog", recommended: true, in_picker: true, context: 1048576, vision: true, pdf: true }),
     row({ id: "openai/gpt-6-astra", model: "openrouter:openai/gpt-6-astra", label: "OpenAI: GPT-6 Astra", verified: "provider", context: 922000, vision: true }),
     row({ id: "lab/mystery", model: "openrouter:lab/mystery", label: "Mystery" }),
     row({ id: "moonshotai/kimi-k3", model: "openrouter:moonshotai/kimi-k3", label: "Kimi K3 · via OpenRouter", verified: "catalog", in_picker: true, on_key: false }),
@@ -73,11 +73,15 @@ describe("ProviderModels with a live listing", () => {
     expect(all).not.toContain("Brand New");
     // the facts and where they came from
     expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("new");
-    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("922K");
-    expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("262K");
-    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("1M");
+    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("922K context");
+    expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("262K context");
+    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("1M context");
     expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("images");
+    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).not.toContain("PDF");
+    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("images + PDF");
     expect(screen.getByTestId("catalog-tags-lab/mystery").textContent).toContain("unverified");
+    expect(screen.getByTestId("catalog-recommended").textContent).toContain("Reviewed by OpenWorker");
+    expect(screen.getByTestId("catalog-all").textContent).toContain("Also on your key");
     expect(screen.getByTestId("catalog-tags-moonshotai/kimi-k3").textContent).toContain("not on this key");
     expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked models are not on this key");
     // the default row is ticked and locked
