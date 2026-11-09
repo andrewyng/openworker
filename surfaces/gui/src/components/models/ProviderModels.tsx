@@ -197,9 +197,10 @@ export function ProviderModels({
 
   const rowEl = (row: ProviderCatalogRow) => {
     const isDefault = row.model === settings.model;
-    const tags: { key: string; text: string; tone?: string }[] = [];
-    if (row.context) tags.push({ key: "ctx", text: fmtTokens(row.context) });
-    if (row.vision) tags.push({ key: "img", text: t("manage.catalog_tag_images") });
+    const tags: { key: string; text: string; tone?: string; title?: string }[] = [];
+    if (row.context) tags.push({ key: "ctx", text: t("manage.catalog_tag_context", { size: fmtTokens(row.context) }), title: t("manage.catalog_tag_context_title", { tokens: row.context.toLocaleString() }) });
+    if (row.vision && row.pdf) tags.push({ key: "att", text: t("manage.catalog_tag_images_pdf"), title: t("manage.catalog_tag_attachments_title") });
+    else if (row.vision) tags.push({ key: "att", text: t("manage.catalog_tag_images"), title: t("manage.catalog_tag_attachments_title") });
     if (row.new) tags.push({ key: "new", text: t("manage.catalog_tag_new"), tone: "text-ok" });
     if (row.verified === "unverified") tags.push({ key: "unv", text: t("manage.catalog_tag_unverified"), tone: "text-warnInk" });
     if (row.in_picker && row.on_key === false) tags.push({ key: "nokey", text: t("manage.catalog_tag_not_on_key"), tone: "text-danger" });
@@ -216,7 +217,7 @@ export function ProviderModels({
           <span className="mlist-name" title={row.model}>{row.label}</span>
           {tags.length > 0 && (
             <span className="text-meta text-muted shrink-0 flex gap-2" data-testid={`catalog-tags-${row.id}`}>
-              {tags.map((g) => <span key={g.key} className={g.tone || ""}>{g.text}</span>)}
+              {tags.map((g) => <span key={g.key} className={g.tone || ""} title={g.title}>{g.text}</span>)}
             </span>
           )}
         </label>
@@ -267,8 +268,8 @@ export function ProviderModels({
         <p className="text-meta text-muted mt-1" data-testid="catalog-not-on-key">{t("manage.catalog_not_on_key_help", { count: catalog.not_on_key.length })}</p>
       )}
       {section(t("manage.catalog_new_since"), sections.fresh, "catalog-new")}
-      {section(t("manage.catalog_recommended"), sections.recommended, "catalog-recommended")}
-      {section(t("manage.catalog_all"), sections.rest, "catalog-all", true)}
+      {section(t("manage.catalog_reviewed"), sections.recommended, "catalog-recommended")}
+      {section(t("manage.catalog_also_on_key"), sections.rest, "catalog-all", true)}
       {rows.some((r) => r.verified === "unverified" && r.in_picker) && (
         <p className="text-meta text-muted mt-2" data-testid="catalog-unverified-help">{t("manage.catalog_unverified_help")}</p>
       )}

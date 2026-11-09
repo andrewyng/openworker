@@ -269,6 +269,7 @@ def test_the_first_look_merges_the_listing_with_the_catalog(manager, fake_provid
     assert rec["label"] == MATRIX[f"openrouter:{OPENROUTER_REC}"].label  # the catalog's label, not the listing's
     astra = rows["openai/gpt-6-astra"]
     assert astra["verified"] == "provider" and astra["context"] == 922_000 and astra["vision"] is True
+    assert astra["pdf"] is None and isinstance(rec["pdf"], bool)  # only the catalog knows PDF
     assert astra["in_picker"] is False and astra["label"] == "OpenAI: GPT-6 Astra" and astra["released"] == "2026-08-29"
     assert rows["lab/mystery"]["verified"] == "unverified" and rows["lab/mystery"]["context"] is None
     assert "openai/text-embedding-4" not in rows

@@ -2933,6 +2933,7 @@ export interface ProviderCatalogRow {
   context: number | null;
   tools: boolean | null;
   vision: boolean | null;
+  pdf: boolean | null; // the catalog knows; listings do not say
   released: string | null; // ISO date when the listing says
   in_picker: boolean;
   recommended: boolean;

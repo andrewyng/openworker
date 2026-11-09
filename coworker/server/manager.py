@@ -5664,6 +5664,7 @@ class SessionManager:
                 "context": context,
                 "tools": cat.caps.tools if cat else lm.get("tools"),
                 "vision": cat.caps.vision if cat else lm.get("vision"),
+                "pdf": cat.caps.pdf if cat else None,  # no listing says; the catalog does
                 "released": lm.get("created"),
                 "in_picker": full in picker,
                 "recommended": bare == rec,
