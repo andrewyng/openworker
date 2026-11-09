@@ -283,7 +283,8 @@ def test_the_first_look_merges_the_listing_with_the_catalog(manager, fake_provid
     astra = rows["openai/gpt-6-astra"]
     assert astra["verified"] == "provider" and astra["context"] == 922_000 and astra["vision"] is True
     assert astra["pdf"] is None and isinstance(rec["pdf"], bool)  # only the catalog knows PDF
-    assert astra["in_picker"] is False and astra["label"] == "OpenAI: GPT-6 Astra" and astra["released"] == "2026-08-29"
+    assert astra["in_picker"] is False and astra["released"] == "2026-08-29"
+    assert astra["label"] == "OpenAI: GPT-6 Astra · via OpenRouter"  # the reviewed rows' suffix, so the list reads as one
     assert rows["lab/mystery"]["verified"] == "unverified" and rows["lab/mystery"]["context"] is None
     assert "openai/text-embedding-4" not in rows
     # nothing is "new" on the first look: the user never saw a list to compare with
@@ -417,11 +418,11 @@ def test_a_ticked_live_model_gets_its_facts_from_the_listing(manager, fake_provi
     manager.add_model("openrouter:openai/gpt-6-astra")
     manager.add_model("openrouter:lab/mystery")
     facts = json.loads((manager._data_base / "live_facts.json").read_text(encoding="utf-8"))
-    assert facts["openrouter:openai/gpt-6-astra"] == {"name": "OpenAI: GPT-6 Astra", "context": 922_000, "tools": True, "vision": True}
-    assert facts["openrouter:lab/mystery"] == {"name": "Mystery"}
+    assert facts["openrouter:openai/gpt-6-astra"] == {"name": "OpenAI: GPT-6 Astra", "context": 922_000, "tools": True, "vision": True, "label": "OpenAI: GPT-6 Astra · via OpenRouter"}
+    assert facts["openrouter:lab/mystery"] == {"name": "Mystery", "label": "Mystery · via OpenRouter"}
     assert f"openrouter:{OPENROUTER_REC}" not in facts  # the catalog already vouches for it
     settings = manager.get_settings()
-    assert settings["model_labels"]["openrouter:openai/gpt-6-astra"] == "OpenAI: GPT-6 Astra"
+    assert settings["model_labels"]["openrouter:openai/gpt-6-astra"] == "OpenAI: GPT-6 Astra · via OpenRouter"
     assert settings["model_context_windows"]["openrouter:openai/gpt-6-astra"] == 922_000
     assert "openrouter:lab/mystery" not in settings["model_context_windows"]
     assert settings["model_verification"]["openrouter:openai/gpt-6-astra"] == "provider"
