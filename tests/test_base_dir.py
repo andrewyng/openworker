@@ -96,6 +96,9 @@ def test_deployed_provider_key_adopts_a_runnable_default(tmp_path, monkeypatch):
     the default — a working default is never stolen."""
     monkeypatch.delenv("OPENWORKER_BASE_DIR", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # "Nobody can run": no Ollama either, whatever this machine has (with one up, the
+    # unchosen default would already follow it, OPE-260).
+    monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: False)
     manager = SessionManager(data_dir=tmp_path / "mgr")
     from coworker.secrets import SecretStore
 
