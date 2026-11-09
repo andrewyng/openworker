@@ -20,7 +20,7 @@ from coworker.compaction import DEFAULT_CONTEXT_WINDOW, trigger_tokens
 from coworker.engine import TurnEngine
 from coworker.permissions import PermissionEngine
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from coworker.providers.matrix import MATRIX, model_context_windows
+from coworker.providers.matrix import MATRIX, full_id, model_context_windows
 from coworker.providers.registry import DESCRIPTORS
 from coworker.tools import ToolRegistry
 
@@ -69,9 +69,7 @@ def test_claude_5_rows_are_vision_capable_and_labelled():
         assert "Anthropic" in entry.label, mid
 
 
-def _matrix_key(provider: str, model: str) -> str:
-    # OpenAI rows are stored bare (bare ids route to the OpenAI default).
-    return model if provider == "openai" else f"{provider}:{model}"
+_matrix_key = full_id  # OpenAI rows are stored bare (bare ids route to the OpenAI default).
 
 
 # Recommended models whose vendor spec has not been re-checked: the matrix keeps their
