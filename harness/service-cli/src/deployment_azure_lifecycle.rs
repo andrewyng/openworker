@@ -55,6 +55,13 @@ pub enum Cleanup {
         #[arg(long)]
         state: PathBuf,
     },
+    /// Pin a reviewed replacement image before an administrator updates the same job.
+    PrepareUpgrade {
+        #[command(flatten)]
+        remote: Remote,
+        #[arg(long)]
+        image: String,
+    },
     /// One scheduled iteration outside AKS. Uses Container Apps managed identity.
     Tick {
         #[arg(long)]
@@ -161,6 +168,8 @@ pub(super) struct State {
     heartbeat_unix: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     guard: Option<GuardReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image_upgrade: Option<ImageUpgrade>,
     destroy_requested: bool,
     completed_unix: Option<u64>,
     job_stop: Option<Stop>,
@@ -168,6 +177,39 @@ pub(super) struct State {
     installation_digest: Option<String>,
     #[serde(default)]
     installation_closed: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImageUpgrade {
+    previous_image: String,
+    image: String,
+    request_id: String,
+    prepared_at_unix: u64,
+    controller: GuardReceipt,
+}
+fn controller_image(s: &State) -> &str {
+    s.image_upgrade
+        .as_ref()
+        .map(|u| u.image.as_str())
+        .unwrap_or(&s.plan.azure_infrastructure.as_ref().unwrap().guard_image)
+}
+fn validate_image_upgrade(s: &State, image: &str) -> Result<()> {
+    let original = &s.plan.azure_infrastructure.as_ref().unwrap().guard_image;
+    let (repo, _) = original
+        .split_once("@sha256:")
+        .context("Original image is not pinned")?;
+    let (next, digest) = image
+        .split_once("@sha256:")
+        .context("Replacement image must be pinned")?;
+    ensure!(
+        next == repo
+            && digest.len() == 64
+            && digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "Replacement must be a SHA256 digest in the original cleanup repository"
+    );
+    Ok(())
 }
 fn digest(p: &Plan) -> Result<String> {
     let files = super::super::artifacts(p)?;
@@ -248,6 +290,18 @@ impl State {
         if let Some(receipt) = &self.guard {
             receipt.validate()?;
         }
+        if let Some(u) = &self.image_upgrade {
+            validate_image_upgrade(self, &u.image)?;
+            ensure!(
+                u.previous_image == self.plan.azure_infrastructure.as_ref().unwrap().guard_image
+                    && self.guard.as_ref() == Some(&u.controller)
+                    && uuid::Uuid::parse_str(&u.request_id).is_ok_and(|id| !id.is_nil())
+                    && u.prepared_at_unix >= self.plan.created_at_unix
+                    && u.prepared_at_unix < self.plan.expires_at_unix,
+                "Invalid pinned controller upgrade receipt"
+            );
+        }
+
         ensure!(
             self.heartbeat_unix.is_none() || self.guard.is_some(),
             "Heartbeat requires an installer-pinned controller receipt"
@@ -313,7 +367,7 @@ impl State {
             .job_stop
             .as_ref()
             .is_some_and(|r| matches!(r.phase, StopPhase::Intent | StopPhase::Unknown));
-        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"controllerReceipt":self.guard,"controllerStop":self.job_stop,"controllerStopped":stopped,"requiresAttention":attention,"workloadAndControllerComplete":self.completed_unix.is_some()&&stopped,"workloadCompletedUnix":self.completed_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"retainedControlResources":true,"liveQualified":false})
+        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"controllerReceipt":self.guard,"controllerImage":controller_image(self),"controllerUpgrade":self.image_upgrade,"controllerStop":self.job_stop,"controllerStopped":stopped,"requiresAttention":attention,"workloadAndControllerComplete":self.completed_unix.is_some()&&stopped,"workloadCompletedUnix":self.completed_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"retainedControlResources":true,"liveQualified":false})
     }
 }
 fn local(path: &Path) -> Result<State> {
@@ -412,8 +466,18 @@ fn owned_body(s: &State, r: &Value, expected: &Value) -> Result<String> {
             && r["tags"]["ows-bundle"] == s.bundle_digest,
         "Resource ownership mismatch; names/tags alone are not receipts"
     );
+    // AKS resourceUID distinguishes delete/recreate under the same ARM ID. Some
+    // live responses omit systemData; preserve older frozen graph descriptors and
+    // accept this documented immutable identity only for managedClusters.
     let receipt = r
         .pointer(expected["incarnationPointer"].as_str().unwrap())
+        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+        .or_else(|| {
+            expected["id"]
+                .as_str()
+                .filter(|id| id.contains("/providers/Microsoft.ContainerService/managedClusters/"))
+                .and_then(|_| r.pointer("/properties/resourceUID"))
+        })
         .and_then(Value::as_str)
         .filter(|v| !v.is_empty() && v.len() <= 128)
         .context("Provider immutable incarnation receipt unavailable; refuse cleanup")?;
@@ -841,6 +905,7 @@ pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
                 resources: vec![],
                 heartbeat_unix: None,
                 guard: None,
+                image_upgrade: None,
                 destroy_requested: false,
                 completed_unix: None,
                 job_stop: None,
@@ -946,6 +1011,26 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 json!({"heartbeatReady":true,"independentOfAks":true,"liveQualified":false,"workloadApplyReady":false}),
             )
         }
+        Cleanup::PrepareUpgrade { remote, image } => {
+            let expected = local(&remote.state)?;
+            ensure!(
+                remote.allow_experimental_cloud && remote.accept == expected.bundle_digest,
+                "Explicit original bundle confirmation required"
+            );
+            let mut c = Azure::new(&expected.plan, None)?;
+            let (mut e, mut s) = c
+                .read_control(&control_url(&expected.plan))
+                .await?
+                .context("Shared control missing")?;
+            ensure!(
+                s.nonce == expected.nonce && s.bundle_digest == expected.bundle_digest,
+                "Control identity mismatch"
+            );
+            prepare_image_upgrade(&mut c, &mut s, &mut e, image, now()?).await?;
+            crate::output(
+                json!({"status":s.status(),"jobImageUpdateRequired":true,"jobId":job_id(&s.plan),"image":image,"resourceOwnershipUnchanged":true}),
+            )
+        }
         Cleanup::Tick {
             control,
             tenant,
@@ -979,6 +1064,44 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
             crate::output(s.status())
         }
     }
+}
+async fn prepare_image_upgrade(
+    c: &mut impl Cloud,
+    s: &mut State,
+    e: &mut String,
+    image: &str,
+    at: u64,
+) -> Result<()> {
+    validate_image_upgrade(s, image)?;
+    ensure!(
+        at >= s.plan.created_at_unix
+            && at < s.plan.expires_at_unix
+            && !s.destroy_requested
+            && s.completed_unix.is_none()
+            && s.job_stop.is_none(),
+        "Controller is closing or expired"
+    );
+    if let Some(u) = &s.image_upgrade {
+        ensure!(
+            u.image == image,
+            "Another controller upgrade is already pinned; reconcile it"
+        );
+        return Ok(());
+    }
+    let controller = verify_job(c, s).await?;
+    ensure!(
+        s.guard.as_ref() == Some(&controller),
+        "Initialized controller receipt required"
+    );
+    s.image_upgrade = Some(ImageUpgrade {
+        previous_image: controller_image(s).into(),
+        image: image.into(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+        prepared_at_unix: at,
+        controller,
+    });
+    s.heartbeat_unix = None; // Old image/configuration cannot authorize new work.
+    save(c, s, e).await
 }
 fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
     let p = &s.plan;
@@ -1031,7 +1154,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
         json!({"type":"Microsoft.Storage/storageAccounts","apiVersion":"2023-05-01","name":control_account,"location":location,"sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{"allowSharedKeyAccess":false,"allowBlobPublicAccess":false,"minimumTlsVersion":"TLS1_2","supportsHttpsTrafficOnly":true,"publicNetworkAccess":"Enabled"}}),
         json!({"type":"Microsoft.Storage/storageAccounts/blobServices/containers","apiVersion":"2023-05-01","name":format!("{control_account}/default/control"),"dependsOn":[account_id],"properties":{"publicAccess":"None"}}),
         json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":null}}}),
-        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
+        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":controller_image(s),"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
     ];
     if c.guard_environment_resource_id.is_some() {
         control_resources.retain(|r| r["type"] != "Microsoft.App/managedEnvironments");
@@ -1112,6 +1235,7 @@ mod tests {
             resources: vec![],
             heartbeat_unix: Some(150),
             guard: Some(fixture_guard()),
+            image_upgrade: None,
             destroy_requested: false,
             completed_unix: None,
             job_stop: None,
@@ -1415,6 +1539,80 @@ mod tests {
             heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
         }
         assert!(s.completed_unix.is_some());
+    }
+
+    #[tokio::test]
+    async fn aks_resource_uid_is_required_when_creation_metadata_is_absent() {
+        let (mut c, mut s, mut e) = active().await;
+        // The foundation is active; apply the cluster, then model the live API shape.
+        apply(&mut c, &mut s, &mut e, Stage::Cluster, 150)
+            .await
+            .unwrap();
+        let id = graph::inventory(&s.plan)
+            .into_iter()
+            .find(|r| r["stage"] == "cluster")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let v = c.objects.get_mut(&id).unwrap();
+        v.as_object_mut().unwrap().remove("systemData");
+        v["properties"]["resourceUID"] = json!("6af38caa5deaf50001940f2c");
+        // First real observation must pin UID, never switch an existing receipt.
+        s.resources.retain(|r| r.id != id);
+        observe(&mut c, &mut s, &mut e).await.unwrap();
+        assert_eq!(
+            s.resources.iter().find(|r| r.id == id).unwrap().incarnation,
+            "6af38caa5deaf50001940f2c"
+        );
+        c.objects.get_mut(&id).unwrap()["properties"]["resourceUID"] = json!("replacement");
+        assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+        c.objects.get_mut(&id).unwrap()["properties"]["resourceUID"] = Value::Null;
+        assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+    }
+    #[tokio::test]
+    async fn controller_upgrade_preserves_ownership_and_refuses_old_image_or_replacement() {
+        let (mut c, mut s, mut e) = active().await;
+        let original = serde_json::to_value((
+            &s.plan,
+            &s.resources,
+            &s.operations,
+            &s.guard,
+            &s.nonce,
+            &s.bundle_digest,
+        ))
+        .unwrap();
+        let image = format!("ghcr.io/test/ows@sha256:{}", "b".repeat(64));
+        prepare_image_upgrade(&mut c, &mut s, &mut e, &image, 160)
+            .await
+            .unwrap();
+        assert_eq!(
+            original,
+            serde_json::to_value((
+                &s.plan,
+                &s.resources,
+                &s.operations,
+                &s.guard,
+                &s.nonce,
+                &s.bundle_digest
+            ))
+            .unwrap()
+        );
+        assert!(s.heartbeat_unix.is_none());
+        assert!(verify_job(&mut c, &s).await.is_err());
+        prepare_image_upgrade(&mut c, &mut s, &mut e, &image, 161)
+            .await
+            .unwrap();
+        assert!(
+            prepare_image_upgrade(&mut c, &mut s, &mut e, "foreign/image:latest", 162)
+                .await
+                .is_err()
+        );
+        c.objects.get_mut(&job_id(&s.plan)).unwrap()["properties"]["template"]["containers"][0]
+            ["image"] = json!(image);
+        verify_job(&mut c, &s).await.unwrap();
+        c.objects.get_mut(&job_id(&s.plan)).unwrap()["systemData"]["createdAt"] = json!("replaced");
+        assert!(verify_job(&mut c, &s).await.is_err());
     }
 
     #[tokio::test]
@@ -1755,7 +1953,7 @@ fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
             && body["properties"]["environmentId"]
                 .as_str()
                 .is_some_and(|id| id.eq_ignore_ascii_case(&environment_id(&s.plan)))
-            && container["image"] == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
+            && container["image"] == controller_image(s)
             && container["command"] == json!(["/opt/openworker/ows"])
             && args.len() == 12
             && args[..4]
