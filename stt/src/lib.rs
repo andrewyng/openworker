@@ -455,11 +455,29 @@ fn capture_worker(
     }
 }
 
+/// The default input device's name, or None when the system has no capture device.
+///
+/// Hosts use this to decide whether to offer Voice Input at all. Without it a machine with no
+/// microphone still reports itself compatible, invites a 141 MB model download, and only fails
+/// at the moment the user presses record — which is the worst place to find out.
+///
+/// Probed live rather than cached so a microphone plugged in after launch is picked up.
+pub fn input_device_name() -> Option<String> {
+    let device = cpal::default_host().default_input_device()?;
+    // Existence is not enough. ALSA always presents a `default` PCM, so on Linux
+    // `default_input_device()` returns Some on a machine with no capture hardware at all.
+    // Querying the config is what actually touches the device, and it is the same call
+    // `start_recording` makes — so if this succeeds, opening the stream will too.
+    device.default_input_config().ok()?;
+    // A device that cannot report a name is still a device; fall back rather than hide it.
+    Some(device.name().unwrap_or_else(|_| "default input".to_owned()))
+}
+
 fn start_recording() -> Result<Recording, String> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .ok_or_else(|| "No microphone is available. Check your Mac sound settings.".to_owned())?;
+        .ok_or_else(|| "No microphone is available. Check your system sound settings.".to_owned())?;
     let supported = device
         .default_input_config()
         .map_err(|e| format!("Could not open the microphone: {e}"))?;
@@ -578,6 +596,16 @@ fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     if !model_path.is_file() {
         return Err("The local voice model is not installed yet.".to_owned());
     }
+    // whisper.cpp and GGML log to stderr by default — including per-token decoder output, i.e.
+    // a running transcript of what the user just said. The app promises recordings and
+    // transcripts stay on the device; letting them leak into a terminal or the session journal
+    // contradicts that, and it is noise besides. This redirects those logs into whisper-rs's
+    // hooks, and with neither its `log_backend` nor `tracing_backend` feature enabled they go
+    // nowhere. `Once`-guarded upstream, so calling it per transcription is free.
+    // (The FullParams print_* flags below do NOT cover this: they gate whisper's own result
+    // printing, not the library's internal logging.)
+    whisper_rs::install_logging_hooks();
+
     let context = WhisperContext::new_with_params(
         model_path
             .to_str()
@@ -594,6 +622,7 @@ fn transcribe(model_path: &Path, samples: &[f32]) -> Result<String, String> {
     params.set_print_progress(false);
     params.set_print_special(false);
     params.set_print_realtime(false);
+    params.set_print_timestamps(false);
     params.set_suppress_blank(true);
     state
         .full(params, samples)
