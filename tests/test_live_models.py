@@ -271,7 +271,7 @@ def test_anthropic_facts_dated_twins_and_retirement():
         {"id": "claude-old", "display_name": "Old", "lifecycle": "retired", "retires_at": "2024-06-01T00:00:00Z"},
     ]})}
     assert set(rows) == {"claude-x", "claude-old"} and rows["claude-x"].aliases == ("claude-x-20250101",)
-    assert (rows["claude-old"].kind, rows["claude-old"].reason_phrase) == ("retired", "Retired on 2024-06-01")
+    assert (rows["claude-old"].kind, rows["claude-old"].reason_phrase) == ("retired", "Deprecated · ended 2024-06-01")
 
 
 def test_xai_joins_the_window_from_the_second_list_and_keeps_aliases():
@@ -332,7 +332,7 @@ def test_openai_name_rules_dated_twins_and_shutdown_dates():
     assert rows["gpt-5-search-api"].reason_phrase == "Likely specialised: web search"
     # a shutdown date in the past sets the row aside as retired, whatever its name
     old = live_models.parse_listing("openai", {"data": [{"id": "gpt-3.5-turbo", "shutdown_date": "2024-01-01"}]})[0]
-    assert (old.kind, old.kind_source, old.reason_phrase) == ("retired", "provider", "Retired on 2024-01-01")
+    assert (old.kind, old.kind_source, old.reason_phrase) == ("retired", "provider", "Deprecated · ended 2024-01-01")
 
 
 def test_bare_lists_use_their_own_short_word_lists():

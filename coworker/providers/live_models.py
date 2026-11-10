@@ -72,7 +72,7 @@ KIND_PHRASES: dict[str, str] = {
     "specialised": "Specialised: {detail}",
     "hybrid_image": "Also generates images",
     "hybrid_audio": "Also generates speech",
-    "retired": "Retired on {date}",
+    "retired": "Deprecated · ended {date}",
 }
 
 
