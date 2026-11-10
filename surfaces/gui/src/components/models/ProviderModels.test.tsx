@@ -276,6 +276,21 @@ describe("ProviderModels without a live listing", () => {
     await waitFor(() => expect(screen.getByTestId("catalog-status")).toBeTruthy());
   });
 
+  it("a partial answer from the backend shows the curated checklist instead of breaking the page", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue({} as ProviderCatalog);
+    renderPanel();
+    await flush();
+    expect(screen.getByTestId("provider-models-fallback").querySelectorAll(".mlist-row").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("catalog-status")).toBeNull();
+    // a live answer missing its lists still renders
+    vi.mocked(getProviderCatalog).mockResolvedValue({ ...LIVE, set_aside: undefined, not_on_key: undefined, new: undefined } as unknown as ProviderCatalog);
+    cleanup();
+    renderPanel();
+    await flush();
+    expect(screen.getByTestId("catalog-status")).toBeTruthy();
+    expect(screen.queryByTestId("catalog-not-on-key")).toBeNull();
+  });
+
   it("an unreachable backend says so with Retry", async () => {
     vi.mocked(getProviderCatalog).mockRejectedValueOnce(new Error("HTTP 500")).mockResolvedValueOnce(LIVE);
     renderPanel();
