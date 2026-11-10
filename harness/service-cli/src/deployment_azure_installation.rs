@@ -399,7 +399,7 @@ not contain admin certificates, bearer tokens, database passwords or model keys.
 
 The installer needs a private network/DNS path to AKS, `kubelogin` with Azure CLI
 login in the pinned tenant, `kubectl`, Helm, a reviewed platform manifest and the
-pinned OpenShell 0.1.3 archive/images. Installing OpenShell/Agent Sandbox requires
+reviewed, pinned OpenShell archive/images (0.1.3 or 0.1.7). Installing OpenShell/Agent Sandbox requires
 reviewed cluster-scoped Kubernetes rights; namespace RBAC alone is insufficient.
 No provider/plugin/component is installed implicitly by preparing this handoff.
 
