@@ -52,6 +52,24 @@ function fmtDate(iso: string, lang: string): string {
 
 type Fact = { key: string; text: string; tone?: "amber" | "ok" | "danger" };
 
+// A partial answer (an older backend, a test double, a proxy error page) must never take the
+// Settings page down: anything that is not a live list or an error reads as "no list", and a
+// missing field reads as empty.
+export function normalizedCatalog(c: Partial<ProviderCatalog> | null | undefined): ProviderCatalog {
+  const listing = c?.listing === "live" || c?.listing === "error" ? c.listing : "none";
+  return {
+    ...(c || {}),
+    ok: c?.ok ?? true,
+    provider: c?.provider ?? "",
+    configured: !!c?.configured,
+    listing,
+    rows: c?.rows || [],
+    set_aside: c?.set_aside || [],
+    new: c?.new || [],
+    not_on_key: c?.not_on_key || [],
+  };
+}
+
 export function ProviderModels({
   provider,
   providerTitle,
@@ -89,7 +107,7 @@ export function ProviderModels({
     setLoading(true);
     setFailed(false);
     try {
-      setCatalog(await getProviderCatalog(provider, refresh));
+      setCatalog(normalizedCatalog(await getProviderCatalog(provider, refresh)));
     } catch {
       setFailed(true);
     } finally {
