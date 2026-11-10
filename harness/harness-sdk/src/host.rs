@@ -680,6 +680,14 @@ impl Host {
                 continue;
             }
             let rt = self.runtime(&s.coworker)?;
+            if let Some(parent_id) = &s.sandbox_parent {
+                let parent = self.store.lock().unwrap().metadata(parent_id)?;
+                if !parent.closed && parent.sandbox.is_none() {
+                    self.runtime(&parent.coworker)?
+                        .prepare_shared_subagent_sandbox(parent_id)
+                        .await?;
+                }
+            }
             if let Some(db) = &self.postgres {
                 if let Some(c) = db.next_control(&s.id)? {
                     rt.apply_control(&s.id, &c.command.request_id).await?;
@@ -792,6 +800,14 @@ impl Host {
                             .cloned()
                             .context("Registered team type missing")?;
                         parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
+                        if let Some(standalone) = &doc.standalone {
+                            let policy = standalone
+                                .policies
+                                .get(&instance.agent_id)
+                                .context("Missing pinned child policy")?;
+                            parameters["safety"] = json!(policy.safety);
+                            parameters["compliance"] = json!(policy.compliance);
+                        }
                         let override_model = doc
                             .roster
                             .request(&instance.agent_id)
@@ -812,6 +828,16 @@ impl Host {
                                 continue;
                             }
                         };
+                        if doc.standalone.is_some()
+                            && s.environment.is_none()
+                            && s.execution_backend
+                                == openworker_runtime::execution::Backend::Openshell
+                        {
+                            self.runtime(&s.coworker)?
+                                .prepare_shared_subagent_sandbox(&s.id)
+                                .await?;
+                            child.sandbox_parent = Some(s.id.clone());
+                        }
                         child.id = instance.session_id.clone();
                         // Read back the immutable acknowledgement saved by the
                         // workspace adapter; model input never supplies this receipt.
@@ -1036,6 +1062,7 @@ impl Host {
                     "agent_teams".into(),
                     json!(self.store.lock().unwrap().supports_agent_teams()),
                 );
+                c.insert("standalone_subagents".into(), json!(true));
                 c.insert("dynamic_agents".into(), json!(true));
                 c.insert("session_model_override".into(), json!(true));
                 c.insert("sdk_question_policy".into(), json!(true));

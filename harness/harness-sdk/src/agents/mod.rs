@@ -107,7 +107,9 @@ impl Approvals {
     pub(crate) fn auto_approves(&self, alias: &str) -> bool {
         // A reusable custom type needs its own exact-definition decision. An
         // interrupt_on exclusion must not silently approve arbitrary new roles.
-        if alias == openworker_runtime::team_type_catalog::TOOL {
+        if alias == openworker_runtime::team_type_catalog::TOOL
+            || alias == openworker_runtime::subagents::CREATE
+        {
             return false;
         }
         match self {
@@ -159,6 +161,8 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) subagents: Vec<Agent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) standalone_subagents: Option<openworker_runtime::subagents::Config>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) servers: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tool_policy: Option<PathBuf>,
@@ -191,6 +195,7 @@ impl Agent {
             approvals: Approvals::default(),
             auto_skip_questions: false,
             subagents: vec![],
+            standalone_subagents: None,
             servers: None,
             tool_policy: None,
             runtime_policy: None,
@@ -298,6 +303,18 @@ impl Agent {
         self.auto_skip_questions = enabled;
         self
     }
+    /// Allow model-created children with fresh context and delegated tools.
+    pub fn allow_subagents(mut self, enabled: bool) -> Self {
+        self.standalone_subagents = Some(openworker_runtime::subagents::Config {
+            enabled,
+            ..Default::default()
+        });
+        self
+    }
+    pub fn subagent_options(mut self, options: openworker_runtime::subagents::Config) -> Self {
+        self.standalone_subagents = Some(options);
+        self
+    }
     /// Add a subagent. A session of this agent becomes a team lead with one
     /// worker session per subagent; delegation runs over the durable team board.
     pub fn subagent(mut self, agent: Agent) -> Self {
@@ -366,6 +383,16 @@ impl Agent {
                 return bad(format!("Agent {}: policy paths must be absolute", self.id));
             }
         }
+        if let Some(config) = &self.standalone_subagents {
+            config
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
+            if config.enabled && (nested || !self.subagents.is_empty()) {
+                return bad(
+                    "Standalone delegation cannot be combined with legacy board subagents".into(),
+                );
+            }
+        }
         if nested && !self.subagents.is_empty() {
             return bad(format!(
                 "Subagent {} cannot have its own subagents (one team level)",
@@ -398,6 +425,9 @@ impl Agent {
         Ok(())
     }
 }
+
+/// Configuration for model-created standalone children.
+pub use openworker_runtime::subagents::Config as SubagentOptions;
 
 #[cfg(test)]
 mod tool_free_tests {

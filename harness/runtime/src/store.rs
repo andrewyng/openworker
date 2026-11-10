@@ -136,6 +136,9 @@ pub struct Session {
     pub interactions: Vec<Interaction>,
     pub turn: Option<Turn>,
     pub sandbox: Option<String>,
+    /// Trusted parent ownership for a shared legacy local OpenShell sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_parent: Option<String>,
     pub closed: bool,
     #[serde(default)]
     pub compaction_config: crate::compaction::Config,
@@ -591,6 +594,7 @@ impl Store {
             params![s.id, serde_json::to_string(s)?],
         )?;
         sqlite_teams::finished(&tx, s)?;
+        sqlite_agent_team::terminal_saved(&tx, s)?;
         let tid = s.turn.as_ref().map(|t| t.id.clone());
         tx.execute(
             "INSERT INTO events(session_id,turn_id,kind,data) VALUES(?,?,?,?)",

@@ -174,7 +174,8 @@ export function agentWire(a: Agent, depth = 0): object {
             },
           }
         : a.approvals,
-    subagents: a.subagents?.map((child) => agentWire(child, depth + 1)),
+    subagents: Array.isArray(a.subagents) ? a.subagents.map((child) => agentWire(child, depth + 1)) : undefined,
+    standalone_subagents: a.subagents && !Array.isArray(a.subagents) ? a.subagents : undefined,
     servers: a.servers,
     tool_policy: a.toolPolicy,
     runtime_policy: a.runtimePolicy,

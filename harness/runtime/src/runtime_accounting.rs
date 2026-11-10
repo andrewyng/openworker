@@ -25,10 +25,27 @@ impl Runtime {
         } else {
             db.metadata(sid)?
         };
+        let parent_span = if self.telemetry.enabled() {
+            if let Some(member) = &session.agent_team {
+                let doc: crate::agent_team::Document =
+                    serde_json::from_value(db.agent_team(sid, "snapshot", &json!({}), None)?)?;
+                doc.standalone
+                    .as_ref()
+                    .and_then(|s| s.parent_spans.get(&member.agent_id))
+                    .copied()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let turn = session.turn.as_mut().context("No current turn")?;
         let tid = turn.id.clone();
         let mut span = self.telemetry.span(Op::Turn, Some(sid), Some(&tid));
         span.turn(&tid);
+        if let Some(parent) = parent_span {
+            span.link(parent);
+        }
         if self.telemetry.enabled() {
             let old = turn.observation.as_ref();
             if let Some(old) = old {

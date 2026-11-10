@@ -27,6 +27,8 @@ mod live_team;
 #[cfg(feature = "trusted-git-test")]
 #[path = "support/service_parallel.rs"]
 mod parallel;
+#[path = "support/service_subagents.rs"]
+mod subagents;
 const BIN: &str = env!("CARGO_BIN_EXE_openworker-server-reference");
 async fn api(config: &Path, node: &str) -> (Child, String) {
     let mut child = Command::new(BIN)
@@ -104,11 +106,25 @@ async fn completed_member(team: &openworker_sdk::service::AgentTeam, agent: &str
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable OW_PG_TEST_URL and OW_PROBE_* local OpenShell"]
 async fn releases_profiles_provisioning_and_shared_verifier() {
-    tokio::time::timeout(Duration::from_secs(720), qualify())
+    tokio::time::timeout(Duration::from_secs(720), qualify(false, false))
         .await
         .unwrap();
 }
-async fn qualify() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires disposable OW_PG_TEST_URL and OW_PROBE_* local OpenShell"]
+async fn standalone_children_share_openshell_without_a_public_team() {
+    tokio::time::timeout(Duration::from_secs(720), qualify(true, false))
+        .await
+        .unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires authorized OW_STANDALONE_LIVE_MODEL, ANTHROPIC_API_KEY and local OpenShell"]
+async fn standalone_live_app_builder() {
+    tokio::time::timeout(Duration::from_secs(720), qualify(true, true))
+        .await
+        .unwrap();
+}
+async fn qualify(standalone: bool, live: bool) {
     let root = tempfile::tempdir().unwrap();
     let token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
     let token_file = root.path().join("token");
@@ -149,6 +165,13 @@ async fn qualify() {
     .unwrap();
 
     let mut value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    if live {
+        value["model"] = json!(
+            std::env::var("OW_STANDALONE_LIVE_MODEL").expect("Provide an authorized model ID")
+        );
+        value["model_provider"] = json!("anthropic");
+        value["scripted"] = json!(false);
+    }
     let git_config = git::configure(&mut value).await;
     assert!(
         !std::env::var("OW_GIT_ONLY").is_ok_and(|v| v == "true") || git_config.is_some(),
@@ -229,7 +252,14 @@ async fn qualify() {
             vec!["read_file", "run_shell", "git_status", "git_log"],
         ),
     ] {
-        let release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":if git_config.as_ref().is_some_and(|g|g.write_profile.is_some()){vec!["team@1","small@1","git@1","git-write@1"]}else if git_config.is_some(){vec!["team@1","small@1","git@1"]}else{vec!["team@1","small@1"]},"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
+        let mut release:openworker_sdk::service::AgentRelease=serde_json::from_value(json!({"id":id,"instructions":format!("You are {id}. Work in your shared project."),"tools":tools,"runtimeProfiles":if git_config.as_ref().is_some_and(|g|g.write_profile.is_some()){vec!["team@1","small@1","git@1","git-write@1"]}else if git_config.is_some(){vec!["team@1","small@1","git@1"]}else{vec!["team@1","small@1"]},"defaultRuntimeProfile":if id=="coder@1"{Some("team@1")}else{None},"allowedPrincipals":["alice"]})).unwrap();
+        if standalone {
+            let mut options = openworker_runtime::subagents::Config::enabled();
+            if live {
+                options.limits=Some(serde_json::from_value(json!({"maxModelCalls":30,"maxOutputTokens":64000,"maxOutputTokensPerCall":4096,"summaryTokens":512})).unwrap());
+            }
+            release.subagents = Some(options);
+        }
         admin
             .deploy_agent(&release, &format!("deploy-{id}"))
             .await
@@ -305,6 +335,11 @@ async fn qualify() {
             .arg("--config")
             .arg(&path)
             .arg(name)
+            .args(if name == "service-worker" && standalone {
+                vec!["--slots", "1"]
+            } else {
+                vec![]
+            })
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .kill_on_drop(true)
@@ -333,6 +368,11 @@ async fn qualify() {
         let reference: openworker_sdk::service::SessionRef =
             serde_json::from_value(operation.receipt.unwrap()).unwrap();
         let session = service.resume(reference.clone()).await.unwrap();
+        if standalone {
+            if live { subagents::live(&service,&session,&db).await; }
+            else { subagents::qualify(&service, &session, &store, &mut worker, &path, &db).await; }
+            return;
+        }
         let run = session
             .send(
                 &plan(

@@ -101,17 +101,22 @@ pub struct Release {
     pub model_overrides: Vec<openworker_runtime::connections::Choice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<openworker_runtime::budget::Limits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagents: Option<openworker_runtime::subagents::Config>,
 }
 impl Release {
     pub fn validate(&self) -> Result<()> {
         revision(&self.id)?;
+        if let Some(config) = &self.subagents {
+            config.validate()?;
+        }
         if let Some(l) = &self.limits {
             l.validate()?;
         }
         ensure!(
             !self.instructions.trim().is_empty()
                 && self.instructions.len() <= 32000
-                && !self.tools.is_empty()
+                && (!self.tools.is_empty() || self.subagents.as_ref().is_some_and(|c| c.enabled))
                 && self.tools.len() <= 64
                 && !self.runtime_profiles.is_empty()
                 && self.runtime_profiles.len() <= 16

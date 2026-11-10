@@ -509,3 +509,12 @@ The service controller and worker restore the same approved revision after resta
 This adapter currently shares the original team environment; nondefault remote
 workspace/new/member placement is still gated. See the
 [Sessions and teams](../../docs/harness/guides/sessions.md).
+
+### Standalone sub-agents (source preview)
+
+Set `subagents: { enabled: true }` on an ordinary agent to let its model create
+children, message them and wait for results. Each child starts fresh with an explicit
+tool subset. The legacy `subagents: Agent[]` form remains unchanged. This requires
+a matching feature runtime; it is not in published runtime 0.1.0-beta.2.
+See [standalone sub-agents](../../docs/harness/guides/sessions.md#standalone-sub-agents)
+for limits, approvals and shared-sandbox behavior.

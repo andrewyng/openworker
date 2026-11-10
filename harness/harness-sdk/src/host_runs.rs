@@ -867,6 +867,24 @@ impl Host {
                     let mut last = from;
                     let journal = self.store.lock().unwrap().events(s, from)?;
                     let membership = self.store.lock().unwrap().metadata(s)?.agent_team;
+                    let parent_session = if membership.is_some() {
+                        let doc = self.store.lock().unwrap().agent_team(
+                            s,
+                            "snapshot",
+                            &json!({}),
+                            None,
+                        )?;
+                        if !doc["standalone"].is_null() {
+                            doc["roster"]["instances"][doc["lead"].as_str().unwrap_or("")]
+                                ["session_id"]
+                                .as_str()
+                                .map(str::to_owned)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     for e in journal {
                         if e.event_id > until {
                             break;
@@ -878,8 +896,15 @@ impl Host {
                         last = e.event_id;
                         let mut item = stream_item(agent, e);
                         if let Some(member) = &membership {
-                            item["agent_id"] = json!(member.agent_id);
-                            item["team_id"] = json!(member.team_id);
+                            if let Some(parent) = &parent_session {
+                                if parent != s {
+                                    item["agent_id"] = json!(member.agent_id);
+                                    item["parent_session_id"] = json!(parent);
+                                }
+                            } else {
+                                item["agent_id"] = json!(member.agent_id);
+                                item["team_id"] = json!(member.team_id);
+                            }
                         }
                         events.push(item);
                     }
@@ -956,16 +981,24 @@ impl Host {
             } else {
                 false
             };
-            let all_idle = snaps
-                .iter()
-                .all(|s| s["turn"]["status"].as_str().is_none_or(terminal));
+            let standalone =
+                snaps[0]["session"]["package"]["standalone_subagents"]["enabled"] == true;
+            let all_idle = if standalone {
+                snaps[0]["turn"]["status"].as_str().is_none_or(terminal)
+            } else {
+                snaps
+                    .iter()
+                    .all(|s| s["turn"]["status"].as_str().is_none_or(terminal))
+            };
             let status = if let Some(result) = &cached {
                 result["status"]
                     .as_str()
                     .context("Invalid saved run status")?
+            } else if standalone && all_idle {
+                terminal_status(lead_turn)
             } else if !interruptions.is_empty() {
                 "interrupted"
-            } else if pending_instances
+            } else if (!standalone && pending_instances)
                 || !all_idle
                 || board.as_ref().is_some_and(|b| b["pending_work"] != false)
             {
