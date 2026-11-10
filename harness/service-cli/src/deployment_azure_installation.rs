@@ -259,9 +259,9 @@ pub(crate) fn database(binding: &Binding, url: &str) -> Result<()> {
             && u.path() == "/postgres"
             && u.query_pairs().count() == 1
             && u.query_pairs()
-                .all(|(k, v)| k == "sslmode" && v == "verify-full")
+                .all(|(k, v)| k == "sslmode" && v == "require")
             && u.fragment().is_none(),
-        "Database must use original PostgreSQL host/database and verify-full TLS"
+        "Database must use original PostgreSQL host/database and sslmode=require with the harness verified TLS connector"
     );
     Ok(())
 }
@@ -410,7 +410,9 @@ checks live ARM/control ownership and a recent external heartbeat before new
 mutations; retries retain existing Helm unknown-outcome safeguards.
 
 Use `secrets --input /private/secrets.json`: database URL must target the original
-private PostgreSQL host and postgres database, user owsadmin and verify-full TLS;
+private PostgreSQL host and postgres database, user owsadmin and sslmode=require.
+The Rust TLS connector verifies the certificate chain and hostname; it never disables
+verification. The postgres crate does not parse libpq’s verify-full value;
 include its trusted CA in pg-ca.crt. API TLS/private key and model keys also travel
 through private files/stdin to named Kubernetes Secrets. No secret belongs in
 values, process arguments, the immutable deployment bundle or control Blob.
@@ -502,10 +504,14 @@ mod tests {
             kubeconfig_hash: "".into(),
             context: "".into(),
         };
-        let url=format!("postgres://owsadmin:fixture-secret@{}-pg.postgres.database.azure.com/postgres?sslmode=verify-full",graph::names(&p).prefix);
+        let url=format!("postgres://owsadmin:fixture-secret@{}-pg.postgres.database.azure.com/postgres?sslmode=require",graph::names(&p).prefix);
         database(&binding, &url).unwrap();
+        // An installer-accepted URL must also parse in the runtime's actual driver.
+        let parsed = url.parse::<postgres::Config>().unwrap();
+        assert_eq!(parsed.get_ssl_mode(), postgres::config::SslMode::Require);
         for bad in [
-            url.replace("verify-full", "disable"),
+            url.replace("require", "disable"),
+            url.replace("require", "verify-full"),
             url.replace(".postgres.database.azure.com", ".attacker.invalid"),
             format!("{url}&sslmode=disable"),
             url.replace("owsadmin:", "other:"),
