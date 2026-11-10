@@ -120,7 +120,9 @@ struct GuardReceipt {
 impl GuardReceipt {
     fn validate(&self) -> Result<()> {
         ensure!(
-            chrono::DateTime::parse_from_rfc3339(&self.created_at).is_ok(),
+            chrono::DateTime::parse_from_rfc3339(&self.created_at).is_ok()
+                || chrono::NaiveDateTime::parse_from_str(&self.created_at, "%Y-%m-%dT%H:%M:%S%.f")
+                    .is_ok(),
             "Invalid controller creation receipt"
         );
         for value in [&self.principal_id, &self.client_id] {
@@ -1333,6 +1335,21 @@ mod tests {
         assert_eq!(s.operations[0].phase, Phase::Unknown);
         assert!(destroy_one(&mut c, &mut s, &mut e, 201).await.is_err());
         assert!(c.writes.is_empty());
+    }
+    #[test]
+    fn azure_creation_receipt_preserves_timezone_less_fractional_timestamp() {
+        let mut s = state();
+        s.guard = None;
+        let mut body = fixture_job(&s);
+        body["systemData"]["createdAt"] = json!("2026-11-10T18:49:20.2965605");
+        let receipt = guard_body(&s, &body).unwrap();
+        assert_eq!(receipt.created_at, "2026-11-10T18:49:20.2965605");
+        s.guard = Some(receipt);
+        body["systemData"]["createdAt"] = json!("2026-11-10T18:49:20.2965606");
+        assert!(guard_body(&s, &body).is_err());
+        s.guard = None;
+        body["systemData"]["createdAt"] = json!("not-a-timestamp");
+        assert!(guard_body(&s, &body).is_err());
     }
     #[test]
     fn private_registry_pulls_bind_cleanup_identity_and_reject_credential_drift() {

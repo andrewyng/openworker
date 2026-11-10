@@ -100,54 +100,7 @@ impl Azure {
                 .await?
                 .context("Missing identity response")?
         } else {
-            // Azure CLI only supplies a short-lived token in memory. Neither its
-            // stderr nor response body may be copied into diagnostics/journals.
-            let mut cmd = tokio::process::Command::new("az");
-            cmd.args([
-                "account",
-                "get-access-token",
-                "--subscription",
-                &self.subscription,
-                "--tenant",
-                &self.tenant,
-                "--resource",
-                resource,
-                "--only-show-errors",
-                "-o",
-                "json",
-            ])
-            .env("AZURE_EXTENSION_USE_DYNAMIC_INSTALL", "no")
-            .env("AZURE_CORE_COLLECT_TELEMETRY", "false")
-            .kill_on_drop(true);
-            use tokio::io::AsyncReadExt;
-            cmd.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .stdin(std::process::Stdio::null());
-            let mut child = cmd.spawn().context("Token command unavailable")?;
-            let stdout = child.stdout.take().unwrap();
-            let mut bytes = Zeroizing::new(Vec::new());
-            let mut bounded_stdout = stdout.take(65537);
-            let operation = async {
-                let (status, _) =
-                    tokio::try_join!(child.wait(), bounded_stdout.read_to_end(&mut bytes))?;
-                Ok::<_, std::io::Error>(status)
-            };
-            let status = tokio::time::timeout(Duration::from_secs(20), operation)
-                .await
-                .context("Token command timed out")?
-                .context("Token command failed")?;
-            ensure!(
-                status.success() && bytes.len() <= 65536,
-                "Token acquisition failed"
-            );
-            let v: Value = serde_json::from_slice(&bytes).context("Invalid credential response")?;
-            bytes.clear();
-            ensure!(
-                v["tenant"].as_str() == Some(&self.tenant)
-                    && v["subscription"].as_str() == Some(&self.subscription),
-                "Token target mismatch"
-            );
-            v
+            cli_token_response("az", &self.subscription, &self.tenant, resource).await?
         };
         let token = v
             .get("accessToken")
@@ -331,6 +284,58 @@ async fn bounded(mut r: reqwest::Response, limit: usize) -> Result<Option<Value>
         .context("Malformed provider response; outcome unknown")
 }
 
+async fn cli_token_response(
+    program: &str,
+    subscription: &str,
+    tenant: &str,
+    resource: &str,
+) -> Result<Value> {
+    // Azure CLI only supplies a short-lived token in memory. Neither its
+    // stderr nor response body may be copied into diagnostics/journals.
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args([
+        "account",
+        "get-access-token",
+        "--subscription",
+        subscription,
+        "--resource",
+        resource,
+        "--only-show-errors",
+        "-o",
+        "json",
+    ])
+    .env("AZURE_EXTENSION_USE_DYNAMIC_INSTALL", "no")
+    .env("AZURE_CORE_COLLECT_TELEMETRY", "false")
+    .kill_on_drop(true);
+    use tokio::io::AsyncReadExt;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    let mut child = cmd.spawn().context("Token command unavailable")?;
+    let stdout = child.stdout.take().unwrap();
+    let mut bytes = Zeroizing::new(Vec::new());
+    let mut bounded_stdout = stdout.take(65537);
+    let operation = async {
+        let (status, _) = tokio::try_join!(child.wait(), bounded_stdout.read_to_end(&mut bytes))?;
+        Ok::<_, std::io::Error>(status)
+    };
+    let status = tokio::time::timeout(Duration::from_secs(20), operation)
+        .await
+        .context("Token command timed out")?
+        .context("Token command failed")?;
+    ensure!(
+        status.success() && bytes.len() <= 65536,
+        "Token acquisition failed"
+    );
+    let v: Value = serde_json::from_slice(&bytes).context("Invalid credential response")?;
+    bytes.clear();
+    ensure!(
+        v["tenant"].as_str() == Some(tenant) && v["subscription"].as_str() == Some(subscription),
+        "Token target mismatch"
+    );
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +345,44 @@ mod tests {
         net::TcpListener,
         sync::{Arc, Mutex},
     };
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cli_token_uses_subscription_only_and_validates_returned_tenant() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("az");
+        let script = |tenant: &str| {
+            format!(
+                r#"#!/bin/sh
+case " $* " in *" --tenant "*) exit 2;; esac
+[ "$1 $2 $3 $4 $5 $6" = "account get-access-token --subscription expected-sub --resource expected-resource" ] || exit 3
+printf '%s' '{{"tenant":"{tenant}","subscription":"expected-sub","accessToken":"fixture-secret-canary"}}'
+"#
+            )
+        };
+        std::fs::write(&program, script("expected-tenant")).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(cli_token_response(
+            program.to_str().unwrap(),
+            "expected-sub",
+            "expected-tenant",
+            "expected-resource"
+        )
+        .await
+        .is_ok());
+        std::fs::write(&program, script("wrong-tenant")).unwrap();
+        let error = cli_token_response(
+            program.to_str().unwrap(),
+            "expected-sub",
+            "expected-tenant",
+            "expected-resource",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Token target mismatch"));
+        assert!(!error.contains("fixture-secret-canary"));
+    }
     fn fixture(
         responses: Vec<Option<String>>,
     ) -> (Azure, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {

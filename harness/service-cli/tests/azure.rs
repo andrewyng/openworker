@@ -733,6 +733,7 @@ fn selected_compute_restrictions_architecture_and_consumed_quota_block_preflight
     for (scenario, code) in [
         ("restricted-sku", "sku_location_restricted"),
         ("arm-sku", "sku_capability_mismatch"),
+        ("sku-pagination", "sku_catalog_truncated"),
         ("quota-zero", "insufficient_compute_quota"),
         ("quota-used", "insufficient_compute_quota"),
     ] {

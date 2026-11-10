@@ -91,20 +91,23 @@ if args[:3] == ["role", "assignment", "list"]:
 if args[:2] == ["provider", "show"]:
     provider = value("--namespace")
     emit({"namespace": provider, "registrationState": "NotRegistered" if scenario == "missing-provider" else "Registered"})
-if args[:2] == ["vm", "list-skus"]:
-    size = value("--size")
-    assert value("--location") == target["location"]
-    assert value("--resource-type") == "virtualMachines" and "--all" in args
-    assert value("--query") == "[?name=='" + size + "']"
+def sku(size):
     family = "StandardDasv7Family" if size in ["Standard_D4as_v7", "Standard_D2as_v7"] else "standardDSv5Family"
-    caps = {"CpuArchitectureType": "x64", "vCPUs": "8" if size == "Standard_D8s_v5" else "2" if size == "Standard_D2as_v7" else "4", "MemoryGB": "16", "PremiumIO": "True"}
+    caps = {"CpuArchitectureType":"x64", "vCPUs":"8" if size == "Standard_D8s_v5" else "2" if size == "Standard_D2as_v7" else "4", "MemoryGB":"16", "PremiumIO":"True"}
     if scenario == "arm-sku": caps["CpuArchitectureType"] = "Arm64"
-    emit([{"name":size,"family":family,"resourceType":"virtualMachines","locations":[target["location"]],"capabilities":[{"name":k,"value":v} for k,v in caps.items()],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription"}] if scenario == "restricted-sku" else []}])
+    return {"name":size,"family":family,"resourceType":"virtualMachines","locations":[target["location"]],"capabilities":[{"name":k,"value":v} for k,v in caps.items()],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription"}] if scenario == "restricted-sku" else []}
 if args[:2] == ["vm", "list-usage"]:
     assert value("--location") == target["location"]
     emit([{"name":{"value":name},"currentValue":"4" if scenario == "quota-used" else "0","limit":"0" if scenario == "quota-zero" else "12" if name == "cores" else "10"} for name in ["cores","StandardDasv7Family","standardDSv5Family"]])
 if args[0] == "rest":
     url = value("--url")
+    if "/Microsoft.Compute/skus?" in url:
+        from urllib.parse import urlparse, parse_qs
+        assert value("--method") == "get"
+        assert parse_qs(urlparse(url).query)["$filter"] == ["location eq '" + target["location"] + "'"]
+        query=value("--query")
+        names=[name for name in ["Standard_D4as_v7","Standard_D2as_v7","Standard_D4s_v5","Standard_D8s_v5"] if "name=='"+name+"'" in query]
+        emit({"skus":[sku(name) for name in names],"nextLink":"https://untrusted.invalid/page" if scenario == "sku-pagination" else None})
     assert url in [ident["roleUrl"], ident["assignmentUrl"]], "Unknown URL"
     is_role = url == ident["roleUrl"]
     payload = json.loads((bundle / ("azure-setup-role.json" if is_role else "azure-setup-assignment.json")).read_text())

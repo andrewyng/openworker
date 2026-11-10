@@ -40,7 +40,7 @@ impl Az {
             return Err("operation_not_allowed");
         }
         if command == ["rest"]
-            && !(args.len() == 4
+            && !((args.len() == 4 || (args.len() == 6 && args[4] == "--query"))
                 && args[0] == "--method"
                 && args[1] == "get"
                 && args[2] == "--url"
@@ -417,47 +417,55 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
     if scope_ok {
         if let Some(config) = &p.azure_infrastructure {
             let size = &config.node_vm_size;
+            // Use the documented server-side location filter. `az vm list-skus`
+            // can enumerate the entire subscription before filtering locally.
+            let mut url = reqwest::Url::parse(&format!("https://management.azure.com/subscriptions/{subscription}/providers/Microsoft.Compute/skus"))?;
+            url.query_pairs_mut()
+                .append_pair("api-version", "2021-07-01")
+                .append_pair("$filter", &format!("location eq '{location}'"));
+            let selection = if config.management_access.is_some() {
+                format!("(name=='{size}' || name=='Standard_D2as_v7')")
+            } else {
+                format!("name=='{size}'")
+            };
+            let query = format!(
+                "{{skus:value[?resourceType=='virtualMachines' && {selection}],nextLink:nextLink}}"
+            );
+            let catalog = api
+                .read(
+                    &["rest"],
+                    &[
+                        "--method".into(),
+                        "get".into(),
+                        "--url".into(),
+                        url.to_string(),
+                        "--query".into(),
+                        query,
+                    ],
+                )
+                .await;
+            let select = |value: Value, name: &str| -> Observed {
+                if !value["nextLink"].is_null() {
+                    return Err("sku_catalog_truncated");
+                }
+                let rows = value["skus"].as_array().ok_or("sku_invalid_response")?;
+                selected_sku(
+                    Value::Array(rows.iter().filter(|r| r["name"] == name).cloned().collect()),
+                    name,
+                    location,
+                )
+            };
             sku_verified = check(
                 &mut checks,
                 "selected_node_sku",
-                api.read(
-                    &["vm", "list-skus"],
-                    &[
-                        "--location".into(),
-                        location.clone(),
-                        "--resource-type".into(),
-                        "virtualMachines".into(),
-                        "--size".into(),
-                        size.clone(),
-                        "--all".into(),
-                        "--query".into(),
-                        format!("[?name=='{size}']"),
-                    ],
-                )
-                .await
-                .and_then(|v| selected_sku(v, size, location)),
+                catalog.clone().and_then(|v| select(v, size)),
                 true,
             );
             if config.management_access.is_some() {
                 check(
                     &mut checks,
                     "management_sku",
-                    api.read(
-                        &["vm", "list-skus"],
-                        &[
-                            "--location".into(),
-                            location.clone(),
-                            "--resource-type".into(),
-                            "virtualMachines".into(),
-                            "--size".into(),
-                            "Standard_D2as_v7".into(),
-                            "--all".into(),
-                            "--query".into(),
-                            "[?name=='Standard_D2as_v7']".into(),
-                        ],
-                    )
-                    .await
-                    .and_then(|v| selected_sku(v, "Standard_D2as_v7", location)),
+                    catalog.and_then(|v| select(v, "Standard_D2as_v7")),
                     true,
                 );
             }
