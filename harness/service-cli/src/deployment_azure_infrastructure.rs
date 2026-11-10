@@ -24,6 +24,10 @@ pub(crate) struct Inputs {
     /// cleanup identity, never a registry password or workload-owned registry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) guard_registry_resource_id: Option<String>,
+    /// Reuse a reviewed environment in the independent control group. It stays
+    /// customer-owned and is never provisioned or deleted by this trial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) guard_environment_resource_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) management_access: Option<ManagementAccess>,
     pub(crate) postgres_password: SecretReference,
@@ -172,6 +176,13 @@ impl Inputs {
                         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
                     && self.guard_image.starts_with(&format!("{name}.azurecr.io/")),
                 "Cleanup image and registry identity must match"
+            );
+        }
+        if let Some(environment) = &self.guard_environment_resource_id {
+            let prefix = format!("/subscriptions/{subscription}/resourceGroups/{}/providers/Microsoft.App/managedEnvironments/", self.control_resource_group);
+            ensure!(
+                environment.strip_prefix(&prefix).is_some_and(identifier),
+                "Cleanup environment must be in the exact independent control group"
             );
         }
         if let Some(access) = &self.management_access {
