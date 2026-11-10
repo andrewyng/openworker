@@ -331,8 +331,11 @@ def _label(item: dict[str, Any], model_id: str, *keys: str) -> str:
 _FIREWORKS_NAMESPACE = re.compile(r"^accounts/[^/]+/(?:models|routers)/")
 _FIREWORKS_DOT = re.compile(r"(?<=\d)p(?=\d)")  # Fireworks writes 5.3 as 5p3
 _ACRONYMS = {"glm", "gpt", "oss", "vl", "ai", "it"}
-_BRANDS = {"deepseek": "DeepSeek", "minimax": "MiniMax", "kimi": "Kimi", "qwen": "Qwen", "llama": "Llama"}
-_SIZE = re.compile(r"^[a-z]?\d+(?:\.\d+)?b$", re.I)  # 120b, 8B, a12b
+_BRANDS = {"deepseek": "DeepSeek", "minimax": "MiniMax", "kimi": "Kimi", "qwen": "Qwen", "llama": "Llama", "firerouter": "FireRouter"}
+_SIZE = re.compile(r"^[a-z]?\d+(?:\.\d+)?[bt]$", re.I)  # 120b, 8B, a12b, 2.4t
+# Bump when display_label() names rows differently: a cached listing keeps the labels it was
+# read with, so the manager asks the provider again rather than show the old names.
+LABELS_VERSION = 2
 _O_SERIES = re.compile(r"^o\d$")  # OpenAI's o3, o4 stay lower case
 
 
@@ -993,6 +996,16 @@ def parse_listing(name: str, payload: Any, extra: Any = None) -> list[LiveModel]
     for row in reader(_items(payload), _items(extra)):
         if row.id not in rows:
             rows[row.id] = row
+    # Two ids that read the same once their namespace is dropped (`auto`, `firerouter/auto`)
+    # keep the namespace in the name, so the list never shows two identical names.
+    counts: dict[str, int] = {}
+    for row in rows.values():
+        counts[row.label] = counts.get(row.label, 0) + 1
+    for mid, row in list(rows.items()):
+        if counts[row.label] > 1 and row.label == display_label(mid):
+            fuller = display_label(_FIREWORKS_NAMESPACE.sub("", mid).replace("/", "-"))
+            if fuller != row.label:
+                rows[mid] = LiveModel(**{**asdict(row), "label": fuller})
     return sorted(rows.values(), key=lambda r: (r.created or "", r.id), reverse=True)
 
 

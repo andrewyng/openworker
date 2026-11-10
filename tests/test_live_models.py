@@ -195,7 +195,7 @@ def test_a_row_without_a_display_name_gets_a_readable_one():
         "accounts/fireworks/models/deepseek-v4p1-flash-1017": "DeepSeek V4.1 Flash 1017",
         "accounts/fireworks/routers/deepseek-v4p1-flash-1017-spot": "DeepSeek V4.1 Flash 1017 Spot",
         "accounts/fireworks/models/minimax-m3p1-flash": "MiniMax M3.1 Flash",
-        "accounts/fireworks/models/qwen3p8-2p4t-a95b": "Qwen3.8 2.4t A95B",
+        "accounts/fireworks/models/qwen3p8-2p4t-a95b": "Qwen3.8 2.4T A95B",
         "gpt-5.4-nano": "GPT-5.4 Nano",
         "gpt-oss-120b": "GPT-OSS 120B",
         "chat-latest": "Chat Latest",
@@ -209,6 +209,16 @@ def test_a_row_without_a_display_name_gets_a_readable_one():
         "grok-4.3": "Grok 4.3",
     }
     assert {i: live_models.display_label(i) for i in cases} == cases
+
+
+def test_two_ids_that_read_the_same_keep_their_namespace_apart():
+    rows = {r.id: r for r in live_models.parse_listing("fireworks", {"data": [
+        {"id": "auto", "kind": "ROUTER", "supports_image_input": True, "supports_tools": True},
+        {"id": "firerouter/auto", "kind": "ROUTER", "supports_image_input": True, "supports_tools": True},
+        {"id": "accounts/fireworks/models/glm-5p3", "kind": "HF_BASE_MODEL", "supports_chat": True},
+    ]})}
+    assert rows["auto"].label == "Auto" and rows["firerouter/auto"].label == "FireRouter Auto"
+    assert rows["accounts/fireworks/models/glm-5p3"].label == "GLM-5.3"
 
 
 def test_fireworks_kind_field():
@@ -578,6 +588,18 @@ def test_a_cached_listing_written_by_an_older_build_is_asked_again(manager, fake
     manager._save_catalogs()
     out = manager.provider_catalog("openrouter")
     assert len(fake_provider["asked"]) == 1 and "old" not in {r["id"] for r in out["rows"]}
+
+
+def test_a_cached_listing_named_by_older_label_rules_is_asked_again(manager, fake_provider):
+    """Labels are worked out when the list is read; a list cached before the naming rules
+    changed would keep showing the old names for a day."""
+    _key(manager)
+    manager.provider_catalog("openrouter")
+    entry = manager._load_catalogs()["openrouter"]
+    assert entry["labels"] == live_models.LABELS_VERSION
+    entry["labels"] = live_models.LABELS_VERSION - 1
+    manager.provider_catalog("openrouter")
+    assert len(fake_provider["asked"]) == 2
 
 
 def test_new_models_are_those_the_listing_gained_since_the_check_before(manager, fake_provider):
