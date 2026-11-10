@@ -5686,6 +5686,7 @@ class SessionManager:
         kinds, unless the reviewed catalog vouches for the model or the user picked it
         anyway. Picker models of this provider the key does not list come last, `on_key`
         false."""
+        from ..providers import live_models
         from ..providers.matrix import MATRIX, full_id, models_for_provider, split_id
 
         d = get_descriptor(name, self.secrets)
@@ -5751,7 +5752,7 @@ class SessionManager:
             offered.append({
                 "id": bare,
                 "model": full,
-                "label": cat.label if cat else f"{bare} · {suffix}",
+                "label": cat.label if cat else f"{live_models.display_label(bare)} · {suffix}",
                 "kind": "chat",
                 "kind_source": "catalog" if cat else "none",
                 "detail": None,

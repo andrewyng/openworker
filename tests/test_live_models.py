@@ -178,6 +178,39 @@ def test_groq_modalities_and_the_prompt_guard_word():
     assert (guard.kind, guard.kind_source, guard.reason_phrase) == ("moderation", "name", "Likely built for content moderation")
 
 
+def test_a_row_without_a_display_name_gets_a_readable_one():
+    """Owner's test 2026-11-10: names must read as names. The list's own name wins; without
+    one the id loses its namespace and becomes words. The full id still shows beside it."""
+    fw = _parsed("fireworks")
+    glm = fw["accounts/fireworks/models/glm-5p3"]
+    assert (glm.id, glm.label) == ("accounts/fireworks/models/glm-5p3", "GLM-5.3")
+    assert fw["accounts/fireworks/routers/glm-5p3-fast"].label == "GLM-5.3 Fast"  # the tier stays in the name
+    assert fw["accounts/fireworks/models/kimi-k3"].label == "Kimi K3"
+    assert fw["auto"].label == "Auto"
+    assert _parsed("huggingface")["Qwen/Qwen3.8-27B"].label == "Qwen3.8 27B"
+    assert _parsed("kimi")["kimi-k2.6"].label == "Kimi K2.6"
+    assert _parsed("openrouter")["openai/gpt-6-astra"].label == "OpenAI: GPT-6 Astra"  # a list's own name wins
+    assert _parsed("openai-codex")["gpt-5.6-terra"].label == "GPT-5.6-Terra"
+    cases = {
+        "accounts/fireworks/models/deepseek-v4p1-flash-1017": "DeepSeek V4.1 Flash 1017",
+        "accounts/fireworks/routers/deepseek-v4p1-flash-1017-spot": "DeepSeek V4.1 Flash 1017 Spot",
+        "accounts/fireworks/models/minimax-m3p1-flash": "MiniMax M3.1 Flash",
+        "accounts/fireworks/models/qwen3p8-2p4t-a95b": "Qwen3.8 2.4t A95B",
+        "gpt-5.4-nano": "GPT-5.4 Nano",
+        "gpt-oss-120b": "GPT-OSS 120B",
+        "chat-latest": "Chat Latest",
+        "o4-mini": "o4 Mini",
+        "glm-4.5-air": "GLM-4.5 Air",
+        "Meta-Llama-3.3-70B-Instruct": "Meta Llama 3.3 70B Instruct",
+        "gemma-4-31B-it": "Gemma 4 31B IT",
+        "nvidia/nemotron-3-super-120b-a12b": "Nemotron 3 Super 120B A12B",
+        "MiniMax-M3.1-Flash": "MiniMax M3.1 Flash",
+        "muse-spark-1.3": "Muse Spark 1.3",
+        "grok-4.3": "Grok 4.3",
+    }
+    assert {i: live_models.display_label(i) for i in cases} == cases
+
+
 def test_fireworks_kind_field():
     rows = _parsed("fireworks")
     glm = rows["accounts/fireworks/models/glm-5p3"]
