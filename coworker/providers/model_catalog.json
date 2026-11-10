@@ -1,11 +1,20 @@
 {
   "schema": 1,
-  "serial": "2026.11.07.1",
-  "generated": "2026-11-07",
+  "serial": "2026.11.10.1",
+  "generated": "2026-11-10",
   "providers": {
     "openai": {
-      "note": "GPT-5.6 (2026-07-09): the number is the generation, Sol/Terra/Luna are capability tiers; bare gpt-5.6 aliases to Sol server-side, so only the explicit tier ids are listed. Rolling out: accounts without access get a friendly error (providers/errors.py).",
+      "note": "GPT-5.6 (2026-07-09): the number is the generation, Sol/Terra/Luna are capability tiers; bare gpt-5.6 aliases to Sol server-side, so only the explicit tier ids are listed. Rolling out: accounts without access get a friendly error (providers/errors.py). GPT-6 Astra: developers.openai.com/api/docs/models/gpt-6-astra, read 2026-11-10: 1,050,000 context window, 128,000 max output, text + image input, function calling.",
       "models": {
+        "gpt-6-astra": {
+          "label": "GPT-6 Astra · OpenAI",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1050000,
+          "output": 128000
+        },
         "gpt-5.6-sol": {
           "label": "GPT-5.6 Sol · OpenAI",
           "tools": true,
@@ -41,15 +50,15 @@
       }
     },
     "openai-codex": {
-      "note": "ChatGPT-subscription catalog (the openai-codex OAuth provider), curated to the ids the subscription backend serves. Vision per the vendor's model docs; PDF unverified over this backend, so it falls back locally via pdf_support.py. Sol is rate-limited on Plus, full on Pro.",
+      "note": "ChatGPT-subscription catalog (the openai-codex OAuth provider). Rows are exactly the models the subscription backend lists (chatgpt.com/backend-api/codex/models, read 2026-11-09): gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, context_window 272,000 each, text + image input. Ids the backend does not list (gpt-5.6-sol, gpt-5.2-codex, gpt-5.2, gpt-5.1-codex, gpt-5.1-codex-mini) left the catalog untested on 2026-11-10 (owner call). PDF unverified over this backend, so it falls back locally via pdf_support.py.",
       "models": {
-        "gpt-5.6-sol": {
-          "label": "GPT-5.6 Sol · ChatGPT plan",
+        "gpt-6-luna": {
+          "label": "GPT-6 Luna · ChatGPT plan",
           "tools": true,
           "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 400000,
+          "context": 272000,
           "pinned": [
             "pdf"
           ],
@@ -61,7 +70,7 @@
           "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 400000,
+          "context": 272000,
           "pinned": [
             "pdf"
           ],
@@ -73,55 +82,7 @@
           "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 400000,
-          "pinned": [
-            "pdf"
-          ],
-          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
-        },
-        "gpt-5.2-codex": {
-          "label": "GPT-5.2 Codex · ChatGPT plan",
-          "tools": true,
-          "vision": true,
-          "pdf": false,
-          "parallel_tool_calls": true,
-          "context": 400000,
-          "pinned": [
-            "pdf"
-          ],
-          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
-        },
-        "gpt-5.2": {
-          "label": "GPT-5.2 · ChatGPT plan",
-          "tools": true,
-          "vision": true,
-          "pdf": false,
-          "parallel_tool_calls": true,
-          "context": 400000,
-          "pinned": [
-            "pdf"
-          ],
-          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
-        },
-        "gpt-5.1-codex": {
-          "label": "GPT-5.1 Codex · ChatGPT plan",
-          "tools": true,
-          "vision": true,
-          "pdf": false,
-          "parallel_tool_calls": true,
-          "context": 400000,
-          "pinned": [
-            "pdf"
-          ],
-          "note": "PDF unverified over the subscription backend (local fallback via pdf_support.py); the OpenAI model's own PDF support does not say what this backend accepts."
-        },
-        "gpt-5.1-codex-mini": {
-          "label": "GPT-5.1 Codex Mini · ChatGPT plan",
-          "tools": true,
-          "vision": false,
-          "pdf": false,
-          "parallel_tool_calls": true,
-          "context": 400000,
+          "context": 272000,
           "pinned": [
             "pdf"
           ],
@@ -130,8 +91,32 @@
       }
     },
     "anthropic": {
-      "note": "platform.claude.com/docs/en/models/overview, read 2026-09-08: 1M context is the default and only size on the Claude 5 generation, 128K max output. Mythos 5.1 is approved-orgs-only and stays out of a public picker. Claude 4.5/4.6 rows are kept for comparability with published evaluations (OPE-170).",
+      "note": "platform.claude.com/docs/en/models/overview, read 2026-09-08: 1M context is the default and only size on the Claude 5 generation, 128K max output. Mythos 5.1 is approved-orgs-only and stays out of a public picker. Claude 4.5/4.6 rows are kept for comparability with published evaluations (OPE-170). api.anthropic.com/v1/models, read 2026-11-09: the Claude 5.5 family (Opus, Sonnet, Haiku) at max_input_tokens 1,000,000 with image and PDF input; the same list puts Opus 4.6, Opus 4.8 and Sonnet 4.6 at 1,000,000 (Haiku 4.5, Opus 4.5 and Sonnet 4.5 stay at 200,000).",
       "models": {
+        "claude-opus-5-5": {
+          "label": "Claude Opus 5.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-sonnet-5-5": {
+          "label": "Claude Sonnet 5.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
+        "claude-haiku-5-5": {
+          "label": "Claude Haiku 5.5 · Anthropic",
+          "tools": true,
+          "vision": true,
+          "pdf": true,
+          "parallel_tool_calls": true,
+          "context": 1000000
+        },
         "claude-fable-5-1": {
           "label": "Claude Fable 5.1 · Anthropic",
           "tools": true,
@@ -170,7 +155,7 @@
           "vision": true,
           "pdf": true,
           "parallel_tool_calls": true,
-          "context": 200000
+          "context": 1000000
         },
         "claude-sonnet-4-6": {
           "label": "Claude Sonnet 4.6 · Anthropic",
@@ -178,7 +163,7 @@
           "vision": true,
           "pdf": true,
           "parallel_tool_calls": true,
-          "context": 200000
+          "context": 1000000
         },
         "claude-haiku-4-5": {
           "label": "Claude Haiku 4.5 · Anthropic",
@@ -194,7 +179,7 @@
           "vision": true,
           "pdf": true,
           "parallel_tool_calls": true,
-          "context": 200000
+          "context": 1000000
         },
         "claude-opus-4-5": {
           "label": "Claude Opus 4.5 · Anthropic",
@@ -322,15 +307,16 @@
       }
     },
     "deepseek": {
-      "note": "DeepSeek's native API exposes the full 1M context for both V4 variants (official model table, 2026-08-10).",
+      "note": "api.deepseek.com/models, read 2026-11-09: two rows, deepseek-flash (the V4 Flash model; `deepseek-v4-flash` is not an id the API serves) and deepseek-v4-pro, context_window 1,048,576 and max_output_tokens 393,216 each; Flash takes image input, Pro text only.",
       "models": {
-        "deepseek-v4-flash": {
-          "label": "DeepSeek V4 Flash · DeepSeek",
+        "deepseek-flash": {
+          "label": "DeepSeek Flash · DeepSeek",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 1000000
+          "context": 1048576,
+          "output": 393216
         },
         "deepseek-v4-pro": {
           "label": "DeepSeek V4 Pro · DeepSeek",
@@ -338,34 +324,42 @@
           "vision": false,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 1000000
+          "context": 1048576,
+          "output": 393216
         }
       }
     },
     "kimi": {
-      "note": "Moonshot's native API.",
+      "note": "api.moonshot.ai/v1/models, read 2026-11-09: kimi-k2.6 context_length 262,144, supports_image_in true, tools.",
       "models": {
         "kimi-k2.6": {
           "label": "Kimi K2.6 · Moonshot",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 256000
+          "context": 262144
         }
       }
     },
     "minimax": {
-      "note": "Window not re-checked against the vendor spec: the meter hides and compaction uses the 128k guess.",
+      "note": "platform.minimax.io/docs (llms-full.txt, read 2026-11-10): the supported models are MiniMax-M3.1-Flash and MiniMax-M3, 1,000,000 total tokens (input + output) each, multimodal, tool calls. M2.5 and M2.7 (and their -highspeed tiers) are closed to new users since 2026-10-19 and retire on 2026-11-18, so the M2.5 row left on 2026-11-10.",
       "models": {
-        "MiniMax-M2.5": {
-          "label": "MiniMax M2.5 · MiniMax",
+        "MiniMax-M3.1-Flash": {
+          "label": "MiniMax M3.1 Flash · MiniMax",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": null,
-          "note": "Window not verified against a vendor spec (OPE-170 known-unverified recommendation)."
+          "context": 1000000
+        },
+        "MiniMax-M3": {
+          "label": "MiniMax M3 · MiniMax",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1000000
         }
       }
     },
@@ -391,28 +385,36 @@
       }
     },
     "xai": {
-      "note": "xAI's native API.",
+      "note": "api.x.ai/v1/models, read 2026-11-09: grok-4.3 context_length 1,000,000, input_modalities text + image (every xAI language model takes images).",
       "models": {
         "grok-4.3": {
           "label": "Grok 4.3 · xAI",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 256000
+          "context": 1000000
         }
       }
     },
     "mistral": {
-      "note": "Mistral's native API.",
+      "note": "api.mistral.ai/v1/models, read 2026-11-09: mistral-large-latest is an alias of mistral-large-2512, max_context_length 262,144, vision and function calling; mistral-large-4 at 1,048,576 with vision, function calling and reasoning.",
       "models": {
         "mistral-large-latest": {
           "label": "Mistral Large · Mistral",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 128000
+          "context": 262144
+        },
+        "mistral-large-4": {
+          "label": "Mistral Large 4 · Mistral",
+          "tools": true,
+          "vision": true,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 1048576
         }
       }
     },
@@ -468,15 +470,15 @@
       }
     },
     "cohere": {
-      "note": "docs.cohere.com/docs/models lists command-a-plus-05-2026 at 128k; the tool-use guide and the Compatibility API docs use this id.",
+      "note": "api.cohere.com/v1/models?endpoint=chat, read 2026-11-10: command-a-plus-05-2026 context_length 436,000; features include tools, strict_tools, reasoning and vision. The tool-use guide and the Compatibility API docs use this id.",
       "models": {
         "command-a-plus-05-2026": {
           "label": "Command A+ · Cohere",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 128000
+          "context": 436000
         }
       }
     },
@@ -617,47 +619,31 @@
       }
     },
     "fireworks": {
-      "note": "fireworks.ai model pages: glm-5p2 (read 2026-09-08) and deepseek-v4-pro (read 2026-10-17) list 1040k tokens, a little under the model-level 1M.",
+      "note": "api.fireworks.ai/inference/v1/models, read 2026-11-09: the earlier rows (glm-5p2, kimi-k2p6, deepseek-v4-pro, llama4-maverick-instruct-basic) are no longer served; these are the current serverless ids with their context_length and supports_image_input (1,048,576 each; Kimi K3 and DeepSeek V4.1 Flash take images).",
       "models": {
-        "accounts/fireworks/models/glm-5p2": {
-          "label": "GLM-5.2 · via Fireworks",
+        "accounts/fireworks/models/glm-5p3": {
+          "label": "GLM-5.3 · via Fireworks",
           "tools": true,
           "vision": false,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 1040000,
-          "pinned": [
-            "context"
-          ],
-          "note": "fireworks.ai/models/fireworks/glm-5p2 lists 1040k tokens (read 2026-09-08)."
+          "context": 1048576
         },
-        "accounts/fireworks/models/kimi-k2p6": {
-          "label": "Kimi K2.6 · via Fireworks",
+        "accounts/fireworks/models/kimi-k3": {
+          "label": "Kimi K3 · via Fireworks",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 256000
+          "context": 1048576
         },
-        "accounts/fireworks/models/deepseek-v4-pro": {
-          "label": "DeepSeek V4 Pro · via Fireworks",
+        "accounts/fireworks/models/deepseek-v4p1-flash": {
+          "label": "DeepSeek V4.1 Flash · via Fireworks",
           "tools": true,
-          "vision": false,
+          "vision": true,
           "pdf": false,
           "parallel_tool_calls": true,
-          "context": 1040000,
-          "pinned": [
-            "context"
-          ],
-          "note": "fireworks.ai/models/fireworks/deepseek-v4-pro lists 1040k tokens (read 2026-10-17)."
-        },
-        "accounts/fireworks/models/llama4-maverick-instruct-basic": {
-          "label": "Llama 4 Maverick · via Fireworks",
-          "tools": true,
-          "vision": false,
-          "pdf": false,
-          "parallel_tool_calls": true,
-          "context": 1000000
+          "context": 1048576
         }
       }
     },

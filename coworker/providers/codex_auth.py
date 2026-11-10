@@ -60,8 +60,9 @@ FLOW_TIMEOUT_SECONDS = 300
 # Refresh this close to the JWT `exp` instead of sending an about-to-die bearer.
 REFRESH_MARGIN_SECONDS = 300
 _ACCOUNT_CLAIM = "https://api.openai.com/auth"
-# Smallest curated model — the verify probe should cost as close to nothing as possible.
-_VERIFY_MODEL = "gpt-5.1-codex-mini"
+# The cheapest model the subscription backend lists ("older fast and efficient", read
+# 2026-11-09) — the verify probe should cost as close to nothing as possible.
+_VERIFY_MODEL = "gpt-5.6-luna"
 
 SIGNED_OUT_ERROR = (
     "Not signed in to ChatGPT — connect your account in Settings ▸ Models to use "

@@ -354,7 +354,7 @@ def test_dated_ids_fold_into_their_catalog_row_and_count_as_on_the_key(manager, 
     catalog twin stays its own row."""
     fake_provider["answers"]["api.anthropic.com"] = {"data": [
         {"id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5", "created_at": "2025-10-15T00:00:00Z", "max_input_tokens": 200_000},
-        {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5", "created_at": "2026-09-22T00:00:00Z"},
+        {"id": "claude-fable-6", "display_name": "Claude Fable 6", "created_at": "2026-09-22T00:00:00Z"},
         {"id": "claude-ghost-20240101", "display_name": "Ghost", "created_at": "2024-01-01T00:00:00Z"},
     ]}
     _key(manager, "anthropic")
@@ -362,7 +362,7 @@ def test_dated_ids_fold_into_their_catalog_row_and_count_as_on_the_key(manager, 
     rows = {r["id"]: r for r in out["rows"]}
     assert "claude-haiku-4-5-20251001" not in rows and rows["claude-haiku-4-5"]["on_key"] is True
     assert rows["claude-haiku-4-5"]["verified"] == "catalog" and rows["claude-haiku-4-5"]["released"] == "2025-10-15"
-    assert rows["claude-opus-5-5"]["verified"] == "unverified" and rows["claude-opus-5-5"]["on_key"] is True
+    assert rows["claude-fable-6"]["verified"] == "unverified" and rows["claude-fable-6"]["on_key"] is True
     assert rows["claude-ghost-20240101"]["on_key"] is True  # no twin: its own row
     assert "anthropic:claude-haiku-4-5" not in out["not_on_key"]
     assert manager.add_model("anthropic:claude-haiku-4-5")["ok"] is True
