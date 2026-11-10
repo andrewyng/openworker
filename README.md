@@ -22,7 +22,7 @@ server deployment references. It is separate from the Desktop app's Python engin
 <sub>macOS 12+ · signed & notarized · auto-updates</sub>
 
 [**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
-<sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
+<sub>builds are not yet code-signed, so SmartScreen will warn — the signing pipeline is in place pending a certificate ([docs/windows-signing.md](docs/windows-signing.md))</sub>
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
