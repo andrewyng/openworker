@@ -27,6 +27,7 @@ class AgentContext:
     # None, the workspace tools run in this process as they always have; with a tool runner
     # behind it, their execution goes there.
     sandbox: Optional[Any] = None
+    session_id: Optional[str] = None
 
 
 @dataclass
