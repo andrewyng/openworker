@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+  <defs>
+    <radialGradient id="bg" cx="65%" cy="50%" r="70%"><stop stop-color="#12343d"/><stop offset="1" stop-color="#080c19"/></radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#699cab" stroke-opacity=".1"/></pattern>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="6"/></filter>
+    <linearGradient id="trail" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#46f8d0" stop-opacity="0"/><stop offset="1" stop-color="#46f8d0"/></linearGradient>
+  </defs>
+  <path fill="url(#bg)" d="M0 0h960v600H0z"/><path fill="url(#grid)" d="M0 0h960v600H0z"/>
+  <g fill="none" stroke="#46f8d0" stroke-opacity=".1"><ellipse cx="640" cy="320" rx="240" ry="155" transform="rotate(-20 640 320)"/><ellipse cx="640" cy="320" rx="330" ry="230" transform="rotate(-20 640 320)"/><ellipse cx="640" cy="320" rx="400" ry="290" transform="rotate(-20 640 320)"/></g>
+  <path d="M30 80V30h60M870 30h60v50M30 520v50h60M870 570h60v-50" fill="none" stroke="#46f8d0" stroke-opacity=".55" stroke-width="2"/>
+  <text x="65" y="91" font-family="sans-serif" font-size="12" fill="#8caeaf" letter-spacing="4">AFTER HOURS CIRCUIT</text>
+  <g font-family="Arial,Helvetica,sans-serif" font-weight="900" font-style="italic" font-size="116" letter-spacing="-8"><text x="57" y="231" fill="#f2fbff">NEON</text><text x="57" y="333" fill="#46f8d0">DRIFT</text></g>
+  <text x="67" y="383" fill="#8a9eb1" font-size="18" font-family="sans-serif" letter-spacing="1">Catch the light. Lose the heat.</text>
+  <path d="M330 538C410 550 475 488 465 436S480 354 554 386 677 392 719 289" stroke="url(#trail)" stroke-width="16" opacity=".4" fill="none" filter="url(#glow)"/>
+  <path d="M330 538C410 550 475 488 465 436S480 354 554 386 677 392 719 289" stroke="url(#trail)" stroke-width="5" fill="none"/>
+  <path d="m733 254-1 49-13-13-20 1z" fill="#46f8d0" filter="url(#glow)"/><path d="m733 254-1 49-13-13-20 1z" fill="#46f8d0"/><path d="m729 268-4 23-7-7z" fill="#edfff9"/>
+  <g fill="#eaff9d"><path d="m795 155 9 16-9 16-9-16z"/><path d="m600 245 9 16-9 16-9-16z"/><path d="m818 393 9 16-9 16-9-16z"/><path d="m612 496 9 16-9 16-9-16z"/></g>
+  <g fill="none" stroke="#eaff9d" stroke-opacity=".25"><circle cx="795" cy="171" r="27"/><circle cx="600" cy="261" r="27"/><circle cx="818" cy="409" r="27"/><circle cx="612" cy="512" r="27"/></g>
+  <g fill="#ff569a"><path d="m598 431 35-15-14 23-5-13z"/><path d="m831 255-26-22 8 30 7-16z"/><path d="m521 162 31 21-25 1 14-10z"/></g>
+  <g stroke="#ff569a" opacity=".3" stroke-width="2"><path d="m586 442-24 16m31-10-24 16m276-223 19-16m-12 22 19-16m-371-77-23-13m27 8-23-13"/></g>
+  <g fill="#46f8d0" font-family="sans-serif" font-size="10" letter-spacing="2"><text x="67" y="504">18 SHARDS</text><text x="67" y="526" fill="#778a9f">ONE MIDNIGHT RUN</text></g>
+</svg>

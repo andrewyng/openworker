@@ -1,0 +1,24 @@
+{
+ "runs": [
+  {
+   "run_id": "run-1",
+   "status": "error",
+   "error": "e0"
+  },
+  {
+   "run_id": "run-2",
+   "status": "error",
+   "error": "e1"
+  },
+  {
+   "run_id": "run-3",
+   "status": "skipped",
+   "error": null
+  },
+  {
+   "run_id": "run-4",
+   "status": "error",
+   "error": "e3"
+  }
+ ]
+}

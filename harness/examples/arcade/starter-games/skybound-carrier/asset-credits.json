@@ -1,0 +1,19 @@
+{
+  "license": "MIT",
+  "copyright": "2026 OpenWorker contributors",
+  "assets": {
+    "sky.png": {
+      "source": "Original AI-generated background, built-in image_gen",
+      "prompt": "Use case: stylized-concept. Original wide raster sky background for Skybound Carrier: luminous ivory clouds, turquoise sky, distant moss-green floating islands and pale sandstone towers, hazy apricot horizon. No foreground, characters, roads, bridges, text, UI, logos or watermark. Calm adventurous painterly 3D game-art; open upper sky. Background artwork, not a gameplay screenshot."
+    },
+    "courier.glb": {
+      "source": "Original procedural geometry and Run animation",
+      "generator": "build-assets.mjs"
+    },
+    "audio": {
+      "source": "Original synthesized PCM tones",
+      "generator": "build-assets.mjs"
+    }
+  },
+  "dependencies": "Three.js and its addons: upstream MIT license in vendor/three-LICENSE.txt. No third-party art or audio downloads."
+}

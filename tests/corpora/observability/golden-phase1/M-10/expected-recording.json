@@ -1,0 +1,232 @@
+{
+ "steps": [
+  {
+   "after_turn": false,
+   "attrs": {
+    "block_hash": null,
+    "per_turn": {
+     "folders": 0,
+     "mode_note": null,
+     "sandbox_note": false,
+     "skills_hash": null,
+     "skills_menu": 0
+    },
+    "session_prompt_hash": null,
+    "session_start": {
+     "agents_md": 0,
+     "memories": [],
+     "memory_mode": "full",
+     "rules": 0
+    },
+    "size_chars": 0
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 5,
+   "kind": "context",
+   "message_id": null,
+   "name": "context",
+   "parent_step_id": null,
+   "seq": 1,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 0,
+   "status": "ok",
+   "step_id": "s1",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 22600,
+     "cache_write": 2400,
+     "input_fresh": 6200,
+     "output": 610,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 7000,
+   "kind": "model",
+   "message_id": "m2",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 2,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 10,
+   "status": "ok",
+   "step_id": "s2",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": true,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "title",
+    "stream": false,
+    "tools_hash": null,
+    "tools_offered": 0,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 0,
+     "cache_write": 0,
+     "input_fresh": 300,
+     "output": 12,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 500,
+   "kind": "model",
+   "message_id": null,
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 3,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 7100,
+   "status": "ok",
+   "step_id": "s3",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "block_hash": null,
+    "per_turn": {
+     "folders": 0,
+     "mode_note": null,
+     "sandbox_note": false,
+     "skills_hash": null,
+     "skills_menu": 0
+    },
+    "session_prompt_hash": null,
+    "size_chars": 0
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 5,
+   "kind": "context",
+   "message_id": null,
+   "name": "context",
+   "parent_step_id": null,
+   "seq": 1,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 7050,
+   "status": "ok",
+   "step_id": "s4",
+   "turn_id": "sess_A:turn_2"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 0,
+     "cache_write": 0,
+     "input_fresh": 500,
+     "output": 50,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1940,
+   "kind": "model",
+   "message_id": "m4",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 2,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 7060,
+   "status": "ok",
+   "step_id": "s5",
+   "turn_id": "sess_A:turn_2"
+  }
+ ],
+ "turns": [
+  {
+   "approval_mode": "interactive",
+   "attended": true,
+   "duration_ms": 7020,
+   "first_message_id": "m1",
+   "incomplete": false,
+   "kind": "run",
+   "last_message_id": "m2",
+   "reviewer": {
+    "active": false,
+    "kind": null,
+    "model": null,
+    "shadow": false
+   },
+   "schema_version": 1,
+   "seq": 1,
+   "session_id": "sess_A",
+   "stamp": {},
+   "started_at": 0,
+   "status": "completed",
+   "trigger": "user",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "approval_mode": "interactive",
+   "attended": true,
+   "duration_ms": 1950,
+   "first_message_id": "m3",
+   "incomplete": false,
+   "kind": "run",
+   "last_message_id": "m4",
+   "reviewer": {
+    "active": false,
+    "kind": null,
+    "model": null,
+    "shadow": false
+   },
+   "schema_version": 1,
+   "seq": 2,
+   "session_id": "sess_A",
+   "stamp": {},
+   "started_at": 7050,
+   "status": "completed",
+   "trigger": "user",
+   "turn_id": "sess_A:turn_2"
+  }
+ ]
+}

@@ -49,6 +49,20 @@ const surfaceFromPersona = (p: Persona) => ({
 // "Needs you": a session parked on a question or an approval. A dot, not a count — a
 // session parks on one prompt at a time, so the number was always 1 (owner 2026-09-03).
 // Amber, so it never reads as the accent "working" pulse beside it.
+// OB-3: warnings in Steps ▸ Issues not opened yet. A ring, so it never reads as the solid
+// "waiting for you" dot beside it.
+function IssueRing({ n }: { n: number }) {
+  const { t } = useTranslation();
+  if (!n) return null;
+  return (
+    <span
+      className="w-1.5 h-1.5 rounded-full border border-warnInk shrink-0"
+      title={t("steps.issues.unseen", { count: n })}
+      data-testid="issue-ring"
+    />
+  );
+}
+
 function AttnBadge({ n }: { n: number }) {
   const { t } = useTranslation();
   if (!n) return null;
@@ -622,6 +636,7 @@ export function Sidebar(props: Props) {
                 )}
                 <OriginIcon s={s} />
                 <LiveDot state={s.liveness} />
+                <IssueRing n={s.issues_unseen || 0} />
                 <AttnBadge n={s.attention || 0} />
               </span>
               {rowActions(s, title)}
@@ -699,6 +714,7 @@ export function Sidebar(props: Props) {
                 <OriginIcon s={s} />
                 <ConnectorDot subs={s.subscriptions} />
                 <LiveDot state={s.liveness} />
+                <IssueRing n={s.issues_unseen || 0} />
                 <AttnBadge n={s.attention || 0} />
               </span>
               {rowActions(s, title)}

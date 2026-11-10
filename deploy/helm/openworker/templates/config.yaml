@@ -1,0 +1,51 @@
+{{- $image := required "image must identify the built Linux harness image" .Values.image -}}
+{{- if and (not .Values.allowMutableImages) (not (regexMatch "@sha256:[a-f0-9]{64}$" $image)) -}}
+{{- fail "image must use an immutable sha256 digest (mutable images are local-development only)" -}}
+{{- end -}}
+{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" .Values.proxyImage) -}}{{ fail "proxyImage must be pinned by digest" }}{{- end -}}
+{{- if not .Values.config -}}{{ fail "config must contain the non-secret reference configuration" }}{{- end -}}
+{{- if and (gt (int .Values.worker.replicas) 0) (lt (int .Values.terminationGracePeriodSeconds) (int (add .Values.worker.drainTimeoutSeconds .Values.worker.shutdownTimeoutSeconds 15))) -}}{{ fail "terminationGracePeriodSeconds must cover worker drain + cleanup + 15s margin" }}{{- end -}}
+{{- if and .Values.config.artifacts .Values.config.artifacts.ca_file (not .Values.secrets.objectStoreCA) -}}{{ fail "private object-store CA requires secrets.objectStoreCA" }}{{- end -}}
+{{- if and .Values.config.recovery_read_only (gt (int .Values.worker.replicas) 0) -}}{{ fail "recovery_read_only requires worker.replicas=0" }}{{- end -}}
+{{- if and .Values.config.recovery_read_only .Values.secrets.model -}}{{ fail "recovery_read_only must not mount model credentials" }}{{- end -}}
+{{- if not .Values.config.recovery_read_only -}}{{- $_ := required "secrets.openshell is required" .Values.secrets.openshell -}}{{- end -}}
+{{- range $k := list "database" "databaseCA" "apiTLS" "probe" -}}
+{{- $_ := required (printf "secrets.%s is required" $k) (index $.Values.secrets $k) -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ow.name" . }}
+  labels:
+    {{- include "ow.labels" . | nindent 4 }}
+data:
+  reference.json: |
+    {{- .Values.config | toPrettyJson | nindent 4 }}
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 256; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8443 ssl;
+        ssl_certificate /tls/tls.crt;
+        ssl_certificate_key /tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        client_max_body_size 65m;
+        location / {
+          proxy_pass http://127.0.0.1:8080;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_buffering off;
+          proxy_request_buffering off;
+          proxy_read_timeout 3600s;
+          proxy_send_timeout 120s;
+        }
+      }
+    }

@@ -1,0 +1,12 @@
+{
+  "appId": "com.openworker.arcade",
+  "productName": "Arcade",
+  "directories": { "output": "release" },
+  "files": ["dist/**", "electron/**", "package.json", "app.json"],
+  "extraResources": [
+    { "from": "bin", "to": ".", "filter": ["openworker-harness*"] }
+  ],
+  "mac": { "target": ["dmg"], "category": "public.app-category.games" },
+  "win": { "target": ["nsis"] },
+  "linux": { "target": ["AppImage"] }
+}

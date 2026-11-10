@@ -1,0 +1,15 @@
+{
+  "distance": 1100,
+  "startSpeed": 16,
+  "maxSpeed": 24,
+  "lives": 3,
+  "jumpSeconds": 0.85,
+  "slideSeconds": 0.8,
+  "seed": 7319,
+  "colors": {
+    "stone": "#d1bc94",
+    "grass": "#638763",
+    "water": "#69a9b5",
+    "lantern": "#ffd58a"
+  }
+}

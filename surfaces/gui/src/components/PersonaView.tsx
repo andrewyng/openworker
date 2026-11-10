@@ -30,6 +30,7 @@ import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { Toggle } from "./Toggle";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
+import { PersonaDoing } from "./PersonaDoing";
 
 const SEC_H = "text-label text-faint font-medium";
 const TAG_CORE =
@@ -47,8 +48,11 @@ export function PersonaView({
   onBack,
   onOpenIntegrations,
   machine,
+  focus,
 }: {
   personaId: string;
+  /** T3-12: "doing" scrolls to "How it's been doing" (opened from Usage ▸ By coworker) */
+  focus?: "doing";
   onBack?: () => void;
   onOpenIntegrations?: () => void;
   // UX-046 machine scope: this coworker lives on a joined machine; every read
@@ -353,29 +357,22 @@ export function PersonaView({
             </section>
           )}
 
-          {/* defaults footer */}
-          <section className="flex flex-wrap gap-x-8 gap-y-2 text-ui">
-            {detail.recommended_models.length > 0 && (
-              <div>
-                <span className="text-faint">{t("persona.models_label")}</span> ·{" "}
-                {detail.recommended_models.map((m, i) => (
-                  <span key={m}>
-                    <span className="font-mono">{m}</span>
-                    {i < detail.recommended_models.length - 1 ? ", " : ""}
-                  </span>
-                ))}
-              </div>
-            )}
-            {detail.default_permission_mode && (
-              <div>
-                <span className="text-faint">{t("persona.default_mode_label")}</span> · {detail.default_permission_mode}
-              </div>
-            )}
-            <div>
-              <span className="text-faint">{t("persona.workspace_label")}</span> ·{" "}
-              {detail.requires_folder ? t("persona.workspace_picked") : t("persona.workspace_scratch")}
-            </div>
-          </section>
+          {/* Phase 3 OB-15: how each version of this coworker has been doing */}
+          <PersonaDoing personaId={personaId} machineId={mid} secClass={SEC_H} scrollIntoView={focus === "doing"} />
+
+          {/* the models this coworker may use (T3-16: "Can use", apart from the models its
+              sessions used, under How it's been doing; Default mode and Workspace removed) */}
+          {detail.recommended_models.length > 0 && (
+            <section className="text-ui" data-testid="persona-can-use">
+              <span className="text-faint">{t("persona.can_use")}</span>{" "}
+              {detail.recommended_models.map((m, i) => (
+                <span key={m}>
+                  <span className="font-mono">{m}</span>
+                  {i < detail.recommended_models.length - 1 ? ", " : ""}
+                </span>
+              ))}
+            </section>
+          )}
 
           {/* management — the controls that left the list page (UX-035) */}
           <section className="border-t border-line pt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-ui">

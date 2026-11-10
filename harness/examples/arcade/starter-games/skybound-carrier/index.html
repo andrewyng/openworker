@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Skybound Carrier</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <canvas id="world" aria-label="Skybound Carrier 3D world"></canvas>
+    <div class="vignette"></div>
+    <header>
+      <div class="wordmark"><span>✧</span> SKYBOUND <b>CARRIER</b></div>
+      <div id="hud" hidden>
+        <span><small>DELIVERY</small><b id="distance">0 m</b></span
+        ><span><small>LIGHTS</small><b id="coins">0</b></span
+        ><span><small>PARCEL</small><b id="lives">◆ ◆ ◆</b></span>
+      </div>
+      <div class="utilities">
+        <button id="sound" aria-label="Enable sound">Sound off</button
+        ><button id="pause" aria-label="Pause game" disabled>Ⅱ</button>
+      </div>
+    </header>
+    <section id="intro" class="overlay">
+      <div class="intro-copy">
+        <span class="eyebrow" id="eyebrow">A DELIVERY ABOVE THE CLOUDS</span>
+        <h1 id="title">A little courage.<br /><em>A long way home.</em></h1>
+        <p id="description">
+          The lighthouse is waiting for its last parcel.<br />Follow the sky
+          bridges. Bring a little light.
+        </p>
+        <button class="primary" id="start" disabled>
+          Preparing the skies…
+        </button>
+        <p id="load-status" role="status">
+          Loading local artwork, character and sound
+        </p>
+        <div class="instructions">
+          <span><kbd>←</kbd><kbd>→</kbd> Change lane</span
+          ><span><kbd>↑</kbd> Jump</span><span><kbd>↓</kbd> Slide</span>
+        </div>
+        <div class="quality">
+          <label for="quality">Graphics</label
+          ><select id="quality">
+            <option value="balanced">Balanced</option>
+            <option value="high">High</option>
+            <option value="low">Low</option></select
+          ><span>Keyboard or touch · No internet needed</span>
+        </div>
+      </div>
+    </section>
+    <div class="route">
+      <span id="chapter">THE GARDEN BRIDGES</span>
+      <div><i id="progress"></i></div>
+      <small id="hint"
+        >Jump over crates. Slide under gold arches. Every obstacle has an open
+        lane.</small
+      >
+    </div>
+    <div class="touch">
+      <button data-action="left" aria-label="Move left">←</button
+      ><button data-action="jump" aria-label="Jump">Jump ↑</button
+      ><button data-action="slide" aria-label="Slide">Slide ↓</button
+      ><button data-action="right" aria-label="Move right">→</button>
+    </div>
+    <div id="toast" role="status"></div>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>

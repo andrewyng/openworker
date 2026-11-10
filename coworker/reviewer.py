@@ -449,8 +449,11 @@ class Reviewer:
         provenance: str = "",
         action_context: dict[str, Any] | None = None,
         facts: Sequence[str] = (),
+        view: Any = None,
     ) -> Verdict:
-        """Never raises. Every failure mode is an `unsure` (§8.5)."""
+        """Never raises. Every failure mode is an `unsure` (§8.5). `view`, when given, is
+        the provider view this check's model call goes through (observability E12: its
+        parent is the check's step)."""
         # Never quietly truncate restrictions out of the owner's words. This is a
         # deterministic size limit, not a scope classifier; oversized input asks a human.
         if action_context and action_context.get("context_unavailable"):
@@ -470,7 +473,7 @@ class Reviewer:
         try:
             turn = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self.provider.complete,
+                    (view or self.provider).complete,
                     model=self.model,
                     messages=messages,
                     # One JSON line comes back. Without an explicit cap the provider's

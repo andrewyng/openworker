@@ -1,0 +1,106 @@
+{
+ "turns": {
+  "T00002262": {
+   "total": 20,
+   "at_least": false,
+   "unreported": 0,
+   "failed": 0,
+   "over_limit": 0,
+   "waiting_ms": 0,
+   "active_ms": 10000,
+   "approvals": 0,
+   "approval_calls": [],
+   "warn": 0,
+   "live_checks": 0
+  },
+  "T00002264": {
+   "total": 20,
+   "at_least": false,
+   "unreported": 0,
+   "failed": 0,
+   "over_limit": 0,
+   "waiting_ms": 0,
+   "active_ms": 10000,
+   "approvals": 0,
+   "approval_calls": [],
+   "warn": 0,
+   "live_checks": 0
+  }
+ },
+ "pills": {
+  "edge-10": 40
+ },
+ "rollups": {
+  "all": {
+   "all": 40
+  },
+  "day": {
+   "2026-10-25": 40
+  },
+  "session": {
+   "edge-10": 40
+  },
+  "persona_fp": {
+   "a1b2c3": 40
+  },
+  "persona_id": {
+   "general": 40
+  },
+  "machine": {
+   "this_machine": 40
+  },
+  "trigger": {
+   "user": 40
+  },
+  "purpose": {
+   "main": 40
+  },
+  "model": {
+   "model-x": 40
+  },
+  "day+purpose": {
+   "2026-10-25|main": 40
+  },
+  "persona_fp+model": {
+   "a1b2c3|model-x": 40
+  }
+ },
+ "turn_counts": {
+  "all": {
+   "all": {
+    "turns": 2,
+    "checked": 2,
+    "with_warn": 0
+   }
+  },
+  "day": {
+   "2026-10-25": {
+    "turns": 2,
+    "checked": 2,
+    "with_warn": 0
+   }
+  },
+  "persona_id": {
+   "general": {
+    "turns": 2,
+    "checked": 2,
+    "with_warn": 0
+   }
+  },
+  "persona_fp": {
+   "a1b2c3": {
+    "turns": 2,
+    "checked": 2,
+    "with_warn": 0
+   }
+  }
+ },
+ "no_turn": {
+  "calls": 0,
+  "total": 0
+ },
+ "approver": {
+  "by_result": {},
+  "tokens": 0
+ }
+}

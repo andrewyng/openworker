@@ -1,0 +1,30 @@
+{
+  "name": "create-openworker",
+  "version": "0.1.0-beta.2",
+  "type": "module",
+  "bin": {
+    "create-openworker": "create.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "files": [
+    "create.mjs",
+    "templates",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrewyng/openworker.git",
+    "directory": "harness/desktop-starters"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
+  },
+  "private": true
+}

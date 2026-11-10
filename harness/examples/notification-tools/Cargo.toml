@@ -1,0 +1,13 @@
+[package]
+publish = false
+name = "notification-tools"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+openworker-tools = { path = "../../tools-sdk" }
+anyhow = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "sync", "time"] }

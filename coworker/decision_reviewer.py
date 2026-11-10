@@ -1080,6 +1080,10 @@ BACKENDS: dict[str, type[DecisionBackend]] = {
 # -- the reviewer -----------------------------------------------------------------------------
 
 
+# Backend name -> the recording's provider / wire name (recording format §6).
+_WIRES = {"openai-decisions": "openai_decisions", "jev": "typesafe_jev"}
+
+
 class DecisionReviewer:
     """Same `review` signature and `Verdict` return as `coworker.reviewer.Reviewer`, so the
     engine, which duck-types its reviewer, can use either."""
@@ -1108,8 +1112,12 @@ class DecisionReviewer:
         provenance: str = "",
         action_context: dict[str, Any] | None = None,
         facts: Sequence[str] = (),
+        view: Any = None,
     ) -> DecisionVerdict:
         """Never raises. Every failure mode is an `unsure`.
+
+        `view`, when given, records the request to the service as a model step nested in
+        the check, with its usage and provider metadata (observability E23, TD-16).
 
         `facts` are the engine's own lines (OPE-235/OPE-237, coworker/review_facts.py), the
         same ones the session-model reviewer gets. They are used in code, not added to the
@@ -1135,10 +1143,15 @@ class DecisionReviewer:
         if len(json.dumps(state, ensure_ascii=False)) > _STATE_CHAR_BUDGET:
             return self._count(_fail_closed("state exceeds the decision model's limit; a human must decide", error=True))
         questions = self.backend.questions
+
+        def ask() -> Any:
+            if view is not None and hasattr(view, "record_call"):
+                return view.record_call(lambda: self.backend.ask_questions(state, questions),
+                                        model=f"{_WIRES.get(self.backend.name, self.backend.name)}:{self.backend.model}")
+            return self.backend.ask_questions(state, questions)
+
         try:
-            answer = await asyncio.wait_for(
-                asyncio.to_thread(self.backend.ask_questions, state, questions), timeout=self.timeout
-            )
+            answer = await asyncio.wait_for(asyncio.to_thread(ask), timeout=self.timeout)
         except asyncio.TimeoutError:
             return self._count(_fail_closed(f"{self.backend.label} timed out", error=True))
         except asyncio.CancelledError:
