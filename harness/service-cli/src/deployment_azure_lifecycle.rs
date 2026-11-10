@@ -991,7 +991,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
         json!({"type":"Microsoft.ManagedIdentity/userAssignedIdentities","apiVersion":"2023-01-31","name":identity_name,"location":location}),
         json!({"type":"Microsoft.Storage/storageAccounts","apiVersion":"2023-05-01","name":control_account,"location":location,"sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{"allowSharedKeyAccess":false,"allowBlobPublicAccess":false,"minimumTlsVersion":"TLS1_2","supportsHttpsTrafficOnly":true,"publicNetworkAccess":"Enabled"}}),
         json!({"type":"Microsoft.Storage/storageAccounts/blobServices/containers","apiVersion":"2023-05-01","name":format!("{control_account}/default/control"),"dependsOn":[account_id],"properties":{"publicAccess":"None"}}),
-        json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":"none"}}}),
+        json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":null}}}),
         json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
     ];
     if let Some(registry) = &c.guard_registry_resource_id {
@@ -1380,6 +1380,16 @@ mod tests {
             .find(|v| v["type"] == "Microsoft.App/jobs")
             .unwrap();
         assert_eq!(job["properties"]["configuration"]["replicaRetryLimit"], 0);
+        let environment = v["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["type"] == "Microsoft.App/managedEnvironments")
+            .unwrap();
+        assert_eq!(
+            environment["properties"]["appLogsConfiguration"]["destination"],
+            Value::Null
+        );
         assert!(!job.to_string().contains("managedClusters"));
         let grants: String = files
             .iter()
