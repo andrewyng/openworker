@@ -4766,12 +4766,14 @@ class SessionManager:
     # 2026-07-04; refresh alongside `recommended_model` in providers/registry.py).
     COMPAT_MODELS = {
         "zai": ["glm-5.2", "glm-4.6"],
-        "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
-        "kimi": ["kimi-k2.6", "kimi-k2.5"],
-        "minimax": ["MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M3"],
+        # Ids re-read from each vendor's own list on 2026-11-09 (OPE-252 survey): deepseek-flash
+        # is the id DeepSeek serves; kimi-k2.5 and MiniMax M2.5 are gone (M2.5 retires 2026-11-18).
+        "deepseek": ["deepseek-flash", "deepseek-v4-pro"],
+        "kimi": ["kimi-k2.6", "kimi-k3"],
+        "minimax": ["MiniMax-M3.1-Flash", "MiniMax-M3"],
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
-        "xai": ["grok-4.3", "grok-4"],
-        "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "xai": ["grok-4.3", "grok-4.5"],
+        "mistral": ["mistral-large-latest", "mistral-large-4", "mistral-small-latest"],
         # NIM ids carry their own `vendor/model` namespace (integrate.api.nvidia.com/v1/models,
         # read 2026-10-25).
         "nvidia": [

@@ -45,11 +45,11 @@ REPO = Path(__file__).resolve().parents[1]
         ("openrouter:moonshotai/kimi-k3", 1_048_576),  # openrouter.ai models API, 2026-09-09
         ("together:zai-org/GLM-5.2", 1_048_575),
         ("together:deepseek-ai/DeepSeek-V4-Pro", 512_000),
-        # Vendor pages read 2026-09-08 (docs.z.ai "1M"; openrouter 1,048,576;
-        # fireworks "1040k").
+        # Vendor pages read 2026-09-08 (docs.z.ai "1M"; openrouter 1,048,576); Fireworks
+        # /v1/models context_length, read 2026-11-09 (glm-5p2 is no longer served).
         ("zai:glm-5.2", 1_000_000),
         ("openrouter:z-ai/glm-5.2", 1_048_576),
-        ("fireworks:accounts/fireworks/models/glm-5p2", 1_040_000),
+        ("fireworks:accounts/fireworks/models/glm-5p3", 1_048_576),
         # openrouter.ai models API, read 2026-10-01 (OPE-215). Ultra: the endpoint's own
         # context_length (202,800), not the model-level 262,144 the catalog shows.
         ("openrouter:nvidia/nemotron-3-ultra-550b-a55b", 202_800),
@@ -75,7 +75,7 @@ _matrix_key = full_id  # OpenAI rows are stored bare (bare ids route to the Open
 # Recommended models whose vendor spec has not been re-checked: the matrix keeps their
 # window at None on purpose (the GUI meter hides rather than show a made-up number) and
 # they compact on the 128k guess. Verify the spec, fill the row, and shrink this set.
-_KNOWN_UNVERIFIED_RECOMMENDATIONS = {"minimax:MiniMax-M2.5", "meta:muse-spark-1.1"}
+_KNOWN_UNVERIFIED_RECOMMENDATIONS = {"meta:muse-spark-1.1"}
 
 
 def test_every_recommended_model_is_in_the_matrix():

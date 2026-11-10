@@ -223,8 +223,8 @@ def test_capabilities_probe_reads_the_file_then_falls_back_to_heuristics():
 
 
 def test_unverified_windows_stay_null_and_hidden_from_the_meter():
-    assert entry_for("minimax:MiniMax-M2.5").context_window is None
-    assert "minimax:MiniMax-M2.5" not in model_context_windows()
+    assert entry_for("meta:muse-spark-1.1").context_window is None
+    assert "meta:muse-spark-1.1" not in model_context_windows()
 
 
 # -- reload / overrides --------------------------------------------------------------------
