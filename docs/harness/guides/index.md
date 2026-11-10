@@ -24,6 +24,10 @@ its ToolRunner can access. See [OpenShell integration](openshell.md) for that bo
 - **[Build a web app and deploy to the cloud](server.md).** Create PDF Notes: upload
   a PDF, ask questions and get answers with page references.
 
+The TypeScript SDK is published on npm with matching native runtimes for macOS,
+Windows and Linux on ARM64 and x64 (Linux uses glibc). The app-building skill works
+with Codex and Claude Code, in one project or across your projects.
+
 Both tracks include a small UI, agent creation and packaging/deployment instructions.
 Open the source drawer to explore the complete example files alongside the guide.
 

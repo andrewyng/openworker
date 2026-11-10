@@ -65,13 +65,21 @@ Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 For all your projects on this machine, replace `--project .` with `--global`.
 That installs to your user skills directory; neither mode overwrites an existing
-skill. The `--global` option is new in the pending skills `0.1.0-beta.2` release.
-See the [skill installation guide](../../../skills/README.md) for availability,
-local candidate installation and invocation details.
+skill. The published skill is `0.1.0-beta.3`, matched to SDK `0.1.0-beta.2`.
+To update an existing installation, review or back up its `openworker-apps` folder
+before replacing it. See the [skill installation guide](../../../skills/README.md)
+for installation paths and invocation details.
 
 </details>
 
-Prefer to work directly? Install the complete example with
+For your own TypeScript app, run `npm install @openworkerai/harness-sdk`
+with Node.js 20 or newer. npm installs SDK `0.1.0-beta.2` and the matching native
+runtime for your OS and CPU; keep optional dependencies enabled. No Rust or Python
+installation is required. Commit your application's lockfile.
+
+The Rust snippets use the SDK from source; see [Rust setup](releases.md#rust-from-source).
+
+To run the complete reference app from this repository, install its dependencies with
 `cd harness/examples/quickstart && npm run setup` from the checkout, then run
 `npm run web` with the model and runtime settings in the
 [example README](../../../harness/examples/quickstart/README.md).
@@ -182,6 +190,13 @@ multi-user authorization model.
 
 ## Deploy the application
 
+For Railway, the published [app-building skill](../../../skills/README.md#install-the-skill)
+includes a tested deployment recipe: one Node service serves the frontend and API,
+with the harness as a managed subprocess. npm selects the matching Linux runtime
+during the container build. Follow the [Railway guide](../../../skills/openworker-apps/references/railway.md)
+for secrets, persistent state and access control.
+
+The repository's PDF Notes Dockerfile uses an explicitly supplied helper.
 Package your server, the SDK and a matching Linux harness executable in one
 container. Supply model credentials as runtime secrets and mount writable session
 storage. Use HTTPS at your ingress.

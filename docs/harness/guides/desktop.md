@@ -65,13 +65,21 @@ Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 For all your projects on this machine, replace `--project .` with `--global`.
 That installs to your user skills directory; neither mode overwrites an existing
-skill. The `--global` option is new in the pending skills `0.1.0-beta.2` release.
-See the [skill installation guide](../../../skills/README.md) for availability,
-local candidate installation and invocation details.
+skill. The published skill is `0.1.0-beta.3`, matched to SDK `0.1.0-beta.2`.
+To update an existing installation, review or back up its `openworker-apps` folder
+before replacing it. See the [skill installation guide](../../../skills/README.md)
+for installation paths and invocation details.
 
 </details>
 
-Prefer to work directly? Install the complete example with
+For your own TypeScript app, run `npm install @openworkerai/harness-sdk`
+with Node.js 20 or newer. npm installs SDK `0.1.0-beta.2` and the matching native
+runtime for your OS and CPU; keep optional dependencies enabled. No Rust or Python
+installation is required. Commit your application's lockfile.
+
+The Rust snippets use the SDK from source; see [Rust setup](releases.md#rust-from-source).
+
+To run the complete reference app from this repository, install its dependencies with
 `cd harness/examples/quickstart && npm run setup` from the checkout, then run
 `npm run desktop` with the model and runtime settings in the
 [example README](../../../harness/examples/quickstart/README.md).
@@ -255,7 +263,7 @@ The complete desktop app stores sessions under its application-data directory.
 It creates one session per summary; the previous model context cannot silently
 carry into the next directory. Add [custom tools](tools.md),
 [Guardrails guide](guardrails.md) or [OpenShell isolation](openshell.md)
-when your product needs them. Packaging and pre-publication setup details are in
+when your product needs them. Reference-app setup and packaging details are in
 [the example README](../../../harness/examples/quickstart/README.md).
 
 </details>

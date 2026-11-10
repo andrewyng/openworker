@@ -8,8 +8,8 @@ Start with the simplest placement that fits your product.
 |---|---|
 | [Private Kubernetes cluster](private-kubernetes.md) | Your cluster, PostgreSQL and OpenShell |
 | [AWS](aws.md) | EKS, PostgreSQL, S3 and OpenShell |
-| [GCP](gcp.md) | GKE Standard, Cloud SQL, Cloud Storage and OpenShell |
-| [Azure](azure.md) | AKS, PostgreSQL, Blob and OpenShell |
+| [GCP](gcp.md) | Experimental; live end-to-end qualification pending |
+| [Azure](azure.md) | Experimental; offline tests, live qualification pending |
 
 The application-facing service API stays the same. Cloud identity, networking,
 storage and lifecycle setup are provider-specific. [NVIDIA OpenShell](openshell.md)

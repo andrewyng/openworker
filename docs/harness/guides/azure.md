@@ -4,6 +4,13 @@ The Azure reference targets AKS, PostgreSQL and Blob artifact storage, with sepa
 managed identities for installation, cluster/workload operations and independent
 cleanup. OpenShell supplies the sandbox execution layer.
 
+## Validation status
+
+Experimental: deployment and cleanup logic have offline test coverage. A live
+Azure/AKS installation with OpenShell, an agent run, recovery and independent
+cleanup has **not yet been qualified**. The setup flow below is the intended
+validation path, not a claim of a tested Azure deployment.
+
 ## Setup flow
 
 1. Select the tenant, subscription, region and dedicated workload/control resource groups.

@@ -109,8 +109,16 @@ existing agent definitions and session schema digests across upgrades.
 
 ## Teams
 
-A lead can create multiple instances of registered agent types, communicate through
-durable inboxes/board mentions and wait without keeping an execution slot occupied.
+A lead can spawn multiple child instances of registered agent types using
+`team_spawn`, send direct messages with `team_send_message`, and wait with
+`team_wait_agent` without keeping an execution slot occupied. Children have their
+own sessions. The SDK exposes these capabilities through `AgentTeam`; the board
+is optional, and `communication: { board: false, directMessages: true }` selects
+direct communication only.
+
+This differs from the Python-powered Desktop app's standalone `spawn_agent`
+interface. A plain SDK agent does not automatically receive that tool family;
+configure a team when your SDK application needs model-driven child spawning.
 Shared workspaces use separate worktrees; independent sandboxes exchange changes
 through explicit handoff. Team creation does not enlarge the lead's permissions.
 

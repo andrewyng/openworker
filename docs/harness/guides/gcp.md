@@ -4,6 +4,14 @@ The GCP reference targets GKE Standard, Cloud SQL PostgreSQL, Cloud Storage and
 Artifact Registry, with NVIDIA OpenShell providing tool sandboxes. The application
 uses the same OpenWorker service API and session model as other deployments.
 
+## Validation status
+
+Experimental: bootstrap and read-only preflight have been exercised in a GCP
+project, and lifecycle, installation and cleanup logic have local test coverage.
+A complete live GKE deployment with OpenShell, an agent run, recovery and
+independent cleanup has **not yet been qualified**. The setup flow below describes
+what remains to validate, not a completed cloud deployment.
+
 ## Setup flow
 
 1. Select a project, region, billing/budget boundary and deployment lifetime.
