@@ -94,9 +94,9 @@ describe("ProviderModels with a live listing", () => {
     await flush();
     const facts = screen.getByTestId("catalog-facts-command-a-translate-08-2025");
     const amber = Array.from(facts.querySelectorAll(".text-warnInk")).map((n) => n.textContent);
-    expect(amber).toEqual(["Context 9K — short for long tasks", "No tool support — coworkers cannot act", "Retires 11 Dec 2026"]);
+    expect(amber).toEqual(["Context 9K — short for long tasks", "No tool support — coworkers cannot act", "Deprecated · ends 11 Dec 2026"]);
     expect(screen.getByTestId("catalog-facts-command-r-old").querySelector(".text-danger")!.textContent).toBe("Not on this key");
-    expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked models are not on this key");
+    expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked model is not on this key; the provider will refuse it.");
   });
 
   it("every model name opens the model's settings without toggling the tick", async () => {

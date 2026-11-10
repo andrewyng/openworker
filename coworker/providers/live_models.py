@@ -328,9 +328,57 @@ def _label(item: dict[str, Any], model_id: str, *keys: str) -> str:
     return model_id
 
 
+_FIREWORKS_NAMESPACE = re.compile(r"^accounts/[^/]+/(?:models|routers)/")
+_FIREWORKS_DOT = re.compile(r"(?<=\d)p(?=\d)")  # Fireworks writes 5.3 as 5p3
+_ACRONYMS = {"glm", "gpt", "oss", "vl", "ai", "it"}
+_BRANDS = {"deepseek": "DeepSeek", "minimax": "MiniMax", "kimi": "Kimi", "qwen": "Qwen", "llama": "Llama"}
+_SIZE = re.compile(r"^[a-z]?\d+(?:\.\d+)?b$", re.I)  # 120b, 8B, a12b
+_O_SERIES = re.compile(r"^o\d$")  # OpenAI's o3, o4 stay lower case
+
+
+def _cased(token: str) -> str:
+    low = token.lower()
+    if low in _ACRONYMS:
+        return low.upper()
+    if low in _BRANDS:
+        return _BRANDS[low]
+    if _SIZE.match(token):
+        return token.upper()
+    if _O_SERIES.match(low):
+        return low
+    return token[:1].upper() + token[1:]
+
+
+def display_label(model_id: str) -> str:
+    """A readable name for a row whose list gives none, for display only: the full id stays
+    the row's id and shows beside the name. Drops the namespace (`accounts/<org>/models/`,
+    `<org>/`), writes Fireworks' `5p3` as `5.3`, turns hyphens into spaces and cases each
+    word: `accounts/fireworks/models/deepseek-v4p1-flash-1017` -> "DeepSeek V4.1 Flash 1017",
+    `gpt-5.4-nano` -> "GPT-5.4 Nano", `gpt-oss-120b` -> "GPT-OSS 120B". A leading acronym keeps
+    its hyphen to the version (GPT-5.4, GLM-5.3), and two acronyms stay one word (GPT-OSS). Tier words such as
+    Fast or Spot stay in the name."""
+    short = _FIREWORKS_NAMESPACE.sub("", model_id)
+    if short != model_id:
+        short = _FIREWORKS_DOT.sub(".", short)
+    elif "/" in model_id:
+        short = model_id.rsplit("/", 1)[-1]
+    tokens = [t for t in re.split(r"[-_]", short) if t]
+    if not tokens:
+        return model_id
+    out = _cased(tokens[0])
+    for i, (prev, token) in enumerate(zip(tokens, tokens[1:])):
+        acronym = prev.lower() in _ACRONYMS
+        # the leading acronym keeps its version (GPT-5.4); two acronyms stay one word (GPT-OSS)
+        joined = acronym and ((i == 0 and token[:1].isdigit()) or token.lower() in _ACRONYMS)
+        out += ("-" if joined else " ") + _cased(token)
+    return out
+
+
 def _row(model_id: str, label: str, kind: Optional[str], source: str, detail: Optional[str] = None, **facts: Any) -> LiveModel:
     if kind is None or kind == CHAT:
         kind, source = CHAT, (source if source == "provider" else "none")
+    if label == model_id:
+        label = display_label(model_id)
     return LiveModel(id=model_id, label=label, kind=kind, kind_source=source, detail=detail, **facts)
 
 
