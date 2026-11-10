@@ -1,0 +1,60 @@
+{
+ "data": [
+  {
+   "id": "grok-4.20-0309-reasoning",
+   "aliases": [
+    "grok-4.20-reasoning-latest",
+    "grok-4.20",
+    "grok-4.20-reasoning",
+    "grok-4.20-0309",
+    "grok-4.20-beta-0309-reasoning",
+    "grok-4.20-beta",
+    "grok-4.20-beta-0309",
+    "grok-4.20-beta-latest",
+    "grok-4.20-beta-latest-reasoning",
+    "grok-4.20-beta-reasoning",
+    "grok-4.20-experimental-beta-0304-reasoning",
+    "grok-4.20-experimental-beta-0304",
+    "grok-4.20-experimental-beta-reasoning-latest",
+    "grok-4.20-experimental-beta-latest",
+    "grok-4.20-reasoning-gv2"
+   ],
+   "context_length": 1000000,
+   "created": 1773014400,
+   "object": "model",
+   "owned_by": "xai"
+  },
+  {
+   "id": "grok-4.3",
+   "aliases": [
+    "grok-4.3-latest"
+   ],
+   "context_length": 1000000,
+   "created": 1776384000,
+   "object": "model",
+   "owned_by": "xai",
+   "capabilities": {
+    "reasoning_effort": [
+     "none",
+     "low",
+     "medium",
+     "high",
+     "xhigh"
+    ],
+    "default_reasoning_effort": "low"
+   }
+  },
+  {
+   "id": "grok-build-0.1",
+   "aliases": [
+    "grok-code-fast-1",
+    "grok-code-fast",
+    "grok-code-fast-1-0825"
+   ],
+   "context_length": 256000,
+   "created": 1776297600,
+   "object": "model",
+   "owned_by": "xai"
+  }
+ ]
+}

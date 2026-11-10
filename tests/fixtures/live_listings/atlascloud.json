@@ -1,0 +1,45 @@
+{
+ "data": [
+  {
+   "id": "deepseek-ai/DeepSeek-V3.2-Exp",
+   "name": "DeepSeek V3.2 Exp",
+   "object": "model",
+   "created": 1626777600,
+   "owned_by": "custom",
+   "context_length": 163840,
+   "max_output_length": 163840,
+   "quantization": "fp8",
+   "input_modalities": [
+    "text"
+   ],
+   "output_modalities": [
+    "text"
+   ],
+   "supported_features": [
+    "json_mode",
+    "structured_outputs",
+    "tools",
+    "reasoning"
+   ]
+  },
+  {
+   "id": "deepseek-ai/deepseek-ocr",
+   "name": "DeepSeek OCR",
+   "object": "model",
+   "created": 1626777600,
+   "owned_by": "custom",
+   "context_length": 8192,
+   "max_output_length": 8192,
+   "quantization": "fp8",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "output_modalities": [
+    "text"
+   ]
+  }
+ ],
+ "code": 0,
+ "msg": "ok"
+}

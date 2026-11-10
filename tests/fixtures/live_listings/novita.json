@@ -1,0 +1,62 @@
+{
+ "data": [
+  {
+   "created": 1793757877,
+   "id": "tencent/hy4",
+   "object": "model",
+   "owned_by": "novita",
+   "is_tiered_billing": false,
+   "title": "tencent/hy4",
+   "context_size": 1000000,
+   "status": 1,
+   "display_name": "Hy4",
+   "model_type": "chat",
+   "max_output_tokens": 64000,
+   "features": [
+    "serverless",
+    "function-calling",
+    "structured-outputs",
+    "reasoning"
+   ],
+   "endpoints": [
+    "chat/completions",
+    "anthropic",
+    "responses"
+   ],
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "output_modalities": [
+    "text"
+   ]
+  },
+  {
+   "created": 1789699811,
+   "id": "ming-image-0.1-design-layer",
+   "object": "model",
+   "owned_by": "novita",
+   "is_tiered_billing": false,
+   "title": "ming-image-0.1-design-layer",
+   "context_size": 0,
+   "status": 1,
+   "display_name": "ming image 0.1 design layer",
+   "model_type": "chat",
+   "features": [
+    "serverless"
+   ],
+   "input_modalities": [
+    "text",
+    "image",
+    "video",
+    "audio"
+   ],
+   "output_modalities": [
+    "text",
+    "image",
+    "video",
+    "audio"
+   ]
+  }
+ ]
+}

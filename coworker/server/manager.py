@@ -5484,10 +5484,12 @@ class SessionManager:
         models = [m for m in [*MATRIX, *user] if m not in hidden]
         return list(dict.fromkeys([self.model, *models]))
 
-    def add_model(self, model: str) -> dict[str, Any]:
+    def add_model(self, model: str, *, anyway: bool = False) -> dict[str, Any]:
         """Add a model id (e.g. `gpt-4o`, `ollama:qwen2.5-coder:32b`) to the picker.
         Custom ids persist in prefs; a previously removed matrix model is just unhidden
-        (storing it too would shadow future matrix updates)."""
+        (storing it too would shadow future matrix updates). `anyway` is the provider page's
+        "Use anyway" on a model its list calls something other than chat: remembered, so the
+        row keeps its "Your pick · untested" badge and its Undo (OPE-252)."""
         from ..providers.matrix import MATRIX
 
         model = (model or "").strip()
@@ -5496,6 +5498,13 @@ class SessionManager:
         refused = self._not_on_key(model)
         if refused is not None:
             return {"ok": False, **refused, **self.get_settings()}
+        picked = [m for m in self._prefs.get("picked_anyway") or [] if m != model]
+        if anyway:
+            picked.append(model)
+        if picked:
+            self._prefs["picked_anyway"] = picked
+        else:
+            self._prefs.pop("picked_anyway", None)
         hidden = [m for m in self._prefs.get("hidden_models") or [] if m != model]
         if hidden:
             self._prefs["hidden_models"] = hidden
@@ -5514,6 +5523,7 @@ class SessionManager:
 
     CATALOG_TTL_SECONDS = 24 * 3600  # a listing is asked for again after a day, or on Refresh
     CATALOG_NEW_WINDOW_SECONDS = 3600  # "new since last check" survives refreshes inside an hour
+    CATALOG_ENTRY_VERSION = 2  # the shape of a cached listing; an older entry is asked again
 
     def _catalogs_path(self) -> Path:
         return self._data_base / "provider_catalogs.json"
@@ -5540,15 +5550,31 @@ class SessionManager:
         entry = self._load_catalogs().get(name) or {}
         return len(entry.get("new") or [])
 
-    def provider_catalog(self, name: str, *, refresh: bool = False) -> dict[str, Any]:
-        """What this provider serves for the user's key, merged with what we vouch for.
+    def _listing_profile(self, name: str) -> dict[str, Any]:
+        """What `live_models.fetch` needs: the stored profile; for the ChatGPT plan a live
+        OAuth bearer and the account id, refreshed first when stale."""
+        profile = dict(self.secrets.get(f"provider:{name}") or {})
+        if name == "openai-codex":
+            from ..providers import codex_auth
 
-        Asks the provider's own model list (cached a day, or again on `refresh`), then
-        answers rows for the provider page: our curated rows and the live ones, each with
-        the facts we have and where they came from (`verified`: catalog, provider,
-        unverified), whether it is in the picker, recommended, new since the check before,
-        and on the key at all. A provider with no list answers `listing: none` and the
-        curated rows alone."""
+            try:
+                access, account = codex_auth.CodexTokenStore(self.secrets).access_token()
+            except Exception:  # noqa: BLE001 - signed out or a dead refresh: the list says "refused"
+                return profile
+            profile.update({"access_token": access, "account_id": account})
+        return profile
+
+    def provider_catalog(self, name: str, *, refresh: bool = False) -> dict[str, Any]:
+        """What this provider serves for the user's key, for the provider page.
+
+        Asks the provider's own model list (cached a day, or again on `refresh`). A keyed or
+        signed-in provider's page offers exactly that list: `rows` are the chat models, each
+        with the facts we have (the user's setting, a maintainer override, the list's own
+        figure, then the reviewed catalog), whether it is in the picker, recommended, new since
+        the check before; `set_aside` are the listed models that are not chat models (image,
+        speech, embeddings…), with the reason, offered only through "Use anyway". A picker
+        model the key does not list is appended as `on_key: false`. The three providers whose
+        list the app cannot sign for yet answer `listing: none` and the reviewed rows."""
         from ..providers import live_models
 
         d = get_descriptor(name, self.secrets)
@@ -5556,22 +5582,24 @@ class SessionManager:
             return {"ok": False, "error": f"unknown provider: {name}"}
         configured = self._provider_configured(name)
         base: dict[str, Any] = {"ok": True, "provider": name, "configured": configured}
+        empty: dict[str, Any] = {"rows": [], "set_aside": [], "new": [], "not_on_key": []}
         if d.kind == "local":
-            return {**base, "listing": "none", "reason": "A local server lists its models on its card.", "rows": [], "new": [], "not_on_key": []}
+            return {**base, "listing": "none", "reason": "A local server lists its models on its card.", **empty}
         if name in live_models.NO_LISTING:
-            return {**base, "listing": "none", "reason": live_models.NO_LISTING[name], "rows": self._catalog_rows(name, None), "new": [], "not_on_key": []}
+            return {**base, "listing": "none", "reason": live_models.NO_LISTING[name], **empty, "rows": self._catalog_rows(name)}
         if not configured:
-            return {**base, "listing": "none", "reason": "Add a key to ask this provider which models it serves.", "rows": self._catalog_rows(name, None), "new": [], "not_on_key": []}
+            return {**base, "listing": "none", "reason": "Add a key to ask this provider which models it serves.", **empty, "rows": self._catalog_rows(name)}
         catalogs = self._load_catalogs()
         entry = catalogs.get(name)
+        if entry and entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            entry = None  # written by an older build: ask again rather than read it wrong
         now = time.time()
         error: Optional[str] = None
         fresh = bool(entry) and (now - float(entry.get("fetched_at") or 0)) < self.CATALOG_TTL_SECONDS
         if refresh or not fresh:
-            profile = self.secrets.get(f"provider:{name}") or {}
-            listing = live_models.fetch(name, profile, d)
+            listing = live_models.fetch(name, self._listing_profile(name), d)
             if listing.ok:
-                ids = [m.id for m in listing.models]
+                ids = [m.id for m in listing.models if m.offered]
                 if entry:
                     # The baseline for "new" moves only when the check before is at least an
                     # hour old, so two refreshes in a row do not swallow the new badge.
@@ -5581,8 +5609,10 @@ class SessionManager:
                     seen = ids  # the first look: nothing is new to a user who never saw a list
                 seen_set = set(seen)
                 entry = {
+                    "v": self.CATALOG_ENTRY_VERSION,
                     "fetched_at": now,
                     "ids": ids,
+                    "aside": [m.id for m in listing.models if not m.offered],
                     "all_ids": listing.all_ids or ids,
                     "seen": seen,
                     "new": [i for i in ids if i not in seen_set],
@@ -5594,10 +5624,10 @@ class SessionManager:
             else:
                 error = listing.error
                 if not entry:
-                    return {**base, "listing": "error", "error": error, "rows": self._catalog_rows(name, None), "new": [], "not_on_key": []}
-        rows = self._catalog_rows(name, entry)
-        live_ids = {str(i).lower() for i in (entry or {}).get("ids") or []}
-        not_on_key = [r["model"] for r in rows if r["in_picker"] and r["on_key"] is False]
+                    # No list ever came back: the error and Retry. Never the reviewed rows
+                    # here, because nobody checked them against this key.
+                    return {**base, "listing": "error", "error": error, **empty}
+        rows, aside = self._live_rows(name, entry or {})
         return {
             **base,
             "listing": "live",
@@ -5605,28 +5635,10 @@ class SessionManager:
             "error": error,
             "new": [r["model"] for r in rows if r["new"]],
             "rows": rows,
-            "not_on_key": not_on_key,
-            "count": len(live_ids),
+            "set_aside": aside,
+            "not_on_key": [r["model"] for r in rows if r["in_picker"] and r["on_key"] is False],
+            "count": len((entry or {}).get("ids") or []),
         }
-
-    # Anthropic (and a few others) list dated ids, `claude-haiku-4-5-20251001`, while the
-    # undated `claude-haiku-4-5` is what the API accepts and what the catalog carries. The
-    # dated id is the same model: it folds into the undated row and counts as on the key.
-    _DATED_ID = re.compile(r"-\d{8}$")
-
-    @classmethod
-    def _alias_base(cls, bare: str) -> str:
-        return cls._DATED_ID.sub("", bare)
-
-    def _listed(self, bare: str, ids: list[str]) -> Optional[str]:
-        """The listing's id for `bare` (exact, case-insensitive, or its dated twin), or None."""
-        key = bare.lower()
-        base = self._alias_base(key)
-        for i in ids:
-            low = str(i).lower()
-            if low == key or self._alias_base(low) == base:
-                return str(i)
-        return None
 
     def _label_suffix(self, name: str) -> str:
         """How the reviewed rows of this provider name it after the dot ("Google",
@@ -5641,55 +5653,168 @@ class SessionManager:
         d = get_descriptor(name, self.secrets)
         return d.title if d else name
 
-    def _catalog_rows(self, name: str, entry: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
-        from ..providers.matrix import MATRIX, full_id, models_for_provider
+    @staticmethod
+    def _first_set(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    def _row_facts(self, full: str, cat: Any, lm: dict[str, Any]) -> dict[str, Any]:
+        """Each fact's winner, first hit: the user's own setting, a maintainer OVERRIDES
+        entry, the provider's live list, the reviewed catalog, nothing (OPE-252 §11.2). The
+        page shows the winner and never says which source won."""
+        from ..providers.matrix import OVERRIDES
+
+        over = OVERRIDES.get(full)
+        user_window = _model_config.get(full).get("context_size")
+        return {
+            "context": self._first_set(user_window, over.context_window if over else None, lm.get("context"), cat.context_window if cat else None),
+            "max_output": lm.get("max_output"),
+            "input_image": self._first_set(over.caps.vision if over else None, lm.get("input_image"), cat.caps.vision if cat else None),
+            "input_pdf": self._first_set(over.caps.pdf if over else None, lm.get("input_pdf"), cat.caps.pdf if cat else None),
+            "tools": self._first_set(over.caps.tools if over else None, lm.get("tools"), cat.caps.tools if cat else None),
+            "reasoning": lm.get("reasoning"),
+            "retires_at": lm.get("retires_at"),
+        }
+
+    def _live_rows(self, name: str, entry: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """(offered rows, set-aside rows) for a keyed provider's page, from its cached
+        listing. Offered: the chat models, new ones first, then the recommendation, then the
+        provider's order; a listed id or alias the catalog knows shows under the catalog's id
+        and label (the API accepts both, settings hold the catalog's). Set aside: the other
+        kinds, unless the reviewed catalog vouches for the model or the user picked it
+        anyway. Picker models of this provider the key does not list come last, `on_key`
+        false."""
+        from ..providers.matrix import MATRIX, full_id, models_for_provider, split_id
 
         d = get_descriptor(name, self.secrets)
         rec = d.recommended_model if d else None
         suffix = self._label_suffix(name)
         picker = set(self._curated_models())
-        live = (entry or {}).get("models") or {}
-        live_ids = [str(i) for i in (entry or {}).get("ids") or []]
-        new = set((entry or {}).get("new") or [])
-        curated = list(models_for_provider(name))
-        curated_bases = {self._alias_base(c.lower()): c for c in curated}
-        # a dated live id whose undated twin is a curated row shows as that row
-        folded = {i: curated_bases[self._alias_base(i.lower())] for i in live_ids if self._alias_base(i.lower()) in curated_bases and i.lower() not in {c.lower() for c in curated}}
-        order = [*[folded.get(i, i) for i in live_ids if i in new], *([rec] if rec else []), *curated, *[folded.get(i, i) for i in live_ids]]
-        rows: list[dict[str, Any]] = []
-        done: set[str] = set()
-        for bare in order:
-            key = bare.lower()
-            if key in done:
-                continue
-            done.add(key)
+        anyway = set(self._prefs.get("picked_anyway") or [])
+        live: dict[str, dict[str, Any]] = {str(k): v for k, v in (entry.get("models") or {}).items() if isinstance(v, dict)}
+        new = set(entry.get("new") or [])
+        curated = {c.lower(): c for c in models_for_provider(name)}
+
+        def catalog_bare(lm: dict[str, Any]) -> Optional[str]:
+            for cand in (lm.get("id"), *(lm.get("aliases") or [])):
+                hit = curated.get(str(cand).lower()) if cand else None
+                if hit:
+                    return hit
+            return None
+
+        def build(lid: str) -> dict[str, Any]:
+            lm = live.get(lid) or {"id": lid}
+            bare = catalog_bare(lm) or lid
             full = full_id(name, bare)
             cat = MATRIX.get(full)
-            listed = self._listed(bare, live_ids) if live_ids else None
-            lm = (live.get(listed) if listed else None) or {}
-            context = cat.context_window if cat else lm.get("context")
-            if cat:
-                verified = "catalog"
-            elif lm.get("context") or lm.get("tools") is not None:
-                verified = "provider"
-            else:
-                verified = "unverified"
-            rows.append({
+            kind, source = str(lm.get("kind") or "chat"), str(lm.get("kind_source") or "none")
+            if kind != "chat" and source == "name" and cat is not None:
+                kind, source = "chat", "catalog"  # a reviewed row is a coworker model by definition
+            return {
                 "id": bare,
                 "model": full,
-                "label": cat.label if cat else f"{lm.get('name') or bare} · {suffix}",
-                "context": context,
-                "tools": cat.caps.tools if cat else lm.get("tools"),
-                "vision": cat.caps.vision if cat else lm.get("vision"),
-                "pdf": cat.caps.pdf if cat else None,  # no listing says; the catalog does
+                "label": cat.label if cat else f"{lm.get('label') or bare} · {suffix}",
+                "kind": kind,
+                "kind_source": source,
+                "detail": lm.get("detail"),
+                "reason": None if kind == "chat" else lm.get("reason"),
+                **self._row_facts(full, cat, lm),
                 "released": lm.get("created"),
                 "in_picker": full in picker,
                 "recommended": bare == rec,
-                "new": bare in new or (listed in new if listed else False),
-                "on_key": (listed is not None) if live_ids else None,
-                "verified": verified,
+                "new": lid in new,
+                "on_key": True,
+                "picked_anyway": full in anyway,
+            }
+
+        offered: list[dict[str, Any]] = []
+        aside: list[dict[str, Any]] = []
+        done: set[str] = set()
+        for lid in [str(i) for i in entry.get("ids") or []]:
+            if lid not in done:
+                done.add(lid)
+                offered.append(build(lid))
+        for lid in [str(i) for i in entry.get("aside") or []]:
+            if lid in done:
+                continue
+            done.add(lid)
+            row = build(lid)
+            (offered if row["kind"] == "chat" or row["picked_anyway"] else aside).append(row)
+        listed_models = {r["model"] for r in offered} | {r["model"] for r in aside}
+        for full in self._curated_models():
+            if full in listed_models or self._model_provider(full) != name:
+                continue
+            _prov, bare = split_id(full)
+            cat = MATRIX.get(full)
+            offered.append({
+                "id": bare,
+                "model": full,
+                "label": cat.label if cat else f"{bare} · {suffix}",
+                "kind": "chat",
+                "kind_source": "catalog" if cat else "none",
+                "detail": None,
+                "reason": None,
+                **self._row_facts(full, cat, {}),
+                "released": None,
+                "in_picker": True,
+                "recommended": bare == rec,
+                "new": False,
+                "on_key": False,
+                "picked_anyway": full in anyway,
             })
+        offered.sort(key=lambda r: (not r["new"], not r["recommended"]))
+        return offered, aside
+
+    def _catalog_rows(self, name: str) -> list[dict[str, Any]]:
+        """The reviewed rows alone, for a provider whose list the app cannot ask (or has no
+        key for yet): what a key would unlock, with the catalog's facts, `on_key` unknown."""
+        from ..providers.matrix import MATRIX, full_id, models_for_provider
+
+        d = get_descriptor(name, self.secrets)
+        rec = d.recommended_model if d else None
+        picker = set(self._curated_models())
+        anyway = set(self._prefs.get("picked_anyway") or [])
+        rows = []
+        for bare in models_for_provider(name):
+            full = full_id(name, bare)
+            cat = MATRIX[full]
+            rows.append({
+                "id": bare,
+                "model": full,
+                "label": cat.label,
+                "kind": "chat",
+                "kind_source": "catalog",
+                "detail": None,
+                "reason": None,
+                **self._row_facts(full, cat, {}),
+                "released": None,
+                "in_picker": full in picker,
+                "recommended": bare == rec,
+                "new": False,
+                "on_key": None,
+                "picked_anyway": full in anyway,
+            })
+        rows.sort(key=lambda r: not r["recommended"])
         return rows
+
+    def _live_row_for(self, model: str) -> Optional[dict[str, Any]]:
+        """The cached live row (as_dict) a picker model stands for, by id or alias."""
+        provider = self._model_provider(model)
+        entry = self._load_catalogs().get(provider) or {}
+        if entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            return None
+        from ..providers.matrix import split_id
+
+        _prov, bare = split_id(model)
+        key = bare.lower()
+        for lm in (entry.get("models") or {}).values():
+            if not isinstance(lm, dict):
+                continue
+            if str(lm.get("id", "")).lower() == key or any(str(a).lower() == key for a in lm.get("aliases") or []):
+                return lm
+        return None
 
     def _not_on_key(self, model: str) -> Optional[dict[str, Any]]:
         """For a keyed provider whose own list we hold: the refusal for an id that list does
@@ -5703,13 +5828,16 @@ class SessionManager:
         if d is None or d.kind == "local" or provider in live_models.NO_LISTING:
             return None
         entry = self._load_catalogs().get(provider) or {}
+        if entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            return None
         ids = [str(i) for i in entry.get("ids") or []]
         if not ids:
             return None
         _prov, bare = split_id(model)
-        # Typed by hand, any id the provider lists is on the key, chat model or not (an
-        # image or music model is not offered in the list, but it is not refused either).
-        if self._listed(bare, [str(i) for i in entry.get("all_ids") or ids]) is not None:
+        # Typed by hand, any id or alias the provider lists is on the key, chat model or not
+        # (an image or music model is not offered in the list, but it is not refused either).
+        known = {str(i).lower() for i in entry.get("all_ids") or ids}
+        if bare.lower() in known:
             return None
         close = difflib.get_close_matches(bare, ids, n=3, cutoff=0.5)
         return {
@@ -5719,20 +5847,21 @@ class SessionManager:
         }
 
     def _rewrite_live_facts(self) -> None:
-        """live_facts.json: the providers' own facts for picker models the catalog does not
-        list, so the engine's window and capabilities_for see them without the manager."""
+        """live_facts.json: what the providers' own lists said about the picker's models, so
+        the engine's window and capabilities_for see it without the manager. Written for
+        every picker model with a live row, catalog or not: the list speaks for the exact id
+        today and wins over the reviewed figure (OPE-252 §11.2)."""
         from ..providers import live_models
-        from ..providers.matrix import MATRIX, full_id
 
         facts: dict[str, dict[str, Any]] = {}
-        picker = set(self._curated_models())
-        for provider, entry in self._load_catalogs().items():
-            suffix = self._label_suffix(provider)
-            for bare, lm in ((entry or {}).get("models") or {}).items():
-                full = full_id(provider, bare)
-                if full in picker and full not in MATRIX and isinstance(lm, dict):
-                    facts[full] = {k: lm.get(k) for k in ("name", "context", "tools", "vision") if lm.get(k) is not None}
-                    facts[full]["label"] = f"{lm.get('name') or bare} · {suffix}"
+        for full in self._curated_models():
+            lm = self._live_row_for(full)
+            if lm is None:
+                continue
+            suffix = self._label_suffix(self._model_provider(full))
+            row = {"name": lm.get("label"), "context": lm.get("context"), "tools": lm.get("tools"), "vision": lm.get("input_image"), "pdf": lm.get("input_pdf")}
+            facts[full] = {k: v for k, v in row.items() if v is not None}
+            facts[full]["label"] = f"{lm.get('label') or lm.get('id')} · {suffix}"
         try:
             live_models.write_facts(facts)
         except OSError:
@@ -5751,7 +5880,13 @@ class SessionManager:
             hidden = self._prefs.get("hidden_models") or []
             if model not in hidden:
                 self._prefs["hidden_models"] = [*hidden, model]
+        picked = [m for m in self._prefs.get("picked_anyway") or [] if m != model]
+        if picked:
+            self._prefs["picked_anyway"] = picked
+        else:
+            self._prefs.pop("picked_anyway", None)  # Undo on the provider page, or an untick
         self._save_prefs()
+        self._rewrite_live_facts()
         return {"ok": True, **self.get_settings()}
 
     def org_policy_status(self) -> dict[str, Any]:
@@ -5805,8 +5940,8 @@ class SessionManager:
             facts = live_facts.get(mid) or {}
             if mid not in labels and (facts.get("label") or facts.get("name")):
                 labels[mid] = str(facts.get("label") or facts["name"])
-            if mid not in windows and facts.get("context"):
-                windows[mid] = int(facts["context"])
+            if facts.get("context"):
+                windows[mid] = int(facts["context"])  # the provider's own figure beats the catalog's (OPE-252 §11.2)
             provider = self._model_provider(mid)
             if provider == "ollama" or provider in LOCAL_SERVERS:
                 verification[mid] = "local"
@@ -5836,6 +5971,9 @@ class SessionManager:
             # the provider's own list, a local server, or nowhere ("unverified": safe
             # defaults the card lets the user correct).
             "model_verification": verification,
+            # Models the user took from a provider's set-aside group with "Use anyway": the
+            # pickers mark them "Your pick · untested" (OPE-252).
+            "model_picked_anyway": [m for m in (self._prefs.get("picked_anyway") or []) if m in selectable],
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
             # model's provider is configured (any provider, not just OpenAI), or for an
