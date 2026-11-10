@@ -80,6 +80,9 @@ impl Fixture {
         f
     }
     fn preflight(&self, scenario: &str, out: &str) -> Output {
+        self.preflight_plan("bootstrap", scenario, out)
+    }
+    fn preflight_plan(&self, plan: &str, scenario: &str, out: &str) -> Output {
         self.command()
             .env("OW_AZ_TEST_SCENARIO", scenario)
             .args([
@@ -87,7 +90,7 @@ impl Fixture {
                 "azure",
                 "preflight",
                 "--plan",
-                self.path("bootstrap").to_str().unwrap(),
+                self.path(plan).to_str().unwrap(),
                 "--out",
                 self.path(out).to_str().unwrap(),
                 "--timeout-seconds",
@@ -689,4 +692,63 @@ fn azure_followup_outputs_cannot_mutate_immutable_inputs_and_bad_install_config_
         .success());
     assert!(!f.path("install").exists());
     assert!(f.log().is_empty());
+}
+
+#[test]
+fn alternative_amd64_sku_exports_and_passes_selected_compute_preflight() {
+    let f = Fixture::ready();
+    let mut config = infrastructure_config();
+    config["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    assert!(infrastructure(&f, &config, "alternative").status.success());
+    let arm: Value =
+        serde_json::from_slice(&fs::read(f.path("alternative/azure-cluster.arm.json")).unwrap())
+            .unwrap();
+    let pool = &arm["resources"][0]["properties"]["agentPoolProfiles"][0];
+    assert_eq!(pool["vmSize"], "Standard_D4as_v7");
+    assert_eq!(pool["count"], 2);
+    assert_eq!(pool["enableAutoScaling"], false);
+    let result = f.preflight_plan("alternative", "ready", "alternative-report");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report = f.report("alternative-report");
+    assert_eq!(report["preflightReady"], true);
+    assert_eq!(report["applyReady"], false);
+    assert_eq!(report["cliCalls"], 15);
+    assert_eq!(report["qualification"]["selectedSkuVerified"], true);
+    assert_eq!(report["qualification"]["initialNodeQuotaVerified"], true);
+    assert!(f
+        .log()
+        .iter()
+        .all(|a| a[0] != "rest" || a.windows(2).any(|w| w == ["--method", "get"])));
+}
+#[test]
+fn selected_compute_restrictions_architecture_and_consumed_quota_block_preflight() {
+    let f = Fixture::ready();
+    let mut config = infrastructure_config();
+    config["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    assert!(infrastructure(&f, &config, "alternative").status.success());
+    for (scenario, code) in [
+        ("restricted-sku", "sku_location_restricted"),
+        ("arm-sku", "sku_capability_mismatch"),
+        ("quota-zero", "insufficient_compute_quota"),
+        ("quota-used", "insufficient_compute_quota"),
+    ] {
+        let result = f.preflight_plan("alternative", scenario, scenario);
+        assert!(!result.status.success(), "{scenario}");
+        let report = f.report(scenario);
+        assert_eq!(report["bootstrapReady"], true);
+        assert_eq!(report["preflightReady"], false);
+        assert_eq!(report["mutations"], 0);
+        assert!(
+            report["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["code"] == code),
+            "{report}"
+        );
+    }
 }

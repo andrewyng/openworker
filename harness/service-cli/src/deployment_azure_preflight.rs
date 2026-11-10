@@ -1,4 +1,4 @@
-//! Read-only Azure bootstrap observation. Never enables providers, exports access
+//! Read-only Azure bootstrap and selected compute observation. Never enables providers, exports access
 //! tokens, switches the selected subscription, logs raw errors or installs extensions.
 use super::*;
 use std::{
@@ -33,6 +33,8 @@ impl Az {
                 | ["account", "show"]
                 | ["group", "show"]
                 | ["provider", "show"]
+                | ["vm", "list-skus"]
+                | ["vm", "list-usage"]
                 | ["rest"]
         ) {
             return Err("operation_not_allowed");
@@ -129,6 +131,75 @@ fn check(rows: &mut Vec<Value>, name: &str, value: Observed, required: bool) -> 
 fn same_id(v: &Value, expected: &str) -> bool {
     v.as_str().is_some_and(|v| v.eq_ignore_ascii_case(expected))
 }
+fn selected_sku(value: Value, size: &str, location: &str) -> Observed {
+    let (family, cores) = graph::node_sku(size).ok_or("unsupported_node_sku")?;
+    let rows = value
+        .as_array()
+        .filter(|v| v.len() == 1)
+        .ok_or("sku_not_found_or_ambiguous")?;
+    let sku = &rows[0];
+    if sku["name"] != size
+        || sku["resourceType"] != "virtualMachines"
+        || !same_id(&sku["family"], family)
+        || !sku["locations"]
+            .as_array()
+            .is_some_and(|v| v.iter().any(|l| same_id(l, location)))
+    {
+        return Err("sku_identity_mismatch");
+    }
+    let capabilities = sku["capabilities"]
+        .as_array()
+        .ok_or("sku_capabilities_missing")?;
+    let cap = |name: &str| -> Option<&str> {
+        let mut found = capabilities.iter().filter(|c| c["name"] == name);
+        let value = found.next()?["value"].as_str()?;
+        found.next().is_none().then_some(value)
+    };
+    if cap("CpuArchitectureType") != Some("x64")
+        || cap("vCPUs").and_then(|v| v.parse::<u64>().ok()) != Some(cores)
+        || !cap("MemoryGB")
+            .and_then(|v| v.parse::<f64>().ok())
+            .is_some_and(|v| v.is_finite() && v >= 16.0)
+        || cap("PremiumIO") != Some("True")
+    {
+        return Err("sku_capability_mismatch");
+    }
+    let restrictions = sku["restrictions"]
+        .as_array()
+        .ok_or("sku_restrictions_missing")?;
+    // The reference template selects no availability zones. Keep zone-only
+    // restrictions visible; location/unknown restrictions must block deployment.
+    if restrictions.iter().any(|r| r["type"] != "Zone") {
+        return Err("sku_location_restricted");
+    }
+    Ok(
+        json!({"name":size,"family":family,"vcpusPerNode":cores,"architecture":"amd64","zoneRestrictions":restrictions,"zonalDeployment":false,"allocationGuaranteed":false,"aksRuntimeQualified":false}),
+    )
+}
+fn quota_headroom(value: Value, family: &str, needed: u64) -> Observed {
+    fn count(v: &Value) -> Option<u64> {
+        v.as_u64().or_else(|| v.as_str()?.parse().ok())
+    }
+    let rows = value.as_array().ok_or("quota_invalid_response")?;
+    let mut limits = vec![];
+    for name in ["cores", family] {
+        let mut found = rows.iter().filter(|r| same_id(&r["name"]["value"], name));
+        let row = found.next().ok_or("quota_missing")?;
+        if found.next().is_some() {
+            return Err("quota_ambiguous");
+        }
+        let used = count(&row["currentValue"]).ok_or("quota_invalid_response")?;
+        let limit = count(&row["limit"]).ok_or("quota_invalid_response")?;
+        let available = limit.checked_sub(used).ok_or("quota_exceeded")?;
+        limits.push(json!({"name":name,"used":used,"limit":limit,"available":available}));
+        if available < needed {
+            return Err("insufficient_compute_quota");
+        }
+    }
+    Ok(
+        json!({"requiredVcpus":needed,"limits":limits,"scope":"initial_node_pool_only","additionalManagementOrSurgeCapacityIncluded":false,"capacityReserved":false}),
+    )
+}
 fn expected_role(p: &Plan, value: Value) -> Observed {
     let expected = role(p);
     let a = &value["properties"];
@@ -203,7 +274,10 @@ fn fresh_directory(out: &Path, plan: &Path) -> Result<()> {
 }
 pub async fn preflight(o: &Preflight) -> Result<()> {
     ensure!(
-        (1..=60).contains(&o.timeout_seconds) && (1..=600).contains(&o.overall_timeout_seconds),
+        // SKU enumeration may take over a minute even with --size: Azure only
+        // supports server-side filtering by location. Retain an explicit bound
+        // and the independent overall deadline instead of retrying the read.
+        (1..=180).contains(&o.timeout_seconds) && (1..=600).contains(&o.overall_timeout_seconds),
         "Invalid preflight deadlines"
     );
     let (p, m) = inspect(&o.plan)?;
@@ -335,10 +409,53 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
             );
         }
     }
+    let bootstrap_ready = checks
+        .iter()
+        .all(|v| v["required"] != true || v["status"] == "ok");
+    let mut sku_verified = false;
+    let mut quota_verified = false;
+    if scope_ok {
+        if let Some(config) = &p.azure_infrastructure {
+            let size = &config.node_vm_size;
+            sku_verified = check(
+                &mut checks,
+                "selected_node_sku",
+                api.read(
+                    &["vm", "list-skus"],
+                    &[
+                        "--location".into(),
+                        location.clone(),
+                        "--resource-type".into(),
+                        "virtualMachines".into(),
+                        "--size".into(),
+                        size.clone(),
+                        "--all".into(),
+                        "--query".into(),
+                        format!("[?name=='{size}']"),
+                    ],
+                )
+                .await
+                .and_then(|v| selected_sku(v, size, location)),
+                true,
+            );
+            let (family, cores) = graph::node_sku(size).context("Unsupported node SKU")?;
+            quota_verified = check(
+                &mut checks,
+                "selected_node_quota",
+                api.read(
+                    &["vm", "list-usage"],
+                    &["--location".into(), location.clone()],
+                )
+                .await
+                .and_then(|v| quota_headroom(v, family, cores * u64::from(p.topology.node_count))),
+                true,
+            );
+        }
+    }
     let ready = checks
         .iter()
         .all(|v| v["required"] != true || v["status"] == "ok");
-    let report = json!({"schemaVersion":1,"provider":"azure","deploymentId":p.deployment_id,"bundleDigest":m.bundle_digest,"observedAtUnix":now()?,"scope":p.target,"resourceGroupScope":scope(&p),"bootstrapReady":ready,"applyReady":false,"mutations":0,"cliCalls":api.calls,"checks":checks,"qualification":{"exactGrantOnly":true,"effectivePermissionsVerified":false,"setupCallerObjectIdentityVerified":false,"infrastructureReady":false,"workloadIdentityReady":false,"expiryGuardInstalled":false,"priceAndQuotaVerified":false},"remaining":["Authenticate the approved setup principal using the customer's login/federation flow","Resolve and grant resource-specific infrastructure actions","Qualify Azure Policy, deny assignments, locks, effective IAM and quotas","Implement Bicep/ARM lifecycle and independent cleanup","Configure AKS workload identity and exact container data grants","Install shared OpenShell/service Helm charts and run live qualification"]});
+    let report = json!({"schemaVersion":1,"provider":"azure","deploymentId":p.deployment_id,"bundleDigest":m.bundle_digest,"observedAtUnix":now()?,"scope":p.target,"resourceGroupScope":scope(&p),"bootstrapReady":bootstrap_ready,"preflightReady":ready,"applyReady":false,"mutations":0,"cliCalls":api.calls,"checks":checks,"qualification":{"exactGrantOnly":true,"effectivePermissionsVerified":false,"setupCallerObjectIdentityVerified":false,"infrastructureReady":false,"workloadIdentityReady":false,"expiryGuardInstalled":false,"priceAndQuotaVerified":false,"selectedSkuVerified":sku_verified,"initialNodeQuotaVerified":quota_verified},"remaining":["Authenticate the approved setup principal using the customer's login/federation flow","Resolve and grant resource-specific infrastructure actions","Qualify Azure Policy, deny assignments, locks, effective IAM and quotas","Qualify ARM lifecycle and independent cleanup in the target subscription","Configure AKS workload identity and exact container data grants","Install shared OpenShell/service Helm charts and run live qualification"]});
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -352,7 +469,60 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
     crate::output(report)?;
     ensure!(
         ready,
-        "Azure bootstrap preflight is blocked; inspect the redacted report"
+        "Azure preflight is blocked; inspect the redacted report"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod compute_tests {
+    use super::*;
+    #[test]
+    fn quota_requires_both_unique_well_formed_limits_and_available_headroom() {
+        let rows = json!([
+            {"name":{"value":"cores"},"currentValue":"0","limit":"12"},
+            {"name":{"value":"standarddasv7family"},"currentValue":2,"limit":10}
+        ]);
+        assert!(quota_headroom(rows.clone(), "StandardDasv7Family", 8).is_ok());
+        assert!(quota_headroom(rows.clone(), "StandardDasv7Family", 9).is_err());
+        for field in ["currentValue", "limit"] {
+            for invalid in [json!(-1), json!(null), json!("bad"), json!(1.5)] {
+                let mut changed = rows.clone();
+                changed[1][field] = invalid;
+                assert!(quota_headroom(changed, "StandardDasv7Family", 8).is_err());
+            }
+        }
+        assert!(quota_headroom(json!([rows[0]]), "StandardDasv7Family", 8).is_err());
+        assert!(
+            quota_headroom(json!([rows[0], rows[1], rows[1]]), "StandardDasv7Family", 8).is_err()
+        );
+    }
+    #[test]
+    fn sku_observation_matches_exact_size_region_family_and_architecture() {
+        let sku = json!([{"name":"Standard_D4as_v7","resourceType":"virtualMachines",
+            "family":"StandardDasv7Family","locations":["westus2"],"restrictions":[],
+            "capabilities":[{"name":"CpuArchitectureType","value":"x64"},
+                {"name":"vCPUs","value":"4"},{"name":"MemoryGB","value":"16"},
+                {"name":"PremiumIO","value":"True"}]}]);
+        assert!(selected_sku(sku.clone(), "Standard_D4as_v7", "westus2").is_ok());
+        for (field, value) in [
+            ("family", json!("unrelated")),
+            ("locations", json!(["eastus"])),
+            ("restrictions", json!(null)),
+            ("capabilities", json!([])),
+        ] {
+            let mut changed = sku.clone();
+            changed[0][field] = value;
+            assert!(selected_sku(changed, "Standard_D4as_v7", "westus2").is_err());
+        }
+        assert!(selected_sku(json!([sku[0], sku[0]]), "Standard_D4as_v7", "westus2").is_err());
+        let mut zonal = sku.clone();
+        zonal[0]["restrictions"] = json!([{"type":"Zone","restrictionInfo":{"zones":["1"]}}]);
+        assert!(
+            !selected_sku(zonal, "Standard_D4as_v7", "westus2").unwrap()["zoneRestrictions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
 }

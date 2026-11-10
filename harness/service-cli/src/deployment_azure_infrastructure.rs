@@ -38,6 +38,16 @@ fn identifier(s: &str) -> bool {
         && s.bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
+// Bounded reference choices, not an OpenShell hardware dependency. Eligibility
+// and regional/family quota must still be observed in the target subscription.
+pub(crate) fn node_sku(size: &str) -> Option<(&'static str, u64)> {
+    match size {
+        "Standard_D4s_v5" => Some(("standardDSv5Family", 4)),
+        "Standard_D8s_v5" => Some(("standardDSv5Family", 8)),
+        "Standard_D4as_v7" => Some(("StandardDasv7Family", 4)),
+        _ => None,
+    }
+}
 impl Inputs {
     pub(crate) fn validate(&self, p: &Plan) -> Result<()> {
         use base64::Engine;
@@ -61,7 +71,7 @@ impl Inputs {
             "Pin an exact Kubernetes 1.x.y version; regional availability requires live preflight"
         );
         ensure!(
-            ["Standard_D4s_v5", "Standard_D8s_v5"].contains(&self.node_vm_size.as_str()),
+            node_sku(&self.node_vm_size).is_some(),
             "Use an explicitly bounded AMD64 node SKU; OpenShell compatibility remains a live gate"
         );
         let key: Vec<_> = self.ssh_public_key.split_whitespace().collect();
