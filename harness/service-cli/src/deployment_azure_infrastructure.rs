@@ -20,7 +20,19 @@ pub(crate) struct Inputs {
     pub(crate) admin_group_object_ids: Vec<String>,
     pub(crate) control_resource_group: String,
     pub(crate) guard_image: String,
+    /// Optional private ACR in the independent control group. Pulls use the
+    /// cleanup identity, never a registry password or workload-owned registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) guard_registry_resource_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) management_access: Option<ManagementAccess>,
     pub(crate) postgres_password: SecretReference,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ManagementAccess {
+    pub(crate) operator_ipv4: std::net::Ipv4Addr,
+    pub(crate) ubuntu_image_version: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -45,6 +57,7 @@ pub(crate) fn node_sku(size: &str) -> Option<(&'static str, u64)> {
         "Standard_D4s_v5" => Some(("standardDSv5Family", 4)),
         "Standard_D8s_v5" => Some(("standardDSv5Family", 8)),
         "Standard_D4as_v7" => Some(("StandardDasv7Family", 4)),
+        "Standard_D2as_v7" => Some(("StandardDasv7Family", 2)),
         _ => None,
     }
 }
@@ -71,7 +84,7 @@ impl Inputs {
             "Pin an exact Kubernetes 1.x.y version; regional availability requires live preflight"
         );
         ensure!(
-            node_sku(&self.node_vm_size).is_some(),
+            node_sku(&self.node_vm_size).is_some_and(|(_, cores)| cores >= 4),
             "Use an explicitly bounded AMD64 node SKU; OpenShell compatibility remains a live gate"
         );
         let key: Vec<_> = self.ssh_public_key.split_whitespace().collect();
@@ -147,6 +160,29 @@ impl Inputs {
                 .contains(&format!("{}.azurecr.io", names(p).registry)),
             "Cleanup image must survive deletion of the workload registry"
         );
+        if let Some(registry_id) = &self.guard_registry_resource_id {
+            let prefix = format!("/subscriptions/{subscription}/resourceGroups/{}/providers/Microsoft.ContainerRegistry/registries/", self.control_resource_group);
+            let name = registry_id
+                .strip_prefix(&prefix)
+                .context("Cleanup registry must be in the exact independent control group")?;
+            ensure!(
+                (5..=50).contains(&name.len())
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    && self.guard_image.starts_with(&format!("{name}.azurecr.io/")),
+                "Cleanup image and registry identity must match"
+            );
+        }
+        if let Some(access) = &self.management_access {
+            ensure!(self.node_vm_size == "Standard_D4as_v7"
+                && !access.operator_ipv4.is_unspecified() && !access.operator_ipv4.is_loopback()
+                && !access.operator_ipv4.is_multicast()
+                && access.ubuntu_image_version.split('.').count() == 3
+                && access.ubuntu_image_version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+                && access.ubuntu_image_version.split('.').all(|s| !s.is_empty()),
+                "Management access requires bounded Dasv7 nodes, one operator IPv4, and a pinned Ubuntu image version");
+        }
         Ok(())
     }
 }
@@ -232,7 +268,7 @@ fn assignment_resource(
 /// disappear with parents; the customer RG and AKS-generated node RG are not owned.
 pub(crate) fn inventory(p: &Plan) -> Vec<Value> {
     let n = names(p);
-    [
+    let mut resources: Vec<Value> = [
       ("cluster","Microsoft.ContainerService/managedClusters",format!("{}-aks",n.prefix),"2024-10-01","/systemData/createdAt"),
       ("foundation","Microsoft.DBforPostgreSQL/flexibleServers",format!("{}-pg",n.prefix),"2024-08-01","/systemData/createdAt"),
       ("foundation","Microsoft.Network/privateEndpoints",format!("{}-blob",n.prefix),"2024-05-01","/systemData/createdAt"),
@@ -244,7 +280,42 @@ pub(crate) fn inventory(p: &Plan) -> Vec<Value> {
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-artifacts",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-kubelet",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-cluster",n.prefix),"2023-01-31","/properties/principalId"),
-    ].into_iter().map(|(stage,kind,name,api,pointer)|json!({"stage":stage,"id":id(p,kind,&name),"apiVersion":api,"incarnationPointer":pointer})).collect()
+    ].into_iter().map(|(stage,kind,name,api,pointer)|json!({"stage":stage,"id":id(p,kind,&name),"apiVersion":api,"incarnationPointer":pointer})).collect();
+    if p.azure_infrastructure
+        .as_ref()
+        .unwrap()
+        .management_access
+        .is_some()
+    {
+        let access = [
+            (
+                "Microsoft.Compute/virtualMachines",
+                "management",
+                "2024-07-01",
+                "/properties/vmId",
+            ),
+            (
+                "Microsoft.Network/networkInterfaces",
+                "management-nic",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+            (
+                "Microsoft.Network/publicIPAddresses",
+                "management-ip",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+            (
+                "Microsoft.Network/networkSecurityGroups",
+                "management-nsg",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+        ];
+        resources.splice(0..0, access.into_iter().map(|(kind, suffix, api, pointer)| json!({"stage":"foundation","id":id(p,kind,&format!("{}-{suffix}",n.prefix)),"apiVersion":api,"incarnationPointer":pointer})));
+    }
+    resources
 }
 pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     let c = p
@@ -357,6 +428,60 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     pg["sku"] = json!({"name":"Standard_B1ms","tier":"Burstable"});
     pg["dependsOn"] = json!([vnet, pg_zone]);
     foundation.push(pg);
+    if let Some(access) = &c.management_access {
+        foundation[0]["properties"]["subnets"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"management","properties":{"addressPrefix":"10.72.6.0/24"}}));
+        let nic = id(
+            p,
+            "Microsoft.Network/networkInterfaces",
+            &format!("{}-management-nic", n.prefix),
+        );
+        let pip = id(
+            p,
+            "Microsoft.Network/publicIPAddresses",
+            &format!("{}-management-ip", n.prefix),
+        );
+        let nsg = id(
+            p,
+            "Microsoft.Network/networkSecurityGroups",
+            &format!("{}-management-nsg", n.prefix),
+        );
+        let mut ip = resource(
+            p,
+            "Microsoft.Network/publicIPAddresses",
+            "2024-05-01",
+            &format!("{}-management-ip", n.prefix),
+            json!({"publicIPAllocationMethod":"Static","publicIPAddressVersion":"IPv4"}),
+        );
+        ip["sku"] = json!({"name":"Standard"});
+        foundation.push(ip);
+        foundation.push(resource(p,"Microsoft.Network/networkSecurityGroups","2024-05-01",&format!("{}-management-nsg",n.prefix),json!({"securityRules":[{"name":"operator-ssh","properties":{"priority":100,"protocol":"Tcp","access":"Allow","direction":"Inbound","sourceAddressPrefix":format!("{}/32",access.operator_ipv4),"sourcePortRange":"*","destinationAddressPrefix":"*","destinationPortRange":"22"}}]})));
+        let mut iface = resource(
+            p,
+            "Microsoft.Network/networkInterfaces",
+            "2024-05-01",
+            &format!("{}-management-nic", n.prefix),
+            json!({"networkSecurityGroup":{"id":nsg},"ipConfigurations":[{"name":"primary","properties":{"privateIPAllocationMethod":"Dynamic","subnet":{"id":format!("{vnet}/subnets/management")},"publicIPAddress":{"id":pip}}}]}),
+        );
+        iface["dependsOn"] = json!([vnet, nsg, pip]);
+        foundation.push(iface);
+        let mut vm = resource(
+            p,
+            "Microsoft.Compute/virtualMachines",
+            "2024-07-01",
+            &format!("{}-management", n.prefix),
+            json!({
+                "hardwareProfile":{"vmSize":"Standard_D2as_v7"},
+                "storageProfile":{"diskControllerType":"NVMe","imageReference":{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":access.ubuntu_image_version},"osDisk":{"createOption":"FromImage","diskSizeGB":32,"deleteOption":"Delete","managedDisk":{"storageAccountType":"StandardSSD_LRS"}}},
+                "osProfile":{"computerName":"ow-management","adminUsername":"owsadmin","linuxConfiguration":{"disablePasswordAuthentication":true,"ssh":{"publicKeys":[{"path":"/home/owsadmin/.ssh/authorized_keys","keyData":c.ssh_public_key}]}}},
+                "networkProfile":{"networkInterfaces":[{"id":nic,"properties":{"primary":true,"deleteOption":"Detach"}}]}
+            }),
+        );
+        vm["dependsOn"] = json!([nic]);
+        foundation.push(vm);
+    }
     let mut ft = template(foundation, json!({}));
     ft["parameters"]["postgresPassword"] = json!({"type":"secureString"});
     let mut aks = resource(
@@ -437,6 +562,7 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         }
     }
     for action in [
+        "Microsoft.Network/networkInterfaces/join/action",
         "Microsoft.Network/virtualNetworks/subnets/read",
         "Microsoft.Network/virtualNetworks/subnets/join/action",
         "Microsoft.Network/privateDnsZones/virtualNetworkLinks/read",

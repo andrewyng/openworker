@@ -159,7 +159,7 @@ fn selected_sku(value: Value, size: &str, location: &str) -> Observed {
         || cap("vCPUs").and_then(|v| v.parse::<u64>().ok()) != Some(cores)
         || !cap("MemoryGB")
             .and_then(|v| v.parse::<f64>().ok())
-            .is_some_and(|v| v.is_finite() && v >= 16.0)
+            .is_some_and(|v| v.is_finite() && v >= (cores * 4) as f64)
         || cap("PremiumIO") != Some("True")
     {
         return Err("sku_capability_mismatch");
@@ -197,7 +197,7 @@ fn quota_headroom(value: Value, family: &str, needed: u64) -> Observed {
         }
     }
     Ok(
-        json!({"requiredVcpus":needed,"limits":limits,"scope":"initial_node_pool_only","additionalManagementOrSurgeCapacityIncluded":false,"capacityReserved":false}),
+        json!({"requiredVcpus":needed,"limits":limits,"scope":"initial_node_pool_only","managementCapacityIncluded":false,"surgeCapacityIncluded":false,"capacityReserved":false}),
     )
 }
 fn expected_role(p: &Plan, value: Value) -> Observed {
@@ -438,6 +438,29 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
                 .and_then(|v| selected_sku(v, size, location)),
                 true,
             );
+            if config.management_access.is_some() {
+                check(
+                    &mut checks,
+                    "management_sku",
+                    api.read(
+                        &["vm", "list-skus"],
+                        &[
+                            "--location".into(),
+                            location.clone(),
+                            "--resource-type".into(),
+                            "virtualMachines".into(),
+                            "--size".into(),
+                            "Standard_D2as_v7".into(),
+                            "--all".into(),
+                            "--query".into(),
+                            "[?name=='Standard_D2as_v7']".into(),
+                        ],
+                    )
+                    .await
+                    .and_then(|v| selected_sku(v, "Standard_D2as_v7", location)),
+                    true,
+                );
+            }
             let (family, cores) = graph::node_sku(size).context("Unsupported node SKU")?;
             quota_verified = check(
                 &mut checks,
@@ -447,7 +470,26 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
                     &["--location".into(), location.clone()],
                 )
                 .await
-                .and_then(|v| quota_headroom(v, family, cores * u64::from(p.topology.node_count))),
+                .and_then(|v| {
+                    quota_headroom(
+                        v,
+                        family,
+                        cores * u64::from(p.topology.node_count)
+                            + if config.management_access.is_some() {
+                                2
+                            } else {
+                                0
+                            },
+                    )
+                    .map(|mut detail| {
+                        if config.management_access.is_some() {
+                            detail["scope"] = json!("initial_node_pool_and_management");
+                            detail["managementVcpusIncluded"] = json!(2);
+                            detail["managementCapacityIncluded"] = json!(true);
+                        }
+                        detail
+                    })
+                }),
                 true,
             );
         }

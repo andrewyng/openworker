@@ -987,13 +987,18 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
     let cleanup_assignment = json!({"properties":{"principalId":recipient,"principalType":"ServicePrincipal","roleDefinitionId":role_id}});
     let blob_scope = format!("{account_id}/blobServices/default/containers/control");
     let builtin=format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe");
-    let control_resources = vec![
+    let mut control_resources = vec![
         json!({"type":"Microsoft.ManagedIdentity/userAssignedIdentities","apiVersion":"2023-01-31","name":identity_name,"location":location}),
         json!({"type":"Microsoft.Storage/storageAccounts","apiVersion":"2023-05-01","name":control_account,"location":location,"sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{"allowSharedKeyAccess":false,"allowBlobPublicAccess":false,"minimumTlsVersion":"TLS1_2","supportsHttpsTrafficOnly":true,"publicNetworkAccess":"Enabled"}}),
         json!({"type":"Microsoft.Storage/storageAccounts/blobServices/containers","apiVersion":"2023-05-01","name":format!("{control_account}/default/control"),"dependsOn":[account_id],"properties":{"publicAccess":"None"}}),
         json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":"none"}}}),
         json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
     ];
+    if let Some(registry) = &c.guard_registry_resource_id {
+        let server = format!("{}.azurecr.io", registry.rsplit('/').next().unwrap());
+        control_resources.last_mut().unwrap()["properties"]["configuration"]["registries"] =
+            json!([{"server":server,"identity":identity_id}]);
+    }
     let template = json!({"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":control_resources});
     let blob_binding = json!({"schemaVersion":1,"scope":blob_scope,"roleDefinitionId":builtin,"assignments":[{"guid":guid(p,"cleanup-control"),"principalId":recipient,"principalType":"ServicePrincipal"},{"guid":guid(p,"setup-control"),"principalId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"principalType":p.azure_bootstrap.as_ref().unwrap().setup_principal_type.azure()}],"resolveIdentityAfterControlDeployment":true});
     let job_role = json!({"properties":{"roleName":format!("{}-cleanup-stop",n.prefix),"type":"CustomRole","assignableScopes":[control_scope],"permissions":[{"actions":["Microsoft.App/jobs/read","Microsoft.App/jobs/delete"],"notActions":[],"dataActions":[],"notDataActions":[]}]},"assignmentScope":job_id(p),"principalId":recipient,"roleDefinitionGuid":guid(p,"cleanup-stop-role"),"assignmentGuid":guid(p,"cleanup-stop-assignment")});
@@ -1018,6 +1023,15 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
             json_bytes(
                 &json!({"deploymentId":p.deployment_id,"bundleDigest":s.bundle_digest,"control":control_url(p),"controlScope":control_scope,"cleanupRoleDefinitionId":role_id,"cleanupRoleUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleDefinitions/{}?api-version=2022-04-01",scope(p),guid(p,"cleanup-role")),"cleanupAssignmentUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleAssignments/{}?api-version=2022-04-01",scope(p),guid(p,"cleanup-workload")),"initializationRequired":true,"retainedControlOwnedByCustomer":true,"liveQualified":false}),
             )?,
+        ),
+        (
+            "azure-control-registry-binding.json".into(),
+            json_bytes(&match &c.guard_registry_resource_id {
+                Some(registry) => {
+                    json!({"scope":registry,"principalId":recipient,"principalType":"ServicePrincipal","roleDefinitionId":format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"),"assignmentGuid":guid(p,"cleanup-registry-pull"),"resolveIdentityAfterControlDeployment":true,"automaticGrant":false})
+                }
+                None => json!({"required":false}),
+            })?,
         ),
         ("AZURE-CLEANUP.md".into(), readme.into_bytes()),
     ]))
@@ -1321,6 +1335,40 @@ mod tests {
         assert!(c.writes.is_empty());
     }
     #[test]
+    fn private_registry_pulls_bind_cleanup_identity_and_reject_credential_drift() {
+        let mut s = state();
+        let input = s.plan.azure_infrastructure.as_mut().unwrap();
+        input.guard_registry_resource_id = Some("/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/customer-control/providers/Microsoft.ContainerRegistry/registries/controlacr".into());
+        input.guard_image = format!("controlacr.azurecr.io/cleanup@sha256:{}", "a".repeat(64));
+        s.bundle_digest = digest(&s.plan).unwrap();
+        let job = fixture_job(&s);
+        assert!(guard_body(&s, &job).is_ok());
+        let files = control_artifacts(&s).unwrap();
+        let binding: Value =
+            serde_json::from_slice(&files["azure-control-registry-binding.json"]).unwrap();
+        assert_eq!(
+            binding["scope"],
+            s.plan
+                .azure_infrastructure
+                .as_ref()
+                .unwrap()
+                .guard_registry_resource_id
+                .as_ref()
+                .unwrap()
+                .as_str()
+        );
+        for (field, value) in [
+            ("identity", json!("system")),
+            ("server", json!("foreign.azurecr.io")),
+            ("passwordSecretRef", json!("password")),
+            ("username", json!("admin")),
+        ] {
+            let mut changed = job.clone();
+            changed["properties"]["configuration"]["registries"][0][field] = value;
+            assert!(guard_body(&s, &changed).is_err());
+        }
+    }
+    #[test]
     fn control_package_has_no_keys_no_cluster_dependency_and_retains_audit_control() {
         let s = state();
         let files = control_artifacts(&s).unwrap();
@@ -1559,6 +1607,35 @@ fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
             && config["scheduleTriggerConfig"]["replicaCompletionCount"] == 1,
         "Independent cleanup job configuration drift"
     );
+    if let Some(registry) = &s
+        .plan
+        .azure_infrastructure
+        .as_ref()
+        .unwrap()
+        .guard_registry_resource_id
+    {
+        let entries = config["registries"]
+            .as_array()
+            .filter(|v| v.len() == 1)
+            .context("Exactly one managed-identity cleanup registry required")?;
+        let entry = &entries[0];
+        ensure!(
+            entry["server"] == format!("{}.azurecr.io", registry.rsplit('/').next().unwrap())
+                && entry["identity"]
+                    .as_str()
+                    .is_some_and(|v| v.eq_ignore_ascii_case(&mi))
+                && entry.get("username").is_none_or(Value::is_null)
+                && entry.get("passwordSecretRef").is_none_or(Value::is_null),
+            "Cleanup registry authentication drift"
+        );
+    } else {
+        ensure!(
+            config
+                .get("registries")
+                .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty)),
+            "Unexpected cleanup registry credentials"
+        );
+    }
     Ok(receipt)
 }
 

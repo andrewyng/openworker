@@ -39,6 +39,20 @@ assume subscription Owner rights, and the normal executor is not granted permiss
 to change role assignments. Keep customer-owned/shared resources outside the trial's
 cleanup scope.
 
+For a private cleanup image, set `guardRegistryResourceId` to an existing ACR in
+the control resource group and use its digest-pinned image in `guardImage`. The
+cleanup package configures managed-identity pulls and exports an exact `AcrPull`
+assignment for review. Registry passwords and workload-owned cleanup images are
+not supported.
+
+An optional `managementAccess` object accepts `operatorIpv4` and a pinned
+`ubuntuImageVersion` for Canonical's `ubuntu-24_04-lts:server` image. With Dasv7
+nodes, this adds one `Standard_D2as_v7` management VM, restricted to SSH from that
+single IPv4 address. The VM, NIC, public IP and security group are tracked by the
+same expiry cleanup as the workload; its generated OS disk uses delete-on-VM-delete.
+The private AKS API remains private. Preflight includes the extra two vCPUs; a
+verified SSH tunnel can keep the operator's Azure credentials on their machine.
+
 This deployment path is experimental. Validate live Azure permissions, network,
 OpenShell compatibility and independent cleanup in your subscription before use.
 

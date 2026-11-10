@@ -752,3 +752,71 @@ fn selected_compute_restrictions_architecture_and_consumed_quota_block_preflight
         );
     }
 }
+
+#[test]
+fn private_control_registry_and_management_access_are_bounded_and_cleanup_owned() {
+    let f = Fixture::ready();
+    let mut c = infrastructure_config();
+    c["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    c["guardImage"] = serde_json::json!(format!(
+        "trialcontrol.azurecr.io/cleanup@sha256:{}",
+        "a".repeat(64)
+    ));
+    c["guardRegistryResourceId"] = serde_json::json!("/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/customer-ow-control/providers/Microsoft.ContainerRegistry/registries/trialcontrol");
+    c["managementAccess"] =
+        serde_json::json!({"operatorIpv4":"203.0.113.42","ubuntuImageVersion":"24.04.202610010"});
+    assert!(infrastructure(&f, &c, "managed").status.success());
+    let get = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(f.path("managed").join(name)).unwrap()).unwrap()
+    };
+    let inv = get("azure-inventory.json");
+    assert_eq!(inv["resources"].as_array().unwrap().len(), 15);
+    assert!(inv["resources"][0]["id"]
+        .as_str()
+        .unwrap()
+        .contains("Microsoft.Compute/virtualMachines"));
+    let arm = get("azure-foundation.arm.json");
+    let resources = arm["resources"].as_array().unwrap();
+    let vm = resources
+        .iter()
+        .find(|r| r["type"] == "Microsoft.Compute/virtualMachines")
+        .unwrap();
+    assert_eq!(
+        vm["properties"]["hardwareProfile"]["vmSize"],
+        "Standard_D2as_v7"
+    );
+    assert_eq!(
+        vm["properties"]["storageProfile"]["osDisk"]["deleteOption"],
+        "Delete"
+    );
+    assert_eq!(
+        vm["properties"]["osProfile"]["linuxConfiguration"]["disablePasswordAuthentication"],
+        true
+    );
+    let nsg = resources
+        .iter()
+        .find(|r| r["type"] == "Microsoft.Network/networkSecurityGroups")
+        .unwrap();
+    assert_eq!(
+        nsg["properties"]["securityRules"][0]["properties"]["sourceAddressPrefix"],
+        "203.0.113.42/32"
+    );
+    let result = f.preflight_plan("managed", "ready", "managed-report");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report = f.report("managed-report");
+    let quota = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "selected_node_quota")
+        .unwrap();
+    assert_eq!(quota["detail"]["requiredVcpus"], 10);
+    for (key,bad) in [("guardRegistryResourceId",serde_json::json!("/subscriptions/other/resourceGroups/other/providers/Microsoft.ContainerRegistry/registries/trialcontrol")),("managementAccess",serde_json::json!({"operatorIpv4":"0.0.0.0/0","ubuntuImageVersion":"latest"}))] {
+        let mut invalid=c.clone();invalid[key]=bad;
+        assert!(!infrastructure(&f,&invalid,"invalid-managed").status.success());
+    }
+}

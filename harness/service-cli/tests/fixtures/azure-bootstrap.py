@@ -96,8 +96,8 @@ if args[:2] == ["vm", "list-skus"]:
     assert value("--location") == target["location"]
     assert value("--resource-type") == "virtualMachines" and "--all" in args
     assert value("--query") == "[?name=='" + size + "']"
-    family = "StandardDasv7Family" if size == "Standard_D4as_v7" else "standardDSv5Family"
-    caps = {"CpuArchitectureType": "x64", "vCPUs": "8" if size == "Standard_D8s_v5" else "4", "MemoryGB": "16", "PremiumIO": "True"}
+    family = "StandardDasv7Family" if size in ["Standard_D4as_v7", "Standard_D2as_v7"] else "standardDSv5Family"
+    caps = {"CpuArchitectureType": "x64", "vCPUs": "8" if size == "Standard_D8s_v5" else "2" if size == "Standard_D2as_v7" else "4", "MemoryGB": "16", "PremiumIO": "True"}
     if scenario == "arm-sku": caps["CpuArchitectureType"] = "Arm64"
     emit([{"name":size,"family":family,"resourceType":"virtualMachines","locations":[target["location"]],"capabilities":[{"name":k,"value":v} for k,v in caps.items()],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription"}] if scenario == "restricted-sku" else []}])
 if args[:2] == ["vm", "list-usage"]:

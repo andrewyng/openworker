@@ -9,7 +9,10 @@ use tokio::{
 const OWNER: &str = "openworker.io/installer-id";
 #[path = "deployment_cluster_platform.rs"]
 mod platform;
-const CHART_SHA: &str = "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33";
+const CHART_PINS: &[&str] = &[
+    "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33", // 0.1.3
+    "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a", // 0.1.7 official OCI archive
+];
 #[derive(Subcommand)]
 pub enum Command {
     Platform {
@@ -436,8 +439,8 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
     {
         let sha = hash_path(archive)?;
         ensure!(
-            sha == CHART_SHA,
-            "OpenShell archive differs from qualified 0.1.3 pin"
+            CHART_PINS.contains(&sha.as_str()),
+            "OpenShell archive differs from reviewed 0.1.3/0.1.7 pins"
         );
         let v = read_json(values_file)?;
         ensure!(
