@@ -1496,6 +1496,14 @@ mod tests {
         s.bundle_digest = digest(&s.plan).unwrap();
         let job = fixture_job(&s);
         assert!(guard_body(&s, &job).is_ok());
+        // Azure's completed GET normalizes omitted registry credentials to "".
+        for empty in [Value::Null, json!("")] {
+            let mut normalized = job.clone();
+            normalized["properties"]["configuration"]["registries"][0]["username"] = empty.clone();
+            normalized["properties"]["configuration"]["registries"][0]["passwordSecretRef"] = empty;
+            assert!(guard_body(&s, &normalized).is_ok());
+        }
+
         let files = control_artifacts(&s).unwrap();
         let binding: Value =
             serde_json::from_slice(&files["azure-control-registry-binding.json"]).unwrap();
@@ -1790,8 +1798,12 @@ fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
                 && entry["identity"]
                     .as_str()
                     .is_some_and(|v| v.eq_ignore_ascii_case(&mi))
-                && entry.get("username").is_none_or(Value::is_null)
-                && entry.get("passwordSecretRef").is_none_or(Value::is_null),
+                && entry
+                    .get("username")
+                    .is_none_or(|v| v.is_null() || v.as_str() == Some(""))
+                && entry
+                    .get("passwordSecretRef")
+                    .is_none_or(|v| v.is_null() || v.as_str() == Some("")),
             "Cleanup registry authentication drift"
         );
     } else {
