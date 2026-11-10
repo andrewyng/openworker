@@ -51,15 +51,13 @@ impl Az {
             return Err("timeout");
         }
         let mut cmd = Command::new("az");
-        cmd.args(command)
-            .args(args)
-            .args([
-                "--subscription",
-                &self.subscription,
-                "--only-show-errors",
-                "--output",
-                "json",
-            ])
+        cmd.args(command).args(args);
+        // `az cloud show` reads CLI-wide cloud configuration and rejects
+        // --subscription. Every resource-scoped read must still pin the target.
+        if command != ["cloud", "show"] {
+            cmd.args(["--subscription", &self.subscription]);
+        }
+        cmd.args(["--only-show-errors", "--output", "json"])
             .env("AZURE_CORE_ONLY_SHOW_ERRORS", "true")
             .env("AZURE_CORE_COLLECT_TELEMETRY", "false")
             .env("AZURE_EXTENSION_USE_DYNAMIC_INSTALL", "no")
@@ -106,6 +104,7 @@ impl Az {
                 if message.contains("AuthorizationFailed") || message.contains("Forbidden") {
                     "access_denied"
                 } else if message.contains("ResourceNotFound")
+                    || message.contains("ResourceGroupNotFound")
                     || message.contains("RoleDefinitionDoesNotExist")
                 {
                     "not_found"
@@ -249,7 +248,12 @@ pub async fn preflight(o: &Preflight) -> Result<()> {
         api.read(&["cloud", "show"], &[]).await.and_then(|v| {
             if v["name"] == "AzureCloud"
                 && v["endpoints"]["resourceManager"] == "https://management.azure.com/"
-                && v["endpoints"]["activeDirectory"] == "https://login.microsoftonline.com/"
+                && matches!(
+                    v["endpoints"]["activeDirectory"].as_str(),
+                    Some(
+                        "https://login.microsoftonline.com" | "https://login.microsoftonline.com/"
+                    )
+                )
             {
                 Ok(json!({"cloud":"AzureCloud","publicManagementEndpoint":true}))
             } else {

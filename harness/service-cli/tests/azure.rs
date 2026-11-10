@@ -91,7 +91,9 @@ impl Fixture {
                 "--out",
                 self.path(out).to_str().unwrap(),
                 "--timeout-seconds",
-                "1",
+                // Keep the deliberate timeout case short; ordinary fake CLI
+                // startups need headroom when the full suite runs in parallel.
+                if scenario == "timeout" { "1" } else { "5" },
                 "--overall-timeout-seconds",
                 "20",
             ])
@@ -222,9 +224,54 @@ fn read_only_preflight_verifies_exact_grant_without_claiming_deployment_readines
     assert_eq!(f.log().len(), 13);
 }
 #[test]
+fn cloud_read_omits_subscription_but_all_resource_reads_pin_the_target() {
+    let f = Fixture::ready();
+    let r = f.preflight("ready", "argument-contract");
+    assert!(
+        r.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&r.stderr),
+        String::from_utf8_lossy(&r.stdout)
+    );
+    let calls = f.log();
+    assert_eq!(calls.len(), 13);
+    assert_eq!(&calls[0][..2], ["cloud", "show"]);
+    assert!(!calls[0].iter().any(|a| a == "--subscription"));
+    for call in &calls[1..] {
+        assert_eq!(call.iter().filter(|a| *a == "--subscription").count(), 1);
+        assert!(call
+            .windows(2)
+            .any(|w| w == ["--subscription", "66666666-7777-4888-8999-aaaaaaaaaaaa"]));
+        assert!(call[0] != "rest" || call.windows(2).any(|w| w == ["--method", "get"]));
+    }
+    assert_eq!(f.report("argument-contract")["mutations"], 0);
+}
+#[test]
+fn missing_resource_group_is_reported_without_querying_or_changing_grants() {
+    let f = Fixture::ready();
+    let r = f.preflight("missing-group", "missing-group-report");
+    assert!(!r.status.success());
+    let report = f.report("missing-group-report");
+    assert_eq!(report["checks"][0]["status"], "ok");
+    assert_eq!(report["checks"][1]["status"], "ok");
+    assert_eq!(report["checks"][2]["code"], "not_found");
+    assert_eq!(report["mutations"], 0);
+    assert_eq!(f.log().len(), 3);
+    assert!(!report.to_string().contains("sensitive-error-canary"));
+}
+#[test]
+fn public_auth_endpoint_with_trailing_slash_remains_supported() {
+    let f = Fixture::ready();
+    let r = f.preflight("auth-trailing-slash", "trailing-slash");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(f.report("trailing-slash")["checks"][0]["status"], "ok");
+}
+#[test]
 fn wrong_cloud_scope_principal_or_role_fails_closed_and_errors_are_redacted() {
     for scenario in [
         "custom-endpoint",
+        "custom-auth-endpoint",
+        "auth-endpoint-path",
         "wrong-tenant",
         "wrong-group",
         "broad-role",

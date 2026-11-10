@@ -35,13 +35,23 @@ if scenario == "too-large":
     print("x" * (1024 * 1024 + 20))
     sys.exit(0)
 if args[:2] == ["cloud", "show"]:
+    # Match the real Azure CLI: cloud configuration is not subscription-scoped.
+    if "--subscription" in args:
+        print("ERROR: unrecognized arguments: --subscription", file=sys.stderr)
+        sys.exit(2)
     c = {
         "name": "AzureCloud",
         "endpoints": {
             "resourceManager": "https://management.azure.com/",
-            "activeDirectory": "https://login.microsoftonline.com/",
+            "activeDirectory": "https://login.microsoftonline.com",
         },
     }
+    if scenario == "auth-trailing-slash":
+        c["endpoints"]["activeDirectory"] += "/"
+    if scenario == "custom-auth-endpoint":
+        c["endpoints"]["activeDirectory"] = "https://login.microsoftonline.com.example.invalid/"
+    if scenario == "auth-endpoint-path":
+        c["endpoints"]["activeDirectory"] += "/untrusted"
     if scenario == "custom-endpoint":
         c["endpoints"]["resourceManager"] = "https://example.invalid/"
     query = value("--query")
@@ -59,6 +69,9 @@ if args[:2] == ["account", "show"]:
         a["tenantId"] = "11111111-1111-1111-1111-111111111111"
     emit(a.get(value("--query")) if value("--query") else a)
 if args[:2] == ["group", "show"]:
+    if scenario == "missing-group":
+        print("ResourceGroupNotFound sensitive-error-canary", file=sys.stderr)
+        sys.exit(1)
     g = {"id": scope, "properties": {"provisioningState": "Succeeded"}}
     if scenario == "wrong-group":
         g["id"] = scope + "-other"
