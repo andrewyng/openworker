@@ -290,6 +290,7 @@ export function ModelsTab() {
             // curated rows (OPE-252); the curated checklist when it has no list.
             <ProviderModels
               provider={ps.sel}
+              providerTitle={info?.title}
               knownProviders={knownNames}
               suggested={info?.suggested_models || []}
               settings={settings}

@@ -257,6 +257,9 @@ export function App() {
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   // Per-model settings the user saved (UX-055): the picker shows context and thinking.
   const [modelConfig, setModelConfig] = useState<Record<string, import("./api").ModelConfigRecord>>({});
+  // Models taken from a provider's set-aside group with "Use anyway" (OPE-252): the composer's
+  // picker marks them "Your pick · untested".
+  const [pickedAnyway, setPickedAnyway] = useState<string[]>([]);
   // {full model id → context window in tokens} from the curated matrix (verified only);
   // drives the composer usage chip's context-fill meter.
   const [modelContextWindows, setModelContextWindows] = useState<Record<string, number>>({});
@@ -838,6 +841,7 @@ export function App() {
         setModels(s.models || []);
         setModelLabels(s.model_labels || {});
         setModelConfig(s.model_config || {});
+        setPickedAnyway(s.model_picked_anyway || []);
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setHideReasoningRunning(s.hide_reasoning_running === true);
@@ -2612,6 +2616,7 @@ export function App() {
               wantedModels={personaModels}
               modelLabels={machine ? machineSettings?.model_labels || {} : modelLabels}
               modelConfig={machine ? machineSettings?.model_config || {} : modelConfig}
+              pickedAnyway={machine ? machineSettings?.model_picked_anyway || [] : pickedAnyway}
               // "Pick or configure a model…" opens Models & Keys with the dialog up.
               onPickModel={() => {
                 try { sessionStorage.setItem("ow:pick-model", "1"); } catch { /* private window */ }

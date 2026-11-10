@@ -81,10 +81,12 @@ export function PickModelDialog({
   const [loadFailed, setLoadFailed] = useState(false);
   const [reload, setReload] = useState(0);
   const fixedContext = provider?.name === "llamacpp" || provider?.name === "vllm";
-  // A cloud model the reviewed catalog does not know (OPE-252): its window came from the
-  // provider's own list or from nowhere; either way the user may set it here.
+  // A cloud model's window (OPE-252 §11.2): the user's own figure wins over the provider's
+  // list and over the reviewed catalog, so every cloud model may be set here; the listed
+  // figure is the starting value.
   const verification = model ? settings.model_verification?.[model] : undefined;
-  const cloudWindowEditable = !isLocal && !!model && verification !== undefined && verification !== "catalog" && verification !== "local";
+  const cloudWindowEditable = !isLocal && !!model && verification !== "local";
+  const pickedAnyway = !!model && !!settings.model_picked_anyway?.includes(model);
   const listedWindow = model ? settings.model_context_windows?.[model] || null : null;
 
   // Step 2: the models the chosen provider offers. Also read when the dialog opens on
@@ -327,7 +329,7 @@ export function PickModelDialog({
               line(3, "todo", t("pick.settings"), undefined, undefined, t("pick.after_model"))
             ) : (
               <>
-                {line(3, "now", t("pick.settings"), undefined, undefined, [rec?.name, row?.size_bytes ? fmtBytes(row.size_bytes) : "", row?.tools || rec ? t("pick.tools") : "", thinkingAvailable ? t("manage.thinking_tag") : ""].filter(Boolean).join(" · "))}
+                {line(3, "now", t("pick.settings"), undefined, undefined, [pickedAnyway ? t("manage.catalog_your_pick") : "", rec?.name, row?.size_bytes ? fmtBytes(row.size_bytes) : "", row?.tools || rec ? t("pick.tools") : "", thinkingAvailable ? t("manage.thinking_tag") : ""].filter(Boolean).join(" · "))}
                 {view && (
                   <div className="ml-[30px] mt-2" data-testid="pick-settings">
                     {isLocal && !fixedContext &&
@@ -339,7 +341,7 @@ export function PickModelDialog({
                     {cloudWindowEditable &&
                       setting("context", t("pick.context_size"),
                         select("context", String(draft.context_size || listedWindow || ""), [{ v: "", label: t("pick.context_unknown") }, ...CONTEXT_STEPS.map((c) => ({ v: String(c), label: fmtContext(c) }))], (v) => setDraft((d) => ({ ...d, context_size: v ? Number(v) : undefined }))),
-                        verification === "provider" ? t("pick.context_from_provider") : t("pick.context_unverified"))}
+                        t("pick.context_note"))}
                     {setting("reply", t("pick.longest_reply"),
                       select("reply", String(draft.max_output_tokens || ""), [{ v: "", label: t("pick.provider_default") }, ...REPLY_STEPS.map((c) => ({ v: String(c), label: `${fmtContext(c)} ${t("pick.tokens")}` }))], (v) => setDraft((d) => ({ ...d, max_output_tokens: v ? Number(v) : undefined }))),
                       recNote(rec?.max_output_tokens && draft.max_output_tokens === rec.max_output_tokens ? "recommended" : undefined))}

@@ -1,8 +1,9 @@
-// OPE-252 layer 1: a keyed provider's page lists what its own model list says the key can
-// call, merged with the curated rows — one list, models new since the last check on top —
-// with tick-to-add, the facts' provenance, "not on this key", Refresh, a ticked row's name
-// opening the model's settings, and a typed id the key cannot call refused with the closest
-// ids. A provider without a list falls back to the curated checklist.
+// OPE-252 layer 1 (design of 2026-11-10): a keyed provider's page offers exactly what its own
+// list says the key can call — one list of chat models with a line of plain facts under each
+// name, the other kinds behind one collapsed line with "Use anyway", a "Your pick · untested"
+// badge with Undo, the name as the one way into a model's settings, Refresh, search, and a
+// typed id the key cannot call refused with the closest ids. A provider without a list falls
+// back to the curated checklist; a first ask that fails shows the error and Retry only.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -19,33 +20,38 @@ import { addModel, getProviderCatalog, removeModel, type ModelSettings, type Pro
 import { ProviderModels } from "./ProviderModels";
 
 const row = (over: Partial<ProviderCatalogRow>): ProviderCatalogRow => ({
-  id: "x", model: "openrouter:x", label: "X", context: null, tools: null, vision: null, released: null,
-  pdf: null, in_picker: false, recommended: false, new: false, on_key: true, verified: "unverified", ...over,
+  id: "x", model: "cohere:x", label: "X · Cohere", kind: "chat", kind_source: "provider", detail: null, reason: null,
+  context: null, max_output: null, input_image: null, input_pdf: null, tools: null, reasoning: null, retires_at: null, released: null,
+  in_picker: false, recommended: false, new: false, on_key: true, picked_anyway: false, ...over,
 });
 
 const LIVE: ProviderCatalog = {
-  ok: true, provider: "openrouter", configured: true, listing: "live", fetched_at: Math.floor(Date.now() / 1000) - 30, count: 4,
+  ok: true, provider: "cohere", configured: true, listing: "live", fetched_at: Math.floor(Date.now() / 1000) - 7200, count: 4,
   rows: [
-    row({ id: "lab/brand-new", model: "openrouter:lab/brand-new", label: "Brand New", new: true, context: 262144 }),
-    row({ id: "z-ai/glm-5.2", model: "openrouter:z-ai/glm-5.2", label: "GLM-5.2 · via OpenRouter", verified: "catalog", recommended: true, in_picker: true, context: 1048576, vision: true, pdf: true }),
-    row({ id: "openai/gpt-6-astra", model: "openrouter:openai/gpt-6-astra", label: "OpenAI: GPT-6 Astra", verified: "provider", context: 922000, vision: true }),
-    row({ id: "lab/mystery", model: "openrouter:lab/mystery", label: "Mystery" }),
-    row({ id: "moonshotai/kimi-k3", model: "openrouter:moonshotai/kimi-k3", label: "Kimi K3 · via OpenRouter", verified: "catalog", in_picker: true, on_key: false }),
+    row({ id: "command-a-plus-05-2026", model: "cohere:command-a-plus-05-2026", label: "Command A+ · Cohere", recommended: true, in_picker: true, context: 436000, input_image: true, tools: true, reasoning: true }),
+    row({ id: "command-a-fresh", model: "cohere:command-a-fresh", label: "command-a-fresh · Cohere", new: true, context: 288000, tools: true }),
+    row({ id: "command-a-translate-08-2025", model: "cohere:command-a-translate-08-2025", label: "command-a-translate-08-2025 · Cohere", context: 8992, tools: false, retires_at: "2026-12-11" }),
+    row({ id: "command-plain", model: "cohere:command-plain", label: "command-plain · Cohere", kind_source: "none" }),
+    row({ id: "command-r-old", model: "cohere:command-r-old", label: "Command R · Cohere", kind_source: "catalog", in_picker: true, on_key: false, context: 128000 }),
   ],
-  new: ["openrouter:lab/brand-new"],
-  not_on_key: ["openrouter:moonshotai/kimi-k3"],
+  set_aside: [
+    row({ id: "embed-v4", model: "cohere:embed-v4", label: "embed-v4 · Cohere", kind: "embedding", reason: "Built for embeddings", context: 512 }),
+    row({ id: "whisper-ish", model: "cohere:whisper-ish", label: "whisper-ish · Cohere", kind: "speech_to_text", kind_source: "name", detail: "whisper", reason: "Likely built for speech to text" }),
+  ],
+  new: ["cohere:command-a-fresh"],
+  not_on_key: ["cohere:command-r-old"],
 };
 
 const SETTINGS = {
-  models: ["openrouter:z-ai/glm-5.2", "openrouter:moonshotai/kimi-k3"],
-  model: "openrouter:z-ai/glm-5.2",
+  models: ["cohere:command-a-plus-05-2026", "cohere:command-r-old"],
+  model: "cohere:command-a-plus-05-2026",
   model_labels: {},
 } as unknown as ModelSettings;
 
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
 function renderPanel(onChanged = vi.fn(), onConfigure?: (model: string) => void) {
-  render(<ProviderModels provider="openrouter" knownProviders={["openai", "openrouter"]} suggested={["z-ai/glm-5.2"]} settings={SETTINGS} onChanged={onChanged} onConfigure={onConfigure} />);
+  render(<ProviderModels provider="cohere" providerTitle="Cohere" knownProviders={["openai", "cohere"]} suggested={["command-a-plus-05-2026"]} settings={SETTINGS} onChanged={onChanged} onConfigure={onConfigure} />);
   return onChanged;
 }
 
@@ -57,88 +63,153 @@ afterEach(() => {
 });
 
 describe("ProviderModels with a live listing", () => {
-  it("asks the provider once on open and lays the rows out in one list with their facts", async () => {
+  it("asks the provider once on open and shows the chat models with their facts as plain text", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
     renderPanel();
     expect(screen.getByTestId("provider-models-loading").textContent).toContain("Checking which models");
     await flush();
-    expect(getProviderCatalog).toHaveBeenCalledWith("openrouter", false);
-    expect(screen.getByTestId("catalog-status").textContent).toContain("4 models on this key");
-    expect(screen.getByTestId("catalog-new").textContent).toContain("Brand New");
-    const list = screen.getByTestId("catalog-list");
-    const names = Array.from(list.querySelectorAll(".mlist-name")).map((n) => n.textContent);
-    expect(names).toEqual(["GLM-5.2 · via OpenRouter", "OpenAI: GPT-6 Astra", "Mystery", "Kimi K3 · via OpenRouter"]); // the backend's order, one list
-    expect(list.textContent).not.toContain("Brand New");
-    expect(screen.queryByText("Reviewed by OpenWorker")).toBeNull();
-    // the facts and where they came from
-    expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("new");
-    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("922K context");
-    expect(screen.getByTestId("catalog-tags-lab/brand-new").textContent).toContain("262K context");
-    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("1M context");
-    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).toContain("reads images");
-    expect(screen.getByTestId("catalog-tags-openai/gpt-6-astra").textContent).not.toContain("PDF");
-    expect(screen.getByTestId("catalog-tags-z-ai/glm-5.2").textContent).toContain("reads images and PDFs");
-    expect(screen.getByTestId("catalog-tags-lab/mystery").textContent).toContain("unverified");
-    expect(screen.getByTestId("catalog-tags-moonshotai/kimi-k3").textContent).toContain("not on this key");
-    expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked models are not on this key");
+    expect(getProviderCatalog).toHaveBeenCalledWith("cohere", false);
+    expect(screen.getByTestId("catalog-status").textContent).toContain("4 models on this key · from Cohere's list, checked 2 h ago");
+    const names = Array.from(screen.getByTestId("catalog-list").querySelectorAll(".mlist-name")).map((n) => n.textContent);
+    expect(names).toEqual(["Command A+", "command-a-fresh", "command-a-translate-08-2025", "command-plain", "Command R"]); // the backend's order, one list, no headings
+    expect(screen.queryByText("New since last check")).toBeNull();
+    expect(screen.queryByText(/From Cohere/)).toBeNull(); // no legend, no source marking anywhere
+    expect(screen.queryByText(/unverified/i)).toBeNull();
+    // the facts line: plain words separated by middle dots
+    expect(screen.getByTestId("catalog-facts-command-a-plus-05-2026").textContent).toBe("Context 436K·Images in·Tools·Reasoning");
+    expect(screen.getByTestId("catalog-facts-command-a-fresh").textContent).toBe("New·Context 288K·Tools");
+    // a row whose vendor gave nothing has no facts line at all
+    expect(screen.queryByTestId("catalog-facts-command-plain")).toBeNull();
+    // the id in grey when the display name differs from it
+    expect(screen.getByTestId("catalog-row-command-a-plus-05-2026").querySelector(".mlist-id")!.textContent).toBe("command-a-plus-05-2026");
+    expect(screen.getByTestId("catalog-row-command-plain").querySelector(".mlist-id")).toBeNull();
     // the default row is ticked and locked
-    const glm = screen.getByTestId("catalog-row-z-ai/glm-5.2").querySelector("input") as HTMLInputElement;
-    expect(glm.checked && glm.disabled).toBe(true);
+    const plus = screen.getByTestId("catalog-row-command-a-plus-05-2026").querySelector("input") as HTMLInputElement;
+    expect(plus.checked && plus.disabled).toBe(true);
   });
 
-  it("a ticked row's name opens the model's settings without unticking it; an unticked row's name is plain text", async () => {
+  it("second-look facts are amber: a short window, no tools, a retirement date; a ticked model the key lacks says so", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
+    renderPanel();
+    await flush();
+    const facts = screen.getByTestId("catalog-facts-command-a-translate-08-2025");
+    const amber = Array.from(facts.querySelectorAll(".text-warnInk")).map((n) => n.textContent);
+    expect(amber).toEqual(["Context 9K — short for long tasks", "No tool support — coworkers cannot act", "Retires 11 Dec 2026"]);
+    expect(screen.getByTestId("catalog-facts-command-r-old").querySelector(".text-danger")!.textContent).toBe("Not on this key");
+    expect(screen.getByTestId("catalog-not-on-key").textContent).toContain("1 ticked models are not on this key");
+  });
+
+  it("every model name opens the model's settings without toggling the tick", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
     const onConfigure = vi.fn();
     renderPanel(vi.fn(), onConfigure);
     await flush();
-    const kimi = screen.getByTestId("catalog-configure-moonshotai/kimi-k3");
-    expect(kimi.tagName).toBe("BUTTON");
-    expect(kimi.getAttribute("title")).toBe("Settings for this model");
-    fireEvent.click(kimi);
-    expect(onConfigure).toHaveBeenCalledWith("openrouter:moonshotai/kimi-k3");
+    const ticked = screen.getByTestId("catalog-configure-command-r-old");
+    expect(ticked.tagName).toBe("BUTTON");
+    expect(ticked.getAttribute("title")).toBe("Settings for this model");
+    fireEvent.click(ticked);
+    expect(onConfigure).toHaveBeenCalledWith("cohere:command-r-old");
     expect(removeModel).not.toHaveBeenCalled();
-    expect((screen.getByTestId("catalog-row-moonshotai/kimi-k3").querySelector("input") as HTMLInputElement).checked).toBe(true);
-    // not ticked: nothing to configure yet, so the name is not a button
-    expect(screen.queryByTestId("catalog-configure-openai/gpt-6-astra")).toBeNull();
-    expect(screen.getByTestId("catalog-row-openai/gpt-6-astra").querySelector(".mlist-name")!.tagName).toBe("SPAN");
+    expect((screen.getByTestId("catalog-row-command-r-old").querySelector("input") as HTMLInputElement).checked).toBe(true);
+    // an unticked row's name too: the dialog adds the model when its settings are saved
+    fireEvent.click(screen.getByTestId("catalog-configure-command-plain"));
+    expect(onConfigure).toHaveBeenLastCalledWith("cohere:command-plain");
+    expect(addModel).not.toHaveBeenCalled();
+    // no Edit button anywhere: the name is the one way in
+    expect(screen.queryByText("Edit")).toBeNull();
   });
 
-  it("without a settings opener (no dialog on this page) every name is plain text", async () => {
+  it("without a settings opener every name is plain text", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
     renderPanel();
     await flush();
-    expect(screen.queryByTestId("catalog-configure-moonshotai/kimi-k3")).toBeNull();
-    expect(screen.getByTestId("catalog-row-moonshotai/kimi-k3").querySelector(".mlist-name")!.tagName).toBe("SPAN");
+    expect(screen.queryByTestId("catalog-configure-command-plain")).toBeNull();
+    expect(screen.getByTestId("catalog-row-command-plain").querySelector(".mlist-name")!.tagName).toBe("SPAN");
   });
 
-  it("tick adds the routed id, untick removes it, and the page learns the new picker", async () => {
+  it("tick adds the routed id, untick removes it, and the page re-reads the list", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
-    vi.mocked(addModel).mockResolvedValue({ ok: true, models: [...SETTINGS.models, "openrouter:openai/gpt-6-astra"], model: SETTINGS.model } as any);
+    vi.mocked(addModel).mockResolvedValue({ ok: true, models: [...SETTINGS.models, "cohere:command-plain"], model: SETTINGS.model } as any);
     vi.mocked(removeModel).mockResolvedValue({ ok: true, models: [SETTINGS.models[0]], model: SETTINGS.model } as any);
     const onChanged = renderPanel();
     await flush();
-    fireEvent.click(screen.getByTestId("catalog-row-openai/gpt-6-astra").querySelector("input")!);
-    await waitFor(() => expect(addModel).toHaveBeenCalledWith("openrouter:openai/gpt-6-astra"));
-    await waitFor(() => expect(onChanged).toHaveBeenCalledWith({ models: [...SETTINGS.models, "openrouter:openai/gpt-6-astra"], model: SETTINGS.model }));
-    expect((screen.getByTestId("catalog-row-openai/gpt-6-astra").querySelector("input") as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByTestId("catalog-row-moonshotai/kimi-k3").querySelector("input")!);
-    await waitFor(() => expect(removeModel).toHaveBeenCalledWith("openrouter:moonshotai/kimi-k3"));
+    fireEvent.click(screen.getByTestId("catalog-row-command-plain").querySelector("input")!);
+    await waitFor(() => expect(addModel).toHaveBeenCalledWith("cohere:command-plain"));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith({ models: [...SETTINGS.models, "cohere:command-plain"], model: SETTINGS.model }));
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByTestId("catalog-row-command-r-old").querySelector("input")!);
+    await waitFor(() => expect(removeModel).toHaveBeenCalledWith("cohere:command-r-old"));
   });
 
-  it("a typed id the key cannot call is refused with the closest ids, and one click adds the right one", async () => {
-    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
-    vi.mocked(addModel)
-      .mockResolvedValueOnce({ ok: false, error: "Not available on this key: openai/gpt-6-astro", reason: "not_on_key", suggestions: ["openai/gpt-6-astra"] } as any)
-      .mockResolvedValueOnce({ ok: true, models: [...SETTINGS.models, "openrouter:openai/gpt-6-astra"], model: SETTINGS.model } as any);
+  it("the set-aside models sit behind one line; Show lists them with the reason and Use anyway; the explanation then adds the model", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValueOnce(LIVE).mockResolvedValue({
+      ...LIVE,
+      rows: [...LIVE.rows, row({ id: "embed-v4", model: "cohere:embed-v4", label: "embed-v4 · Cohere", kind: "embedding", reason: "Built for embeddings", context: 512, in_picker: true, picked_anyway: true })],
+      set_aside: [LIVE.set_aside[1]],
+    });
+    vi.mocked(addModel).mockResolvedValue({ ok: true, models: [...SETTINGS.models, "cohere:embed-v4"], model: SETTINGS.model } as any);
     const onChanged = renderPanel();
     await flush();
-    fireEvent.change(screen.getByTestId("catalog-add-input"), { target: { value: "openai/gpt-6-astro" } });
+    expect(screen.getByTestId("catalog-aside-line").textContent).toContain("2 more models on this key are for images, speech, embeddings and other tasks.");
+    expect(screen.queryByTestId("catalog-aside")).toBeNull();
+    fireEvent.click(screen.getByTestId("catalog-aside-toggle"));
+    expect(screen.getByTestId("catalog-aside-toggle").textContent).toBe("Hide");
+    expect(screen.getByTestId("catalog-aside").querySelectorAll(".mlist-row").length).toBe(2);
+    expect(screen.getByTestId("catalog-aside-embed-v4").querySelector("input")).toBeNull(); // no checkbox
+    expect(screen.getByTestId("catalog-reason-embed-v4").textContent).toBe("Built for embeddings"); // the vendor said: definite
+    expect(screen.getByTestId("catalog-reason-whisper-ish").textContent).toBe("Likely built for speech to text"); // our name rule: hedged
+    expect(screen.queryByText(/by its name|naming convention/)).toBeNull();
+    // Use anyway opens the explanation under the row, with the two templates
+    fireEvent.click(screen.getByTestId("catalog-use-embed-v4"));
+    expect(screen.getByTestId("catalog-why-embed-v4").textContent).toContain("Cohere's API lists it as embeddings, not chat. Coworkers send conversations and tool calls");
+    expect(screen.getByTestId("catalog-why-embed-v4").textContent).toContain("If you use it anyway. It is ticked and shows in the picker marked “Your pick · untested”. Undo any time.");
+    fireEvent.click(screen.getByTestId("catalog-use-whisper-ish"));
+    expect(screen.queryByTestId("catalog-why-embed-v4")).toBeNull(); // one explanation open at a time
+    expect(screen.getByTestId("catalog-why-whisper-ish").textContent).toContain("Cohere's API gives no details for this model. Its name suggests speech to text. If you know it chats, use it.");
+    fireEvent.click(screen.getByTestId("catalog-keep-whisper-ish"));
+    expect(screen.queryByTestId("catalog-why-whisper-ish")).toBeNull();
+    expect(addModel).not.toHaveBeenCalled();
+    // confirm: the model is added "anyway" and the page re-reads the list
+    fireEvent.click(screen.getByTestId("catalog-use-embed-v4"));
+    fireEvent.click(screen.getByTestId("catalog-use-confirm-embed-v4"));
+    await waitFor(() => expect(addModel).toHaveBeenCalledWith("cohere:embed-v4", true));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("catalog-row-embed-v4")).toBeTruthy());
+    // now in the list, ticked, with the badge, the reason and Undo
+    expect((screen.getByTestId("catalog-row-embed-v4").querySelector("input") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByTestId("catalog-your-pick-embed-v4").textContent).toBe("Your pick · untested");
+    expect(screen.getByTestId("catalog-added-embed-v4").textContent).toContain("Added by you · Built for embeddings");
+    expect(screen.getByTestId("catalog-aside-line").textContent).toContain("1 more model on this key is for images");
+  });
+
+  it("Undo on a Your-pick row removes the model", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue({
+      ...LIVE,
+      rows: [...LIVE.rows, row({ id: "embed-v4", model: "cohere:embed-v4", label: "embed-v4 · Cohere", kind: "embedding", reason: "Built for embeddings", in_picker: true, picked_anyway: true })],
+    });
+    vi.mocked(removeModel).mockResolvedValue({ ok: true, models: SETTINGS.models, model: SETTINGS.model } as any);
+    renderPanel();
+    await flush();
+    fireEvent.click(screen.getByTestId("catalog-undo-embed-v4"));
+    await waitFor(() => expect(removeModel).toHaveBeenCalledWith("cohere:embed-v4"));
+  });
+
+  it("the Add box names the provider, and a typed id the key cannot call is refused with the closest ids", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
+    vi.mocked(addModel)
+      .mockResolvedValueOnce({ ok: false, error: "Not available on this key: command-a-plux", reason: "not_on_key", suggestions: ["command-a-plus-05-2026"] } as any)
+      .mockResolvedValueOnce({ ok: true, models: SETTINGS.models, model: SETTINGS.model } as any);
+    const onChanged = renderPanel();
+    await flush();
+    expect(screen.getByTestId("catalog-add-box").textContent).toContain("Not in the list? Add a Cohere model by its id.");
+    expect(screen.getByTestId("catalog-add-input").getAttribute("placeholder")).toBe("Model id…");
+    fireEvent.change(screen.getByTestId("catalog-add-input"), { target: { value: "command-a-plux" } });
     fireEvent.click(screen.getByTestId("catalog-add"));
-    await waitFor(() => expect(screen.getByTestId("catalog-add-error").textContent).toContain("Not available on this key: openai/gpt-6-astro"));
-    expect(addModel).toHaveBeenCalledWith("openrouter:openai/gpt-6-astro");
+    await waitFor(() => expect(screen.getByTestId("catalog-add-error").textContent).toContain("Not available on this key: command-a-plux"));
+    expect(addModel).toHaveBeenCalledWith("cohere:command-a-plux");
     expect(screen.getByTestId("catalog-add-error").textContent).toContain("Did you mean:");
-    fireEvent.click(screen.getByTestId("catalog-suggest-openai/gpt-6-astra"));
-    await waitFor(() => expect(addModel).toHaveBeenLastCalledWith("openrouter:openai/gpt-6-astra"));
+    fireEvent.click(screen.getByTestId("catalog-suggest-command-a-plus-05-2026"));
+    await waitFor(() => expect(addModel).toHaveBeenLastCalledWith("cohere:command-a-plus-05-2026"));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(screen.queryByTestId("catalog-add-error")).toBeNull();
   });
@@ -148,23 +219,21 @@ describe("ProviderModels with a live listing", () => {
     renderPanel();
     await flush();
     fireEvent.click(screen.getByTestId("catalog-refresh"));
-    await waitFor(() => expect(getProviderCatalog).toHaveBeenLastCalledWith("openrouter", true));
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenLastCalledWith("cohere", true));
     await waitFor(() => expect(screen.getByTestId("catalog-error").textContent).toContain("HTTP 503"));
-    expect(screen.getByTestId("catalog-list").textContent).toContain("GLM-5.2");
+    expect(screen.getByTestId("catalog-list").textContent).toContain("Command A+");
   });
 
-  it("search narrows every section and long lists fold", async () => {
-    const many = Array.from({ length: 20 }, (_, i) => row({ id: `lab/m${i}`, model: `openrouter:lab/m${i}`, label: `Model ${i}` }));
-    vi.mocked(getProviderCatalog).mockResolvedValue({ ...LIVE, rows: [...LIVE.rows, ...many] });
+  it("search narrows the list and reaches the set-aside rows too", async () => {
+    vi.mocked(getProviderCatalog).mockResolvedValue(LIVE);
     renderPanel();
     await flush();
-    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(12);
-    expect(screen.getByTestId("catalog-show-all").textContent).toContain("Show all 24");
-    fireEvent.click(screen.getByTestId("catalog-show-all"));
-    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(24);
-    fireEvent.change(screen.getByTestId("catalog-search"), { target: { value: "astra" } });
-    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(1);
-    expect(screen.queryByTestId("catalog-new")).toBeNull();
+    fireEvent.change(screen.getByTestId("catalog-search"), { target: { value: "embed" } });
+    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(0);
+    expect(screen.getByTestId("catalog-aside").querySelectorAll(".mlist-row").length).toBe(1);
+    expect(screen.queryByTestId("catalog-aside-line")).toBeNull();
+    fireEvent.change(screen.getByTestId("catalog-search"), { target: { value: "command-a" } });
+    expect(screen.getByTestId("catalog-list").querySelectorAll(".mlist-row").length).toBe(3);
   });
 });
 
@@ -172,8 +241,8 @@ describe("ProviderModels without a live listing", () => {
   it("a provider with no list shows the reason and the curated checklist", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue({
       ok: true, provider: "bedrock", configured: true, listing: "none",
-      reason: "Bedrock lists models per region with AWS credentials; the curated rows are shown.",
-      rows: [], new: [], not_on_key: [],
+      reason: "Bedrock lists models per region with AWS credentials the app does not sign yet; the curated rows are shown.",
+      rows: [], set_aside: [], new: [], not_on_key: [],
     });
     render(<ProviderModels provider="bedrock" knownProviders={["openai", "bedrock"]} suggested={["claude/anthropic.claude-sonnet-4-6-v1:0"]} settings={SETTINGS} onChanged={vi.fn()} />);
     await flush();
@@ -182,15 +251,17 @@ describe("ProviderModels without a live listing", () => {
     expect(screen.queryByTestId("catalog-status")).toBeNull();
   });
 
-  it("a refused key on the first ask says so, offers Retry, and still shows the curated rows", async () => {
+  it("a refused key on the first ask shows the error, Retry and the Add box, never the curated rows", async () => {
     vi.mocked(getProviderCatalog)
-      .mockResolvedValueOnce({ ok: true, provider: "openrouter", configured: true, listing: "error", error: "The provider refused the key.", rows: [], new: [], not_on_key: [] })
+      .mockResolvedValueOnce({ ok: true, provider: "cohere", configured: true, listing: "error", error: "The provider refused the key.", rows: [], set_aside: [], new: [], not_on_key: [] })
       .mockResolvedValueOnce(LIVE);
     renderPanel();
     await flush();
     expect(screen.getByTestId("provider-models-reason").textContent).toContain("refused the key");
+    expect(screen.getByTestId("provider-models-fallback").querySelectorAll(".mlist-row").length).toBe(0);
+    expect(screen.getByTestId("catalog-add-input")).toBeTruthy();
     fireEvent.click(screen.getByTestId("provider-models-retry"));
-    await waitFor(() => expect(getProviderCatalog).toHaveBeenLastCalledWith("openrouter", true));
+    await waitFor(() => expect(getProviderCatalog).toHaveBeenLastCalledWith("cohere", true));
     await waitFor(() => expect(screen.getByTestId("catalog-status")).toBeTruthy());
   });
 

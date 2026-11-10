@@ -95,6 +95,7 @@ interface Props {
   // Entries of `models` this machine cannot run (a coworker's `models:` list names them
   // regardless, spec §4): shown in the menu with a note, never hidden.
   unavailableModels?: string[];
+  pickedAnyway?: string[]; // "Use anyway" picks from a provider page: marked "Your pick · untested" (OPE-252)
   // The coworker's own `models:` list when none of it runs here: the "No model" chip
   // names what would work instead of a bare warning.
   wantedModels?: string[];
@@ -573,7 +574,7 @@ export function Composer(props: Props) {
     const cfg = props.modelConfig?.[m];
     const notes = isLocalModel(m)
       ? [cfg?.context_size ? `${Math.round(cfg.context_size / 1024)}K` : "", cfg?.thinking ? t("composer.model.thinking") : ""]
-      : [provider || (m.includes(":") ? m.split(":")[0] : "")];
+      : [provider || (m.includes(":") ? m.split(":")[0] : ""), props.pickedAnyway?.includes(m) ? t("manage.catalog_your_pick") : ""];
     return {
       value: m,
       label: name,
