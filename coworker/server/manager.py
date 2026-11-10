@@ -5591,8 +5591,8 @@ class SessionManager:
             return {**base, "listing": "none", "reason": "Add a key to ask this provider which models it serves.", **empty, "rows": self._catalog_rows(name)}
         catalogs = self._load_catalogs()
         entry = catalogs.get(name)
-        if entry and entry.get("v") != self.CATALOG_ENTRY_VERSION:
-            entry = None  # written by an older build: ask again rather than read it wrong
+        if entry and (entry.get("v") != self.CATALOG_ENTRY_VERSION or entry.get("labels") != live_models.LABELS_VERSION):
+            entry = None  # written by an older build, or named by older rules: ask again
         now = time.time()
         error: Optional[str] = None
         fresh = bool(entry) and (now - float(entry.get("fetched_at") or 0)) < self.CATALOG_TTL_SECONDS
@@ -5610,6 +5610,7 @@ class SessionManager:
                 seen_set = set(seen)
                 entry = {
                     "v": self.CATALOG_ENTRY_VERSION,
+                    "labels": live_models.LABELS_VERSION,
                     "fetched_at": now,
                     "ids": ids,
                     "aside": [m.id for m in listing.models if not m.offered],
