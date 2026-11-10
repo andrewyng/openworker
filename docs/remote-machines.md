@@ -19,7 +19,8 @@ A few things are true by design, before any setup:
 ## What you need
 
 - The OpenWorker **desktop app** on your Mac or PC (this is the controller).
-- A **Linux machine** (Ubuntu 22.04+ or similar, x64 or ARM) with Python 3.10+.
+- A **Linux machine** (Ubuntu 22.04+ or similar, x64 or ARM), or a **Mac**.
+  The Python installation route requires Python 3.10+ (or `uv` to manage it).
 - A network path from the machine **to** your desktop — see
   [Reachability](#reachability-how-the-machine-finds-your-desktop) below.
   Tailscale is the easy answer; an SSH reverse tunnel works with nothing but
@@ -33,9 +34,12 @@ On the remote machine (Linux or a Mac):
 curl -fsSL https://openworker.com/install.sh | sh
 ```
 
-This downloads the `openworker` program for the machine into `~/.local/share/openworker`
-and links it into `~/.local/bin`. No Python is needed. The script tells you if
-`~/.local/bin` is not on your PATH yet.
+On supported Linux systems, this downloads the `openworker` program into
+`~/.local/share/openworker` and links it into `~/.local/bin`; no Python is
+needed. On macOS, the script uses the Python package route with `uv` or `pipx`.
+The script tells you if the command's bin directory is not on your PATH yet.
+If it reports that the PyPI package is a placeholder, that route has not yet
+published a usable runtime; do not treat the placeholder as a working install.
 
 Check it:
 
@@ -53,18 +57,32 @@ shows it.) Your desktop binds to localhost only, so pick one of these:
 
 **Option A — Tailscale (recommended).** Install [Tailscale](https://tailscale.com)
 on both computers. In the desktop app, enable listening on the tailnet
-interface, and use your desktop's Tailscale address in the join URL. Survives
-reboots on both ends with no extra care.
+interface, and use your desktop's Tailscale address in the join URL. Tailscale
+alone does not expose a localhost-only server: changing the URL's address is
+not enough. If your app version has no listener configuration available, use
+the SSH option below. Both the desktop app and the machine service must be
+running after a reboot.
 
 **Option B — SSH reverse tunnel (zero new software).** If you can SSH from your
 desktop to the machine, run this **on your desktop** and leave it running:
 
 ```bash
-ssh -N -o ServerAliveInterval=15 -R 8765:localhost:8765 you@your-machine
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:18765:127.0.0.1:8765 you@your-machine
 ```
 
 This makes your desktop's server appear at the *machine's own*
-`localhost:8765` — the join URL from the app works exactly as displayed.
+`127.0.0.1:18765`. The separate remote port avoids colliding with a desktop app
+already using 8765 on the machine. In the join command, replace the app URL's
+host and port with `127.0.0.1:18765`, keeping its `/j/<token>` path unchanged:
+
+```bash
+openworker join http://127.0.0.1:18765/j/<token> --name=my-box
+```
+
+If the controller uses a port other than 8765, change the last port in the SSH
+forwarding argument. Keep the remote listener bound to loopback. Run
+`nc -vz 127.0.0.1 18765` on the machine as a TCP check; successful enrollment
+is the application-level check that the tunnel reaches the controller.
 Note: the tunnel dies if either end reboots; use `autossh` or a process
 supervisor to keep it up unattended.
 
@@ -130,23 +148,70 @@ Slack, …) are *not* copied between machines — each machine connects its own.
 
 ## 5. Run it as a service
 
-To keep the machine serving across logouts and reboots, on the machine:
+After enrolling, stop the foreground `join` process with Ctrl-C before
+installing the service. Do this before starting work: stopping that process
+can interrupt a running task. On the machine:
 
 ```bash
 openworker machine service install
 ```
 
-This writes and enables a systemd user unit running `openworker up`
+**Linux (systemd).** This writes and enables a systemd user unit running `openworker up`
 (auto-restart, 5s backoff). To also run without anyone logged in:
 
 ```bash
 sudo loginctl enable-linger $USER
 ```
 
+**macOS (launchd).** The same install command creates a per-user LaunchAgent
+running `openworker up`. It starts at login and restarts if the process exits.
+Keep that user logged in; locking the screen is fine, logging out is not.
+After a reboot, login (and any FileVault unlock) is still required. This is not
+a system LaunchDaemon that runs before login; do not disable disk encryption
+or enable automatic login just to work around that distinction.
+
+Prevent idle system sleep on a Mac intended for long-running work. Display
+sleep and screen locking can remain enabled. Install the service from the
+intended user's logged-in session; the installer reports if launchd could
+not load it. Verify with:
+
+```bash
+openworker machine service list
+openworker machine logs -f
+```
+
+The list shows installed service definitions, not proof of a live controller
+connection. Also check that the machine is online in the desktop app and run
+a small task on it. Ctrl-C while following logs only stops the log viewer.
+Automatic service restart does not guarantee that an interrupted task resumes.
+
 `openworker machine service uninstall` reverses it. (If you used the SSH-tunnel
 option, remember the tunnel on your desktop needs the same treatment —
 `autossh` or a LaunchAgent — or the machine will wait patiently for a tunnel
 that isn't there.)
+
+## Using the desktop app on the machine too
+
+Do not run the machine agent and a desktop app backend against the same state
+directory, even if you are not actively sending messages. Both are engines
+with background work, not two frontends attached to one engine. The default
+state directory on macOS and Linux is `~/.config/coworker`.
+
+For simultaneous, independent use, give one engine a separate state directory
+with `COWORKER_STATE_DIR`. For example, on macOS, first fully quit any running
+desktop app from its tray menu (closing its window is not enough), then launch
+the desktop executable from a local terminal:
+
+```bash
+COWORKER_STATE_DIR="$HOME/.config/coworker-desktop" /Applications/OpenWorker.app/Contents/MacOS/openworker-desktop
+```
+
+Use that explicit launch method for the separate desktop profile. Opening the
+normal app icon or enabling its normal open-at-login entry does not preserve
+this per-launch override. The new profile has its own conversations, model
+keys, and connectors; they are not copied automatically. This separates state,
+not OS permissions or project files: avoid concurrent edits to the same work.
+It does not let both desktop apps share the agent's existing sessions.
 
 ## Security model, in five lines
 
