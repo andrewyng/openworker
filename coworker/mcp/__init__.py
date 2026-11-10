@@ -15,7 +15,7 @@ from .config import (
     put_global_server,
     read_global,
 )
-from .tools import build_callables, tool_name
+from .tools import build_callables, full_tool_name, tool_name
 
 __all__ = [
     "MCPManager",
@@ -28,4 +28,5 @@ __all__ = [
     "delete_global_server",
     "build_callables",
     "tool_name",
+    "full_tool_name",
 ]
