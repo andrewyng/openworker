@@ -1178,7 +1178,7 @@ mod tests {
                     .filter(|r| r["stage"] == stage.name())
                 {
                     let rid = item["id"].as_str().unwrap();
-                    let mut v = json!({"id":rid,"tags":{"ows-deployment":self.control.plan.deployment_id,"ows-nonce":self.control.nonce,"ows-bundle":self.control.bundle_digest},"systemData":{"createdAt":"2026-10-31T00:00:00Z"},"properties":{"creationTime":"2026-10-31T00:00:00Z","creationDate":"2026-10-31T00:00:00Z","resourceGuid":"receipt-guid","principalId":"12345678-1234-4234-8234-123456789abc"}});
+                    let mut v = json!({"id":rid,"tags":{"ows-deployment":self.control.plan.deployment_id,"ows-nonce":self.control.nonce,"ows-bundle":self.control.bundle_digest},"systemData":{"createdAt":"2026-10-31T00:00:00Z"},"properties":{"creationTime":"2026-10-31T00:00:00Z","creationDate":"2026-10-31T00:00:00Z","resourceGuid":"receipt-guid","internalId":"opaque-zone-identity","principalId":"12345678-1234-4234-8234-123456789abc"}});
                     v["etag"] = json!("ignored-mutable-etag");
                     self.objects.insert(rid.into(), v);
                 }
@@ -1281,6 +1281,63 @@ mod tests {
             1
         );
     }
+    #[tokio::test]
+    async fn network_receipts_use_live_provider_fields_and_delete_vnet_before_dns() {
+        let (mut c, mut s, mut e) = active().await;
+        let mut protected = Vec::new();
+        for item in graph::inventory(&s.plan) {
+            let id = item["id"].as_str().unwrap();
+            if id.contains("/privateEndpoints/") || id.contains("/privateDnsZones/") {
+                let v = c.objects.get_mut(id).unwrap();
+                v.as_object_mut().unwrap().remove("systemData");
+                protected.push((
+                    id.to_owned(),
+                    item["incarnationPointer"].as_str().unwrap().to_owned(),
+                ));
+            }
+        }
+        observe(&mut c, &mut s, &mut e).await.unwrap();
+        // Neither a mutable ETag nor ownership tags may replace the provider's identity.
+        for (id, pointer) in protected {
+            let original = c.objects[&id].pointer(&pointer).unwrap().clone();
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = Value::Null;
+            assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = json!("replaced");
+            assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = original;
+        }
+        for _ in 0..15 {
+            heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
+        }
+        let deleted: Vec<_> = c
+            .writes
+            .iter()
+            .filter(|(method, _)| *method == Method::DELETE)
+            .map(|(_, id)| id)
+            .collect();
+        let network = deleted
+            .iter()
+            .position(|id| id.contains("/virtualNetworks/"))
+            .unwrap();
+        assert!(deleted
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| id.contains("/privateDnsZones/"))
+            .all(|(i, _)| i > network));
+    }
+
     #[tokio::test]
     async fn replacement_or_missing_incarnation_refuses_deletion() {
         let (mut c, mut s, mut e) = active().await;

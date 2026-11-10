@@ -707,6 +707,10 @@ fn alternative_amd64_sku_exports_and_passes_selected_compute_preflight() {
     assert_eq!(pool["vmSize"], "Standard_D4as_v7");
     assert_eq!(pool["count"], 2);
     assert_eq!(pool["enableAutoScaling"], false);
+    assert_eq!(
+        arm["resources"][0]["properties"]["autoUpgradeProfile"],
+        serde_json::json!({"upgradeChannel":"none","nodeOSUpgradeChannel":"None"})
+    );
     let result = f.preflight_plan("alternative", "ready", "alternative-report");
     assert!(
         result.status.success(),

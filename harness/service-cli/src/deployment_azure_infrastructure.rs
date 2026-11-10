@@ -266,17 +266,19 @@ fn assignment_resource(
 }
 /// Exact top-level workload IDs in dependency-safe deletion order. Nested children
 /// disappear with parents; the customer RG and AKS-generated node RG are not owned.
+/// Delete the VNet before its private DNS zones: Azure removes its virtual-network
+/// links on VNet deletion, whereas zone deletion refuses surviving links.
 pub(crate) fn inventory(p: &Plan) -> Vec<Value> {
     let n = names(p);
     let mut resources: Vec<Value> = [
       ("cluster","Microsoft.ContainerService/managedClusters",format!("{}-aks",n.prefix),"2024-10-01","/systemData/createdAt"),
       ("foundation","Microsoft.DBforPostgreSQL/flexibleServers",format!("{}-pg",n.prefix),"2024-08-01","/systemData/createdAt"),
-      ("foundation","Microsoft.Network/privateEndpoints",format!("{}-blob",n.prefix),"2024-05-01","/systemData/createdAt"),
+      ("foundation","Microsoft.Network/privateEndpoints",format!("{}-blob",n.prefix),"2024-05-01","/properties/resourceGuid"),
       ("foundation","Microsoft.Storage/storageAccounts",n.storage,"2023-05-01","/properties/creationTime"),
       ("foundation","Microsoft.ContainerRegistry/registries",n.registry,"2023-07-01","/properties/creationDate"),
-      ("foundation","Microsoft.Network/privateDnsZones",format!("{}.postgres.database.azure.com",n.prefix),"2020-06-01","/systemData/createdAt"),
-      ("foundation","Microsoft.Network/privateDnsZones","privatelink.blob.core.windows.net".into(),"2020-06-01","/systemData/createdAt"),
       ("foundation","Microsoft.Network/virtualNetworks",format!("{}-vnet",n.prefix),"2024-05-01","/properties/resourceGuid"),
+      ("foundation","Microsoft.Network/privateDnsZones",format!("{}.postgres.database.azure.com",n.prefix),"2020-06-01","/properties/internalId"),
+      ("foundation","Microsoft.Network/privateDnsZones","privatelink.blob.core.windows.net".into(),"2020-06-01","/properties/internalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-artifacts",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-kubelet",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-cluster",n.prefix),"2023-01-31","/properties/principalId"),
@@ -491,6 +493,10 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         &format!("{}-aks", n.prefix),
         json!({"dnsPrefix":n.prefix,"kubernetesVersion":c.kubernetes_version,"enableRBAC":true,"disableLocalAccounts":true,"aadProfile":{"managed":true,"enableAzureRBAC":false,"adminGroupObjectIDs":c.admin_group_object_ids,"tenantID":tenant},"apiServerAccessProfile":{"enablePrivateCluster":true,"enablePrivateClusterPublicFQDN":false,"privateDNSZone":"System"},"oidcIssuerProfile":{"enabled":true},"securityProfile":{"workloadIdentity":{"enabled":true}},"linuxProfile":{"adminUsername":"owsadmin","ssh":{"publicKeys":[{"keyData":c.ssh_public_key}]}},"agentPoolProfiles":[{"name":"system","count":2,"vmSize":c.node_vm_size,"osDiskSizeGB":64,"osType":"Linux","osSKU":"Ubuntu","mode":"System","type":"VirtualMachineScaleSets","enableAutoScaling":false,"vnetSubnetID":aks_subnet}],"networkProfile":{"networkPlugin":"azure","networkPolicy":"azure","serviceCidr":"10.73.0.0/24","dnsServiceIP":"10.73.0.10","loadBalancerSku":"standard","outboundType":"loadBalancer"},"identityProfile":{"kubeletidentity":{"resourceId":kubelet,"clientId":format!("[reference('{kubelet}', '2023-01-31').clientId]"),"objectId":principal(&kubelet)}}}),
     );
+    // This bounded, expiring trial has no quota/budget for upgrade surge nodes.
+    // Long-lived installations must choose their own patch/upgrade policy.
+    aks["properties"]["autoUpgradeProfile"] =
+        json!({"upgradeChannel":"none","nodeOSUpgradeChannel":"None"});
     aks["identity"] = json!({"type":"UserAssigned","userAssignedIdentities":{cluster.clone():{}}});
     aks["sku"] = json!({"name":"Base","tier":"Free"});
     let ct = template(
