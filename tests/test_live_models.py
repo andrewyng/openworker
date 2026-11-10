@@ -96,6 +96,8 @@ def fake_provider(monkeypatch):
             body = answers.get(request.url.host)
         if body is None:
             return httpx.Response(404, json={"error": "no such host in the fake"})
+        if callable(body):
+            return body(request)
         if isinstance(body, Exception):
             raise body
         if isinstance(body, int):
@@ -552,11 +554,181 @@ def test_the_first_look_offers_the_live_list_with_merged_facts(manager, fake_pro
     assert aside["openai/whisper-2"]["kind"] == "speech_to_text" and aside["openai/whisper-2"]["picked_anyway"] is False
     # nothing is "new" on the first look: the user never saw a list to compare with
     assert out["new"] == [] and manager.provider_new_models("openrouter") == 0
-    # a reviewed picker row the key does not list is appended and said so; no other catalog row appears
-    kimi = rows["moonshotai/kimi-k3"]
-    assert kimi["on_key"] is False and kimi["in_picker"] is True and kimi["kind_source"] == "catalog"
-    assert "openrouter:moonshotai/kimi-k3" in out["not_on_key"] and f"openrouter:{OPENROUTER_REC}" not in out["not_on_key"]
+    # a catalog row the key does not list is neither offered nor in the picker any more
+    assert "moonshotai/kimi-k3" not in rows and out["not_on_key"] == []
     assert out["rows"][0]["id"] == OPENROUTER_REC  # recommended first when nothing is new
+
+
+# -- the picker shows exactly the ticked boxes --------------------------------------------------
+
+
+def _picker(manager) -> list[str]:
+    return manager.get_settings()["models"]
+
+
+def test_before_a_list_the_catalog_rows_of_a_keyed_provider_are_in_the_picker(manager, fake_provider):
+    _key(manager)
+    assert "openrouter:moonshotai/kimi-k3" in _picker(manager)  # a catalog row, no list asked yet
+    assert fake_provider["asked"] == []
+
+
+def test_once_the_list_is_in_only_the_catalog_rows_it_carries_stay_ticked(manager, fake_provider):
+    """Owner, 2026-11-10: the picker shows the catalog rows the key's list contains, the
+    models the user ticked or added, and nothing that is unticked."""
+    _key(manager)
+    manager.provider_catalog("openrouter")
+    picker = _picker(manager)
+    assert f"openrouter:{OPENROUTER_REC}" in picker  # a catalog row the list carries
+    assert "openrouter:moonshotai/kimi-k3" not in picker  # a catalog row the key does not serve
+    assert "openrouter:openai/gpt-6-astra" not in picker  # listed, not a catalog row, not ticked
+    rows = {r["id"]: r["in_picker"] for r in manager.provider_catalog("openrouter")["rows"]}
+    assert rows[OPENROUTER_REC] is True and rows["openai/gpt-6-astra"] is False  # the page's boxes say the same
+    # tick one, untick the catalog row: the picker follows the boxes
+    manager.add_model("openrouter:openai/gpt-6-astra")
+    manager.remove_model(f"openrouter:{OPENROUTER_REC}")
+    picker = _picker(manager)
+    assert "openrouter:openai/gpt-6-astra" in picker and f"openrouter:{OPENROUTER_REC}" not in picker
+
+
+def test_a_listed_twin_or_alias_keeps_its_catalog_row_ticked(manager, fake_provider):
+    fake_provider["answers"]["api.anthropic.com"] = {"data": [
+        {"id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5", "created_at": "2025-10-15T00:00:00Z"},
+    ]}
+    _key(manager, "anthropic")
+    manager.provider_catalog("anthropic")
+    picker = _picker(manager)
+    assert "anthropic:claude-haiku-4-5" in picker  # listed under its dated twin
+    assert "anthropic:claude-opus-5-5" not in picker  # a catalog row this key's list lacks
+
+
+def test_the_default_model_stays_even_when_the_key_does_not_list_it(manager, fake_provider):
+    _key(manager)
+    manager.set_default_model("openrouter:moonshotai/kimi-k3")
+    manager.provider_catalog("openrouter")
+    assert manager.get_settings()["model"] == "openrouter:moonshotai/kimi-k3"
+    assert "openrouter:moonshotai/kimi-k3" in _picker(manager)
+
+
+def test_a_provider_without_a_list_keeps_its_catalog_rows(manager, fake_provider):
+    from coworker.providers.matrix import models_for_provider
+
+    _key(manager, "bedrock")
+    manager.provider_catalog("bedrock")
+    picker = _picker(manager)
+    assert all(f"bedrock:{m}" in picker for m in models_for_provider("bedrock"))
+
+
+# -- the free availability check ---------------------------------------------------------------
+
+GEMINI_GONE = '{"error": {"code": 404, "message": "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements.", "status": "NOT_FOUND"}}'
+MINIMAX_GONE = '{"type":"error","error":{"type":"not_found_error","message":"The model \\"MiniMax-M2.5\\" is no longer available. (2069)"}}'
+MINIMAX_UNKNOWN = '{"type":"error","error":{"type":"invalid_request_error","message":"invalid params, unknown model \'MiniMax-Made-Up\' (2013)"}}'
+ANTHROPIC_UNKNOWN = '{"type":"error","error":{"type":"not_found_error","message":"model: claude-made-up-9"}}'
+GEMINI_FREE_TIER = '{"error": {"code": 429, "message": "You exceeded your current quota, please check your plan and billing details. * Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: computer-use-preview", "status": "RESOURCE_EXHAUSTED"}}'
+GEMINI_BUSY = '{"error": {"code": 503, "message": "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", "status": "UNAVAILABLE"}}'
+
+
+def test_a_refusal_is_a_4xx_that_names_the_model_and_says_it_is_not_available():
+    """Real answers from the free token counts, 2026-11-10."""
+    assert live_models.refusal("gemini-2.5-flash", 404, GEMINI_GONE) == "This model models/gemini-2.5-flash is no longer available to new users"
+    assert live_models.refusal("MiniMax-M2.5", 404, MINIMAX_GONE) == 'The model "MiniMax-M2.5" is no longer available'
+    assert live_models.refusal("MiniMax-Made-Up", 400, MINIMAX_UNKNOWN) == "invalid params, unknown model 'MiniMax-Made-Up'"
+    assert live_models.refusal("claude-made-up-9", 404, ANTHROPIC_UNKNOWN) == "The provider says this model is not available to this key"
+    # not refusals: the model stays
+    assert live_models.refusal("computer-use-preview", 429, GEMINI_FREE_TIER) is None  # quota, not withdrawal
+    assert live_models.refusal("gemini-3.8-flash", 503, GEMINI_BUSY) is None  # busy for now
+    assert live_models.refusal("gemini-3.6-flash", 404, '{"error": "no route /v2"}') is None  # a wrong address names no model
+    assert live_models.refusal("claude-opus-5-5", 400, '{"error": {"message": "max_tokens: 999999 > 128000, the maximum for claude-opus-5-5"}}') is None
+    assert live_models.refusal("gemini-3.6-flash", 200, '{"totalTokens": 5}') is None
+
+
+def test_the_free_check_is_asked_where_each_provider_counts_tokens():
+    g = live_models.check_request("gemini", {"api_key": "g-1"}, get_descriptor("gemini"), "gemini-3.6-flash")
+    assert g["url"].endswith("/models/gemini-3.6-flash:countTokens") and g["headers"] == {"x-goog-api-key": "g-1"}
+    a = live_models.check_request("anthropic", {"api_key": "a-1"}, get_descriptor("anthropic"), "claude-opus-5-5")
+    assert a["url"] == "https://api.anthropic.com/v1/messages/count_tokens" and a["json"]["model"] == "claude-opus-5-5"
+    m = live_models.check_request("minimax", {"api_key": "m-1"}, get_descriptor("minimax"), "MiniMax-M3")
+    assert m["url"] == "https://api.minimax.io/anthropic/v1/messages/count_tokens" and m["headers"]["x-api-key"] == "m-1"
+    assert live_models.check_request("openai", {"api_key": "o"}, get_descriptor("openai"), "gpt-5.5") is None  # no free check there
+    assert live_models.check_request("gemini", {}, get_descriptor("gemini"), "x") is None  # no key, no check
+
+
+def test_a_failed_check_never_hides_a_model(fake_provider):
+    fake_provider["answers"]["api.anthropic.com/v1/messages/count_tokens"] = httpx.ConnectError("no route")
+    assert live_models.check_model("anthropic", {"api_key": "a"}, get_descriptor("anthropic"), "claude-opus-5-5") is None
+    fake_provider["answers"]["api.anthropic.com/v1/messages/count_tokens"] = 529
+    assert live_models.check_model("anthropic", {"api_key": "a"}, get_descriptor("anthropic"), "claude-opus-5-5") is None
+
+
+def _anthropic_refuses(*models):
+    def answer(request):
+        body = json.loads(request.content or b"{}")
+        if body.get("model") in models:
+            return httpx.Response(404, json={"type": "error", "error": {"type": "not_found_error", "message": f"The model \"{body['model']}\" is no longer available."}})
+        return httpx.Response(200, json={"input_tokens": 3})
+    return answer
+
+
+ANTHROPIC_LIST = {"data": [
+    {"id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5", "created_at": "2025-10-15T00:00:00Z"},
+    {"id": "claude-sonnet-4-5-20250929", "display_name": "Claude Sonnet 4.5", "created_at": "2025-09-29T00:00:00Z"},
+]}
+
+
+def test_the_daily_fetch_checks_the_picker_models_and_sets_a_refused_one_aside(manager, fake_provider):
+    fake_provider["answers"]["api.anthropic.com/v1/models"] = ANTHROPIC_LIST
+    fake_provider["answers"]["api.anthropic.com/v1/messages/count_tokens"] = _anthropic_refuses("claude-sonnet-4-5")
+    _key(manager, "anthropic")
+    out = manager.provider_catalog("anthropic")
+    asked = [u for u, _ in fake_provider["asked"]]
+    assert asked.count("https://api.anthropic.com/v1/models?limit=1000") == 1
+    assert any(u.endswith("/v1/messages/count_tokens") for u in asked)  # the picker models were checked
+    rows = {r["id"]: r for r in out["rows"]}
+    aside = {r["id"]: r for r in out["set_aside"]}
+    assert "claude-haiku-4-5" in rows and "claude-sonnet-4-5" not in rows
+    gone = aside["claude-sonnet-4-5"]
+    assert (gone["kind"], gone["kind_source"], gone["reason"]) == ("unavailable", "provider", 'The model "claude-sonnet-4-5" is no longer available')
+    picker = _picker(manager)
+    assert "anthropic:claude-haiku-4-5" in picker and "anthropic:claude-sonnet-4-5" not in picker
+    # "Use anyway" brings it back into the picker, with its badge
+    manager.add_model("anthropic:claude-sonnet-4-5", anyway=True)
+    assert "anthropic:claude-sonnet-4-5" in _picker(manager)
+    row = next(r for r in manager.provider_catalog("anthropic")["rows"] if r["id"] == "claude-sonnet-4-5")
+    assert row["picked_anyway"] is True and row["kind"] == "unavailable"
+
+
+def test_ticking_a_model_runs_the_free_check_and_a_refusal_turns_the_tick_down(manager, fake_provider):
+    """A model the provider lists but refuses (MiniMax M2.5, seen 2026-11-10) is not in the
+    picker, so the daily check skipped it; ticking it asks first."""
+    fake_provider["answers"]["api.anthropic.com/v1/models"] = ANTHROPIC_LIST
+    fake_provider["answers"]["api.anthropic.com/v1/messages/count_tokens"] = _anthropic_refuses("claude-haiku-4-5")
+    _key(manager, "anthropic")
+    manager.provider_catalog("anthropic")
+    manager.remove_model("anthropic:claude-haiku-4-5")  # unticked, then ticked again
+    out = manager.add_model("anthropic:claude-haiku-4-5")
+    assert out["ok"] is False and out["reason"] == "unavailable"
+    assert out["error"] == 'Not available to this key: The model "claude-haiku-4-5" is no longer available'
+    assert "anthropic:claude-haiku-4-5" not in _picker(manager)
+    aside = {r["id"]: r for r in manager.provider_catalog("anthropic")["set_aside"]}
+    assert aside["claude-haiku-4-5"]["kind"] == "unavailable"
+    # "Use anyway" is the user's call and skips the check
+    assert manager.add_model("anthropic:claude-haiku-4-5", anyway=True)["ok"] is True
+
+
+def test_the_free_check_runs_only_with_the_list_and_keeps_the_default(manager, fake_provider):
+    fake_provider["answers"]["api.anthropic.com/v1/models"] = ANTHROPIC_LIST
+    fake_provider["answers"]["api.anthropic.com/v1/messages/count_tokens"] = _anthropic_refuses("claude-sonnet-4-5")
+    _key(manager, "anthropic")
+    manager.set_default_model("anthropic:claude-sonnet-4-5")
+    manager.provider_catalog("anthropic")
+    n = len(fake_provider["asked"])
+    manager.provider_catalog("anthropic")  # cached for a day: no list, no checks
+    assert len(fake_provider["asked"]) == n
+    assert "anthropic:claude-sonnet-4-5" in _picker(manager)  # the default never leaves
+    # a provider with no free check is never asked one
+    _key(manager)
+    manager.provider_catalog("openrouter")
+    assert not any("count_tokens" in u or "countTokens" in u for u, _ in fake_provider["asked"][n:])
 
 
 def test_a_users_own_setting_beats_every_other_fact(manager, fake_provider):

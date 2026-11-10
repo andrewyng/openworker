@@ -2603,7 +2603,7 @@ export async function setDefaultModel(
 export async function addModel(
   model: string,
   anyway = false, // the provider page's "Use anyway" on a model its list calls something other than chat
-): Promise<ModelSettings & { ok: boolean; error?: string; reason?: "not_on_key"; suggestions?: string[] }> {
+): Promise<ModelSettings & { ok: boolean; error?: string; reason?: "not_on_key" | "unavailable"; suggestions?: string[] }> {
   const res = await fetch(`${httpBase()}/v1/settings/models/add`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

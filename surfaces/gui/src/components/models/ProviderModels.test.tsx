@@ -182,6 +182,17 @@ describe("ProviderModels with a live listing", () => {
     expect(screen.getByTestId("catalog-aside-line").textContent).toContain("1 more model on this key is for images");
   });
 
+  it("a model the provider refused for this key sits aside with the provider's own words", async () => {
+    const gone = row({ id: "gemini-2.5-flash", model: "gemini:gemini-2.5-flash", label: "Gemini 2.5 Flash · Google", kind: "unavailable", detail: "This model models/gemini-2.5-flash is no longer available to new users" });
+    vi.mocked(getProviderCatalog).mockResolvedValue({ ...LIVE, set_aside: [gone] });
+    renderPanel();
+    await flush();
+    fireEvent.click(screen.getByTestId("catalog-aside-toggle"));
+    expect(screen.getByTestId("catalog-reason-gemini-2.5-flash").textContent).toBe("Not available to this key: “This model models/gemini-2.5-flash is no longer available to new users”");
+    fireEvent.click(screen.getByTestId("catalog-use-gemini-2.5-flash"));
+    expect(screen.getByTestId("catalog-why-gemini-2.5-flash").textContent).toContain("When the app checked this model with your key, Cohere refused it");
+  });
+
   it("Undo on a Your-pick row removes the model", async () => {
     vi.mocked(getProviderCatalog).mockResolvedValue({
       ...LIVE,
