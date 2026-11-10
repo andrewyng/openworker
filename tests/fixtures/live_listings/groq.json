@@ -1,0 +1,116 @@
+{
+ "data": [
+  {
+   "id": "qwen/qwen3.8-27b",
+   "object": "model",
+   "created": 1786984846,
+   "owned_by": "Alibaba Cloud",
+   "active": true,
+   "context_window": 131072,
+   "public_apps": null,
+   "max_completion_tokens": 16384,
+   "name": "Qwen/Qwen3.8-27B",
+   "input_modalities": [
+    "text",
+    "image"
+   ],
+   "output_modalities": [
+    "text"
+   ],
+   "context_length": 131072,
+   "max_output_length": 16384,
+   "supported_features": [
+    "tools",
+    "json_mode",
+    "reasoning"
+   ]
+  },
+  {
+   "id": "meta-llama/llama-prompt-guard-2-86m",
+   "object": "model",
+   "created": 1748632165,
+   "owned_by": "Meta",
+   "active": true,
+   "context_window": 512,
+   "public_apps": null,
+   "max_completion_tokens": 512,
+   "name": "Prompt Guard 2 86M",
+   "input_modalities": [
+    "text"
+   ],
+   "output_modalities": [
+    "text"
+   ],
+   "context_length": 512,
+   "max_output_length": 512,
+   "supported_features": [
+    "json_mode"
+   ]
+  },
+  {
+   "model_card": "https://openai.com/index/gpt-oss-model-card",
+   "id": "openai/gpt-oss-120b",
+   "object": "model",
+   "created": 1754408224,
+   "owned_by": "OpenAI",
+   "active": true,
+   "context_window": 131072,
+   "public_apps": null,
+   "max_completion_tokens": 65536,
+   "name": "GPT OSS 120B",
+   "input_modalities": [
+    "text"
+   ],
+   "output_modalities": [
+    "text"
+   ],
+   "context_length": 131072,
+   "max_output_length": 65536,
+   "supported_features": [
+    "tools",
+    "json_mode",
+    "structured_outputs",
+    "reasoning"
+   ]
+  },
+  {
+   "model_card": "https://huggingface.co/openai/whisper-large-v3",
+   "id": "whisper-large-v3",
+   "object": "model",
+   "created": 1693721698,
+   "owned_by": "OpenAI",
+   "active": true,
+   "context_window": 448,
+   "public_apps": null,
+   "max_completion_tokens": 448,
+   "name": "Whisper",
+   "input_modalities": [
+    "audio"
+   ],
+   "output_modalities": [
+    "transcription"
+   ],
+   "context_length": 448,
+   "max_output_length": 448
+  },
+  {
+   "id": "canopylabs/orpheus-v1-english",
+   "object": "model",
+   "created": 1766186316,
+   "owned_by": "Canopy Labs",
+   "active": true,
+   "context_window": 4000,
+   "public_apps": null,
+   "max_completion_tokens": 50000,
+   "name": "Canopy Labs Orpheus V1 English",
+   "input_modalities": [
+    "text"
+   ],
+   "output_modalities": [
+    "speech"
+   ],
+   "context_length": 4000,
+   "max_output_length": 50000
+  }
+ ]
+}

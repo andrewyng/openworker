@@ -89,25 +89,58 @@ def _auth_error_message(model: str, exc: Exception) -> Optional[str]:
     )
 
 
+# A model the provider has withdrawn, or one this account may no longer use (Google:
+# "This model models/X is no longer available to new users"; MiniMax: 'The model "X" is
+# no longer available'; seen live 2026-11-10).
+_WITHDRAWN = ("no longer available", "decommissioned")
+# A model that cannot take tools, which every coworker turn sends (Google, 2026-11-10:
+# "Function calling is not enabled for models/X").
+_NO_TOOLS = ("function calling is not enabled",)
+# The provider is busy right now: retrying later or another model works.
+_BUSY = ("currently experiencing high demand", "overloaded_error", "is overloaded", "server is overloaded")
+# Words of a refusal in a 404 that also names the model (any provider, including ones with no
+# marker of their own here). A wrong address answers 404 too, but never names the model.
+_GENERIC_REFUSAL = ("not found", "not available", "does not exist", "unknown model", "deprecated", "retired")
+
+
 def friendly_model_error(model: str, exc: Exception) -> Optional[str]:
-    """One actionable sentence for "your account can't use this model" failures, or None."""
+    """One actionable sentence for a failure the user can act on by picking another model
+    (no access, withdrawn, no tools, no quota, busy), or None to show the raw error."""
     text = str(exc).lower()
+    bare = model.split(":", 1)[-1].lower()
     no_access = (
         f"Your account doesn't have access to {model} — new models can roll out "
         "gradually or require a plan upgrade. Pick a different model, or check "
         "the provider's console for availability."
     )
     if any(marker in text for marker in _NO_QUOTA):
+        if "limit: 0" in text:
+            # Google's free tier answers "quota exceeded ... limit: 0" for a model it does not serve
+            return (
+                f"Your plan doesn't include {model} — enable billing for it in the provider's "
+                "console, or pick a different model."
+            )
         return (
             f"Your account is out of quota for {model} — add credits or raise the limit "
             "in the provider's billing console, or pick a different model."
+        )
+    if any(marker in text for marker in _NO_TOOLS):
+        return f"{model} can't use tools, which coworkers need. Pick a different model."
+    if any(marker in text for marker in _WITHDRAWN) and bare in text:
+        return (
+            f"{model} is no longer available to your account — the provider has withdrawn "
+            "it. Pick a different model."
         )
     if any(marker in text for marker in _NO_ACCESS):
         return no_access
     # Anthropic's 404 body is just "model: <id>" under type not_found_error; require both
     # halves so unrelated 404s (bad base_url, deleted resource) keep their raw message.
-    if "not_found_error" in text and f"model: {model.split(':')[-1].lower()}" in text:
+    if "not_found_error" in text and f"model: {bare}" in text:
         return no_access
+    if "404" in text and bare in text and any(word in text for word in _GENERIC_REFUSAL):
+        return f"The provider says {model} isn't available to your account. Pick a different model."
+    if any(marker in text for marker in _BUSY):
+        return f"{model} is busy at the provider right now. Try again in a moment, or pick a different model."
     # Authentication failures (401 InvalidApiKey) — checked last so a 403 permission_error
     # (which is about model access, not key validity) is caught by _NO_ACCESS above.
     auth_msg = _auth_error_message(model, exc)

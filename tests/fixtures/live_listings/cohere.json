@@ -1,0 +1,85 @@
+{
+ "models": [
+  {
+   "name": "command-a-plus-05-2026",
+   "endpoints": [
+    "generate",
+    "chat"
+   ],
+   "finetuned": false,
+   "context_length": 436000,
+   "features": [
+    "logprobs",
+    "json_mode",
+    "json_schema",
+    "strict_tools",
+    "safety_modes",
+    "tools",
+    "reasoning",
+    "vision",
+    "tool_images",
+    "citations"
+   ],
+   "default_endpoints": [],
+   "sampling_defaults": {
+    "temperature": 0.6,
+    "p": 0.95
+   }
+  },
+  {
+   "name": "command-a-translate-08-2025",
+   "endpoints": [
+    "chat"
+   ],
+   "finetuned": false,
+   "context_length": 8992,
+   "features": [
+    "json_mode",
+    "json_schema",
+    "safety_modes",
+    "tools",
+    "tool_choice",
+    "citations"
+   ],
+   "default_endpoints": []
+  },
+  {
+   "name": "command-a-vision-07-2025",
+   "endpoints": [
+    "chat"
+   ],
+   "finetuned": false,
+   "context_length": 128000,
+   "features": [
+    "vision",
+    "logprobs",
+    "json_mode",
+    "json_schema",
+    "strict_tools",
+    "safety_modes",
+    "citations"
+   ],
+   "default_endpoints": []
+  },
+  {
+   "name": "embed-english-light-v3.0",
+   "endpoints": [
+    "embed"
+   ],
+   "finetuned": false,
+   "context_length": 512,
+   "features": null,
+   "default_endpoints": []
+  },
+  {
+   "name": "rerank-english-v3.0",
+   "endpoints": [
+    "rerank"
+   ],
+   "finetuned": false,
+   "context_length": 4096,
+   "features": null,
+   "default_endpoints": []
+  }
+ ]
+}

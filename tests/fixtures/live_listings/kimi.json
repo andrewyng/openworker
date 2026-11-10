@@ -1,0 +1,196 @@
+{
+ "data": [
+  {
+   "created": 1794022880,
+   "id": "kimi-k3.1-pro",
+   "object": "model",
+   "owned_by": "moonshot",
+   "supports_image_in": true,
+   "supports_video_in": true,
+   "supports_reasoning": true,
+   "supports_dynamic_tools": true,
+   "think_efforts": {
+    "support": true,
+    "valid_efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   },
+   "reasoning_efforts": {
+    "support": true,
+    "valid_efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   },
+   "supports_thinking_type": "only",
+   "context_length": 1048576,
+   "modalities": {
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "reasoning": {
+    "type": "only",
+    "effort": {
+     "valid": [
+      "low",
+      "high",
+      "max"
+     ],
+     "default": "max"
+    }
+   },
+   "tools": {
+    "dynamic_load": true
+   },
+   "limit": {
+    "context": 1048576
+   }
+  },
+  {
+   "created": 1794022880,
+   "id": "kimi-k3",
+   "object": "model",
+   "owned_by": "moonshot",
+   "supports_image_in": true,
+   "supports_video_in": true,
+   "supports_reasoning": true,
+   "supports_dynamic_tools": true,
+   "think_efforts": {
+    "support": true,
+    "valid_efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   },
+   "reasoning_efforts": {
+    "support": true,
+    "valid_efforts": [
+     "low",
+     "high",
+     "max"
+    ],
+    "default_effort": "max"
+   },
+   "supports_thinking_type": "only",
+   "context_length": 1048576,
+   "modalities": {
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "reasoning": {
+    "type": "only",
+    "effort": {
+     "valid": [
+      "low",
+      "high",
+      "max"
+     ],
+     "default": "max"
+    }
+   },
+   "tools": {
+    "dynamic_load": true
+   },
+   "limit": {
+    "context": 1048576
+   }
+  },
+  {
+   "created": 1794022880,
+   "id": "kimi-k2.7-code-highspeed",
+   "object": "model",
+   "owned_by": "moonshot",
+   "supports_image_in": true,
+   "supports_video_in": true,
+   "supports_reasoning": true,
+   "context_length": 262144,
+   "modalities": {
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "tools": {
+    "dynamic_load": false
+   },
+   "limit": {
+    "context": 262144
+   }
+  },
+  {
+   "created": 1794022880,
+   "id": "kimi-k2.6",
+   "object": "model",
+   "owned_by": "moonshot",
+   "supports_image_in": true,
+   "supports_video_in": true,
+   "supports_reasoning": true,
+   "context_length": 262144,
+   "modalities": {
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "tools": {
+    "dynamic_load": false
+   },
+   "limit": {
+    "context": 262144
+   }
+  },
+  {
+   "created": 1794022880,
+   "id": "kimi-k2.7-code",
+   "object": "model",
+   "owned_by": "moonshot",
+   "supports_image_in": true,
+   "supports_video_in": true,
+   "supports_reasoning": true,
+   "context_length": 262144,
+   "modalities": {
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ]
+   },
+   "tools": {
+    "dynamic_load": false
+   },
+   "limit": {
+    "context": 262144
+   }
+  }
+ ]
+}

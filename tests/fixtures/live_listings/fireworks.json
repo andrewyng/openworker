@@ -1,0 +1,80 @@
+{
+ "data": [
+  {
+   "id": "accounts/fireworks/models/qwen3-reranker-8b",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1759865045,
+   "kind": "EMBEDDING_MODEL",
+   "supports_chat": true,
+   "supports_image_input": false,
+   "supports_tools": false,
+   "context_length": 40960
+  },
+  {
+   "id": "accounts/fireworks/models/qwen3-embedding-8b",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1755707090,
+   "kind": "EMBEDDING_MODEL",
+   "supports_chat": true,
+   "supports_image_input": false,
+   "supports_tools": false,
+   "context_length": 40960
+  },
+  {
+   "id": "accounts/fireworks/models/kimi-k3",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1784483409,
+   "kind": "HF_BASE_MODEL",
+   "supports_chat": true,
+   "supports_image_input": true,
+   "supports_tools": true,
+   "context_length": 1048576
+  },
+  {
+   "id": "accounts/fireworks/models/glm-5p3",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1787895551,
+   "kind": "HF_BASE_MODEL",
+   "supports_chat": true,
+   "supports_image_input": false,
+   "supports_tools": true,
+   "context_length": 1048576
+  },
+  {
+   "id": "accounts/fireworks/routers/glm-5p3-fast",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1787895551,
+   "kind": "HF_BASE_MODEL",
+   "supports_chat": true,
+   "supports_image_input": false,
+   "supports_tools": true,
+   "context_length": 1048576
+  },
+  {
+   "id": "auto",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1790634780,
+   "kind": "ROUTER",
+   "supports_chat": true,
+   "supports_image_input": true,
+   "supports_tools": true
+  },
+  {
+   "id": "accounts/fireworks/models/rune",
+   "object": "model",
+   "owned_by": "fireworks",
+   "created": 1792518104,
+   "kind": "HF_BASE_MODEL",
+   "supports_chat": false,
+   "supports_image_input": false,
+   "supports_tools": false,
+   "context_length": 262144
+  }
+ ]
+}

@@ -1244,6 +1244,13 @@ export interface ModelSettings {
   // {full id → context window in tokens}, verified matrix entries only — drives the
   // composer's context-fill meter (absent id → the meter hides). Optional for older backends.
   model_context_windows?: Record<string, number>;
+  // Where each picker model's facts come from (OPE-252): "catalog" (our reviewed list),
+  // "provider" (its own model list), "local" (the server), or "unverified" (safe defaults
+  // the user may correct). Absent on an older backend.
+  model_verification?: Record<string, "catalog" | "provider" | "local" | "unverified">;
+  // Models the user took from a provider's set-aside group with "Use anyway" (OPE-252): the
+  // pickers mark them "Your pick · untested". Absent on an older backend.
+  model_picked_anyway?: string[];
   // Token savings (PDF attachments): fallback for models without native PDF support,
   // and attach-time thresholds. Optional so the GUI is robust to an older backend.
   pdf_fallback?: "text" | "images";
@@ -2593,11 +2600,14 @@ export async function setDefaultModel(
   return res.json();
 }
 
-export async function addModel(model: string): Promise<ModelSettings & { ok: boolean; error?: string }> {
+export async function addModel(
+  model: string,
+  anyway = false, // the provider page's "Use anyway" on a model its list calls something other than chat
+): Promise<ModelSettings & { ok: boolean; error?: string; reason?: "not_on_key" | "unavailable"; suggestions?: string[] }> {
   const res = await fetch(`${httpBase()}/v1/settings/models/add`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(anyway ? { model, anyway: true } : { model }),
   });
   return res.json();
 }
@@ -2725,6 +2735,9 @@ export interface ProviderInfo {
   // into, or an API key. Absent on an older backend → treated as an API key.
   kind?: "local" | "subscription" | "api_key";
   is_custom?: boolean; // user-created OpenAI-compatible provider
+  // Models the provider's own list gained since the check before (OPE-252); the card
+  // shows the count. Absent on an older backend.
+  new_models?: number;
   // Local servers only: whether the server answers right now (cached probe).
   alive?: boolean;
   // llama.cpp on a Mac (UX-057): OpenWorker can set it up and run it, and what it runs.
@@ -2914,6 +2927,57 @@ export interface LocalModelRow {
   context_from: "user" | "machine" | "server";
   fit: "runs_well" | "tight" | "too_large" | "cloud" | "unknown";
   recommendation: string | null;
+}
+
+// -- the provider's own model list, with the user's key (OPE-252 layer 1) --------------
+export interface ProviderCatalogRow {
+  id: string; // the provider's bare id (the catalog's when the list's id is an alias of it)
+  model: string; // the routed id (bare for OpenAI, `provider:id` otherwise)
+  label: string;
+  // What the model is: "chat" rows are offered; every other kind is set aside with the reason
+  // (image, video, speech_to_text, text_to_speech, music, embedding, rerank, moderation,
+  // document, completion, live, specialised, hybrid_image, hybrid_audio, retired).
+  kind: string;
+  kind_source: "provider" | "name" | "catalog" | "none"; // who decided the kind; never shown as such
+  detail: string | null; // the vendor's own word or the matched word, for "Specialised: …"
+  reason: string | null; // the backend's English phrase; the page composes its own by kind
+  // Each fact is the already-merged winner (user setting > maintainer override > the
+  // provider's list > the reviewed catalog); null = nobody has one.
+  context: number | null; // the total window
+  max_output: number | null;
+  input_image: boolean | null;
+  input_pdf: boolean | null;
+  tools: boolean | null;
+  reasoning: boolean | null;
+  retires_at: string | null; // ISO date the vendor announced
+  released: string | null; // ISO date when the listing says
+  in_picker: boolean;
+  recommended: boolean;
+  new: boolean; // gained since the check before
+  on_key: boolean | null; // null = no listing to tell
+  picked_anyway: boolean; // taken from the set-aside group with "Use anyway"
+}
+
+export interface ProviderCatalog {
+  ok: boolean;
+  provider: string;
+  configured: boolean;
+  listing: "live" | "none" | "error";
+  reason?: string; // listing "none": why there is no list
+  error?: string | null; // a failed ask (the rows are the last good list, or the curated ones)
+  fetched_at?: number | null;
+  count?: number;
+  rows: ProviderCatalogRow[]; // the chat models, offered
+  set_aside: ProviderCatalogRow[]; // the listed models that are not chat models
+  new: string[];
+  not_on_key: string[]; // picker models this key cannot call
+}
+
+export async function getProviderCatalog(provider: string, refresh = false): Promise<ProviderCatalog> {
+  const url = `${httpBase()}/v1/providers/${encodeURIComponent(provider)}/catalog${refresh ? "?refresh=true" : ""}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 export async function getLocalModels(

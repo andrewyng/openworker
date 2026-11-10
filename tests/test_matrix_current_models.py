@@ -20,7 +20,7 @@ from coworker.compaction import DEFAULT_CONTEXT_WINDOW, trigger_tokens
 from coworker.engine import TurnEngine
 from coworker.permissions import PermissionEngine
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from coworker.providers.matrix import MATRIX, model_context_windows
+from coworker.providers.matrix import MATRIX, full_id, model_context_windows
 from coworker.providers.registry import DESCRIPTORS
 from coworker.tools import ToolRegistry
 
@@ -45,11 +45,11 @@ REPO = Path(__file__).resolve().parents[1]
         ("openrouter:moonshotai/kimi-k3", 1_048_576),  # openrouter.ai models API, 2026-09-09
         ("together:zai-org/GLM-5.2", 1_048_575),
         ("together:deepseek-ai/DeepSeek-V4-Pro", 512_000),
-        # Vendor pages read 2026-09-08 (docs.z.ai "1M"; openrouter 1,048,576;
-        # fireworks "1040k").
+        # Vendor pages read 2026-09-08 (docs.z.ai "1M"; openrouter 1,048,576); Fireworks
+        # /v1/models context_length, read 2026-11-09 (glm-5p2 is no longer served).
         ("zai:glm-5.2", 1_000_000),
         ("openrouter:z-ai/glm-5.2", 1_048_576),
-        ("fireworks:accounts/fireworks/models/glm-5p2", 1_040_000),
+        ("fireworks:accounts/fireworks/models/glm-5p3", 1_048_576),
         # openrouter.ai models API, read 2026-10-01 (OPE-215). Ultra: the endpoint's own
         # context_length (202,800), not the model-level 262,144 the catalog shows.
         ("openrouter:nvidia/nemotron-3-ultra-550b-a55b", 202_800),
@@ -69,15 +69,13 @@ def test_claude_5_rows_are_vision_capable_and_labelled():
         assert "Anthropic" in entry.label, mid
 
 
-def _matrix_key(provider: str, model: str) -> str:
-    # OpenAI rows are stored bare (bare ids route to the OpenAI default).
-    return model if provider == "openai" else f"{provider}:{model}"
+_matrix_key = full_id  # OpenAI rows are stored bare (bare ids route to the OpenAI default).
 
 
 # Recommended models whose vendor spec has not been re-checked: the matrix keeps their
 # window at None on purpose (the GUI meter hides rather than show a made-up number) and
 # they compact on the 128k guess. Verify the spec, fill the row, and shrink this set.
-_KNOWN_UNVERIFIED_RECOMMENDATIONS = {"minimax:MiniMax-M2.5", "meta:muse-spark-1.1"}
+_KNOWN_UNVERIFIED_RECOMMENDATIONS = {"meta:muse-spark-1.1"}
 
 
 def test_every_recommended_model_is_in_the_matrix():

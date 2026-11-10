@@ -1,0 +1,287 @@
+{
+ "data": [
+  {
+   "id": "mistral-large-2512",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": true,
+    "function_calling": true,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": true,
+    "vision": true,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "mistral-large-2512",
+   "max_context_length": 262144,
+   "aliases": [
+    "mistral-large-latest"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "mistral-large-latest",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": true,
+    "function_calling": true,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": true,
+    "vision": true,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "mistral-large-2512",
+   "max_context_length": 262144,
+   "aliases": [
+    "mistral-large-2512"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "mistral-large-4",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": true,
+    "function_calling": true,
+    "reasoning": true,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": true,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": true
+   },
+   "name": "mistral-large-4",
+   "max_context_length": 1048576,
+   "aliases": [
+    "mistral-large-4-0"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "mistral-large-4-0",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": true,
+    "function_calling": true,
+    "reasoning": true,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": true,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": true
+   },
+   "name": "mistral-large-4",
+   "max_context_length": 1048576,
+   "aliases": [
+    "mistral-large-4"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "voxtral-mini-2602",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": false,
+    "function_calling": false,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": false,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": true,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "Voxtral Mini Transcribe",
+   "max_context_length": 16384,
+   "aliases": [
+    "voxtral-mini-latest"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": {
+    "modes": [
+     "offline"
+    ],
+    "diarization": true,
+    "speaker_references": false,
+    "context_bias": true,
+    "turn_detection": false,
+    "timestamp_granularities": [
+     "segment",
+     "word"
+    ],
+    "languages": [
+     "ar",
+     "en",
+     "de",
+     "es",
+     "fr",
+     "hi",
+     "it",
+     "nl",
+     "pt",
+     "zh",
+     "ru",
+     "ko",
+     "ja"
+    ],
+    "streaming_delays_ms": []
+   },
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "mistral-ocr-2512",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": false,
+    "function_calling": true,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": true,
+    "ocr": true,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "Mistral OCR 3.0",
+   "max_context_length": 16384,
+   "aliases": [
+    "mistral-ocr-3-0",
+    "mistral-ocr-3"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "mistral-moderation-2603",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": false,
+    "function_calling": false,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": false,
+    "ocr": false,
+    "classification": true,
+    "moderation": true,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "mistral-moderation-2603",
+   "max_context_length": 131071,
+   "aliases": [],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  },
+  {
+   "id": "codestral-embed",
+   "object": "model",
+   "created": 1794230557,
+   "owned_by": "mistralai",
+   "capabilities": {
+    "completion_chat": false,
+    "function_calling": false,
+    "reasoning": false,
+    "completion_fim": false,
+    "fine_tuning": false,
+    "vision": false,
+    "ocr": false,
+    "classification": false,
+    "moderation": false,
+    "audio": false,
+    "audio_transcription": false,
+    "audio_transcription_realtime": false,
+    "audio_speech": false,
+    "unified_resources": false
+   },
+   "name": "codestral-embed",
+   "max_context_length": 8192,
+   "aliases": [
+    "codestral-embed-2505"
+   ],
+   "deprecation": null,
+   "deprecation_replacement_model": null,
+   "type": "base",
+   "audio_transcription_capabilities": null,
+   "audio_speech_capabilities": null
+  }
+ ]
+}

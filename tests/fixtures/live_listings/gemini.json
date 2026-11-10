@@ -1,0 +1,164 @@
+{
+ "models": [
+  {
+   "name": "models/gemini-2.5-flash",
+   "displayName": "Gemini 2.5 Flash",
+   "inputTokenLimit": 1048576,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens",
+    "createCachedContent",
+    "batchGenerateContent"
+   ],
+   "thinking": true
+  },
+  {
+   "name": "models/gemini-2.5-flash-image",
+   "displayName": "Nano Banana",
+   "inputTokenLimit": 32768,
+   "outputTokenLimit": 32768,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens",
+    "batchGenerateContent"
+   ]
+  },
+  {
+   "name": "models/lyria-3-clip-preview",
+   "displayName": "Lyria 3 Clip Preview",
+   "inputTokenLimit": 1048576,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ]
+  },
+  {
+   "name": "models/gemini-robotics-er-2-preview",
+   "displayName": "Gemini Robotics-ER 2 Preview",
+   "inputTokenLimit": 131072,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens",
+    "createCachedContent",
+    "batchGenerateContent"
+   ],
+   "thinking": true
+  },
+  {
+   "name": "models/gemini-2.5-flash-preview-tts",
+   "displayName": "Gemini 2.5 Flash Preview TTS",
+   "inputTokenLimit": 8192,
+   "outputTokenLimit": 16384,
+   "supportedGenerationMethods": [
+    "countTokens",
+    "generateContent"
+   ]
+  },
+  {
+   "name": "models/gemini-2.5-computer-use-preview-10-2025",
+   "displayName": "Gemini 2.5 Computer Use Preview 10-2025",
+   "inputTokenLimit": 131072,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ],
+   "thinking": true
+  },
+  {
+   "name": "models/deep-research-max-preview-04-2026",
+   "displayName": "Deep Research Max Preview (Apr-21-2026)",
+   "inputTokenLimit": 131072,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ],
+   "thinking": true
+  },
+  {
+   "name": "models/antigravity-preview-05-2026",
+   "displayName": "Antigravity Agent Preview",
+   "inputTokenLimit": 1048576,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ]
+  },
+  {
+   "name": "models/aqa",
+   "displayName": "Model that performs Attributed Question Answering.",
+   "inputTokenLimit": 7168,
+   "outputTokenLimit": 1024,
+   "supportedGenerationMethods": [
+    "generateAnswer"
+   ]
+  },
+  {
+   "name": "models/gemini-embedding-001",
+   "displayName": "Gemini Embedding 001",
+   "inputTokenLimit": 2048,
+   "outputTokenLimit": 1,
+   "supportedGenerationMethods": [
+    "embedContent",
+    "countTextTokens",
+    "countTokens",
+    "asyncBatchEmbedContent"
+   ]
+  },
+  {
+   "name": "models/gemini-3.5-transcribe-live",
+   "displayName": "Gemini 3.5 Transcribe Live",
+   "inputTokenLimit": 131072,
+   "outputTokenLimit": 65536,
+   "supportedGenerationMethods": [
+    "bidiGenerateContent"
+   ]
+  },
+  {
+   "name": "models/gemini-2.5-flash-native-audio-latest",
+   "displayName": "Gemini 2.5 Flash Native Audio Latest",
+   "inputTokenLimit": 131072,
+   "outputTokenLimit": 8192,
+   "supportedGenerationMethods": [
+    "countTokens",
+    "bidiGenerateContent"
+   ],
+   "thinking": true
+  },
+  {
+   "name": "models/gemini-3.5-transcribe",
+   "displayName": "Gemini 3.5 Transcribe",
+   "inputTokenLimit": 98304,
+   "outputTokenLimit": 32768,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ]
+  },
+  {
+   "name": "models/gemini-3.5-live-translate-preview",
+   "displayName": "Gemini 3.5 Live Translate Preview",
+   "inputTokenLimit": 16384,
+   "outputTokenLimit": 32768,
+   "supportedGenerationMethods": [
+    "bidiGenerateContent"
+   ]
+  },
+  {
+   "name": "models/gemma-4-26b-a4b-it",
+   "displayName": "Gemma 4 26B A4B IT",
+   "inputTokenLimit": 262144,
+   "outputTokenLimit": 32768,
+   "supportedGenerationMethods": [
+    "generateContent",
+    "countTokens"
+   ],
+   "thinking": true
+  }
+ ]
+}

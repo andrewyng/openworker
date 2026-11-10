@@ -1195,6 +1195,33 @@ html[data-theme="dark"] .aglyph-f7 { color: #9aa5b3; }
 }
 .mlist-add select:focus { border-color: var(--accent); }
 
+/* The provider page's model rows (OPE-252): a name line and a line of plain facts under it;
+   set-aside rows are muted with a quiet "Use anyway"; "Your pick" is a small outline badge. */
+.mlist-row { align-items: flex-start; }
+.mlist-main { align-items: flex-start; }
+.mlist-main > input { margin-top: 3px; }
+.mlist-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.mlist-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mlist-id { font-size: var(--fs-meta); color: var(--muted); opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlist-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.mlist-facts .sep { color: var(--line-strong); margin-right: 6px; }
+.mlist-row.aside .mlist-name { color: var(--muted); }
+.mlist-spacer { width: 13px; flex: none; }
+.mlist-use {
+  border: 1px solid var(--line-strong); background: transparent; border-radius: 7px; padding: 3px 9px;
+  font-size: var(--fs-meta); color: var(--muted); cursor: pointer; flex: none; margin-top: 1px;
+}
+.mlist-use:hover { color: var(--ink); border-color: var(--ink); }
+.mlist-badge {
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 7px; font-size: 10px; line-height: 16px;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); flex: none; white-space: nowrap;
+}
+.mlist-why {
+  margin: 2px 0 6px 30px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  font-size: var(--fs-meta); line-height: 1.5; color: var(--muted);
+}
+.mlist-why b { color: var(--ink); font-weight: 600; }
+
 /* .mcp-error is used by ScheduledView; the MCP servers list itself is Tailwind-styled inline
    (ManageTabs McpTab/McpRow/AddForm). */
 .mcp-error { color: var(--accent); font-size: var(--fs-ui); margin-top: 6px; }

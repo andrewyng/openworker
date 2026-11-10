@@ -552,7 +552,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         needs_key=False,
         fields=[],
         build=_build_codex,
-        recommended_model="gpt-5.6-sol",
+        recommended_model="gpt-5.6-terra",
         blurb="Sign in with your ChatGPT plan and run OpenAI models through your "
         "subscription — no API key. Tokens stay on this machine.",
         auth="oauth",
@@ -781,7 +781,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "deepseek",
         "DeepSeek",
         base_url="https://api.deepseek.com",
-        recommended_model="deepseek-v4-flash",
+        recommended_model="deepseek-flash",
         env_key="DEEPSEEK_API_KEY",
     ),
     _compat(
@@ -796,7 +796,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "minimax",
         "MiniMax",
         base_url="https://api.minimax.io/v1",
-        recommended_model="MiniMax-M2.5",
+        recommended_model="MiniMax-M3.1-Flash",
         env_key="MINIMAX_API_KEY",
     ),
     _compat(
@@ -878,7 +878,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         "fireworks",
         "Fireworks AI",
         base_url="https://api.fireworks.ai/inference/v1",
-        recommended_model="accounts/fireworks/models/glm-5p2",
+        recommended_model="accounts/fireworks/models/glm-5p3",
         env_key="FIREWORKS_API_KEY",
     ),
     _compat(

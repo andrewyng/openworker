@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import difflib
 import time
 import uuid
 from pathlib import Path
@@ -498,6 +499,11 @@ class SessionManager:
         self._data_base = base
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
         self._prefs = self._load_prefs()
+        # The facts the providers' own model lists gave for picker models the catalog does
+        # not know (OPE-252 layer 1): read by the engine and capabilities_for.
+        from ..providers import live_models as _live
+
+        _live.use_facts_path(self._data_base / "live_facts.json")
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
         # Seed the PDF-fallback module global from prefs so engines see the user's
@@ -4629,6 +4635,9 @@ class SessionManager:
                     d.name
                 ),
                 "is_custom": is_custom_provider(d.name, self.secrets),
+                # Models the provider added since the last check of its own list (OPE-252):
+                # the card shows the count; the provider page lists them.
+                "new_models": self.provider_new_models(d.name),
             }
             if d.kind == "local":
                 row["alive"] = alive
@@ -4757,12 +4766,14 @@ class SessionManager:
     # 2026-07-04; refresh alongside `recommended_model` in providers/registry.py).
     COMPAT_MODELS = {
         "zai": ["glm-5.2", "glm-4.6"],
-        "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
-        "kimi": ["kimi-k2.6", "kimi-k2.5"],
-        "minimax": ["MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M3"],
+        # Ids re-read from each vendor's own list on 2026-11-09 (OPE-252 survey): deepseek-flash
+        # is the id DeepSeek serves; kimi-k2.5 and MiniMax M2.5 are gone (M2.5 retires 2026-11-18).
+        "deepseek": ["deepseek-flash", "deepseek-v4-pro"],
+        "kimi": ["kimi-k2.6", "kimi-k3"],
+        "minimax": ["MiniMax-M3.1-Flash", "MiniMax-M3"],
         "qwen": ["qwen3-max", "qwen3-coder-plus", "qwen-plus"],
-        "xai": ["grok-4.3", "grok-4"],
-        "mistral": ["mistral-large-latest", "mistral-small-latest"],
+        "xai": ["grok-4.3", "grok-4.5"],
+        "mistral": ["mistral-large-latest", "mistral-large-4", "mistral-small-latest"],
         # NIM ids carry their own `vendor/model` namespace (integrate.api.nvidia.com/v1/models,
         # read 2026-10-25).
         "nvidia": [
@@ -5459,29 +5470,73 @@ class SessionManager:
         return out
 
     def _curated_models(self) -> list[str]:
-        """The models offered in the composer's selector: every curated-matrix model
-        (`get_settings` culls the ones whose provider has no key) plus custom ids the user
-        added, minus matrix models they removed. Deliberately NO built-in seed list — a
-        fresh install offers nothing until a provider key exists, and then exactly that
-        provider's matrix models appear. The active default is always kept selectable.
+        """The models offered in the composer's selector, which are exactly the ticked boxes
+        on the provider pages: the catalog's rows, plus ids the user ticked or added, minus
+        the ones they unticked (`get_settings` culls providers without a key). Deliberately
+        NO built-in seed list — a fresh install offers nothing until a provider key exists.
+
+        For a provider whose own model list we hold, a catalog row starts ticked only when
+        that list carries it (by id or alias): the key's list decides what is on offer, the
+        catalog only adds facts (OPE-252). Before the first list, and for Bedrock, Vertex and
+        the Ark agent plan, which have none, the catalog rows stand. The active default is
+        always kept selectable, so a session never changes model behind the user's back.
         """
-        from ..providers.matrix import MATRIX
+        from ..providers.matrix import MATRIX, split_id
 
         user = self._prefs.get("models")
         user = user if isinstance(user, list) else []
         hidden = set(self._prefs.get("hidden_models") or [])
-        models = [m for m in [*MATRIX, *user] if m not in hidden]
+        listed, refused = self._listed_ids_by_provider()
+        anyway = set(self._prefs.get("picked_anyway") or [])
+
+        def on_the_list(full: str) -> bool:
+            ids = listed.get(self._model_provider(full))
+            return ids is None or split_id(full)[1].lower() in ids
+
+        def usable(full: str) -> bool:
+            # a model the free check refused leaves the picker, unless the user chose "Use anyway"
+            return full in anyway or split_id(full)[1].lower() not in refused.get(self._model_provider(full), set())
+
+        catalog = [m for m in MATRIX if on_the_list(m)]
+        models = [m for m in [*catalog, *user] if m not in hidden and usable(m)]
         return list(dict.fromkeys([self.model, *models]))
 
-    def add_model(self, model: str) -> dict[str, Any]:
+    def _listed_ids_by_provider(self) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+        """({provider: every id and alias its cached list carries}, {provider: ids the free
+        check refused}), lower case, for the providers whose list we hold in the current shape."""
+        listed: dict[str, set[str]] = {}
+        refused: dict[str, set[str]] = {}
+        for provider, entry in self._load_catalogs().items():
+            if isinstance(entry, dict) and entry.get("v") == self.CATALOG_ENTRY_VERSION:
+                listed[provider] = {str(i).lower() for i in entry.get("all_ids") or entry.get("ids") or []}
+                refused[provider] = {str(i).lower() for i in entry.get("unavailable") or {}}
+        return listed, refused
+
+    def add_model(self, model: str, *, anyway: bool = False) -> dict[str, Any]:
         """Add a model id (e.g. `gpt-4o`, `ollama:qwen2.5-coder:32b`) to the picker.
         Custom ids persist in prefs; a previously removed matrix model is just unhidden
-        (storing it too would shadow future matrix updates)."""
+        (storing it too would shadow future matrix updates). `anyway` is the provider page's
+        "Use anyway" on a model its list calls something other than chat: remembered, so the
+        row keeps its "Your pick · untested" badge and its Undo (OPE-252)."""
         from ..providers.matrix import MATRIX
 
         model = (model or "").strip()
         if not model:
             return {"ok": False, "error": "empty model"}
+        refused = self._not_on_key(model)
+        if refused is not None:
+            return {"ok": False, **refused, **self.get_settings()}
+        if not anyway:
+            gone = self._refused_by_free_check(model)
+            if gone is not None:
+                return {"ok": False, **gone, **self.get_settings()}
+        picked = [m for m in self._prefs.get("picked_anyway") or [] if m != model]
+        if anyway:
+            picked.append(model)
+        if picked:
+            self._prefs["picked_anyway"] = picked
+        else:
+            self._prefs.pop("picked_anyway", None)
         hidden = [m for m in self._prefs.get("hidden_models") or [] if m != model]
         if hidden:
             self._prefs["hidden_models"] = hidden
@@ -5493,7 +5548,412 @@ class SessionManager:
             models.append(model)
         self._prefs["models"] = models
         self._save_prefs()
+        self._rewrite_live_facts()
         return {"ok": True, **self.get_settings()}
+
+    # -- the provider's own model list, with the user's key (OPE-252 layer 1) --------------
+
+    CATALOG_TTL_SECONDS = 24 * 3600  # a listing is asked for again after a day, or on Refresh
+    CATALOG_NEW_WINDOW_SECONDS = 3600  # "new since last check" survives refreshes inside an hour
+    CATALOG_ENTRY_VERSION = 2  # the shape of a cached listing; an older entry is asked again
+
+    def _catalogs_path(self) -> Path:
+        return self._data_base / "provider_catalogs.json"
+
+    def _load_catalogs(self) -> dict[str, dict[str, Any]]:
+        cached = getattr(self, "_catalogs", None)
+        if cached is not None:
+            return cached
+        try:
+            doc = json.loads(self._catalogs_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = {}
+        self._catalogs = doc if isinstance(doc, dict) else {}
+        return self._catalogs
+
+    def _save_catalogs(self) -> None:
+        self._catalogs_path().write_text(
+            json.dumps(self._load_catalogs(), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def provider_new_models(self, name: str) -> int:
+        """How many models the provider's list gained since the check before (0 when the
+        list was never asked)."""
+        entry = self._load_catalogs().get(name) or {}
+        return len(entry.get("new") or [])
+
+    def _listing_profile(self, name: str) -> dict[str, Any]:
+        """What `live_models.fetch` needs: the stored profile; for the ChatGPT plan a live
+        OAuth bearer and the account id, refreshed first when stale."""
+        profile = dict(self.secrets.get(f"provider:{name}") or {})
+        if name == "openai-codex":
+            from ..providers import codex_auth
+
+            try:
+                access, account = codex_auth.CodexTokenStore(self.secrets).access_token()
+            except Exception:  # noqa: BLE001 - signed out or a dead refresh: the list says "refused"
+                return profile
+            profile.update({"access_token": access, "account_id": account})
+        return profile
+
+    def provider_catalog(self, name: str, *, refresh: bool = False) -> dict[str, Any]:
+        """What this provider serves for the user's key, for the provider page.
+
+        Asks the provider's own model list (cached a day, or again on `refresh`). A keyed or
+        signed-in provider's page offers exactly that list: `rows` are the chat models, each
+        with the facts we have (the user's setting, a maintainer override, the list's own
+        figure, then the reviewed catalog), whether it is in the picker, recommended, new since
+        the check before; `set_aside` are the listed models that are not chat models (image,
+        speech, embeddings…), with the reason, offered only through "Use anyway". A picker
+        model the key does not list is appended as `on_key: false`. The three providers whose
+        list the app cannot sign for yet answer `listing: none` and the reviewed rows."""
+        from ..providers import live_models
+
+        d = get_descriptor(name, self.secrets)
+        if d is None:
+            return {"ok": False, "error": f"unknown provider: {name}"}
+        configured = self._provider_configured(name)
+        base: dict[str, Any] = {"ok": True, "provider": name, "configured": configured}
+        empty: dict[str, Any] = {"rows": [], "set_aside": [], "new": [], "not_on_key": []}
+        if d.kind == "local":
+            return {**base, "listing": "none", "reason": "A local server lists its models on its card.", **empty}
+        if name in live_models.NO_LISTING:
+            return {**base, "listing": "none", "reason": live_models.NO_LISTING[name], **empty, "rows": self._catalog_rows(name)}
+        if not configured:
+            return {**base, "listing": "none", "reason": "Add a key to ask this provider which models it serves.", **empty, "rows": self._catalog_rows(name)}
+        catalogs = self._load_catalogs()
+        entry = catalogs.get(name)
+        if entry and (entry.get("v") != self.CATALOG_ENTRY_VERSION or entry.get("labels") != live_models.LABELS_VERSION):
+            entry = None  # written by an older build, or named by older rules: ask again
+        now = time.time()
+        error: Optional[str] = None
+        fresh = bool(entry) and (now - float(entry.get("fetched_at") or 0)) < self.CATALOG_TTL_SECONDS
+        if refresh or not fresh:
+            listing, unavailable = self._fetch_and_check(name, d)
+            if listing.ok:
+                ids = [m.id for m in listing.models if m.offered]
+                if entry:
+                    # The baseline for "new" moves only when the check before is at least an
+                    # hour old, so two refreshes in a row do not swallow the new badge.
+                    old_enough = now - float(entry.get("fetched_at") or 0) >= self.CATALOG_NEW_WINDOW_SECONDS
+                    seen = list(entry.get("ids") or []) if old_enough else list(entry.get("seen") or entry.get("ids") or [])
+                else:
+                    seen = ids  # the first look: nothing is new to a user who never saw a list
+                seen_set = set(seen)
+                entry = {
+                    "v": self.CATALOG_ENTRY_VERSION,
+                    "labels": live_models.LABELS_VERSION,
+                    "fetched_at": now,
+                    "ids": ids,
+                    "aside": [m.id for m in listing.models if not m.offered],
+                    "all_ids": listing.all_ids or ids,
+                    "seen": seen,
+                    "new": [i for i in ids if i not in seen_set],
+                    "models": {m.id: live_models.as_dict(m) for m in listing.models},
+                    # {bare id: the provider's sentence} for picker models the free check refused
+                    "unavailable": unavailable,
+                }
+                catalogs[name] = entry
+                self._save_catalogs()
+                self._rewrite_live_facts()
+            else:
+                error = listing.error
+                if not entry:
+                    # No list ever came back: the error and Retry. Never the reviewed rows
+                    # here, because nobody checked them against this key.
+                    return {**base, "listing": "error", "error": error, **empty}
+        rows, aside = self._live_rows(name, entry or {})
+        return {
+            **base,
+            "listing": "live",
+            "fetched_at": (entry or {}).get("fetched_at"),
+            "error": error,
+            "new": [r["model"] for r in rows if r["new"]],
+            "rows": rows,
+            "set_aside": aside,
+            "not_on_key": [r["model"] for r in rows if r["in_picker"] and r["on_key"] is False],
+            "count": len((entry or {}).get("ids") or []),
+        }
+
+    def _fetch_and_check(self, name: str, d: Any) -> tuple[Any, dict[str, str]]:
+        """The provider's list and, at the same moment, the free availability check on the
+        models this provider has in the picker (Gemini, Anthropic, MiniMax). Both run in
+        parallel, so the page waits no longer than for the list alone. Returns (listing,
+        {bare id: the provider's sentence} for the models it refused)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ..providers import live_models
+        from ..providers.matrix import split_id
+
+        profile = self._listing_profile(name)
+        targets: list[str] = []
+        if name in live_models.FREE_CHECK:
+            targets = list(dict.fromkeys(split_id(m)[1] for m in self._curated_models() if self._model_provider(m) == name))[:24]
+        with ThreadPoolExecutor(max_workers=1 + len(targets)) as pool:
+            listing_job = pool.submit(live_models.fetch, name, profile, d)
+            checks = {bare: pool.submit(live_models.check_model, name, profile, d, bare) for bare in targets}
+            listing = listing_job.result()
+            unavailable = {bare: job.result() for bare, job in checks.items() if job.result()}
+        return listing, unavailable
+
+    def _label_suffix(self, name: str) -> str:
+        """How the reviewed rows of this provider name it after the dot ("Google",
+        "Anthropic", "via OpenRouter"), so a row from the provider's own list reads the
+        same way; the descriptor's title when the provider has no reviewed row."""
+        from ..providers.matrix import MATRIX, full_id, models_for_provider
+
+        for bare in models_for_provider(name):
+            label = MATRIX[full_id(name, bare)].label
+            if " · " in label:
+                return label.split(" · ", 1)[1]
+        d = get_descriptor(name, self.secrets)
+        return d.title if d else name
+
+    @staticmethod
+    def _first_set(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    def _row_facts(self, full: str, cat: Any, lm: dict[str, Any]) -> dict[str, Any]:
+        """Each fact's winner, first hit: the user's own setting, a maintainer OVERRIDES
+        entry, the provider's live list, the reviewed catalog, nothing (OPE-252 §11.2). The
+        page shows the winner and never says which source won."""
+        from ..providers.matrix import OVERRIDES
+
+        over = OVERRIDES.get(full)
+        user_window = _model_config.get(full).get("context_size")
+        return {
+            "context": self._first_set(user_window, over.context_window if over else None, lm.get("context"), cat.context_window if cat else None),
+            "max_output": lm.get("max_output"),
+            "input_image": self._first_set(over.caps.vision if over else None, lm.get("input_image"), cat.caps.vision if cat else None),
+            "input_pdf": self._first_set(over.caps.pdf if over else None, lm.get("input_pdf"), cat.caps.pdf if cat else None),
+            "tools": self._first_set(over.caps.tools if over else None, lm.get("tools"), cat.caps.tools if cat else None),
+            "reasoning": lm.get("reasoning"),
+            "retires_at": lm.get("retires_at"),
+        }
+
+    def _live_rows(self, name: str, entry: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """(offered rows, set-aside rows) for a keyed provider's page, from its cached
+        listing. Offered: the chat models, new ones first, then the recommendation, then the
+        provider's order; a listed id or alias the catalog knows shows under the catalog's id
+        and label (the API accepts both, settings hold the catalog's). Set aside: the other
+        kinds, unless the reviewed catalog vouches for the model or the user picked it
+        anyway. Picker models of this provider the key does not list come last, `on_key`
+        false."""
+        from ..providers import live_models
+        from ..providers.matrix import MATRIX, full_id, models_for_provider, split_id
+
+        d = get_descriptor(name, self.secrets)
+        rec = d.recommended_model if d else None
+        suffix = self._label_suffix(name)
+        picker = set(self._curated_models())
+        anyway = set(self._prefs.get("picked_anyway") or [])
+        live: dict[str, dict[str, Any]] = {str(k): v for k, v in (entry.get("models") or {}).items() if isinstance(v, dict)}
+        refusals = {str(k).lower(): str(v) for k, v in (entry.get("unavailable") or {}).items()}
+        new = set(entry.get("new") or [])
+        curated = {c.lower(): c for c in models_for_provider(name)}
+
+        def catalog_bare(lm: dict[str, Any]) -> Optional[str]:
+            for cand in (lm.get("id"), *(lm.get("aliases") or [])):
+                hit = curated.get(str(cand).lower()) if cand else None
+                if hit:
+                    return hit
+            return None
+
+        def build(lid: str) -> dict[str, Any]:
+            lm = live.get(lid) or {"id": lid}
+            bare = catalog_bare(lm) or lid
+            full = full_id(name, bare)
+            cat = MATRIX.get(full)
+            kind, source = str(lm.get("kind") or "chat"), str(lm.get("kind_source") or "none")
+            if kind != "chat" and source == "name" and cat is not None:
+                kind, source = "chat", "catalog"  # a reviewed row is a coworker model by definition
+            refused = refusals.get(bare.lower()) or refusals.get(lid.lower())
+            if refused:
+                # The free check: the provider refused this model for the key.
+                kind, source = "unavailable", "provider"
+                lm = {**lm, "detail": refused, "reason": refused}
+            return {
+                "id": bare,
+                "model": full,
+                "label": cat.label if cat else f"{lm.get('label') or bare} · {suffix}",
+                "kind": kind,
+                "kind_source": source,
+                "detail": lm.get("detail"),
+                "reason": None if kind == "chat" else lm.get("reason"),
+                **self._row_facts(full, cat, lm),
+                "released": lm.get("created"),
+                "in_picker": full in picker,
+                "recommended": bare == rec,
+                "new": lid in new,
+                "on_key": True,
+                "picked_anyway": full in anyway,
+            }
+
+        offered: list[dict[str, Any]] = []
+        aside: list[dict[str, Any]] = []
+        done: set[str] = set()
+        for lid in [str(i) for i in entry.get("ids") or []]:
+            if lid not in done:
+                done.add(lid)
+                row = build(lid)
+                (offered if row["kind"] == "chat" or row["picked_anyway"] else aside).append(row)
+        for lid in [str(i) for i in entry.get("aside") or []]:
+            if lid in done:
+                continue
+            done.add(lid)
+            row = build(lid)
+            (offered if row["kind"] == "chat" or row["picked_anyway"] else aside).append(row)
+        listed_models = {r["model"] for r in offered} | {r["model"] for r in aside}
+        for full in self._curated_models():
+            if full in listed_models or self._model_provider(full) != name:
+                continue
+            _prov, bare = split_id(full)
+            cat = MATRIX.get(full)
+            offered.append({
+                "id": bare,
+                "model": full,
+                "label": cat.label if cat else f"{live_models.display_label(bare)} · {suffix}",
+                "kind": "chat",
+                "kind_source": "catalog" if cat else "none",
+                "detail": None,
+                "reason": None,
+                **self._row_facts(full, cat, {}),
+                "released": None,
+                "in_picker": True,
+                "recommended": bare == rec,
+                "new": False,
+                "on_key": False,
+                "picked_anyway": full in anyway,
+            })
+        offered.sort(key=lambda r: (not r["new"], not r["recommended"]))
+        return offered, aside
+
+    def _catalog_rows(self, name: str) -> list[dict[str, Any]]:
+        """The reviewed rows alone, for a provider whose list the app cannot ask (or has no
+        key for yet): what a key would unlock, with the catalog's facts, `on_key` unknown."""
+        from ..providers.matrix import MATRIX, full_id, models_for_provider
+
+        d = get_descriptor(name, self.secrets)
+        rec = d.recommended_model if d else None
+        picker = set(self._curated_models())
+        anyway = set(self._prefs.get("picked_anyway") or [])
+        rows = []
+        for bare in models_for_provider(name):
+            full = full_id(name, bare)
+            cat = MATRIX[full]
+            rows.append({
+                "id": bare,
+                "model": full,
+                "label": cat.label,
+                "kind": "chat",
+                "kind_source": "catalog",
+                "detail": None,
+                "reason": None,
+                **self._row_facts(full, cat, {}),
+                "released": None,
+                "in_picker": full in picker,
+                "recommended": bare == rec,
+                "new": False,
+                "on_key": None,
+                "picked_anyway": full in anyway,
+            })
+        rows.sort(key=lambda r: not r["recommended"])
+        return rows
+
+    def _live_row_for(self, model: str) -> Optional[dict[str, Any]]:
+        """The cached live row (as_dict) a picker model stands for, by id or alias."""
+        provider = self._model_provider(model)
+        entry = self._load_catalogs().get(provider) or {}
+        if entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            return None
+        from ..providers.matrix import split_id
+
+        _prov, bare = split_id(model)
+        key = bare.lower()
+        for lm in (entry.get("models") or {}).values():
+            if not isinstance(lm, dict):
+                continue
+            if str(lm.get("id", "")).lower() == key or any(str(a).lower() == key for a in lm.get("aliases") or []):
+                return lm
+        return None
+
+    def _refused_by_free_check(self, model: str) -> Optional[dict[str, Any]]:
+        """A model about to enter the picker gets the same free check the daily fetch runs
+        (Gemini, Anthropic, MiniMax): the refusal, with the provider's sentence, when the
+        provider says this key cannot use it; None otherwise. Only for a provider whose list
+        the app holds, so nothing is asked before the user has a key and has seen the page.
+        A refusal is kept with the list, so the page sets the row aside."""
+        from ..providers import live_models
+        from ..providers.matrix import split_id
+
+        provider = self._model_provider(model)
+        if provider not in live_models.FREE_CHECK:
+            return None
+        entry = self._load_catalogs().get(provider) or {}
+        if entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            return None
+        d = get_descriptor(provider, self.secrets)
+        _prov, bare = split_id(model)
+        sentence = live_models.check_model(provider, self._listing_profile(provider), d, bare)
+        if not sentence:
+            return None
+        entry.setdefault("unavailable", {})[bare] = sentence
+        self._save_catalogs()
+        return {"error": f"Not available to this key: {sentence}", "reason": "unavailable", "suggestions": []}
+
+    def _not_on_key(self, model: str) -> Optional[dict[str, Any]]:
+        """For a keyed provider whose own list we hold: the refusal for an id that list does
+        not carry, with the closest ids it does. None when the id is fine or nothing is
+        known (no list asked yet, a local server, a provider without a list)."""
+        from ..providers import live_models
+        from ..providers.matrix import split_id
+
+        provider = self._model_provider(model)
+        d = get_descriptor(provider, self.secrets)
+        if d is None or d.kind == "local" or provider in live_models.NO_LISTING:
+            return None
+        entry = self._load_catalogs().get(provider) or {}
+        if entry.get("v") != self.CATALOG_ENTRY_VERSION:
+            return None
+        ids = [str(i) for i in entry.get("ids") or []]
+        if not ids:
+            return None
+        _prov, bare = split_id(model)
+        # Typed by hand, any id or alias the provider lists is on the key, chat model or not
+        # (an image or music model is not offered in the list, but it is not refused either).
+        known = {str(i).lower() for i in entry.get("all_ids") or ids}
+        if bare.lower() in known:
+            return None
+        close = difflib.get_close_matches(bare, ids, n=3, cutoff=0.5)
+        return {
+            "error": f"Not available on this key: {bare}",
+            "reason": "not_on_key",
+            "suggestions": close,
+        }
+
+    def _rewrite_live_facts(self) -> None:
+        """live_facts.json: what the providers' own lists said about the picker's models, so
+        the engine's window and capabilities_for see it without the manager. Written for
+        every picker model with a live row, catalog or not: the list speaks for the exact id
+        today and wins over the reviewed figure (OPE-252 §11.2)."""
+        from ..providers import live_models
+
+        facts: dict[str, dict[str, Any]] = {}
+        for full in self._curated_models():
+            lm = self._live_row_for(full)
+            if lm is None:
+                continue
+            suffix = self._label_suffix(self._model_provider(full))
+            row = {"name": lm.get("label"), "context": lm.get("context"), "tools": lm.get("tools"), "vision": lm.get("input_image"), "pdf": lm.get("input_pdf")}
+            facts[full] = {k: v for k, v in row.items() if v is not None}
+            facts[full]["label"] = f"{lm.get('label') or lm.get('id')} · {suffix}"
+        try:
+            live_models.write_facts(facts)
+        except OSError:
+            pass  # a read-only state dir keeps the previous facts
 
     def remove_model(self, model: str) -> dict[str, Any]:
         """Remove a model id from the picker. Custom ids are dropped; matrix models are
@@ -5508,7 +5968,13 @@ class SessionManager:
             hidden = self._prefs.get("hidden_models") or []
             if model not in hidden:
                 self._prefs["hidden_models"] = [*hidden, model]
+        picked = [m for m in self._prefs.get("picked_anyway") or [] if m != model]
+        if picked:
+            self._prefs["picked_anyway"] = picked
+        else:
+            self._prefs.pop("picked_anyway", None)  # Undo on the provider page, or an untick
         self._save_prefs()
+        self._rewrite_live_facts()
         return {"ok": True, **self.get_settings()}
 
     def org_policy_status(self) -> dict[str, Any]:
@@ -5551,7 +6017,28 @@ class SessionManager:
                 selectable = list(dict.fromkeys([*selectable, *self._local_server_models(local)]))
         if self.model not in selectable:
             selectable.insert(0, self.model)
-        from ..providers.matrix import model_context_windows, model_labels
+        from ..providers import live_models
+        from ..providers.matrix import MATRIX, model_context_windows, model_labels
+
+        labels = model_labels()
+        windows = model_context_windows()
+        live_facts = live_models.all_facts()
+        verification: dict[str, str] = {}
+        for mid in selectable:
+            facts = live_facts.get(mid) or {}
+            if mid not in labels and (facts.get("label") or facts.get("name")):
+                labels[mid] = str(facts.get("label") or facts["name"])
+            if facts.get("context"):
+                windows[mid] = int(facts["context"])  # the provider's own figure beats the catalog's (OPE-252 §11.2)
+            provider = self._model_provider(mid)
+            if provider == "ollama" or provider in LOCAL_SERVERS:
+                verification[mid] = "local"
+            elif mid in MATRIX:
+                verification[mid] = "catalog"
+            elif facts.get("context") or facts.get("tools") is not None:
+                verification[mid] = "provider"
+            else:
+                verification[mid] = "unverified"
 
         return {
             "provider": "openai",
@@ -5563,10 +6050,18 @@ class SessionManager:
             "org_policy": self.org_policy_status(),
             # Curated-matrix display names ({full id → "GLM-5.2 · via Together"}) so every
             # picker shows human labels; custom models absent here render their raw id.
-            "model_labels": model_labels(),
-            # {full id → context window in tokens}, verified matrix entries only —
-            # drives the composer's context-fill meter (absent id → meter hides).
-            "model_context_windows": model_context_windows(),
+            "model_labels": labels,
+            # {full id → context window in tokens}: the catalog's rows plus what a
+            # provider's own list said for a picker model the catalog lacks — drives the
+            # composer's context-fill meter (absent id → meter hides).
+            "model_context_windows": windows,
+            # Where each picker model's facts come from (OPE-252): the curated catalog,
+            # the provider's own list, a local server, or nowhere ("unverified": safe
+            # defaults the card lets the user correct).
+            "model_verification": verification,
+            # Models the user took from a provider's set-aside group with "Use anyway": the
+            # pickers mark them "Your pick · untested" (OPE-252).
+            "model_picked_anyway": [m for m in (self._prefs.get("picked_anyway") or []) if m in selectable],
             "has_key": env_key or stored,
             # Provider-agnostic "can this default model actually run?" — true when the default
             # model's provider is configured (any provider, not just OpenAI), or for an
