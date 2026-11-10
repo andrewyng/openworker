@@ -18,7 +18,7 @@ the id refresh.
 
 Resellers: Together + Fireworks + OpenRouter + Nebius + OrcaRouter + NVIDIA NIM
 + Groq (landed 2026-10-25, after the deferral of 2026-07-04) + Cerebras, Hugging Face
-Inference Providers and SiliconFlow (2026-10-26).
+Inference Providers and SiliconFlow (2026-10-26) + UberLLM (2026-11-10).
 """
 
 from __future__ import annotations
@@ -378,6 +378,20 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "orcarouter:deepseek/deepseek-v4-pro": ModelEntry(
         "DeepSeek V4 Pro · via OrcaRouter", _AGENTIC, 1_048_576
+    ),
+    # UberLLM: the same vendor namespaces, one key for all of them. Ids, windows and tool
+    # support from api.uberllm.dev/v1/models (keyless, read 2026-11-10: `context_length`
+    # 1,000,000 for both; both list `tools`; Sonnet 5 declares image input, PDFs
+    # unverified over the compat surface).
+    "uberllm:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via UberLLM",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "uberllm:deepseek/deepseek-v4-pro": ModelEntry(
+        "DeepSeek V4 Pro · via UberLLM", _AGENTIC, 1_000_000
     ),
     # NVIDIA NIM — NVIDIA's own `vendor/model` namespace, so its models repeat the word in
     # the routed id. Ids from integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25;
