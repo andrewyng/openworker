@@ -1623,8 +1623,12 @@ def verify_provider_key(
             # segment (e.g. LM Studio served at http://127.0.0.1:1234) can still answer
             # /models while every completion 404s — the session then hangs silently on
             # an endpoint that "tested" fine. Probe the real completions route too and
-            # fail fast with a path-specific message instead (issue #431).
-            if resp.status_code < 300:
+            # fail fast with a path-specific message instead (issue #431). Only for an
+            # endpoint the user typed: a vendor's own default needs no path check, and
+            # Moonshot, Groq and MiniMax answer 404 to a GET on the completions route
+            # while serving it fine (OPE-268).
+            vendor_default = default_base.rstrip("/") or ("https://api.openai.com/v1" if name == "openai" else "")
+            if resp.status_code < 300 and base != vendor_default:
                 route = httpx.get(
                     base + "/chat/completions",
                     headers={"Authorization": f"Bearer {key}"},
@@ -1656,6 +1660,9 @@ def verify_provider_key(
     if resp.status_code in (401, 403):
         if name == "ollama":
             return {"ok": False, "error": "Server rejected the request."}
+        return {"ok": False, "error": "Invalid API key."}
+    if resp.status_code == 400 and name == "xai" and "incorrect api key" in str(getattr(resp, "text", "") or "").lower():
+        # xAI answers a wrong key with 400 and a sentence, not 401 (seen live 2026-11-09, OPE-268).
         return {"ok": False, "error": "Invalid API key."}
     if resp.status_code == 404 and name == "ollama":
         return {
