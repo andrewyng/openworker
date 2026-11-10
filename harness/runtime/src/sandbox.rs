@@ -351,7 +351,7 @@ impl Sandbox {
     }
 }
 
-// Minimal messages matching NVIDIA OpenShell 0.0.116 proto/openshell.proto.
+// Minimal messages matching reviewed NVIDIA OpenShell v0.1.3/v0.1.7 Exec wire fields.
 // prost skips future unknown fields; the gateway version is pinned by preflight.
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ExecStart {
