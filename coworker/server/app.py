@@ -15,15 +15,16 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger("coworker.server.app")
 
@@ -298,6 +299,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # A GUI websocket whose client stopped reading is dropped, and every open websocket can be
+    # aborted at shutdown, so neither holds the server up (ws_guard.py, T3-3).
+    from .ws_guard import WebsocketGuard
+
+    app.add_middleware(WebsocketGuard)
     app.state.manager = manager
 
     @app.get("/v1/capabilities")
@@ -480,6 +486,28 @@ def create_app(manager: SessionManager) -> FastAPI:
             "unattended": manager.unattended.is_unattended(session_id),
             "attendance": manager.unattended.attendance(session_id),
         }
+
+    @app.get("/v1/sessions/{session_id}/tasks")
+    def get_session_tasks(session_id: str) -> dict[str, Any]:
+        # Async subagents (OPE-257): the Subagents section's registry view. A live
+        # engine answers from its registry; otherwise the supplemental record answers,
+        # so history shows before the session's first turn after a restart.
+        engine = manager._engines.get(session_id)
+        reg = getattr(engine, "agent_tasks", None) if engine else None
+        if reg is not None:
+            return {"agents": reg.snapshot()}
+        rows = manager.agent_task_store.load(session_id)
+        rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
+        return {"agents": [{k: v for k, v in r.items() if k != "report"} for r in rows]}
+
+    @app.get("/v1/sessions/{session_id}/tasks/{task_id}/transcript")
+    def get_session_task_transcript(session_id: str, task_id: str) -> dict[str, Any]:
+        # Subagent durability (OPE-262): the child's full message log, on demand only —
+        # for an audit or a future read-only viewer. Never streamed.
+        messages = manager.agent_task_store.read_transcript(session_id, task_id)
+        if messages is None:
+            raise HTTPException(status_code=404, detail="no transcript for that subagent run")
+        return {"task_id": task_id, "messages": messages}
 
     @app.get("/v1/sessions/{session_id}/reviewer-stats")
     def get_reviewer_stats(session_id: str) -> dict[str, Any]:
@@ -825,6 +853,137 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.get("/v1/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
+
+    # Observability (§12): the recorded turns and steps of a session.
+    @app.get("/v1/sessions/{session_id}/turns")
+    def session_turns(session_id: str) -> dict[str, Any]:
+        return manager.recording_turns(session_id)
+
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/steps")
+    def session_turn_steps(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.recording_turn_steps(session_id, turn_id)
+
+    @app.get("/v1/sessions/{session_id}/steps/{step_id}")
+    def session_step(session_id: str, step_id: str) -> dict[str, Any]:
+        return manager.recording_step(session_id, step_id)
+
+    @app.get("/v1/sessions/{session_id}/usage")
+    def session_usage(session_id: str) -> dict[str, Any]:
+        return manager.recording_usage(session_id)
+
+    # OB-3: a turn's Issues, and "I have looked" (clears the session's amber dot).
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/issues")
+    def session_turn_issues(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.recording_turn_issues(session_id, turn_id)
+
+    @app.post("/v1/sessions/{session_id}/issues/seen")
+    def session_issues_seen(session_id: str) -> dict[str, Any]:
+        return manager.mark_recording_issues_seen(session_id)
+
+    # OB-6: one session's recording as a file, content included (phase-2 design §10.6).
+    @app.get("/v1/sessions/{session_id}/recording")
+    def session_recording(session_id: str):
+        body = json.dumps(manager.recording_file(session_id), ensure_ascii=False)
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80] or "session"
+        return Response(content=body, media_type="application/json", headers={
+            "Content-Disposition": f'attachment; filename="recording-{safe}.json"'})
+
+    # OB-6: Settings ▸ Machine ▸ Observability. Keys are write-only: answers carry masked
+    # hints, never a value (phase-2 design §10.8).
+    @app.get("/v1/observability/settings")
+    def observability_settings() -> dict[str, Any]:
+        return manager.observability.get_settings()
+
+    @app.put("/v1/observability/settings")
+    def observability_settings_put(body: dict):
+        code, answer = manager.observability.put_settings(body or {})
+        return JSONResponse(answer, status_code=code)
+
+    @app.post("/v1/observability/test")
+    async def observability_test() -> dict[str, Any]:
+        return await asyncio.to_thread(manager.observability.send_test)
+
+    @app.get("/v1/observability/status")
+    def observability_status(day_start_ms: Optional[int] = None) -> dict[str, Any]:
+        # "Today" is the viewer's day: the desktop sends when it began (Phase 3 TD3-2, V3-18).
+        return manager.observability.status(day_start_ms=day_start_ms)
+
+    # -- Phase 3 (design §4): rollups over many turns. Days are the viewer's: the desktop
+    # sends its own local day boundaries as epoch ms (TD3-2). Tokens only, never prices.
+    def _period(from_: Optional[int], to: Optional[int], days: Optional[str]) -> tuple[int, int, list]:
+        from ..observability.rollups import parse_days
+
+        parsed = parse_days(days) if days else []
+        start = int(from_) if from_ is not None else (parsed[0][1] if parsed else 0)
+        end = int(to) if to is not None else (parsed[-1][2] if parsed else int(time.time() * 1000) + 1)
+        if end <= start:
+            raise ValueError("`to` must be after `from`")
+        return start, end, parsed
+
+    @app.get("/v1/observability/rollup")
+    def observability_rollup(request: Request, to: Optional[int] = None, days: Optional[str] = None,
+                             group: str = "all", persona_id: Optional[str] = None,
+                             team_id: Optional[str] = None, task_id: Optional[str] = None):
+        try:
+            start, end, parsed = _period(request.query_params.get("from"), to, days)
+            groups = [g for g in group.split(",") if g] or ["all"]
+            if "day" in groups and not parsed:
+                raise ValueError("grouping by day needs `days`")
+            where = {k: v for k, v in (("persona_id", persona_id), ("team_id", team_id), ("task_id", task_id)) if v}
+            return manager.usage_rollup(start=start, end=end, group=groups, days=parsed, where=where)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/v1/observability/turns")
+    def observability_heaviest(request: Request, to: Optional[int] = None, order: str = "tokens", limit: int = 20,
+                               persona_id: Optional[str] = None):
+        if order != "tokens":
+            return JSONResponse({"error": "order must be tokens"}, status_code=400)
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_heaviest(start=start, end=end, limit=limit, persona_id=persona_id)
+
+    @app.get("/v1/observability/approver")
+    def observability_approver(request: Request, to: Optional[int] = None, persona_id: Optional[str] = None):
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_approver(start=start, end=end, persona_id=persona_id)
+
+    @app.get("/v1/observability/ratings")
+    def observability_ratings(request: Request, to: Optional[int] = None, persona_id: Optional[str] = None):
+        # T3-10: the Ratings card on Usage
+        try:
+            start, end, _ = _period(request.query_params.get("from"), to, None)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return manager.usage_ratings(start=start, end=end, persona_id=persona_id)
+
+    @app.get("/v1/personas/{persona_id}/doing")
+    def persona_doing(persona_id: str, days: int = 30, to: Optional[int] = None) -> dict[str, Any]:
+        return manager.persona_doing(persona_id, days=days, end=to)
+
+    @app.get("/v1/personas/{persona_id}/versions/diff")
+    def persona_version_diff(request: Request, persona_id: str, to: str = ""):
+        result = manager.persona_version_diff(persona_id, request.query_params.get("from") or "", to)
+        return JSONResponse(result, status_code=404 if "error" in result else 200)
+
+    # OB-5: the footer numbers under each answer, and the turn's rating.
+    @app.get("/v1/sessions/{session_id}/footers")
+    def session_footers(session_id: str) -> dict[str, Any]:
+        return manager.session_footers(session_id)
+
+    @app.get("/v1/sessions/{session_id}/turns/{turn_id}/feedback")
+    def turn_feedback(session_id: str, turn_id: str) -> dict[str, Any]:
+        return manager.turn_feedback(session_id, turn_id)
+
+    @app.put("/v1/sessions/{session_id}/turns/{turn_id}/feedback")
+    def turn_feedback_put(session_id: str, turn_id: str, body: dict):
+        code, answer = manager.put_turn_feedback(session_id, turn_id, body or {})
+        return JSONResponse(answer, status_code=code)
 
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
@@ -2559,6 +2718,17 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
         return manager.set_scratch_base(str((body or {}).get("path", "")))
 
+    # Feature worktrees (Code coworker, 2026-11-07): the global defaults, and a per-repo
+    # override keyed by the repo (any path inside it).
+    @app.post("/v1/settings/worktrees")
+    def settings_set_worktrees(body: dict) -> dict[str, Any]:
+        return manager.set_worktree_settings(body or {})
+
+    @app.post("/v1/settings/worktrees/repo")
+    def settings_set_worktrees_repo(body: dict) -> dict[str, Any]:
+        b = body or {}
+        return manager.set_worktree_override(str(b.get("path", "")), b.get("settings") or {})
+
     @app.post("/v1/settings/nav-layout")
     def settings_set_nav_layout(body: dict) -> dict[str, Any]:
         return manager.set_nav_layout(str((body or {}).get("nav_layout", "")))
@@ -3092,6 +3262,9 @@ def create_app(manager: SessionManager) -> FastAPI:
                 manager.inbox.resolve(pend[0].id, resolution, by=viewer_actor)
 
         workspace = ws.query_params.get("workspace")
+        # A feature worktree that no longer exists (archive cleanup, a hand delete) means
+        # the repo root — never a "no valid workspace" close the client would retry forever.
+        workspace = manager.resolve_missing_worktree(session_id, workspace)
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
@@ -3187,6 +3360,13 @@ def create_app(manager: SessionManager) -> FastAPI:
                     "command_trust": manager.workspace_command_trust(
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
+                    # Context panel (FB-015): occupancy on reconnect, so a reopened
+                    # session shows its meter before any new turn runs.
+                    "context": engine.context_snapshot(),
+                    # The branch the shell is on (a reopened session has no folder pick
+                    # to learn it from) and the feature worktree, if start_worktree made one.
+                    "branch": manager.session_branch(session_id),
+                    "worktree": manager.session_worktree(session_id),
                 },
             }
         )
@@ -3227,11 +3407,15 @@ def create_app(manager: SessionManager) -> FastAPI:
                             },
                         )
                         return
+                # 1.3 (E18a, E26a): why the turn started, the team member it belongs to, and
+                # for a manual automation run's first turn, the run it is.
+                facts = manager.user_turn_facts(session_id)
                 events = (
-                    engine.retry()
+                    engine.retry(trigger="user", **facts)
                     if retry
                     else engine.run(content, display=display,
-                                    activity=manager.prepare_activity(session_id, "user activity"))
+                                    activity=manager.prepare_activity(session_id, "user activity"),
+                                    trigger="user", **facts)
                 )
                 async for event in events:
                     data = event.data
@@ -3282,6 +3466,17 @@ def create_app(manager: SessionManager) -> FastAPI:
                     },
                 }
             )
+        # OB-6 (TD2-11): the company's policy sends this machine's content somewhere. Each
+        # new session says what goes where, once, before its first message.
+        export_notice = manager.observability.content_notice()
+        if export_notice and not any(
+            m.get("role") in ("user", "assistant") or m.get("kind") == "export_notice"
+            for m in engine.messages
+        ):
+            # Not saved here: an empty draft session must not appear in the sidebar. The
+            # notice is kept on the engine and saved with the session's first turn.
+            engine._append_notice("export_notice", export_notice)
+            await ws.send_json({"type": "export_notice", "data": {"text": export_notice}})
         inbound_times: deque[float] = deque()
 
         async def reject_input(reason: str) -> None:

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from .. import credentials as creds
-from .. import netproxy, network_profiles
+from .. import netproxy, network_profiles, stages
 from ..bundle import build_runner_zipapp
 from ..launch import read_paths, runner_command
 from ..transport import PipeTransport, Transport
@@ -80,6 +80,7 @@ def clean_environment(base: Optional[dict[str, str]] = None) -> dict[str, str]:
 
 class SeatbeltProvider:
     name = "seatbelt"
+    reports_stages = True  # its start's inner stages go to the recording (stages.stage)
 
     def __init__(
         self,
@@ -163,6 +164,8 @@ class SeatbeltProvider:
     def _create(self) -> None:
         preflight()
         os.makedirs(os.path.join(self._dir, "tmp", "cache"), exist_ok=True)
+        if self.grants:
+            stages.stage(self, "copy_logins")
         if self.network and not network_profiles.is_open(self.profile):
             hosts = sorted({*self.extra_hosts, *(h for g in self.grants for h in g.hosts)})
             # Each session has its own proxy: its allow list can grow while it runs (add_hosts).
@@ -175,6 +178,7 @@ class SeatbeltProvider:
             proxy_port=self._proxy.port if self._proxy is not None else None,
             ssh_proxy_command=creds.mac_ssh_proxy_command(self._proxy.port) if self._proxy is not None else None,
         )
+        stages.stage(self, "create")
         log = open(os.path.join(self._dir, "daemon.log"), "wb")
         self._daemon = subprocess.Popen(
             [

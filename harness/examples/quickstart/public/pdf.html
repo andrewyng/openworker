@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PDF Notes</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="pdf.js" defer></script>
+  </head>
+  <body>
+    <header><b>✦ PDF Notes</b><span>Built with OpenWorker</span></header>
+    <main>
+      <h1>A conversation with your document.</h1>
+      <p>
+        Upload a PDF, ask a question and follow the answer back to its pages.
+      </p>
+      <div class="layout">
+        <aside class="panel">
+          <h2>Your document</h2>
+          <label for="pdf">PDF · up to 8 MB / 80 pages</label
+          ><input id="pdf" type="file" accept="application/pdf" />
+          <div class="actions"><button id="upload">Open document</button></div>
+          <small id="document">No PDF uploaded.</small
+          ><small
+            >Extracted text is sent to your configured model. Scanned pages need
+            OCR and are not supported here.</small
+          >
+          <details>
+            <summary>Application access token</summary>
+            <input
+              id="token"
+              type="password"
+              autocomplete="off"
+              placeholder="For a protected deployment"
+              aria-label="Application access token"
+            />
+          </details>
+        </aside>
+        <section class="panel">
+          <h2>Ask your document</h2>
+          <label for="question">Your question</label
+          ><textarea
+            id="question"
+            placeholder="What are the main conclusions?"
+          ></textarea>
+          <div class="actions">
+            <button class="primary" id="ask" disabled>Ask a question</button
+            ><button id="cancel" disabled>Stop</button>
+          </div>
+          <p id="status" role="status">Upload a document to begin.</p>
+          <div id="answers" class="output empty">
+            Answers will include page references.
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

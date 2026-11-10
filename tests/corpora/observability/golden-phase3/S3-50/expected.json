@@ -1,0 +1,81 @@
+{
+ "team_turns": 58,
+ "explained_1_2": 33,
+ "explained_1_3": 57,
+ "gate_95": true,
+ "by_reason": {
+  "answer": {
+   "wakes": 6,
+   "tokens": 210000,
+   "cache_read": 144894,
+   "input": 203700
+  },
+  "assigned": {
+   "wakes": 20,
+   "tokens": 300000,
+   "cache_read": 180000,
+   "input": 285000
+  },
+  "mention": {
+   "wakes": 3,
+   "tokens": 20000,
+   "cache_read": 11998,
+   "input": 18998
+  },
+  "review": {
+   "wakes": 9,
+   "tokens": 320000,
+   "cache_read": 227199,
+   "input": 310397
+  },
+  "steer": {
+   "wakes": 2,
+   "tokens": 15000,
+   "cache_read": 9000,
+   "input": 14250
+  },
+  "timer": {
+   "wakes": 11,
+   "tokens": 380000,
+   "cache_read": 334394,
+   "input": 368593
+  },
+  "unknown": {
+   "wakes": 1,
+   "tokens": 1000,
+   "cache_read": 0,
+   "input": 900
+  },
+  "user": {
+   "wakes": 2,
+   "tokens": 43000,
+   "cache_read": 17200,
+   "input": 41710
+  },
+  "watchdog": {
+   "wakes": 4,
+   "tokens": 140000,
+   "cache_read": 114800,
+   "input": 135800
+  }
+ },
+ "team_total": 1429000,
+ "lead_polling": [
+  {
+   "count": 9,
+   "from": "golden-team-L1",
+   "to": "golden-team-L9"
+  }
+ ],
+ "turn_checks": {
+  "wake_capped": [
+   "golden-team-L12"
+  ],
+  "watchdog_nudged": [
+   "golden-team-L27",
+   "golden-team-L28",
+   "golden-team-L29",
+   "golden-team-L30"
+  ]
+ }
+}

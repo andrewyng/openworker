@@ -1,0 +1,74 @@
+{
+  "version": "0.1.0-beta.2",
+  "protocol": "0.1",
+  "rustPackages": [
+    {
+      "name": "openworker-guardrails",
+      "directory": "guardrails"
+    },
+    {
+      "name": "openworker-security-adapters",
+      "directory": "security-adapters"
+    },
+    {
+      "name": "openworker-artifacts",
+      "directory": "artifacts"
+    },
+    {
+      "name": "openworker-compliance",
+      "directory": "compliance"
+    },
+    {
+      "name": "openworker-telemetry",
+      "directory": "telemetry"
+    },
+    {
+      "name": "openworker-tools",
+      "directory": "tools-sdk"
+    },
+    {
+      "name": "openworker-runtime",
+      "directory": "runtime"
+    },
+    {
+      "name": "openworker-store-postgres",
+      "directory": "store-postgres"
+    },
+    {
+      "name": "openworker-sdk",
+      "directory": "harness-sdk"
+    }
+  ],
+  "targets": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "rust": "aarch64-apple-darwin"
+    },
+    {
+      "platform": "darwin",
+      "arch": "x64",
+      "rust": "x86_64-apple-darwin"
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "rust": "x86_64-pc-windows-msvc"
+    },
+    {
+      "platform": "win32",
+      "arch": "arm64",
+      "rust": "aarch64-pc-windows-msvc"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "rust": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "platform": "linux",
+      "arch": "arm64",
+      "rust": "aarch64-unknown-linux-gnu"
+    }
+  ]
+}

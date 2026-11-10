@@ -1,0 +1,29 @@
+{
+ "buckets_by_turn": {
+  "sess_A:turn_1": {
+   "auto_approver": 0,
+   "model": 3800,
+   "other": 10,
+   "other_shown": false,
+   "summary": 0,
+   "tools": 1200,
+   "total": 7000,
+   "waiting": 1990
+  }
+ },
+ "usage": {
+  "at_least": false,
+  "auto_approver_checks_not_reported": 0,
+  "by_model": {
+   "anthropic:claude-sonnet-5": 3850
+  },
+  "by_purpose": {
+   "main": 3850
+  },
+  "cache_share": 0.0,
+  "failed_calls": 0,
+  "overflow_calls": 0,
+  "pill": 3850,
+  "unreported_calls": 0
+ }
+}

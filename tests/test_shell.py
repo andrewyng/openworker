@@ -112,6 +112,85 @@ def test_exit_code_captured(executor):
     assert executor.run(EXIT_FAIL)["exit_code"] == 1
 
 
+@pytest.mark.skipif(not _WIN, reason="PowerShell's REPL skips a line it cannot parse")
+@pytest.mark.parametrize(
+    "command, message",
+    [
+        # Round-2 F-8: `@notes.txt` (curl's upload syntax) is splatting to PowerShell.
+        ("Write-Output @notes.txt", "splatting operator"),
+        ("if (1 {", "Missing closing"),
+        # An unclosed quote used to swallow the trailer and hang until the timeout.
+        ("Write-Output 'unclosed", "missing the terminator"),
+    ],
+)
+def test_powershell_parse_error_is_a_failure(executor, command, message):
+    start = time.monotonic()
+    result = executor.run("Write-Output before")  # a success first: `$?` was left true
+    assert result["exit_code"] == 0
+    result = executor.run(command)
+    assert result["exit_code"] == 1
+    assert result["timed_out"] is False
+    assert message in result["output"]
+    assert "At line:1 char:" in result["output"]
+    assert time.monotonic() - start < 8.0
+    # Nothing of the check is left in the session, and the shell carries on.
+    after = executor.run("Get-Variable __cw* -ErrorAction SilentlyContinue | Measure-Object | % Count")
+    assert after["exit_code"] == 0
+    assert after["output"].strip() == "0"
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell parse check")
+def test_powershell_parse_check_leaves_valid_commands_alone(executor, tmp_path):
+    # Quotes and `$` travel through the check unchanged; state persists.
+    result = executor.run("$cwValue = \"it's $(1+1) ok\"; Write-Output $cwValue")
+    assert result["exit_code"] == 0
+    assert "it's 2 ok" in result["output"]
+    assert "it's 2 ok" in executor.run("Write-Output $cwValue")["output"]
+    assert executor.run("cmd /c exit 3")["exit_code"] == 3
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell's REPL waits for an empty line after a block")
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ('foreach ($i in 1..2) {\n  Write-Output "n$i"\n}', ["n1", "n2"]),
+        ('foreach ($i in 1..2) {\n\n  Write-Output "n$i"\n}', ["n1", "n2"]),  # empty line inside
+        ("if ($true) {\n  Write-Output yes\n} else {\n  Write-Output no\n}", ["yes"]),
+        ("Write-Output a\nWrite-Output b\n", ["a", "b"]),
+    ],
+)
+def test_powershell_multi_line_command_finishes(executor, command, expected):
+    # Used to hang until the timeout: the trailer was read into the open block.
+    start = time.monotonic()
+    result = executor.run(command, timeout=8)
+    assert result["timed_out"] is False
+    assert result["exit_code"] == 0
+    assert result["output"].split() == expected
+    assert time.monotonic() - start < 6.0
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell multi-line commands")
+def test_powershell_multi_line_keeps_exit_codes_and_state(executor):
+    assert executor.run("Write-Output a\ncmd /c exit 4")["exit_code"] == 4  # last line decides
+    assert executor.run("cmd /c exit 4\nWrite-Output a")["exit_code"] == 0
+    defined = executor.run("$cwMulti = 7\nfunction Get-CwMulti {\n  'from-function'\n}")
+    assert defined["exit_code"] == 0
+    used = executor.run("Get-CwMulti; $cwMulti")
+    assert used["output"].split() == ["from-function", "7"]
+
+
+@pytest.mark.skipif(not _WIN, reason="PowerShell's $LASTEXITCODE")
+def test_powershell_failed_cmdlet_does_not_report_an_earlier_programs_code(executor, tmp_path):
+    missing = str(tmp_path / "missing.invalid")
+    assert executor.run("cmd /c exit 3")["exit_code"] == 3
+    # Used to say 3: `$LASTEXITCODE` still held the earlier call's native program.
+    assert executor.run(f"Get-Item '{missing}'")["exit_code"] == 1
+    assert executor.run("Write-Output ok")["exit_code"] == 0
+    assert executor.run(f"Get-Item '{missing}'")["exit_code"] == 1
+    # A native program in the same command still gives its own code.
+    assert executor.run(f"Get-Item '{missing}'; cmd /c exit 6")["exit_code"] == 6
+
+
 def test_timeout_kills_command(executor):
     start = time.monotonic()
     result = executor.run(SLEEP_5, timeout=1)

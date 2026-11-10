@@ -1,0 +1,13 @@
+[workspace]
+members = ["security-adapters", "compliance", "guardrails", "runtime", "git-broker", "artifacts", "telemetry", "observability", "tools-sdk", "harness-sdk", "store-postgres", "server-reference", "service-cli", "examples/notification-tools", "examples/device-tools", "examples/computer-tools", "examples/native-tools-runtime"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0-beta.2"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+
+[profile.release]
+lto = "thin"
+strip = true

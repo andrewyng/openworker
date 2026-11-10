@@ -1,0 +1,588 @@
+{
+ "steps": [
+  {
+   "after_turn": false,
+   "attrs": {
+    "block_hash": null,
+    "per_turn": {
+     "folders": 0,
+     "mode_note": null,
+     "sandbox_note": false,
+     "skills_hash": null,
+     "skills_menu": 0
+    },
+    "session_prompt_hash": null,
+    "session_start": {
+     "agents_md": 0,
+     "memories": [],
+     "memory_mode": "full",
+     "rules": 0
+    },
+    "size_chars": 0
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 5,
+   "kind": "context",
+   "message_id": null,
+   "name": "context",
+   "parent_step_id": null,
+   "seq": 1,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 0,
+   "status": "ok",
+   "step_id": "s1",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "tool_calls",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 18000,
+     "cache_write": 0,
+     "input_fresh": 2100,
+     "output": 150,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1800,
+   "kind": "model",
+   "message_id": "m2",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 2,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 0,
+   "status": "ok",
+   "step_id": "s2",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "auto_approver",
+    "stream": false,
+    "tools_hash": null,
+    "tools_offered": 0,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 1600,
+     "cache_write": 0,
+     "input_fresh": 400,
+     "output": 40,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": "a",
+   "call_index": null,
+   "content": {},
+   "duration_ms": 900,
+   "kind": "model",
+   "message_id": null,
+   "name": "model",
+   "parent_step_id": "s4",
+   "seq": 3,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 1800,
+   "status": "ok",
+   "step_id": "s3",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "breaker": {
+     "denials_in_row": 0,
+     "tripped": false
+    },
+    "mode": "live",
+    "result": "allow",
+    "reviewer": {
+     "external": false,
+     "kind": "session_model",
+     "model": "anthropic:claude-sonnet-5"
+    },
+    "usage_reported": true
+   },
+   "call_id": "a",
+   "call_index": 0,
+   "content": {
+    "reason": "Runs a local scanner inside the workspace"
+   },
+   "duration_ms": 900,
+   "kind": "auto_approver",
+   "message_id": null,
+   "name": "run_shell",
+   "parent_step_id": null,
+   "seq": 4,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 1800,
+   "status": "ok",
+   "step_id": "s4",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "decision": {
+     "origin": "reviewer",
+     "path": [
+      {
+       "outcome": "needs_user",
+       "stage": "permission"
+      },
+      {
+       "outcome": "suspended_in_auto_approve",
+       "stage": "grant"
+      },
+      {
+       "outcome": "allow",
+       "stage": "auto_approver"
+      }
+     ]
+    },
+    "result_bytes": 12,
+    "risk_class": "exec",
+    "sandbox": null
+   },
+   "call_id": "a",
+   "call_index": 0,
+   "content": {},
+   "duration_ms": 41000,
+   "kind": "tool",
+   "message_id": "m3",
+   "name": "run_shell",
+   "parent_step_id": null,
+   "seq": 5,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 2700,
+   "status": "ok",
+   "step_id": "s5",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "tool_calls",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 20000,
+     "cache_write": 0,
+     "input_fresh": 900,
+     "output": 120,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1400,
+   "kind": "model",
+   "message_id": "m4",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 6,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 43700,
+   "status": "ok",
+   "step_id": "s6",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "auto_approver",
+    "stream": false,
+    "tools_hash": null,
+    "tools_offered": 0,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 1600,
+     "cache_write": 0,
+     "input_fresh": 420,
+     "output": 55,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": "b",
+   "call_index": null,
+   "content": {},
+   "duration_ms": 900,
+   "kind": "model",
+   "message_id": null,
+   "name": "model",
+   "parent_step_id": "s8",
+   "seq": 7,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 45100,
+   "status": "ok",
+   "step_id": "s7",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "breaker": {
+     "denials_in_row": 1,
+     "tripped": false
+    },
+    "mode": "live",
+    "result": "deny",
+    "reviewer": {
+     "external": false,
+     "kind": "session_model",
+     "model": "anthropic:claude-sonnet-5"
+    },
+    "usage_reported": true
+   },
+   "call_id": "b",
+   "call_index": 0,
+   "content": {
+    "reason": "Deletes files outside the request"
+   },
+   "duration_ms": 900,
+   "kind": "auto_approver",
+   "message_id": null,
+   "name": "run_shell",
+   "parent_step_id": null,
+   "seq": 8,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 45100,
+   "status": "ok",
+   "step_id": "s8",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "decision": {
+     "origin": "reviewer_denied",
+     "path": [
+      {
+       "outcome": "needs_user",
+       "stage": "permission"
+      },
+      {
+       "outcome": "suspended_in_auto_approve",
+       "stage": "grant"
+      },
+      {
+       "outcome": "deny",
+       "stage": "auto_approver"
+      }
+     ]
+    },
+    "result_bytes": null,
+    "risk_class": "exec",
+    "sandbox": null
+   },
+   "call_id": "b",
+   "call_index": 0,
+   "content": {},
+   "duration_ms": 0,
+   "kind": "tool",
+   "message_id": null,
+   "name": "run_shell",
+   "parent_step_id": null,
+   "seq": 9,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 46000,
+   "status": "denied",
+   "step_id": "s9",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "tool_calls",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 21000,
+     "cache_write": 0,
+     "input_fresh": 700,
+     "output": 160,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1500,
+   "kind": "model",
+   "message_id": "m6",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 10,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 46000,
+   "status": "ok",
+   "step_id": "s10",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "auto_approver",
+    "stream": false,
+    "tools_hash": null,
+    "tools_offered": 0,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 1600,
+     "cache_write": 0,
+     "input_fresh": 450,
+     "output": 60,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": "c",
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1300,
+   "kind": "model",
+   "message_id": null,
+   "name": "model",
+   "parent_step_id": "s12",
+   "seq": 11,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 47500,
+   "status": "ok",
+   "step_id": "s11",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "breaker": {
+     "denials_in_row": 0,
+     "tripped": false
+    },
+    "mode": "live",
+    "result": "unsure",
+    "reviewer": {
+     "external": false,
+     "kind": "session_model",
+     "model": "anthropic:claude-sonnet-5"
+    },
+    "usage_reported": true
+   },
+   "call_id": "c",
+   "call_index": 0,
+   "content": {
+    "reason": "Opens a PR on a shared repo"
+   },
+   "duration_ms": 1300,
+   "kind": "auto_approver",
+   "message_id": null,
+   "name": "github_create_pr",
+   "parent_step_id": null,
+   "seq": 12,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 47500,
+   "status": "ok",
+   "step_id": "s12",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "attended": true,
+    "for_call_id": "c",
+    "kind": "approval",
+    "outcome": "approved",
+    "where": "session"
+   },
+   "call_id": "c",
+   "call_index": 0,
+   "content": {
+    "resolved_by": "devika"
+   },
+   "duration_ms": 60000,
+   "kind": "wait",
+   "message_id": null,
+   "name": "approval",
+   "parent_step_id": null,
+   "seq": 13,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 48800,
+   "status": "ok",
+   "step_id": "s13",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "decision": {
+     "origin": "user",
+     "path": [
+      {
+       "outcome": "needs_user",
+       "stage": "permission"
+      },
+      {
+       "outcome": "suspended_in_auto_approve",
+       "stage": "grant"
+      },
+      {
+       "outcome": "unsure",
+       "stage": "auto_approver"
+      },
+      {
+       "outcome": "shown_session",
+       "stage": "card"
+      },
+      {
+       "outcome": "approved_once",
+       "stage": "resolved"
+      }
+     ]
+    },
+    "result_bytes": 12,
+    "risk_class": "external",
+    "sandbox": null
+   },
+   "call_id": "c",
+   "call_index": 0,
+   "content": {},
+   "duration_ms": 2000,
+   "kind": "tool",
+   "message_id": "m7",
+   "name": "github_create_pr",
+   "parent_step_id": null,
+   "seq": 14,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 108800,
+   "status": "ok",
+   "step_id": "s14",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": 1000000,
+    "finish_reason": "stop",
+    "model": "anthropic:claude-sonnet-5",
+    "provider": "anthropic",
+    "provider_title": "Anthropic",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 22000,
+     "cache_write": 0,
+     "input_fresh": 800,
+     "output": 300,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 3000,
+   "kind": "model",
+   "message_id": "m8",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 15,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 110800,
+   "status": "ok",
+   "step_id": "s15",
+   "turn_id": "sess_A:turn_1"
+  }
+ ],
+ "turns": [
+  {
+   "approval_mode": "auto-approve",
+   "attended": true,
+   "duration_ms": 113800,
+   "first_message_id": "m1",
+   "incomplete": false,
+   "kind": "run",
+   "last_message_id": "m8",
+   "reviewer": {
+    "active": true,
+    "kind": "session_model",
+    "model": "anthropic:claude-sonnet-5",
+    "shadow": false
+   },
+   "schema_version": 1,
+   "seq": 1,
+   "session_id": "sess_A",
+   "stamp": {},
+   "started_at": 0,
+   "status": "completed",
+   "trigger": "user",
+   "turn_id": "sess_A:turn_1"
+  }
+ ]
+}

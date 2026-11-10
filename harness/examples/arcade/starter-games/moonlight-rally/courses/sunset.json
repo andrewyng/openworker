@@ -1,0 +1,33 @@
+{
+  "id": "sunset",
+  "name": "Sunset Coast",
+  "subtitle": "GOLDEN HOUR / CLIFFSIDE CIRCUIT",
+  "description": "A ribbon of road above the sea. Sweep past terracotta rooftops, climb the coast, and brake for the harbor hairpin.",
+  "width": 13,
+  "laps": 3,
+  "gold": 50,
+  "silver": 75,
+  "points": [
+    [0, 2, 0],
+    [-22, 5, -90],
+    [15, 12, -170],
+    [105, 18, -205],
+    [175, 14, -155],
+    [130, 9, -95],
+    [205, 5, -50],
+    [230, 3, 55],
+    [150, 2, 115],
+    [65, 5, 80]
+  ],
+  "palette": {
+    "sky": "#efba91",
+    "fog": "#e6b39a",
+    "sea": "#488e9e",
+    "road": "#686d70",
+    "land": "#c2a282",
+    "curb": "#fff0bf",
+    "accent": "#ffdfa3",
+    "building": ["#f4ddbb", "#ecd2ae", "#e4bca0"],
+    "roof": "#b9694e"
+  }
+}

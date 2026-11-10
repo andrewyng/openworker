@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Moonlight Rally</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <canvas id="world" aria-label="Moonlight Rally 3D circuit"></canvas>
+    <div class="shade"></div>
+    <header>
+      <div class="brand">MOONLIGHT<span>RALLY</span></div>
+      <div id="race-hud" hidden>
+        <span><small>RACE TIME</small><b id="time">0:00.00</b></span
+        ><span><small>LAP</small><b id="lap">1 / 3</b></span
+        ><span><small>CHECKPOINTS</small><b id="checkpoints">0 / 12</b></span>
+      </div>
+      <div class="utilities">
+        <button id="sound" aria-label="Enable sound">Sound off</button
+        ><button id="pause" aria-label="Pause race" disabled>Ⅱ</button>
+      </div>
+    </header>
+    <section id="menu">
+      <div class="menu-copy">
+        <div class="eyebrow" id="eyebrow">ONE CAR. TWO COASTLINES.</div>
+        <h1 id="heading">Find your line.<br /><em>Own the night.</em></h1>
+        <p id="description">
+          Neon streets. Sunset curves. A good corner is all it takes.<br />Pick
+          your coast and make every second count.
+        </p>
+        <div class="course-picker" role="group" aria-label="Choose course">
+          <button data-course="neon" aria-pressed="true">
+            <small>01 / NIGHT RUN</small><strong>Neon Harbor</strong
+            ><span>City corners · Waterfront straight</span></button
+          ><button data-course="sunset" aria-pressed="false">
+            <small>02 / GOLDEN HOUR</small><strong>Sunset Coast</strong
+            ><span>Cliffside curves · Harbor hairpin</span>
+          </button>
+        </div>
+        <div id="targets" class="targets"></div>
+        <div id="results" hidden>
+          <b id="result-time"></b><span id="result-detail"></span
+          ><small id="lap-times"></small>
+        </div>
+        <button class="primary" id="start" disabled>
+          Preparing the coast…
+        </button>
+        <button id="continue" class="primary" hidden>
+          Continue saved lap →
+        </button>
+        <div class="progress-note">
+          <span id="best"></span><span id="save-status" role="status"></span>
+        </div>
+        <div class="keys">
+          <span><kbd>W</kbd> / <kbd>↑</kbd> Accelerate</span
+          ><span><kbd>S</kbd> / <kbd>↓</kbd> Brake / reverse</span
+          ><span><kbd>A D</kbd> Steer</span><span><kbd>Space</kbd> Drift</span>
+        </div>
+        <p class="note">
+          Brake before the turn. Aim for the exit. Touch controls below.
+        </p>
+        <div class="options">
+          <label
+            >Graphics
+            <select id="quality">
+              <option value="balanced">Balanced</option>
+              <option value="low">Low</option>
+              <option value="high">High</option>
+            </select></label
+          ><span id="course-length"></span>
+        </div>
+        <p class="note" id="vehicle-status" role="status"></p>
+      </div>
+    </section>
+    <div id="countdown" aria-live="polite"></div>
+    <div id="finish-banner" hidden aria-live="polite">FINISH</div>
+    <div id="toast" role="status"></div>
+    <aside id="telemetry" hidden>
+      <canvas
+        id="map"
+        width="200"
+        height="160"
+        aria-label="Circuit map"
+      ></canvas
+      ><span id="course-name">Neon Harbor</span>
+      <div class="speed"><b id="speed">0</b><small>KM/H</small></div>
+      <span id="drift-label">FIND YOUR RHYTHM</span>
+    </aside>
+    <div class="touch" hidden>
+      <div>
+        <button data-control="left" aria-label="Steer left">←</button
+        ><button data-control="right" aria-label="Steer right">→</button>
+      </div>
+      <div>
+        <button data-control="drift" aria-label="Handbrake">Drift</button
+        ><button data-control="brake" aria-label="Brake">Brake</button
+        ><button data-control="throttle" aria-label="Accelerate">Go ↑</button>
+      </div>
+    </div>
+    <button id="reset" hidden>↺ Back on track</button>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>

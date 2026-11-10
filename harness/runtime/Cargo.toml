@@ -1,0 +1,60 @@
+[package]
+readme = "README.md"
+repository = "https://github.com/andrewyng/openworker"
+description = "OpenWorker runtime for durable agent applications"
+publish = ["crates-io"]
+name = "openworker-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "openworker"
+path = "src/main.rs"
+
+# Fault-injection fixtures are opt-in and excluded from shipped builds.
+[features]
+default = ["guardrails", "compliance"]
+guardrails = ["openworker-guardrails/engine"]
+compliance = []
+compliance-export = ["compliance"]
+test-fixtures = []
+
+[dependencies]
+openworker-compliance = { version = "=0.1.0-beta.2", path = "../compliance" }
+openworker-guardrails = { version = "=0.1.0-beta.2", path = "../guardrails", default-features = false }
+openworker-telemetry = { version = "=0.1.0-beta.2", path = "../telemetry" }
+openworker-tools = { version = "=0.1.0-beta.2", path = "../tools-sdk" }
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+fs2 = "0.4"
+futures-util = "0.3"
+libc = "0.2"
+jsonschema = { version = "0.33", default-features = false }
+ignore = "0.4"
+globset = "0.4"
+regex = "1"
+prost = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = "0.7"
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+
+[dev-dependencies]
+tempfile = "3"

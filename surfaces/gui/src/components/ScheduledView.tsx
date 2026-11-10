@@ -5,6 +5,7 @@ import {
   deleteAutomation,
   getAutomation,
   getAutomations,
+  type FailedInARow,
   markAutomationSeen,
   announceAutomationsChanged,
   updateAutomation,
@@ -14,6 +15,9 @@ import {
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { AutomationQuickstart } from "./AutomationQuickstart";
+import { formatTokens } from "../usage";
+import { formatDuration } from "./StepsPanel";
+import { healthTone } from "../obs3";
 
 // Shared utility strings (the §28 page shell — mirrors IntegrationsView's constants).
 const CARD = "rounded-xl2 border border-line bg-panel";
@@ -62,9 +66,11 @@ interface Props {
   onRunNow: (taskId: string, title?: string) => void;
   // Open directly on a task's detail (set by the run banner's "Back to runs").
   initialOpenId?: string | null;
+  // OB-18 (Phase 3): a run's Steps, at its first recorded turn.
+  onOpenRunSteps?: (sessionId: string, turnId: string, workspace: string, agent: string, task?: { id: string; title: string }) => void;
 }
 
-export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
+export function ScheduledView({ onOpenRun, onRunNow, initialOpenId, onOpenRunSteps }: Props) {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<Automation[]>([]);
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
@@ -115,6 +121,7 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
         onBack={() => { setOpenId(null); refresh(); }}
         onOpenRun={onOpenRun}
         onRunNow={onRunNow}
+        onOpenRunSteps={onOpenRunSteps}
       />
     );
   }
@@ -170,7 +177,14 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId }: Props) {
               onClick={() => setOpenId(task.id)}
             >
               <div className="flex items-center justify-between gap-2.5 mb-1">
-                <span className="text-ui font-semibold truncate">{task.title}</span>
+                <span className="text-ui font-semibold truncate">
+                  {task.title}
+                  {task.machine_name && (
+                    <span className="text-meta text-muted font-normal" data-testid="automation-machine">
+                      {" · "}{t("p3.runs.on_machine", { name: task.machine_name })}
+                    </span>
+                  )}
+                </span>
                 <button
                   className="sched-card-del"
                   title={t("automations.delete_title")}
@@ -279,9 +293,11 @@ function TaskDetail({
   onBack,
   onOpenRun,
   onRunNow,
+  onOpenRunSteps,
 }: {
   id: string;
   onBack: () => void;
+  onOpenRunSteps?: Props["onOpenRunSteps"];
   onOpenRun: (
     sessionId: string,
     workspace: string,
@@ -293,6 +309,7 @@ function TaskDetail({
   const { t: tt } = useTranslation();
   const [task, setTask] = useState<Automation | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
+  const [failedRow, setFailedRow] = useState<FailedInARow | null>(null);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
@@ -316,6 +333,7 @@ function TaskDetail({
         }
         setTask(d.task);
         setRuns(d.runs || []);
+        setFailedRow(d.failed_in_a_row ?? null);
         setSeenMark((cur) => (cur === null ? d.task?.seen_runs_at ?? 0 : cur));
         return true;
       })
@@ -482,6 +500,12 @@ function TaskDetail({
         <div className="dim" style={{ marginBottom: 8, fontSize: 12.5 }}>
           {tt("automations.runs_desc")}
         </div>
+        {failedRow && (
+          <div className="p3-callout err" data-testid="runs-failed-banner">
+            <b>{tt("p3.runs.failed_in_a_row", { count: failedRow.count })}</b>{" "}
+            {tt("p3.runs.last_error", { error: failedRow.last_error || tt("p3.runs.unknown_error") })}
+          </div>
+        )}
         {runs.length === 0 && <div className="dim">{tt("automations.no_runs")}</div>}
         {runs.map((r) => (
           <div
@@ -508,6 +532,31 @@ function TaskDetail({
                 {tt("automations.open_go")}
               </span>
             </div>
+            {r.health && (
+              <div className="sched-run-health" data-testid="run-health-row">
+                <span className={"p3-chip " + healthTone(r.health)} data-testid="run-health">{tt(`p3.runs.health.${r.health}`)}</span>
+                {r.health === "failed" && r.status === "ok" && <span className="dim">{tt("p3.runs.run_said_ok")}</span>}
+                {r.health === "did_not_finish" && <span className="dim">{tt("p3.runs.still_running")}</span>}
+                <span className="dim">{tt("p3.runs.duration", { time: formatDuration(r.duration_ms ?? null) })}</span>
+                <span className="dim" data-testid="run-tokens">
+                  {r.total == null ? tt("p3.runs.tokens_none") : tt("p3.runs.tokens", { tokens: (r.at_least ? "≥ " : "") + formatTokens(r.total) })}
+                </span>
+                {(r.check_titles || r.checks || []).map((c, i) => (
+                  <span key={i} className="steps-badge warn">{tt(`steps.issues.title.${(r.checks || [])[i] || c}`, { defaultValue: c })}</span>
+                ))}
+                {r.error && <span className="steps-badge err" title={r.error}>{tt("p3.runs.error")}</span>}
+                {r.turns === 0 && r.total == null && <span className="dim">{tt("p3.runs.not_recorded")}</span>}
+                {r.first_turn_id && onOpenRunSteps && (
+                  <button className="p3-link ml-auto" data-testid="run-steps"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenRunSteps(r.session_id, r.first_turn_id!, task.workspace, task.agent, { id: task.id, title: task.title });
+                    }}>
+                    {tt("steps.open")}
+                  </button>
+                )}
+              </div>
+            )}
             {r.result_text && <div className="sched-run-peek">{r.result_text}</div>}
             {r.error && <div className="mcp-error">{r.error}</div>}
           </div>

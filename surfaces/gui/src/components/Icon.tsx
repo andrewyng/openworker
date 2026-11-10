@@ -2,6 +2,8 @@
 // currentColor, rounded caps/joins. Replaces emoji in the chrome for a crisp, consistent look.
 
 export type IconName =
+  | "stretch"
+  | "unstretch"
   | "sparkle"
   | "logo"
   | "sidebar"
@@ -214,6 +216,19 @@ export function Icon({
       return (
         <svg {...s}>
           <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      );
+    // Full width and back (UX-060): two arrows out of / into the corners.
+    case "stretch":
+      return (
+        <svg {...s}>
+          <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />
+        </svg>
+      );
+    case "unstretch":
+      return (
+        <svg {...s}>
+          <path d="M20 10h-6V4M14 10l6-6M4 14h6v6M10 14l-6 6" />
         </svg>
       );
     case "warning":
