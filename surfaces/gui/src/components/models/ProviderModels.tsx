@@ -135,8 +135,10 @@ export function ProviderModels({
 
   const tick = async (row: ProviderCatalogRow, on: boolean) => {
     setRowError(null);
-    const res = on ? await addModel(row.model) : await removeModel(row.model);
-    if (apply(res)) await load(false); // the row's facts, badge and place come from the backend
+    const res: ModelSettings & { ok: boolean; error?: string; reason?: string } = on ? await addModel(row.model) : await removeModel(row.model);
+    // the row's facts, badge and place come from the backend; a tick the provider refused
+    // moves the row to the set-aside group
+    if (apply(res) || res.reason === "unavailable") await load(false);
   };
 
   const useAnyway = async (row: ProviderCatalogRow) => {
@@ -386,9 +388,11 @@ export function ProviderModels({
       {why === row.model && (
         <div className="mlist-why" data-testid={`catalog-why-${row.id}`}>
           <p>
-            {row.kind_source === "name"
-              ? t("manage.catalog_why_name", { provider: title, kind: kindWord(row) })
-              : t("manage.catalog_why_provider", { provider: title, kind: kindWord(row) })}
+            {row.kind === "unavailable"
+              ? t("manage.catalog_why_unavailable", { provider: title, detail: row.detail || "" })
+              : row.kind_source === "name"
+                ? t("manage.catalog_why_name", { provider: title, kind: kindWord(row) })
+                : t("manage.catalog_why_provider", { provider: title, kind: kindWord(row) })}
           </p>
           <p className="mt-1.5">
             <b>{t("manage.catalog_why_then_lead")}</b> {t("manage.catalog_why_then")}

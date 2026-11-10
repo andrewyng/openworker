@@ -1059,6 +1059,85 @@ def fetch(name: str, profile: dict[str, Any], descriptor: Any, *, timeout: float
     return Listing(name, True, rows, status=resp.status_code, all_ids=listed_ids(name, payload, rows))
 
 
+# -- the free availability check -------------------------------------------------------------
+#
+# Some providers list a model a key can no longer use: Google still lists gemini-2.5-flash to a
+# key that gets "no longer available to new users", MiniMax lists M2.5 and answers "no longer
+# available" (both seen 2026-11-10). These three count a prompt's tokens without generating,
+# which costs nothing, and refuse an unavailable model there exactly as a real call would.
+
+FREE_CHECK = ("gemini", "anthropic", "minimax")
+CHECK_TIMEOUT = 6.0
+# Words a refusal uses, in a 400/403/404 that also names the model (so a wrong address, which
+# names no model, is never read as one).
+_UNAVAILABLE_WORDS = (
+    "not found", "not_found_error", "no longer available", "not available", "does not exist",
+    "unknown model", "do not have access", "no access", "deprecated", "retired", "decommissioned",
+)
+
+
+def check_request(name: str, profile: dict[str, Any], descriptor: Any, model: str) -> Optional[dict[str, Any]]:
+    """url / headers / json for a free token count of `model`, or None for a provider without one."""
+    if name not in FREE_CHECK or descriptor is None:
+        return None
+    key = key_for(profile or {}, getattr(descriptor, "env_key", None))
+    if not key:
+        return None
+    if name == "gemini":
+        return {
+            "url": f"https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens",
+            "headers": {"x-goog-api-key": key},
+            "json": {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+        }
+    body = {"model": model, "messages": [{"role": "user", "content": "hi"}]}
+    if name == "anthropic":
+        return {"url": "https://api.anthropic.com/v1/messages/count_tokens", "headers": {"x-api-key": key, "anthropic-version": "2023-06-01"}, "json": body}
+    base = str((profile or {}).get("base_url") or "").strip().rstrip("/") or _default_base(descriptor)
+    root = base[: -len("/v1")] if base.endswith("/v1") else base
+    return {"url": root + "/anthropic/v1/messages/count_tokens", "headers": {"x-api-key": key, "anthropic-version": "2023-06-01"}, "json": body}
+
+
+def _provider_sentence(text: str) -> str:
+    """The provider's own message, first sentence, without a trailing code like "(2069)"."""
+    message = text
+    try:
+        doc = json.loads(text)
+        err = doc.get("error") if isinstance(doc, dict) else None
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            message = err["message"]
+    except ValueError:
+        pass
+    message = re.sub(r"\s*\(\d+\)\s*$", "", message.strip())
+    first = message.split(". ")[0].strip().rstrip(".")
+    if not first or first.lower().startswith("model:"):
+        return "The provider says this model is not available to this key"
+    return first[:200]
+
+
+def refusal(model: str, status: int, text: str) -> Optional[str]:
+    """The provider's sentence when an answer means "this key cannot use `model`", else None.
+    Quota, rate limits, overload and anything unclear are not refusals: the model stays."""
+    if status not in (400, 403, 404):
+        return None
+    low = (text or "").lower()
+    if model.lower() not in low or not any(w in low for w in _UNAVAILABLE_WORDS):
+        return None
+    return _provider_sentence(text)
+
+
+def check_model(name: str, profile: dict[str, Any], descriptor: Any, model: str, *, timeout: float = CHECK_TIMEOUT) -> Optional[str]:
+    """None when the model is fine, or nothing could be learned (no free check, a network
+    error, an unclear answer); the provider's sentence when it refuses the model. Never raises."""
+    request = check_request(name, profile, descriptor, model)
+    if request is None:
+        return None
+    try:
+        resp = probe_http.post(request["url"], json=request["json"], headers=request["headers"], timeout=timeout)
+    except Exception:  # noqa: BLE001 - a failed check never hides a model
+        return None
+    return refusal(model, resp.status_code, getattr(resp, "text", "") or "")
+
+
 def _ask(request: dict[str, Any], timeout: float) -> Any:
     url = request["url"]
     if request.get("params"):
