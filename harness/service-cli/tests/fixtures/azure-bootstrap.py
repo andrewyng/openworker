@@ -80,7 +80,13 @@ if args[:3] == ["role", "definition", "list"]:
     assert value("--scope") == scope and value("--name") == ident["roleDefinitionGuid"]
     emit(1 if scenario == "existing-role" else 0)
 if args[:3] == ["role", "assignment", "list"]:
+    if "--scope" in args and "--all" in args:
+        print("ERROR: group or scope are not required when --all is used", file=sys.stderr)
+        sys.exit(2)
     assert value("--scope") == scope
+    if scenario == "assignment-read-fails":
+        print("AuthorizationFailed", file=sys.stderr)
+        sys.exit(1)
     emit(0)
 if args[:2] == ["provider", "show"]:
     provider = value("--namespace")

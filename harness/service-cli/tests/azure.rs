@@ -361,6 +361,16 @@ fn exported_script_requires_explicit_confirmation_and_refuses_existing_or_wrong_
     }
 }
 #[test]
+fn failed_assignment_read_stops_before_grants_and_is_not_reported_as_a_collision() {
+    let f = Fixture::ready();
+    let r = f.script("assignment-read-fails", "read-failed-journal");
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("AuthorizationFailed"));
+    assert!(!String::from_utf8_lossy(&r.stderr).contains("already exists"));
+    assert!(!f.path("read-failed-journal").exists());
+    assert!(f.log().iter().all(|a| a[0] != "rest"));
+}
+#[test]
 fn exported_script_writes_fixed_scope_receipts_and_never_retries_unknown_mutations() {
     let f = Fixture::ready();
     let r = f.script("ready", "private journal");
