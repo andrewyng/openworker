@@ -2687,7 +2687,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/settings/models/add")
     def settings_models_add(body: dict) -> dict[str, Any]:
-        return manager.add_model((body or {}).get("model", ""))
+        return manager.add_model((body or {}).get("model", ""), anyway=bool((body or {}).get("anyway")))
 
     @app.post("/v1/settings/models/remove")
     def settings_models_remove(body: dict) -> dict[str, Any]:

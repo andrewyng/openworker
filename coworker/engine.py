@@ -1626,9 +1626,10 @@ class TurnEngine:
             from .providers.live_models import context_window_for as _live_window
             from .providers.matrix import model_context_windows
 
-            # A window the user saved (or the overflow learner stored) beats the catalog;
-            # the catalog beats what the provider's own list said (OPE-252).
-            cfg["context_window"] = saved_window or model_context_windows().get(self.model) or _live_window(self.model)
+            # A window the user saved (or the overflow learner stored) beats everything;
+            # then what the provider's own list said for this exact id today; then the
+            # reviewed catalog, which is weekly and lagged wherever the two differed (OPE-252).
+            cfg["context_window"] = saved_window or _live_window(self.model) or model_context_windows().get(self.model)
             if not cfg["context_window"]:
                 # Ollama's window is the num_ctx we send (providers/ollama_context.py),
                 # not the 128k guess — compact before that window context-shifts.
