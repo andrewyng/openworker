@@ -289,3 +289,26 @@ test("coding defaults and submitted-source selection preserve independent checko
     await team.submissions({after:"hs_original",limit:5});assert.deepEqual(requests[2],{operation:"team_list_submissions",arguments:{after:"hs_original",limit:5}});
   }finally{service.disconnect();}
 });
+
+test("service attachments use bounded authenticated uploads before submitting references",async t=>{
+  const {Attachment}=await import("../dist/index.js");const uploads=[];let submitted;
+  const url=await server(t,(req,res)=>{
+    headers(res);
+    if(req.url==="/v1/capabilities"){res.end(JSON.stringify({apiVersion:"1",namespace:"test",serviceId:"service-one",agent:"reader",features:{attachments:true}}));return;}
+    if(handshake(req,res))return;
+    if(req.url==="/v1/agents/reader"){res.end('{"id":"reader"}');return;}
+    if(req.url==="/v1/sessions/s_one"&&req.method==="GET"){res.end('{"session":{"environment":{"environment_id":"env"}}}');return;}
+    assert.equal(req.headers.authorization,`Bearer ${token}`);
+    let raw="";req.on("data",c=>raw+=c);req.on("end",()=>{
+      const body=JSON.parse(raw);assert.ok(Buffer.byteLength(raw)<400000);
+      if(req.url.startsWith("/v1/sessions/s_one/attachments/")){uploads.push(body);res.end('{}');}
+      else {assert.equal(req.url,"/v1/sessions/s_one/turns");assert.equal(req.headers["idempotency-key"],"original-input");submitted=body;res.end('{"runId":"run-one","submissionId":"receipt-one"}');}
+    });
+  });
+  const service=await Harness.connect(options(url));
+  try{
+    const session=await service.resume({serviceId:"service-one",namespace:"test",sessionId:"s_one",agent:"reader",environmentId:"env"});
+    const run=await session.send({content:[{type:"text",text:"Before"},Attachment.fromBytes({name:"notes.txt",mediaType:"text/plain",data:Buffer.from("hello")}),{type:"text",text:"After"}]},{idempotencyKey:"original-input"});
+    assert.equal(run.id,"run-one");assert.deepEqual(uploads.map(v=>v.operation),["begin","chunk","commit"]);assert.deepEqual(submitted.content.map(v=>v.type),["text","document","text"]);assert.ok(submitted.content[1].attachment_id.startsWith("att_"));assert.ok(!JSON.stringify(submitted).includes("aGVsbG8="));
+  }finally{service.disconnect();}
+});

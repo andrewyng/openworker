@@ -23,7 +23,7 @@ fn session(id: &str) -> Session {
 fn admin(c: &Config) -> postgres::Client {
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     db.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();
@@ -135,6 +135,7 @@ fn imported_history_and_turn_context_survive_postgres_atomicity_and_takeover() {
     owner.save(&s, "session_created", json!({})).unwrap();
     assert!(owner.get(&s.id).unwrap().turn.is_none());
     let context = Context {
+        content: None,
         instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
         output: OutputOptions {
             reasoning: true,
@@ -195,6 +196,7 @@ fn imported_history_and_turn_context_survive_postgres_atomicity_and_takeover() {
             None,
             None,
             Context {
+                content: None,
                 output: OutputOptions::default(),
                 ..context
             }

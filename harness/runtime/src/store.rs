@@ -213,6 +213,19 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    fn supports_input_attachments(&self) -> bool {
+        false
+    }
+
+    fn input_attachment(
+        &mut self,
+        _sid: &str,
+        _id: &str,
+        _request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        bail!("Input attachments unsupported by this store")
+    }
+
     fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
         Ok(self.metadata(sid)?.turn.is_some_and(|t| t.id == tid))
     }
@@ -475,7 +488,7 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
-            if !(matches!(version, 7 | 8) || version == 0 && tables == 0) {
+            if !(matches!(version, 7..=9) || version == 0 && tables == 0) {
                 bail!("Incompatible runtime state schema {version}; use a fresh state directory. M1 migration is intentionally unsupported; existing data was not reset.");
             }
         }
@@ -504,8 +517,11 @@ impl Store {
             CREATE TABLE IF NOT EXISTS submissions(session_id TEXT, submission_id TEXT, text TEXT, turn_id TEXT, PRIMARY KEY(session_id,submission_id));
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL, turn_id TEXT,kind TEXT NOT NULL,data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS session_events ON events(session_id,id);
-            PRAGMA user_version=8;
+            PRAGMA user_version=9;
             COMMIT;")?;
+        if cfg!(feature = "attachments") {
+            db.execute_batch("CREATE TABLE IF NOT EXISTS input_attachments(session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,id TEXT NOT NULL,metadata TEXT NOT NULL,data BLOB NOT NULL,sealed INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,referenced INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(session_id,id))")?;
+        }
         sqlite_teams::migrate(&db)?;
         sqlite_assistant::migrate(&db)?;
         sqlite_agent_team::migrate(&db)?;
@@ -837,6 +853,13 @@ impl Store {
         context: crate::turn_options::Context,
     ) -> Result<(Session, bool, Option<Event>)> {
         context.validate()?;
+        if let Some(parts) = &context.content {
+            crate::attachments::validate_references(parts, |id| {
+                let blob = self.input_blob(sid, id, crate::attachments::Upload::Stat)?;
+                anyhow::ensure!(blob.sealed, "Attachment upload is incomplete");
+                Ok(blob.metadata)
+            })?;
+        }
         let context_digest = context.digest()?;
         if let Some(config) = &safety {
             config.validate()?;
@@ -911,7 +934,7 @@ impl Store {
                 s.history.push(json!({"type":"function_call_output","call_id":c["call_id"],"output":"Previous turn interrupted; action outcome unknown, do not assume success."}));
             }
         }
-        let mut input = json!({"role":"user","content":text});
+        let mut input = json!({"role":"user","content":context.content.as_ref().map(|p|crate::attachments::history(p)).unwrap_or_else(||json!(text))});
         if crate::assistant_tools::admit(&mut s, key, text, crate::assistant_tools::now())? {
             input["_runtime_notice"] = json!("scheduled_task");
         }
@@ -953,6 +976,18 @@ impl Store {
         });
         let tx = self.db.transaction()?;
         sqlite_agent_team::ensure_admission(&tx, &s)?;
+        if let Some(parts) = &context.content {
+            for part in parts {
+                if let crate::attachments::Part::Image { attachment_id }
+                | crate::attachments::Part::Document { attachment_id } = part
+                {
+                    tx.execute(
+                        "UPDATE input_attachments SET referenced=1 WHERE session_id=? AND id=?",
+                        params![sid, attachment_id],
+                    )?;
+                }
+            }
+        }
         Self::append_history(&tx, &s)?;
         tx.execute("UPDATE team_queue SET status='accepted' WHERE session_id=? AND id=? AND status='queued'", params![sid,key])?;
         tx.execute(
@@ -1079,6 +1114,19 @@ impl Store {
 }
 
 impl StateStore for Store {
+    fn supports_input_attachments(&self) -> bool {
+        cfg!(feature = "attachments")
+    }
+
+    fn input_attachment(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        self.input_blob(sid, id, request)
+    }
+
     fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
         self.metadata(sid)?;
         Ok(self.db.query_row(
@@ -1304,5 +1352,80 @@ impl StateStore for Store {
     }
     fn recover(&mut self) -> Result<()> {
         Store::recover(self)
+    }
+}
+
+impl Store {
+    fn input_blob(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        use crate::attachments::*;
+        anyhow::ensure!(cfg!(feature = "attachments"), "Attachments disabled");
+        let session = self.metadata(sid)?;
+        let stat = matches!(&request, Upload::Stat);
+        let writable = !stat && !session.closed;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if writable {
+            tx.execute(
+                "DELETE FROM input_attachments WHERE session_id=? AND referenced=0 AND created<?",
+                params![sid, now_ms().saturating_sub(86400000)],
+            )?;
+        }
+        let old = tx
+            .query_row(
+                "SELECT metadata,data,sealed FROM input_attachments WHERE session_id=? AND id=?",
+                params![sid, id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Vec<u8>>(1)?,
+                        r.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(m, bytes, sealed)| -> Result<_> {
+                Ok(Blob {
+                    metadata: serde_json::from_str(&m)?,
+                    bytes,
+                    sealed,
+                })
+            })
+            .transpose()?;
+        if session.closed && !stat {
+            anyhow::ensure!(
+                matches!(&request, Upload::Begin { .. }) && old.as_ref().is_some_and(|b| b.sealed),
+                "Session closed"
+            );
+        }
+        if old.is_none() {
+            if let Upload::Begin { metadata } = &request {
+                let count: usize = tx.query_row(
+                    "SELECT count(*) FROM input_attachments WHERE session_id=?",
+                    [sid],
+                    |r| r.get(0),
+                )?;
+                anyhow::ensure!(
+                    count < MAX_SESSION_FILES,
+                    "Session attachment count limit exceeded"
+                );
+                let total:usize=tx.query_row("SELECT COALESCE(SUM(json_extract(metadata,'$.size')),0) FROM input_attachments WHERE session_id=?",[sid],|r|r.get(0))?;
+                anyhow::ensure!(
+                    total.saturating_add(metadata.size) <= MAX_SESSION,
+                    "Session attachment quota exceeded"
+                );
+            }
+        }
+        let blob = apply(id, old, request)?;
+        if writable {
+            tx.execute("INSERT INTO input_attachments(session_id,id,metadata,data,sealed,created) VALUES(?,?,?,?,?,?) ON CONFLICT(session_id,id) DO UPDATE SET data=excluded.data,sealed=excluded.sealed",params![sid,id,serde_json::to_string(&blob.metadata)?,blob.bytes,blob.sealed,now_ms()])?;
+        }
+        tx.commit()?;
+        Ok(blob)
     }
 }

@@ -529,3 +529,10 @@ See the [observability guide](../../docs/harness/guides/observability.md) for lo
 SQLite/PostgreSQL, Langfuse export, content selection and audit references. These
 new APIs require matching local candidate builds and are not in the published
 0.1.0-beta.2 packages yet.
+
+## User attachments (source preview)
+
+Attach images, PDFs and UTF-8 text files to a session with ordered content and
+immutable recovery references. See [Attachments](../../docs/harness/guides/attachments.md)
+for the Rust/TypeScript APIs, service uploads, limits and upgrade instructions.
+This API requires matching source builds; it is not in npm `0.1.0-beta.2`.

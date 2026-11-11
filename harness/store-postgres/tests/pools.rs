@@ -103,7 +103,7 @@ fn version_catalog_preserves_identity_counts_idle_sessions_and_expires_presence(
         .advertise_worker("old-pool", selector.clone(), 2, false)
         .unwrap();
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET ow.runtime_schema='6'; SET search_path={},pg_catalog; UPDATE worker_presence SET expires=now()-interval '1 second'",c.schema)).unwrap();
+    db.batch_execute(&format!("SET ow.runtime_schema='7'; SET search_path={},pg_catalog; UPDATE worker_presence SET expires=now()-interval '1 second'",c.schema)).unwrap();
     assert_eq!(
         store.worker_pools(None, 1).unwrap()["pools"][0]["workers"],
         json!([])

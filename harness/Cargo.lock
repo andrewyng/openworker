@@ -1941,6 +1941,7 @@ version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "async-stream",
+ "base64 0.22.1",
  "chrono",
  "fs2",
  "futures-util",

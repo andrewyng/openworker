@@ -15,7 +15,8 @@ path = "src/main.rs"
 
 # Fault-injection fixtures are opt-in and excluded from shipped builds.
 [features]
-default = ["guardrails", "compliance"]
+default = ["guardrails", "compliance", "attachments"]
+attachments = []
 guardrails = ["openworker-guardrails/engine"]
 compliance = []
 compliance-export = ["compliance"]

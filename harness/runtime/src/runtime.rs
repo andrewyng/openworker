@@ -64,7 +64,7 @@ pub struct Runtime {
     observers_started: AtomicBool,
     observers_stop: CancellationToken,
     compliance_defaults: Option<crate::compliance::Config>,
-    safety_defaults: crate::safety::Config,
+    pub(crate) safety_defaults: crate::safety::Config,
     pub safety_handlers: Arc<crate::safety::Registry>,
     pub telemetry: Telemetry,
     pub store: crate::store::SharedStore,
@@ -665,8 +665,24 @@ impl Runtime {
             } else if summary {
                 instructions.push_str("\nThe configured turn budget is exhausted. No tools may execute. Return a short plain-language response (at most 120 words) telling the user the configured limit was reached, what was actually completed, and what is incomplete. Do not claim failed/unknown tools succeeded. Do not request tools or continue the task.");
             }
+            // Text documents participate in model-input checks. Binary blocks
+            // are withheld from text checks and exports; admission rejects them
+            // when an input policy requires inspection we cannot perform.
+            let attachment_history =
+                crate::attachments::hydrate(self.store.lock().unwrap().as_mut(), sid, history)?;
+            if safety.protects(crate::safety::Phase::ModelInput, None)
+                && attachment_history.iter().any(|item| {
+                    item["content"].as_array().is_some_and(|blocks| {
+                        blocks
+                            .iter()
+                            .any(|b| b["type"] == "input_image" || b["type"] == "input_file")
+                    })
+                })
+            {
+                return Err(crate::attachments::InspectionUnsupported.into());
+            }
             let request_text = serde_json::to_string(
-                &json!({"instructions":instructions,"history":crate::model::public_items(history)}),
+                &json!({"instructions":instructions,"history":crate::model::public_items(&attachment_history)}),
             )?;
             let (_, blocked) = self
                 .check_content(
@@ -771,7 +787,7 @@ impl Runtime {
                     }) {
                         images.clear(sid);
                     }
-                    images.hydrate(sid, history)
+                    images.hydrate(sid, &attachment_history)
                 };
                 tokio::time::timeout(
                     std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
@@ -1550,6 +1566,10 @@ impl Runtime {
                     json!(self.store.lock().unwrap().supports_teams());
                 info["capabilities"]["session_tool_grants"] = json!(true);
                 info["capabilities"]["native_tool_controls"] = json!(true);
+                info["capabilities"]["attachments"] = json!(
+                    cfg!(feature = "attachments")
+                        && self.store.lock().unwrap().supports_input_attachments()
+                );
                 info["capabilities"]["ephemeral_native_images"] = json!(true);
                 info["capabilities"]["model_connections"] = json!(true);
                 info["capabilities"]["model_providers"] = json!(["openai", "anthropic"]);
@@ -1600,6 +1620,16 @@ impl Runtime {
             _ => {}
         }
         let sid = text(&p, "session_id", 80)?.to_owned();
+        if method == "attachment/upload" {
+            let id = text(&p, "id", 100)?;
+            let request: crate::attachments::Upload = serde_json::from_value(p["upload"].clone())?;
+            let blob = self
+                .store
+                .lock()
+                .unwrap()
+                .input_attachment(&sid, id, request)?;
+            return Ok(blob.reply());
+        }
         match method {
             "session/attach" => self.snapshot(&sid),
             "compliance/delivery-health" => {
@@ -1693,7 +1723,7 @@ impl Runtime {
                 Ok(json!({"resumed":true}))
             }
             "turn/start" => {
-                let context = crate::turn_options::Context::from_request(&p)?;
+                let mut context = crate::turn_options::Context::from_request(&p)?;
                 self.check_backend(&sid)?;
                 if self
                     .store
@@ -1739,9 +1769,17 @@ impl Runtime {
                     .filter(|v| !v.is_null())
                     .map(|v| serde_json::from_value::<crate::safety::Config>(v.clone()))
                     .transpose()?;
-                let checked_input = self
-                    .check_user_input_with(&sid, text(&p, "text", 32000)?, safety.as_ref())
-                    .await?;
+                let checked_input = if let Some(parts) = &context.content {
+                    let parts = self
+                        .prepare_input_content(&sid, parts, safety.as_ref())
+                        .await?;
+                    let text = crate::attachments::summary(&parts);
+                    context.content = Some(parts);
+                    text
+                } else {
+                    self.check_user_input_with(&sid, text(&p, "text", 32000)?, safety.as_ref())
+                        .await?
+                };
                 let (s, fresh, e) = self.store.lock().unwrap().accept_with_context(
                     &sid,
                     text(&p, "submission_id", 100)?,
@@ -1907,7 +1945,7 @@ impl Runtime {
                     let provider_error = e.downcast_ref::<crate::provider::Error>().map(|e| e.diagnostic());
                     let status = if e.is::<safety::Unavailable>() {
                         "waiting_safety"
-                    } else if e.is::<safety::Blocked>() {
+                    } else if e.is::<safety::Blocked>() || e.is::<crate::attachments::InspectionUnsupported>() {
                         "blocked"
                     } else if e
                         .downcast_ref::<crate::provider::Error>()

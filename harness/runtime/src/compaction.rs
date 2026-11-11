@@ -284,7 +284,30 @@ pub fn candidate(
     let mut lines = vec![];
     for msg in span {
         let role = msg["role"].as_str().unwrap_or("");
-        let text = msg["content"].as_str().unwrap_or("");
+        let text = msg["content"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                msg["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|block| {
+                        if let Some(text) = block["text"].as_str() {
+                            Some(text.to_owned())
+                        } else if block["type"] == "input_attachment" {
+                            Some(format!(
+                                "[attached {}: {}; original retained in session]",
+                                block["kind"].as_str().unwrap_or("file"),
+                                block["id"].as_str().unwrap_or("")
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
         if role == "user" && msg["_runtime_notice"].is_null() {
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             if !text.is_empty() {
@@ -318,9 +341,9 @@ pub fn candidate(
         lines.push(format!(
             "[{role}] {}",
             if role == "tool" {
-                clip(text, 100)
+                clip(&text, 100)
             } else {
-                text.into()
+                text
             }
         ));
     }

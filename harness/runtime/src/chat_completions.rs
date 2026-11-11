@@ -67,6 +67,7 @@ fn content(value: &Value) -> Result<Value, Error> {
     let blocks = value.as_array().ok_or_else(config)?.iter().map(|p| {
         match p["type"].as_str() {
             Some("text" | "input_text" | "output_text") => Ok(json!({"type":"text","text":p["text"].as_str().ok_or_else(config)?})),
+            Some("input_file") => Ok(json!({"type":"file","file":{"filename":p["filename"],"file_data":p["file_data"]}})),
             Some("input_image") => Ok(json!({"type":"image_url","image_url":{"url":p["image_url"].as_str().ok_or_else(config)?}})),
             _ => Err(config()),
         }

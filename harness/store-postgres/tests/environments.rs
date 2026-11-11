@@ -60,7 +60,7 @@ fn close(store: &mut PostgresStore, id: &str) {
 fn admin(c: &Config) -> postgres::Client {
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     db.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();

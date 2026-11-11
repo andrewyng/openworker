@@ -10,7 +10,8 @@ license.workspace = true
 publish = ["crates-io"]
 
 [features]
-default = ["guardrails", "compliance", "otlp"]
+default = ["guardrails", "compliance", "otlp", "attachments"]
+attachments = ["openworker-runtime/attachments", "openworker-store-postgres/attachments"]
 otlp = ["openworker-telemetry/otlp"]
 recording = ["dep:openworker-observability"]
 evaluations = ["recording", "openworker-observability/evaluations"]
@@ -32,6 +33,7 @@ openworker-observability = { path = "../observability", version = "=0.1.0-beta.2
 openworker-security-adapters = { version = "=0.1.0-beta.2", path = "../security-adapters", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 anyhow = "1"
+base64 = "0.22"
 fs2 = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 openworker-store-postgres = { version = "=0.1.0-beta.2", path = "../store-postgres" }

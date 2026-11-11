@@ -681,6 +681,52 @@ impl Session {
                 .into(),
         })
     }
+    /// Upload immutable inputs over the authenticated service boundary, then
+    /// submit their ordered references using the caller's idempotency key.
+    pub async fn send_input(
+        &self,
+        input: crate::UserInput,
+        limits: Option<openworker_runtime::budget::Limits>,
+        key: Option<&str>,
+    ) -> Result<Run> {
+        let _ = id(self.id())?;
+        let content = input
+            .upload_service(&self.service, self.id())
+            .await
+            .map_err(|e| {
+                error(if matches!(e, crate::Error::OutcomeUnknown) {
+                    "outcome_unknown"
+                } else {
+                    "attachment_upload_failed"
+                })
+            })?;
+        if let Some(limits) = &limits {
+            limits
+                .validate()
+                .map_err(|_| error("invalid_turn_limits"))?;
+        }
+        let generated = openworker_runtime::id("idem");
+        let r = self
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/turns", id(self.id())?),
+                Some(json!({"content":content,"limits":limits})),
+                Some(key.unwrap_or(&generated)),
+            )
+            .await?;
+        Ok(Run {
+            session: self.clone(),
+            id: r["runId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+            submission_id: r["submissionId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+        })
+    }
     pub async fn resume_run(&self, submission: &str) -> Result<Run> {
         let r = self
             .service

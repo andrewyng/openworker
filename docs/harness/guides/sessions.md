@@ -40,6 +40,12 @@ limit does not increase that total. Set limits on the agent for defaults or on
 Reusing a submission ID requires the same message, context, limits and safety
 options; a changed addendum is a new turn with a new submission ID.
 
+## Attach a file
+
+The source preview supports images, PDFs and UTF-8 files as ordered user-message
+content. See [Attachments](attachments.md) for the convenience and interleaved
+forms, storage limits and guardrail behavior.
+
 ## Import a conversation
 
 Use `initialHistory` only when creating a new session. Ordinary recovery should

@@ -998,7 +998,19 @@ pub fn public_items(items: &[Value]) -> Vec<Value> {
     items
         .iter()
         .filter(|item| item["type"] != "reasoning")
-        .cloned()
+        .map(|item| {
+            let mut item = item.clone();
+            if let Some(blocks) = item["content"].as_array_mut() {
+                for block in blocks {
+                    if block["type"] == "input_image" {
+                        *block = json!({"type":"input_image","content_withheld":true});
+                    } else if block["type"] == "input_file" {
+                        *block = json!({"type":"input_file","filename":block["filename"],"content_withheld":true});
+                    }
+                }
+            }
+            item
+        })
         .collect()
 }
 
