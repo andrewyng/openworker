@@ -116,6 +116,19 @@ struct Owned {
     delete_request: Option<String>,
     delete_accepted: bool,
     operation_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rejected_dns_deletes: Vec<RejectedDnsDelete>,
+}
+// A bounded, provider-confirmed no-effect response is different from an unknown
+// mutation. Keep every original request; old ambiguous receipts stay parked.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RejectedDnsDelete {
+    request_id: String,
+    observed_at_unix: u64,
+    retry_after_unix: u64,
+    status: u16,
+    code: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -343,6 +356,23 @@ impl State {
                     uuid::Uuid::parse_str(request)
                         .is_ok_and(|u| !u.is_nil() && u.to_string() == *request),
                     "Invalid deletion request UUID"
+                );
+            }
+            let mut rejected = std::collections::BTreeSet::new();
+            ensure!(
+                r.rejected_dns_deletes.len() <= 5,
+                "DNS dependency retry limit exceeded"
+            );
+            for rejection in &r.rejected_dns_deletes {
+                ensure!(
+                    r.id.contains("/providers/Microsoft.Network/privateDnsZones/")
+                        && rejection.status == 409
+                        && rejection.code == "CannotDeleteResource"
+                        && uuid::Uuid::parse_str(&rejection.request_id).is_ok_and(|u| !u.is_nil())
+                        && rejected.insert(&rejection.request_id)
+                        && rejection.retry_after_unix
+                            == rejection.observed_at_unix.saturating_add(60),
+                    "Invalid DNS no-effect receipt"
                 );
             }
             if r.deleted {
@@ -581,6 +611,7 @@ async fn observe(c: &mut impl Cloud, s: &mut State, e: &mut String) -> Result<()
                 delete_request: None,
                 delete_accepted: false,
                 operation_url: None,
+                rejected_dns_deletes: vec![],
             });
             save(c, s, e).await?;
         }
@@ -703,9 +734,22 @@ async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64)
         else {
             continue;
         };
-        if s.resources[i].delete_request.is_some() {
-            return Ok(());
-        } // GET only on subsequent ticks; even a lost DELETE is not replay permission.
+        if let Some(request) = &s.resources[i].delete_request {
+            let Some(rejected) = s.resources[i]
+                .rejected_dns_deletes
+                .last()
+                .filter(|r| &r.request_id == request)
+            else {
+                // GET only after an accepted or unknown mutation, including old
+                // receipts. A lost response must never authorize another DELETE.
+                return Ok(());
+            };
+            ensure!(s.resources[i].rejected_dns_deletes.len() < 5,
+                "DNS dependencies repeatedly rejected deletion; inspect original resource and receipts");
+            if at < rejected.retry_after_unix {
+                return Ok(());
+            }
+        }
         let id = s.resources[i].id.clone();
         let api = expected["apiVersion"].as_str().unwrap();
         let r = c.arm(Method::GET, &id, api, None, &s.nonce).await?;
@@ -749,9 +793,32 @@ async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64)
         }
         let request = uuid::Uuid::new_v4().to_string();
         s.resources[i].delete_request = Some(request.clone());
+        s.resources[i].delete_accepted = false;
+        s.resources[i].operation_url = None;
         save(c, s, e).await?;
         let r = c.arm(Method::DELETE, &id, api, None, &request).await;
-        match r {Ok(r) if [200,202,204].contains(&r.status)=>{s.resources[i].delete_accepted=true;s.resources[i].operation_url=r.operation;save(c,s,e).await?;},_=>bail!("Delete outcome unknown/rejected. Observe this exact resource; no automatic replay.")}
+        match r {
+            Ok(r) if [200, 202, 204].contains(&r.status) => {
+                s.resources[i].delete_accepted = true;
+                s.resources[i].operation_url = r.operation;
+                save(c, s, e).await?;
+            }
+            Ok(r) if id.contains("/providers/Microsoft.Network/privateDnsZones/")
+                && r.status == 409
+                && r.body.as_ref().and_then(|v| v.pointer("/error/code")).and_then(Value::as_str)
+                    == Some("CannotDeleteResource") => {
+                // Azure's empty link listing can precede dependency deletion.
+                // Only this exact rejected response permits a future NEW attempt,
+                // after backoff and fresh ownership/dependency checks above.
+                s.resources[i].rejected_dns_deletes.push(RejectedDnsDelete {
+                    request_id: request, observed_at_unix: at,
+                    retry_after_unix: at.saturating_add(60), status: 409,
+                    code: "CannotDeleteResource".into(),
+                });
+                save(c, s, e).await?;
+            }
+            _ => bail!("Delete outcome unknown/rejected. Observe this exact resource; no automatic replay."),
+        }
         return Ok(());
     }
     s.completed_unix = Some(at);
@@ -1261,6 +1328,8 @@ mod tests {
         lose_put: bool,
         lose_delete: bool,
         conflict: bool,
+        dns_rejections: usize,
+        dns_error_code: String,
     }
     impl Fake {
         fn new(s: State) -> Self {
@@ -1274,6 +1343,8 @@ mod tests {
                 lose_put: false,
                 lose_delete: false,
                 conflict: false,
+                dns_rejections: 0,
+                dns_error_code: "CannotDeleteResource".into(),
             }
         }
         fn etag(&self) -> String {
@@ -1373,6 +1444,13 @@ mod tests {
                             .any(|r| r.id == id && r.delete_request.as_deref() == Some(request)),
                         "Delete intent must be durable"
                     );
+                }
+                if id.contains("/privateDnsZones/") && self.dns_rejections > 0 {
+                    self.dns_rejections -= 1;
+                    return Ok(reply(
+                        409,
+                        Some(json!({"error":{"code":self.dns_error_code}})),
+                    ));
                 }
                 self.objects.remove(id);
                 if self.lose_delete {
@@ -1539,6 +1617,109 @@ mod tests {
             heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
         }
         assert!(s.completed_unix.is_some());
+    }
+
+    async fn blocked_dns() -> (Fake, State, String, String) {
+        let (mut c, mut s, mut e) = active().await;
+        c.dns_rejections = 1;
+        for _ in 0..15 {
+            destroy_one(&mut c, &mut s, &mut e, 201).await.unwrap();
+            if s.resources
+                .iter()
+                .any(|r| !r.rejected_dns_deletes.is_empty())
+            {
+                break;
+            }
+        }
+        let zone = s
+            .resources
+            .iter()
+            .find(|r| !r.rejected_dns_deletes.is_empty())
+            .unwrap()
+            .id
+            .clone();
+        (c, s, e, zone)
+    }
+    #[tokio::test]
+    async fn dns_proven_dependency_rejection_survives_restart_and_rechecks_before_new_request() {
+        let (mut c, s, _, zone) = blocked_dns().await;
+        let old = s
+            .resources
+            .iter()
+            .find(|r| r.id == zone)
+            .unwrap()
+            .delete_request
+            .clone();
+        let (mut e, mut s) = c.read_control("").await.unwrap().unwrap();
+        let before = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 260).await.unwrap();
+        assert_eq!(c.deletes(), before, "backoff must survive restart");
+        c.objects.insert(
+            format!("{zone}/virtualNetworkLinks"),
+            json!({"value":[{"id":"still-there"}]}),
+        );
+        destroy_one(&mut c, &mut s, &mut e, 261).await.unwrap();
+        assert_eq!(c.deletes(), before);
+        c.objects.remove(&format!("{zone}/virtualNetworkLinks"));
+        destroy_one(&mut c, &mut s, &mut e, 262).await.unwrap();
+        let resource = s.resources.iter().find(|r| r.id == zone).unwrap();
+        assert_ne!(resource.delete_request, old);
+        assert_eq!(resource.rejected_dns_deletes[0].request_id, old.unwrap());
+        assert!(resource.delete_accepted);
+        assert_eq!(c.deletes(), before + 1);
+    }
+    #[tokio::test]
+    async fn dns_retry_refuses_replacement_unknown_response_and_other_conflicts() {
+        let (mut c, mut s, mut e, zone) = blocked_dns().await;
+        c.objects.get_mut(&zone).unwrap()["properties"]["internalId"] = json!("replacement");
+        let count = c.deletes();
+        assert!(destroy_one(&mut c, &mut s, &mut e, 300).await.is_err());
+        assert_eq!(c.deletes(), count);
+        let (mut c, mut s, mut e, zone) = blocked_dns().await;
+        // Model a lost/legacy response: no proven-rejection receipt exists.
+        s.resources
+            .iter_mut()
+            .find(|r| r.id == zone)
+            .unwrap()
+            .rejected_dns_deletes
+            .clear();
+        save(&mut c, &s, &mut e).await.unwrap();
+        let count = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 400).await.unwrap();
+        assert_eq!(c.deletes(), count);
+        let (mut c, mut s, mut e) = active().await;
+        c.dns_rejections = 1;
+        c.dns_error_code = "AnotherConflict".into();
+        for _ in 0..15 {
+            if destroy_one(&mut c, &mut s, &mut e, 201).await.is_err() {
+                break;
+            }
+        }
+        assert!(s
+            .resources
+            .iter()
+            .all(|r| r.rejected_dns_deletes.is_empty()));
+        let count = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 400).await.unwrap();
+        assert_eq!(c.deletes(), count);
+    }
+    #[tokio::test]
+    async fn dns_dependency_attempts_are_bounded_and_keep_all_receipts() {
+        let (mut c, mut s, mut e, _) = blocked_dns().await;
+        c.dns_rejections = 20;
+        for at in [261, 321, 381, 441] {
+            destroy_one(&mut c, &mut s, &mut e, at).await.unwrap();
+        }
+        let count = c.deletes();
+        assert!(destroy_one(&mut c, &mut s, &mut e, 501).await.is_err());
+        assert_eq!(c.deletes(), count);
+        assert_eq!(
+            s.resources
+                .iter()
+                .map(|r| r.rejected_dns_deletes.len())
+                .sum::<usize>(),
+            5
+        );
     }
 
     #[tokio::test]
