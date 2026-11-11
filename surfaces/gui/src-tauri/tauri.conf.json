@@ -34,6 +34,15 @@
       "entitlements": "entitlements.plist",
       "minimumSystemVersion": "12.0"
     },
+    "linux": {
+      "deb": {
+        "section": "utils",
+        "depends": ["libayatana-appindicator3-1"]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
