@@ -26,6 +26,8 @@ pub struct Wait {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
+    #[serde(default)]
+    pub trace_origins: BTreeMap<String, crate::observation_links::SpawnOrigin>,
     pub id: String,
     pub lead: String,
     pub roster: rules::Roster,
@@ -365,6 +367,7 @@ pub fn apply(
             }
         }
         let doc = Document {
+            trace_origins: BTreeMap::new(),
             id: id.clone(),
             lead: lead_id.clone(),
             roster,
@@ -1037,6 +1040,26 @@ pub fn apply(
             };
             let reservation = doc.roster.reserve(request.clone(), || crate::id("s"))?;
             if reservation.created {
+                if let Some(turn) = &s.turn {
+                    doc.trace_origins.insert(
+                        request.agent_id.clone(),
+                        crate::observation_links::SpawnOrigin {
+                            parent_session_id: s.id.clone(),
+                            parent_turn_id: turn.id.clone(),
+                            parent_call_id: turn
+                                .queue
+                                .first()
+                                .filter(|c| {
+                                    matches!(
+                                        c["name"].as_str(),
+                                        Some("team_spawn" | "create_sub_agent")
+                                    )
+                                })
+                                .and_then(|c| c["call_id"].as_str())
+                                .map(str::to_owned),
+                        },
+                    );
+                }
                 doc.sandbox_choices
                     .insert(request.agent_id.clone(), sandbox.clone());
                 if let Some(binding) = binding {
@@ -1420,6 +1443,7 @@ pub fn public_snapshot(mut value: Value) -> Value {
     if let Some(object) = value.as_object_mut() {
         for key in [
             "standalone",
+            "trace_origins",
             "commands",
             "tasks",
             "charges",

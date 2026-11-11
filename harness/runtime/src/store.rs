@@ -213,6 +213,17 @@ pub struct Event {
 /// the runtime safe for shared workers. `recover` may only touch sessions owned
 /// exclusively by this store instance. No automatic replay of tool effects.
 pub trait StateStore: Send {
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        Ok(self.metadata(sid)?.turn.is_some_and(|t| t.id == tid))
+    }
+
+    fn observation_children(
+        &self,
+        _sid: &str,
+        _tid: &str,
+    ) -> Result<Vec<crate::observation_links::ChildLink>> {
+        bail!("Spawn trace queries unsupported")
+    }
     fn pending_observers(&self, _sid: &str) -> Result<Vec<Value>> {
         Ok(vec![])
     }
@@ -1068,6 +1079,40 @@ impl Store {
 }
 
 impl StateStore for Store {
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.metadata(sid)?;
+        Ok(self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=? AND turn_id=?)",
+            params![sid, tid],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<crate::observation_links::ChildLink>> {
+        let session = self.metadata(sid)?;
+        let Some(member) = session.agent_team else {
+            return Ok(vec![]);
+        };
+        let raw: String = self.db.query_row(
+            "SELECT data FROM agent_teams WHERE id=?",
+            [member.team_id],
+            |r| r.get(0),
+        )?;
+        let mut children =
+            crate::observation_links::children(&serde_json::from_str(&raw)?, sid, tid);
+        for child in &mut children {
+            child.child_turn_id = self.db.query_row(
+                "SELECT turn_id FROM events WHERE session_id=? AND kind='turn_accepted' ORDER BY id LIMIT 1",
+                [&child.child_session_id], |r| r.get(0),
+            ).optional()?.flatten();
+        }
+        Ok(children)
+    }
+
     fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
         Store::pending_observers(self, sid)
     }

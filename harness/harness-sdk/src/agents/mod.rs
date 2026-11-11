@@ -51,8 +51,8 @@ mod team;
 
 pub use crate::{
     AccessToken, ApprovalDecision, Capture, ContentPolicy, Credentials, Model, ModelChoice,
-    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryConfig, TelemetryHeader,
-    TelemetrySignal, TokenRefreshReason, ToolRegistry,
+    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryAcknowledgement, TelemetryConfig,
+    TelemetryHeader, TelemetrySignal, TokenRefreshReason, ToolRegistry,
 };
 pub use agent_team::{
     AgentTeam, AgentTeamRef, ChildContext, ChildOptions, ChildWorkspace, Communication,

@@ -139,6 +139,19 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
         : (options.sandbox ?? "openshell"),
     scripted: options.scripted ?? false,
     telemetry: options.telemetry ?? null,
+    ...(options.recording ? { recording: {
+      evaluations: options.recording.evaluations ?? false,
+      max_pending_evaluations:options.recording.maxPendingEvaluations??10000,
+      evaluation_retention_days:options.recording.evaluationRetentionDays??30,
+      evaluation_sinks:(options.recording.evaluationSinks??[]).map(s=>({name:s.name,url:s.url,authorization_env:s.authorizationEnv,include_explanation:s.includeExplanation??false})),
+      evidence: options.recording.evidence ? {user_input:options.recording.evidence.userInput??false,assistant_output:options.recording.evidence.assistantOutput??false,tool_arguments:options.recording.evidence.toolArguments??false,tool_results:options.recording.evidence.toolResults??false,max_bytes:options.recording.evidence.maxBytes}:null,
+      database: options.recording.database.type === "sqlite"
+        ? {kind:"sqlite",path:resolve(options.recording.database.path)}
+        : {kind:"postgres",connection_env:options.recording.database.connectionEnv,schema:options.recording.database.schema,ca_file:options.recording.database.caFile ?? null,loopback_plaintext:options.recording.database.loopbackPlaintext ?? false},
+      deployment:options.recording.deployment ?? "sdk",
+      retention_days:options.recording.retentionDays ?? 30,
+      queue_capacity:options.recording.queueCapacity ?? 1024,
+    }} : {}),
   };
 }
 export function agentWire(a: Agent, depth = 0): object {
@@ -186,6 +199,8 @@ export function environment(options: HarnessOptions): NodeJS.ProcessEnv {
   const explicit = [...(options.inheritEnv ?? []), ...(options.complianceSinks ?? []).map(s=>s.credentialEnv)];
   if (options.storage?.type === "postgres")
     explicit.push(options.storage.connectionEnv);
+  if(options.recording?.database.type === "postgres") explicit.push(options.recording.database.connectionEnv);
+  for (const sink of options.recording?.evaluationSinks ?? []) explicit.push(sink.authorizationEnv);
   for (const header of options.telemetry?.headers ?? [])
     if ("value_env" in header) explicit.push(header.value_env);
   for (const key of explicit) {

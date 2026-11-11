@@ -104,8 +104,10 @@ function allowedRecording(path) {
     `^/v1/sessions/${id}/observability/${id}/timeline$`,
   ).test(u.pathname);
   const summary = new RegExp(
-    `^/v1/sessions/${id}/observability/${id}/summary$`,
+    `^/v1/sessions/${id}/observability/${id}/(?:summary|subtree-summary)$`,
   ).test(u.pathname);
+  const children = new RegExp(`^/v1/sessions/${id}/observability/${id}/children$`).test(u.pathname);
+  if(children) return !u.search;
   const health = u.pathname === "/v1/observability/health";
   if (!listing && !timeline && !summary && !health) return false;
   try {

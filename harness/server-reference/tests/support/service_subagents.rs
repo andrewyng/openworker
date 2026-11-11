@@ -51,6 +51,52 @@ pub(super) async fn qualify(
         .await
         .unwrap();
     assert_eq!(run.result().await.unwrap().status, "completed");
+    let links = service
+        .json(
+            "GET",
+            &format!(
+                "/v1/sessions/{}/observability/{}/children",
+                parent.id(),
+                run.id
+            ),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(links["children"].as_array().unwrap().len(), 3);
+    for link in links["children"].as_array().unwrap() {
+        assert_eq!(link["origin"]["parent_turn_id"], run.id);
+        assert!(link["origin"]["parent_call_id"].is_string());
+    }
+    // A parent-only read credential cannot discover child identifiers or usage.
+    let cfg: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let admin_token = std::fs::read_to_string(cfg["api_token_file"].as_str().unwrap()).unwrap();
+    let read_token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
+    _db.authorized(admin_token.trim()).unwrap().auth_issue("trace-parent-only",serde_json::from_value(json!({"principal":"trace-reader","role":"observer","scope":{"kind":"sessions","ids":[parent.id()]}})).unwrap(),&read_token).unwrap();
+    let restricted = _db.authorized(&read_token).unwrap();
+    assert!(restricted
+        .observation_children(parent.id(), &run.id)
+        .unwrap()
+        .is_empty());
+    let initial_scope = format!("/v1/sessions/{}/observability/{}", parent.id(), run.id);
+    let initial_tree = service
+        .json(
+            "GET",
+            &format!("{initial_scope}/subtree-summary"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        initial_tree["selection"]["runs"].as_array().unwrap().len(),
+        4
+    );
+    assert!(initial_tree["summary"]["wall_elapsed_us"].is_null());
+    for link in links["children"].as_array().unwrap() {
+        assert!(link["child_turn_id"].is_string());
+    }
     let original = doc(config, parent.id());
     assert!(original.standalone.is_some());
     assert_eq!(original.roster.instances().count(), 4);
@@ -181,6 +227,50 @@ pub(super) async fn qualify(
         .unwrap()
         .iter()
         .any(|e| e["type"] == "tool_started"));
+    // Follow-up messages must not change the initial spawn selection.
+    let after_tree = service
+        .json(
+            "GET",
+            &format!("{initial_scope}/subtree-summary"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_tree["selection"], initial_tree["selection"]);
+    if let Ok(destination) = std::env::var("OW_OBSERVABILITY_EVIDENCE") {
+        let timeline = service
+            .json(
+                "GET",
+                &format!("{initial_scope}/timeline?limit=200"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let summary = service
+            .json("GET", &format!("{initial_scope}/summary"), None, None)
+            .await
+            .unwrap();
+        let mut child_traces = Vec::new();
+        for link in links["children"].as_array().unwrap() {
+            let base = format!(
+                "/v1/sessions/{}/observability/{}",
+                link["child_session_id"].as_str().unwrap(),
+                link["child_turn_id"].as_str().unwrap()
+            );
+            let timeline = service
+                .json("GET", &format!("{base}/timeline?limit=200"), None, None)
+                .await
+                .unwrap();
+            let summary = service
+                .json("GET", &format!("{base}/summary"), None, None)
+                .await
+                .unwrap();
+            child_traces.push(json!({"timeline":timeline,"summary":summary}));
+        }
+        std::fs::write(destination,serde_json::to_vec_pretty(&json!({"timeline":timeline,"summary":summary,"children":links,"subtree":after_tree,"childTraces":child_traces})).unwrap()).unwrap();
+    }
     eprintln!("PASS standalone service releases: two async builders, sync restricted verifier, shared OpenShell, worker restart, durable follow-up");
 }
 

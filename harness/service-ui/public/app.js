@@ -563,6 +563,7 @@ async function render() {
         request: (path, signal) =>
           api(path, "GET", undefined, undefined, signal),
         isAdmin: can.admin(),
+        children: true,
       });
       return;
     }

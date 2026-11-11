@@ -10,7 +10,12 @@ license.workspace = true
 publish = ["crates-io"]
 
 [features]
-default = ["guardrails", "compliance"]
+default = ["guardrails", "compliance", "otlp"]
+otlp = ["openworker-telemetry/otlp"]
+recording = ["dep:openworker-observability"]
+evaluations = ["recording", "openworker-observability/evaluations"]
+evaluation-export = ["evaluations", "reqwest/blocking", "dep:chrono"]
+recording-postgres = ["recording", "openworker-observability/postgres"]
 guardrails = ["openworker-runtime/guardrails", "openworker-store-postgres/guardrails"]
 compliance = ["openworker-runtime/compliance", "openworker-store-postgres/compliance"]
 test-support = []
@@ -22,6 +27,8 @@ name = "openworker-harness"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+openworker-observability = { path = "../observability", version = "=0.1.0-beta.2", optional = true }
 openworker-security-adapters = { version = "=0.1.0-beta.2", path = "../security-adapters", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 anyhow = "1"
@@ -29,7 +36,7 @@ fs2 = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 openworker-store-postgres = { version = "=0.1.0-beta.2", path = "../store-postgres" }
 openworker-runtime = { version = "=0.1.0-beta.2", path = "../runtime", default-features = false }
-openworker-telemetry = { version = "=0.1.0-beta.2", path = "../telemetry", features = ["otlp"] }
+openworker-telemetry = { version = "=0.1.0-beta.2", path = "../telemetry" }
 openworker-tools = { version = "=0.1.0-beta.2", path = "../tools-sdk" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

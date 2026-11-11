@@ -421,3 +421,68 @@ async fn resilience_recovered_runtime_shutdown_retires_old_attachments_without_d
     );
     assert!(!next.get("recovered").unwrap().closed);
 }
+
+#[test]
+#[ignore = "requires isolated OW_PG_TEST_URL"]
+fn terminal_team_save_does_not_hold_environment_while_waiting_for_team() {
+    let c = config();
+    let mut store = PostgresStore::open(c.clone()).unwrap();
+    let binding = ready(&store, Sharing::Shared, Management::Harness);
+    let lead = session("lock-order-lead", binding.clone());
+    store.save(&lead, "created", json!({})).unwrap();
+    let team = store
+        .agent_team(
+            &lead.id,
+            "create",
+            &json!({"agent_id":"lead","agent_types":["builder"]}),
+            None,
+        )
+        .unwrap();
+    let team_id = team["id"].as_str().unwrap().to_owned();
+    let mut closed = store.get(&lead.id).unwrap();
+    closed.closed = true;
+    let mut controller = admin(&c);
+    let mut monitor = admin(&c);
+    let mut tx = controller.transaction().unwrap();
+    tx.query_one(
+        "SELECT data FROM agent_teams WHERE id=$1 FOR UPDATE",
+        &[&team_id],
+    )
+    .unwrap();
+    let worker = std::thread::spawn(move || store.save(&closed, "session_closed", json!({})));
+    // Wait until this exact schema's worker is blocked on the held team row.
+    let relation = format!("{}.agent_teams", c.schema);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let waiting = loop {
+        let blocked:bool=monitor.query_one("SELECT EXISTS(SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE l.relation=$1::text::regclass AND a.wait_event_type='Lock' AND a.query LIKE '%agent_teams%FOR UPDATE%')",&[&relation]).unwrap().get(0);
+        if blocked {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    tx.batch_execute("SET LOCAL lock_timeout='500ms'").unwrap();
+    let can_read_environment = tx
+        .query_one(
+            "SELECT data FROM environments WHERE id=$1 FOR SHARE",
+            &[&binding.environment_id],
+        )
+        .is_ok();
+    // Always release test locks before joining or asserting, even on failure.
+    tx.rollback().unwrap();
+    let saved = worker.join().unwrap();
+    drop(controller);
+    drop(monitor);
+    postgres::Client::connect(&c.connection, postgres::NoTls)
+        .unwrap()
+        .batch_execute(&format!("DROP SCHEMA {} CASCADE", c.schema))
+        .unwrap();
+    assert!(waiting, "Worker never reached the team lock");
+    assert!(
+        can_read_environment,
+        "Worker held environment while waiting for team: reversed lock order"
+    );
+    saved.unwrap();
+}

@@ -116,7 +116,11 @@ const stepKind = (s) =>
             ? "question_wait"
             : "other_active";
 
-export function mountObservability(root, { request, isAdmin = false }) {
+let viewerSequence = 0;
+export function mountObservability(root, { request, isAdmin = false, initialRun = null, directory = true, openSession = true, children = false }) {
+  const instance = `ow-trace-${++viewerSequence}`;
+  const domId = (id) => `${instance}-${id}`;
+  const ids = (html) => html.replace(/(id|for|aria-controls|aria-labelledby)="(obs[^" ]*)"/g, (_, attr, id) => `${attr}="${domId(id)}"`);
   const lifetime = new AbortController();
   let stopped = false,
     serial = 0,
@@ -124,7 +128,8 @@ export function mountObservability(root, { request, isAdmin = false }) {
     timer,
     loadController,
     searchController;
-  let chosen = null,
+  let childLinks=[], ancestors=[], subtree=null;
+  let chosen = initialRun,
     tab = "usage",
     summary = null,
     selection = null,
@@ -155,8 +160,10 @@ export function mountObservability(root, { request, isAdmin = false }) {
       controllers.delete(c);
     }
   }
-  root.innerHTML = `<section class="observability" id="observability"><div class="page-heading"><div><h1>Observability</h1><p>Where agent time and tokens go.</p></div><button class="button" data-obs="refresh">Refresh</button></div><div class="obs-toolbar"><div class="tabs obs-tabs" role="tablist" aria-label="Observability views"><button class="tab active" role="tab" id="obs-usage-tab" aria-controls="obs-content" aria-selected="true" data-obs="usage">Usage</button><button class="tab" role="tab" id="obs-timeline-tab" aria-controls="obs-content" aria-selected="false" data-obs="timeline">Timeline</button></div><div class="obs-picker"><label for="obs-run-search">Find a run</label><input id="obs-run-search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="obs-run-options" autocomplete="off" placeholder="Search name or ID…"><div id="obs-run-menu" class="obs-run-menu" hidden><div id="obs-run-options" role="listbox" aria-label="Matching runs"></div><button class="obs-more" id="obs-search-more" hidden>More results</button><p id="obs-search-state" role="status"></p></div></div></div><div id="obs-scope"></div><div id="obs-content" role="tabpanel" aria-labelledby="obs-usage-tab" aria-live="polite"></div><details class="obs-details"><summary>How time and usage are counted</summary><p>Input and output are provider-reported tokens. Cached input and reasoning are subsets, not extra tokens. Tools have duration and result bytes; tokens cannot be attributed exactly to a tool.</p><p>Accumulated work adds individual durations. Exclusive phases partition the observed window, with parallel work shown separately. Unobserved gaps are not assigned to model or tool work. First-output time includes transport and provider queueing, not just inference.</p></details>${isAdmin ? '<details class="obs-details" id="obs-health"><summary>Recorder &amp; exporter health</summary><div id="obs-health-content"></div></details>' : ""}</section>`;
-  const $ = (s) => root.querySelector(s);
+  root.innerHTML = ids(`<section class="observability" id="observability"><div class="page-heading"><div><h1>Observability</h1><p>Where agent time and tokens go.</p></div><button class="button" data-obs="refresh">Refresh</button></div><div class="obs-toolbar"><div class="tabs obs-tabs" role="tablist" aria-label="Observability views"><button class="tab active" role="tab" id="obs-usage-tab" aria-controls="obs-content" aria-selected="true" data-obs="usage">Usage</button><button class="tab" role="tab" id="obs-timeline-tab" aria-controls="obs-content" aria-selected="false" data-obs="timeline">Timeline</button></div><div class="obs-picker"><label for="obs-run-search">Find a run</label><input id="obs-run-search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="obs-run-options" autocomplete="off" placeholder="Search name or ID…"><div id="obs-run-menu" class="obs-run-menu" hidden><div id="obs-run-options" role="listbox" aria-label="Matching runs"></div><button class="obs-more" id="obs-search-more" hidden>More results</button><p id="obs-search-state" role="status"></p></div></div></div><div id="obs-scope"></div><div id="obs-content" role="tabpanel" aria-labelledby="obs-usage-tab" aria-live="polite"></div><details class="obs-details"><summary>How time and usage are counted</summary><p>Input and output are provider-reported tokens. Cached input and reasoning are subsets, not extra tokens. Tools have duration and result bytes; tokens cannot be attributed exactly to a tool.</p><p>Accumulated work adds individual durations. Exclusive phases partition the observed window, with parallel work shown separately. Unobserved gaps are not assigned to model or tool work. First-output time includes transport and provider queueing, not just inference.</p></details>${isAdmin ? '<details class="obs-details" id="obs-health"><summary>Recorder &amp; exporter health</summary><div id="obs-health-content"></div></details>' : ""}</section>`);
+  const $ = (s) => root.querySelector(s.replace(/#(obs[\w-]*)/g, (_, id) => `#${domId(id)}`));
+  if (!directory) $(".obs-picker").hidden = true;
+  root.addEventListener("ow-trace-refresh", () => load(), {signal:lifetime.signal});
   const content = $("#obs-content"),
     input = $("#obs-run-search"),
     menu = $("#obs-run-menu");
@@ -168,7 +175,7 @@ export function mountObservability(root, { request, isAdmin = false }) {
   }
   function scope() {
     $("#obs-scope").innerHTML = chosen
-      ? `<div class="obs-scope"><div><strong>${esc(chosen.name || chosen.turn_id)}</strong><span>${esc(chosen.agent)} · ${esc(chosen.status)} · ${esc(new Date(chosen.created_ms).toLocaleString())}</span></div><button class="obs-text" data-obs="recent">Recent runs</button><a class="obs-text" href="#sessions/${encodeURIComponent(chosen.session_id)}">Open session ↗</a></div>`
+      ? `<div class="obs-scope"><div><strong>${esc(chosen.name || chosen.turn_id)}</strong><span>${esc([chosen.agent, chosen.status, known(chosen.created_ms) ? new Date(chosen.created_ms).toLocaleString() : null].filter(Boolean).join(" · "))}</span></div>${directory ? `<button class="obs-text" data-obs="recent">Recent runs</button>` : ""}${openSession ? `<a class="obs-text" href="#sessions/${encodeURIComponent(chosen.session_id)}">Open session ↗</a>` : ""}</div>`
       : `<p class="obs-hint obs-scope">${selection ? `${selection.selected_runs} recent authorized runs${selection.selection_truncated ? " · more available" : ""}. Summary covers this page only.` : "Recent authorized runs"}</p>`;
     if (summary?.coverage.scan_truncated || summary?.coverage.group_truncated) {
       $("#obs-scope").insertAdjacentHTML(
@@ -176,13 +183,14 @@ export function mountObservability(root, { request, isAdmin = false }) {
         '<span class="obs-partial">Partial summary</span>',
       );
     }
-    content.setAttribute("aria-labelledby", `obs-${tab}-tab`);
+    content.setAttribute("aria-labelledby", domId(`obs-${tab}-tab`));
     for (const b of root.querySelectorAll(
       "[data-obs=usage],[data-obs=timeline]",
     )) {
       const active = b.dataset.obs === tab;
       b.classList.toggle("active", active);
       b.setAttribute("aria-selected", String(active));
+      b.tabIndex = active ? 0 : -1;
     }
   }
   function draw() {
@@ -219,7 +227,7 @@ export function mountObservability(root, { request, isAdmin = false }) {
       )
       .join(
         "",
-      )}</div>${s.coverage.scanned_steps === 0 ? notice("No recorded steps yet. The run directory is still available below.") : ""}${tab === "timeline" ? timelineView(s) : usageView(s)}${coverage(s)}${runDirectory()}`;
+      )}</div>${s.coverage.scanned_steps === 0 ? notice("No recorded steps yet. The run directory is still available below.") : ""}${tab === "timeline" ? timelineView(s) : usageView(s)}${coverage(s)}${runDirectory()}${chosen&&children?`<section class="obs-panel"><h2>Sub-agents</h2>${ancestors.length?`<button class="button" data-obs="parent">Back to parent turn</button>`:""}${childLinks.map((child,i)=>`<button class="button" data-obs-child="${i}">${esc(child.agent_id)} · ${esc(child.phase)}</button>`).join(" ")||hint("No visible recorded child links for this turn.")}${subtree ? hint(`Linked work: ${count(subtree.selection.runs.length)} visible initial tasks${subtree.selection.selection_truncated ? " · truncated" : ""} · ${measurement(subtree.summary.usage.input)} input / ${measurement(subtree.summary.usage.output)} output tokens. Later inbox turns are separate.`) : ""}${hint("Usage above covers this turn. Open a child to inspect its own requests and usage.")}</section>`:""}`;
     widths();
   }
   function usageView(s) {
@@ -274,7 +282,7 @@ export function mountObservability(root, { request, isAdmin = false }) {
         }))
         .filter((r) => r.value > 0),
       "Run phase duration",
-    )}</section><section class="obs-panel"><h2>Usage by purpose</h2>${tokensByPurpose(s)}</section></div><section class="obs-panel obs-timeline"><div class="obs-panel-title"><div><h2>Turn timeline</h2>${hint(`${timeline.length} loaded records · select a step for details`)}</div>${tool ? `<button class="obs-text" data-obs="clear-tool">Clear tool filter</button>` : ""}</div>${tool ? hint(`Tool: ${tool}`) : ""}<div class="obs-axis"><span>0</span><span>${duration(layout.to - layout.from)}</span></div><div class="obs-lanes">${layout.rows.map((r) => `<button class="obs-lane" data-obs-step="${r.cursor}" aria-pressed="${String(selectedStep) === String(r.cursor)}"><span class="obs-lane-name" title="${esc(stepName(r.step))}">${esc(stepName(r.step))}<small>${esc(r.step.operation === "model.attempt" ? purpose(r.step.purpose) : r.step.outcome)}</small></span><span class="obs-lane-track"><i class="obs-mark obs-${stepKind(r.step)}" data-obs-left="${r.left}" data-obs-width="${r.width}"></i></span><span class="obs-number">${duration(r.step.duration_us)}</span></button>`).join("") || hint("No timeline records in this view.")}</div>${timelinePage?.next !== null && timelinePage?.next !== undefined ? (timeline.length < 1000 ? '<button class="button" data-obs="more-timeline">Load more records</button>' : hint("The browser limit of 1,000 records was reached. The summary uses its separate bounded scan.")) : ""}<div id="obs-step-detail">${selected ? stepDetail(selected) : hint("Select a step to inspect timing, usage and outcome.")}</div><div id="obs-timeline-error" role="status"></div>${hint("Bars use recorded starts and measured durations. Unknown duration is a marker, not zero. Late records can appear before earlier pages.")}</section>`;
+    )}</section><section class="obs-panel"><h2>Usage by purpose</h2>${tokensByPurpose(s)}</section></div><section class="obs-panel obs-timeline"><div class="obs-panel-title"><div><h2>Turn timeline</h2>${hint(`${timeline.length} loaded records · select a step for details`)}</div>${tool ? `<button class="obs-text" data-obs="clear-tool">Clear tool filter</button>` : ""}</div>${tool ? hint(`Tool: ${tool}`) : ""}<div class="obs-axis"><span>0</span><span>${duration(layout.to - layout.from)}</span></div><div class="obs-lanes">${layout.rows.map((r) => `<button class="obs-lane" data-obs-step="${r.cursor}" aria-pressed="${String(selectedStep) === String(r.cursor)}"><span class="obs-lane-name" title="${esc(stepName(r.step))}">${esc(stepName(r.step))}<small>${esc(r.step.operation === "model.attempt" ? purpose(r.step.purpose) : r.step.outcome)}</small></span><span class="obs-lane-track"><i class="obs-mark obs-${stepKind(r.step)}" data-obs-left="${r.left}" data-obs-width="${r.width}"></i></span><span class="obs-number">${duration(r.step.duration_us)}</span></button>`).join("") || hint("No timeline records in this view.")}</div>${timelinePage?.next !== null && timelinePage?.next !== undefined ? (timeline.length < 1000 ? '<button class="button" data-obs="more-timeline">Load more records</button>' : hint("The browser limit of 1,000 records was reached. The summary uses its separate bounded scan.")) : ""}<div id="${domId("obs-step-detail")}">${selected ? stepDetail(selected) : hint("Select a step to inspect timing, usage and outcome.")}</div><div id="${domId("obs-timeline-error")}" role="status"></div>${hint("Bars use recorded starts and measured durations. Unknown duration is a marker, not zero. Late records can appear before earlier pages.")}</section>`;
   }
   function stepDetail(r) {
     const s = r.step;
@@ -338,6 +346,12 @@ export function mountObservability(root, { request, isAdmin = false }) {
         selection = value;
         summary = selection.summary;
       }
+      childLinks=[];subtree=null;
+      if(chosen && children) {
+        try {const links=await read(perRun(chosen)+"/children",c); if(stopped||n!==serial)return;childLinks=links.children||[];} catch {childLinks=[];}
+        if (stopped || n !== serial) return;
+        try {const value=await read(perRun(chosen)+"/subtree-summary?"+query({through:timelineThrough}),c);if(stopped||n!==serial)return;subtree=value;} catch {subtree=null;}
+      }
       draw();
     } catch (e) {
       if (stopped || n !== serial || c.signal.aborted) return;
@@ -356,12 +370,12 @@ export function mountObservability(root, { request, isAdmin = false }) {
     $("#obs-run-options").innerHTML = results
       .map(
         (r, i) =>
-          `<button type="button" class="obs-run-option" role="option" id="obs-option-${i}" aria-selected="${i === focusedIndex}" data-obs-option="${i}"><strong>${esc(r.name || r.turn_id)}</strong><span>${esc(r.agent)} · ${esc(r.status)}</span><small>${esc(r.turn_id)}</small></button>`,
+          `<button type="button" class="obs-run-option" role="option" id="${domId(`obs-option-${i}`)}" aria-selected="${i === focusedIndex}" data-obs-option="${i}"><strong>${esc(r.name || r.turn_id)}</strong><span>${esc(r.agent)} · ${esc(r.status)}</span><small>${esc(r.turn_id)}</small></button>`,
       )
       .join("");
     $("#obs-search-more").hidden = !resultNext;
     if (focusedIndex >= 0)
-      input.setAttribute("aria-activedescendant", `obs-option-${focusedIndex}`);
+      input.setAttribute("aria-activedescendant", domId(`obs-option-${focusedIndex}`));
     else input.removeAttribute("aria-activedescendant");
   }
   async function search(more = false) {
@@ -401,7 +415,8 @@ export function mountObservability(root, { request, isAdmin = false }) {
       $("#obs-search-state").textContent = "Unable to search runs. Try again.";
     }
   }
-  function choose(run) {
+  function choose(run, keepParents=false) {
+    if(!keepParents) ancestors=[];
     if (!run) return;
     chosen = run;
     tool = null;
@@ -498,14 +513,29 @@ export function mountObservability(root, { request, isAdmin = false }) {
         draw();
         return;
       }
+      const childButton=e.target.closest("[data-obs-child]");
+      if(childButton){
+        const child=childLinks[Number(childButton.dataset.obsChild)];if(!child)return;
+        const selectedSerial=serial;const selectedParent=chosen;
+        if(child.child_turn_id){ancestors.push(selectedParent);choose({session_id:child.child_session_id,turn_id:child.child_turn_id},true);return;}
+        childButton.disabled=true;
+        const c=controller();
+        read("/v1/observability/runs?"+query({q:child.child_session_id,limit:100}),c).then(page=>{
+          if(stopped||serial!==selectedSerial)return;
+          const run=child.child_turn_id ? {session_id:child.child_session_id,turn_id:child.child_turn_id} : page.runs.find(r=>r.session_id===child.child_session_id);
+          if(run){ancestors.push(selectedParent);choose(run,true);}else{content.prepend(notice("No accessible child turn is available yet."));}
+        }).catch(()=>{if(!stopped)content.prepend(notice("Child traces are unavailable."));}).finally(()=>{childButton.disabled=false;});
+        return;
+      }
       const action = e.target.closest("[data-obs]")?.dataset.obs;
+      if(action==="parent" && ancestors.length){choose(ancestors.pop(),true);return;}
       if (action === "refresh") {
         health = null;
         healthError = false;
         if ($("#obs-health")?.open) loadHealth();
         load();
       }
-      if (action === "recent") {
+      if (action === "recent" && directory) {
         chosen = null;
         tool = null;
         tab = "usage";
@@ -534,6 +564,15 @@ export function mountObservability(root, { request, isAdmin = false }) {
     },
     { signal: lifetime.signal },
   );
+  root.addEventListener("keydown", e => {
+    if (e.target.getAttribute?.("role") !== "tab" || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabs = [...root.querySelectorAll('[role="tab"]')];
+    let index = tabs.indexOf(e.target);
+    if (e.key === "Home") index = 0;
+    else if (e.key === "End") index = tabs.length - 1;
+    else index = (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    e.preventDefault(); tab = tabs[index].dataset.obs; draw(); tabs[index].focus();
+  }, {signal:lifetime.signal});
   input.addEventListener(
     "input",
     () => {

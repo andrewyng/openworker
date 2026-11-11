@@ -19,6 +19,12 @@ pub use openworker_runtime::coding_handoff::config::{
 pub use openworker_runtime::coding_handoff::ObjectFormat as GitObjectFormat;
 pub use openworker_runtime::team_definition::Sandbox as TeamSandbox;
 
+#[cfg(feature = "recording")]
+#[path = "service_observability.rs"]
+mod observability;
+#[cfg(feature = "recording")]
+pub use observability::Observability;
+
 pub fn new_idempotency_key() -> String {
     openworker_runtime::id("idem")
 }

@@ -165,6 +165,13 @@ async fn qualify(standalone: bool, live: bool) {
     .unwrap();
 
     let mut value = json!({"service":{"id":"m2-test","namespace":"test","agent":"builder"},"database_env":"OW_PG_TEST_URL","schema":format!("ow_service_{}",uuid::Uuid::new_v4().simple()),"observability":{"schema":format!("ow_record_{}",uuid::Uuid::new_v4().simple())},"database_loopback_plaintext":true,"state_root":root.path().join("state"),"bundle":bundle,"runner":std::env::var("OW_PROBE_RUNNER").unwrap(),"model":"fixture","scripted":true,"api_token_file":token_file,"actor":"tester","openshell":{"identity":"m2-test","endpoint":std::env::var("OW_PROBE_ENDPOINT").unwrap(),"certificates":std::env::var("OW_PROBE_CERTS").unwrap(),"tls_server_name":std::env::var("OW_PROBE_TLS_NAME").ok(),"workspace":"default","image":std::env::var("OW_PROBE_IMAGE").unwrap()}});
+    if let Ok(endpoint) = std::env::var("OW_TEST_OTLP_ENDPOINT") {
+        assert!(
+            endpoint.starts_with("http://127.0.0.1:"),
+            "Qualification exporter must be loopback"
+        );
+        value["telemetry"] = json!({"endpoint":endpoint,"signals":["traces"],"acknowledgement":"langfuse_v4","headers":[{"name":"Authorization","value_env":"OW_TEST_OTLP_AUTH"},{"name":"x-langfuse-ingestion-version","value":"4"}],"content":{"capture":"metadata"}});
+    }
     if live {
         value["model"] = json!(
             std::env::var("OW_STANDALONE_LIVE_MODEL").expect("Provide an authorized model ID")

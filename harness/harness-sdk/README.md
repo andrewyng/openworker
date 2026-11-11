@@ -343,3 +343,14 @@ coordination engine without application-managed team setup. This requires a
 matching feature runtime; it is not in published runtime 0.1.0-beta.2.
 See [standalone sub-agents](../../docs/harness/guides/sessions.md#standalone-sub-agents)
 for limits, approvals and shared-sandbox behavior.
+
+
+## Optional turn traces and evaluation evidence
+
+The source candidate includes opt-in recording, per-turn timeline/grouped queries,
+child drill-down and durable evaluation results. Recording and evaluation delivery
+are disabled until configured; browser UI is a separate optional component.
+See the [observability guide](../../docs/harness/guides/observability.md) for local
+SQLite/PostgreSQL, Langfuse export, content selection and audit references. These
+new APIs require matching local candidate builds and are not in the published
+0.1.0-beta.2 packages yet.

@@ -35,6 +35,10 @@
       "directory": "store-postgres"
     },
     {
+      "name": "openworker-observability",
+      "directory": "observability"
+    },
+    {
       "name": "openworker-sdk",
       "directory": "harness-sdk"
     }

@@ -167,6 +167,8 @@ export type Storage =
       loopbackPlaintext?: boolean;
     };
 export interface Telemetry {
+  /** Receiver protocol; direct Langfuse v4 requires its explicit receipt dialect. */
+  acknowledgement?: "otlp" | "langfuse_v4";
   endpoint: string;
   deployment?: string;
   headers?: (
@@ -205,6 +207,7 @@ export interface HarnessOptions extends SafetyOptions {
   sandbox?: "openshell" | "off" | { provider: "openshell" };
   mcpServers?: McpServer[];
   telemetry?: Telemetry;
+  recording?: RecordingOptions;
   restart?: { maxRestarts?: number; delayMs?: number };
   requestTimeoutMs?: number;
   shutdownTimeoutMs?: number;
@@ -452,3 +455,17 @@ export interface ComplianceActivity {
 }
 export interface CompliancePage { activities:ComplianceActivity[]; nextAfter:number; hasMore:boolean }
 export interface ComplianceDeliveryHealth { sinks:{sink:string;cursor:number;pending:number;failures:number;nextAtMs:number;lastSuccessMs:number|null}[] }
+
+/** Optional diagnostics storage, independent from execution storage. */
+export interface RecordingOptions {
+  maxPendingEvaluations?:number;
+  evaluationRetentionDays?:number;
+  evaluationSinks?: {name:string;url:string;authorizationEnv:string;includeExplanation?:boolean}[];
+  evidence?: {userInput?:boolean;assistantOutput?:boolean;toolArguments?:boolean;toolResults?:boolean;maxBytes:number};
+  /** Enable acknowledged evaluation-result storage (requires runtime capability). */
+  evaluations?: boolean;
+  database: { type: "sqlite"; path: string } | { type: "postgres"; connectionEnv: string; schema: string; caFile?: string; loopbackPlaintext?: boolean };
+  deployment?: string;
+  retentionDays?: number;
+  queueCapacity?: number;
+}

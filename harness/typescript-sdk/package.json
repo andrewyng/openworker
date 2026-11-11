@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./evaluation-export": {
+      "types": "./dist/evaluation-export.d.ts",
+      "import": "./dist/evaluation-export.js"
     }
   },
   "files": [
@@ -37,7 +41,9 @@
     "test:provider-auth": "npm run build && node --test test/provider-auth.test.mjs",
     "prepack": "npm run build",
     "test:service": "npm run build && node --test test/service.test.mjs",
-    "test:team-types": "npm run build && node --test --test-concurrency=1 test/team-types.test.mjs"
+    "test:team-types": "npm run build && node --test --test-concurrency=1 test/team-types.test.mjs",
+    "test:observability": "npm run build && node --test test/observability.test.mjs test/evaluation-export.test.mjs",
+    "test:observability:integration": "npm run build && node --test test/observability-live.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

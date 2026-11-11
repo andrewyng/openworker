@@ -27,7 +27,9 @@ if (process.argv.includes("--list")) {
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
-  run(["test", "--locked", "-p", "openworker-sdk", "--features", "test-support",
+  process.env.OW_OBSERVABILITY_TEST_URL = process.env.OW_PG_TEST_URL;
+  const features = shard === "core" ? "test-support,recording-postgres,evaluation-export" : shard === "teams" ? "test-support,recording" : "test-support";
+  run(["test", "--locked", "-p", "openworker-sdk", "--features", features,
     ...(shard === "core" ? ["--lib", "--bins"] : []),
     ...groups[shard].flatMap((name) => ["--test", name]),
     "--", "--include-ignored", "--test-threads=1"]);

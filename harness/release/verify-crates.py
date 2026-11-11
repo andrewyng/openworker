@@ -10,7 +10,7 @@ for item in m['rustPackages']:
  name=item['name'];filename=f'{name}-{m["version"]}'
  with tarfile.open(pathlib.Path(a.packages)/(filename+'.crate')) as archive:archive.extractall(out/'crates',filter='data')
  patch.append(f'{name} = {{ path = {json.dumps(str(out/"crates"/filename))} }}')
-(out/'Cargo.toml').write_text('[package]\nname="openworker-registry-consumer"\nversion="0.0.0"\nedition="2021"\n[workspace]\n[dependencies]\nopenworker-sdk = {version="='+m['version']+'", features=["security-adapters","compliance-export"]}\ntokio = {version="1", features=["macros","rt-multi-thread"]}\nfutures-util="0.3"\nanyhow="1"\n[patch.crates-io]\n'+'\n'.join(patch)+'\n')
+(out/'Cargo.toml').write_text('[package]\nname="openworker-registry-consumer"\nversion="0.0.0"\nedition="2021"\n[workspace]\n[dependencies]\nopenworker-sdk = {version="='+m['version']+'", features=["security-adapters","compliance-export","recording-postgres","evaluation-export"]}\ntokio = {version="1", features=["macros","rt-multi-thread"]}\nfutures-util="0.3"\nanyhow="1"\n[patch.crates-io]\n'+'\n'.join(patch)+'\n')
 (out/'src/main.rs').write_text(pathlib.Path(a.example).read_text() if a.example else 'fn main() { let _ = openworker_sdk::agents::Harness::builder(); }\n')
 if a.fetch:
  subprocess.run(['cargo','fetch','--manifest-path',str(out/'Cargo.toml')],check=True)
