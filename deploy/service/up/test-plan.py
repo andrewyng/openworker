@@ -74,10 +74,15 @@ print(json.dumps(v))
     assert (root/'state/review.json').read_bytes() == first
     run(args+['--accept-plan','wrong'], ok=False)
     run(args+['--accept-plan',review['digest']], ok=False)  # bootstrap still unapproved
+    kubectl = tools / 'kubectl'
+    kubectl.write_text('#!/usr/bin/python3\nraise SystemExit(1)\n')
+    kubectl.chmod(0o700)
+    unavailable = run(args+['--accept-plan',review['digest'],'--accept-bootstrap',review['digest']], ok=False)
+    assert 'Local prerequisite kubectl unavailable' in unavailable.stderr
     calls = (root/'calls.jsonl').read_bytes()
     (root/'deployment.yaml').write_text(yaml.replace('count: 2', 'count: 3'))
     result = run(args+['--plan-only'], ok=False)
     assert 'changed' in result.stderr
     assert (root/'calls.jsonl').read_bytes() == calls
     assert all(json.loads(line) in [['sts','get-caller-identity'],['ec2','describe-instance-types'],['ec2','describe-instance-type-offerings'],['pricing','get-products']] for line in calls.splitlines())
-    print(json.dumps({'readOnlyPlan':True,'stableResume':True,'changedConfigRejected':True,'unapprovedBootstrapBlocked':True,'cloudMutations':0,'installationQualified':False}))
+    print(json.dumps({'readOnlyPlan':True,'stableResume':True,'changedConfigRejected':True,'unapprovedBootstrapBlocked':True,'missingLocalToolBlocked':True,'cloudMutations':0,'installationQualified':False}))

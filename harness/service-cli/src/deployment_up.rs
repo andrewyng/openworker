@@ -155,6 +155,37 @@ pub(super) fn operation_lock(root: &Path, name: &str) -> Result<fs::File> {
         .context("Another command owns this operation journal")?;
     Ok(f)
 }
+async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()> {
+    let mut tools: Vec<(&str, Vec<&str>)> = vec![
+        ("kubectl", vec!["version", "--client", "--output=json"]),
+        ("helm", vec!["version", "--short"]),
+        ("docker", vec!["version", "--format", "{{.Server.Version}}"]),
+        ("openssl", vec!["version"]),
+    ];
+    if c.cloud.provider() == "azure" {
+        tools.push(("kubelogin", vec!["--version"]));
+        if package
+            .setup
+            .infrastructure
+            .get("managementAccess")
+            .is_some_and(|v| !v.is_null())
+        {
+            tools.push(("ssh", vec!["-V"]));
+        }
+    } else if package
+        .setup
+        .infrastructure
+        .get("operatorAccess")
+        .is_some_and(|v| !v.is_null())
+    {
+        tools.push(("session-manager-plugin", vec!["--version"]));
+    }
+    for (program, args) in tools {
+        let args: Vec<String> = args.into_iter().map(str::to_owned).collect();
+        super::local::exec(Path::new(program),&args,None).await.with_context(||format!("Local prerequisite {program} unavailable. Install/start it before provisioning; no cloud mutation performed."))?;
+    }
+    Ok(())
+}
 pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
     let config = Config::load(&o.config, provider)?;
     let package = package::load(&config)?;
@@ -271,6 +302,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         "bootstrap",
         o.accept_bootstrap.as_deref(),
     )?;
+    check_local_tools(&config, &package).await?;
     resolve::identity(&config).await?;
     let mut driver = native::Native {
         root: state.canonicalize()?,
