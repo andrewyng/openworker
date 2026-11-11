@@ -19,7 +19,7 @@
 #   - System packages (Debian/Ubuntu names):
 #       sudo apt install build-essential curl wget file patchelf pkg-config libssl-dev \
 #         libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
-#         libasound2-dev cmake clang libclang-dev
+#         libasound2-dev cmake clang libclang-dev xdg-utils
 #     (libasound2/cmake/clang: the voice-input crate — cpal and whisper.cpp — must compile
 #     even though voice input is not offered on Linux yet.)
 #   - A Python venv at .venv (repo root) with this package installed editable, plus the
