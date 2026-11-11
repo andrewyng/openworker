@@ -112,6 +112,17 @@ MATRIX: dict[str, ModelEntry] = {
     # Fable 5.1 (2026-09-01) is GA; its Mythos 5.1 sibling is approved-orgs-only, so it
     # stays out of a picker meant for the public. Missing rows fell back to the 128k
     # compaction guess and compacted at 102,400 tokens (OPE-170).
+    # The 5.5 line (overview read 2026-11-11, #872): Opus 5.5 is the current Opus,
+    # Sonnet 5.5 the current Sonnet, Haiku 5.5 the current Haiku — all 1M / 128K.
+    "anthropic:claude-opus-5-5": ModelEntry(
+        "Claude Opus 5.5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
+    "anthropic:claude-sonnet-5-5": ModelEntry(
+        "Claude Sonnet 5.5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
+    "anthropic:claude-haiku-5-5": ModelEntry(
+        "Claude Haiku 5.5 · Anthropic", _AGENTIC_VISION, 1_000_000
+    ),
     "anthropic:claude-fable-5-1": ModelEntry(
         "Claude Fable 5.1 · Anthropic", _AGENTIC_VISION, 1_000_000
     ),
