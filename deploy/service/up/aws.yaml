@@ -1,5 +1,7 @@
+# Full reference and companion setup.json: ../examples/aws/
+# Replace the account ID and choose an authenticated AWS CLI profile.
 apiVersion: ows/v1alpha1
-name: my-agents
+name: aws-agents
 cloud:
   provider: aws
   accountId: "123456789012"
@@ -7,12 +9,20 @@ cloud:
   profile: default
 nodes:
   count: 2
-  requirements:
-    cpu: {min: 2, max: 4}
-    memoryGiB: {min: 8, max: 16}
+  instanceType: t4g.large
+# Disposable six-hour trial. Expiry deletes workload data; keep no valuable data here.
+trial:
+  expiresAfterHours: 6
+  deleteData: true
+# Planning limit, not a hard billing cap. Set cloud billing alerts separately.
 budget:
-  limitUSD: 1000
-# Omit trial to keep the deployment running. For disposable test data only:
-# trial: {expiresAfterHours: 6, deleteData: true}
-# models:
-#   anthropic: {env: ANTHROPIC_API_KEY}
+  limitUSD: 100
+managementUI:
+  enabled: true
+  publicOrigin: https://localhost:8444
+observability:
+  enabled: true
+  retentionDays: 14
+# Export this variable in your shell; never put a key in this file.
+models:
+  anthropic: {env: ANTHROPIC_API_KEY}

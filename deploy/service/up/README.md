@@ -2,7 +2,7 @@
 
 This experimental coordinator installs a private service cluster, OpenShell and the OpenWorker service using a reviewed account setup profile. It resumes the same deployment when rerun. Fresh AWS and Azure installs with this coordinator still require live qualification; do not treat local tests as a production certificate.
 
-Once the prerequisites below are installed, copy `aws.yaml` or `azure.yaml` to `deployment.yaml`, set your account/subscription and region, then run:
+Complete commented examples, including companion setup profiles and an existing local kind cluster, are in [deployment examples](../examples/README.md). Copy the selected cloud folder, replace its documented placeholders and prepare the reviewed release bundle before running:
 
 ```sh
 owcluster deploy aws up --config deployment.yaml
@@ -41,7 +41,7 @@ The profile contains **references and version pins**, not passwords:
 
 Replace `infrastructure` with the reviewed native AWS input described in [`harness/service-cli/examples/README.md`](../../../harness/service-cli/examples/README.md). It includes zone/version pins and a versioned S3 reference to **this CLI release's packaged cleanup guard**. For Azure, use the existing Azure infrastructure input (Kubernetes version, supported VM size, SSH public key, administrator group IDs, control group, pinned external cleanup image and Key Vault secret reference). Its profile uses `provider: azure`, the subscription as `account`, and `resourceGroup`, `setupObjectId`, `setupPrincipalType` instead of `operatorArn`. Package the matching native cleanup image before running the installer. Existing control assets are retained, not silently taken over or deleted.
 
-This release does not assume public OpenWorker service images or a published Helm chart exist. Prepare a reviewed release manifest with `package.py --help`: it copies a chart, pinned OpenShell archive and values, platform manifest and database CA bundle, then hashes them. Supply immutable harness/runner image digests for Linux ARM64 on AWS or AMD64 on Azure. The supported OpenShell archive is 0.1.7. The CA bundle must contain 1–32 certificates. The installer publishes the selected images into its owned ECR/ACR registry. An optional UI image can be packaged, but browser ingress/UI exposure is not enabled by this initial coordinator.
+This release does not assume public OpenWorker service images or a published Helm chart exist. Prepare a reviewed release manifest with `package.py --help`: it copies a chart, pinned OpenShell archive and values, platform manifest and database CA bundle, then hashes them. Supply immutable harness/runner image digests for Linux ARM64 on AWS or AMD64 on Azure. The supported OpenShell archive is 0.1.7. The CA bundle must contain 1–32 certificates. The installer publishes the selected images into its owned ECR/ACR registry. Package a UI image when enabling `managementUI`. The CLI can configure a private HTTPS preview; public ingress remains operator-managed.
 
 ## Review, budget and resume
 

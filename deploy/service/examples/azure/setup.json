@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "provider": "azure",
+  "account": "11111111-2222-4333-8444-555555555555",
+  "region": "westus2",
+  "setupObjectId": "22222222-3333-4444-8555-666666666666",
+  "setupPrincipalType": "User",
+  "resourceGroup": "rg-ow-example-workload",
+  "infrastructure": {
+    "kubernetesVersion": "REPLACE_WITH_AVAILABLE_AKS_VERSION",
+    "nodeVmSize": "Standard_D4as_v7",
+    "sshPublicKey": "REPLACE_WITH_SSH_PUBLIC_KEY_WITHOUT_COMMENT",
+    "adminGroupObjectIds": [
+      "33333333-4444-4555-8666-777777777777"
+    ],
+    "controlResourceGroup": "rg-ow-example-control",
+    "guardImage": "examplecontrol.azurecr.io/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "guardRegistryResourceId": "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg-ow-example-control/providers/Microsoft.ContainerRegistry/registries/examplecontrol",
+    "managementAccess": {
+      "operatorIpv4": "203.0.113.10",
+      "ubuntuImageVersion": "REPLACE_WITH_PINNED_UBUNTU_IMAGE_VERSION"
+    },
+    "postgresPassword": {
+      "keyVaultId": "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg-ow-example-control/providers/Microsoft.KeyVault/vaults/ow-example-vault",
+      "secretName": "postgres-password",
+      "secretVersion": "0123456789abcdef0123456789abcdef"
+    }
+  },
+  "release": "/absolute/path/to/amd64-release/release.json"
+}

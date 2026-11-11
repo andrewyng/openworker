@@ -255,3 +255,10 @@ test("private management UI preview terminates TLS without giving the UI server 
   assert.match(out,/name: https, port: 443, targetPort: https/);
   assert.match(out,/proxy_set_header Host \$http_host/);
 });
+test("local cluster reference renders with management UI and trace storage",async()=>{
+  const out=await run("helm",["template","ows",resolve("deploy/service/chart"),"--namespace","ow-service-m4-local","-f",resolve("deploy/service/examples/local-cluster/service-values.json")]);
+  assert.match(out,/name: ows-ui/);
+  assert.match(out,/"retention_days": 14/);
+  assert.match(out,/args: \[recording-migrate\]/);
+  assert.match(out,/name: https, port: 443, targetPort: https/);
+});

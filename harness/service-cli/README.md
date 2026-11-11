@@ -116,3 +116,7 @@ verified cluster identity. UI and trace storage are independent. Disabling traci
 retains data and leaves security audit and separately configured exporters intact.
 The CLI saves feature changes and reconciles lost Helm responses without repeating
 unknown upgrades. See [setup, UI image, private HTTPS and database options](../../deploy/service/up/README.md#management-ui-and-trace-storage).
+
+Complete [Azure, AWS and local kind reference files](../../deploy/service/examples/README.md)
+include deployment choices, companion cloud setup profiles, local chart values and
+placeholder secrets-file shape. Replace their documented placeholders before use.

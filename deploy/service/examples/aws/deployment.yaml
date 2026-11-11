@@ -1,0 +1,30 @@
+# Replace the account ID and choose an authenticated AWS CLI profile.
+apiVersion: ows/v1alpha1
+name: aws-agents
+cloud:
+  provider: aws
+  accountId: "123456789012"
+  region: us-west-2
+  profile: default
+nodes:
+  count: 2
+  instanceType: t4g.large
+# Disposable six-hour trial. Expiry deletes workload data; keep no valuable data here.
+trial:
+  expiresAfterHours: 6
+  deleteData: true
+# Planning limit, not a hard billing cap. Set cloud billing alerts separately.
+budget:
+  limitUSD: 100
+managementUI:
+  enabled: true
+  publicOrigin: https://localhost:8444
+observability:
+  enabled: true
+  retentionDays: 14
+# Export this variable in your shell; never put a key in this file.
+models:
+  anthropic: {env: ANTHROPIC_API_KEY}
+# This is an OpenWorker settings file, separate from your cloud CLI login.
+advanced:
+  setupProfile: ./setup.json

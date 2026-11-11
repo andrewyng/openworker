@@ -391,3 +391,35 @@ mod feature_config_tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+mod reference_examples {
+    use super::*;
+    #[test]
+    fn cloud_reference_files_match_cli_schema_and_account_profiles() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/service/examples");
+        for provider in ["azure", "aws"] {
+            let c = Config::load(&root.join(provider).join("deployment.yaml"), provider).unwrap();
+            assert_eq!(c.budget.alert_usd, 100);
+            assert_eq!(c.trial.as_ref().unwrap().expires_after_hours, 6);
+            assert!(
+                c.management_ui.as_ref().unwrap().enabled
+                    && c.observability.as_ref().unwrap().enabled
+            );
+            let setup: super::super::package::Setup = serde_json::from_slice(
+                &fs::read(c.advanced.setup_profile.as_ref().unwrap()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(setup.provider, provider);
+            assert_eq!(setup.account, c.cloud.account());
+            assert_eq!(setup.region, c.cloud.region());
+            if provider == "azure" {
+                let _: super::super::super::azure::Inputs =
+                    serde_json::from_value(setup.infrastructure).unwrap();
+            } else {
+                let _: super::super::super::infrastructure::Inputs =
+                    serde_json::from_value(setup.infrastructure).unwrap();
+            }
+        }
+    }
+}
