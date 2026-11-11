@@ -106,6 +106,7 @@ async fn exercise(postgres: bool, process: bool) {
         sandbox: Sandbox::Off,
         scripted: true,
         telemetry: None,
+        recording: None,
         agents: vec![],
     };
     let c = client(&config, process).await;

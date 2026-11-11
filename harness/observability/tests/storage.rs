@@ -290,3 +290,22 @@ fn postgres_connection_validation() {
     c.schema = "ow_obs;DROP SCHEMA public".into();
     assert!(c.validate().is_err());
 }
+
+#[test]
+fn recording_refuses_execution_database_without_modifying_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("runtime.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE sessions(id TEXT PRIMARY KEY)")
+        .unwrap();
+    assert!(Sqlite::open(&path).is_err());
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name='ow_observation_version'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}

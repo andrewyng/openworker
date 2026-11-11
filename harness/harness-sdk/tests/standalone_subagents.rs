@@ -32,6 +32,10 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
                 })
                 .allow_subagents(true),
         );
+    #[cfg(feature = "recording")]
+    let builder = builder.recording(openworker_sdk::RecordingConfig::sqlite(
+        root.join("traces.sqlite"),
+    ));
     let h = if managed {
         builder
             .managed(executable, Default::default())
@@ -91,6 +95,31 @@ async fn scenario(managed: bool, execution: &str, approval: u8) {
         .await
         .unwrap();
     assert_eq!(run.status, RunStatus::Completed, "{run:?} {events}");
+    #[cfg(feature = "recording")]
+    {
+        let turns = h.observability().turns(parent.id(), 0, 25).await.unwrap();
+        let tid = turns["turns"][0]["turn_id"].as_str().unwrap();
+        let children = h
+            .observability()
+            .children(openworker_sdk::TraceQuery::turn(parent.id(), tid))
+            .await
+            .unwrap();
+        assert_eq!(children["children"].as_array().unwrap().len(), 1);
+        assert_eq!(children["children"][0]["agent_id"], "reader");
+        assert_eq!(children["children"][0]["origin"]["parent_turn_id"], tid);
+        assert!(children["children"][0]["origin"]["parent_call_id"].is_string());
+        assert!(!children.to_string().contains("CHILD_FILE_EVIDENCE"));
+        assert!(children["children"][0]["child_turn_id"].is_string());
+        let tree = h
+            .observability()
+            .subtree_summary(openworker_sdk::TraceQuery::turn(parent.id(), tid))
+            .await
+            .unwrap();
+        assert_eq!(tree["selection"]["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(tree["selection"]["selection_truncated"], false);
+        assert!(tree["summary"]["wall_elapsed_us"].is_null());
+    }
+
     let doc = h
         .client()
         .request(

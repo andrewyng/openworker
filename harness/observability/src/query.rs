@@ -44,7 +44,8 @@ pub struct Page {
 }
 pub(crate) fn page(rows: Vec<(i64, Step)>, through: u64, q: &Query) -> Result<Page> {
     let limit = q.limit;
-    let more = rows.len() > usize::from(limit);
+    let mut more = rows.len() > usize::from(limit);
+    let mut bytes = 0usize;
     let mut steps = vec![];
     for (cursor, step) in rows.into_iter().take(limit.into()) {
         ensure!(cursor > 0, "Invalid recording cursor");
@@ -57,6 +58,12 @@ pub(crate) fn page(rows: Vec<(i64, Step)>, through: u64, q: &Query) -> Result<Pa
                         && step.turn_hash.as_ref() == Some(&s.turn_hash)),
             "Recording scope mismatch"
         );
+        let size = serde_json::to_vec(&step)?.len();
+        if q.limit <= 200 && !steps.is_empty() && bytes + size > 512_000 {
+            more = true;
+            break;
+        }
+        bytes += size;
         steps.push(StoredStep {
             cursor: cursor as u64,
             step,

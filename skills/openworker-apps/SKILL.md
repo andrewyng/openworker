@@ -15,6 +15,8 @@ Preserve their chosen UI framework, model and deployment target.
   history or changing turn preferences, read [Runtime options](references/runtime-options.md).
 - For model-created child agents, read [Standalone sub-agents](references/subagents.md)
   and check its runtime-version gate before using the option.
+- For optional turn traces, Langfuse export or evaluation evidence, read
+  [Observability](references/observability.md) and check its release gate.
 - For desktop apps, read [Desktop](references/desktop.md).
 - For browser/server apps, read [Web](references/web.md).
 - For a Railway deployment, read [Railway](references/railway.md). Default to one

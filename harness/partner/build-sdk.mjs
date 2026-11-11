@@ -168,6 +168,7 @@ pub fn config(state_dir: PathBuf, package_dir: &Path) -> HostConfig {
         sandbox: Sandbox::Openshell,
         scripted: false,
         telemetry: None,
+        recording: None,
     }
 }
 

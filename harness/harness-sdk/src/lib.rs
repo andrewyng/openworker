@@ -1,6 +1,11 @@
 //! Development Rust API for the same engine embedded or over managed private stdio.
 //! No request is automatically resubmitted after transport failure.
 pub mod agents;
+#[cfg(feature = "evaluation-export")]
+mod evaluation_export;
+mod instrumentation;
+pub mod recording;
+pub use recording::{RecordingConfig, RecordingDatabase, TraceQuery};
 mod application_tools;
 mod callbacks;
 mod provider_callbacks;
@@ -34,8 +39,9 @@ pub use openworker_runtime::team_service::{Command as TeamCommand, Create as Tea
 pub use openworker_runtime::teams::{Member as TeamMember, Role as TeamRole};
 /// OTLP/HTTP export settings: `endpoint` (collector origin, HTTPS or loopback
 /// HTTP) and `deployment` (label, default `"default"`).
-pub use openworker_telemetry::otlp::{
-    Config as TelemetryConfig, Header as TelemetryHeader, Signal as TelemetrySignal,
+pub use openworker_telemetry::config::{
+    Acknowledgement as TelemetryAcknowledgement, Config as TelemetryConfig,
+    Header as TelemetryHeader, Signal as TelemetrySignal,
 };
 /// Opt-in prompt/tool content in telemetry (off by default).
 pub use openworker_telemetry::{Capture, ContentPolicy};
@@ -517,3 +523,6 @@ pub use openworker_runtime::compliance;
 pub use openworker_security_adapters as security_adapters;
 
 pub use openworker_runtime::compliance_export::Sink as ComplianceSink;
+
+#[cfg(feature = "evaluations")]
+pub use openworker_observability::evaluations;

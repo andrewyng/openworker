@@ -51,6 +51,7 @@ async fn exercise(postgres: bool, process: bool) {
         sandbox: Sandbox::Off,
         scripted: true,
         telemetry: None,
+        recording: None,
         agents: vec![],
     };
     let h = connect(&config, process).await;
@@ -244,6 +245,7 @@ async fn live_configuration_requires_explicit_model_without_calling_provider() {
         sandbox: Sandbox::Off,
         scripted: false,
         telemetry: None,
+        recording: None,
     };
     let h = connect(&config, false).await;
     let agent = h
@@ -285,6 +287,7 @@ async fn registering_startup_definition_makes_it_durable_without_replacement() {
         sandbox: Sandbox::Off,
         scripted: true,
         telemetry: None,
+        recording: None,
     };
     let h = connect(&config, false).await;
     h.create_agent(agent.clone()).await.unwrap();

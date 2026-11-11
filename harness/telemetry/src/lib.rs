@@ -12,6 +12,7 @@ use std::{
 };
 mod accounting;
 pub mod attributes;
+pub mod config;
 mod observation;
 pub use accounting::{ModelPurpose, TokenUsage};
 #[cfg(feature = "otel")]
@@ -391,6 +392,7 @@ pub trait Sink: Send + 'static {
     }
 }
 enum Message {
+    Flush(mpsc::SyncSender<bool>),
     Record(Record),
     Observations([Observation; Gauge::ALL.len()], usize),
 }
@@ -485,11 +487,13 @@ impl Telemetry {
                         break;
                     }
                     if !batch.is_empty() {
+                        let mut acknowledgements = Vec::new();
                         let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let mut records = Vec::new();
                             let mut observations = Vec::new();
                             for message in batch.drain(..) {
                                 match message {
+                                    Message::Flush(ack) => acknowledgements.push(ack),
                                     Message::Record(r) => records.push(r),
                                     Message::Observations(o, n) => {
                                         observations.extend_from_slice(&o[..n])
@@ -504,6 +508,9 @@ impl Telemetry {
                         .unwrap_or(false);
                         if !ok {
                             s.failures.fetch_add(1, Ordering::Relaxed);
+                        }
+                        for ack in acknowledgements {
+                            let _ = ack.try_send(ok);
                         }
                         batch.clear();
                     }
@@ -531,6 +538,19 @@ impl Telemetry {
                 deadline,
             },
         ))
+    }
+    /// Bounded barrier for records already enqueued. Success is not durable or
+    /// lossless delivery; inspect counters for earlier drops/rejections. Never retries.
+    pub fn flush(&self, budget: Duration) -> bool {
+        let Some(inner) = &self.0 else {
+            return true;
+        };
+        let (ack, rx) = mpsc::sync_channel(1);
+        if inner.stop.load(Ordering::Acquire) || inner.tx.try_send(Message::Flush(ack)).is_err() {
+            return false;
+        }
+        rx.recv_timeout(budget.min(Duration::from_secs(5)))
+            .unwrap_or(false)
     }
     pub fn enabled(&self) -> bool {
         self.0.is_some()

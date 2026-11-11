@@ -509,6 +509,23 @@ impl Database {
             if tx.execute("INSERT INTO sessions(id,data,owner,epoch,expires) VALUES($1,'{}',$2,1,clock_timestamp()+$3::bigint*interval '1 millisecond') ON CONFLICT DO NOTHING", &[&s.id,&self.owner,&self.lease_ms])?!=1 {bail!("Session already exists; claim it explicitly");}
             1
         };
+        // Controllers acquire team -> environment. Terminal reconciliation also
+        // needs the team row, so take it BEFORE write_metadata locks the bound
+        // environment. Otherwise a child save and a reception controller can
+        // deadlock (environment -> team versus team -> environment). This is a
+        // lock-order fix, not permission to retry any uncertain external action.
+        if s.closed
+            || s.turn
+                .as_ref()
+                .is_some_and(|t| openworker_runtime::store::terminal(&t.status))
+        {
+            if let Some(member) = &s.agent_team {
+                tx.query_one(
+                    "SELECT data FROM agent_teams WHERE id=$1 FOR UPDATE",
+                    &[&member.team_id],
+                )?;
+            }
+        }
         append_history(&mut tx, s)?;
         write_metadata(&mut tx, s)?;
         openworker_runtime::subagents::terminal_saved(&mut crate::agent_team::Tx(&mut tx), s)?;

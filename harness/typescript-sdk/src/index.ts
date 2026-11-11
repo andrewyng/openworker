@@ -1,3 +1,5 @@
+import { Observability } from "./observability.js";
+export * from "./observability.js";
 import { normalizeSafety, type SafetyOptions, type SafetyHandler, type SafetyContext, type SafetyDecision } from "./safety.js";
 export * from "./safety.js";
 import { Service, type ServiceOptions } from "./service.js";
@@ -101,6 +103,7 @@ function interruptionOf(value: unknown): Interruption {
 
 /** Node.js host owner. Agent logic, storage and permission enforcement remain in Rust. */
 export class Harness {
+  get observability(): Observability { return new Observability((method,args)=>this.request(method,args as Json)); }
   static connect(options: ServiceOptions): Promise<Service> {
     return Service.connect(options);
   }

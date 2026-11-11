@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenWorker · Turn trace</title><link rel="stylesheet" href="/src/style.css"><style>body{margin:0;background:#f6f7f9}header{padding:20px 40px;background:white;border-bottom:1px solid #e7e9ee;font:15px -apple-system,BlinkMacSystemFont,sans-serif;color:#20242b}header span{color:#737b89;margin-left:16px;font-size:13px}main{margin:32px auto;border-radius:16px;max-width:1120px;overflow:hidden;box-shadow:0 4px 24px #17243508}</style><header><strong>OpenWorker</strong><span>SDK turn trace</span></header><main id="trace"></main><script type="module">
+import {mountTurnTrace} from '/src/index.js';
+const evidence=await fetch('/trace.json').then(r=>r.json());
+const adapter={timeline:async()=>evidence.timeline,summary:async()=>evidence.summary,evaluations:async()=>({results:evidence.evaluationRecord?[{cursor:1,evaluation:evidence.evaluationRecord}]:[],next:null})};
+window.viewer=mountTurnTrace(document.querySelector('#trace'),{adapter,sessionId:evidence.timeline.run.session_id,turnId:evidence.timeline.run.turn_id});
+</script></html>

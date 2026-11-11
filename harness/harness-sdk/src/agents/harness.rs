@@ -20,6 +20,7 @@ pub struct HarnessBuilder {
     sandbox: Sandbox,
     scripted: bool,
     telemetry: Option<TelemetryConfig>,
+    recording: Option<crate::RecordingConfig>,
     options: ClientOptions,
 }
 
@@ -129,13 +130,19 @@ impl HarnessBuilder {
     ///         TelemetryHeader::literal("x-langfuse-ingestion-version", "4"),
     ///     ],
     ///     signals: vec![TelemetrySignal::Traces],
-    ///     content: ContentPolicy { capture: Capture::Full, ..ContentPolicy::default() },
+    ///     acknowledgement: TelemetryAcknowledgement::LangfuseV4,
+    ///     content: ContentPolicy { capture: Capture::Metadata, ..ContentPolicy::default() },
     ///     ..TelemetryConfig::default()
     /// });
     /// # }
     /// ```
     pub fn telemetry(mut self, config: TelemetryConfig) -> Self {
         self.telemetry = Some(config);
+        self
+    }
+    /// Record diagnostics independently of execution storage and external export.
+    pub fn recording(mut self, config: crate::RecordingConfig) -> Self {
+        self.recording = Some(config);
         self
     }
     pub fn options(mut self, options: ClientOptions) -> Self {
@@ -175,6 +182,7 @@ impl HarnessBuilder {
             sandbox: self.sandbox,
             scripted: self.scripted,
             telemetry: self.telemetry.clone(),
+            recording: self.recording.clone(),
             agents: self.agents.clone(),
         })
     }
@@ -310,6 +318,7 @@ impl Harness {
             sandbox: Sandbox::default(),
             scripted: false,
             telemetry: None,
+            recording: None,
             options: ClientOptions::default(),
         }
     }
@@ -338,6 +347,9 @@ impl Harness {
         })
     }
     /// The underlying protocol client, for anything this layer does not wrap.
+    pub fn observability(&self) -> crate::recording::Observability {
+        crate::recording::Observability::new(self.client.clone())
+    }
     pub fn client(&self) -> &HarnessClient {
         &self.client
     }

@@ -160,7 +160,7 @@ impl Manager {
             bail!("Credential database cannot be a link");
         }
         let db = Connection::open(path)?;
-        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;
+        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY,label TEXT NOT NULL,identity TEXT NOT NULL,persistence TEXT NOT NULL,secret BLOB);
             CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1),value TEXT NOT NULL);")?;
         let has_provider = db
@@ -198,6 +198,10 @@ impl Manager {
                 "ALTER TABLE endpoints ADD COLUMN prompt_caching INTEGER NOT NULL DEFAULT 1 CHECK(prompt_caching IN (0,1))",
             )?;
         }
+        // Multiple service controllers may prepare the same immutable child type.
+        // Serialize check-and-alter migrations so a duplicate initializer cannot
+        // turn valid child provisioning into a permanent definition failure.
+        db.execute_batch("COMMIT")?;
         Ok(Self {
             scope: root.canonicalize()?.to_string_lossy().into(),
             state: Mutex::new(State {

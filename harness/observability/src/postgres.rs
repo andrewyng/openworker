@@ -136,6 +136,8 @@ impl Postgres {
               INSERT INTO observation_version VALUES(TRUE,1);")?;
         }
         tx.batch_execute("CREATE INDEX IF NOT EXISTS observation_turn ON observation_steps(deployment,session_hash,(data->>'turn_hash'),cursor)")?;
+        #[cfg(feature="evaluations")]
+        tx.batch_execute("CREATE TABLE IF NOT EXISTS observation_evaluation_delivery(deployment TEXT NOT NULL,sink TEXT NOT NULL,data JSONB NOT NULL,PRIMARY KEY(deployment,sink)); CREATE TABLE IF NOT EXISTS observation_evaluations(cursor BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,deployment TEXT NOT NULL,id TEXT NOT NULL,session_hash TEXT NOT NULL,turn_hash TEXT NOT NULL,data JSONB NOT NULL,recorded_ms BIGINT NOT NULL DEFAULT ((extract(epoch FROM clock_timestamp())*1000)::bigint),UNIQUE(deployment,id)); CREATE INDEX IF NOT EXISTS observation_evaluation_scope ON observation_evaluations(deployment,session_hash,turn_hash,cursor)")?;
         tx.commit()?;
         Ok(())
     }
@@ -156,6 +158,223 @@ impl Postgres {
     }
 }
 impl Store for Postgres {
+    #[cfg(feature = "evaluations")]
+    fn register_evaluation_sink(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        binding: &str,
+    ) -> Result<()> {
+        crate::evaluations::delivery_key(deployment, sink, binding, "registration")?;
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "INSERT INTO observation_evaluation_delivery VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+            &[
+                &deployment,
+                &sink,
+                &serde_json::to_value(openworker_compliance::delivery::Checkpoint::new(
+                    binding.into(),
+                ))?,
+            ],
+        )?;
+        let row=tx.query_one("SELECT data FROM observation_evaluation_delivery WHERE deployment=$1 AND sink=$2 FOR UPDATE",&[&deployment,&sink])?;
+        let c: openworker_compliance::delivery::Checkpoint = serde_json::from_value(row.get(0))?;
+        ensure!(
+            c.binding == binding,
+            "Evaluation destination changed; choose a new sink name"
+        );
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn prune_evaluations(&mut self, deployment: &str, before_ms: u64, limit: u16) -> Result<u64> {
+        crate::query(deployment, None, 0, limit)?;
+        ensure!(before_ms <= i64::MAX as u64, "Invalid cutoff");
+        Ok(self.client.execute("DELETE FROM observation_evaluations WHERE cursor IN(SELECT e.cursor FROM observation_evaluations e WHERE e.deployment=$1 AND e.recorded_ms<$2 AND NOT EXISTS(SELECT 1 FROM observation_evaluation_delivery d WHERE d.deployment=e.deployment AND (d.data->>'cursor')::bigint<e.cursor) ORDER BY e.cursor LIMIT $3)",&[&deployment,&(before_ms as i64),&i64::from(limit)])?)
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn claim_evaluation_export(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        binding: &str,
+        token: &str,
+        now: u64,
+    ) -> Result<Option<crate::evaluations::Delivery>> {
+        use openworker_compliance::delivery::Checkpoint;
+        crate::evaluations::delivery_key(deployment, sink, binding, token)?;
+        let mut tx = self.client.transaction()?;
+        tx.execute(
+            "INSERT INTO observation_evaluation_delivery VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+            &[
+                &deployment,
+                &sink,
+                &serde_json::to_value(Checkpoint::new(binding.into()))?,
+            ],
+        )?;
+        let raw=tx.query_one("SELECT data FROM observation_evaluation_delivery WHERE deployment=$1 AND sink=$2 FOR UPDATE",&[&deployment,&sink])?;
+        let mut checkpoint: Checkpoint = serde_json::from_value(raw.get(0))?;
+        ensure!(
+            checkpoint.binding == binding,
+            "Export destination changed; choose a new sink name"
+        );
+        let row=tx.query_opt("SELECT cursor,data FROM observation_evaluations WHERE deployment=$1 AND cursor>$2 ORDER BY cursor LIMIT 1",&[&deployment,&checkpoint.cursor])?;
+        let Some(row) = row else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let cursor: i64 = row.get(0);
+        let claimed = checkpoint.claim(binding, token, now, cursor)?;
+        let evaluation: crate::evaluations::Evaluation = serde_json::from_value(row.get(1))?;
+        evaluation.validate()?;
+        ensure!(
+            evaluation.deployment == deployment,
+            "Evaluation export scope mismatch"
+        );
+        tx.execute(
+            "UPDATE observation_evaluation_delivery SET data=$1 WHERE deployment=$2 AND sink=$3",
+            &[&serde_json::to_value(checkpoint)?, &deployment, &sink],
+        )?;
+        tx.commit()?;
+        Ok(claimed.then(|| crate::evaluations::Delivery {
+            token: token.into(),
+            row: crate::evaluations::Row {
+                cursor: cursor as u64,
+                evaluation,
+            },
+        }))
+    }
+    #[cfg(feature = "evaluations")]
+    fn settle_evaluation_export(
+        &mut self,
+        deployment: &str,
+        sink: &str,
+        token: &str,
+        now: u64,
+        success: bool,
+    ) -> Result<()> {
+        let mut tx = self.client.transaction()?;
+        let raw=tx.query_one("SELECT data FROM observation_evaluation_delivery WHERE deployment=$1 AND sink=$2 FOR UPDATE",&[&deployment,&sink])?;
+        let mut c: openworker_compliance::delivery::Checkpoint =
+            serde_json::from_value(raw.get(0))?;
+        c.settle(token, now, success)?;
+        tx.execute(
+            "UPDATE observation_evaluation_delivery SET data=$1 WHERE deployment=$2 AND sink=$3",
+            &[&serde_json::to_value(c)?, &deployment, &sink],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "evaluations")]
+    fn evaluation(
+        &mut self,
+        deployment: &str,
+        id: &str,
+    ) -> Result<Option<crate::evaluations::Evaluation>> {
+        ensure!(
+            crate::identifier(deployment) && crate::label(id),
+            "Invalid evaluation identity"
+        );
+        self.client
+            .query_opt(
+                "SELECT data FROM observation_evaluations WHERE deployment=$1 AND id=$2",
+                &[&deployment, &id],
+            )?
+            .map(|r| {
+                let e: crate::evaluations::Evaluation = serde_json::from_value(r.get(0))?;
+                e.validate()?;
+                ensure!(
+                    e.deployment == deployment && e.result.id == id,
+                    "Evaluation identity mismatch"
+                );
+                Ok(e)
+            })
+            .transpose()
+    }
+    #[cfg(feature = "evaluations")]
+    fn record_evaluation_bounded(
+        &mut self,
+        value: &crate::evaluations::Evaluation,
+        max_pending: u32,
+    ) -> Result<Write> {
+        ensure!(
+            (1..=1_000_000).contains(&max_pending),
+            "Invalid evaluation export backlog limit"
+        );
+        value.validate()?;
+        let value = value.clone().redacted();
+        value.validate()?;
+        let data = serde_json::to_value(&value)?;
+        if let Some(old) = self.evaluation(&value.deployment, &value.result.id)? {
+            ensure!(old == value, "Evaluation identity conflict");
+            return Ok(Write::Duplicate);
+        }
+        let mut tx = self.client.transaction()?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock(hashtext($1))",
+            &[&format!("eval-capacity:{}", value.deployment)],
+        )?;
+        let retained: i64 = tx
+            .query_one(
+                "SELECT count(*) FROM observation_evaluations e WHERE deployment=$1 AND EXISTS(SELECT 1 FROM observation_evaluation_delivery d WHERE d.deployment=e.deployment AND (d.data->>'cursor')::bigint<e.cursor)",
+                &[&value.deployment],
+            )?
+            .get(0);
+        let exists:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM observation_evaluations WHERE deployment=$1 AND id=$2)",&[&value.deployment,&value.result.id])?.get(0);
+        ensure!(
+            exists || retained < i64::from(max_pending),
+            "Pending evaluation export limit reached; restore delivery or raise the configured limit"
+        );
+        if let Some(id) = &value.result.supersedes {
+            let prior = tx
+                .query_opt(
+                    "SELECT data FROM observation_evaluations WHERE deployment=$1 AND id=$2",
+                    &[&value.deployment, id],
+                )?
+                .context("Superseded evaluation missing")?;
+            let prior: crate::evaluations::Evaluation = serde_json::from_value(prior.get(0))?;
+            ensure!(
+                prior.target == value.target,
+                "Correction must retain its target"
+            );
+        }
+        let inserted=tx.execute("INSERT INTO observation_evaluations(deployment,id,session_hash,turn_hash,data) VALUES($1,$2,$3,$4,$5) ON CONFLICT(deployment,id) DO NOTHING",&[&value.deployment,&value.result.id,&value.target.session_hash,&value.target.turn_hash,&data])?;
+        if inserted == 0 {
+            let old = tx.query_one(
+                "SELECT data FROM observation_evaluations WHERE deployment=$1 AND id=$2",
+                &[&value.deployment, &value.result.id],
+            )?;
+            ensure!(
+                serde_json::from_value::<crate::evaluations::Evaluation>(old.get(0))? == value,
+                "Evaluation identity conflict"
+            );
+        }
+        tx.commit()?;
+        Ok(if inserted == 0 {
+            Write::Duplicate
+        } else {
+            Write::Inserted
+        })
+    }
+    #[cfg(feature = "evaluations")]
+    fn evaluations(&mut self, q: &crate::evaluations::Query) -> Result<crate::evaluations::Page> {
+        q.validate()?;
+        let rows=self.client.query("SELECT cursor,data FROM observation_evaluations WHERE deployment=$1 AND session_hash=$2 AND turn_hash=$3 AND cursor>$4 ORDER BY cursor LIMIT $5",&[&q.deployment,&q.session_hash,&q.turn_hash,&(q.after as i64),&(i64::from(q.limit)+1)])?;
+        let rows = rows
+            .into_iter()
+            .map(|r| {
+                Ok(crate::evaluations::Row {
+                    cursor: r.get::<_, i64>(0) as u64,
+                    evaluation: serde_json::from_value(r.get(1))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        crate::evaluations::page(rows, q)
+    }
+
     fn timeline(&mut self, q: &crate::query::Query) -> Result<crate::query::Page> {
         q.validate()?;
         let sessions: Vec<_> = q.scopes.iter().map(|s| s.session_hash.as_str()).collect();

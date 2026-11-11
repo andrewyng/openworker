@@ -82,6 +82,10 @@ impl StateStore for ScopedStore {
             .unwrap()
             .assistant_call(sid, tid, call, args)
     }
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.metadata(sid)?;
+        self.inner.lock().unwrap().has_turn(sid, tid)
+    }
     fn agent_run(&self, sid: &str, submission: Option<&str>) -> Result<Option<Value>> {
         self.metadata(sid)?;
         self.inner.lock().unwrap().agent_run(sid, submission)

@@ -583,6 +583,16 @@ impl StateStore for PostgresStore {
     ) -> Result<Value> {
         PostgresStore::compliance_page(self, sid, q)
     }
+    fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<openworker_runtime::observation_links::ChildLink>> {
+        PostgresStore::observation_children(self, sid, tid)
+    }
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.observation_run(sid, tid).map(|_| true)
+    }
     fn supports_agent_teams(&self) -> bool {
         true
     }

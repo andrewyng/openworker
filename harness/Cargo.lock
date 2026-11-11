@@ -1882,10 +1882,11 @@ dependencies = [
 
 [[package]]
 name = "openworker-observability"
-version = "0.1.0"
+version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "native-tls",
+ "openworker-compliance",
  "openworker-telemetry",
  "postgres",
  "postgres-native-tls",
@@ -1940,8 +1941,10 @@ version = "0.1.0-beta.2"
 dependencies = [
  "anyhow",
  "async-stream",
+ "chrono",
  "fs2",
  "futures-util",
+ "openworker-observability",
  "openworker-runtime",
  "openworker-security-adapters",
  "openworker-store-postgres",

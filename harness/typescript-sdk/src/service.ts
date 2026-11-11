@@ -1,3 +1,4 @@
+import { ServiceObservability } from "./observability.js";
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
 import {sandboxWire, serviceDelegationWire, type ServiceTeamDelegation} from "./team-placement.js";
@@ -222,6 +223,7 @@ export async function* serviceFrames(
   }
 }
 export class Service {
+  get observability():ServiceObservability {return new ServiceObservability(path=>this.json("GET",path));}
   private closed = false;
   private requests = new Set<AbortController>();
   private endpoint = 0;
