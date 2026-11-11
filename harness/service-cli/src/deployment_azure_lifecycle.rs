@@ -713,6 +713,7 @@ async fn apply(
     }
 }
 async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -> Result<()> {
+    ensure!(s.plan.expires_workload(), "Persistent deployment data is retained. Review a separate data-retention/teardown plan before destruction.");
     if !s.destroy_requested {
         s.destroy_requested = true;
         save(c, s, e).await?;
@@ -861,7 +862,7 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
     s.heartbeat_unix = Some(at);
     save(c, s, e).await?;
     if s.completed_unix.is_none() {
-        if at >= s.plan.expires_at_unix || s.destroy_requested {
+        if (s.plan.expires_workload() && at >= s.plan.expires_at_unix) || s.destroy_requested {
             destroy_one(c, s, e, at).await?;
         } else {
             observe(c, s, e).await?;
@@ -945,6 +946,45 @@ async fn initialize(c: &mut impl Cloud, s: &mut State) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn up_package(root: &Path, out: &Path) -> Result<()> {
+    let s = local(root)?;
+    let files = control_artifacts(&s)?;
+    private_dir(out)?;
+    for (name, bytes) in files {
+        put(out, &name, &bytes)?;
+    }
+    Ok(())
+}
+pub(super) async fn up_initialize_control(root: &Path) -> Result<bool> {
+    let mut expected = local(root)?;
+    let mut api = Azure::new(&expected.plan, None)?;
+    let path = root.join("up-operations/control-init.json");
+    if let Some((_etag, shared)) = api.read_control(&control_url(&expected.plan)).await? {
+        ensure!(
+            shared.nonce == expected.nonce && shared.bundle_digest == expected.bundle_digest,
+            "Shared cleanup identity mismatch"
+        );
+        verify_job(&mut api, &shared).await?;
+        super::super::up::write_private(
+            &path,
+            &json!({"phase":"observed","nonce":shared.nonce,"bundleDigest":shared.bundle_digest}),
+        )?;
+        return Ok(shared
+            .heartbeat_unix
+            .is_some_and(|at| now().is_ok_and(|n| at <= n && n - at <= 600)));
+    }
+    ensure!(!path.exists(),"Control initialization outcome unknown; observe original Blob instead of replaying creation");
+    super::super::up::write_private(
+        &path,
+        &json!({"phase":"intent","nonce":expected.nonce,"bundleDigest":expected.bundle_digest}),
+    )?;
+    initialize(&mut api, &mut expected).await?;
+    Ok(false)
+}
+pub(super) fn up_local(root: &Path) -> Result<(Plan, String, String)> {
+    let s = local(root)?;
+    Ok((s.plan, s.bundle_digest, s.nonce))
+}
 pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
     match command {
         Lifecycle::Prepare { plan, out } => {
@@ -1815,6 +1855,22 @@ mod tests {
         assert!(destroy_one(&mut c, &mut s, &mut e, 160).await.is_err());
         assert_eq!(c.deletes(), 0);
     }
+    #[tokio::test]
+    async fn persistent_workload_is_not_deleted_at_provisioning_deadline() {
+        let mut s = state();
+        s.plan.auto_expire = Some(false);
+        s.bundle_digest = digest(&s.plan).unwrap();
+        let mut c = Fake::new(s.clone());
+        let mut e = c.etag();
+        apply(&mut c, &mut s, &mut e, Stage::Foundation, 150)
+            .await
+            .unwrap();
+        heartbeat(&mut c, &mut s, &mut e, 500).await.unwrap();
+        assert_eq!(c.deletes(), 0);
+        assert!(destroy_one(&mut c, &mut s, &mut e, 500).await.is_err());
+        assert_eq!(c.deletes(), 0);
+    }
+
     #[tokio::test]
     async fn expiry_runs_outside_cluster_and_stops_its_job_after_workload_cleanup() {
         let (mut c, mut s, mut e) = active().await;

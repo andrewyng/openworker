@@ -362,6 +362,7 @@ pub(super) async fn destroy<P: Provider>(
     p: &Plan,
     api: &mut P,
 ) -> Result<()> {
+    ensure!(p.expires_workload(), "Persistent deployment data is retained. Review a separate data-retention/teardown plan before destruction.");
     let key = "create:infra";
     let Some(mut op) = j.operations.get(key).cloned() else {
         bail!("Infrastructure has no original intent; inspect incomplete bootstrap")

@@ -129,6 +129,11 @@ pub(crate) async fn verify_installation(
         path.parent().unwrap(),
         path.file_name().unwrap().to_str().unwrap(),
     )?)?;
+    let content = if p.auto_expire.is_some() {
+        super::super::up::original_kubeconfig(&content)?
+    } else {
+        content
+    };
     ensure!(
         context == p.prefix() && content == kubeconfig(&p, &binding.profile, &c),
         "Kubeconfig must match the original private cluster endpoint, CA and setup profile"

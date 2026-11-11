@@ -227,3 +227,11 @@ test("invalid clocks and incomplete SDK inventories never authorize cleanup", as
   };
   await assert.rejects(api.objects(), /repeated_token/);
 });
+
+test("persistent deployments never expire or delete data after provisioning deadline", async () => {
+  const f = fixture();
+  const s = settings({...env, OWS_AUTO_EXPIRE:"false"}, context);
+  assert.equal((await run(s, f.api, 5000)).status, "not_due");
+  assert.equal(f.effects.length, 0);
+  assert.throws(()=>settings({...env, OWS_AUTO_EXPIRE:"maybe"}, context));
+});

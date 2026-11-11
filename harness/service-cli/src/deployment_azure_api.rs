@@ -61,6 +61,32 @@ impl Azure {
             fixture_origin: None,
         })
     }
+    pub(super) async fn check_setup_identity(&self, p: &Plan) -> Result<()> {
+        use base64::Engine;
+        let token = self.token("https://management.azure.com/").await?;
+        let part = token
+            .split('.')
+            .nth(1)
+            .context("Azure caller claims unavailable")?;
+        let bytes = Zeroizing::new(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(part)
+                .context("Invalid caller claims")?,
+        );
+        let claims: Value = serde_json::from_slice(&bytes).context("Invalid caller claims")?;
+        // Identity pinning on a token obtained from the trusted CLI; ARM verifies
+        // its signature. This is not an independent token authentication API.
+        ensure!(
+            claims["tid"] == self.tenant
+                && claims["oid"]
+                    == p.azure_bootstrap
+                        .as_ref()
+                        .context("Setup recipient missing")?
+                        .setup_object_id,
+            "Azure login is not the exact reviewed setup principal/tenant"
+        );
+        Ok(())
+    }
     async fn token(&self, resource: &str) -> Result<Zeroizing<String>> {
         #[cfg(test)]
         if self.fixture_origin.is_some() {
@@ -342,7 +368,7 @@ async fn cli_token_response(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use reqwest::Method;
     use std::{
@@ -388,7 +414,7 @@ printf '%s' '{{"tenant":"{tenant}","subscription":"expected-sub","accessToken":"
         assert!(error.contains("Token target mismatch"));
         assert!(!error.contains("fixture-secret-canary"));
     }
-    fn fixture(
+    pub(in super::super) fn fixture(
         responses: Vec<Option<String>>,
     ) -> (Azure, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

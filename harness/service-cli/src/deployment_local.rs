@@ -165,7 +165,16 @@ struct Client<'a> {
     c: &'a Config,
 }
 pub(super) async fn exec(bin: &Path, a: &[String], input: Option<Vec<u8>>) -> Result<Vec<u8>> {
+    exec_with_env(bin, a, input, &BTreeMap::new()).await
+}
+pub(super) async fn exec_with_env(
+    bin: &Path,
+    a: &[String],
+    input: Option<Vec<u8>>,
+    env: &BTreeMap<String, String>,
+) -> Result<Vec<u8>> {
     let mut child = Process::new(bin)
+        .envs(env)
         .args(a)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -188,6 +197,7 @@ pub(super) async fn exec(bin: &Path, a: &[String], input: Option<Vec<u8>>) -> Re
             bytes(stderr, 65536),
             async move {
                 if let Some(v) = input {
+                    let v = zeroize::Zeroizing::new(v);
                     stdin.write_all(&v).await?;
                 }
                 drop(stdin);
@@ -1283,7 +1293,7 @@ pub(super) async fn verify_teardown(
         "Installation belongs to a different cloud lifecycle/profile"
     );
     ensure!(
-        read_json(&p.config.kubeconfig)? == *kubeconfig,
+        super::up::original_kubeconfig(&read_json(&p.config.kubeconfig)?)? == *kubeconfig,
         "Installation cluster endpoint/CA/profile changed"
     );
     let client = Client { c: &p.config };

@@ -9,6 +9,8 @@ mod graph;
 mod installation;
 #[path = "deployment_azure_lifecycle.rs"]
 mod recovery;
+#[path = "deployment_up_azure_bootstrap.rs"]
+mod up_bootstrap;
 pub(crate) use installation::{
     database as installation_database, intent as installation_intent,
     storage as installation_storage, verify as verify_installation, Binding as InstallationBinding,
@@ -246,4 +248,8 @@ pub(super) fn outside(out: &Path, input: &Path) -> Result<()> {
         "Output must be outside immutable input/state"
     );
     Ok(())
+}
+
+pub(super) fn up_grants(p: &Plan) -> Result<Value> {
+    up_bootstrap::grants(p)
 }

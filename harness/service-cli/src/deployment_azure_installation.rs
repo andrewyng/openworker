@@ -6,6 +6,24 @@ use base64::Engine;
 use reqwest::Method;
 #[derive(Subcommand)]
 pub enum Installation {
+    /// Explicit digest-bound setup/control grants for the single-command flow.
+    Bootstrap {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long, value_enum)]
+        phase: super::up_bootstrap::UpPhase,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        approve_identities: bool,
+    },
+    /// Read owned infrastructure material for the single-command installer; no credentials.
+    Material {
+        #[arg(long)]
+        state: PathBuf,
+    },
     /// Observe owned AKS and export a reviewed private Helm handoff; no Kubernetes writes.
     Prepare {
         #[arg(long)]
@@ -221,17 +239,23 @@ pub(crate) async fn verify(
         values_path.parent().unwrap(),
         values_path.file_name().unwrap().to_str().unwrap(),
     )?;
+    let (local_plan, _, _) = super::recovery::up_local(&binding.state)?;
+    let actual: Value = serde_json::from_slice(&kube_bytes)?;
+    let (actual, original_bytes) = if local_plan.auto_expire.is_some() {
+        let original = super::super::up::original_kubeconfig(&actual)?;
+        let bytes = json_bytes(&original)?;
+        (original, bytes)
+    } else {
+        (actual, kube_bytes)
+    };
     ensure!(
         context == binding.context
-            && hash(&kube_bytes) == binding.kubeconfig_hash
+            && hash(&original_bytes) == binding.kubeconfig_hash
             && hash(&value_bytes) == binding.values_hash,
         "Azure installation inputs changed"
     );
     let (p, _, expected, identity) = observed(&binding.state, provisioning).await?;
-    let actual: Value = serde_json::from_slice(&super::super::read_file(
-        path.parent().unwrap(),
-        path.file_name().unwrap().to_str().unwrap(),
-    )?)?;
+
     ensure!(
         context == graph::names(&p).prefix && actual == expected,
         "Kubeconfig differs from original AKS endpoint/CA/Entra plugin"
@@ -285,6 +309,71 @@ pub(crate) fn storage(classes: &Value) -> Result<()> {
 }
 pub(crate) async fn install(command: &Installation) -> Result<()> {
     match command {
+        Installation::Bootstrap {
+            plan,
+            state,
+            phase,
+            accept_plan,
+            approve_identities,
+        } => super::up_bootstrap::run(plan, state, *phase, accept_plan, *approve_identities).await,
+        Installation::Material { state } => {
+            let (p, mut api, cluster, identity) = observed(state, false).await?;
+            let names = graph::names(&p);
+            let registry_id = graph::id(
+                &p,
+                "Microsoft.ContainerRegistry/registries",
+                &names.registry,
+            );
+            let registry = api
+                .arm(
+                    Method::GET,
+                    &registry_id,
+                    "2023-07-01",
+                    None,
+                    &uuid::Uuid::new_v4().to_string(),
+                )
+                .await?;
+            ensure!(registry.status == 200, "Owned registry is unavailable");
+            let registry = registry.body.context("Registry observation missing")?;
+            ensure!(
+                registry["id"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&registry_id))
+                    && registry["properties"]["loginServer"]
+                        == format!("{}.azurecr.io", names.registry),
+                "Owned registry identity mismatch"
+            );
+            let management_ip = if p
+                .azure_infrastructure
+                .as_ref()
+                .unwrap()
+                .management_access
+                .is_some()
+            {
+                let id = graph::id(
+                    &p,
+                    "Microsoft.Network/publicIPAddresses",
+                    &format!("{}-management-ip", names.prefix),
+                );
+                let r = api
+                    .arm(
+                        Method::GET,
+                        &id,
+                        "2024-05-01",
+                        None,
+                        &uuid::Uuid::new_v4().to_string(),
+                    )
+                    .await?;
+                ensure!(r.status == 200, "Owned management IP missing");
+                r.body.context("Management IP observation missing")?["properties"]["ipAddress"]
+                    .clone()
+            } else {
+                Value::Null
+            };
+            crate::output(
+                json!({"deploymentId":p.deployment_id,"cluster":cluster,"managementIp":management_ip,"artifactIdentity":identity,"registry":{"id":registry_id,"name":names.registry,"loginServer":registry["properties"]["loginServer"],"createdAt":registry["properties"]["creationDate"]},"artifactAccount":names.storage,"postgresHost":format!("{}-pg.postgres.database.azure.com",names.prefix),"target":p.target,"credentialsIncluded":false}),
+            )
+        }
         Installation::Prepare { state, config, out } => {
             outside(out, state)?;
             let mut c: Value = serde_json::from_slice(&super::super::read_file(

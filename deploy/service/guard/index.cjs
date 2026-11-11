@@ -33,6 +33,8 @@ function settings(env, context) {
     `arn:aws:lambda:${region}:${account}:function:${prefix}-cleanup`
   )
     throw Error("invalid_function_identity");
+  if (env.OWS_AUTO_EXPIRE !== undefined && !["true", "false"].includes(env.OWS_AUTO_EXPIRE))
+    throw Error("invalid_expiry_policy");
   const expiry = Number(env.OWS_EXPIRY);
   if (!Number.isSafeInteger(expiry) || expiry <= 0)
     throw Error("invalid_expiry");
@@ -46,6 +48,7 @@ function settings(env, context) {
     role,
     prefix,
     expiry,
+    autoExpire: env.OWS_AUTO_EXPIRE !== "false",
     table: prefix + "-control",
   };
 }
@@ -106,7 +109,8 @@ async function run(s, api, now, event = {}) {
     record.version++;
     await api.writeControl(record, previous);
   }
-  if (now < s.expiry) return { status: "not_due", destructiveActions: 0 };
+  if (now < s.expiry || s.autoExpire === false)
+    return { status: "not_due", destructiveActions: 0 };
   if (stack) {
     if (stack.StackStatus === "DELETE_IN_PROGRESS")
       return { status: "deleting", destructiveActions: 0 };
