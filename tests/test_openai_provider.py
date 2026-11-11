@@ -311,3 +311,101 @@ def test_complete_picks_up_reasoning_attr():
     turn = provider.complete(model="grok-4", messages=[{"role": "user", "content": "?"}])
     assert turn.reasoning == "because"
     assert turn.text == "answer"
+
+
+# -- inline `<think>…</think>` reasoning (issue #111) --------------------------------
+
+
+def test_complete_peels_inline_think_tags_off_the_answer():
+    # MiniMax M2.5 reasons INSIDE the reply text; the tags must not reach the user.
+    message = SimpleNamespace(
+        content="<think>weighing the options</think>The answer.",
+        tool_calls=None,
+    )
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(
+        client=_FakeClient(SimpleNamespace(choices=[choice]))
+    )
+    turn = provider.complete(
+        model="MiniMax-M2.5", messages=[{"role": "user", "content": "?"}]
+    )
+    assert turn.reasoning == "weighing the options"
+    assert turn.text == "The answer."
+
+
+def test_complete_keeps_think_tags_for_other_models():
+    # The peel is gated on the model — a model that merely talks about the tag keeps it.
+    message = SimpleNamespace(
+        content="Use <think> in your code.", tool_calls=None
+    )
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(
+        client=_FakeClient(SimpleNamespace(choices=[choice]))
+    )
+    turn = provider.complete(
+        model="gpt-5.5", messages=[{"role": "user", "content": "?"}]
+    )
+    assert turn.reasoning is None
+    assert turn.text == "Use <think> in your code."
+
+
+def test_stream_peels_inline_think_tags_split_across_deltas():
+    # The tags arrive mid-stream and can straddle two deltas ("<thi" + "nk>").
+    chunks = [
+        _chunk(content="<thi"),
+        _chunk(content="nk>weighing "),
+        _chunk(content="the options</thi"),
+        _chunk(content="nk>The answer."),
+        _chunk(finish="stop"),
+    ]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="MiniMax-M2.5", messages=[]))
+    assert "".join(c.reasoning_delta for c in out if c.reasoning_delta) == (
+        "weighing the options"
+    )
+    turn = out[-1].turn
+    assert turn.reasoning == "weighing the options"
+    assert turn.text == "The answer."
+
+
+def test_stream_keeps_think_tags_for_other_models():
+    chunks = [_chunk(content="<think>why</think>answer"), _chunk(finish="stop")]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="gpt-5.5", messages=[]))
+    assert [c.reasoning_delta for c in out if c.reasoning_delta] == []
+    assert out[-1].turn.text == "<think>why</think>answer"
+
+
+def test_stream_treats_a_truncated_think_block_as_reasoning():
+    # The reply ended inside the reasoning block: it is thinking, not answer text.
+    chunks = [_chunk(content="<think>still thinking"), _chunk(finish="stop")]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    out = list(provider.stream(model="MiniMax-M2.5", messages=[]))
+    turn = out[-1].turn
+    assert turn.reasoning == "still thinking"
+    assert turn.text is None
+
+
+def test_inline_think_gate_is_scoped_to_the_model_family():
+    # The provider is handed the BARE id (the router strips the provider prefix), so
+    # both spellings have to resolve — and no other family may be caught by the gate.
+    from coworker.providers.openai_provider import _inline_think_splitter
+
+    assert _inline_think_splitter("MiniMax-M2.5") is not None
+    assert _inline_think_splitter("minimax:MiniMax-M2.5") is not None
+    assert _inline_think_splitter("gpt-5.5") is None
+    assert _inline_think_splitter("deepseek-v4-flash") is None
+
+
+def test_complete_peels_an_empty_think_block():
+    # An empty block still has to go — the answer must not keep the tags.
+    message = SimpleNamespace(content="<think></think>The answer.", tool_calls=None)
+    choice = SimpleNamespace(message=message, finish_reason="stop")
+    provider = OpenAIProvider(
+        client=_FakeClient(SimpleNamespace(choices=[choice]))
+    )
+    turn = provider.complete(
+        model="MiniMax-M2.5", messages=[{"role": "user", "content": "?"}]
+    )
+    assert turn.reasoning is None
+    assert turn.text == "The answer."
