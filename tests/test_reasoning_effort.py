@@ -342,7 +342,12 @@ def test_anthropic_unrelated_error_still_raises():
     def create(**kwargs):
         raise RuntimeError("overloaded_error")
 
+    # Both endpoints: `claude-sonnet-5` runs with the server-side refusal fallback
+    # (#873), so its calls go through beta.messages.create.
     fake.messages = SimpleNamespace(create=create, stream=fake.messages.stream)
+    fake.beta = SimpleNamespace(
+        messages=SimpleNamespace(create=create, stream=fake.beta.messages.stream)
+    )
     with pytest.raises(RuntimeError, match="overloaded"):
         list(AnthropicProvider(client=fake).stream(model="claude-sonnet-5", messages=[{"role": "user", "content": "x"}], reasoning_effort="low"))
 

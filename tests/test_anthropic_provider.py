@@ -461,6 +461,27 @@ def test_stream_passes_stream_flag():
     assert fake.kwargs["max_tokens"] == DEFAULT_MAX_TOKENS
 
 
+def test_streaming_path_carries_the_fallback_too():
+    """The streaming call site is a separate code path from complete()'s — it has to
+    opt into the same fallback, or a decline mid-stream is unhandled there (#873)."""
+    fake = _FakeClient(events=[])
+    list(
+        AnthropicProvider(client=fake).stream(
+            model="claude-opus-5-5", messages=[{"role": "user", "content": "x"}]
+        )
+    )
+    assert fake.kwargs["betas"] == ["server-side-fallback-2026-06-01"]
+    assert fake.kwargs["fallbacks"] == [{"model": "claude-opus-4-8"}]
+
+    fake2 = _FakeClient(events=[])
+    list(
+        AnthropicProvider(client=fake2).stream(
+            model="claude-sonnet-5-5", messages=[{"role": "user", "content": "x"}]
+        )
+    )
+    assert fake2.kwargs["fallbacks"] == [{"model": "claude-sonnet-5"}]
+
+
 # -- registry / capabilities ----------------------------------------------------------
 
 
@@ -680,6 +701,35 @@ def test_fable_requests_carry_server_side_fallback():
         model="claude-opus-4-8", messages=[{"role": "user", "content": "x"}]
     )
     assert "betas" not in client2.kwargs and "fallbacks" not in client2.kwargs
+
+
+@pytest.mark.parametrize(
+    "model,target",
+    [
+        # #873: Anthropic's refusals doc (read 2026-11-11) names the rest of the
+        # current Claude 5 line — Opus 5, Opus 5.5 and Sonnet 5.5 all run safety
+        # classifiers that can decline with HTTP 200.
+        ("claude-opus-5", "claude-opus-4-8"),
+        ("claude-opus-5-5", "claude-opus-4-8"),
+        ("claude-sonnet-5-5", "claude-sonnet-5"),  # its array form names only Sonnet 5
+        ("claude-sonnet-5", "claude-sonnet-5"),
+        ("claude-fable-5-1", "claude-opus-4-8"),
+        # Haiku 5.5 has no server-side fallback, and pre-5 models predate the doc.
+        ("claude-haiku-5-5", None),
+        ("claude-haiku-4-5", None),
+        ("claude-opus-4-8", None),
+    ],
+)
+def test_current_claude_5_models_carry_the_fallback(model, target):
+    client = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client, thinking_budget=8192).complete(
+        model=model, messages=[{"role": "user", "content": "x"}]
+    )
+    if target is None:
+        assert "betas" not in client.kwargs and "fallbacks" not in client.kwargs
+    else:
+        assert client.kwargs["betas"] == ["server-side-fallback-2026-06-01"]
+        assert client.kwargs["fallbacks"] == [{"model": target}]
 
 
 def test_whole_chain_refusal_raises_friendly_error():
