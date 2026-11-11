@@ -4765,6 +4765,12 @@ class SessionManager:
         "huggingface": ["zai-org/GLM-5.2"],
         "cohere": ["command-a-plus-05-2026"],
         "siliconflow": ["zai-org/GLM-5.2"],
+        # Routed default plus pinned ids from api.stdcmpt.com/v1/models (read 2026-11-09).
+        "standardcompute": [
+            "StandardCompute",
+            "anthropic/claude-sonnet-5",
+            "z-ai/glm-5.2",
+        ],
     }
 
     def _warm_local_probes(self, names: list[str]) -> None:

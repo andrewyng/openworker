@@ -968,6 +968,18 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         env_key="SILICONFLOW_API_KEY",
         endpoint_help="Prefilled with SiliconFlow's international endpoint. China mainland: https://api.siliconflow.cn/v1 (keys from cloud.siliconflow.cn).",
     ),
+    # Standard Compute: an OpenAI-compatible router. The `StandardCompute` model id sends
+    # each request to the cheapest enabled model that can handle it, with automatic
+    # fallback (image requests go to a vision model); pinned ids use the lab namespaces
+    # listed by api.stdcmpt.com/v1/models.
+    _compat(
+        "standardcompute",
+        "Standard Compute",
+        base_url="https://api.stdcmpt.com/v1",
+        recommended_model="StandardCompute",
+        env_key="STANDARDCOMPUTE_API_KEY",
+        endpoint_help="Prefilled with Standard Compute's OpenAI-compatible endpoint. Model StandardCompute routes each request; pinned ids such as anthropic/claude-sonnet-5 also work.",
+    ),
     ProviderDescriptor(
         name="ollama",
         title="Ollama",

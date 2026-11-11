@@ -299,6 +299,7 @@ COMPAT_VENDORS = {
     "huggingface": "https://router.huggingface.co/v1",
     "cohere": "https://api.cohere.ai/compatibility/v1",
     "siliconflow": "https://api.siliconflow.com/v1",
+    "standardcompute": "https://api.stdcmpt.com/v1",
 }
 
 
@@ -485,6 +486,8 @@ def test_compat_models_route_and_get_tool_capabilities():
         "huggingface:zai-org/GLM-5.2",
         "cohere:command-a-plus-05-2026",
         "siliconflow:zai-org/GLM-5.2",
+        "standardcompute:StandardCompute",
+        "standardcompute:anthropic/claude-sonnet-5",
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix

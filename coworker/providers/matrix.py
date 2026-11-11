@@ -379,6 +379,28 @@ MATRIX: dict[str, ModelEntry] = {
     "orcarouter:deepseek/deepseek-v4-pro": ModelEntry(
         "DeepSeek V4 Pro · via OrcaRouter", _AGENTIC, 1_048_576
     ),
+    # Standard Compute: `StandardCompute` is a routed id (cheapest enabled model that can
+    # handle the request, automatic fallback, image requests go to a vision model); the
+    # pinned rows use the lab namespaces. Ids and windows from api.stdcmpt.com/v1/models
+    # (keyless, read 2026-11-09: `context_length` 1,000,000 / 1,000,000 / 1,048,576, all
+    # list `tools`; Sonnet 5 declares image input, PDFs unverified over the compat surface).
+    "standardcompute:StandardCompute": ModelEntry(
+        "StandardCompute (routed) · via Standard Compute",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "standardcompute:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via Standard Compute",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
+    ),
+    "standardcompute:z-ai/glm-5.2": ModelEntry(
+        "GLM 5.2 · via Standard Compute", _AGENTIC, 1_048_576
+    ),
     # NVIDIA NIM — NVIDIA's own `vendor/model` namespace, so its models repeat the word in
     # the routed id. Ids from integrate.api.nvidia.com/v1/models (keyless, read 2026-10-25;
     # the earlier llama-3.3-nemotron-super-49b, z-ai/glm-5.2 and deepseek-v4-pro ids are
