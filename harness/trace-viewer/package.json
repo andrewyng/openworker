@@ -9,7 +9,8 @@
       "types": "./src/index.d.ts",
       "import": "./src/index.js"
     },
-    "./style.css": "./src/style.css"
+    "./style.css": "./src/style.css",
+    "./tracing.css": "./src/tracing.css"
   },
   "files": [
     "src",

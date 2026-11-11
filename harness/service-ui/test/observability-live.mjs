@@ -103,10 +103,33 @@ async function login(page, url, token) {
   await page.goto(url + "/#observability");
   await page.locator("#token").fill(token);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.locator("#obs-run-search").waitFor();
+  await page.getByRole("searchbox", { name: "Search sessions" }).waitFor();
+  if (url === app.url) {
+    const search = page.getByRole("searchbox", { name: "Search sessions" });
+    await search.fill("s_alice");
+    await page
+      .locator(".tr-session")
+      .filter({ hasText: "s_alice" })
+      .first()
+      .click();
+    await page.waitForFunction(
+      () => document.querySelectorAll(".tr-turn").length === 2,
+    );
+    await page.locator(".tr-step").first().click();
+    await page.getByRole("button", { name: "Waterfall", exact: true }).click();
+    await page.locator(".tr-track").first().waitFor();
+    await capture(page, "session-tracing");
+    checks.push(
+      "actual service session search, two turns, step details and waterfall",
+    );
+  }
+  await page
+    .getByRole("button", { name: "Usage overview ↗", exact: true })
+    .click();
+  await page.locator("[id$='-obs-run-search']").waitFor();
 }
 async function choose(page, text) {
-  const input = page.locator("#obs-run-search");
+  const input = page.locator("[id$='-obs-run-search']");
   await input.fill(text);
   const option = page
     .locator(".obs-run-option")
@@ -165,12 +188,12 @@ try {
   await login(page, app.url, process.env.OW_UI_USER);
   await page.locator(".obs-stats").waitFor();
   assert(
-    (await page.locator("#obs-scope").innerText()).includes(
+    (await page.locator("[id$='-obs-scope']").innerText()).includes(
       "25 recent authorized runs",
     ),
   );
   assert(!(await page.locator("#main").innerText()).includes("Beta Private"));
-  assert.equal(await page.locator("#obs-health").count(), 0);
+  assert.equal(await page.locator("[id$='-obs-health']").count(), 0);
   checks.push(
     "real scoped recent-page summary, no foreign runs or process counters",
   );
@@ -185,7 +208,7 @@ try {
     .getByRole("button", { name: "Next 25 runs", exact: true })
     .waitFor();
   checks.push("summary page navigation preserves bounded selected-page scope");
-  const input = page.locator("#obs-run-search");
+  const input = page.locator("[id$='-obs-run-search']");
   await input.fill("Alpha % Game");
   await page
     .locator(".obs-run-option")
@@ -197,9 +220,9 @@ try {
   await input.fill("No matching run 游");
   await page.getByText("No matching runs.", { exact: true }).waitFor();
   await input.fill("");
-  await page.locator("#obs-search-more:not([hidden])").waitFor();
+  await page.locator("[id$='-obs-search-more']:not([hidden])").waitFor();
   const firstCount = await page.locator(".obs-run-option").count();
-  await page.locator("#obs-search-more").click();
+  await page.locator("[id$='-obs-search-more']").click();
   await page.waitForFunction(
     (n) => document.querySelectorAll(".obs-run-option").length > n,
     firstCount,
@@ -346,11 +369,13 @@ try {
       () =>
         document.querySelectorAll(".obs-stats").length === 0 &&
         /busy|Unable to/.test(
-          document.querySelector("#obs-content").textContent,
+          document.querySelector("[id$='-obs-content']").textContent,
         ),
     );
     assert(
-      !(await page.locator("#obs-content").innerText()).includes("12,500"),
+      !(await page.locator("[id$='-obs-content']").innerText()).includes(
+        "12,500",
+      ),
     );
     await page.unroute("**/api/v1/sessions/s_ui/observability/*/summary?**");
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -390,6 +415,9 @@ try {
   await page.locator('[data-nav="activity"]').click();
   await page.getByRole("heading", { name: "Sessions by day" }).waitFor();
   await page.locator('[data-nav="observability"]').click();
+  await page
+    .getByRole("button", { name: "Usage overview ↗", exact: true })
+    .click();
   await page.locator(".obs-stats").waitFor();
   checks.push("Activity charts preserved; route return resets selection");
   const emptyPage = await browser.newPage();
@@ -400,7 +428,7 @@ try {
       { exact: true },
     )
     .waitFor();
-  await emptyPage.locator("#obs-run-search").fill("Deployment");
+  await emptyPage.locator("[id$='-obs-run-search']").fill("Deployment");
   await emptyPage
     .locator(".obs-run-option")
     .filter({ hasText: "Deployment diagnosis" })
@@ -414,7 +442,7 @@ try {
   const adminPage = await browser.newPage();
   await login(adminPage, app.url, process.env.OW_UI_ADMIN);
   await adminPage.locator(".obs-stats").waitFor();
-  await adminPage.locator("#obs-health summary").click();
+  await adminPage.locator("[id$='-obs-health'] summary").click();
   await adminPage
     .getByText(
       "Serving API instance only. Worker and other API counters are not aggregated here.",
@@ -442,7 +470,7 @@ try {
     .getByRole("button", { name: "Refresh", exact: true })
     .click();
   await revokedPage.locator("#login:not([hidden])").waitFor();
-  assert.equal(await revokedPage.locator("#obs-content").count(), 0);
+  assert.equal(await revokedPage.locator("[id$='-obs-content']").count(), 0);
   await revokedPage.close();
   checks.push("real service revocation signs out and erases metrics");
   assert.equal(
