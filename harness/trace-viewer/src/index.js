@@ -1,3 +1,4 @@
+export {mountSessionTracing, serviceTracingAdapter} from './tracing.js';
 import {mountObservability} from './observability.js';
 import {count, measurement} from './observability-data.js';
 export {mountObservability};

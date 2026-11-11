@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>OpenWorker · Session tracing</title
+  ><link rel="stylesheet" href="/src/tracing.css" /><style>
+    body {
+      margin: 0;
+      background: #fafbfd;
+    }
+    header {
+      padding: 20px 28px;
+      border-bottom: 1px solid #e5eaf1;
+      background: #fff;
+      font:
+        13px -apple-system,
+        BlinkMacSystemFont,
+        sans-serif;
+      color: #8090a5;
+    }
+    header strong {
+      color: #293544;
+      font-size: 17px;
+      letter-spacing: -0.5px;
+      margin-right: 20px;
+    }
+    #preview-note {
+      font-size: 11px;
+      margin-left: 16px;
+    }
+  </style>
+  <header>
+    <strong>OpenWorker</strong>Session tracing<span id="preview-note"
+      >Recorded local OpenShell qualification · deterministic model</span
+    >
+  </header>
+  <main id="trace"></main>
+  <script type="module">
+    import {
+      mountSessionTracing,
+      serviceTracingAdapter,
+    } from "/src/tracing.js";
+    const request = async (path, signal) => {
+      const r = await fetch("/api" + path, { signal });
+      if (!r.ok)
+        throw Object.assign(Error("Request failed"), { status: r.status });
+      return r.json();
+    };
+    window.traceView = mountSessionTracing(document.querySelector("#trace"), {
+      adapter: serviceTracingAdapter(request),
+    });
+  </script>
+</html>

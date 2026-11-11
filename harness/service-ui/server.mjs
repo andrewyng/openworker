@@ -486,6 +486,8 @@ export async function start(config) {
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
+        "/tracing.js": ["tracing.js", "text/javascript"],
+        "/tracing.css": ["tracing.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],

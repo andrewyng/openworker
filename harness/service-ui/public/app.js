@@ -1,4 +1,5 @@
 import {renderCompliance} from "./compliance.js";
+import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
 let disposeObservability = null;
 let safetyActivity = null;
@@ -559,12 +560,30 @@ async function render() {
   main.innerHTML = empty("Loading…");
   try {
     if (page === "observability") {
-      disposeObservability = mountObservability(main, {
-        request: (path, signal) =>
-          api(path, "GET", undefined, undefined, signal),
-        isAdmin: can.admin(),
-        children: true,
-      });
+      const request = (path, signal) =>
+        api(path, "GET", undefined, undefined, signal);
+      const tracing = () => {
+        disposeObservability?.();
+        const view = mountSessionTracing(main, {
+          adapter: serviceTracingAdapter(request),
+          onOverview: overview,
+        });
+        disposeObservability = () => view.dispose();
+      };
+      const overview = () => {
+        disposeObservability?.();
+        disposeObservability = mountObservability(main, {
+          request,
+          isAdmin: can.admin(),
+          children: true,
+        });
+        const back = document.createElement("button");
+        back.className = "button";
+        back.textContent = "← Session tracing";
+        back.addEventListener("click", tracing);
+        main.prepend(back);
+      };
+      tracing();
       return;
     }
     let html;
