@@ -1,9 +1,9 @@
--- Old clients ignore safety fields. Fence their writes even if they raced an
+-- Old clients ignore safety fields and queued attachment inputs. Fence their writes even if they raced an
 -- upgrade startup check. This is a compatibility boundary, not DB-user auth.
 CREATE OR REPLACE FUNCTION ow_require_safety_runtime() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
- IF current_setting('ow.runtime_schema',true) IS DISTINCT FROM '6' THEN
-   RAISE EXCEPTION 'Runtime schema 6 required; upgrade the client before writing';
+ IF current_setting('ow.runtime_schema',true) IS DISTINCT FROM '7' THEN
+   RAISE EXCEPTION 'Runtime schema 7 required; upgrade the client before writing';
  END IF;
  RETURN NULL;
 END $$;

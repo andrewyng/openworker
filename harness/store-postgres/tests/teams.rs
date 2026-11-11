@@ -348,7 +348,7 @@ fn concurrent_assignment_has_one_winner_and_failed_commit_enqueues_nothing() {
     let before = db.team_snapshot(&team).unwrap();
     let mut sql = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     sql.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();

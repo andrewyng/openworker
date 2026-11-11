@@ -264,7 +264,7 @@ export interface RunOptions extends SafetyOptions {
   /** Stops waiting only. Call session.cancel() to cancel agent execution. */
   signal?: AbortSignal;
 }
-export type MessageInput = string | { type?: "message"; text: string };
+export type MessageInput = string | { type?: "message"; text: string } | import("./attachments.js").UserInput;
 export interface OutputOptions {
   reasoning?: boolean;
   bufferAttempts?: boolean;

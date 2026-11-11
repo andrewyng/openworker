@@ -33,7 +33,7 @@ fn postgres_atomic_memory_rollback() {
     let (tid, call) = contract::prepare(&mut s, "a", "memory_remember", &args);
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     db.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();
@@ -117,7 +117,7 @@ fn fenced_owner_cannot_mutate_memory() {
     let args = json!({"summary":"fenced","content":"must not commit"});
     let (tid, call) = contract::prepare(&mut old, "a", "memory_remember", &args);
     let mut db = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
-    db.batch_execute(&format!("SET ow.runtime_schema='6'; SET search_path={},pg_catalog; UPDATE sessions SET expires=clock_timestamp()-interval '1 second' WHERE id='a'", c.schema)).unwrap();
+    db.batch_execute(&format!("SET ow.runtime_schema='7'; SET search_path={},pg_catalog; UPDATE sessions SET expires=clock_timestamp()-interval '1 second' WHERE id='a'", c.schema)).unwrap();
     let mut next = PostgresStore::open(c).unwrap();
     next.claim("a").unwrap();
     assert!(old.assistant_call("a", &tid, &call, &args).is_err());

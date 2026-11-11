@@ -6,6 +6,23 @@ pub struct ScopedStore {
     pub coworker: String,
 }
 impl StateStore for ScopedStore {
+    fn supports_input_attachments(&self) -> bool {
+        self.inner.lock().unwrap().supports_input_attachments()
+    }
+
+    fn input_attachment(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: crate::attachments::Upload,
+    ) -> Result<crate::attachments::Blob> {
+        self.metadata(sid)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .input_attachment(sid, id, request)
+    }
+
     fn claim_compliance_export(
         &mut self,
         sid: &str,

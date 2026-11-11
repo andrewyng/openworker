@@ -1,3 +1,6 @@
+import {Attachment,attachmentArgument,stageInput,userInput,type UserInput} from "./attachments.js";
+export { Attachment } from "./attachments.js";
+export type { UserInput, InputContent, AttachmentSource } from "./attachments.js";
 import { Observability } from "./observability.js";
 export * from "./observability.js";
 import { normalizeSafety, type SafetyOptions, type SafetyHandler, type SafetyContext, type SafetyDecision } from "./safety.js";
@@ -800,7 +803,11 @@ export class Session {
     if (options.limits && this.harness.capabilities.turn_limits !== true) {
       throw new HarnessError("Setup", "Host does not support turn limits");
     }
-    const value = typeof input === "string" ? { text: input } : input;
+    let value = typeof input === "string" ? { text: input } : input;
+    if ("content" in value) {
+      if(this.harness.capabilities.attachments!==true)throw new HarnessError("Setup","Host does not support attachments");
+      value={content:await stageInput(value as UserInput,this.id,(m,p)=>this.harness.request(m,p),options.signal)} as unknown as typeof value;
+    }
     const control = value.type === "approval" || value.type === "answer";
     if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
       throw new HarnessError(
@@ -812,14 +819,14 @@ export class Session {
       ? value.type === "approval"
         ? ["type", "interactionId", "targetSessionId", "decision"]
         : ["type", "interactionId", "targetSessionId", "text"]
-      : ["type", "text"];
+      : ["type", "text", "content"];
     if (Object.keys(value).some((key) => !allowed.includes(key)))
       throw new HarnessError(
         "InvalidInput",
         "Mixed or unknown session input fields",
       );
     const submissionId = options.submissionId ?? randomUUID();
-    const wire = control
+    const wire = (value.type === "approval" || value.type === "answer")
       ? {
           ...value,
           interaction_id: value.interactionId,
@@ -851,10 +858,14 @@ export class Session {
       options,
     );
   }
-  async run(input: string, options: RunOptions = {}): Promise<RunResult> {
+  async run(input:string|UserInput,options?:RunOptions):Promise<RunResult>;
+  async run(input:string,attachments:Attachment|Attachment[],options?:RunOptions):Promise<RunResult>;
+  async run(input: string|UserInput, second:RunOptions|Attachment|Attachment[] = {}, third:RunOptions = {}): Promise<RunResult> {
+    const options=attachmentArgument(second)?third:second;
+    if(attachmentArgument(second)){if(typeof input!=="string")throw new HarnessError("InvalidInput","Attachments convenience form requires text");input=userInput(input,second);}
     const submissionId = options.submissionId ?? randomUUID();
     try {
-      await this.start(input, submissionId, options.signal);
+      await this.start(input, submissionId, options);
       return await this.resume({ ...options, submissionId });
     } catch (e) {
       if (e instanceof HarnessError) {
@@ -868,7 +879,7 @@ export class Session {
     }
   }
   async runWith(
-    input: string,
+    input: string|UserInput,
     handler: (i: Interruption) => Response | Promise<Response>,
     options: RunOptions = {},
   ): Promise<RunResult> {
@@ -888,12 +899,13 @@ export class Session {
     }
     return result;
   }
-  async runStreamed(
-    input: string,
-    options: RunOptions = {},
-  ): Promise<RunStream> {
+  async runStreamed(input:string|UserInput,options?:RunOptions):Promise<RunStream>;
+  async runStreamed(input:string,attachments:Attachment|Attachment[],options?:RunOptions):Promise<RunStream>;
+  async runStreamed(input:string|UserInput,second:RunOptions|Attachment|Attachment[]={},third:RunOptions={}):Promise<RunStream>{
+    const options=attachmentArgument(second)?third:second;
+    if(attachmentArgument(second)){if(typeof input!=="string")throw new HarnessError("InvalidInput","Attachments convenience form requires text");input=userInput(input,second);}
     const submissionId = options.submissionId ?? randomUUID();
-    const started = await this.start(input, submissionId, options.signal);
+    const started = await this.start(input, submissionId, options);
     return new RunStream(this.harness, this.id, started.cursors as Cursors, {
       ...options,
       submissionId,
@@ -932,17 +944,28 @@ export class Session {
     return new RunStream(this.harness, this.id, cursors, options);
   }
   private async start(
-    input: string,
+    input: string|UserInput,
     submissionId: string,
-    signal?: AbortSignal,
+    options:RunOptions = {},
   ): Promise<Record<string, unknown>> {
-    aborted(signal);
+    aborted(options.signal);
+    let content:Record<string,unknown>[]|undefined;
+    if(typeof input!=="string"){
+      if(this.harness.capabilities.attachments!==true)throw new HarnessError("Setup","Host does not support attachments");
+      content=await stageInput(input,this.id,(m,p)=>this.harness.request(m,p),options.signal);
+    }
+    aborted(options.signal);
     try {
       return record(
         await this.harness.request("run/start", {
           session_id: this.id,
           submission_id: submissionId,
-          text: input,
+          text: typeof input==="string"?input:undefined,
+          content,
+          limits:options.limits,
+          instruction_addendum:options.instructionAddendum,
+          output:options.output,
+          safety:await this.harness.safetyOptions(options),
         }),
       );
     } catch (e) {

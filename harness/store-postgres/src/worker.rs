@@ -599,10 +599,12 @@ async fn execute_inner(
                     Err(e) => return Err(e),
                 };
                 if let Some(next) = next {
-                    if let Err(error) = runtime
-                        .dispatch("turn/start", serde_json::to_value(next)?)
-                        .await
-                    {
+                    let content = store.submission_input(sid, &next.submission_id)?;
+                    let mut request = serde_json::to_value(next)?;
+                    if let Some(content) = content {
+                        request["content"] = serde_json::to_value(content)?;
+                    }
+                    if let Err(error) = runtime.dispatch("turn/start", request).await {
                         // A control can arrive after the peek. Acceptance has
                         // committed nothing: re-read the priority path next tick,
                         // without restarting this worker or changing task IDs.

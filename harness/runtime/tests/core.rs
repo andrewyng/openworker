@@ -88,6 +88,7 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
     db.save(&s, "session_created", json!({})).unwrap();
     assert!(db.get(&s.id).unwrap().turn.is_none());
     let context = Context {
+        content: None,
         instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
         output: OutputOptions {
             reasoning: true,
@@ -142,6 +143,7 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
             None,
             None,
             Context {
+                content: None,
                 output: OutputOptions::default(),
                 ..context
             }
@@ -601,6 +603,6 @@ fn safety_schema_upgrade_preserves_existing_sessions_and_fences_old_readers() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 8); // The old runtime accepts only 7.
+    assert_eq!(version, 9); // Older runtimes accept only 7/8.
     assert_eq!(store.events(&s.id, 0).unwrap().len(), 1);
 }

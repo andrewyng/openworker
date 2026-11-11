@@ -43,7 +43,8 @@
     "test:service": "npm run build && node --test test/service.test.mjs",
     "test:team-types": "npm run build && node --test --test-concurrency=1 test/team-types.test.mjs",
     "test:observability": "npm run build && node --test test/observability.test.mjs test/evaluation-export.test.mjs",
-    "test:observability:integration": "npm run build && node --test test/observability-live.test.mjs"
+    "test:observability:integration": "npm run build && node --test test/observability-live.test.mjs",
+    "test:attachments": "npm run build && node --test --test-concurrency=1 test/attachments.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

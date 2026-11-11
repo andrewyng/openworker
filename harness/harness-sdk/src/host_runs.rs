@@ -93,19 +93,31 @@ impl Host {
         let _run_admission = self.run_admission.lock().await;
         let sid = text(p, "session_id")?;
         let submission = text(p, "submission_id")?;
-        let context = openworker_runtime::turn_options::Context::from_request(p)?;
-        let context_digest = context.digest()?;
-        let raw_input = openworker_runtime::runtime::text(p, "text", 32000)?;
+        let mut context = openworker_runtime::turn_options::Context::from_request(p)?;
         let coworker = self.store.lock().unwrap().metadata(sid)?.coworker;
         let safety = p
             .get("safety")
             .filter(|v| !v.is_null())
             .map(|v| serde_json::from_value::<openworker_runtime::safety::Config>(v.clone()))
             .transpose()?;
-        let input = self
-            .runtime(&coworker)?
-            .check_user_input_with(sid, raw_input, safety.as_ref())
-            .await?;
+        let runtime = self.runtime(&coworker)?;
+        let input = if let Some(parts) = &context.content {
+            let parts = runtime
+                .prepare_input_content(sid, parts, safety.as_ref())
+                .await?;
+            let text = openworker_runtime::attachments::summary(&parts);
+            context.content = Some(parts);
+            text
+        } else {
+            runtime
+                .check_user_input_with(
+                    sid,
+                    openworker_runtime::runtime::text(p, "text", 32000)?,
+                    safety.as_ref(),
+                )
+                .await?
+        };
+        let context_digest = context.digest()?;
         if let Some(value) = p.get("limits").filter(|v| !v.is_null()) {
             let limits: openworker_runtime::budget::Limits = serde_json::from_value(value.clone())?;
             limits.validate()?;
@@ -164,7 +176,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"output":context.output}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"output":context.output,"content":context.content}),
             )
             .await;
         match started {
@@ -300,7 +312,7 @@ impl Host {
             .transpose()?
             .unwrap_or("message");
         let allowed: &[&str] = match kind {
-            "message" => &["type", "text"],
+            "message" => &["type", "text", "content"],
             "answer" => &["type", "text", "interaction_id", "target_session_id"],
             "approval" => &["type", "decision", "interaction_id", "target_session_id"],
             "steer" => bail!("Steering is not supported by this host"),
@@ -319,7 +331,7 @@ impl Host {
             "Safety overrides apply only to new turns"
         );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"output":p["output"]})).await;
+            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"output":p["output"],"content":input["content"]})).await;
         }
         ensure!(
             p.get("instruction_addendum").is_none_or(Value::is_null)

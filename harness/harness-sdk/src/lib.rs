@@ -526,3 +526,6 @@ pub use openworker_runtime::compliance_export::Sink as ComplianceSink;
 
 #[cfg(feature = "evaluations")]
 pub use openworker_observability::evaluations;
+
+mod attachments;
+pub use attachments::{Attachment, InputContent, UserInput};

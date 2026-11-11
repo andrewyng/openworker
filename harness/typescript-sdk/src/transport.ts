@@ -331,7 +331,7 @@ export class Transport {
             p.reject(
               new HarnessError(
                 "Remote",
-                diagnostic ? `Provider ${diagnostic.category}${diagnostic.httpStatus ? ` (HTTP ${diagnostic.httpStatus})` : ""}` : "Harness rejected the request; inspect its configuration or durable session state",
+                typeof frame.error === "object" && "attachment_inspection_unsupported" in frame.error && frame.error.attachment_inspection_unsupported === true ? "Binary attachments cannot be inspected by configured text-only input guardrails" : diagnostic ? `Provider ${diagnostic.category}${diagnostic.httpStatus ? ` (HTTP ${diagnostic.httpStatus})` : ""}` : "Harness rejected the request; inspect its configuration or durable session state",
                 diagnostic ? { providerError: diagnostic } : undefined,
               ),
             );

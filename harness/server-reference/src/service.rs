@@ -72,7 +72,8 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("POST", ["", "v1", "sessions", _, "artifacts"])
         | ("POST", ["", "v1", "sessions", _, "artifacts", _, "reconcile"])
         | ("PUT", ["", "v1", "sessions", _, "artifacts", _, "content"]) => Some(Action::Artifact),
-        ("POST", ["", "v1", "sessions", _, "turns"]) => Some(Action::Submit),
+        ("POST", ["", "v1", "sessions", _, "turns"])
+        | ("POST", ["", "v1", "sessions", _, "attachments", _]) => Some(Action::Submit),
         ("GET", ["", "v1", "sessions", _, "team"])
         | ("GET", ["", "v1", "sessions", _, "team", "messages"]) => Some(Action::Read),
         ("POST", ["", "v1", "sessions", _, "team"])
@@ -182,6 +183,10 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/sessions/:sid/runs/:id", get(run_result))
         .route("/v1/sessions/:sid", get(snapshot))
         .route("/v1/sessions/:sid/events", get(crate::http::events))
+        .route(
+            "/v1/sessions/:sid/attachments/:id",
+            post(crate::input_attachments::upload).layer(DefaultBodyLimit::max(1_048_576)),
+        )
         .route("/v1/sessions/:sid/turns", post(send))
         .route("/v1/sessions/:sid/turns/:id", get(result))
         .route("/v1/sessions/:sid/controls", post(control))
@@ -212,7 +217,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -300,7 +305,8 @@ async fn snapshot(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Send {
-    text: String,
+    text: Option<String>,
+    content: Option<Vec<openworker_runtime::attachments::Part>>,
     #[serde(default)]
     limits: Option<openworker_runtime::budget::Limits>,
 }
@@ -311,13 +317,29 @@ async fn send(
     Json(body): Json<Send>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let submission_id = key(&app, &headers, &format!("turn:{sid}"))?;
-    let text = crate::service_safety::inspect(&app, Some(&sid), &submission_id, &body.text).await?;
-    let r = app.store.submit_service_turn(TurnSubmission {
+    let (text, content) = match (body.text, body.content) {
+        (Some(text), None) => (
+            crate::service_safety::inspect(&app, Some(&sid), &submission_id, &text).await?,
+            None,
+        ),
+        (None, Some(parts)) => {
+            let parts = crate::input_attachments::inspect(&app, &sid, &parts).await?;
+            let text = openworker_runtime::attachments::summary(&parts);
+            (text, Some(parts))
+        }
+        _ => return Err(ApiError(SubmissionError::InvalidRequest.into())),
+    };
+    let request = TurnSubmission {
         session_id: sid.clone(),
         submission_id,
         text,
         limits: body.limits,
-    })?;
+    };
+    let r = if let Some(content) = content {
+        app.store.submit_service_input(request, content)?
+    } else {
+        app.store.submit_service_turn(request)?
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(

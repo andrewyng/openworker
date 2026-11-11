@@ -709,6 +709,59 @@ impl Session {
         let cursors = started["cursors"].as_object().cloned().unwrap_or_default();
         Ok(self.spawn(Some(submission), cursors))
     }
+    /// Submit an ordered user message, staging immutable attachments first.
+    pub async fn send_input(
+        &self,
+        input: crate::UserInput,
+        options: crate::TurnOptions,
+    ) -> Result<Run> {
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = options
+            .submission_id
+            .unwrap_or_else(|| openworker_runtime::id("sub"));
+        let value=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"content":parts},"limits":options.limits,"safety":options.safety,"instruction_addendum":options.instruction_addendum,"output":options.output})).await?;
+        Ok(Run {
+            session: self.clone(),
+            submission: id,
+            cursors: value["cursors"].as_object().cloned().unwrap_or_default(),
+        })
+    }
+    pub async fn run_input(&self, input: crate::UserInput) -> Result<RunResult> {
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = openworker_runtime::id("sub");
+        self.client
+            .request(
+                "run/start",
+                json!({"session_id":self.id(),"submission_id":id,"content":parts}),
+            )
+            .await?;
+        self.wait(Some(&id)).await
+    }
+    pub async fn run_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<crate::Attachment>,
+    ) -> Result<RunResult> {
+        let mut content = vec![crate::InputContent::text(text)];
+        content.extend(attachments.into_iter().map(crate::InputContent::from));
+        self.run_input(crate::UserInput::new(content)).await
+    }
+    pub async fn run_input_streamed(&self, input: crate::UserInput) -> Result<RunStream> {
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = openworker_runtime::id("sub");
+        let started = self
+            .client
+            .request(
+                "run/start",
+                json!({"session_id":self.id(),"submission_id":id,"content":parts}),
+            )
+            .await?;
+        Ok(self.spawn(
+            Some(id),
+            started["cursors"].as_object().cloned().unwrap_or_default(),
+        ))
+    }
+
     /// Keep waiting after responding to interruptions (or after reattaching).
     pub async fn resume(&self) -> Result<RunResult> {
         self.wait(None).await

@@ -19,6 +19,43 @@ impl PostgresStore {
         request.validate()?;
         self.call(move |db| db.submit_turn_with_mode(request, true))
     }
+    pub fn submit_service_input(
+        &self,
+        request: crate::TurnSubmission,
+        content: Vec<openworker_runtime::attachments::Part>,
+    ) -> Result<crate::SubmissionReceipt> {
+        self.call(move |db| db.submit_turn_with_input(request, true, Some(content)))
+    }
+    /// References only; scoped read, never attachment bytes.
+    pub fn submission_input(
+        &self,
+        sid: &str,
+        key: &str,
+    ) -> Result<Option<Vec<openworker_runtime::attachments::Part>>> {
+        let (sid, key) = (sid.to_owned(), key.to_owned());
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            auth::guard(
+                &mut tx,
+                db.auth.as_ref(),
+                auth::Action::Read,
+                Some(&sid),
+                None,
+            )?;
+            let value = tx
+                .query_opt(
+                    "SELECT input_content FROM submissions WHERE session_id=$1 AND id=$2",
+                    &[&sid, &key],
+                )?
+                .ok_or(SubmissionError::NotFound)?
+                .get::<_, Option<Value>>(0);
+            tx.commit()?;
+            value
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(Into::into)
+        })
+    }
     /// Trusted installation/startup only. Never changes an established binding.
     pub fn bind_service(&self, id: &str, namespace: &str) -> Result<()> {
         ensure!(self.auth.is_none(), auth::Error::Forbidden);

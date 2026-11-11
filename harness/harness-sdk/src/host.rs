@@ -1131,6 +1131,13 @@ impl Host {
                 c.insert("telemetry_export".into(), json!(cfg!(feature = "otlp")));
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("turn_context".into(), json!(true));
+                c.insert(
+                    "attachments".into(),
+                    json!(
+                        cfg!(feature = "attachments")
+                            && self.store.lock().unwrap().supports_input_attachments()
+                    ),
+                );
                 c.insert("initial_history".into(), json!(true));
                 c.insert("builtin_tools".into(), json!(true));
                 c.insert("per_call_output_limit".into(), json!(true));
