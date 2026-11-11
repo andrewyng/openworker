@@ -14,6 +14,8 @@ mod install;
 mod platform_artifact;
 #[path = "deployment_cloud_state.rs"]
 mod state;
+#[path = "deployment_up_aws_bootstrap.rs"]
+mod up_bootstrap;
 pub(super) use install::{
     database_url, enable_strict_network, install_scope, installation_intent, verify_installation,
     verify_network, Binding,
@@ -22,6 +24,19 @@ use state::{Journal, Provider, Stack};
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Explicit, digest-bound identity-stack bootstrap. Normal deployment does not grant IAM.
+    Bootstrap {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        approve_identities: bool,
+    },
     PlatformArtifact {
         #[arg(long)]
         plan: PathBuf,
@@ -516,7 +531,7 @@ impl Provider for Aws {
     }
     async fn guard_health(&mut self) -> Result<()> {
         ensure!(
-            self.p.infrastructure.as_ref().unwrap().guard_code.sha256 == guard::archive_sha(),
+            guard::compatible(&self.p),
             "Guard must match this CLI's locally qualified bundled package"
         );
         let Target::Aws { account, region } = &self.p.target else {
@@ -699,6 +714,17 @@ fn fresh_preflight(path: &Path, p: &Plan, j: &Journal) -> Result<()> {
     Ok(())
 }
 pub(super) async fn run(command: &Command) -> Result<()> {
+    if let Command::Bootstrap {
+        plan,
+        state,
+        profile,
+        accept_plan,
+        approve_identities,
+    } = command
+    {
+        return up_bootstrap::bootstrap(plan, state, profile, accept_plan, *approve_identities)
+            .await;
+    }
     if let Command::PlatformArtifact {
         plan,
         out,
@@ -744,9 +770,7 @@ pub(super) async fn run(command: &Command) -> Result<()> {
     if let Command::Prepare { plan, out } = command {
         let (p, _) = inspect(plan)?;
         ensure!(
-            p.infrastructure
-                .as_ref()
-                .is_some_and(|i| i.guard_code.sha256 == guard::archive_sha()),
+            guard::compatible(&p),
             "Pin this CLI's packaged guard before preparing lifecycle execution"
         );
         let j = state::init(plan, out)?;

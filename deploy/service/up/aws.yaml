@@ -1,0 +1,18 @@
+apiVersion: ows/v1alpha1
+name: my-agents
+cloud:
+  provider: aws
+  accountId: "123456789012"
+  region: us-west-2
+  profile: default
+nodes:
+  count: 2
+  requirements:
+    cpu: {min: 2, max: 4}
+    memoryGiB: {min: 8, max: 16}
+budget:
+  limitUSD: 1000
+# Omit trial to keep the deployment running. For disposable test data only:
+# trial: {expiresAfterHours: 6, deleteData: true}
+# models:
+#   anthropic: {env: ANTHROPIC_API_KEY}

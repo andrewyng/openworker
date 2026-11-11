@@ -9,7 +9,10 @@ use tokio::{
 const OWNER: &str = "openworker.io/installer-id";
 #[path = "deployment_cluster_platform.rs"]
 mod platform;
-const CHART_SHA: &str = "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33";
+const CHART_PINS: &[&str] = &[
+    "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33", // 0.1.3
+    "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a", // 0.1.7 official OCI archive
+];
 #[derive(Subcommand)]
 pub enum Command {
     Platform {
@@ -162,7 +165,16 @@ struct Client<'a> {
     c: &'a Config,
 }
 pub(super) async fn exec(bin: &Path, a: &[String], input: Option<Vec<u8>>) -> Result<Vec<u8>> {
+    exec_with_env(bin, a, input, &BTreeMap::new()).await
+}
+pub(super) async fn exec_with_env(
+    bin: &Path,
+    a: &[String],
+    input: Option<Vec<u8>>,
+    env: &BTreeMap<String, String>,
+) -> Result<Vec<u8>> {
     let mut child = Process::new(bin)
+        .envs(env)
         .args(a)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -185,6 +197,7 @@ pub(super) async fn exec(bin: &Path, a: &[String], input: Option<Vec<u8>>) -> Re
             bytes(stderr, 65536),
             async move {
                 if let Some(v) = input {
+                    let v = zeroize::Zeroizing::new(v);
                     stdin.write_all(&v).await?;
                 }
                 drop(stdin);
@@ -436,8 +449,8 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
     {
         let sha = hash_path(archive)?;
         ensure!(
-            sha == CHART_SHA,
-            "OpenShell archive differs from qualified 0.1.3 pin"
+            CHART_PINS.contains(&sha.as_str()),
+            "OpenShell archive differs from reviewed 0.1.3/0.1.7 pins"
         );
         let v = read_json(values_file)?;
         ensure!(
@@ -1280,7 +1293,7 @@ pub(super) async fn verify_teardown(
         "Installation belongs to a different cloud lifecycle/profile"
     );
     ensure!(
-        read_json(&p.config.kubeconfig)? == *kubeconfig,
+        super::up::original_kubeconfig(&read_json(&p.config.kubeconfig)?)? == *kubeconfig,
         "Installation cluster endpoint/CA/profile changed"
     );
     let client = Client { c: &p.config };

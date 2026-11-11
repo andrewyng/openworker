@@ -20,7 +20,23 @@ pub(crate) struct Inputs {
     pub(crate) admin_group_object_ids: Vec<String>,
     pub(crate) control_resource_group: String,
     pub(crate) guard_image: String,
+    /// Optional private ACR in the independent control group. Pulls use the
+    /// cleanup identity, never a registry password or workload-owned registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) guard_registry_resource_id: Option<String>,
+    /// Reuse a reviewed environment in the independent control group. It stays
+    /// customer-owned and is never provisioned or deleted by this trial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) guard_environment_resource_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) management_access: Option<ManagementAccess>,
     pub(crate) postgres_password: SecretReference,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ManagementAccess {
+    pub(crate) operator_ipv4: std::net::Ipv4Addr,
+    pub(crate) ubuntu_image_version: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -37,6 +53,17 @@ fn identifier(s: &str) -> bool {
         && s.len() <= 63
         && s.bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+// Bounded reference choices, not an OpenShell hardware dependency. Eligibility
+// and regional/family quota must still be observed in the target subscription.
+pub(crate) fn node_sku(size: &str) -> Option<(&'static str, u64)> {
+    match size {
+        "Standard_D4s_v5" => Some(("standardDSv5Family", 4)),
+        "Standard_D8s_v5" => Some(("standardDSv5Family", 8)),
+        "Standard_D4as_v7" => Some(("StandardDasv7Family", 4)),
+        "Standard_D2as_v7" => Some(("StandardDasv7Family", 2)),
+        _ => None,
+    }
 }
 impl Inputs {
     pub(crate) fn validate(&self, p: &Plan) -> Result<()> {
@@ -61,7 +88,7 @@ impl Inputs {
             "Pin an exact Kubernetes 1.x.y version; regional availability requires live preflight"
         );
         ensure!(
-            ["Standard_D4s_v5", "Standard_D8s_v5"].contains(&self.node_vm_size.as_str()),
+            node_sku(&self.node_vm_size).is_some_and(|(_, cores)| cores >= 4),
             "Use an explicitly bounded AMD64 node SKU; OpenShell compatibility remains a live gate"
         );
         let key: Vec<_> = self.ssh_public_key.split_whitespace().collect();
@@ -137,6 +164,36 @@ impl Inputs {
                 .contains(&format!("{}.azurecr.io", names(p).registry)),
             "Cleanup image must survive deletion of the workload registry"
         );
+        if let Some(registry_id) = &self.guard_registry_resource_id {
+            let prefix = format!("/subscriptions/{subscription}/resourceGroups/{}/providers/Microsoft.ContainerRegistry/registries/", self.control_resource_group);
+            let name = registry_id
+                .strip_prefix(&prefix)
+                .context("Cleanup registry must be in the exact independent control group")?;
+            ensure!(
+                (5..=50).contains(&name.len())
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    && self.guard_image.starts_with(&format!("{name}.azurecr.io/")),
+                "Cleanup image and registry identity must match"
+            );
+        }
+        if let Some(environment) = &self.guard_environment_resource_id {
+            let prefix = format!("/subscriptions/{subscription}/resourceGroups/{}/providers/Microsoft.App/managedEnvironments/", self.control_resource_group);
+            ensure!(
+                environment.strip_prefix(&prefix).is_some_and(identifier),
+                "Cleanup environment must be in the exact independent control group"
+            );
+        }
+        if let Some(access) = &self.management_access {
+            ensure!(self.node_vm_size == "Standard_D4as_v7"
+                && !access.operator_ipv4.is_unspecified() && !access.operator_ipv4.is_loopback()
+                && !access.operator_ipv4.is_multicast()
+                && access.ubuntu_image_version.split('.').count() == 3
+                && access.ubuntu_image_version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+                && access.ubuntu_image_version.split('.').all(|s| !s.is_empty()),
+                "Management access requires bounded Dasv7 nodes, one operator IPv4, and a pinned Ubuntu image version");
+        }
         Ok(())
     }
 }
@@ -220,21 +277,58 @@ fn assignment_resource(
 }
 /// Exact top-level workload IDs in dependency-safe deletion order. Nested children
 /// disappear with parents; the customer RG and AKS-generated node RG are not owned.
+/// Delete the VNet before its private DNS zones: Azure removes its virtual-network
+/// links on VNet deletion, whereas zone deletion refuses surviving links.
 pub(crate) fn inventory(p: &Plan) -> Vec<Value> {
     let n = names(p);
-    [
+    let mut resources: Vec<Value> = [
       ("cluster","Microsoft.ContainerService/managedClusters",format!("{}-aks",n.prefix),"2024-10-01","/systemData/createdAt"),
       ("foundation","Microsoft.DBforPostgreSQL/flexibleServers",format!("{}-pg",n.prefix),"2024-08-01","/systemData/createdAt"),
-      ("foundation","Microsoft.Network/privateEndpoints",format!("{}-blob",n.prefix),"2024-05-01","/systemData/createdAt"),
+      ("foundation","Microsoft.Network/privateEndpoints",format!("{}-blob",n.prefix),"2024-05-01","/properties/resourceGuid"),
       ("foundation","Microsoft.Storage/storageAccounts",n.storage,"2023-05-01","/properties/creationTime"),
       ("foundation","Microsoft.ContainerRegistry/registries",n.registry,"2023-07-01","/properties/creationDate"),
-      ("foundation","Microsoft.Network/privateDnsZones",format!("{}.postgres.database.azure.com",n.prefix),"2020-06-01","/systemData/createdAt"),
-      ("foundation","Microsoft.Network/privateDnsZones","privatelink.blob.core.windows.net".into(),"2020-06-01","/systemData/createdAt"),
       ("foundation","Microsoft.Network/virtualNetworks",format!("{}-vnet",n.prefix),"2024-05-01","/properties/resourceGuid"),
+      ("foundation","Microsoft.Network/privateDnsZones",format!("{}.postgres.database.azure.com",n.prefix),"2020-06-01","/properties/internalId"),
+      ("foundation","Microsoft.Network/privateDnsZones","privatelink.blob.core.windows.net".into(),"2020-06-01","/properties/internalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-artifacts",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-kubelet",n.prefix),"2023-01-31","/properties/principalId"),
       ("foundation","Microsoft.ManagedIdentity/userAssignedIdentities",format!("{}-cluster",n.prefix),"2023-01-31","/properties/principalId"),
-    ].into_iter().map(|(stage,kind,name,api,pointer)|json!({"stage":stage,"id":id(p,kind,&name),"apiVersion":api,"incarnationPointer":pointer})).collect()
+    ].into_iter().map(|(stage,kind,name,api,pointer)|json!({"stage":stage,"id":id(p,kind,&name),"apiVersion":api,"incarnationPointer":pointer})).collect();
+    if p.azure_infrastructure
+        .as_ref()
+        .unwrap()
+        .management_access
+        .is_some()
+    {
+        let access = [
+            (
+                "Microsoft.Compute/virtualMachines",
+                "management",
+                "2024-07-01",
+                "/properties/vmId",
+            ),
+            (
+                "Microsoft.Network/networkInterfaces",
+                "management-nic",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+            (
+                "Microsoft.Network/publicIPAddresses",
+                "management-ip",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+            (
+                "Microsoft.Network/networkSecurityGroups",
+                "management-nsg",
+                "2024-05-01",
+                "/properties/resourceGuid",
+            ),
+        ];
+        resources.splice(0..0, access.into_iter().map(|(kind, suffix, api, pointer)| json!({"stage":"foundation","id":id(p,kind,&format!("{}-{suffix}",n.prefix)),"apiVersion":api,"incarnationPointer":pointer})));
+    }
+    resources
 }
 pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     let c = p
@@ -347,6 +441,60 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
     pg["sku"] = json!({"name":"Standard_B1ms","tier":"Burstable"});
     pg["dependsOn"] = json!([vnet, pg_zone]);
     foundation.push(pg);
+    if let Some(access) = &c.management_access {
+        foundation[0]["properties"]["subnets"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"management","properties":{"addressPrefix":"10.72.6.0/24"}}));
+        let nic = id(
+            p,
+            "Microsoft.Network/networkInterfaces",
+            &format!("{}-management-nic", n.prefix),
+        );
+        let pip = id(
+            p,
+            "Microsoft.Network/publicIPAddresses",
+            &format!("{}-management-ip", n.prefix),
+        );
+        let nsg = id(
+            p,
+            "Microsoft.Network/networkSecurityGroups",
+            &format!("{}-management-nsg", n.prefix),
+        );
+        let mut ip = resource(
+            p,
+            "Microsoft.Network/publicIPAddresses",
+            "2024-05-01",
+            &format!("{}-management-ip", n.prefix),
+            json!({"publicIPAllocationMethod":"Static","publicIPAddressVersion":"IPv4"}),
+        );
+        ip["sku"] = json!({"name":"Standard"});
+        foundation.push(ip);
+        foundation.push(resource(p,"Microsoft.Network/networkSecurityGroups","2024-05-01",&format!("{}-management-nsg",n.prefix),json!({"securityRules":[{"name":"operator-ssh","properties":{"priority":100,"protocol":"Tcp","access":"Allow","direction":"Inbound","sourceAddressPrefix":format!("{}/32",access.operator_ipv4),"sourcePortRange":"*","destinationAddressPrefix":"*","destinationPortRange":"22"}}]})));
+        let mut iface = resource(
+            p,
+            "Microsoft.Network/networkInterfaces",
+            "2024-05-01",
+            &format!("{}-management-nic", n.prefix),
+            json!({"networkSecurityGroup":{"id":nsg},"ipConfigurations":[{"name":"primary","properties":{"privateIPAllocationMethod":"Dynamic","subnet":{"id":format!("{vnet}/subnets/management")},"publicIPAddress":{"id":pip}}}]}),
+        );
+        iface["dependsOn"] = json!([vnet, nsg, pip]);
+        foundation.push(iface);
+        let mut vm = resource(
+            p,
+            "Microsoft.Compute/virtualMachines",
+            "2024-07-01",
+            &format!("{}-management", n.prefix),
+            json!({
+                "hardwareProfile":{"vmSize":"Standard_D2as_v7"},
+                "storageProfile":{"diskControllerType":"NVMe","imageReference":{"publisher":"Canonical","offer":"ubuntu-24_04-lts","sku":"server","version":access.ubuntu_image_version},"osDisk":{"createOption":"FromImage","diskSizeGB":32,"deleteOption":"Delete","managedDisk":{"storageAccountType":"StandardSSD_LRS"}}},
+                "osProfile":{"computerName":"ow-management","adminUsername":"owsadmin","linuxConfiguration":{"disablePasswordAuthentication":true,"ssh":{"publicKeys":[{"path":"/home/owsadmin/.ssh/authorized_keys","keyData":c.ssh_public_key}]}}},
+                "networkProfile":{"networkInterfaces":[{"id":nic,"properties":{"primary":true,"deleteOption":"Detach"}}]}
+            }),
+        );
+        vm["dependsOn"] = json!([nic]);
+        foundation.push(vm);
+    }
     let mut ft = template(foundation, json!({}));
     ft["parameters"]["postgresPassword"] = json!({"type":"secureString"});
     let mut aks = resource(
@@ -354,8 +502,12 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         "Microsoft.ContainerService/managedClusters",
         "2024-10-01",
         &format!("{}-aks", n.prefix),
-        json!({"dnsPrefix":n.prefix,"kubernetesVersion":c.kubernetes_version,"enableRBAC":true,"disableLocalAccounts":true,"aadProfile":{"managed":true,"enableAzureRBAC":false,"adminGroupObjectIDs":c.admin_group_object_ids,"tenantID":tenant},"apiServerAccessProfile":{"enablePrivateCluster":true,"enablePrivateClusterPublicFQDN":false,"privateDNSZone":"System"},"oidcIssuerProfile":{"enabled":true},"securityProfile":{"workloadIdentity":{"enabled":true}},"linuxProfile":{"adminUsername":"owsadmin","ssh":{"publicKeys":[{"keyData":c.ssh_public_key}]}},"agentPoolProfiles":[{"name":"system","count":2,"vmSize":c.node_vm_size,"osDiskSizeGB":64,"osType":"Linux","osSKU":"Ubuntu","mode":"System","type":"VirtualMachineScaleSets","enableAutoScaling":false,"vnetSubnetID":aks_subnet}],"networkProfile":{"networkPlugin":"azure","networkPolicy":"azure","serviceCidr":"10.73.0.0/24","dnsServiceIP":"10.73.0.10","loadBalancerSku":"standard","outboundType":"loadBalancer"},"identityProfile":{"kubeletidentity":{"resourceId":kubelet,"clientId":format!("[reference('{kubelet}', '2023-01-31').clientId]"),"objectId":principal(&kubelet)}}}),
+        json!({"dnsPrefix":n.prefix,"kubernetesVersion":c.kubernetes_version,"enableRBAC":true,"disableLocalAccounts":true,"aadProfile":{"managed":true,"enableAzureRBAC":false,"adminGroupObjectIDs":c.admin_group_object_ids,"tenantID":tenant},"apiServerAccessProfile":{"enablePrivateCluster":true,"enablePrivateClusterPublicFQDN":false,"privateDNSZone":"System"},"oidcIssuerProfile":{"enabled":true},"securityProfile":{"workloadIdentity":{"enabled":true}},"linuxProfile":{"adminUsername":"owsadmin","ssh":{"publicKeys":[{"keyData":c.ssh_public_key}]}},"agentPoolProfiles":[{"name":"system","count":p.topology.node_count,"vmSize":c.node_vm_size,"osDiskSizeGB":64,"osType":"Linux","osSKU":"Ubuntu","mode":"System","type":"VirtualMachineScaleSets","enableAutoScaling":false,"vnetSubnetID":aks_subnet}],"networkProfile":{"networkPlugin":"azure","networkPolicy":"azure","serviceCidr":"10.73.0.0/24","dnsServiceIP":"10.73.0.10","loadBalancerSku":"standard","outboundType":"loadBalancer"},"identityProfile":{"kubeletidentity":{"resourceId":kubelet,"clientId":format!("[reference('{kubelet}', '2023-01-31').clientId]"),"objectId":principal(&kubelet)}}}),
     );
+    // This bounded, expiring trial has no quota/budget for upgrade surge nodes.
+    // Long-lived installations must choose their own patch/upgrade policy.
+    aks["properties"]["autoUpgradeProfile"] =
+        json!({"upgradeChannel":"none","nodeOSUpgradeChannel":"None"});
     aks["identity"] = json!({"type":"UserAssigned","userAssignedIdentities":{cluster.clone():{}}});
     aks["sku"] = json!({"name":"Base","tier":"Free"});
     let ct = template(
@@ -427,6 +579,7 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         }
     }
     for action in [
+        "Microsoft.Network/networkInterfaces/join/action",
         "Microsoft.Network/virtualNetworks/subnets/read",
         "Microsoft.Network/virtualNetworks/subnets/join/action",
         "Microsoft.Network/privateDnsZones/virtualNetworkLinks/read",
@@ -453,6 +606,14 @@ pub(crate) fn artifacts(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         assignment_actions.push(json!({"scope":resource_id,"actions":["Microsoft.ManagedIdentity/userAssignedIdentities/assign/action"],"recipientObjectId":p.azure_bootstrap.as_ref().unwrap().setup_object_id}));
     }
     let review=format!("# Azure ARM graph (experimental, live-unqualified)\n\nTarget `{subscription}` / `{location}`. Workload scope `{}`. Independent control scope `{}`. Both groups already exist and remain customer owned.\n\nOrder: bootstrap independent control and verify heartbeat; submit foundation; have a bootstrap administrator apply resource-specific bindings; submit cluster; have administrator apply federation. Normal executor role has no RBAC writes. Exported identity-assignment and Key Vault deploy grants are separate customer-reviewed prerequisites.\n\nTwo bounded AMD64 Ubuntu nodes; private AKS management API, PostgreSQL and Blob. ACR Basic remains authenticated public HTTPS (no admin credentials). Existing private network access and DNS are needed by the installer. Fixed network ranges must not overlap the customer's network. Admin group memberships/Entra privileges are customer owned.\n\nThe PostgreSQL secret is a pinned Key Vault reference, never plaintext. Existing vault requires template-deployment enabled and exact vault `Microsoft.KeyVault/vaults/deploy/action` for the deployment caller. ARM resolves the secret; no value is exported.\n\nResource tags and names are bookkeeping, not ownership authority. Cleanup uses exact IDs + persisted nonce and immutable creation receipts; missing receipts stop deletion. The AKS provider manages its node RG; we never delete arbitrary `MC_*` groups. No customer RG delete, wildcard role assignment, account key/SAS, Entra app creation or broad subscription grant is exported.\n\nThis export is not a production readiness certificate. Region/version/SKU/quota/price, Azure Policy/locks/effective IAM, actual API schema validation, private routes, cleanup and AKS/OpenShell runtime compatibility need a separately authorized live trial. No paid resource is created by export. Budget alerts/TTL are not a hard cost cap.\n",scope(p),control_scope(p));
+    let review = if p.auto_expire.is_some() || p.topology.node_count != 2 {
+        review.replace(
+            "Two bounded AMD64 Ubuntu nodes;",
+            &format!("{} fixed AMD64 Ubuntu nodes;", p.topology.node_count),
+        )
+    } else {
+        review
+    };
     Ok(BTreeMap::from([
         ("azure-foundation.arm.json".into(), json_bytes(&ft)?),
         ("azure-cluster.arm.json".into(), json_bytes(&ct)?),

@@ -6,6 +6,24 @@ use base64::Engine;
 use reqwest::Method;
 #[derive(Subcommand)]
 pub enum Installation {
+    /// Explicit digest-bound setup/control grants for the single-command flow.
+    Bootstrap {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long, value_enum)]
+        phase: super::up_bootstrap::UpPhase,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        approve_identities: bool,
+    },
+    /// Read owned infrastructure material for the single-command installer; no credentials.
+    Material {
+        #[arg(long)]
+        state: PathBuf,
+    },
     /// Observe owned AKS and export a reviewed private Helm handoff; no Kubernetes writes.
     Prepare {
         #[arg(long)]
@@ -221,17 +239,23 @@ pub(crate) async fn verify(
         values_path.parent().unwrap(),
         values_path.file_name().unwrap().to_str().unwrap(),
     )?;
+    let (local_plan, _, _) = super::recovery::up_local(&binding.state)?;
+    let actual: Value = serde_json::from_slice(&kube_bytes)?;
+    let (actual, original_bytes) = if local_plan.auto_expire.is_some() {
+        let original = super::super::up::original_kubeconfig(&actual)?;
+        let bytes = json_bytes(&original)?;
+        (original, bytes)
+    } else {
+        (actual, kube_bytes)
+    };
     ensure!(
         context == binding.context
-            && hash(&kube_bytes) == binding.kubeconfig_hash
+            && hash(&original_bytes) == binding.kubeconfig_hash
             && hash(&value_bytes) == binding.values_hash,
         "Azure installation inputs changed"
     );
     let (p, _, expected, identity) = observed(&binding.state, provisioning).await?;
-    let actual: Value = serde_json::from_slice(&super::super::read_file(
-        path.parent().unwrap(),
-        path.file_name().unwrap().to_str().unwrap(),
-    )?)?;
+
     ensure!(
         context == graph::names(&p).prefix && actual == expected,
         "Kubeconfig differs from original AKS endpoint/CA/Entra plugin"
@@ -259,9 +283,9 @@ pub(crate) fn database(binding: &Binding, url: &str) -> Result<()> {
             && u.path() == "/postgres"
             && u.query_pairs().count() == 1
             && u.query_pairs()
-                .all(|(k, v)| k == "sslmode" && v == "verify-full")
+                .all(|(k, v)| k == "sslmode" && v == "require")
             && u.fragment().is_none(),
-        "Database must use original PostgreSQL host/database and verify-full TLS"
+        "Database must use original PostgreSQL host/database and sslmode=require with the harness verified TLS connector"
     );
     Ok(())
 }
@@ -285,6 +309,71 @@ pub(crate) fn storage(classes: &Value) -> Result<()> {
 }
 pub(crate) async fn install(command: &Installation) -> Result<()> {
     match command {
+        Installation::Bootstrap {
+            plan,
+            state,
+            phase,
+            accept_plan,
+            approve_identities,
+        } => super::up_bootstrap::run(plan, state, *phase, accept_plan, *approve_identities).await,
+        Installation::Material { state } => {
+            let (p, mut api, cluster, identity) = observed(state, false).await?;
+            let names = graph::names(&p);
+            let registry_id = graph::id(
+                &p,
+                "Microsoft.ContainerRegistry/registries",
+                &names.registry,
+            );
+            let registry = api
+                .arm(
+                    Method::GET,
+                    &registry_id,
+                    "2023-07-01",
+                    None,
+                    &uuid::Uuid::new_v4().to_string(),
+                )
+                .await?;
+            ensure!(registry.status == 200, "Owned registry is unavailable");
+            let registry = registry.body.context("Registry observation missing")?;
+            ensure!(
+                registry["id"]
+                    .as_str()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&registry_id))
+                    && registry["properties"]["loginServer"]
+                        == format!("{}.azurecr.io", names.registry),
+                "Owned registry identity mismatch"
+            );
+            let management_ip = if p
+                .azure_infrastructure
+                .as_ref()
+                .unwrap()
+                .management_access
+                .is_some()
+            {
+                let id = graph::id(
+                    &p,
+                    "Microsoft.Network/publicIPAddresses",
+                    &format!("{}-management-ip", names.prefix),
+                );
+                let r = api
+                    .arm(
+                        Method::GET,
+                        &id,
+                        "2024-05-01",
+                        None,
+                        &uuid::Uuid::new_v4().to_string(),
+                    )
+                    .await?;
+                ensure!(r.status == 200, "Owned management IP missing");
+                r.body.context("Management IP observation missing")?["properties"]["ipAddress"]
+                    .clone()
+            } else {
+                Value::Null
+            };
+            crate::output(
+                json!({"deploymentId":p.deployment_id,"cluster":cluster,"managementIp":management_ip,"artifactIdentity":identity,"registry":{"id":registry_id,"name":names.registry,"loginServer":registry["properties"]["loginServer"],"createdAt":registry["properties"]["creationDate"]},"artifactAccount":names.storage,"postgresHost":format!("{}-pg.postgres.database.azure.com",names.prefix),"target":p.target,"credentialsIncluded":false}),
+            )
+        }
         Installation::Prepare { state, config, out } => {
             outside(out, state)?;
             let mut c: Value = serde_json::from_slice(&super::super::read_file(
@@ -399,7 +488,7 @@ not contain admin certificates, bearer tokens, database passwords or model keys.
 
 The installer needs a private network/DNS path to AKS, `kubelogin` with Azure CLI
 login in the pinned tenant, `kubectl`, Helm, a reviewed platform manifest and the
-pinned OpenShell 0.1.3 archive/images. Installing OpenShell/Agent Sandbox requires
+reviewed, pinned OpenShell archive/images (0.1.3 or 0.1.7). Installing OpenShell/Agent Sandbox requires
 reviewed cluster-scoped Kubernetes rights; namespace RBAC alone is insufficient.
 No provider/plugin/component is installed implicitly by preparing this handoff.
 
@@ -410,7 +499,9 @@ checks live ARM/control ownership and a recent external heartbeat before new
 mutations; retries retain existing Helm unknown-outcome safeguards.
 
 Use `secrets --input /private/secrets.json`: database URL must target the original
-private PostgreSQL host and postgres database, user owsadmin and verify-full TLS;
+private PostgreSQL host and postgres database, user owsadmin and sslmode=require.
+The Rust TLS connector verifies the certificate chain and hostname; it never disables
+verification. The postgres crate does not parse libpq’s verify-full value;
 include its trusted CA in pg-ca.crt. API TLS/private key and model keys also travel
 through private files/stdin to named Kubernetes Secrets. No secret belongs in
 values, process arguments, the immutable deployment bundle or control Blob.
@@ -502,10 +593,14 @@ mod tests {
             kubeconfig_hash: "".into(),
             context: "".into(),
         };
-        let url=format!("postgres://owsadmin:fixture-secret@{}-pg.postgres.database.azure.com/postgres?sslmode=verify-full",graph::names(&p).prefix);
+        let url=format!("postgres://owsadmin:fixture-secret@{}-pg.postgres.database.azure.com/postgres?sslmode=require",graph::names(&p).prefix);
         database(&binding, &url).unwrap();
+        // An installer-accepted URL must also parse in the runtime's actual driver.
+        let parsed = url.parse::<postgres::Config>().unwrap();
+        assert_eq!(parsed.get_ssl_mode(), postgres::config::SslMode::Require);
         for bad in [
-            url.replace("verify-full", "disable"),
+            url.replace("require", "disable"),
+            url.replace("require", "verify-full"),
             url.replace(".postgres.database.azure.com", ".attacker.invalid"),
             format!("{url}&sslmode=disable"),
             url.replace("owsadmin:", "other:"),

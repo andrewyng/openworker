@@ -55,6 +55,13 @@ pub enum Cleanup {
         #[arg(long)]
         state: PathBuf,
     },
+    /// Pin a reviewed replacement image before an administrator updates the same job.
+    PrepareUpgrade {
+        #[command(flatten)]
+        remote: Remote,
+        #[arg(long)]
+        image: String,
+    },
     /// One scheduled iteration outside AKS. Uses Container Apps managed identity.
     Tick {
         #[arg(long)]
@@ -109,6 +116,19 @@ struct Owned {
     delete_request: Option<String>,
     delete_accepted: bool,
     operation_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rejected_dns_deletes: Vec<RejectedDnsDelete>,
+}
+// A bounded, provider-confirmed no-effect response is different from an unknown
+// mutation. Keep every original request; old ambiguous receipts stay parked.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RejectedDnsDelete {
+    request_id: String,
+    observed_at_unix: u64,
+    retry_after_unix: u64,
+    status: u16,
+    code: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -120,7 +140,9 @@ struct GuardReceipt {
 impl GuardReceipt {
     fn validate(&self) -> Result<()> {
         ensure!(
-            chrono::DateTime::parse_from_rfc3339(&self.created_at).is_ok(),
+            chrono::DateTime::parse_from_rfc3339(&self.created_at).is_ok()
+                || chrono::NaiveDateTime::parse_from_str(&self.created_at, "%Y-%m-%dT%H:%M:%S%.f")
+                    .is_ok(),
             "Invalid controller creation receipt"
         );
         for value in [&self.principal_id, &self.client_id] {
@@ -159,6 +181,8 @@ pub(super) struct State {
     heartbeat_unix: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     guard: Option<GuardReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    image_upgrade: Option<ImageUpgrade>,
     destroy_requested: bool,
     completed_unix: Option<u64>,
     job_stop: Option<Stop>,
@@ -166,6 +190,39 @@ pub(super) struct State {
     installation_digest: Option<String>,
     #[serde(default)]
     installation_closed: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImageUpgrade {
+    previous_image: String,
+    image: String,
+    request_id: String,
+    prepared_at_unix: u64,
+    controller: GuardReceipt,
+}
+fn controller_image(s: &State) -> &str {
+    s.image_upgrade
+        .as_ref()
+        .map(|u| u.image.as_str())
+        .unwrap_or(&s.plan.azure_infrastructure.as_ref().unwrap().guard_image)
+}
+fn validate_image_upgrade(s: &State, image: &str) -> Result<()> {
+    let original = &s.plan.azure_infrastructure.as_ref().unwrap().guard_image;
+    let (repo, _) = original
+        .split_once("@sha256:")
+        .context("Original image is not pinned")?;
+    let (next, digest) = image
+        .split_once("@sha256:")
+        .context("Replacement image must be pinned")?;
+    ensure!(
+        next == repo
+            && digest.len() == 64
+            && digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "Replacement must be a SHA256 digest in the original cleanup repository"
+    );
+    Ok(())
 }
 fn digest(p: &Plan) -> Result<String> {
     let files = super::super::artifacts(p)?;
@@ -185,6 +242,20 @@ fn job_id(p: &Plan) -> String {
         graph::control_scope(p),
         graph::names(p).prefix
     )
+}
+fn environment_id(p: &Plan) -> String {
+    p.azure_infrastructure
+        .as_ref()
+        .unwrap()
+        .guard_environment_resource_id
+        .clone()
+        .unwrap_or_else(|| {
+            format!(
+                "{}/providers/Microsoft.App/managedEnvironments/{}-expiry",
+                graph::control_scope(p),
+                graph::names(p).prefix
+            )
+        })
 }
 fn arm_deployment(s: &State, stage: Stage) -> String {
     format!(
@@ -232,6 +303,18 @@ impl State {
         if let Some(receipt) = &self.guard {
             receipt.validate()?;
         }
+        if let Some(u) = &self.image_upgrade {
+            validate_image_upgrade(self, &u.image)?;
+            ensure!(
+                u.previous_image == self.plan.azure_infrastructure.as_ref().unwrap().guard_image
+                    && self.guard.as_ref() == Some(&u.controller)
+                    && uuid::Uuid::parse_str(&u.request_id).is_ok_and(|id| !id.is_nil())
+                    && u.prepared_at_unix >= self.plan.created_at_unix
+                    && u.prepared_at_unix < self.plan.expires_at_unix,
+                "Invalid pinned controller upgrade receipt"
+            );
+        }
+
         ensure!(
             self.heartbeat_unix.is_none() || self.guard.is_some(),
             "Heartbeat requires an installer-pinned controller receipt"
@@ -275,6 +358,23 @@ impl State {
                     "Invalid deletion request UUID"
                 );
             }
+            let mut rejected = std::collections::BTreeSet::new();
+            ensure!(
+                r.rejected_dns_deletes.len() <= 5,
+                "DNS dependency retry limit exceeded"
+            );
+            for rejection in &r.rejected_dns_deletes {
+                ensure!(
+                    r.id.contains("/providers/Microsoft.Network/privateDnsZones/")
+                        && rejection.status == 409
+                        && rejection.code == "CannotDeleteResource"
+                        && uuid::Uuid::parse_str(&rejection.request_id).is_ok_and(|u| !u.is_nil())
+                        && rejected.insert(&rejection.request_id)
+                        && rejection.retry_after_unix
+                            == rejection.observed_at_unix.saturating_add(60),
+                    "Invalid DNS no-effect receipt"
+                );
+            }
             if r.deleted {
                 ensure!(
                     r.delete_request.is_some(),
@@ -297,7 +397,7 @@ impl State {
             .job_stop
             .as_ref()
             .is_some_and(|r| matches!(r.phase, StopPhase::Intent | StopPhase::Unknown));
-        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"controllerReceipt":self.guard,"controllerStop":self.job_stop,"controllerStopped":stopped,"requiresAttention":attention,"workloadAndControllerComplete":self.completed_unix.is_some()&&stopped,"workloadCompletedUnix":self.completed_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"retainedControlResources":true,"liveQualified":false})
+        json!({"deploymentId":self.plan.deployment_id,"bundleDigest":self.bundle_digest,"control":control_url(&self.plan),"stages":self.operations,"ownedResourceCount":self.resources.len(),"deletedResourceCount":self.resources.iter().filter(|r|r.deleted).count(),"heartbeatUnix":self.heartbeat_unix,"controllerReceipt":self.guard,"controllerImage":controller_image(self),"controllerUpgrade":self.image_upgrade,"controllerStop":self.job_stop,"controllerStopped":stopped,"requiresAttention":attention,"workloadAndControllerComplete":self.completed_unix.is_some()&&stopped,"workloadCompletedUnix":self.completed_unix,"destroyRequested":self.destroy_requested,"completedUnix":self.completed_unix,"retainedControlResources":true,"liveQualified":false})
     }
 }
 fn local(path: &Path) -> Result<State> {
@@ -396,8 +496,18 @@ fn owned_body(s: &State, r: &Value, expected: &Value) -> Result<String> {
             && r["tags"]["ows-bundle"] == s.bundle_digest,
         "Resource ownership mismatch; names/tags alone are not receipts"
     );
+    // AKS resourceUID distinguishes delete/recreate under the same ARM ID. Some
+    // live responses omit systemData; preserve older frozen graph descriptors and
+    // accept this documented immutable identity only for managedClusters.
     let receipt = r
         .pointer(expected["incarnationPointer"].as_str().unwrap())
+        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+        .or_else(|| {
+            expected["id"]
+                .as_str()
+                .filter(|id| id.contains("/providers/Microsoft.ContainerService/managedClusters/"))
+                .and_then(|_| r.pointer("/properties/resourceUID"))
+        })
         .and_then(Value::as_str)
         .filter(|v| !v.is_empty() && v.len() <= 128)
         .context("Provider immutable incarnation receipt unavailable; refuse cleanup")?;
@@ -501,6 +611,7 @@ async fn observe(c: &mut impl Cloud, s: &mut State, e: &mut String) -> Result<()
                 delete_request: None,
                 delete_accepted: false,
                 operation_url: None,
+                rejected_dns_deletes: vec![],
             });
             save(c, s, e).await?;
         }
@@ -602,6 +713,7 @@ async fn apply(
     }
 }
 async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -> Result<()> {
+    ensure!(s.plan.expires_workload(), "Persistent deployment data is retained. Review a separate data-retention/teardown plan before destruction.");
     if !s.destroy_requested {
         s.destroy_requested = true;
         save(c, s, e).await?;
@@ -623,9 +735,22 @@ async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64)
         else {
             continue;
         };
-        if s.resources[i].delete_request.is_some() {
-            return Ok(());
-        } // GET only on subsequent ticks; even a lost DELETE is not replay permission.
+        if let Some(request) = &s.resources[i].delete_request {
+            let Some(rejected) = s.resources[i]
+                .rejected_dns_deletes
+                .last()
+                .filter(|r| &r.request_id == request)
+            else {
+                // GET only after an accepted or unknown mutation, including old
+                // receipts. A lost response must never authorize another DELETE.
+                return Ok(());
+            };
+            ensure!(s.resources[i].rejected_dns_deletes.len() < 5,
+                "DNS dependencies repeatedly rejected deletion; inspect original resource and receipts");
+            if at < rejected.retry_after_unix {
+                return Ok(());
+            }
+        }
         let id = s.resources[i].id.clone();
         let api = expected["apiVersion"].as_str().unwrap();
         let r = c.arm(Method::GET, &id, api, None, &s.nonce).await?;
@@ -642,11 +767,59 @@ async fn destroy_one(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64)
             incarnation == s.resources[i].incarnation,
             "Resource incarnation changed; refuse deletion"
         );
+        if id.contains("/providers/Microsoft.Network/privateDnsZones/") {
+            // VNet deletion acknowledges before DNS links finish disappearing.
+            // Wait without a DELETE intent; never retry a rejected/unknown mutation.
+            let links = c
+                .arm(
+                    Method::GET,
+                    &format!("{id}/virtualNetworkLinks"),
+                    "2020-06-01",
+                    None,
+                    &s.nonce,
+                )
+                .await?;
+            ensure!(links.status == 200, "DNS link observation unavailable");
+            let body = links.body.context("DNS link observation missing")?;
+            ensure!(
+                body.get("nextLink").is_none_or(Value::is_null),
+                "DNS link inventory incomplete"
+            );
+            let items = body["value"]
+                .as_array()
+                .context("DNS link inventory malformed")?;
+            if !items.is_empty() {
+                return Ok(());
+            }
+        }
         let request = uuid::Uuid::new_v4().to_string();
         s.resources[i].delete_request = Some(request.clone());
+        s.resources[i].delete_accepted = false;
+        s.resources[i].operation_url = None;
         save(c, s, e).await?;
         let r = c.arm(Method::DELETE, &id, api, None, &request).await;
-        match r {Ok(r) if [200,202,204].contains(&r.status)=>{s.resources[i].delete_accepted=true;s.resources[i].operation_url=r.operation;save(c,s,e).await?;},_=>bail!("Delete outcome unknown/rejected. Observe this exact resource; no automatic replay.")}
+        match r {
+            Ok(r) if [200, 202, 204].contains(&r.status) => {
+                s.resources[i].delete_accepted = true;
+                s.resources[i].operation_url = r.operation;
+                save(c, s, e).await?;
+            }
+            Ok(r) if id.contains("/providers/Microsoft.Network/privateDnsZones/")
+                && r.status == 409
+                && r.body.as_ref().and_then(|v| v.pointer("/error/code")).and_then(Value::as_str)
+                    == Some("CannotDeleteResource") => {
+                // Azure's empty link listing can precede dependency deletion.
+                // Only this exact rejected response permits a future NEW attempt,
+                // after backoff and fresh ownership/dependency checks above.
+                s.resources[i].rejected_dns_deletes.push(RejectedDnsDelete {
+                    request_id: request, observed_at_unix: at,
+                    retry_after_unix: at.saturating_add(60), status: 409,
+                    code: "CannotDeleteResource".into(),
+                });
+                save(c, s, e).await?;
+            }
+            _ => bail!("Delete outcome unknown/rejected. Observe this exact resource; no automatic replay."),
+        }
         return Ok(());
     }
     s.completed_unix = Some(at);
@@ -689,7 +862,7 @@ async fn heartbeat(c: &mut impl Cloud, s: &mut State, e: &mut String, at: u64) -
     s.heartbeat_unix = Some(at);
     save(c, s, e).await?;
     if s.completed_unix.is_none() {
-        if at >= s.plan.expires_at_unix || s.destroy_requested {
+        if (s.plan.expires_workload() && at >= s.plan.expires_at_unix) || s.destroy_requested {
             destroy_one(c, s, e, at).await?;
         } else {
             observe(c, s, e).await?;
@@ -773,6 +946,45 @@ async fn initialize(c: &mut impl Cloud, s: &mut State) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn up_package(root: &Path, out: &Path) -> Result<()> {
+    let s = local(root)?;
+    let files = control_artifacts(&s)?;
+    private_dir(out)?;
+    for (name, bytes) in files {
+        put(out, &name, &bytes)?;
+    }
+    Ok(())
+}
+pub(super) async fn up_initialize_control(root: &Path) -> Result<bool> {
+    let mut expected = local(root)?;
+    let mut api = Azure::new(&expected.plan, None)?;
+    let path = root.join("up-operations/control-init.json");
+    if let Some((_etag, shared)) = api.read_control(&control_url(&expected.plan)).await? {
+        ensure!(
+            shared.nonce == expected.nonce && shared.bundle_digest == expected.bundle_digest,
+            "Shared cleanup identity mismatch"
+        );
+        verify_job(&mut api, &shared).await?;
+        super::super::up::write_private(
+            &path,
+            &json!({"phase":"observed","nonce":shared.nonce,"bundleDigest":shared.bundle_digest}),
+        )?;
+        return Ok(shared
+            .heartbeat_unix
+            .is_some_and(|at| now().is_ok_and(|n| at <= n && n - at <= 600)));
+    }
+    ensure!(!path.exists(),"Control initialization outcome unknown; observe original Blob instead of replaying creation");
+    super::super::up::write_private(
+        &path,
+        &json!({"phase":"intent","nonce":expected.nonce,"bundleDigest":expected.bundle_digest}),
+    )?;
+    initialize(&mut api, &mut expected).await?;
+    Ok(false)
+}
+pub(super) fn up_local(root: &Path) -> Result<(Plan, String, String)> {
+    let s = local(root)?;
+    Ok((s.plan, s.bundle_digest, s.nonce))
+}
 pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
     match command {
         Lifecycle::Prepare { plan, out } => {
@@ -800,6 +1012,7 @@ pub(crate) async fn lifecycle(command: &Lifecycle) -> Result<()> {
                 resources: vec![],
                 heartbeat_unix: None,
                 guard: None,
+                image_upgrade: None,
                 destroy_requested: false,
                 completed_unix: None,
                 job_stop: None,
@@ -905,6 +1118,26 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
                 json!({"heartbeatReady":true,"independentOfAks":true,"liveQualified":false,"workloadApplyReady":false}),
             )
         }
+        Cleanup::PrepareUpgrade { remote, image } => {
+            let expected = local(&remote.state)?;
+            ensure!(
+                remote.allow_experimental_cloud && remote.accept == expected.bundle_digest,
+                "Explicit original bundle confirmation required"
+            );
+            let mut c = Azure::new(&expected.plan, None)?;
+            let (mut e, mut s) = c
+                .read_control(&control_url(&expected.plan))
+                .await?
+                .context("Shared control missing")?;
+            ensure!(
+                s.nonce == expected.nonce && s.bundle_digest == expected.bundle_digest,
+                "Control identity mismatch"
+            );
+            prepare_image_upgrade(&mut c, &mut s, &mut e, image, now()?).await?;
+            crate::output(
+                json!({"status":s.status(),"jobImageUpdateRequired":true,"jobId":job_id(&s.plan),"image":image,"resourceOwnershipUnchanged":true}),
+            )
+        }
         Cleanup::Tick {
             control,
             tenant,
@@ -939,6 +1172,44 @@ pub(crate) async fn cleanup(command: &Cleanup) -> Result<()> {
         }
     }
 }
+async fn prepare_image_upgrade(
+    c: &mut impl Cloud,
+    s: &mut State,
+    e: &mut String,
+    image: &str,
+    at: u64,
+) -> Result<()> {
+    validate_image_upgrade(s, image)?;
+    ensure!(
+        at >= s.plan.created_at_unix
+            && at < s.plan.expires_at_unix
+            && !s.destroy_requested
+            && s.completed_unix.is_none()
+            && s.job_stop.is_none(),
+        "Controller is closing or expired"
+    );
+    if let Some(u) = &s.image_upgrade {
+        ensure!(
+            u.image == image,
+            "Another controller upgrade is already pinned; reconcile it"
+        );
+        return Ok(());
+    }
+    let controller = verify_job(c, s).await?;
+    ensure!(
+        s.guard.as_ref() == Some(&controller),
+        "Initialized controller receipt required"
+    );
+    s.image_upgrade = Some(ImageUpgrade {
+        previous_image: controller_image(s).into(),
+        image: image.into(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+        prepared_at_unix: at,
+        controller,
+    });
+    s.heartbeat_unix = None; // Old image/configuration cannot authorize new work.
+    save(c, s, e).await
+}
 fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
     let p = &s.plan;
     let n = graph::names(p);
@@ -957,10 +1228,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
     let identity_id=format!("{control_scope}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{identity_name}");
     let account_id =
         format!("{control_scope}/providers/Microsoft.Storage/storageAccounts/{control_account}");
-    let environment_id = format!(
-        "{control_scope}/providers/Microsoft.App/managedEnvironments/{}-expiry",
-        n.prefix
-    );
+    let environment_id = environment_id(p);
     let recipient = format!("[reference('{identity_id}', '2023-01-31').principalId]");
     let client = format!("[reference('{identity_id}', '2023-01-31').clientId]");
     let mut workload_actions = std::collections::BTreeSet::new();
@@ -979,6 +1247,7 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
         }
     }
     workload_actions.insert("Microsoft.Resources/deployments/read".into());
+    workload_actions.insert("Microsoft.Network/privateDnsZones/virtualNetworkLinks/read".into());
     let role_id = format!(
         "/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/{}",
         guid(p, "cleanup-role")
@@ -987,13 +1256,22 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
     let cleanup_assignment = json!({"properties":{"principalId":recipient,"principalType":"ServicePrincipal","roleDefinitionId":role_id}});
     let blob_scope = format!("{account_id}/blobServices/default/containers/control");
     let builtin=format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe");
-    let control_resources = vec![
+    let mut control_resources = vec![
         json!({"type":"Microsoft.ManagedIdentity/userAssignedIdentities","apiVersion":"2023-01-31","name":identity_name,"location":location}),
         json!({"type":"Microsoft.Storage/storageAccounts","apiVersion":"2023-05-01","name":control_account,"location":location,"sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{"allowSharedKeyAccess":false,"allowBlobPublicAccess":false,"minimumTlsVersion":"TLS1_2","supportsHttpsTrafficOnly":true,"publicNetworkAccess":"Enabled"}}),
         json!({"type":"Microsoft.Storage/storageAccounts/blobServices/containers","apiVersion":"2023-05-01","name":format!("{control_account}/default/control"),"dependsOn":[account_id],"properties":{"publicAccess":"None"}}),
-        json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":"none"}}}),
-        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":c.guard_image,"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
+        json!({"type":"Microsoft.App/managedEnvironments","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"properties":{"appLogsConfiguration":{"destination":null}}}),
+        json!({"type":"Microsoft.App/jobs","apiVersion":"2024-03-01","name":format!("{}-expiry",n.prefix),"location":location,"tags":{"ows-deployment":p.deployment_id,"ows-nonce":s.nonce,"ows-bundle":s.bundle_digest},"dependsOn":[identity_id,environment_id],"identity":{"type":"UserAssigned","userAssignedIdentities":{identity_id.clone():{}}},"properties":{"environmentId":environment_id,"configuration":{"triggerType":"Schedule","replicaTimeout":240,"replicaRetryLimit":0,"scheduleTriggerConfig":{"cronExpression":"*/5 * * * *","parallelism":1,"replicaCompletionCount":1}},"template":{"containers":[{"name":"cleanup","image":controller_image(s),"command":["/opt/openworker/ows"],"args":["deploy","azure","cleanup","tick","--control",control_url(p),"--tenant",tenant,"--subscription",subscription,"--client-id",client],"resources":{"cpu":0.25,"memory":"0.5Gi"}}]}}}),
     ];
+    if c.guard_environment_resource_id.is_some() {
+        control_resources.retain(|r| r["type"] != "Microsoft.App/managedEnvironments");
+        control_resources.last_mut().unwrap()["dependsOn"] = json!([identity_id]);
+    }
+    if let Some(registry) = &c.guard_registry_resource_id {
+        let server = format!("{}.azurecr.io", registry.rsplit('/').next().unwrap());
+        control_resources.last_mut().unwrap()["properties"]["configuration"]["registries"] =
+            json!([{"server":server,"identity":identity_id}]);
+    }
     let template = json!({"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#","contentVersion":"1.0.0.0","resources":control_resources});
     let blob_binding = json!({"schemaVersion":1,"scope":blob_scope,"roleDefinitionId":builtin,"assignments":[{"guid":guid(p,"cleanup-control"),"principalId":recipient,"principalType":"ServicePrincipal"},{"guid":guid(p,"setup-control"),"principalId":p.azure_bootstrap.as_ref().unwrap().setup_object_id,"principalType":p.azure_bootstrap.as_ref().unwrap().setup_principal_type.azure()}],"resolveIdentityAfterControlDeployment":true});
     let job_role = json!({"properties":{"roleName":format!("{}-cleanup-stop",n.prefix),"type":"CustomRole","assignableScopes":[control_scope],"permissions":[{"actions":["Microsoft.App/jobs/read","Microsoft.App/jobs/delete"],"notActions":[],"dataActions":[],"notDataActions":[]}]},"assignmentScope":job_id(p),"principalId":recipient,"roleDefinitionGuid":guid(p,"cleanup-stop-role"),"assignmentGuid":guid(p,"cleanup-stop-assignment")});
@@ -1018,6 +1296,15 @@ fn control_artifacts(s: &State) -> Result<BTreeMap<String, Vec<u8>>> {
             json_bytes(
                 &json!({"deploymentId":p.deployment_id,"bundleDigest":s.bundle_digest,"control":control_url(p),"controlScope":control_scope,"cleanupRoleDefinitionId":role_id,"cleanupRoleUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleDefinitions/{}?api-version=2022-04-01",scope(p),guid(p,"cleanup-role")),"cleanupAssignmentUrl":format!("https://management.azure.com{}/providers/Microsoft.Authorization/roleAssignments/{}?api-version=2022-04-01",scope(p),guid(p,"cleanup-workload")),"initializationRequired":true,"retainedControlOwnedByCustomer":true,"liveQualified":false}),
             )?,
+        ),
+        (
+            "azure-control-registry-binding.json".into(),
+            json_bytes(&match &c.guard_registry_resource_id {
+                Some(registry) => {
+                    json!({"scope":registry,"principalId":recipient,"principalType":"ServicePrincipal","roleDefinitionId":format!("/subscriptions/{subscription}/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d"),"assignmentGuid":guid(p,"cleanup-registry-pull"),"resolveIdentityAfterControlDeployment":true,"automaticGrant":false})
+                }
+                None => json!({"required":false}),
+            })?,
         ),
         ("AZURE-CLEANUP.md".into(), readme.into_bytes()),
     ]))
@@ -1055,6 +1342,7 @@ mod tests {
             resources: vec![],
             heartbeat_unix: Some(150),
             guard: Some(fixture_guard()),
+            image_upgrade: None,
             destroy_requested: false,
             completed_unix: None,
             job_stop: None,
@@ -1080,6 +1368,8 @@ mod tests {
         lose_put: bool,
         lose_delete: bool,
         conflict: bool,
+        dns_rejections: usize,
+        dns_error_code: String,
     }
     impl Fake {
         fn new(s: State) -> Self {
@@ -1093,6 +1383,8 @@ mod tests {
                 lose_put: false,
                 lose_delete: false,
                 conflict: false,
+                dns_rejections: 0,
+                dns_error_code: "CannotDeleteResource".into(),
             }
         }
         fn etag(&self) -> String {
@@ -1134,6 +1426,9 @@ mod tests {
             request: &str,
         ) -> Result<Reply> {
             if method == Method::GET {
+                if id.ends_with("/virtualNetworkLinks") && !self.objects.contains_key(id) {
+                    return Ok(reply(200, Some(json!({"value":[]}))));
+                }
                 return Ok(self
                     .objects
                     .get(id)
@@ -1162,7 +1457,7 @@ mod tests {
                     .filter(|r| r["stage"] == stage.name())
                 {
                     let rid = item["id"].as_str().unwrap();
-                    let mut v = json!({"id":rid,"tags":{"ows-deployment":self.control.plan.deployment_id,"ows-nonce":self.control.nonce,"ows-bundle":self.control.bundle_digest},"systemData":{"createdAt":"2026-10-31T00:00:00Z"},"properties":{"creationTime":"2026-10-31T00:00:00Z","creationDate":"2026-10-31T00:00:00Z","resourceGuid":"receipt-guid","principalId":"12345678-1234-4234-8234-123456789abc"}});
+                    let mut v = json!({"id":rid,"tags":{"ows-deployment":self.control.plan.deployment_id,"ows-nonce":self.control.nonce,"ows-bundle":self.control.bundle_digest},"systemData":{"createdAt":"2026-10-31T00:00:00Z"},"properties":{"creationTime":"2026-10-31T00:00:00Z","creationDate":"2026-10-31T00:00:00Z","resourceGuid":"receipt-guid","internalId":"opaque-zone-identity","principalId":"12345678-1234-4234-8234-123456789abc"}});
                     v["etag"] = json!("ignored-mutable-etag");
                     self.objects.insert(rid.into(), v);
                 }
@@ -1189,6 +1484,13 @@ mod tests {
                             .any(|r| r.id == id && r.delete_request.as_deref() == Some(request)),
                         "Delete intent must be durable"
                     );
+                }
+                if id.contains("/privateDnsZones/") && self.dns_rejections > 0 {
+                    self.dns_rejections -= 1;
+                    return Ok(reply(
+                        409,
+                        Some(json!({"error":{"code":self.dns_error_code}})),
+                    ));
                 }
                 self.objects.remove(id);
                 if self.lose_delete {
@@ -1266,6 +1568,275 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn network_receipts_use_live_provider_fields_and_delete_vnet_before_dns() {
+        let (mut c, mut s, mut e) = active().await;
+        let mut protected = Vec::new();
+        for item in graph::inventory(&s.plan) {
+            let id = item["id"].as_str().unwrap();
+            if id.contains("/privateEndpoints/") || id.contains("/privateDnsZones/") {
+                let v = c.objects.get_mut(id).unwrap();
+                v.as_object_mut().unwrap().remove("systemData");
+                protected.push((
+                    id.to_owned(),
+                    item["incarnationPointer"].as_str().unwrap().to_owned(),
+                ));
+            }
+        }
+        observe(&mut c, &mut s, &mut e).await.unwrap();
+        // Neither a mutable ETag nor ownership tags may replace the provider's identity.
+        for (id, pointer) in protected {
+            let original = c.objects[&id].pointer(&pointer).unwrap().clone();
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = Value::Null;
+            assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = json!("replaced");
+            assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+            *c.objects
+                .get_mut(&id)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = original;
+        }
+        for _ in 0..15 {
+            heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
+        }
+        let deleted: Vec<_> = c
+            .writes
+            .iter()
+            .filter(|(method, _)| *method == Method::DELETE)
+            .map(|(_, id)| id)
+            .collect();
+        let network = deleted
+            .iter()
+            .position(|id| id.contains("/virtualNetworks/"))
+            .unwrap();
+        assert!(deleted
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| id.contains("/privateDnsZones/"))
+            .all(|(i, _)| i > network));
+    }
+
+    #[tokio::test]
+    async fn dns_cleanup_waits_for_provider_link_convergence_without_delete_intent() {
+        let (mut c, mut s, mut e) = active().await;
+        let zone = graph::inventory(&s.plan)
+            .into_iter()
+            .find(|r| r["id"].as_str().unwrap().contains("/privateDnsZones/"))
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let links = format!("{zone}/virtualNetworkLinks");
+        c.objects
+            .insert(links.clone(), json!({"value":[{"id":"still-converging"}]}));
+        for _ in 0..15 {
+            heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
+        }
+        assert!(!c
+            .writes
+            .iter()
+            .any(|(m, id)| *m == Method::DELETE && id == &zone));
+        assert!(s
+            .resources
+            .iter()
+            .find(|r| r.id == zone)
+            .unwrap()
+            .delete_request
+            .is_none());
+        assert!(s.completed_unix.is_none());
+        c.objects.remove(&links);
+        for _ in 0..15 {
+            heartbeat(&mut c, &mut s, &mut e, 201).await.unwrap();
+        }
+        assert!(s.completed_unix.is_some());
+    }
+
+    async fn blocked_dns() -> (Fake, State, String, String) {
+        let (mut c, mut s, mut e) = active().await;
+        c.dns_rejections = 1;
+        for _ in 0..15 {
+            destroy_one(&mut c, &mut s, &mut e, 201).await.unwrap();
+            if s.resources
+                .iter()
+                .any(|r| !r.rejected_dns_deletes.is_empty())
+            {
+                break;
+            }
+        }
+        let zone = s
+            .resources
+            .iter()
+            .find(|r| !r.rejected_dns_deletes.is_empty())
+            .unwrap()
+            .id
+            .clone();
+        (c, s, e, zone)
+    }
+    #[tokio::test]
+    async fn dns_proven_dependency_rejection_survives_restart_and_rechecks_before_new_request() {
+        let (mut c, s, _, zone) = blocked_dns().await;
+        let old = s
+            .resources
+            .iter()
+            .find(|r| r.id == zone)
+            .unwrap()
+            .delete_request
+            .clone();
+        let (mut e, mut s) = c.read_control("").await.unwrap().unwrap();
+        let before = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 260).await.unwrap();
+        assert_eq!(c.deletes(), before, "backoff must survive restart");
+        c.objects.insert(
+            format!("{zone}/virtualNetworkLinks"),
+            json!({"value":[{"id":"still-there"}]}),
+        );
+        destroy_one(&mut c, &mut s, &mut e, 261).await.unwrap();
+        assert_eq!(c.deletes(), before);
+        c.objects.remove(&format!("{zone}/virtualNetworkLinks"));
+        destroy_one(&mut c, &mut s, &mut e, 262).await.unwrap();
+        let resource = s.resources.iter().find(|r| r.id == zone).unwrap();
+        assert_ne!(resource.delete_request, old);
+        assert_eq!(resource.rejected_dns_deletes[0].request_id, old.unwrap());
+        assert!(resource.delete_accepted);
+        assert_eq!(c.deletes(), before + 1);
+    }
+    #[tokio::test]
+    async fn dns_retry_refuses_replacement_unknown_response_and_other_conflicts() {
+        let (mut c, mut s, mut e, zone) = blocked_dns().await;
+        c.objects.get_mut(&zone).unwrap()["properties"]["internalId"] = json!("replacement");
+        let count = c.deletes();
+        assert!(destroy_one(&mut c, &mut s, &mut e, 300).await.is_err());
+        assert_eq!(c.deletes(), count);
+        let (mut c, mut s, mut e, zone) = blocked_dns().await;
+        // Model a lost/legacy response: no proven-rejection receipt exists.
+        s.resources
+            .iter_mut()
+            .find(|r| r.id == zone)
+            .unwrap()
+            .rejected_dns_deletes
+            .clear();
+        save(&mut c, &s, &mut e).await.unwrap();
+        let count = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 400).await.unwrap();
+        assert_eq!(c.deletes(), count);
+        let (mut c, mut s, mut e) = active().await;
+        c.dns_rejections = 1;
+        c.dns_error_code = "AnotherConflict".into();
+        for _ in 0..15 {
+            if destroy_one(&mut c, &mut s, &mut e, 201).await.is_err() {
+                break;
+            }
+        }
+        assert!(s
+            .resources
+            .iter()
+            .all(|r| r.rejected_dns_deletes.is_empty()));
+        let count = c.deletes();
+        destroy_one(&mut c, &mut s, &mut e, 400).await.unwrap();
+        assert_eq!(c.deletes(), count);
+    }
+    #[tokio::test]
+    async fn dns_dependency_attempts_are_bounded_and_keep_all_receipts() {
+        let (mut c, mut s, mut e, _) = blocked_dns().await;
+        c.dns_rejections = 20;
+        for at in [261, 321, 381, 441] {
+            destroy_one(&mut c, &mut s, &mut e, at).await.unwrap();
+        }
+        let count = c.deletes();
+        assert!(destroy_one(&mut c, &mut s, &mut e, 501).await.is_err());
+        assert_eq!(c.deletes(), count);
+        assert_eq!(
+            s.resources
+                .iter()
+                .map(|r| r.rejected_dns_deletes.len())
+                .sum::<usize>(),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn aks_resource_uid_is_required_when_creation_metadata_is_absent() {
+        let (mut c, mut s, mut e) = active().await;
+        // The foundation is active; apply the cluster, then model the live API shape.
+        apply(&mut c, &mut s, &mut e, Stage::Cluster, 150)
+            .await
+            .unwrap();
+        let id = graph::inventory(&s.plan)
+            .into_iter()
+            .find(|r| r["stage"] == "cluster")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let v = c.objects.get_mut(&id).unwrap();
+        v.as_object_mut().unwrap().remove("systemData");
+        v["properties"]["resourceUID"] = json!("6af38caa5deaf50001940f2c");
+        // First real observation must pin UID, never switch an existing receipt.
+        s.resources.retain(|r| r.id != id);
+        observe(&mut c, &mut s, &mut e).await.unwrap();
+        assert_eq!(
+            s.resources.iter().find(|r| r.id == id).unwrap().incarnation,
+            "6af38caa5deaf50001940f2c"
+        );
+        c.objects.get_mut(&id).unwrap()["properties"]["resourceUID"] = json!("replacement");
+        assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+        c.objects.get_mut(&id).unwrap()["properties"]["resourceUID"] = Value::Null;
+        assert!(observe(&mut c, &mut s, &mut e).await.is_err());
+    }
+    #[tokio::test]
+    async fn controller_upgrade_preserves_ownership_and_refuses_old_image_or_replacement() {
+        let (mut c, mut s, mut e) = active().await;
+        let original = serde_json::to_value((
+            &s.plan,
+            &s.resources,
+            &s.operations,
+            &s.guard,
+            &s.nonce,
+            &s.bundle_digest,
+        ))
+        .unwrap();
+        let image = format!("ghcr.io/test/ows@sha256:{}", "b".repeat(64));
+        prepare_image_upgrade(&mut c, &mut s, &mut e, &image, 160)
+            .await
+            .unwrap();
+        assert_eq!(
+            original,
+            serde_json::to_value((
+                &s.plan,
+                &s.resources,
+                &s.operations,
+                &s.guard,
+                &s.nonce,
+                &s.bundle_digest
+            ))
+            .unwrap()
+        );
+        assert!(s.heartbeat_unix.is_none());
+        assert!(verify_job(&mut c, &s).await.is_err());
+        prepare_image_upgrade(&mut c, &mut s, &mut e, &image, 161)
+            .await
+            .unwrap();
+        assert!(
+            prepare_image_upgrade(&mut c, &mut s, &mut e, "foreign/image:latest", 162)
+                .await
+                .is_err()
+        );
+        c.objects.get_mut(&job_id(&s.plan)).unwrap()["properties"]["template"]["containers"][0]
+            ["image"] = json!(image);
+        verify_job(&mut c, &s).await.unwrap();
+        c.objects.get_mut(&job_id(&s.plan)).unwrap()["systemData"]["createdAt"] = json!("replaced");
+        assert!(verify_job(&mut c, &s).await.is_err());
+    }
+
+    #[tokio::test]
     async fn replacement_or_missing_incarnation_refuses_deletion() {
         let (mut c, mut s, mut e) = active().await;
         let id = s.resources[0].id.clone();
@@ -1284,6 +1855,22 @@ mod tests {
         assert!(destroy_one(&mut c, &mut s, &mut e, 160).await.is_err());
         assert_eq!(c.deletes(), 0);
     }
+    #[tokio::test]
+    async fn persistent_workload_is_not_deleted_at_provisioning_deadline() {
+        let mut s = state();
+        s.plan.auto_expire = Some(false);
+        s.bundle_digest = digest(&s.plan).unwrap();
+        let mut c = Fake::new(s.clone());
+        let mut e = c.etag();
+        apply(&mut c, &mut s, &mut e, Stage::Foundation, 150)
+            .await
+            .unwrap();
+        heartbeat(&mut c, &mut s, &mut e, 500).await.unwrap();
+        assert_eq!(c.deletes(), 0);
+        assert!(destroy_one(&mut c, &mut s, &mut e, 500).await.is_err());
+        assert_eq!(c.deletes(), 0);
+    }
+
     #[tokio::test]
     async fn expiry_runs_outside_cluster_and_stops_its_job_after_workload_cleanup() {
         let (mut c, mut s, mut e) = active().await;
@@ -1321,6 +1908,63 @@ mod tests {
         assert!(c.writes.is_empty());
     }
     #[test]
+    fn azure_creation_receipt_preserves_timezone_less_fractional_timestamp() {
+        let mut s = state();
+        s.guard = None;
+        let mut body = fixture_job(&s);
+        body["systemData"]["createdAt"] = json!("2026-11-10T18:49:20.2965605");
+        let receipt = guard_body(&s, &body).unwrap();
+        assert_eq!(receipt.created_at, "2026-11-10T18:49:20.2965605");
+        s.guard = Some(receipt);
+        body["systemData"]["createdAt"] = json!("2026-11-10T18:49:20.2965606");
+        assert!(guard_body(&s, &body).is_err());
+        s.guard = None;
+        body["systemData"]["createdAt"] = json!("not-a-timestamp");
+        assert!(guard_body(&s, &body).is_err());
+    }
+    #[test]
+    fn private_registry_pulls_bind_cleanup_identity_and_reject_credential_drift() {
+        let mut s = state();
+        let input = s.plan.azure_infrastructure.as_mut().unwrap();
+        input.guard_registry_resource_id = Some("/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/customer-control/providers/Microsoft.ContainerRegistry/registries/controlacr".into());
+        input.guard_image = format!("controlacr.azurecr.io/cleanup@sha256:{}", "a".repeat(64));
+        s.bundle_digest = digest(&s.plan).unwrap();
+        let job = fixture_job(&s);
+        assert!(guard_body(&s, &job).is_ok());
+        // Azure's completed GET normalizes omitted registry credentials to "".
+        for empty in [Value::Null, json!("")] {
+            let mut normalized = job.clone();
+            normalized["properties"]["configuration"]["registries"][0]["username"] = empty.clone();
+            normalized["properties"]["configuration"]["registries"][0]["passwordSecretRef"] = empty;
+            assert!(guard_body(&s, &normalized).is_ok());
+        }
+
+        let files = control_artifacts(&s).unwrap();
+        let binding: Value =
+            serde_json::from_slice(&files["azure-control-registry-binding.json"]).unwrap();
+        assert_eq!(
+            binding["scope"],
+            s.plan
+                .azure_infrastructure
+                .as_ref()
+                .unwrap()
+                .guard_registry_resource_id
+                .as_ref()
+                .unwrap()
+                .as_str()
+        );
+        for (field, value) in [
+            ("identity", json!("system")),
+            ("server", json!("foreign.azurecr.io")),
+            ("passwordSecretRef", json!("password")),
+            ("username", json!("admin")),
+        ] {
+            let mut changed = job.clone();
+            changed["properties"]["configuration"]["registries"][0][field] = value;
+            assert!(guard_body(&s, &changed).is_err());
+        }
+    }
+    #[test]
     fn control_package_has_no_keys_no_cluster_dependency_and_retains_audit_control() {
         let s = state();
         let files = control_artifacts(&s).unwrap();
@@ -1332,6 +1976,16 @@ mod tests {
             .find(|v| v["type"] == "Microsoft.App/jobs")
             .unwrap();
         assert_eq!(job["properties"]["configuration"]["replicaRetryLimit"], 0);
+        let environment = v["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["type"] == "Microsoft.App/managedEnvironments")
+            .unwrap();
+        assert_eq!(
+            environment["properties"]["appLogsConfiguration"]["destination"],
+            Value::Null
+        );
         assert!(!job.to_string().contains("managedClusters"));
         let grants: String = files
             .iter()
@@ -1533,7 +2187,10 @@ fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
     );
     ensure!(
         body["properties"]["provisioningState"] == "Succeeded"
-            && container["image"] == s.plan.azure_infrastructure.as_ref().unwrap().guard_image
+            && body["properties"]["environmentId"]
+                .as_str()
+                .is_some_and(|id| id.eq_ignore_ascii_case(&environment_id(&s.plan)))
+            && container["image"] == controller_image(s)
             && container["command"] == json!(["/opt/openworker/ows"])
             && args.len() == 12
             && args[..4]
@@ -1559,12 +2216,96 @@ fn guard_body(s: &State, body: &Value) -> Result<GuardReceipt> {
             && config["scheduleTriggerConfig"]["replicaCompletionCount"] == 1,
         "Independent cleanup job configuration drift"
     );
+    if let Some(registry) = &s
+        .plan
+        .azure_infrastructure
+        .as_ref()
+        .unwrap()
+        .guard_registry_resource_id
+    {
+        let entries = config["registries"]
+            .as_array()
+            .filter(|v| v.len() == 1)
+            .context("Exactly one managed-identity cleanup registry required")?;
+        let entry = &entries[0];
+        ensure!(
+            entry["server"] == format!("{}.azurecr.io", registry.rsplit('/').next().unwrap())
+                && entry["identity"]
+                    .as_str()
+                    .is_some_and(|v| v.eq_ignore_ascii_case(&mi))
+                && entry
+                    .get("username")
+                    .is_none_or(|v| v.is_null() || v.as_str() == Some(""))
+                && entry
+                    .get("passwordSecretRef")
+                    .is_none_or(|v| v.is_null() || v.as_str() == Some("")),
+            "Cleanup registry authentication drift"
+        );
+    } else {
+        ensure!(
+            config
+                .get("registries")
+                .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty)),
+            "Unexpected cleanup registry credentials"
+        );
+    }
     Ok(receipt)
 }
 
 #[cfg(test)]
 mod guard_tests {
     use super::*;
+    #[test]
+    fn existing_control_environment_is_external_and_bound_to_exact_scope() {
+        let mut s = tests::state();
+        let env = format!(
+            "{}/providers/Microsoft.App/managedEnvironments/existing-control",
+            graph::control_scope(&s.plan)
+        );
+        s.plan
+            .azure_infrastructure
+            .as_mut()
+            .unwrap()
+            .guard_environment_resource_id = Some(env.clone());
+        s.bundle_digest = digest(&s.plan).unwrap();
+        s.validate().unwrap();
+        let files = control_artifacts(&s).unwrap();
+        let role: Value = serde_json::from_slice(&files["azure-cleanup-role.json"]).unwrap();
+        assert!(role["properties"]["permissions"][0]["actions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(
+                "Microsoft.Network/privateDnsZones/virtualNetworkLinks/read"
+            )));
+        let template: Value = serde_json::from_slice(&files["azure-control.arm.json"]).unwrap();
+        assert!(!template["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["type"] == "Microsoft.App/managedEnvironments"));
+        let job = template["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["type"] == "Microsoft.App/jobs")
+            .unwrap();
+        assert_eq!(job["properties"]["environmentId"], env);
+        assert_eq!(job["dependsOn"].as_array().unwrap().len(), 1);
+        let mut live = fixture_job(&s);
+        guard_body(&s, &live).unwrap();
+        live["properties"]["environmentId"] = json!("/foreign/environment");
+        assert!(guard_body(&s, &live).is_err());
+        s.plan
+            .azure_infrastructure
+            .as_mut()
+            .unwrap()
+            .guard_environment_resource_id = Some(format!(
+            "{}/providers/Microsoft.App/managedEnvironments/existing-control",
+            scope(&s.plan)
+        ));
+        assert!(s.plan.validate().is_err());
+    }
+
     #[tokio::test]
     async fn cleanup_configuration_drift_blocks_workload_submission() {
         struct ReadOnly {

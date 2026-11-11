@@ -9,6 +9,8 @@ mod graph;
 mod installation;
 #[path = "deployment_azure_lifecycle.rs"]
 mod recovery;
+#[path = "deployment_up_azure_bootstrap.rs"]
+mod up_bootstrap;
 pub(crate) use installation::{
     database as installation_database, intent as installation_intent,
     storage as installation_storage, verify as verify_installation, Binding as InstallationBinding,
@@ -191,8 +193,12 @@ a() {{ az "$@" --subscription '{subscription}' --only-show-errors; }}
 [ "$(a account show --query id -o tsv)" = '{subscription}' ] || {{ echo 'Subscription mismatch' >&2; exit 1; }}
 [ "$(a account show --query state -o tsv)" = Enabled ] || {{ echo 'Subscription is not enabled' >&2; exit 1; }}
 [ "$(a group show --name '{rg}' --query id -o tsv | tr '[:upper:]' '[:lower:]')" = '{scope_lower}' ] || {{ echo 'Existing resource group mismatch' >&2; exit 1; }}
-[ "$(a role definition list --name '{rid}' --scope '{resource}' --query 'length(@)' -o tsv)" = 0 ] || {{ echo 'Generated role already exists; reconcile the original journal, never overwrite it' >&2; exit 1; }}
-[ "$(a role assignment list --scope '{resource}' --all --query 'length([?name==`"{aid}"`])' -o tsv)" = 0 ] || {{ echo 'Generated assignment already exists; reconcile first' >&2; exit 1; }}
+bootstrap_role_count=$(a role definition list --name '{rid}' --scope '{resource}' --query 'length(@)' -o tsv)
+[ "$bootstrap_role_count" = 0 ] || {{ echo 'Generated role already exists; reconcile the original journal, never overwrite it' >&2; exit 1; }}
+# --scope and --all are mutually exclusive in Azure CLI. A failed read must
+# stop here, rather than be misreported as an existing assignment.
+bootstrap_assignment_count=$(a role assignment list --scope '{resource}' --query 'length([?name==`"{aid}"`])' -o tsv)
+[ "$bootstrap_assignment_count" = 0 ] || {{ echo 'Generated assignment already exists; reconcile first' >&2; exit 1; }}
 journal_parent=$(cd -- "$(dirname -- "$2")" && pwd)
 case "$journal_parent/" in "$root/"*) echo 'Journal must be outside the immutable bundle' >&2; exit 1;; esac
 umask 077
@@ -242,4 +248,8 @@ pub(super) fn outside(out: &Path, input: &Path) -> Result<()> {
         "Output must be outside immutable input/state"
     );
     Ok(())
+}
+
+pub(super) fn up_grants(p: &Plan) -> Result<Value> {
+    up_bootstrap::grants(p)
 }

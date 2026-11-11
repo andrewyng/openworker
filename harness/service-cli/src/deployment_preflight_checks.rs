@@ -135,7 +135,7 @@ async fn zones(aws: &mut Aws, p: &Plan) -> Observed<Value> {
                 "--location-type",
                 "availability-zone",
                 "--filters",
-                "Name=instance-type,Values=t4g.large",
+                &format!("Name=instance-type,Values={}", i.node_instance_type),
                 &filter,
             ]),
             "InstanceTypeOfferings",
@@ -145,11 +145,11 @@ async fn zones(aws: &mut Aws, p: &Plan) -> Observed<Value> {
         expect(
             offers
                 .iter()
-                .any(|z| z["InstanceType"] == "t4g.large" && z["Location"] == *zone),
+                .any(|z| z["InstanceType"] == i.node_instance_type && z["Location"] == *zone),
         )?;
     }
     Ok(
-        json!({"zones":i.availability_zones,"instanceType":"t4g.large","offered":true,"capacityReserved":false}),
+        json!({"zones":i.availability_zones,"instanceType":i.node_instance_type,"offered":true,"capacityReserved":false}),
     )
 }
 async fn operator_access(aws: &mut Aws, p: &Plan) -> Observed<Value> {
@@ -482,11 +482,16 @@ async fn quotas(aws: &mut Aws, p: &Plan) -> Observed<Value> {
     }
     // Counting every non-host On-Demand family is conservative: some families
     // consume separate quotas. Never understate usage by assuming their count zero.
-    let requested = if p.infrastructure.as_ref().unwrap().operator_access.is_some() {
-        6
-    } else {
-        4
-    };
+    let inputs = p.infrastructure.as_ref().unwrap();
+    let cores = infrastructure::worker_shape(&inputs.node_instance_type)
+        .ok_or_else(invalid)?
+        .0;
+    let requested = cores * u32::from(p.topology.node_count)
+        + if inputs.operator_access.is_some() {
+            2
+        } else {
+            0
+        };
     expect(limit >= used + f64::from(requested))?;
     let cluster_limit = quota(aws, "eks", "L-1194D53C").await?;
     let clusters = aws
@@ -526,8 +531,8 @@ async fn quotas(aws: &mut Aws, p: &Plan) -> Observed<Value> {
     )
 }
 #[derive(Clone, Copy)]
-enum Product {
-    Node(&'static str),
+enum Product<'a> {
+    Node(&'a str),
     Database,
     Cluster,
     Nat,
@@ -535,7 +540,7 @@ enum Product {
     Ebs,
     RdsStorage,
 }
-async fn price(aws: &mut Aws, p: &Plan, kind: Product) -> Observed<Value> {
+async fn price(aws: &mut Aws, p: &Plan, kind: Product<'_>) -> Observed<Value> {
     let region = target(p).1;
     let (service, filters, unit) = match kind {
         Product::Node(instance) => (
@@ -700,12 +705,20 @@ async fn price(aws: &mut Aws, p: &Plan, kind: Product) -> Observed<Value> {
 async fn cost(aws: &mut Aws, p: &Plan, allowance: u32) -> Observed<Value> {
     let mut components = BTreeMap::new();
     let mut lines = vec![
-        ("workerInstances", Product::Node("t4g.large"), 2.0),
+        (
+            "workerInstances",
+            Product::Node(&p.infrastructure.as_ref().unwrap().node_instance_type),
+            f64::from(p.topology.node_count),
+        ),
         ("databaseInstance", Product::Database, 1.0),
         ("eksStandardCluster", Product::Cluster, 1.0),
         ("natGateway", Product::Nat, 1.0),
         ("natPublicIpv4", Product::Ip, 1.0),
-        ("nodeGp3Storage", Product::Ebs, 60.0),
+        (
+            "nodeGp3Storage",
+            Product::Ebs,
+            30.0 * f64::from(p.topology.node_count),
+        ),
         ("databaseGp3Storage", Product::RdsStorage, 20.0),
     ];
     if p.infrastructure.as_ref().unwrap().operator_access.is_some() {

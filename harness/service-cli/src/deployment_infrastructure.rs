@@ -12,6 +12,8 @@ mod permissions;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Inputs {
     pub schema_version: u16,
+    #[serde(default = "default_node_type", skip_serializing_if = "default_node")]
+    pub node_instance_type: String,
     pub availability_zones: [String; 2],
     pub vpc_cidr: String,
     pub kubernetes_version: String,
@@ -51,17 +53,35 @@ pub(super) fn addon_version(s: &str) -> bool {
     parts.len() == 3 && parts.iter().all(|p| digits(p, 1, 4)) && digits(build, 1, 4)
 }
 
+fn default_node_type() -> String {
+    "t4g.large".into()
+}
+fn default_node(s: &str) -> bool {
+    s == "t4g.large"
+}
+pub(super) fn worker_shape(s: &str) -> Option<(u32, u32)> {
+    match s {
+        "t4g.large" => Some((2, 8)),
+        "t4g.xlarge" => Some((4, 16)),
+        "t4g.2xlarge" => Some((8, 32)),
+        _ => None,
+    }
+}
 impl Inputs {
     pub(super) fn validate(&self, p: &Plan) -> Result<()> {
         let Target::Aws { region, .. } = &p.target else {
             bail!("AWS infrastructure inputs require AWS target")
         };
         ensure!(
+            worker_shape(&self.node_instance_type).is_some(),
+            "Unsupported reviewed ARM64 worker size"
+        );
+        ensure!(
             self.schema_version == 1,
             "Unsupported infrastructure input schema"
         );
         ensure!(
-            self.acknowledge_experiment_data_deletion,
+            !p.expires_workload() || self.acknowledge_experiment_data_deletion,
             "Explicit experiment data-deletion acknowledgement required"
         );
         ensure!(
@@ -342,8 +362,8 @@ fn infrastructure_template(p: &Plan, i: &Inputs) -> Result<Value> {
     add(
         "Nodes",
         "AWS::EKS::Nodegroup",
-        json!({"ClusterName":reference("Cluster"),"NodegroupName":"workers","NodeRole":role_arn(p,"node"),"Subnets":[reference("PrivateSubnet0"),reference("PrivateSubnet1")],"AmiType":"AL2023_ARM_64_STANDARD","ReleaseVersion":i.node_release_version,"Version":i.kubernetes_version,"InstanceTypes":["t4g.large"],"CapacityType":"ON_DEMAND",
-        "ScalingConfig":{"MinSize":2,"MaxSize":2,"DesiredSize":2},"LaunchTemplate":{"Id":reference("LaunchTemplate"),"Version":attribute("LaunchTemplate","LatestVersionNumber")},"Tags":{"ows:deployment-id":p.deployment_id,"ows:expires-at":p.expires_at_unix.to_string()}}),
+        json!({"ClusterName":reference("Cluster"),"NodegroupName":"workers","NodeRole":role_arn(p,"node"),"Subnets":[reference("PrivateSubnet0"),reference("PrivateSubnet1")],"AmiType":"AL2023_ARM_64_STANDARD","ReleaseVersion":i.node_release_version,"Version":i.kubernetes_version,"InstanceTypes":[i.node_instance_type],"CapacityType":"ON_DEMAND",
+        "ScalingConfig":{"MinSize":p.topology.node_count,"MaxSize":p.topology.node_count,"DesiredSize":p.topology.node_count},"LaunchTemplate":{"Id":reference("LaunchTemplate"),"Version":attribute("LaunchTemplate","LatestVersionNumber")},"Tags":{"ows:deployment-id":p.deployment_id,"ows:expires-at":p.expires_at_unix.to_string()}}),
     );
     for (logical, name, version) in [
         ("Cni", "vpc-cni", &i.addons.vpc_cni),
@@ -510,6 +530,10 @@ fn guard_template(p: &Plan, i: &Inputs) -> Value {
         ),
     ]);
     r.get_mut("Cleanup").unwrap()["DependsOn"] = json!(["Logs", "Control"]);
+    if let Some(auto_expire) = p.auto_expire {
+        r.get_mut("Cleanup").unwrap()["Properties"]["Environment"]["Variables"]
+            ["OWS_AUTO_EXPIRE"] = json!(auto_expire.to_string());
+    }
     template(
         "OpenWorker independent expiry guard; artifact and cleanup behavior require qualification",
         r,
@@ -549,6 +573,14 @@ pub(super) fn render(p: &Plan) -> Result<BTreeMap<String, Vec<u8>>> {
         json!({"Sid":"RegistryLogin","Effect":"Allow","Action":["ecr:GetAuthorizationToken"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":region},"NumericLessThan":{"aws:EpochTime":p.expires_at_unix}}}),
         json!({"Sid":"PublishOwnImages","Effect":"Allow","Action":["ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage","ecr:DescribeRepositories","ecr:InitiateLayerUpload","ecr:UploadLayerPart","ecr:CompleteLayerUpload","ecr:PutImage"],"Resource":(["harness","runner","service-ui"].iter().map(|s|format!("arn:aws:ecr:{region}:{account}:repository/{}/{s}",p.prefix())).collect::<Vec<_>>()),"Condition":{"NumericLessThan":{"aws:EpochTime":p.expires_at_unix}}}),
     ]);
+    if p.auto_expire.is_some() && i.operator_access.is_some() {
+        setup["Statement"].as_array_mut().unwrap().extend([
+            json!({"Sid":"StartOwnedOperatorTunnel","Effect":"Allow","Action":"ssm:StartSession","Resource":format!("arn:aws:ec2:{region}:{account}:instance/*"),"Condition":{"StringEquals":{"ssm:resourceTag/ows:deployment-id":p.deployment_id}}}),
+            json!({"Sid":"UsePortForwardDocument","Effect":"Allow","Action":"ssm:StartSession","Resource":format!("arn:aws:ssm:{region}::document/AWS-StartPortForwardingSessionToRemoteHost")}),
+            json!({"Sid":"ObserveManagementSessions","Effect":"Allow","Action":"ssm:DescribeSessions","Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":region}}}),
+            json!({"Sid":"OwnManagementSessionOnly","Effect":"Allow","Action":["ssm:ResumeSession","ssm:TerminateSession","ssmmessages:OpenDataChannel"],"Resource":format!("arn:aws:ssm:{region}:{account}:session/*"),"Condition":{"StringEquals":{"ssm:resourceTag/aws:ssmmessages:session-id":"${aws:userid}"}}})
+        ]);
+    }
     boot["Resources"]["SetupRole"]["Properties"]["Policies"][0]["PolicyDocument"] = setup.clone();
     files.insert("setup-policy.json".into(), json_bytes(&setup)?);
     let resources = boot["Resources"].as_object_mut().unwrap();
@@ -724,6 +756,22 @@ of the entire bundle. No cloud execution was performed to generate this review.
         i.availability_zones,
         policies.len()
     );
+    if p.auto_expire.is_some() || p.topology.node_count != 2 || i.node_instance_type != "t4g.large"
+    {
+        text = text.replace(
+            "Two ARM64 t4g.large workers",
+            &format!(
+                "{} fixed ARM64 {} workers",
+                p.topology.node_count, i.node_instance_type
+            ),
+        );
+        if !p.expires_workload() {
+            text = text.replace(
+                "Fixed expiry",
+                "Provisioning deadline (persistent data is not automatically deleted)",
+            );
+        }
+    }
     if let Some(access) = &i.operator_access {
         text.push_str(&format!("\n## Optional SSM operator bridge\n\nOne private t4g.micro, pinned AMI {}, encrypted 8 GiB disposable disk, no public IP, no inbound ports or SSH. Its instance profile permits only regional SSM heartbeat/session channels, no parameter, database, artifact or model-secret reads. The main infrastructure stack owns the instance/security groups, so normal and expiry teardown include them. Bootstrap owns the role/profile; remove those last. The existing operator login must authorize Session Manager port forwarding; it is separate from workload identity. The added instance/storage/vCPUs are included in preflight cost/quota checks.\n",access.ami_id));
     }

@@ -1,4 +1,4 @@
-//! Pinned OpenShell 0.1.3 server provider. No CLI, local Docker fallback, host
+//! Reviewed OpenShell 0.1.3/0.1.7 server provider. No CLI, local Docker fallback, host
 //! mounts or automatic lifecycle retry. Credential providers require an explicit
 //! original provider/profile pin; they are absent from the default profile. The gateway and
 //! cluster operator remain trusted; app-owned objects must use this exact profile.
@@ -286,13 +286,7 @@ impl OpenShell {
         let info: Gateway = self
             .rpc("/openshell.v1.OpenShell/GetGatewayInfo", Empty {})
             .await?;
-        if info.version != "0.1.3"
-            || info.drivers.len() != 1
-            || info.drivers[0].name != "kubernetes"
-        {
-            bail!("Server provider requires OpenShell 0.1.3 with the qualified Kubernetes driver");
-        }
-        Ok(())
+        checked_gateway(&info)
     }
     async fn version(&self) -> Result<()> {
         self.check_gateway().await
@@ -603,7 +597,21 @@ impl Connection for Stream {
     }
 }
 
-// Minimal wire messages from the pinned public 0.1.3 protocol. Presence-only
+// The lifecycle, authority, workspace and Exec wire fields used here are identical
+// in the official v0.1.3 and v0.1.7 protobuf contracts. Keep an exact allowlist;
+// accepting a version does not replace functional qualification on each platform.
+fn checked_gateway(info: &Gateway) -> Result<()> {
+    if !matches!(info.version.as_str(), "0.1.3" | "0.1.7")
+        || info.drivers.len() != 1
+        || info.drivers[0].name != "kubernetes"
+    {
+        bail!(
+            "Server provider requires reviewed OpenShell 0.1.3 or 0.1.7 with the Kubernetes driver"
+        );
+    }
+    Ok(())
+}
+// Minimal wire messages shared by the reviewed public 0.1.3/0.1.7 protocols. Presence-only
 // fields use bytes/Empty when their contents are never authorized by this profile.
 #[derive(Clone, PartialEq, Message)]
 struct Empty {}
@@ -848,6 +856,38 @@ fn resource_limits(cpu: u16, memory_mb: u32) -> Struct {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gateway_versions_are_exact_and_driver_authority_is_not_broadened() {
+        for version in ["0.1.3", "0.1.7"] {
+            let mut info = Gateway {
+                version: version.into(),
+                drivers: vec![Driver {
+                    name: "kubernetes".into(),
+                }],
+            };
+            checked_gateway(&info).unwrap();
+            info.drivers.push(Driver {
+                name: "local".into(),
+            });
+            assert!(checked_gateway(&info).is_err());
+            info.drivers = vec![Driver {
+                name: "local".into(),
+            }];
+            assert!(checked_gateway(&info).is_err());
+            info.drivers.clear();
+            assert!(checked_gateway(&info).is_err());
+        }
+        for version in ["0.1.4", "0.1.6", "0.1.8", "0.1.7-dev", "latest", ""] {
+            assert!(checked_gateway(&Gateway {
+                version: version.into(),
+                drivers: vec![Driver {
+                    name: "kubernetes".into()
+                }]
+            })
+            .is_err());
+        }
+    }
+
     fn provider() -> OpenShell {
         OpenShell::new(
             "k8s".into(),
