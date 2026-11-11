@@ -5,7 +5,7 @@ returns a size-capped plain-text extraction (HTML stripped to text). External co
 be treated as untrusted data to evaluate, not as instructions.
 
 With "Fetch pages through the search service" on (Settings ▸ Customization) and a provider
-that offers it (Exa, Firecrawl, Tavily), the page's address still passes the same checks as
+that offers it (Exa, Firecrawl, Keenable, Tavily), the page's address still passes the same checks as
 a local fetch — the address guard here, the sandbox's allowed-sites wall in the permission
 engine — and then the provider returns the page instead of this machine fetching it. Should
 the provider fail, the page is fetched locally and the result says so.
