@@ -159,6 +159,22 @@ describe("Atlas Cloud provider presentation", () => {
   });
 });
 
+describe("UberLLM provider presentation", () => {
+  it("links to the UberLLM API key page", () => {
+    expect(KEY_HELP.uberllm).toEqual({
+      url: "https://uberllm.dev/dashboard/keys",
+      label: "uberllm.dev",
+    });
+  });
+
+  it("wears the bundled UberLLM mark", () => {
+    const { container } = render(
+      <ProviderMark name="uberllm" title="UberLLM" />,
+    );
+    expect(container.querySelector("img")).not.toBeNull();
+  });
+});
+
 describe("Azure OpenAI provider presentation", () => {
   it("renders the endpoint as a plain required row, not the custom-endpoint disclosure", () => {
     render(<ProviderForm ps={makePs({}, vi.fn(), AZURE)} tp="t" />);

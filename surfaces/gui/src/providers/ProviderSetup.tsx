@@ -60,6 +60,7 @@ export const KEY_HELP: Record<string, { url: string; label: string; labelKey?: s
   xai: { url: "https://console.x.ai", label: "console.x.ai" },
   sambanova: { url: "https://cloud.sambanova.ai/apis", label: "cloud.sambanova.ai" },
   atlascloud: { url: "https://www.atlascloud.ai/console/api-keys", label: "atlascloud.ai" },
+  uberllm: { url: "https://uberllm.dev/dashboard/keys", label: "uberllm.dev" },
   groq: { url: "https://console.groq.com/keys", label: "console.groq.com" },
   upstage: { url: "https://console.upstage.ai/api-keys", label: "console.upstage.ai" },
   cerebras: { url: "https://cloud.cerebras.ai", label: "cloud.cerebras.ai" },
