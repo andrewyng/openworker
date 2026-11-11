@@ -156,6 +156,11 @@ pub(super) fn operation_lock(root: &Path, name: &str) -> Result<fs::File> {
     Ok(f)
 }
 async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()> {
+    ensure!(
+        !c.management_ui.as_ref().is_some_and(|ui| ui.enabled)
+            || package.release.images.service_ui.is_some(),
+        "Enabling managementUI requires a digest-pinned service-ui image in the release manifest"
+    );
     let mut tools: Vec<(&str, Vec<&str>)> = vec![
         ("kubectl", vec!["version", "--client", "--output=json"]),
         ("helm", vec!["version", "--short"]),

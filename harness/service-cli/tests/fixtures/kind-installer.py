@@ -13,12 +13,19 @@ if tool=='helm':
     ns=arg('-n');releases=state['releases'].setdefault(ns,{})
     if a[0]=='list':finish([{'name':n} for n in releases])
     if a[0]=='status':finish(releases[a[1]])
+    if a[:2]==['get','values']:finish(releases[a[2]].get('values',{}))
+    if a[0]=='template':finish('rendered')
     if a[0]=='install':
         if os.environ.get('FAIL_BEFORE')=='yes':sys.exit(77)
-        name=a[1];labels=dict(pair.split('=',1) for pair in arg('--labels').split(','));releases[name]={'version':1,'info':{'status':'failed' if os.environ.get('FAIL_RELEASE') else 'deployed','description':'context deadline exceeded' if os.environ.get('FAIL_RELEASE') else arg('--description')},'uid':'release-uid','labels':labels};store.write_text(json.dumps(state))
+        name=a[1];labels=dict(pair.split('=',1) for pair in arg('--labels').split(','));releases[name]={'version':1,'info':{'status':'failed' if os.environ.get('FAIL_RELEASE') else 'deployed','description':'context deadline exceeded' if os.environ.get('FAIL_RELEASE') else arg('--description')},'uid':'release-uid','labels':labels,'values':json.loads(pathlib.Path(arg('-f')).read_text())};store.write_text(json.dumps(state))
         if os.environ.get('FAIL_RELEASE'):sys.exit(81)
         if os.environ.get('FAIL_AFTER')=='yes':sys.exit(78)
         finish('installed')
+    if a[0]=='upgrade':
+        if os.environ.get('FAIL_UPGRADE_BEFORE')=='yes':sys.exit(77)
+        name=a[1];r=releases[name];r['version']+=1;r['uid']='release-uid-'+str(r['version']);r['labels']=dict(pair.split('=',1) for pair in arg('--labels').split(','));r['info']={'status':'deployed','description':arg('--description')};r['values']=json.loads(pathlib.Path(arg('-f')).read_text());store.write_text(json.dumps(state))
+        if os.environ.get('FAIL_UPGRADE_AFTER')=='yes':sys.exit(78)
+        finish('upgraded')
     if a[0]=='uninstall':del releases[a[1]];finish('uninstalled')
     sys.exit(99)
 # kubectl global options precede its command.

@@ -96,3 +96,23 @@ See [AWS deployment](../../docs/harness/guides/aws.md) and
 with an explicit budget and independent cleanup before production deployment.
 
 `owcluster` is the primary command. `ows` remains an alias, using the same commands, configuration and saved deployment state. Existing `.ows` paths and `OWS_*` settings remain valid.
+
+## Optional management UI and trace storage
+
+Select these features in `deployment.yaml` for the AWS/Azure `up` commands, or
+change them on an existing installation:
+
+```sh
+ows management-ui enable --state ./deployment-state/installation
+ows management-ui disable --state ./deployment-state/installation
+ows management-ui status --state ./deployment-state/installation
+ows observability enable --state ./deployment-state/installation --retention-days 14
+ows observability disable --state ./deployment-state/installation
+ows observability status --state ./deployment-state/installation
+```
+
+`--state` is the original installer journal, using its Kubernetes credentials and
+verified cluster identity. UI and trace storage are independent. Disabling tracing
+retains data and leaves security audit and separately configured exporters intact.
+The CLI saves feature changes and reconciles lost Helm responses without repeating
+unknown upgrades. See [setup, UI image, private HTTPS and database options](../../deploy/service/up/README.md#management-ui-and-trace-storage).

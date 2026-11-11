@@ -229,3 +229,29 @@ test("exporter authentication mounts only into harness roles and remains opt-in"
   assert.match(bootstrap, /OW_TELEMETRY_AUTH/);
   assert.match(bootstrap, /secretName: export-auth/);
 });
+test("attachment chunks have a scoped 1 MiB limit, separate from metadata and artifacts",async()=>{
+  const out=await render({});
+  const block=out.match(/location ~ \^\/v1\/sessions\/\[A-Za-z0-9_-\]\+\/attachments\/\[A-Za-z0-9_-\]\+\$ \{[\s\S]*?\}/)?.[0];
+  assert.ok(block,"Only the exact authenticated attachment upload path gets a larger bound");
+  assert.match(block,/client_max_body_size 1m/);
+  assert.match(block,/proxy_request_buffering off/);
+  assert.match(out,/ssl_protocols TLSv1.2 TLSv1.3; client_max_body_size 160k/);
+});
+test("recording enable runs only advisory-locked schema initialization, disable removes it",async()=>{
+  const off=await render({});assert.doesNotMatch(off,/name: recording-schema/);
+  const on=await render({config:{...base.config,observability:{retention_days:14}}});
+  for(const role of ["api","worker","controller","platform"]){
+    const d=deployment(on,role);const init=d.split("initContainers:")[1].split("      containers:")[0];
+    assert.match(init,/args: \[recording-migrate\]/);
+    assert.doesNotMatch(init,/bootstrap|\/models|\/openshell/);
+  }
+});
+test("private management UI preview terminates TLS without giving the UI server the private key",async()=>{
+  const out=await render({managementUI:{enabled:true,image:"ui@sha256:"+"b".repeat(64),publicOrigin:"https://localhost:8444",serviceUrl:"https://test-api.default.svc",caSecret:"ow-service-tls",caKey:"tls.crt",tlsSecret:"ow-service-tls"}});
+  const d=deployment(out,"ui");
+  assert.match(d,/name: tls/);assert.match(d,/key: "tls.crt", path: ca.crt/);
+  const ui=d.split("- name: ui")[1].split("- name: tls")[0];
+  assert.doesNotMatch(ui,/mountPath: \/tls/);
+  assert.match(out,/name: https, port: 443, targetPort: https/);
+  assert.match(out,/proxy_set_header Host \$http_host/);
+});

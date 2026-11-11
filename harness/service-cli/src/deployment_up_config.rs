@@ -17,6 +17,11 @@ pub(super) struct Config {
     pub models: BTreeMap<String, Secret>,
     #[serde(default)]
     pub advanced: Advanced,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "managementUI")]
+    pub management_ui: Option<super::super::local::features::ManagementUI>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observability: Option<super::super::local::features::Observability>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -170,6 +175,12 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self, provider: &str) -> Result<()> {
+        if let Some(ui) = &self.management_ui {
+            ui.validate()?;
+        }
+        if let Some(obs) = &self.observability {
+            obs.validate()?;
+        }
         if let Some(t) = &self.trial {
             ensure!((1..=72).contains(&t.expires_after_hours)&&t.delete_data,"A disposable trial requires 1..72 hours and explicit deleteData:true; omit trial for persistent deployment");
         }
@@ -310,7 +321,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    pub(super) fn yaml() -> &'static str {
+    pub(crate) fn yaml() -> &'static str {
         "name: example\ncloud:\n  provider: azure\n  subscriptionId: 11111111-2222-4333-8444-555555555555\n  region: westus2\nnodes:\n  count: 2\n  requirements:\n    cpu: {min: 4, max: 8}\n    memoryGiB: {min: 16, max: 32}\nbudget:\n  limitUSD: 100\n"
     }
     #[test]
@@ -355,5 +366,28 @@ mod tests {
             },
         );
         c.validate("azure").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod feature_config_tests {
+    use super::*;
+    #[test]
+    fn cloud_settings_accept_independent_features_and_reject_unknown_inline_options() {
+        let base = tests::yaml();
+        for options in [
+            "managementUI: {enabled: true}\n",
+            "observability: {enabled: true, retentionDays: 14, databaseSecret: recording-db}\n",
+        ] {
+            let c: Config = serde_yaml::from_str(&format!("{base}{options}")).unwrap();
+            c.validate("azure").unwrap();
+        }
+        let c: Config = serde_yaml::from_str(base).unwrap();
+        let value = serde_json::to_value(c).unwrap();
+        assert!(value.get("managementUI").is_none() && value.get("observability").is_none());
+        assert!(serde_yaml::from_str::<Config>(&format!(
+            "{base}observability: {{enabled: true, connection: secret}}\n"
+        ))
+        .is_err());
     }
 }

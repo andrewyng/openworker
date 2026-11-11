@@ -8,6 +8,27 @@ metadata: {name: {{ .Release.Name }}-ui}
 data:
   ui.json: |
     {{- dict "host" "0.0.0.0" "port" 8080 "publicOrigin" .Values.managementUI.publicOrigin "serviceUrl" .Values.managementUI.serviceUrl "serviceId" .Values.config.service.id "namespace" .Values.config.service.namespace "sessionSeconds" 1800 | toPrettyJson | nindent 4 }}
+  {{- if .Values.managementUI.tlsSecret }}
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 128; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/body; proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi; uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi;
+      server {
+        listen 8443 ssl;
+        ssl_certificate /tls/tls.crt; ssl_certificate_key /tls/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3; client_max_body_size 160k;
+        location / {
+          proxy_pass http://127.0.0.1:8080; proxy_http_version 1.1;
+          proxy_set_header Host $http_host; proxy_set_header Connection "";
+          proxy_buffering off; proxy_read_timeout 3600s;
+        }
+      }
+    }
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -22,7 +43,7 @@ spec:
     metadata:
       labels: {app: {{ .Release.Name }}-ui}
       annotations:
-        checksum/config: {{ .Values.managementUI | toJson | sha256sum | quote }}
+        checksum/config: {{ list .Values.managementUI .Values.config.service | toJson | sha256sum | quote }}
     spec:
       automountServiceAccountToken: false
       securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
@@ -39,12 +60,28 @@ spec:
             - {name: ca, mountPath: /trust, readOnly: true}
           env: [{name: NODE_EXTRA_CA_CERTS, value: /trust/ca.crt}]
             {{- end }}
+        {{- if .Values.managementUI.tlsSecret }}
+        - name: tls
+          image: {{ .Values.proxyImage | quote }}
+          command: [nginx, -c, /config/nginx.conf, -g, "daemon off;"]
+          ports: [{name: https, containerPort: 8443}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+        {{- end }}
       volumes:
         - name: config
           configMap: {name: {{ .Release.Name }}-ui}
         {{- if .Values.managementUI.caSecret }}
         - name: ca
-          secret: {secretName: {{ .Values.managementUI.caSecret }}, items: [{key: ca.crt, path: ca.crt}]}
+          secret: {secretName: {{ .Values.managementUI.caSecret }}, items: [{key: {{ .Values.managementUI.caKey | quote }}, path: ca.crt}]}
+        {{- end }}
+        {{- if .Values.managementUI.tlsSecret }}
+        - name: tls
+          secret: {secretName: {{ .Values.managementUI.tlsSecret }}, defaultMode: 0440}
+        - {name: tmp, emptyDir: {sizeLimit: 64Mi}}
         {{- end }}
 ---
 apiVersion: v1
@@ -52,5 +89,5 @@ kind: Service
 metadata: {name: {{ .Release.Name }}-ui}
 spec:
   selector: {app: {{ .Release.Name }}-ui}
-  ports: [{name: http, port: 80, targetPort: http}]
+  ports: [{{ if .Values.managementUI.tlsSecret }}{name: https, port: 443, targetPort: https}{{ else }}{name: http, port: 80, targetPort: http}{{ end }}]
 {{- end }}

@@ -13,7 +13,7 @@ mod guard;
 #[path = "deployment_infrastructure.rs"]
 mod infrastructure;
 #[path = "deployment_local.rs"]
-mod local;
+pub(crate) mod local;
 #[path = "deployment_preflight.rs"]
 mod preflight;
 #[path = "deployment_up.rs"]

@@ -101,3 +101,81 @@ python3 deploy/service/up/test-plan.py \
 ```
 
 That check uses the real pinned OpenShell archive, fixture image references and catalog responses. It performs no real cloud calls, does not install a cluster and must not be presented as cloud qualification.
+
+## Management UI and trace storage
+
+Both features are optional and independent. Select them before the first `up`:
+
+```yaml
+managementUI:
+  enabled: true
+  publicOrigin: https://localhost:8444
+observability:
+  enabled: true
+  retentionDays: 14
+```
+
+The reviewed release manifest must include a digest-pinned `service-ui` image.
+The default private preview uses the API certificate and a loopback-only Kubernetes
+port-forward; `connection.json` contains its command, URL and CA file. Trust that
+certificate locally, then sign in with a current service token. No token is put in
+the browser URL. Keep the cloud's private management route open as described above.
+A non-loopback `publicOrigin` requires your own TLS ingress; `up` does not create
+public exposure or DNS records.
+
+After installation, use the original **installer** state directory (the
+`installation/` child of the `up --state` directory):
+
+```sh
+ows management-ui enable --state .ows/my-deployment/installation
+ows management-ui status --state .ows/my-deployment/installation
+ows management-ui disable --state .ows/my-deployment/installation
+
+ows observability enable --state .ows/my-deployment/installation --retention-days 14
+ows observability status --state .ows/my-deployment/installation
+ows observability disable --state .ows/my-deployment/installation
+```
+
+If the original release did not include a UI image, pass
+`--image registry.example.com/ui@sha256:YOUR_VERIFIED_DIGEST` on enable.
+`--public-origin` overrides its origin. These commands use the original Kubernetes
+credentials, verify cluster/namespace/release identities, and perform a Helm upgrade
+of the saved chart. They do not use the service REST token. Features are saved in
+`journal.json` with their original Helm operation and revision receipts; the initial
+provisioning review and `deployment.yaml` stay immutable. Rerunning `up` does not
+reset these saved feature overrides. Do not edit old installer values in place.
+
+Trace storage uses a separate `ow_observability` schema and connection to the
+execution PostgreSQL by default. For a separate database, create an existing
+Kubernetes Secret containing `database-url` and `ca.crt`, then select it with
+`observability.databaseSecret` or `ows observability enable --database-secret NAME`.
+Verified database TLS remains required. Enabling initializes the recording schema
+before workloads start; feature changes roll the affected pods, so allow active
+turns to drain. The first-admin bootstrap is not rerun.
+
+Disabling recording stops new recordings as the rollout completes. It does not
+delete traces, databases or credentials. While disabled, the recorder's retention
+worker is also stopped; retained data remains until recording resumes or an operator
+performs a separate cleanup. Security audit, durable execution state and separately
+configured OTLP exporters are unaffected. This is deployment-level control, not a
+new per-agent trace policy API.
+
+A lost Helm response never causes an automatic repeat. `status` can reconcile the
+original successful revision; an unresolved/pending/failed result blocks another
+upgrade or teardown until the operator inspects that original operation.
+
+Local regression checks:
+
+```sh
+cargo test --manifest-path harness/Cargo.toml -p openworker-service-cli
+node --test deploy/service/chart.test.mjs
+OWS_PROXY_TEST=1 node --test deploy/service/proxy.test.mjs
+```
+
+If the API uses a certificate signed by a separate CA, provide its public trust
+bundle using `managementUI.caSecret` / `managementUI.caKey` in deployment YAML,
+or `ows management-ui enable --ca-secret API_CA_SECRET --ca-key ca.crt`.
+The Secret must already exist in the service namespace. Without an override,
+the CLI trusts the API TLS Secret's `tls.crt`, suitable for the self-signed
+certificate produced by `up`. The UI process receives only that public certificate;
+the HTTPS proxy sidecar receives the separate TLS key mount.

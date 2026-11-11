@@ -48,6 +48,23 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       securityContext: {fsGroup: 1000}
+      {{- if hasKey $.Values.config "observability" }}
+      # Explicit enable-time initialization; advisory-locked and idempotent.
+      # No first-admin bootstrap, provider key or sandbox credential required.
+      initContainers:
+        - name: recording-schema
+          image: {{ $.Values.image | quote }}
+          command: [/bin/sh, /opt/openworker/entrypoint.sh]
+          args: [recording-migrate]
+          securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          volumeMounts:
+            - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
+            - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
+            - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            {{- if $.Values.secrets.observability }}
+            - {name: observability, mountPath: /run/observability, readOnly: true}
+            {{- end }}
+      {{- end }}
       containers:
         - name: harness
           image: {{ $.Values.image | quote }}
