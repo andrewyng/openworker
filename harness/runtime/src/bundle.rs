@@ -258,6 +258,9 @@ impl Bundle {
     /// Preserve registered provider selection when publishing a scoped bundle.
     /// Resolved $NATIVE/$HTTP bindings must never be serialized as legacy v2.
     pub fn selection_text(&self, selected: &Tools) -> Result<String> {
+        if selected.bindings.is_empty() {
+            return Ok(serde_json::json!({"version":3,"tools":[]}).to_string());
+        }
         if self.registry_digest.is_none() {
             return Ok(serde_json::to_string(selected)?);
         }

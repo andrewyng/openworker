@@ -184,6 +184,17 @@ impl HarnessBuilder {
         let host = self.prepare()?;
         let client = HarnessClient::embedded_host(host, self.registry, self.options).await?;
         let harness = Harness::connect(client).await?;
+        if self
+            .agents
+            .iter()
+            .any(|a| a.standalone_subagents.as_ref().is_some_and(|c| c.enabled))
+            && harness.client.info()["capabilities"]["standalone_subagents"] != true
+        {
+            let _ = harness.shutdown().await;
+            return Err(Error::Setup(
+                "Update the host to enable standalone sub-agents".into(),
+            ));
+        }
         for provider in self.providers {
             if let Err(error) = harness.set_model_provider(provider).await {
                 let _ = harness.shutdown().await;
@@ -206,6 +217,17 @@ impl HarnessBuilder {
         )
         .await?;
         let harness = Harness::connect(client).await?;
+        if self
+            .agents
+            .iter()
+            .any(|a| a.standalone_subagents.as_ref().is_some_and(|c| c.enabled))
+            && harness.client.info()["capabilities"]["standalone_subagents"] != true
+        {
+            let _ = harness.shutdown().await;
+            return Err(Error::Setup(
+                "Update the host to enable standalone sub-agents".into(),
+            ));
+        }
         for provider in self.providers {
             if let Err(error) = harness.set_model_provider(provider).await {
                 let _ = harness.shutdown().await;
@@ -235,6 +257,13 @@ impl Harness {
     /// Register an agent after startup. Exact repeats are safe; changes need a new ID.
     pub async fn create_agent(&self, definition: Agent) -> Result<AgentHandle> {
         for a in std::iter::once(&definition).chain(definition.subagents.iter()) {
+            if a.standalone_subagents.as_ref().is_some_and(|c| c.enabled)
+                && self.client.info()["capabilities"]["standalone_subagents"] != true
+            {
+                return Err(Error::Setup(
+                    "Update the host to enable standalone sub-agents".into(),
+                ));
+            }
             if a.builtin_tools.is_some()
                 && self.client.info()["capabilities"]["builtin_tools"] != true
             {

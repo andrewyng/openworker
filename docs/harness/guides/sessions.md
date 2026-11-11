@@ -107,6 +107,52 @@ These APIs require an updated native runtime as well as the SDK package. Clients
 check host capabilities before sending the new options. Omitted options retain
 existing agent definitions and session schema digests across upgrades.
 
+## Standalone sub-agents
+
+**Source preview:** this requires the matching feature runtime; it is not available
+in npm runtime 0.1.0-beta.2. An ordinary agent can let its model delegate work:
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+const assistant = harness.createAgent({
+  name: "assistant",
+  instructions: "Delegate source reviews and combine the findings.",
+  tools: ["coding.read_file", "coding.list_files"],
+  subagents: { enabled: true },
+});
+```
+
+### Rust
+
+```rust
+let assistant = Agent::new("assistant")
+    .instructions("Delegate source reviews and combine the findings.")
+    .tool("coding.read_file")
+    .tool("coding.list_files")
+    .allow_subagents(true);
+```
+<!-- /sdk-tabs -->
+
+The model receives `create_sub_agent`. It supplies an instance ID, system prompt,
+explicit task/context, a subset of its tools and `execution: "sync"` or `"async"`.
+Each child starts with a fresh conversation. No parent history is copied.
+Sync waits without occupying a worker slot; async returns a durable child identity.
+
+Parent and child exchange messages through durable inboxes. The parent can wait,
+cancel a running child or close it. A completed child can accept follow-up work;
+explicitly cancelled or closed children do not automatically resume. Creation uses
+normal approval policy and does not approve subsequent child tools.
+
+Children initially share the parent's workspace and sandbox; assign separate
+paths for concurrent edits. Service profiles must allow a shared environment.
+Defaults allow four active children and 32 retained child identities. Shared scope
+budgets count parent and child work; children cannot reset the allowance or spawn
+further descendants. Existing explicit teams remain available separately.
+
+See the [complete tool contract and configuration](../../../skills/openworker-apps/references/subagents.md).
+
 ## Teams
 
 A lead can create multiple instances of registered agent types, communicate through

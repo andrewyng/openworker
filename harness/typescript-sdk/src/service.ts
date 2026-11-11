@@ -48,6 +48,7 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
 export interface AgentRelease {
+  subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   limits?: TurnLimits;
   id: string;
   instructions: string;

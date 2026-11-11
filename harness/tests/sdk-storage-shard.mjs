@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const groups = {
-  teams: ["agent_team", "storage_teams", "team_types"],
+  teams: ["agent_team", "storage_teams", "team_types", "standalone_subagents"],
   workspaces: ["team_workspaces", "coding_presets", "dynamic_agents"],
 };
 const root = fileURLToPath(new URL("../", import.meta.url));

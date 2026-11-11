@@ -128,7 +128,8 @@ export interface Agent {
   approvals?: Approvals;
   /** Skip structured ask_user calls without changing tool approvals. */
   autoSkipQuestions?: boolean;
-  subagents?: Agent[];
+  /** Existing arrays configure board workers; an object enables standalone children. */
+  subagents?: Agent[] | { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   servers?: string;
   toolPolicy?: string;
   runtimePolicy?: string;
@@ -307,6 +308,8 @@ export interface JournalEvent {
 export interface RunEvent {
   agentId?: string;
   teamId?: string;
+  /** Original parent session for standalone child events. */
+  parentSessionId?: string;
   agent: string;
   sessionId: string;
   event: JournalEvent;

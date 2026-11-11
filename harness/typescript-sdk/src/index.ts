@@ -309,6 +309,11 @@ export class Harness {
     const safety=await normalizeSafety(options,async(ref,callback)=>{pending.push({ref,callback});});
     const {guardrails:_guards,hooks:_hooks,blockedOutputOptions:_blocked,...launchOptions}=options;
     const transport = await Transport.start(launchOptions,safety);
+    if (options.agents?.some(a=>a.subagents && !Array.isArray(a.subagents) && a.subagents.enabled)
+        && record(transport.info.capabilities).standalone_subagents !== true) {
+      await transport.stop();
+      throw new HarnessError("Setup","Update the runtime to enable standalone sub-agents");
+    }
     try {
       const listed = record(await transport.request("agent/list", {}));
       if (!Array.isArray(listed.agents))
@@ -651,7 +656,9 @@ export class AgentHandle {
     void this.registration.catch(() => {});
   }
   private async register(definition: AgentDefinition): Promise<void> {
-    const definitions = [definition, ...(definition.subagents ?? [])];
+    const definitions = [definition, ...(Array.isArray(definition.subagents) ? definition.subagents : [])];
+    if (definitions.some(a => a.subagents && !Array.isArray(a.subagents) && a.subagents.enabled) && this.harness.capabilities.standalone_subagents !== true)
+      throw new HarnessError("Setup", "Update the host to enable standalone sub-agents");
     if (definitions.some(a => a.builtinTools !== undefined) && this.harness.capabilities.builtin_tools !== true)
       throw new HarnessError("Setup", "Update the host to configure built-in tools");
     if (definitions.some(a => a.limits?.maxOutputTokensPerCall !== undefined) && this.harness.capabilities.per_call_output_limit !== true)
@@ -1087,6 +1094,7 @@ export class RunStream implements AsyncIterable<RunEvent> {
             ? { agentId: item.agent_id }
             : {}),
           ...(typeof item.team_id === "string" ? { teamId: item.team_id } : {}),
+          ...(typeof item.parent_session_id === "string" ? { parentSessionId: item.parent_session_id } : {}),
           sessionId: sid,
           event: event as unknown as RunEvent["event"],
           summary,

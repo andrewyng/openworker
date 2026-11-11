@@ -157,3 +157,7 @@ pub(super) fn ensure_admission(db: &Connection, s: &Session) -> Result<()> {
     }
     Ok(())
 }
+
+pub(super) fn terminal_saved(db: &Connection, s: &Session) -> Result<()> {
+    crate::subagents::terminal_saved(&mut Tx(db), s)
+}

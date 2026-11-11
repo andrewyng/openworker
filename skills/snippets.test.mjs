@@ -11,7 +11,7 @@ test('runtime-options examples compile against the matching SDK declarations', a
     await mkdir(join(root, 'node_modules/@openworkerai'), { recursive: true });
     await symlink(sdk, join(root, 'node_modules/@openworkerai/harness-sdk'), 'junction');
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    const text = await readFile('skills/openworker-apps/references/runtime-options.md', 'utf8');
+    const text = (await Promise.all(['runtime-options.md','subagents.md'].map(name=>readFile('skills/openworker-apps/references/'+name,'utf8')))).join('\n');
     const files = [];
     for (const [index, match] of [...text.matchAll(/```typescript\r?\n([\s\S]*?)```/g)].entries()) {
       const file = join(root, `example-${index}.ts`);

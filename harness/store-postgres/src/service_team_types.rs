@@ -169,6 +169,11 @@ impl PostgresStore {
             let profile=service_catalog::entry(&mut tx,"profile",&team.profile.id)?;
             ensure!(source.activated && profile.activated && source.digest==team.release.digest && profile.digest==team.profile.digest,"Source release/profile unavailable or changed");
             ensure!(session.coworker==stored.runtime_id() && session.environment==lead.environment && session.workspace==lead.workspace && serde_json::to_value(&session.permissions)?==serde_json::to_value(&lead.permissions)? && serde_json::to_value(&session.compaction_config)?==serde_json::to_value(&lead.compaction_config)? && session.turn.is_none() && session.history.is_empty() && session.agent_team.is_none() && !session.closed,"Scoped template differs from approved lead scope");
+            if let Some(standalone)=&doc.standalone {
+                let policy=standalone.policy_for_type(&stored.binding.definition().name)?;
+                ensure!(serde_json::to_value(&session.safety)?==serde_json::to_value(&policy.safety)?
+                    && serde_json::to_value(&session.compliance)?==serde_json::to_value(&policy.compliance)?,"Pinned child safety/compliance policy changed");
+            }
             let expected_model=match &stored.binding.definition().model {Some(m)=>Some(team.models.get(&model_key(m)?).context("Missing pinned type model")?),None=>lead.model_selection.as_ref()};
             ensure!(serde_json::to_value(&session.model_selection)?==serde_json::to_value(expected_model)?
                 && (expected_model.is_some() || (session.model==lead.model && session.model_provider==lead.model_provider))

@@ -41,6 +41,8 @@ pub struct Document {
     pub charges: BTreeMap<String, (u32, bool)>,
     #[serde(default)]
     pub stopped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standalone: Option<crate::subagents::State>,
     #[serde(default)]
     pub failures: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,20 +121,21 @@ pub fn delegated_task(message: &str) -> String {
     format!("{DELEGATION_PREFIX}{message}")
 }
 pub fn internal(name: &str) -> bool {
-    matches!(
-        name,
-        "team_spawn"
-            | "team_submit_code"
-            | "team_receive_submission"
-            | "team_integrate_submission"
-            | "team_report_verification"
-            | "team_list_submissions"
-            | "team_send_message"
-            | "team_wait_agent"
-            | "team_post_board"
-            | "team_read_board"
-            | "team_manage"
-    )
+    crate::subagents::TOOLS.contains(&name)
+        || matches!(
+            name,
+            "team_spawn"
+                | "team_submit_code"
+                | "team_receive_submission"
+                | "team_integrate_submission"
+                | "team_report_verification"
+                | "team_list_submissions"
+                | "team_send_message"
+                | "team_wait_agent"
+                | "team_post_board"
+                | "team_read_board"
+                | "team_manage"
+        )
 }
 fn op<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v[key].as_str().context("Missing string argument")
@@ -172,6 +175,10 @@ pub fn apply(
                 .is_some_and(|i| i.session_id == s.id),
             "Invalid team command author"
         );
+        ensure!(
+            doc.standalone.is_none(),
+            "Standalone scopes use model coordination tools and normal session controls"
+        );
         let receipt_key = format!("{}:{key}", member.agent_id);
         if let Some((old, result)) = doc.commands.get(&receipt_key) {
             ensure!(old == args, "Conflicting command retry");
@@ -188,7 +195,29 @@ pub fn apply(
         tx.write(&doc, false)?;
         return Ok(result);
     }
-    if operation == "create" {
+    if operation == "create" || operation == "standalone_init" {
+        let standalone = operation == "standalone_init";
+        if standalone {
+            ensure!(
+                s.package
+                    .standalone_subagents
+                    .as_ref()
+                    .is_some_and(|c| c.enabled),
+                "Standalone delegation not enabled"
+            );
+            ensure!(
+                s.package.team_role.is_none(),
+                "Legacy team role cannot use standalone delegation"
+            );
+        } else {
+            ensure!(
+                !s.package
+                    .standalone_subagents
+                    .as_ref()
+                    .is_some_and(|c| c.enabled),
+                "Standalone delegation cannot be combined with an explicit team"
+            );
+        }
         let policy: rules::Policy = args
             .get("policy")
             .cloned()
@@ -244,6 +273,10 @@ pub fn apply(
         if let Some(member) = &s.agent_team {
             let doc = tx.load(&member.team_id)?;
             ensure!(
+                standalone == doc.standalone.is_some(),
+                "Session already belongs to a different coordination scope"
+            );
+            ensure!(
                 doc.lead == member.agent_id && lead_id == member.agent_id,
                 "Session already belongs to a team"
             );
@@ -298,7 +331,7 @@ pub fn apply(
             return Ok(json!(doc));
         }
         ensure!(
-            !s.closed && s.turn.is_none(),
+            !s.closed && (s.turn.is_none() || standalone),
             "Create a team before starting its lead"
         );
         let id = crate::id("at");
@@ -349,6 +382,13 @@ pub fn apply(
             limited: true,
             charges: BTreeMap::new(),
             stopped: false,
+            standalone: if standalone {
+                Some(crate::subagents::State::new(
+                    s.package.standalone_subagents.clone().unwrap(),
+                ))
+            } else {
+                None
+            },
             failures: BTreeMap::new(),
             type_catalog,
             type_bindings: BTreeMap::new(),
@@ -436,6 +476,18 @@ pub fn apply(
         if operation == "pending_inbox" {
             return Ok(json!(false));
         }
+    }
+    if doc.standalone.is_some() && matches!(operation, "pending" | "wake" | "subagent_reconcile") {
+        crate::subagents::reconcile(tx, &mut doc)?;
+    }
+    if operation == "subagent_reconcile" {
+        return Ok(json!({"reconciled":true}));
+    }
+    if operation == "subagent_prepare" {
+        return crate::subagents::prepare(tx, s, args, now);
+    }
+    if crate::subagents::TOOLS.contains(&operation) {
+        return crate::subagents::execute(tx, s, operation, args, now);
     }
     match operation {
         "snapshot" => Ok(json!(doc)),
@@ -563,7 +615,7 @@ pub fn apply(
                 let definition: crate::team_definition::Definition =
                     serde_json::from_value(args.clone())?;
                 ensure!(
-                    !definition.tools.is_empty(),
+                    doc.standalone.is_some() || !definition.tools.is_empty(),
                     "This adapter requires at least one delegated tool in a custom type"
                 );
                 catalog.propose(s, definition, now)?
@@ -1125,6 +1177,25 @@ pub fn apply(
             if s.closed || s.provider_blocked || (s.turn.is_none() && member.agent_id != doc.lead) {
                 return Ok(json!({"wake":false}));
             }
+            if let Some(state) = &doc.standalone {
+                if member.agent_id != doc.lead && !state.active.contains(&member.agent_id) {
+                    return Ok(json!({"wake":false}));
+                }
+                if member.agent_id == doc.lead {
+                    if let Some(id) = &state.sync {
+                        let output = crate::subagents::result(tx, &doc, id)?;
+                        if !crate::store::terminal(output["status"].as_str().unwrap_or("queued"))
+                            && output["status"] != "closed"
+                        {
+                            return Ok(json!({"wake":false}));
+                        }
+                        s.agent_team.as_mut().unwrap().waiting = None;
+                        s.turn.as_mut().context("Missing sync parent turn")?.status =
+                            "resuming_agents".into();
+                        return Ok(json!({"wake":true,"resume":true}));
+                    }
+                }
+            }
             let pending = !member.notices.is_empty()
                 || (!doc.retirements.contains_key(&member.agent_id)
                     && !tx
@@ -1242,6 +1313,9 @@ pub fn runtime_type(doc: &Document, instance: &rules::Instance) -> Result<String
     }
 }
 pub fn schemas(doc: &Document, agent_id: &str) -> Vec<Value> {
+    if doc.standalone.is_some() {
+        return crate::subagents::schemas(doc, agent_id);
+    }
     let mut specs=vec![("team_wait_agent","Wait for a named instance to finish, receive a message or reach timeout. Releases execution capacity.",json!({"agent_ids":{"type":"array","items":{"type":"string"}},"timeout_ms":{"type":"integer"}}),vec!["agent_ids","timeout_ms"])];
     if agent_id == doc.lead {
         // Approved dynamic names are checked at dispatch. Changing an enum here
@@ -1328,9 +1402,13 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
         return Ok(());
     }
     let t = s.turn.as_mut().context("Missing turn")?;
+    if call["name"] == crate::subagents::CREATE && result["parked"] == true {
+        t.status = "waiting_agents".into();
+        return Ok(());
+    }
     s.history.push(json!({"type":"function_call_output","call_id":call["call_id"],"output":result.to_string()}));
     t.queue.remove(0);
-    if call["name"] == "team_wait_agent" {
+    if call["name"] == "team_wait_agent" || call["name"] == "wait_agent" {
         t.status = "waiting_agents".into();
     }
     Ok(())
@@ -1341,6 +1419,7 @@ pub fn finish(s: &mut Session, tid: &str, call: &Value, result: &Value) -> Resul
 pub fn public_snapshot(mut value: Value) -> Value {
     if let Some(object) = value.as_object_mut() {
         for key in [
+            "standalone",
             "commands",
             "tasks",
             "charges",

@@ -334,3 +334,12 @@ stages verified artifacts and ToolRunner imports them before the lead starts;
 GitHub credentials stay outside the sandbox. Publication is a separately selected
 registered native tool with ordinary approvals and a RuntimeProfile scope ceiling.
 This Linux service adapter does not add a Git executable to the core SDK.
+
+### Standalone sub-agents (source preview)
+
+Use `Agent::allow_subagents(true)` to let a normal agent create children with an
+explicit prompt, context and tool subset. Children use the existing durable
+coordination engine without application-managed team setup. This requires a
+matching feature runtime; it is not in published runtime 0.1.0-beta.2.
+See [standalone sub-agents](../../docs/harness/guides/sessions.md#standalone-sub-agents)
+for limits, approvals and shared-sandbox behavior.

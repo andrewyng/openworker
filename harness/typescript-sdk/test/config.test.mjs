@@ -83,3 +83,13 @@ for (const kind of ["directory", "file", "resources"])
   });
 
  test("agent budgets retain their typed wire values",()=>{const limits={maxModelCalls:40,maxOutputTokens:64000,summaryTokens:512};const wire=agentWire({id:"builder",instructions:"Build",tools:["coding.read_file"],limits});assert.deepEqual(wire.limits,limits);});
+
+test("standalone enablement is additive and legacy subagent arrays retain their wire format",()=>{
+  const base={id:"parent",instructions:"Help",tools:[]};
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(agentWire(base))),"standalone_subagents"),false);
+  const enabled=agentWire({...base,subagents:{enabled:true,maxConcurrent:2,maxChildren:8}});
+  assert.deepEqual(enabled.standalone_subagents,{enabled:true,maxConcurrent:2,maxChildren:8});
+  const legacy=agentWire({...base,subagents:[{id:"worker",instructions:"Build",tools:[]}]});
+  assert.equal(legacy.subagents[0].id,"worker");
+  assert.equal(legacy.standalone_subagents,undefined);
+});

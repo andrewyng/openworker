@@ -192,6 +192,13 @@ pub enum RunEvent {
         attempt_id: String,
         diagnostic: openworker_runtime::provider::Diagnostic,
     },
+    /// Child events keep their original journal identity; do not add their usage twice.
+    SubagentActivity {
+        agent_id: String,
+        parent_session_id: String,
+        event: Event,
+        summary: Value,
+    },
     /// Named-team events retain both instance and definition identities.
     TeamActivity {
         agent_id: String,
@@ -233,6 +240,17 @@ pub enum RunEvent {
 }
 impl RunEvent {
     fn from_wire(item: &Value) -> Option<Self> {
+        if let (Some(agent_id), Some(parent_session_id)) = (
+            item["agent_id"].as_str(),
+            item["parent_session_id"].as_str(),
+        ) {
+            return Some(Self::SubagentActivity {
+                agent_id: agent_id.into(),
+                parent_session_id: parent_session_id.into(),
+                event: serde_json::from_value(item["event"].clone()).ok()?,
+                summary: item["summary"].clone(),
+            });
+        }
         if let (Some(agent_id), Some(team_id)) =
             (item["agent_id"].as_str(), item["team_id"].as_str())
         {

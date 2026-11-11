@@ -97,7 +97,7 @@ pub fn service_release(
     let release:crate::service::AgentRelease=serde_json::from_value(serde_json::json!({
         "id":format!("{}@{version}",agent.id()),"instructions":agent.instructions,"tools":agent.tools,
         "runtimeProfiles":[profile.id],"defaultRuntimeProfile":profile.id,"allowedPrincipals":profile.allowed_principals,
-        "defaultModel":agent.model,"reviewerModel":reviewer,"modelOverrides":[],"limits":agent.limits
+        "defaultModel":agent.model,"reviewerModel":reviewer,"modelOverrides":[],"limits":agent.limits,"subagents":agent.standalone_subagents
     })).map_err(|e|Error::InvalidInput(e.to_string()))?;
     release
         .validate()

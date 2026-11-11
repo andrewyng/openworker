@@ -35,6 +35,26 @@ impl Host {
             {
                 continue;
             }
+            if let Some(state) = &doc.standalone {
+                for (id, turn_id) in &state.cancellations {
+                    if let Some(instance) = doc.roster.instance(id) {
+                        if let Some(child) = sessions.iter().find(|s| s.id == instance.session_id) {
+                            if child
+                                .turn
+                                .as_ref()
+                                .is_some_and(|t| t.id == *turn_id && !terminal(&t.status))
+                            {
+                                self.runtime(&child.coworker)?
+                                    .dispatch(
+                                        "turn/cancel",
+                                        json!({"session_id":child.id,"turn_id":turn_id}),
+                                    )
+                                    .await?;
+                            }
+                        }
+                    }
+                }
+            }
             for i in doc
                 .roster
                 .instances()

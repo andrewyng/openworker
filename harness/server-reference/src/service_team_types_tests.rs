@@ -1182,3 +1182,56 @@ async fn coding_team_source_templates_membership_and_audit_commit_or_roll_back_t
         assert_eq!(source, coding["source"]);
     });
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires isolated OW_PG_TEST_URL; no gateway or model traffic"]
+async fn uncertain_template_installation_remains_reconcilable_instead_of_rejected() {
+    let mut f = Fixture::new().await;
+    let doc = f.create();
+    let record = f.approve("reader", json!(["coding.read_file"]));
+    let installed = management::installation(&f.config).unwrap();
+    let db = f.db.clone();
+    tokio::task::spawn_blocking(move||{
+        let mut pg=postgres::Client::connect(&db.connection,postgres::NoTls).unwrap();
+        pg.batch_execute(&format!("SET search_path={},pg_catalog; CREATE FUNCTION fail_template() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected transient storage failure'; END $$; CREATE TRIGGER fail_template BEFORE INSERT ON agent_team_templates FOR EACH ROW EXECUTE FUNCTION fail_template();",db.schema)).unwrap();
+    }).await.unwrap();
+    let error = refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap_err();
+    assert!(error
+        .downcast_ref::<openworker_store_postgres::StorageUnavailable>()
+        .is_some());
+    // A poisoned/lost connection is replaced before inspecting the original receipt.
+    f.store = PostgresStore::open(f.db.clone()).unwrap();
+    assert!(
+        !f.store
+            .service_team_type_installed(&doc.id, &record.runtime_id())
+            .unwrap(),
+        "Storage failure must not publish a permanent rejection receipt"
+    );
+    let db = f.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&db.connection, postgres::NoTls).unwrap();
+        pg.batch_execute(&format!(
+            "DROP TRIGGER fail_template ON {}.agent_team_templates",
+            db.schema
+        ))
+        .unwrap();
+    })
+    .await
+    .unwrap();
+    refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .service_team_type_ready(&doc.id, &record.runtime_id())
+        .unwrap());
+    refresh(&f.config, &f.store, &installed, &mut String::new())
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .service_team_type_ready(&doc.id, &record.runtime_id())
+        .unwrap());
+}

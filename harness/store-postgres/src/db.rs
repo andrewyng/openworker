@@ -511,6 +511,7 @@ impl Database {
         };
         append_history(&mut tx, s)?;
         write_metadata(&mut tx, s)?;
+        openworker_runtime::subagents::terminal_saved(&mut crate::agent_team::Tx(&mut tx), s)?;
         let e = event(&mut tx, s, &self.owner, epoch, kind, data)?;
         tx.commit()?;
         self.leases.insert(s.id.clone(), epoch);

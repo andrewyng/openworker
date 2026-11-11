@@ -212,7 +212,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(

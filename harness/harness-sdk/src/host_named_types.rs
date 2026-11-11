@@ -24,6 +24,21 @@ pub(super) fn scoped_agent(
     agent.description.clear();
     agent.tools = definition.tools.iter().cloned().collect();
     agent.subagents.clear();
+    agent.standalone_subagents = None;
+    if lead
+        .package
+        .standalone_subagents
+        .as_ref()
+        .is_some_and(|c| c.enabled)
+    {
+        agent.builtin_tools = Some(openworker_runtime::package::BuiltinTools {
+            ask_user: Some(false),
+            read_history: Some(false),
+        });
+        if let crate::agents::Approvals::Only(names) = &mut agent.approvals {
+            names.retain(|n| agent.tools.contains(n));
+        }
+    }
     agent.planning = false;
     agent.memory = false;
     agent.memory_scope = None;

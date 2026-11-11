@@ -76,15 +76,22 @@ impl Catalog {
             .context("Definition requires a current turn")?;
         ensure!(turn.status == "running", "Definition turn is not running");
         let call = turn.queue.first().context("Definition is not queued")?;
-        ensure!(
-            call["name"] == TOOL
-                && serde_json::from_str::<Definition>(
-                    call["arguments"]
-                        .as_str()
-                        .context("Missing definition arguments")?
-                )? == definition,
-            "Definition differs from queued call"
-        );
+        let queued: Definition = if call["name"] == crate::subagents::CREATE {
+            serde_json::from_str::<crate::subagents::Create>(
+                call["arguments"]
+                    .as_str()
+                    .context("Missing child arguments")?,
+            )?
+            .definition()
+        } else {
+            ensure!(call["name"] == TOOL, "Not a definition call");
+            serde_json::from_str(
+                call["arguments"]
+                    .as_str()
+                    .context("Missing definition arguments")?,
+            )?
+        };
+        ensure!(queued == definition, "Definition differs from queued call");
         let call_id = call["call_id"].as_str().context("Missing call identity")?;
         if let Some(old) = self
             .records
@@ -152,7 +159,8 @@ impl Catalog {
         ensure!(turn.id == record.proposal_turn, "Stale type proposal");
         let call = turn.queue.first().context("Definition is not queued")?;
         ensure!(
-            call["call_id"] == record.proposal_call && call["name"] == TOOL,
+            call["call_id"] == record.proposal_call
+                && (call["name"] == TOOL || call["name"] == crate::subagents::CREATE),
             "Stale type call"
         );
         let interaction = lead
@@ -230,14 +238,19 @@ fn check_interaction(
     definition: &Definition,
 ) -> Result<()> {
     ensure!(
-        interaction.kind == "approval" && interaction.call["name"] == TOOL,
+        interaction.kind == "approval"
+            && (interaction.call["name"] == TOOL
+                || interaction.call["name"] == crate::subagents::CREATE),
         "Wrong approval kind"
     );
-    let args: Definition = serde_json::from_str(
-        interaction.call["arguments"]
-            .as_str()
-            .context("Missing arguments")?,
-    )?;
+    let raw = interaction.call["arguments"]
+        .as_str()
+        .context("Missing arguments")?;
+    let args: Definition = if interaction.call["name"] == crate::subagents::CREATE {
+        serde_json::from_str::<crate::subagents::Create>(raw)?.definition()
+    } else {
+        serde_json::from_str(raw)?
+    };
     ensure!(
         &args == definition,
         "Approval covers a different definition"

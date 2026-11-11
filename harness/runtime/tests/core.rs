@@ -33,6 +33,7 @@ fn session() -> Session {
         interactions: vec![],
         turn: None,
         sandbox: None,
+        sandbox_parent: None,
         closed: false,
         compaction_config: Default::default(),
         compaction: None,
