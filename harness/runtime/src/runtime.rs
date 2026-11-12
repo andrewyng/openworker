@@ -1066,6 +1066,13 @@ impl Runtime {
             return Ok(CompactResult::Skipped);
         };
         let turn_id = s.turn.as_ref().context("No current turn")?.id.clone();
+        let additional = s
+            .turn
+            .as_ref()
+            .and_then(|t| t.compaction.as_ref())
+            .and_then(|c| c.additional_instructions.as_deref())
+            .or(cfg.additional_instructions.as_deref());
+        let summary_instructions = c::summary_instructions(additional);
         self.update(
             sid,
             "compacting",
@@ -1088,7 +1095,11 @@ impl Runtime {
                     sid,
                     &safety_config,
                     crate::safety::Phase::ModelInput,
-                    candidate.prompt.clone(),
+                    if additional.is_some() {
+                        format!("{summary_instructions}\n\n{}", candidate.prompt)
+                    } else {
+                        candidate.prompt.clone()
+                    },
                     None,
                     None,
                 )
@@ -1121,7 +1132,7 @@ impl Runtime {
                         attempt,
                     })
                     .summarize_with_usage(
-                        c::REFERENCE["prompts"]["system"].as_str().unwrap(),
+                        &summary_instructions,
                         &candidate.prompt,
                         reserved as usize,
                     )
@@ -1270,7 +1281,7 @@ impl Runtime {
             })
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;
-        let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
+        let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"auto_approver_context":s.auto_approver_context,"compaction_config":s.compaction_config,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
         snapshot["schedules"] = json!(s.schedules);
         if let Some(environment) = &s.environment {
             snapshot["session"]["environment"] = json!(environment);
@@ -1296,6 +1307,7 @@ impl Runtime {
             ![
                 "model",
                 "reviewer_model",
+                "auto_approver_context",
                 "name",
                 "coworker",
                 "workspace",
@@ -1430,6 +1442,11 @@ impl Runtime {
                 .map_or(self.model.provider, |s| s.provider),
             model_selection,
             reviewer_selection,
+            auto_approver_context: p
+                .get("auto_approver_context")
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?,
             scripted: self.model.scripted,
             workspace: path
                 .to_str()
@@ -1467,6 +1484,10 @@ impl Runtime {
             resource_policy,
         };
         s.compaction_config.validate()?;
+        crate::turn_options::validate_guidance(
+            "autoApproverContext",
+            s.auto_approver_context.as_deref(),
+        )?;
         s.safety_models = self.pin_safety_models(&s.safety)?;
         if let Some(c) = &s.compliance {
             ensure!(

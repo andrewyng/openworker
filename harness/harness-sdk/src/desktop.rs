@@ -7,6 +7,10 @@ pub struct SessionOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_history: Option<Vec<crate::HistoryItem>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    auto_approver_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compaction: Option<crate::CompactionOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     safety: Option<crate::guardrails::Config>,
     #[serde(skip_serializing_if = "Option::is_none")]
     compliance: Option<openworker_runtime::compliance::Config>,
@@ -20,6 +24,15 @@ pub struct SessionOptions {
     auto_skip_questions: Option<bool>,
 }
 impl SessionOptions {
+    /// Durable default for action review; does not grant tool permissions.
+    pub fn auto_approver_context(mut self, text: impl Into<String>) -> Self {
+        self.auto_approver_context = Some(text.into());
+        self
+    }
+    pub fn compaction(mut self, options: crate::CompactionOptions) -> Self {
+        self.compaction = Some(options);
+        self
+    }
     /// Seed a new session with a complete portable transcript. No tool runs.
     pub fn initial_history(mut self, history: Vec<crate::HistoryItem>) -> Self {
         self.initial_history = Some(history);
@@ -144,5 +157,8 @@ pub struct TurnOptions {
     pub safety: Option<crate::guardrails::Config>,
     /// Trusted application instructions for this turn only, not user text.
     pub instruction_addendum: Option<String>,
+    /// Replaces session guidance for this turn only; empty string clears it.
+    pub auto_approver_context: Option<String>,
+    pub compaction: Option<crate::CompactionOptions>,
     pub output: Option<crate::OutputOptions>,
 }

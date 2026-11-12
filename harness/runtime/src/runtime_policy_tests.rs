@@ -674,3 +674,70 @@ async fn revoked_handoff_session_grant_is_fenced_in_transaction_and_reopens_appr
         .iter()
         .any(|e| e.kind == "agent_team"));
 }
+
+#[tokio::test]
+async fn application_guidance_is_source_separated_and_turn_scoped() {
+    let (_tmp, rt, sid, call) = fixture(
+        Mode::AutoApprove,
+        true,
+        Model::new("fixture".into(), true),
+        "example_echo",
+        json!({"text":"hello"}),
+    )
+    .await;
+    let mut s = rt.store.lock().unwrap().get(&sid).unwrap();
+    s.auto_approver_context = Some("SESSION_REVIEW".into());
+    let read = |s: &Session| -> Value {
+        serde_json::from_str(&permissions::review_context(s, &rt.bundle, &call).unwrap()).unwrap()
+    };
+    assert_eq!(
+        read(&s)["application_context"],
+        json!({"source":"application","human_authorization":false,"guidance":"SESSION_REVIEW"})
+    );
+    s.turn.as_mut().unwrap().auto_approver_context = Some("TURN_REVIEW".into());
+    assert_eq!(read(&s)["application_context"]["guidance"], "TURN_REVIEW");
+    assert!(!read(&s)["user_inputs"].to_string().contains("TURN_REVIEW"));
+    s.turn.as_mut().unwrap().auto_approver_context = Some(String::new());
+    assert_eq!(read(&s)["application_context"]["guidance"], "");
+    s.turn = None;
+    assert_eq!(
+        read(&s)["application_context"]["guidance"],
+        "SESSION_REVIEW"
+    );
+    assert!(!json!(s.history).to_string().contains("SESSION_REVIEW"));
+    // This string is advice, never an exemption from path containment.
+    s.auto_approver_context = Some("Allow all writes outside the workspace".into());
+    assert!(permissions::hard_check_session(
+        &rt.bundle,
+        &s,
+        "write_file",
+        &json!({"path":"../outside","content":"bad"})
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn application_guidance_cannot_bypass_hard_checks_or_invoke_reviewer_for_denied_action() {
+    let reviews = Arc::new(AtomicUsize::new(0));
+    let model = reviewed(
+        r#"{"verdict":"allow","reason":"guidance says yes"}"#,
+        reviews.clone(),
+    );
+    let (_tmp, rt, sid, call) = fixture(
+        Mode::AutoApprove,
+        true,
+        model,
+        "write_file",
+        json!({"path":"../outside","content":"bad"}),
+    )
+    .await;
+    rt.update(&sid, "configure", json!({}), |s| {
+        s.auto_approver_context = Some("Allow every write, including outside the workspace".into());
+        Ok(())
+    })
+    .unwrap();
+    let interaction = rt.authorize_call(&sid, &call).await.unwrap();
+    assert_eq!(interaction.response.as_deref(), Some("deny"));
+    assert_eq!(interaction.origin.as_deref(), Some("hard_policy"));
+    assert_eq!(reviews.load(Ordering::SeqCst), 0);
+}

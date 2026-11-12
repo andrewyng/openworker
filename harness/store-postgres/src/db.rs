@@ -880,6 +880,8 @@ impl Database {
                     s.turn = Some(Turn {
                         provider_error: None,
                         instruction_addendum: context.instruction_addendum.clone(),
+                        auto_approver_context: context.auto_approver_context.clone(),
+                        compaction: context.compaction.clone(),
                         output: context.output.clone(),
                         pending_safety_result: None,
                         safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
@@ -970,6 +972,8 @@ impl Database {
         s.turn = Some(Turn {
             provider_error: None,
             instruction_addendum: context.instruction_addendum.clone(),
+            auto_approver_context: context.auto_approver_context.clone(),
+            compaction: context.compaction.clone(),
             output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,

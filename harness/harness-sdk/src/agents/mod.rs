@@ -158,6 +158,10 @@ pub struct Agent {
     pub(crate) approvals: Approvals,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) auto_approver_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<crate::CompactionOptions>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) subagents: Vec<Agent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +198,8 @@ impl Agent {
             scheduling: false,
             approvals: Approvals::default(),
             auto_skip_questions: false,
+            auto_approver_context: None,
+            compaction: None,
             subagents: vec![],
             standalone_subagents: None,
             servers: None,
@@ -278,6 +284,14 @@ impl Agent {
         self.approvals = Approvals::Only(tools.into_iter().map(Into::into).collect());
         self
     }
+    pub fn auto_approver_context(mut self, text: impl Into<String>) -> Self {
+        self.auto_approver_context = Some(text.into());
+        self
+    }
+    pub fn compaction(mut self, options: crate::CompactionOptions) -> Self {
+        self.compaction = Some(options);
+        self
+    }
     pub fn approvals(mut self, approvals: Approvals) -> Self {
         self.approvals = approvals;
         self
@@ -354,6 +368,16 @@ impl Agent {
         }
         if self.tools.len() > 64 {
             return bad(format!("Agent {} supports at most 64 tools", self.id));
+        }
+        openworker_runtime::turn_options::validate_guidance(
+            "autoApproverContext",
+            self.auto_approver_context.as_deref(),
+        )
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if let Some(options) = &self.compaction {
+            options
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
         }
         let mut seen = BTreeSet::new();
         for tool in &self.tools {

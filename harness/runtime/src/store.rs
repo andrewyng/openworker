@@ -53,6 +53,10 @@ pub struct Turn {
     pub provider_error: Option<crate::provider::Diagnostic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_addendum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_approver_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<crate::compaction::Instructions>,
     #[serde(default)]
     pub output: crate::turn_options::OutputOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +128,8 @@ pub struct Session {
     pub model_selection: Option<crate::connections::Selection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewer_selection: Option<crate::connections::Selection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_approver_context: Option<String>,
     #[serde(default)]
     pub scripted: bool,
     pub workspace: String,
@@ -896,6 +902,8 @@ impl Store {
             s.turn = Some(Turn {
                 provider_error: None,
                 instruction_addendum: context.instruction_addendum.clone(),
+                auto_approver_context: context.auto_approver_context.clone(),
+                compaction: context.compaction.clone(),
                 output: context.output.clone(),
                 pending_safety_result: None,
                 safety: s.safety.merge(&safety.clone().unwrap_or_default())?,
@@ -957,6 +965,8 @@ impl Store {
         s.turn = Some(Turn {
             provider_error: None,
             instruction_addendum: context.instruction_addendum.clone(),
+            auto_approver_context: context.auto_approver_context.clone(),
+            compaction: context.compaction.clone(),
             output: context.output.clone(),
             pending_safety_result: None,
             safety: s.safety.merge(&safety.clone().unwrap_or_default())?,

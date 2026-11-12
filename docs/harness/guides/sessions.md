@@ -40,6 +40,58 @@ limit does not increase that total. Set limits on the agent for defaults or on
 Reusing a submission ID requires the same message, context, limits and safety
 options; a changed addendum is a new turn with a new submission ID.
 
+## Guide the auto-approver and compactor
+
+**Source preview:** use the matching updated runtime. For embedded Rust and
+managed-subprocess TypeScript sessions, `autoApproverContext` supplies application
+facts and review guidance to the action reviewer. `compaction.additionalInstructions`
+adds summary guidance. Both can be set on an agent, a new session, or one turn.
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+const session = await agent.newSession({
+  autoApproverContext: "Staging workspace. Ask before publishing.",
+  compaction: { additionalInstructions: "Preserve decisions and unfinished tests." },
+});
+await session.run("Continue.", {
+  autoApproverContext: "For this turn, changes must remain inside src/.",
+  compaction: { additionalInstructions: "Keep the migration checklist." },
+});
+```
+
+### Rust
+
+```rust
+let session = agent.new_session_with(
+    SessionOptions::default()
+        .auto_approver_context("Staging workspace. Ask before publishing.")
+        .compaction(CompactionOptions::additional_instructions(
+            "Preserve decisions and unfinished tests."
+        ))
+).await?;
+let run = session.send_with_options("Continue.", TurnOptions {
+    auto_approver_context: Some("Changes must remain inside src/.".into()),
+    compaction: Some(CompactionOptions::additional_instructions("Keep the migration checklist.")),
+    ..Default::default()
+}).await?;
+let result = run.result().await?;
+```
+<!-- /sdk-tabs -->
+
+Precedence is agent → session → turn. Omitted fields inherit; an empty string
+clears inherited guidance for that scope. Turn overrides survive recovery and
+apply to retries and tool follow-ups in that turn. They do not change the next
+turn's defaults. Reusing a submission ID with changed guidance fails.
+
+Each string supports up to 32,000 UTF-8 bytes and no NUL. Guidance is stored
+separately from user history. Reviewer context does not enable auto-approval or
+grant tool access: configure auto-approval and a reviewer model separately.
+Hard policy checks still run first; an unavailable or unsure reviewer asks the
+human. Compaction guidance supplements the required summary structure. These
+session/turn overrides are not yet exposed by the service-cluster REST client.
+
 ## Attach a file
 
 The source preview supports images, PDFs and UTF-8 files as ordered user-message

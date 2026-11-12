@@ -109,7 +109,16 @@ export interface TurnLimits {
   /** Reserved inside maxOutputTokens for one additional tool-free summary. Default 512. */
   summaryTokens?: number;
 }
-export interface Agent {
+/** Application guidance. Omission inherits; an empty string clears inherited guidance. */
+export interface CompactionOptions {
+  additionalInstructions?: string;
+}
+export interface ApplicationGuidance {
+  /** Facts/guidance for the action reviewer; does not grant tool permissions. */
+  autoApproverContext?: string;
+  compaction?: CompactionOptions;
+}
+export interface Agent extends ApplicationGuidance {
   builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
   id: string;
@@ -145,7 +154,7 @@ export interface Model {
 }
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
-export interface SessionOptions extends SafetyOptions {
+export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
   /** Completed portable transcript only. Imported calls never execute. */
   initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
@@ -199,7 +208,7 @@ export interface HarnessOptions extends SafetyOptions {
   appId?: string;
   sessions?: { persist?: boolean; directory?: string };
   scratch?: { directory: string };
-  compaction?: { triggerAtContextFraction?: number; contextWindow?: number };
+  compaction?: CompactionOptions & { triggerAtContextFraction?: number; contextWindow?: number };
   modelProviders?: ModelProvider[];
   runner?: string;
   agents?: Agent[];
@@ -254,7 +263,7 @@ export interface RunResult {
   board: Json | null;
 }
 export type Cursors = Record<string, number>;
-export interface RunOptions extends SafetyOptions {
+export interface RunOptions extends SafetyOptions, ApplicationGuidance {
   /** Trusted application instructions for this turn only, separate from user text. */
   instructionAddendum?: string;
   output?: OutputOptions;

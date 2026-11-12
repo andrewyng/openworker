@@ -93,3 +93,11 @@ test("standalone enablement is additive and legacy subagent arrays retain their 
   assert.equal(legacy.subagents[0].id,"worker");
   assert.equal(legacy.standalone_subagents,undefined);
 });
+
+test("application guidance maps to the private wire without changing compaction tuning",()=>{
+  const a=JSON.parse(JSON.stringify(agentWire({id:"a",instructions:"Help.",tools:[],autoApproverContext:"review",compaction:{additionalInstructions:"summary"}})));
+  assert.equal(a.auto_approver_context,"review");
+  assert.deepEqual(a.compaction,{additional_instructions:"summary"});
+  const global=hostConfig({executable:"/harness",stateDir:"/state",compaction:{additionalInstructions:"global",triggerAtContextFraction:0.7,contextWindow:160000}});
+  assert.deepEqual(global.desktop.compaction,{additional_instructions:"global",threshold_pct:0.7,context_window:160000});
+});

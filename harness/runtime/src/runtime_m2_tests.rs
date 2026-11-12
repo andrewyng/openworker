@@ -437,7 +437,7 @@ async fn summary_failures_retry_once_then_park_or_trim() {
         let count = Arc::new(AtomicUsize::new(0));
         let seen = count.clone();
         let mut model = Model::new("fixture".into(), true);
-        model.summary_hook = Some(Arc::new(move |_| {
+        model.summary_hook = Some(Arc::new(move |_, _| {
             seen.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { bail!("synthetic failure") })
         }));
@@ -467,7 +467,7 @@ async fn cancellation_drops_native_summarizer_without_late_commit() {
     let entered = Arc::new(tokio::sync::Notify::new());
     let notify = entered.clone();
     let mut model = Model::new("fixture".into(), true);
-    model.summary_hook = Some(Arc::new(move |_| {
+    model.summary_hook = Some(Arc::new(move |_, _| {
         let notify = notify.clone();
         Box::pin(async move {
             notify.notify_one();
@@ -512,7 +512,7 @@ async fn stale_summary_cannot_replace_current_history_view() {
     let mut model = Model::new("fixture".into(), true);
     let e = entered.clone();
     let r = release.clone();
-    model.summary_hook = Some(Arc::new(move |_| {
+    model.summary_hook = Some(Arc::new(move |_, _| {
         let e = e.clone();
         let r = r.clone();
         Box::pin(async move {
@@ -876,4 +876,59 @@ async fn compaction_retry_and_pending_approval_survive_the_same_restart_scenario
         .unwrap()
         .iter()
         .any(|e| e.kind == "tool_started"));
+}
+
+#[tokio::test]
+async fn application_guidance_reaches_compactor_without_replacing_its_contract() {
+    for guidance in [None, Some("TURN_SUMMARY"), Some("")] {
+        let expected = guidance.unwrap_or("SESSION_SUMMARY").to_owned();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let mut model = Model::new("fixture".into(), true);
+        model.summary_hook = Some(Arc::new(move |instructions, input| {
+            captured.lock().unwrap().push((instructions, input));
+            Box::pin(async {
+                Ok(crate::compaction::REFERENCE["cases"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c["op"] == "quality" && c["expected"] == true)
+                    .unwrap()["text"]
+                    .as_str()
+                    .unwrap()
+                    .into())
+            })
+        }));
+        let (_tmp, rt, sid) = fixture(model, true).await;
+        rt.update(&sid, "configure", json!({}), |s| {
+            s.compaction_config.additional_instructions = Some("SESSION_SUMMARY".into());
+            s.turn.as_mut().unwrap().compaction =
+                guidance.map(crate::compaction::Instructions::additional_instructions);
+            Ok(())
+        })
+        .unwrap();
+        assert!(matches!(
+            rt.compact(&sid, true).await.unwrap(),
+            CompactResult::Applied
+        ));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let base = crate::compaction::REFERENCE["prompts"]["system"]
+            .as_str()
+            .unwrap();
+        assert!(requests[0].0.starts_with(base));
+        if expected.is_empty() {
+            assert_eq!(requests[0].0, base);
+        } else {
+            assert!(requests[0].0.contains(&expected));
+        }
+        assert!(!requests[0].1.contains("SESSION_SUMMARY"));
+        assert!(!requests[0].1.contains("TURN_SUMMARY"));
+        let s = rt.store.lock().unwrap().get(&sid).unwrap();
+        assert_eq!(
+            s.compaction_config.additional_instructions.as_deref(),
+            Some("SESSION_SUMMARY")
+        );
+        assert!(!json!(s.history).to_string().contains("SUMMARY"));
+    }
 }
