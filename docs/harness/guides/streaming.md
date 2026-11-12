@@ -123,3 +123,56 @@ Upstream response bodies, prompts, keys and arbitrary error messages are not
 included in these diagnostics. Use the request ID with the provider when more
 detail is needed. A retryable provider error does not authorize an application to
 replay tool actions: retain the SDK's run reference and reconcile unknown outcomes.
+
+## Streaming with tool approvals
+
+Use one durable submission for the turn, including time spent waiting for approval.
+The UI shows the actual proposed tool and arguments; never invent an approval.
+
+### Stream, approve and continue the same turn
+
+This helper supplies the full loop. The app provides escaped-text rendering,
+activity UI and an approval card showing both `pending.tool` and
+`pending.arguments`.
+
+```typescript
+import { AttemptOutput, type Session, type RunEvent, type Interruption }
+  from '@openworkerai/harness-sdk';
+
+type Approval = Extract<Interruption, { kind: 'approval' }>;
+export async function streamWithApprovals(session: Session, text: string, ui: {
+  renderText(text: string): void;
+  renderActivity(event: RunEvent): void;
+  approve(proposal: Approval): Promise<boolean>;
+}) {
+  const display = new AttemptOutput();
+  let stream = (await session.send(text)).events();
+  while (true) {
+    for await (const event of stream) {
+      display.apply(event);
+      ui.renderText(display.text); // Replace; do not append the whole projection.
+      ui.renderActivity(event);
+    }
+    const result = await stream.result();
+    if (result.status !== 'interrupted') {
+      if (result.status === 'completed') ui.renderText(result.finalOutput ?? display.text);
+      else { display.interrupt(); ui.renderText(display.text); }
+      return result;
+    }
+    if (!result.interruptions.length) throw new Error('No pending interaction');
+    for (const pending of result.interruptions) {
+      if (pending.kind !== 'approval') return result; // Route questions/safety separately.
+      const allowed = await ui.approve(pending);
+      await session.respond(pending, { decision: allowed ? 'once' : 'deny' });
+    }
+    stream = await session.resumeStreamed(stream.checkpoint());
+  }
+}
+```
+
+Do not resend the user message to continue after approval: retain the submission
+and consumed cursors. Use `session.cancel()` for Stop. Closing an observer does not
+cancel execution or justify automatic approval. Persist the session reference
+and stream checkpoint for crash recovery, then reconcile pending interactions.
+For a non-streaming flow, `session.runWith(input, handler)` invokes a real app
+handler for interruptions; `{ defer: true }` leaves the decision pending.

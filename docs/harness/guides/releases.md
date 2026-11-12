@@ -1,8 +1,14 @@
 # Versions and compatibility
 
-Keep the SDK and harness executable on the same version. During beta, pin a
+Use the native runtime version pinned by your SDK release. During beta, pin a
 repository revision or an explicitly published release rather than following a
 moving branch in a production application.
+
+The published TypeScript client **0.1.0-beta.4** is a documentation-only update
+using native runtime **0.1.0-beta.3**. npm installs that exact dependency; keep
+optional dependencies enabled. Executable code and API declarations are unchanged
+from client beta.3. The native compatibility check remains strict: a client package
+version is not permission to substitute an arbitrary runtime version.
 
 ## Install from a checkout
 
@@ -19,8 +25,8 @@ build the SDK and any ToolRunner/helper executable from the same revision.
 ## Upgrade an application
 
 1. Back up durable state before changing versions.
-2. Update the SDK and native executable together; retain the previous application
-   package for rollback planning.
+2. Install the runtime dependency selected by the SDK; update an explicit/custom
+   executable to that required version. Retain the previous app package for rollback.
 3. Read the [storage migration instructions](guardrails.md#upgrade-an-existing-installation)
    before restarting an application or service against existing state.
 4. For services, drain workers and coordinate API/worker upgrades. Do not downgrade
@@ -35,7 +41,7 @@ executable automatically.
 ## Session and streaming API updates
 
 The new turn options, history import, built-in tool controls and provider settings
-require rebuilding the native harness alongside the SDK. They are not enabled by
+require a native harness that advertises those capabilities. They are not enabled by
 updating a TypeScript declaration file alone. Existing sessions and omitted
 configuration keep their previous tool selection and per-call limits.
 

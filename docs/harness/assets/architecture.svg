@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620" role="img" aria-labelledby="title desc">
+  <title id="title">OpenWorker Harness architecture</title>
+  <desc id="desc">Your desktop or web application uses TypeScript or Rust to control one Rust agent runtime. The harness manages model calls, durable sessions, tools and approvals. It connects to cloud or local models. Application callbacks keep app privileges; configured file and shell tools can run inside NVIDIA OpenShell, while the agent loop remains outside that sandbox.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 7 4 1 7" fill="none" stroke="#85909e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="620" rx="24" fill="#f5f6f8"/>
+  <g fill="none" stroke="#a3acb8" stroke-width="1.5" marker-end="url(#arrow)">
+    <path d="M285 126V155"/>
+    <path d="M815 126V155"/>
+    <path d="M285 228V263"/>
+    <path d="M815 228V263"/>
+    <path d="M255 404V445"/>
+    <path d="M785 404V445"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" fill="#17202b">
+    <rect x="40" y="36" width="1020" height="90" rx="16" fill="#fff" stroke="#dce1e8"/>
+    <text x="68" y="75" font-size="23" font-weight="600">Your desktop or web app</text>
+    <text x="68" y="103" font-size="16" fill="#586474">Your interface · authentication · product workflow</text>
+
+    <rect x="40" y="156" width="490" height="72" rx="14" fill="#fff" stroke="#dce1e8"/>
+    <text x="68" y="185" font-size="19" font-weight="600">TypeScript SDK</text>
+    <text x="68" y="209" font-size="15" fill="#586474">Node.js / Electron main / your server · managed Rust child</text>
+    <rect x="570" y="156" width="490" height="72" rx="14" fill="#fff" stroke="#dce1e8"/>
+    <text x="598" y="185" font-size="19" font-weight="600">Rust SDK</text>
+    <text x="598" y="209" font-size="15" fill="#586474">Embedded in-process · optional managed child</text>
+
+    <rect x="40" y="264" width="1020" height="140" rx="16" fill="#202b3a"/>
+    <text x="68" y="304" font-size="24" font-weight="600" fill="#fff">OpenWorker Harness</text>
+    <text x="910" y="303" font-size="15" fill="#c0cad7">Rust runtime</text>
+    <text x="68" y="342" font-size="17" fill="#edf1f7">Model calls &amp; agent loop</text>
+    <text x="392" y="342" font-size="17" fill="#edf1f7">Durable sessions &amp; recovery</text>
+    <text x="730" y="342" font-size="17" fill="#edf1f7">Tools, approvals &amp; guardrails</text>
+    <text x="68" y="377" font-size="15" fill="#c0cad7">Optional: agent teams · memory · observability</text>
+
+    <rect x="40" y="446" width="430" height="124" rx="16" fill="#fff" stroke="#dce1e8"/>
+    <text x="68" y="479" font-size="20" font-weight="600">Cloud or local models</text>
+    <text x="68" y="511" font-size="15" fill="#586474">OpenAI · Anthropic · compatible endpoints</text>
+    <text x="68" y="537" font-size="15" fill="#586474">Ollama, vLLM or a Nemotron endpoint</text>
+
+    <rect x="500" y="446" width="560" height="124" rx="16" fill="#fff" stroke="#dce1e8"/>
+    <text x="528" y="478" font-size="20" font-weight="600">Tool execution</text>
+    <rect x="520" y="493" width="230" height="59" rx="10" fill="#f5f6f8"/>
+    <text x="536" y="517" font-size="16" font-weight="600">Application callbacks</text>
+    <text x="536" y="539" font-size="14" fill="#586474">Your app's privileges</text>
+    <rect x="766" y="493" width="274" height="59" rx="10" fill="#eef4ff" stroke="#c7d8f5"/>
+    <text x="782" y="517" font-size="16" font-weight="600" fill="#244c89">NVIDIA OpenShell</text>
+    <text x="782" y="539" font-size="14" fill="#42618b">Isolated file &amp; shell tools</text>
+    <text x="40" y="601" font-size="14" fill="#586474">OpenShell contains isolated tools. The agent loop stays in the trusted harness.</text>
+  </g>
+</svg>

@@ -9,6 +9,20 @@ timers. On restart, reattach to the saved session rather than creating a replace
 Reconnect/replay does not mean replaying side effects. If an action's outcome is
 unknown, inspect its status before retrying it.
 
+## Agent identity and workspace
+
+Agent names identify persisted immutable definitions. Changing instructions,
+tools, approval mode or other definition fields requires a new name. Identical
+registration is idempotent; creating another session does not replace a definition.
+Keep old identities for their existing sessions. A fresh state directory is a
+separate development environment, not a migration of existing conversations.
+
+An explicit `workspace` selects the working directory. Omitting it normally
+allocates a private scratch workspace. `scratch: false` requires an explicit
+workspace; `scratch: true` cannot accompany one. Scratch does not promise automatic
+deletion. Keep state outside files available to tools, and enforce directory scope
+in app callbacks; a workspace is not an OS sandbox.
+
 ## Context and limits for each turn
 
 Use `instructionAddendum` in TypeScript, or `TurnOptions.instruction_addendum` in
@@ -94,7 +108,7 @@ session/turn overrides are not yet exposed by the service-cluster REST client.
 
 ## Attach a file
 
-The source preview supports images, PDFs and UTF-8 files as ordered user-message
+The SDK supports images, PDFs and UTF-8 files as ordered user-message
 content. See [Attachments](attachments.md) for the convenience and interleaved
 forms, storage limits and guardrail behavior.
 
@@ -136,9 +150,31 @@ assembled request, including imported history, before the next model call.
 ## Approvals and questions
 
 Render durable approval/question interruptions in your UI, then send the user's
-actual response. “Allow always” applies to the session. Auto-approval uses a
-reviewer; an inconclusive decision still asks the human. Bypass skips human approval
-but does not remove required guardrails or sandbox restrictions.
+actual response. Configure the decision path in the agent definition:
+
+| TypeScript mode | Behavior |
+| --- | --- |
+| `always` (default) | Requests a human decision unless a valid session grant covers the tool. |
+| `only` with a tool list | Requests approval for listed tools; ordinary unlisted tools receive application-policy approval. |
+| `auto` with `reviewerModel` | An explicit LLM reviews eligible calls: allow executes, deny returns a denial, uncertain requests human input. |
+| `never` | Bypasses approval review; hard security checks still apply. |
+
+Rust exposes `Approvals::Always`, `Only`, `auto(model)` and `Never`. Auto review
+can include read-only tools. Hard denials and valid session grants are checked
+first. Privileged child/type-creation operations have additional requirements;
+omission from an `only` list does not automatically exempt them.
+
+Use `once` when each mutation requires a new card. A `session` grant covers the
+entire tool, including different valid arguments, survives restart and does not
+override hard checks. Questions are separate from approval decisions. See the
+[complete streamed approval loop](streaming.md#streaming-with-tool-approvals).
+
+The typed `auto_approved` summary currently describes application-policy approval,
+not a model review verdict. Raw `interaction_required` / `interaction_resolved`
+events can include `data.review.verdict`, a safe `reason`, `origin` and nested
+`call.call_id`; handle absent/withheld content. A denied tool result tells the
+working model not to retry or evade the denial, but currently omits the reviewer's
+reason. The app can display an available safe journal reason itself.
 
 A tool-free guide can disable optional tools, memory, planning and scheduling.
 Auto-skip questions is a separate setting, not an authorization mode.
@@ -167,8 +203,8 @@ existing agent definitions and session schema digests across upgrades.
 
 ## Standalone sub-agents
 
-**Source preview:** this requires the matching feature runtime; it is not available
-in npm runtime 0.1.0-beta.2. An ordinary agent can let its model delegate work:
+Requires a runtime advertising `standalone_subagents`, available in native
+runtime 0.1.0-beta.3. An ordinary agent can let its model delegate work:
 
 <!-- sdk-tabs -->
 ### TypeScript
