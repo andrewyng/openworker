@@ -55,6 +55,13 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
         )
 
+    # Models discovered from the signed-in Codex catalog are modern Responses models.
+    # Their exact generation can be newer than OpenWorker's bundled matrix.
+    if provider == "openai-codex" and name.startswith("gpt-"):
+        return ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        )
+
     # Modern OpenAI GPT models: tools + vision + parallel tool calls + streaming.
     if name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
