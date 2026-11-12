@@ -232,7 +232,7 @@ def test_ollama_default_ready_tracks_liveness(tmp_path, monkeypatch):
 def test_ollama_adopts_first_pulled_model(tmp_path, monkeypatch):
     """Saving Ollama with only a non-recommended model pulled still yields a runnable default."""
     manager = _ollama_manager(tmp_path, monkeypatch)
-    assert manager.get_settings()["model_ready"] is False
+    assert manager.model_selectable(manager.model) is False  # the built-in default cannot run
     assert manager.adopt_provider_default("ollama") == "ollama:qwen2.5:7b-instruct"
     settings = manager.get_settings()
     assert settings["model"] == "ollama:qwen2.5:7b-instruct"
@@ -285,6 +285,11 @@ def test_stored_key_provider_removes_cleanly(tmp_path, monkeypatch):
     mgr.set_provider("anthropic", {"api_key": "sk-ant-stored"})
     row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
     assert row["key_source"] == "store" and row["env_key"] is None
-    assert mgr.remove_provider("anthropic") == {"ok": True, "provider": "anthropic"}
+    res = mgr.remove_provider("anthropic")
+    assert res["ok"] is True and res["provider"] == "anthropic"
+    assert "env_key" not in res and "configured" not in res
+    # `default_model` may be present: saving the key made Claude the default, and removing
+    # it moves the default to whatever this machine can still run (OPE-260) — on a dev box
+    # with a live Ollama that is one of its models; on CI nothing, so the key is absent.
     row = {p["name"]: p for p in mgr.get_providers()}["anthropic"]
     assert row["configured"] is False and row["key_source"] is None

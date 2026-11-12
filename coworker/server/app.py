@@ -193,7 +193,8 @@ def create_app(manager: SessionManager) -> FastAPI:
     from ..providers.openrouter_auth import OpenRouterAuth
 
     def openrouter_changed() -> None:
-        manager._refresh_provider("openrouter-account")
+        # Refreshes the router; after a sign-out also re-picks the default (OPE-260).
+        manager.provider_signin_changed("openrouter-account")
         if manager._provider_configured("openrouter-account"):
             from ..providers.registry import get_descriptor
 

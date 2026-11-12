@@ -370,6 +370,10 @@ class SessionManager:
             str(Path(workspace).expanduser().resolve()) if workspace else None
         )
         self.model = model
+        # The default nobody chose: config's model until prefs name one. While the default
+        # is only this guess, a settings read may swap it for a model that runs here.
+        self._builtin_default = model
+        self._default_is_guess = True
         self.mode = mode
         self.provider = provider
         # The dangerous mode is never offered by the desktop app: a session may run in it
@@ -494,6 +498,7 @@ class SessionManager:
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
+            self._default_is_guess = False
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
         from ..pdf_support import set_fallback_mode
@@ -4870,7 +4875,11 @@ class SessionManager:
             added = f"{name}:{suggested[0]}"
         if added:
             self.add_model(added)
-        if added and not self.model_selectable(self.model):
+        # A default that works is never stolen, with one exception: a guess that moved off
+        # the built-in id (`_guess_default`) is a stopgap, and the first key's recommended
+        # model is what the user came for.
+        stopgap = self._default_is_guess and self.model != self._builtin_default
+        if added and (stopgap or not self.model_selectable(self.model)):
             self.set_default_model(added)
             return added
         return None
@@ -4929,7 +4938,52 @@ class SessionManager:
             # The stored key is gone but the variable still configures the provider.
             out["env_key"] = env_var
             out["configured"] = True
+        moved = self._repick_default_after_removal(name)
+        if moved:
+            out["default_model"] = moved
         return out
+
+    def _repick_default_after_removal(self, name: str) -> Optional[str]:
+        """The mirror of `adopt_provider_default`: when the key that ran the default model
+        is removed, the default moves to the first model this machine can still run —
+        another keyed provider's model or a model a live local server serves. Without it
+        the composer sat on "No model" while five Ollama models were runnable (OPE-260).
+        A default that still runs (another key, an environment variable) is never moved;
+        when nothing can run, the default stays and the composer's chip is honest."""
+        if self._model_provider(self.model) != name or self.model_selectable(self.model):
+            return None
+        for candidate in self._selectable_models():
+            if candidate != self.model and self.model_selectable(candidate):
+                self.set_default_model(candidate)
+                return candidate
+        return None
+
+    def _guess_default(self) -> None:
+        """While nobody has chosen a default, it follows what can run: the built-in
+        `gpt-5.6-sol` is a guess, and a fresh install with no key and Ollama up should not
+        sit on it with five runnable models next to it (seen 2026-11-09 testing OPE-260).
+        The guess is recomputed on every settings read and never persisted: the first key
+        that arrives still takes over (`adopt_provider_default`), unticking it just moves
+        it on, and when nothing can run it falls back to the built-in id so the composer's
+        chip stays honest. A default the user set (`set_default_model`) is never touched
+        here; Remove key and sign-out move that one, and say so."""
+        if not self._default_is_guess or self.model_selectable(self.model):
+            return
+        self.model = next(
+            (m for m in self._selectable_models() if self.model_selectable(m)),
+            self._builtin_default,
+        )
+
+    def provider_signin_changed(self, name: str) -> Optional[str]:
+        """The OAuth providers (OpenRouter account, ChatGPT subscription) sign in and out
+        without passing through set/remove key, so their sign-out never reached the re-pick
+        above and the composer sat on the signed-out default (seen 2026-11-09 testing
+        OPE-260). A sign-out now moves the default like Remove key does; a sign-in moves
+        nothing. Returns the new default when it moved."""
+        self._refresh_provider(name)
+        if self._provider_configured(name):
+            return None
+        return self._repick_default_after_removal(name)
 
     # -- ChatGPT-subscription provider (OAuth, no key) ---------------------------
     def begin_codex_signin(self) -> None:
@@ -4980,8 +5034,11 @@ class SessionManager:
 
         had_tokens = codex_auth.CodexTokenStore(self.secrets).clear()
         self._codex_error = None
-        self._refresh_provider("openai-codex")
-        return {"ok": True, "had_tokens": had_tokens}
+        moved = self.provider_signin_changed("openai-codex")
+        out: dict[str, Any] = {"ok": True, "had_tokens": had_tokens}
+        if moved:
+            out["default_model"] = moved
+        return out
 
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]
@@ -5457,20 +5514,55 @@ class SessionManager:
         return {"ok": True, **self.get_settings()}
 
     def remove_model(self, model: str) -> dict[str, Any]:
-        """Remove a model id from the picker. Custom ids are dropped; matrix models are
-        hidden by id (the matrix is derived, not stored, so a bare drop would resurrect
-        them on the next read)."""
+        """Remove a model id from the picker. Custom ids are dropped; derived rows — matrix
+        models and the models a local server (Ollama, llama.cpp, vLLM, …) lists live — are
+        hidden by id, because they are not stored anywhere a drop could reach: a bare drop
+        resurrected them on the next read, so unticking an Ollama row did nothing (OPE-260).
+        The default stays in the picker; make another model the default first."""
         from ..providers.matrix import MATRIX
 
+        model = (model or "").strip()
+        if not model:
+            return {"ok": False, "error": "empty model"}
+        if model == self.model and not self._default_is_guess:
+            return {
+                "ok": False,
+                "error": "the default model stays in the picker; make another model the default first",
+                **self.get_settings(),
+            }
         models = self._prefs.get("models")
         models = models if isinstance(models, list) else []
         self._prefs["models"] = [m for m in models if m != model]
-        if model in MATRIX:
+        if model in MATRIX or self._is_live_local_model(model):
             hidden = self._prefs.get("hidden_models") or []
             if model not in hidden:
                 self._prefs["hidden_models"] = [*hidden, model]
         self._save_prefs()
+        if model == self.model:
+            # Only a guessed default gets here: unticking it hands the guess back to
+            # `_guess_default`, which picks the next runnable row (hidden ones stay out).
+            self.model = self._builtin_default
         return {"ok": True, **self.get_settings()}
+
+    def _is_live_local_model(self, model: str) -> bool:
+        """A model id a local server lists live (`ollama:…`, `vllm:…`): offered while the
+        server answers, so only `hidden_models` can keep it out of the picker."""
+        provider = self._model_provider(model)
+        return provider == "ollama" or provider in LOCAL_SERVERS
+
+    def _selectable_models(self) -> list[str]:
+        """Every model this machine can run right now, in picker order: curated and custom
+        ids whose provider has a key, then what a live Ollama / local server serves. Hidden
+        ids stay out, the default never does (the composer must always render it)."""
+        hidden = set(self._prefs.get("hidden_models") or [])
+        selectable = [m for m in self._curated_models() if self.model_selectable(m)]
+        # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
+        if self._ollama_alive():
+            selectable = [*selectable, *self._ollama_models()]
+        for local in LOCAL_SERVERS:
+            if self.secrets.get(f"provider:{local}") and self._local_server_alive(local):
+                selectable = [*selectable, *self._local_server_models(local)]
+        return [m for m in dict.fromkeys(selectable) if m == self.model or m not in hidden]
 
     def org_policy_status(self) -> dict[str, Any]:
         """Which org policy document governs this machine (visible governance)."""
@@ -5503,21 +5595,21 @@ class SessionManager:
         # (it's hidden behind the "No model" state until a provider is connected anyway).
         # Ollama is keyless, so "configured" is meaningless there — its models show only
         # while a local Ollama answers (cached liveness probe).
-        selectable = [m for m in self._curated_models() if self.model_selectable(m)]
-        # Pulled Ollama models are offered live while Ollama answers — no need to add each one.
-        if self._ollama_alive():
-            selectable = list(dict.fromkeys([*selectable, *self._ollama_models()]))
-        for local in LOCAL_SERVERS:
-            if self.secrets.get(f"provider:{local}") and self._local_server_alive(local):
-                selectable = list(dict.fromkeys([*selectable, *self._local_server_models(local)]))
+        self._guess_default()
+        selectable = self._selectable_models()
         if self.model not in selectable:
             selectable.insert(0, self.model)
+        model_ready = self.model_selectable(self.model)
         from ..providers.matrix import model_context_windows, model_labels
 
         return {
             "provider": "openai",
             "model": self.model,
             "models": selectable,
+            # Something on this machine can run, even if the default cannot: the composer
+            # then shows the picker (with the default marked) instead of hiding every
+            # runnable model behind the "connect a model" chip (OPE-260).
+            "any_model_ready": model_ready or any(self.model_selectable(m) for m in selectable),
             # Visible governance (spec §Audit export): what this machine exports,
             # where, and how far along — shown in its settings, never hidden.
             "audit_export": self.audit_export_status(),
@@ -5533,7 +5625,7 @@ class SessionManager:
             # model's provider is configured (any provider, not just OpenAI), or for an
             # `ollama:*` default, when a local Ollama answers. Drives the GUI's
             # "No model connected" composer chip and the onboarding Skip warning.
-            "model_ready": self.model_selectable(self.model),
+            "model_ready": model_ready,
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
             "experimental_connectors": experimental_enabled(self.secrets),
@@ -5900,6 +5992,7 @@ class SessionManager:
             return {"ok": False, "error": "empty model"}
         self.model = model
         self._prefs["default_model"] = model
+        self._default_is_guess = False
         self._save_prefs()
         _model_config.set(model, {"default": True})
         return {"ok": True, **self.get_settings()}

@@ -59,7 +59,12 @@ export function ProviderGroups({
 
   const cardFor = (p: ProviderInfo) => {
     const connected = providerConnected(p, ps.keylessOk);
-    const count = connected ? modelCountFor(p.name, models, known) : 0;
+    // A keyed provider's card counts the picker's models (what the key is used for). A
+    // local server's card counts what the server holds: its live listing comes with the
+    // row, and counting the picker instead made the card drop to "4 models" the moment
+    // one of five installed models was unticked (OPE-260 feedback).
+    const live = p.kind === "local" ? p.suggested_models?.length || 0 : 0;
+    const count = connected ? live || modelCountFor(p.name, models, known) : 0;
     return (
       <button
         key={p.name}
