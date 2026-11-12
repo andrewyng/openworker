@@ -4765,6 +4765,7 @@ class SessionManager:
         "huggingface": ["zai-org/GLM-5.2"],
         "cohere": ["command-a-plus-05-2026"],
         "siliconflow": ["zai-org/GLM-5.2"],
+        "venice": ["zai-org-glm-5-2", "z-ai-glm-5v-turbo", "qwen-3-7-max"],
     }
 
     def _warm_local_probes(self, names: list[str]) -> None:

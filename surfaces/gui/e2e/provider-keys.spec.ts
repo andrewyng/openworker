@@ -18,6 +18,8 @@ test("Test with a bad key fails in place; a good key saves and returns to the ga
   page,
 }) => {
   await openModels(page);
+  // Z AI is the seventh API-key card by title, behind the "Show 1 more" fold.
+  await page.getByTestId("provider-more-api_key").click();
   await page.getByTestId("set-provider-zai").click();
 
   await page.getByTestId("set-field-api_key").fill("sk-bad-key");
