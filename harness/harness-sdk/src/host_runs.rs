@@ -241,9 +241,10 @@ impl Host {
                 }
                 Ok(json!({"closed": closed, "errors": errors}))
             }
-            "session/send" => self.session_send(&p).await,
+            // Keep nested routing futures off the small Windows process-main stack.
+            "session/send" => Box::pin(self.session_send(&p)).await,
             "session/state" => self.session_state(&p).await,
-            "run/start" => self.run_start(&p).await,
+            "run/start" => Box::pin(self.run_start(&p)).await,
             "run/wait" => self.run_wait(&p).await,
             "run/respond" => self.run_respond(&p).await,
             "run/cancel" => {
@@ -333,7 +334,7 @@ impl Host {
             "Safety overrides apply only to new turns"
         );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"auto_approver_context":p["auto_approver_context"],"compaction":p["compaction"],"output":p["output"],"content":input["content"]})).await;
+            return Box::pin(self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"auto_approver_context":p["auto_approver_context"],"compaction":p["compaction"],"output":p["output"],"content":input["content"]}))).await;
         }
         ensure!(
             p.get("auto_approver_context").is_none_or(Value::is_null)

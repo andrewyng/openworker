@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-async fn exercise(managed: bool) {
+async fn exercise(managed: bool, small_stack: bool) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let requests = Arc::new(Mutex::new(vec![]));
@@ -46,11 +46,32 @@ async fn exercise(managed: bool) {
         }
     });
     let root = tempfile::tempdir().unwrap();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"));
+    let original = PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"));
+    let binary = if small_stack {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = root.path().join("small-stack-host");
+            let quoted = original.to_str().unwrap().replace('\'', "'\\''");
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\nulimit -s 1024\nexec '{quoted}' \"$@\"\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            path
+        }
+        #[cfg(not(unix))]
+        {
+            panic!("Process-stack wrapper is Unix-only")
+        }
+    } else {
+        original.clone()
+    };
     let builder = || {
         Harness::builder()
             .state_dir(root.path())
-            .executable(&binary)
+            .executable(&original)
             .sandbox(Sandbox::Off)
     };
     let harness = if managed {
@@ -176,9 +197,19 @@ async fn exercise(managed: bool) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attachments_work_in_process_and_managed_subprocess() {
     tokio::time::timeout(Duration::from_secs(120), async {
-        exercise(false).await;
-        exercise(true).await
+        exercise(false, false).await;
+        exercise(true, false).await
     })
     .await
     .unwrap();
+}
+
+/// Reproduce the small Windows process-main stack on Unix using an owned
+/// wrapper. The normal native Windows test already exercises its real stack.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_attachments_fit_a_small_host_stack() {
+    tokio::time::timeout(Duration::from_secs(120), exercise(true, true))
+        .await
+        .unwrap();
 }
