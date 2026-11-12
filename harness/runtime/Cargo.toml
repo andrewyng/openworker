@@ -23,10 +23,10 @@ compliance-export = ["compliance"]
 test-fixtures = []
 
 [dependencies]
-openworker-compliance = { version = "=0.1.0-beta.2", path = "../compliance" }
-openworker-guardrails = { version = "=0.1.0-beta.2", path = "../guardrails", default-features = false }
-openworker-telemetry = { version = "=0.1.0-beta.2", path = "../telemetry" }
-openworker-tools = { version = "=0.1.0-beta.2", path = "../tools-sdk" }
+openworker-compliance = { version = "=0.1.0-beta.3", path = "../compliance" }
+openworker-guardrails = { version = "=0.1.0-beta.3", path = "../guardrails", default-features = false }
+openworker-telemetry = { version = "=0.1.0-beta.3", path = "../telemetry" }
+openworker-tools = { version = "=0.1.0-beta.3", path = "../tools-sdk" }
 anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

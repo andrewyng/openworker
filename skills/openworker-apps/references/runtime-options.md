@@ -138,3 +138,36 @@ For UI activity, `model_activity` reports elapsed waiting time at most once ever
 five seconds; it is not task progress. Match tool callback UI with
 `(sessionId, turnId, callId)`, not event arrival order. Do not retry side effects
 because a stream disconnects; resume the durable run and reconcile its outcome.
+
+## Reviewer and compaction guidance (SDK 0.1.0-beta.3)
+
+Use these options only with a matching runtime advertising `application_guidance`.
+They apply to embedded Rust and managed-process sessions. The cluster REST client
+does not expose session/turn guidance overrides yet.
+
+```typescript
+const session = await agent.newSession({
+  autoApproverContext: 'Staging workspace. Ask before publishing.',
+  compaction: { additionalInstructions: 'Preserve decisions and unfinished tests.' },
+});
+await session.run('Continue.', {
+  autoApproverContext: 'For this turn, changes must stay inside src/.',
+  compaction: { additionalInstructions: 'Keep the migration checklist.' },
+});
+```
+
+Agent defaults → session → turn; omission inherits and `''` clears guidance in
+that scope. Accepted options survive restart and bind the submission ID; changing
+them requires a new submission. Each string is limited to32,000 UTF-8 bytes with
+no NUL. A turn override does not alter the next turn's session defaults.
+
+Keep working-agent preferences in `instructionAddendum`; reviewer context goes
+only to the auto-approver and summary guidance only to the compactor. They are not
+user transcript messages. Context alone does not turn auto-approval on: configure
+`approvals: { mode: 'auto', reviewerModel }` separately. Hard policy checks still
+run first, and summary guidance supplements the required summary structure.
+
+Rust uses `Agent::auto_approver_context`, `SessionOptions::auto_approver_context`
+and `TurnOptions.auto_approver_context`. Use
+`CompactionOptions::additional_instructions(text)` with the agent/session
+`.compaction(...)` setter or `TurnOptions.compaction`.

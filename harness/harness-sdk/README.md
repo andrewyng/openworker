@@ -1,6 +1,6 @@
 # OpenWorker Harness SDK (development API)
 
-Registry candidate: **0.1.0-beta.2**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
+Registry candidate: **0.1.0-beta.3**. See the [installation guide](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/installation.md) and [tested desktop QuickStart](https://github.com/andrewyng/openworker/blob/openworker-harness-sdk/docs/harness/guides/desktop.md). Registry publication is a separate release step; prepared tarballs are available for pre-publication testing.
 
 One Rust client, two deployment backends, the same native engine. This is a beta
 crate with an explicit SDK/runtime compatibility contract. It is distinct
@@ -340,7 +340,7 @@ This Linux service adapter does not add a Git executable to the core SDK.
 Use `Agent::allow_subagents(true)` to let a normal agent create children with an
 explicit prompt, context and tool subset. Children use the existing durable
 coordination engine without application-managed team setup. This requires a
-matching feature runtime; it is not in published runtime 0.1.0-beta.2.
+matching feature runtime; it is not in published runtime 0.1.0-beta.3.
 See [standalone sub-agents](../../docs/harness/guides/sessions.md#standalone-sub-agents)
 for limits, approvals and shared-sandbox behavior.
 
@@ -353,14 +353,14 @@ are disabled until configured; browser UI is a separate optional component.
 See the [observability guide](../../docs/harness/guides/observability.md) for local
 SQLite/PostgreSQL, Langfuse export, content selection and audit references. These
 new APIs require matching local candidate builds and are not in the published
-0.1.0-beta.2 packages yet.
+0.1.0-beta.3 packages yet.
 
 ## User attachments (source preview)
 
 Attach images, PDFs and UTF-8 text files to a session with ordered content and
 immutable recovery references. See [Attachments](../../docs/harness/guides/attachments.md)
 for the Rust/TypeScript APIs, service uploads, limits and upgrade instructions.
-This API requires matching source builds; it is not in npm `0.1.0-beta.2`.
+This API requires matching source builds; it is not in npm `0.1.0-beta.3`.
 
 ## Reviewer and compaction guidance
 

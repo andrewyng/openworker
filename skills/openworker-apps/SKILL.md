@@ -12,7 +12,7 @@ Preserve their chosen UI framework, model and deployment target.
 
 - Read [SDK integration](references/sdk.md) for the shared lifecycle and package contract.
 - For provider configuration, retry-safe streaming, reasoning display, migrated
-  history or changing turn preferences, read [Runtime options](references/runtime-options.md).
+  history, reviewer/compaction guidance or changing turn preferences, read [Runtime options](references/runtime-options.md).
 - For model-created child agents, read [Standalone sub-agents](references/subagents.md)
   and check its runtime-version gate before using the option.
 - For optional turn traces, Langfuse export or evaluation evidence, read

@@ -1,7 +1,7 @@
 # Desktop app starters
 
 Desktop scaffolder with registry dependencies by default and an explicit source
-checkout mode. Candidate: `create-openworker@0.1.0-beta.2`; registry publication is
+checkout mode. Candidate: `create-openworker@0.1.0-beta.3`; registry publication is
 a separate release step. See the [installation guide](../../docs/harness/guides/installation.md).
 
 ```sh

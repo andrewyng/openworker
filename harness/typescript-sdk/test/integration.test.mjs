@@ -47,7 +47,9 @@ for (const database of ["sqlite", "postgres"]) {
     `real Rust host: ${database} lifecycle, streaming, teams, MCP and recovery`,
     {
       skip: database === "postgres" && !process.env.OW_PG_TEST_URL,
-      timeout: 360_000,
+      // Debug macOS supervisors make this multi-restart stress case slower
+      // than the Linux release host used by CI. Every individual wait stays bounded.
+      timeout: process.platform === "darwin" ? 600_000 : 360_000,
     },
     async (t) => {
       // Trusted server policy paths cannot traverse macOS's /var symlink.
@@ -308,7 +310,10 @@ for (const database of ["sqlite", "postgres"]) {
         text: plan([probe(true)]),
       });
       let admitted = false;
-      for (let n = 0; n < 300; n++) {
+      // Wait for the real effect before cancellation. Rebuilding/recovering
+      // native supervisors on macOS can exceed the old six-second assumption.
+      const admissionDeadline = Date.now() + 30_000;
+      while (Date.now() < admissionDeadline) {
         if ((await readFile(join(work, "proof.txt"), "utf8")).length > before) {
           admitted = true;
           break;

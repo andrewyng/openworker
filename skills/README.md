@@ -5,8 +5,8 @@ applications with the OpenWorker Harness SDK. It includes version-matched SDK
 snippets and separate Desktop/Web references. No OpenWorker checkout is required
 for the packaged skill, and installing it does not install the SDK or a runtime.
 
-This skill release targets SDK `0.1.0-beta.2`, including provider caching,
-attempt-aware streaming and per-turn session options.
+This skill release targets SDK `0.1.0-beta.3`, including provider caching,
+attempt-aware streaming, per-turn session options, and reviewer/compaction guidance.
 
 ## Install the skill
 
@@ -28,7 +28,7 @@ on Windows and macOS, leaves global settings alone, and refuses to overwrite an
 existing skill. Review/back up an existing installation before replacing it.
 `references/installation.json` records the matching SDK version, without local
 checkout paths or credentials. Use `sdkVersion` from that file for the SDK. Skill and SDK package versions may
-differ; this skill release targets SDK `0.1.0-beta.2`.
+differ; this skill release targets SDK `0.1.0-beta.3`.
 
 ### Across your projects
 
