@@ -291,8 +291,8 @@ impl Native<'_> {
             .filter(|ui| ui.enabled)
         {
             connection["managementUI"] =
-                json!({"url":ui.public_origin,"login":"existing service token"});
-            let url = reqwest::Url::parse(&ui.public_origin)?;
+                json!({"url":ui.browser_origin()?,"login":"existing service token"});
+            let url = reqwest::Url::parse(&ui.browser_origin()?)?;
             if matches!(url.host_str(), Some("localhost" | "127.0.0.1")) {
                 connection["managementUI"]["privatePreview"] = json!({"command":"kubectl","arguments":["--kubeconfig",arg(&kube)?,"-n","ow-service","port-forward","service/ows-ui",format!("{}:443",url.port_or_known_default().unwrap()),"--address=127.0.0.1"],"caFile":self.root.join("credentials/api.crt")});
             }

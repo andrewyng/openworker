@@ -1,27 +1,44 @@
-# Full reference and companion setup.json: ../examples/azure/
-# Replace the subscription UUID. The setup profile must match it and this region.
-apiVersion: ows/v1alpha1
-name: azure-agents
+# Single authored deployment file. Replace documented identity/artifact placeholders.
+# No trial by default: this deployment does not expire automatically.
+# For disposable data only, add trial: {expiresAfterHours: 6, deleteData: true}.
+# Cost estimates are checked with --plan-only --max-estimated-cost-usd, not a spending cap.
+apiVersion: "ows/v1alpha1"
+name: "azure-agents"
 cloud:
-  provider: azure
+  provider: "azure"
   subscriptionId: "11111111-2222-4333-8444-555555555555"
-  region: westus2
+  region: "westus2"
 nodes:
   count: 2
-  instanceType: Standard_D4as_v7
-# Disposable six-hour trial. Expiry deletes workload data; keep no valuable data here.
-trial:
-  expiresAfterHours: 6
-  deleteData: true
-# Planning limit, not a hard billing cap. Set cloud billing alerts separately.
-budget:
-  limitUSD: 100
+  instanceType: "Standard_D4as_v7"
 managementUI:
   enabled: true
-  publicOrigin: https://localhost:8444
+  port: 8444
 observability:
   enabled: true
   retentionDays: 14
-# Export this variable in your shell; never put a key in this file.
 models:
-  anthropic: {env: ANTHROPIC_API_KEY}
+  anthropic:
+    env: "ANTHROPIC_API_KEY"
+advanced:
+  release: "/absolute/path/to/amd64-release/release.json"
+  infrastructure:
+    kubernetesVersion: "REPLACE_WITH_AVAILABLE_AKS_VERSION"
+    nodeVmSize: "Standard_D4as_v7"
+    sshPublicKey: "REPLACE_WITH_SSH_PUBLIC_KEY_WITHOUT_COMMENT"
+    adminGroupObjectIds:
+      - "33333333-4444-4555-8666-777777777777"
+    controlResourceGroup: "rg-ow-example-control"
+    guardImage: "examplecontrol.azurecr.io/cleanup@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    guardRegistryResourceId: "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg-ow-example-control/providers/Microsoft.ContainerRegistry/registries/examplecontrol"
+    managementAccess:
+      operatorIpv4: "203.0.113.10"
+      ubuntuImageVersion: "REPLACE_WITH_PINNED_UBUNTU_IMAGE_VERSION"
+    postgresPassword:
+      keyVaultId: "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/rg-ow-example-control/providers/Microsoft.KeyVault/vaults/ow-example-vault"
+      secretName: "postgres-password"
+      secretVersion: "0123456789abcdef0123456789abcdef"
+  azure:
+    resourceGroup: "rg-ow-example-workload"
+    setupObjectId: "22222222-3333-4444-8555-666666666666"
+    setupPrincipalType: "User"

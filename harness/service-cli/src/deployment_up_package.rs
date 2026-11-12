@@ -187,25 +187,32 @@ impl Snapshot {
     }
 }
 pub(super) fn load(c: &Config) -> Result<Snapshot> {
-    let path = if let Some(p) = &c.advanced.setup_profile {
-        p.clone()
+    let setup: Setup = if let Some(infrastructure) = &c.advanced.infrastructure {
+        let azure = c.advanced.azure.as_ref();
+        Setup {
+            schema_version: 1,
+            provider: c.cloud.provider().into(),
+            account: c.cloud.account().into(),
+            region: c.cloud.region().into(),
+            infrastructure: infrastructure.clone(),
+            operator_arn: c.advanced.aws.as_ref().and_then(|a| a.operator_arn.clone()),
+            setup_object_id: azure.and_then(|a| a.setup_object_id.clone()),
+            setup_principal_type: azure.and_then(|a| a.setup_principal_type.clone()),
+            resource_group: azure.and_then(|a| a.resource_group.clone()),
+            release: c.advanced.release.clone().context(
+                "Set advanced.release to a generated release manifest in this deployment YAML",
+            )?,
+        }
+    } else if let Some(path) = &c.advanced.setup_profile {
+        ensure!(
+            fs::metadata(path)?.len() <= 65536,
+            "Legacy setup profile exceeds 64 KiB"
+        );
+        serde_json::from_slice(&fs::read(path)?)
+            .map_err(|_| anyhow::anyhow!("Invalid legacy setup profile"))?
     } else {
-        let home =
-            std::env::var_os("HOME").context("HOME unavailable; set advanced.setupProfile")?;
-        PathBuf::from(home)
-            .join(".config/ows/deployments")
-            .join(c.cloud.provider())
-            .join(c.cloud.account())
-            .join(format!("{}.json", c.cloud.region()))
+        bail!("Set advanced.infrastructure, advanced.release and cloud identity overrides in deployment.yaml. No separate setup profile is required and no cloud resources were created.")
     };
-    ensure!(path.is_file(),"Account setup profile is missing at {}. Install the reviewed account/release prerequisites once (see deploy/service/up/README.md), then rerun the same up command. No cloud resources were created.",path.display());
-    ensure!(
-        fs::metadata(&path)?.len() <= 65536,
-        "Setup profile exceeds 64 KiB"
-    );
-    let setup: Setup = serde_json::from_slice(&fs::read(&path)?).map_err(|_| {
-        anyhow::anyhow!("Invalid account setup profile; use references, not inline credentials")
-    })?;
     let release_path = c.advanced.release.as_ref().unwrap_or(&setup.release);
     ensure!(
         fs::metadata(release_path)?.len() <= 65536,

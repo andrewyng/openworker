@@ -8,6 +8,8 @@ use tokio::{
 };
 #[path = "deployment_features.rs"]
 pub(crate) mod features;
+#[path = "deployment_kubernetes.rs"]
+pub(crate) mod single_file;
 const OWNER: &str = "openworker.io/installer-id";
 #[path = "deployment_cluster_platform.rs"]
 mod platform;
@@ -1873,34 +1875,4 @@ pub(crate) async fn verify_azure_teardown(
         );
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod reference_examples {
-    use super::*;
-    #[test]
-    fn local_reference_uses_supported_existing_kind_installer_and_valid_chart_values() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../deploy/service/examples/local-cluster");
-        let c: Config =
-            serde_json::from_slice(&fs::read(root.join("installer.json")).unwrap()).unwrap();
-        assert!(c.context.starts_with("kind-") && c.service.fixture_database);
-        let v: Value =
-            serde_json::from_slice(&fs::read(root.join("service-values.json")).unwrap()).unwrap();
-        let (ns, _, fullname) = c.openshell.scope();
-        assert_eq!(
-            v["config"]["openshell"]["endpoint"],
-            format!("https://{fullname}.{ns}.svc.cluster.local:8080")
-        );
-        assert_eq!(
-            v["managementUI"]["serviceUrl"],
-            format!(
-                "https://{}-api.{}.svc",
-                c.service.release, c.service.namespace
-            )
-        );
-        assert!(pinned(v["image"].as_str().unwrap()));
-        assert_eq!(v["managementUI"]["enabled"], true);
-        assert_eq!(v["config"]["observability"]["retention_days"], 14);
-    }
 }

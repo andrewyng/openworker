@@ -7,6 +7,9 @@ use super::*;
 pub(crate) struct ManagementUI {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Legacy explicit origin for existing ingress deployments. Basic YAML uses port.
     #[serde(default = "origin")]
     pub public_origin: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,6 +24,7 @@ impl Default for ManagementUI {
     fn default() -> Self {
         Self {
             enabled: false,
+            port: None,
             public_origin: origin(),
             ca_secret: None,
             ca_key: None,
@@ -28,6 +32,21 @@ impl Default for ManagementUI {
     }
 }
 impl ManagementUI {
+    pub(crate) fn browser_origin(&self) -> Result<String> {
+        if let Some(port) = self.port {
+            ensure!(
+                port >= 1024,
+                "Management UI port must be between 1024 and 65535"
+            );
+            ensure!(
+                self.public_origin == origin(),
+                "Choose a preview port or a legacy explicit ingress origin, not both"
+            );
+            Ok(format!("https://localhost:{port}"))
+        } else {
+            Ok(self.public_origin.clone())
+        }
+    }
     pub(crate) fn validate(&self) -> Result<()> {
         if let Some(s) = &self.ca_secret {
             ensure!(dns_name(s), "Invalid UI CA Secret name");
@@ -41,7 +60,8 @@ impl ManagementUI {
                 "Invalid UI CA Secret key"
             );
         }
-        let u = reqwest::Url::parse(&self.public_origin).context("Invalid management UI origin")?;
+        let u =
+            reqwest::Url::parse(&self.browser_origin()?).context("Invalid management UI origin")?;
         ensure!(u.scheme()=="https" && u.host_str().is_some() && u.username().is_empty() && u.password().is_none() && u.path()=="/" && u.query().is_none() && u.fragment().is_none(), "Management UI publicOrigin must be an HTTPS origin without credentials, path, query or fragment");
         Ok(())
     }
@@ -93,7 +113,7 @@ fn dns_name(s: &str) -> bool {
 pub(crate) struct Target {
     /// Original installer journal (local-plan.json and journal.json), not cloud lifecycle state.
     #[arg(long)]
-    state: PathBuf,
+    pub(super) state: PathBuf,
 }
 #[derive(Subcommand)]
 pub(crate) enum UICommand {
@@ -103,8 +123,11 @@ pub(crate) enum UICommand {
         /// Digest-pinned UI image. Omit when already recorded in Helm values.
         #[arg(long)]
         image: Option<String>,
-        #[arg(long)]
+        #[arg(long = "ingress-url", alias = "public-origin", conflicts_with = "port")]
         public_origin: Option<String>,
+        /// Loopback HTTPS preview port; defaults to 8444.
+        #[arg(long, value_parser=clap::value_parser!(u16).range(1024..=65535))]
+        port: Option<u16>,
         /// Existing Secret containing the CA that signs the service API certificate.
         #[arg(long)]
         ca_secret: Option<String>,
@@ -251,7 +274,7 @@ pub(crate) fn configure_ui(
     if let Some(image) = image {
         values["managementUI"]["image"] = json!(image);
     }
-    values["managementUI"]["publicOrigin"] = json!(ui.public_origin);
+    values["managementUI"]["publicOrigin"] = json!(ui.browser_origin()?);
     values["managementUI"]["serviceUrl"] = json!(format!("https://{release}-api.{namespace}.svc"));
     if ui.enabled {
         let image = values["managementUI"]["image"]
@@ -301,7 +324,7 @@ pub(crate) fn configure_ui(
         values["managementUI"]["caKey"] = json!(ca_key);
         // Private loopback preview is self-contained. Public origins require the
         // operator's TLS ingress; never create public exposure implicitly.
-        let u = reqwest::Url::parse(&ui.public_origin)?;
+        let u = reqwest::Url::parse(&ui.browser_origin()?)?;
         values["managementUI"]["tlsSecret"] =
             if matches!(u.host_str(), Some("localhost" | "127.0.0.1")) {
                 json!(api_tls)
@@ -441,7 +464,7 @@ async fn change(
         Value::Null
     };
     crate::output(
-        json!({"deploymentId":p.id,"managementUI":{"enabled":ui["enabled"]==true,"publicOrigin":ui["publicOrigin"],"privatePreview":preview},"observability":{"enabled":!obs.is_null(),"configuration":obs,"databaseSecret":values["secrets"]["observability"],"storedData":"retained; no deletion performed","exporters":"configured independently"},"savedConfiguration":root.join("journal.json"),"helmRevision":confirmed_receipt(&j)?["revision"]}),
+        json!({"deploymentId":p.id,"managementUI":{"enabled":ui["enabled"]==true,"port":ui["publicOrigin"].as_str().and_then(|s|reqwest::Url::parse(s).ok()).and_then(|u|u.port_or_known_default()),"url":ui["publicOrigin"],"publicOrigin":ui["publicOrigin"],"privatePreview":preview},"observability":{"enabled":!obs.is_null(),"configuration":obs,"databaseSecret":values["secrets"]["observability"],"storedData":"retained; no deletion performed","exporters":"configured independently"},"savedConfiguration":root.join("journal.json"),"helmRevision":confirmed_receipt(&j)?["revision"]}),
     )
 }
 pub(crate) async fn ui(command: &UICommand) -> Result<()> {
@@ -465,6 +488,7 @@ pub(crate) async fn ui(command: &UICommand) -> Result<()> {
             target,
             image,
             public_origin,
+            port,
             ca_secret,
             ca_key,
         } => {
@@ -473,14 +497,18 @@ pub(crate) async fn ui(command: &UICommand) -> Result<()> {
                 |v, p| {
                     let ui = ManagementUI {
                         enabled: true,
-                        public_origin: public_origin
-                            .clone()
-                            .or_else(|| {
-                                v["managementUI"]["publicOrigin"]
-                                    .as_str()
-                                    .map(str::to_owned)
-                            })
-                            .unwrap_or_else(origin),
+                        port: *port,
+                        public_origin: if port.is_some() {
+                            Some(origin())
+                        } else {
+                            public_origin.clone()
+                        }
+                        .or_else(|| {
+                            v["managementUI"]["publicOrigin"]
+                                .as_str()
+                                .map(str::to_owned)
+                        })
+                        .unwrap_or_else(origin),
                         ca_secret: ca_secret.clone(),
                         ca_key: ca_key.clone(),
                     };
@@ -613,5 +641,27 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    #[test]
+    fn port_derives_trusted_loopback_origin_and_rejects_ambiguous_ingress() {
+        let mut ui = ManagementUI {
+            port: Some(9000),
+            ..Default::default()
+        };
+        ui.validate().unwrap();
+        assert_eq!(ui.browser_origin().unwrap(), "https://localhost:9000");
+        ui.port = Some(80);
+        assert!(ui.validate().is_err());
+        ui.port = Some(9000);
+        ui.public_origin = "https://manage.example.com".into();
+        assert!(ui.validate().is_err());
+        ui.port = None;
+        ui.validate().unwrap();
+        assert_eq!(ui.browser_origin().unwrap(), "https://manage.example.com");
     }
 }

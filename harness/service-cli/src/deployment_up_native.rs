@@ -92,7 +92,7 @@ impl Native<'_> {
         let c = &self.review.config;
         let package = &self.package;
         let created = self.review.resolution.observed_at_unix;
-        let mut value = json!({"schemaVersion":if self.provider()=="aws"{3}else{2},"deploymentId":self.review.deployment_id,"name":c.name,"createdAtUnix":created,"expiresAtUnix":created+u64::from(c.trial.as_ref().map(|t|t.expires_after_hours).unwrap_or(72))*3600,"autoExpire":c.trial.is_some(),"budget":{"authorizedUsd":c.budget.alert_usd,"hardCap":false,"estimate":null},"topology":{"clusterMode":"new","nodeCount":c.nodes.count,"maxWorkerReplicas":2,"architecture":self.review.resolution.node.architecture,"access":"private","nodeAutoscaling":false}});
+        let mut value = json!({"schemaVersion":if self.provider()=="aws"{3}else{2},"deploymentId":self.review.deployment_id,"name":c.name,"createdAtUnix":created,"expiresAtUnix":created+u64::from(c.trial.as_ref().map(|t|t.expires_after_hours).unwrap_or(72))*3600,"autoExpire":c.trial.is_some(),"budget":{"authorizedUsd":c.budget.as_ref().map(|b|b.alert_usd).unwrap_or(0),"estimateCheckDisabled":c.budget.is_none(),"hardCap":false,"estimate":null},"topology":{"clusterMode":"new","nodeCount":c.nodes.count,"maxWorkerReplicas":2,"architecture":self.review.resolution.node.architecture,"access":"private","nodeAutoscaling":false}});
         let mut inputs = package.setup.infrastructure.clone();
         if let Some(version) = &c.advanced.kubernetes_version {
             inputs["kubernetesVersion"] = json!(version);
@@ -115,7 +115,9 @@ impl Native<'_> {
                     .as_ref()
                     .and_then(|a| a.operator_arn.as_ref())
                     .or(package.setup.operator_arn.as_ref())
-                    .context("AWS setup profile needs its approved IAM operatorArn")?;
+                    .context(
+                        "Set advanced.aws.operatorArn to the approved installer IAM identity",
+                    )?;
                 let prefix = format!("ows-{}-{}", c.name, &self.review.deployment_id[4..16]);
                 value["bootstrap"] = json!({"operatorArn":operator,"executionRoleArn":format!("arn:aws:iam::{account_id}:role/{prefix}-executor")});
                 inputs["nodeInstanceType"] = json!(self.review.resolution.node.instance_type);
@@ -139,7 +141,7 @@ impl Native<'_> {
                         inputs["sshPublicKey"] = json!(fs::read_to_string(key)?.trim());
                     }
                 }
-                value["azureBootstrap"] = json!({"resourceGroup":azure.and_then(|a| a.resource_group.as_ref()).or(package.setup.resource_group.as_ref()).context("Azure setup profile needs an approved workload resourceGroup")?,"setupObjectId":package.setup.setup_object_id.as_ref().context("Azure setup profile needs an exact setupObjectId")?,"setupPrincipalType":package.setup.setup_principal_type.as_deref().unwrap_or("ServicePrincipal")});
+                value["azureBootstrap"] = json!({"resourceGroup":azure.and_then(|a| a.resource_group.as_ref()).or(package.setup.resource_group.as_ref()).context("Set advanced.azure.resourceGroup to the approved workload group")?,"setupObjectId":package.setup.setup_object_id.as_ref().context("Set advanced.azure.setupObjectId to the approved installer object ID")?,"setupPrincipalType":package.setup.setup_principal_type.as_deref().unwrap_or("ServicePrincipal")});
                 inputs["nodeVmSize"] = json!(self.review.resolution.node.instance_type);
                 value["azureInfrastructure"] = inputs;
             }

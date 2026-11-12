@@ -2,18 +2,20 @@
 //! Desired state, reviewed observations and effect receipts remain distinct.
 use super::*;
 #[path = "deployment_up_config.rs"]
-mod config;
+pub(super) mod config;
 #[path = "deployment_up_native.rs"]
 mod native;
 #[path = "deployment_up_package.rs"]
 mod package;
 #[path = "deployment_up_pricing.rs"]
-mod pricing;
+pub(super) mod pricing;
 #[path = "deployment_up_resolve.rs"]
 mod resolve;
 #[path = "deployment_up_state.rs"]
 mod state;
 use config::Config;
+#[path = "deployment_up_cost.rs"]
+mod cost;
 
 #[derive(Args)]
 pub struct Options {
@@ -25,6 +27,9 @@ pub struct Options {
     /// Resolve and write the review without provisioning.
     #[arg(long)]
     plan_only: bool,
+    /// Check the priced fixed infrastructure estimate plus explicit allowance, never actual spend.
+    #[arg(long, requires = "plan_only", value_parser=clap::value_parser!(u32).range(1..=100000))]
+    max_estimated_cost_usd: Option<u32>,
     /// Noninteractive approval of this exact review digest, never a blanket yes.
     #[arg(long)]
     accept_plan: Option<String>,
@@ -267,7 +272,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         "Generated infrastructure/permissions changed since review; do not reuse the old approval"
     );
     crate::output(
-        json!({"deploymentId":review.deployment_id,"state":state,"planDigest":review.digest,"nodeCount":config.nodes.count,"instanceType":review.resolution.node.instance_type,"price":review.resolution.price,"phase":"review","mutations":0}),
+        json!({"deploymentId":review.deployment_id,"state":state,"planDigest":review.digest,"nodeCount":config.nodes.count,"instanceType":review.resolution.node.instance_type,"price":review.resolution.price,"priceObservedAtUnix":review.resolution.observed_at_unix,"priceSnapshot":"original planning observation; refreshed prices live in cost-estimate.json","phase":"review","mutations":0}),
     )?;
     if o.plan_only {
         native::Native {
@@ -279,12 +284,18 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         }
         .review_bundle()
         .await?;
-        return Ok(());
+        return cost::review(&state, &review, &package, o.max_estimated_cost_usd).await;
     }
-    if let Some(subtotal) = review.resolution.price.known_hourly_subtotal_usd {
+    cost::validate_approval(&state, &review)?;
+    if let Some(subtotal) = review
+        .resolution
+        .price
+        .known_hourly_subtotal_usd
+        .filter(|_| config.budget.is_some())
+    {
         let minimum = subtotal * f64::from(review.resolution.price.planned_hours)
             + f64::from(review.resolution.price.variable_allowance_usd);
-        ensure!(minimum<=f64::from(config.budget.alert_usd),"Known planning estimate already exceeds budget.limitUSD. Review a new budget/size/lifetime before provisioning; no mutations performed.");
+        ensure!(minimum<=f64::from(config.budget.as_ref().unwrap().alert_usd),"Known planning estimate already exceeds budget.limitUSD. Review a new budget/size/lifetime before provisioning; no mutations performed.");
     }
     // Render the exact permission payloads before either approval prompt.
     let preview = native::Native {

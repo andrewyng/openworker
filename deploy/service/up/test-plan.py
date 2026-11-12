@@ -58,10 +58,7 @@ print(json.dumps(v))
         '--database-ca',str(repo/'harness/store-postgres/tests/fixtures/public-ca.pem'),'--out',str(root/'release')], check=True, capture_output=True)
     infrastructure = json.loads((repo/'harness/service-cli/examples/aws-infrastructure.json').read_text())
     infrastructure['guardCode']['sha256'] = json.loads((root/'guard/package-manifest.json').read_text())['archiveSha256']
-    setup = {'schemaVersion':1,'provider':'aws','account':'123456789012','region':'us-west-2',
-             'operatorArn':'arn:aws:iam::123456789012:role/operator','infrastructure':infrastructure,'release':str(root/'release/release.json')}
-    (root/'setup.json').write_text(json.dumps(setup))
-    yaml = "name: fixture\ncloud: {provider: aws, accountId: '123456789012', region: us-west-2}\nnodes: {count: 2, instanceType: t4g.large}\nbudget: {limitUSD: 1000}\nadvanced:\n  setupProfile: " + str(root/'setup.json') + '\n'
+    yaml = "name: fixture\ncloud: {provider: aws, accountId: '123456789012', region: us-west-2}\nnodes: {count: 2, instanceType: t4g.large}\nadvanced:\n  release: " + json.dumps(str(root/'release/release.json')) + '\n  aws: {operatorArn: "arn:aws:iam::123456789012:role/operator"}\n  infrastructure: ' + json.dumps(infrastructure) + '\n'
     (root/'deployment.yaml').write_text(yaml)
     args = ['deploy','aws','up','--config',str(root/'deployment.yaml'),'--state',str(root/'state')]
     run(args+['--plan-only'])
@@ -70,8 +67,17 @@ print(json.dumps(v))
     assert review['config']['nodes']['count'] == 2
     plan = json.loads((root/'state/infrastructure/deployment-plan.json').read_text())
     assert plan['autoExpire'] is False
+    assert plan['budget']['estimateCheckDisabled'] is True
+    assert not (root/'setup.json').exists()
     run(args+['--plan-only'])
     assert (root/'state/review.json').read_bytes() == first
+    too_small=run(args+['--plan-only','--max-estimated-cost-usd','1'],ok=False)
+    assert 'exceeds' in too_small.stderr
+    run(args+['--plan-only','--max-estimated-cost-usd','100000'])
+    quote=json.loads((root/'state/cost-estimate.json').read_text())
+    assert quote['ceilingCheck']=='within_estimated_ceiling'
+    assert quote['reviewDigest']==review['digest']
+    assert (root/'state/review.json').read_bytes()==first
     run(args+['--accept-plan','wrong'], ok=False)
     run(args+['--accept-plan',review['digest']], ok=False)  # bootstrap still unapproved
     kubectl = tools / 'kubectl'
@@ -85,4 +91,4 @@ print(json.dumps(v))
     assert 'changed' in result.stderr
     assert (root/'calls.jsonl').read_bytes() == calls
     assert all(json.loads(line) in [['sts','get-caller-identity'],['ec2','describe-instance-types'],['ec2','describe-instance-type-offerings'],['pricing','get-products']] for line in calls.splitlines())
-    print(json.dumps({'readOnlyPlan':True,'stableResume':True,'changedConfigRejected':True,'unapprovedBootstrapBlocked':True,'missingLocalToolBlocked':True,'cloudMutations':0,'installationQualified':False}))
+    print(json.dumps({'oneAuthoredYaml':True,'planCeilingChecked':True,'quoteRefreshPreservesIntent':True,'readOnlyPlan':True,'stableResume':True,'changedConfigRejected':True,'unapprovedBootstrapBlocked':True,'missingLocalToolBlocked':True,'cloudMutations':0,'installationQualified':False}))

@@ -103,7 +103,7 @@ Select these features in `deployment.yaml` for the AWS/Azure `up` commands, or
 change them on an existing installation:
 
 ```sh
-ows management-ui enable --state ./deployment-state/installation
+ows management-ui enable --state ./deployment-state/installation --port 8444
 ows management-ui disable --state ./deployment-state/installation
 ows management-ui status --state ./deployment-state/installation
 ows observability enable --state ./deployment-state/installation --retention-days 14
@@ -118,5 +118,8 @@ The CLI saves feature changes and reconciles lost Helm responses without repeati
 unknown upgrades. See [setup, UI image, private HTTPS and database options](../../deploy/service/up/README.md#management-ui-and-trace-storage).
 
 Complete [Azure, AWS and local kind reference files](../../deploy/service/examples/README.md)
-include deployment choices, companion cloud setup profiles, local chart values and
-placeholder secrets-file shape. Replace their documented placeholders before use.
+put deployment choices and advanced account/cluster inputs in one YAML. The CLI
+generates internal values/installer files; replace the documented placeholders
+before use. `local-docker` and `remote-k8s` are explicit roadmap modes, not
+qualified installers. New cloud configs omit budget; optional estimated-cost
+ceilings use `up --plan-only --max-estimated-cost-usd`.
