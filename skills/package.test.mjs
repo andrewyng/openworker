@@ -34,7 +34,7 @@ test('packed installer works outside the checkout without SDK or native dependen
       : execFileSync(bin,args,{cwd:consumer,encoding:'utf8'});
     assert.match(run(['--help']), /--agent codex\|claude/);
     assert.match(run(['--help']), /--global/);
-    if(process.platform==='win32')assert.match(execFileSync(process.execPath,[join(installed,'INSTALL.MJS'),'--help'],{cwd:consumer,encoding:'utf8'}),/--agent codex\|claude/);
+    if(process.platform==='win32')assert.match(execFileSync(process.execPath,[join(installed.toUpperCase(),'install.mjs'),'--help'],{cwd:consumer,encoding:'utf8'}),/--agent codex\|claude/);
     // Mock only the child's OS home resolver; never write to the developer's
     // actual home or override HOME/USERPROFILE while exercising the real CLI.
     const userHome=join(root,'personal home');await mkdir(userHome);
