@@ -17,7 +17,8 @@ test('release versions and publishable Rust dependency closure agree',()=>{
   assert.ok(existsSync(join(root,pkg.directory,'LICENSE')));
  }
  for(const folder of ['typescript-sdk','desktop-starters'])assert.equal(JSON.parse(readFileSync(join(root,folder,'package.json'))).version,manifest.version);
- assert.equal(JSON.parse(readFileSync(join(root,'../skills/package.json'))).openworkerSdkVersion,manifest.version);
+ // Skill compatibility is pinned/tested by its standalone package tests. Its
+ // published consumer SDK may differ from this native-release source manifest.
  assert.ok(readFileSync(join(root,'typescript-sdk/src/version.ts'),'utf8').includes(JSON.stringify(manifest.version)));
  assert.equal(new Set(manifest.targets.map(t=>t.rust)).size,manifest.targets.length);
 });

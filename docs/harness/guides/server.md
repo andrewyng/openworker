@@ -35,7 +35,7 @@ Install the shared [OpenWorker app-building skill](../../../skills/README.md),
 then paste this prompt into Codex or Claude Code in your app project:
 
 ```text
-Use the openworker-apps skill to build a web app where I can upload a PDF
+Use the openworker-harness-builder skill to build a web app where I can upload a PDF
 and ask questions with page references. Start from PDF Notes, explain the
 agent and session code, and prepare container deployment files.
 ```
@@ -50,13 +50,13 @@ skill. No OpenWorker repository checkout is required.
 ### Codex
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent codex --project .
+npx @openworkerai/openworker-harness-builder --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent claude --project .
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->
@@ -64,8 +64,9 @@ npx @openworkerai/build-with-sdk-skills --agent claude --project .
 Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 For all your projects on this machine, replace `--project .` with `--global`.
-That installs to your user skills directory; neither mode overwrites an existing
-skill. The `--global` option is new in the pending skills `0.1.0-beta.2` release.
+That installs to your user skills directory. Existing installs prompt before
+replacement; `--replace-existing` skips the prompt. Both save a backup outside the
+active skills directory. Non-interactive updates require the flag.
 See the [skill installation guide](../../../skills/README.md) for availability,
 local candidate installation and invocation details.
 

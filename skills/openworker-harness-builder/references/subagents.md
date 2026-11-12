@@ -1,7 +1,6 @@
 # Standalone sub-agents
 
-Source-feature preview: this option is not in the published 0.1.0-beta.2 runtime.
-Use this reference only with a matching candidate SDK/runtime whose handshake has
+Available in SDK/runtime 0.1.0-beta.3. Use a matching SDK/runtime whose handshake has
 `standalone_subagents: true` (service: `standaloneSubagents`). Otherwise use the
 installed version's existing explicit team API or explain the version requirement.
 Do not silently substitute a team or upgrade an application.
