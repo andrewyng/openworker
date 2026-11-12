@@ -34,6 +34,7 @@ test('packed installer works outside the checkout without SDK or native dependen
       : execFileSync(bin,args,{cwd:consumer,encoding:'utf8'});
     assert.match(run(['--help']), /--agent codex\|claude/);
     assert.match(run(['--help']), /--global/);
+    assert.match(run(['--help']), /--replace-existing/);
     if(process.platform==='win32')assert.match(execFileSync(process.execPath,[join(installed.toUpperCase(),'install.mjs'),'--help'],{cwd:consumer,encoding:'utf8'}),/--agent codex\|claude/);
     // Mock only the child's OS home resolver; never write to the developer's
     // actual home or override HOME/USERPROFILE while exercising the real CLI.
@@ -59,6 +60,10 @@ test('packed installer works outside the checkout without SDK or native dependen
       await writeFile(join(globalDest,'SKILL.md'),'personal customization');
       assert.throws(()=>runGlobal(['--global','--agent',agent]));
       assert.equal(await readFile(join(globalDest,'SKILL.md'),'utf8'),'personal customization');
+      const globalReplacement=runGlobal(['--global','--agent',agent,'--replace-existing']);
+      const globalBackup=globalReplacement.split('Backup saved: ')[1].split('\n')[0];
+      assert.equal(await readFile(join(globalBackup,'SKILL.md'),'utf8'),'personal customization');
+      assert.match(await readFile(join(globalDest,'SKILL.md'),'utf8'),/^name: openworker-harness-builder$/m);
       for (const folder of ['', 'references', 'agents']) {
         for (const file of await readdir(join(dest,folder))) {
           if (!/\.(md|json|yaml)$/.test(file)) continue;
@@ -73,6 +78,10 @@ test('packed installer works outside the checkout without SDK or native dependen
       await writeFile(join(dest,'SKILL.md'),'developer customization');
       assert.throws(() => run(['--agent',agent,'--project',project]));
       assert.equal(await readFile(join(dest,'SKILL.md'),'utf8'),'developer customization');
+      const replacement=run(['--agent',agent,'--project',project,'--replace-existing']);
+      const backup=replacement.split('Backup saved: ')[1].split('\n')[0];
+      assert.equal(await readFile(join(backup,'SKILL.md'),'utf8'),'developer customization');
+      assert.match(await readFile(join(dest,'SKILL.md'),'utf8'),/^name: openworker-harness-builder$/m);
     }
   } finally { await rm(root, {recursive:true,force:true}); }
 });

@@ -24,6 +24,11 @@ npx @openworkerai/openworker-harness-builder --agent codex --project .
 # For Claude Code, use --agent claude. For user-wide installation, use --global.
 ```
 
+If the Skill is already installed, interactive runs ask before replacing it.
+Use `--replace-existing` for an explicit update without prompting. Both paths
+save a backup outside the active skills directory; non-interactive updates require
+the flag. See the [Skill update instructions](../../skills/README.md#update-an-existing-installation).
+
 See the [Desktop guide](https://openworker.com/docs/sdk/desktop/),
 [Web guide](https://openworker.com/docs/sdk/server/) or the bundled
 [plain Node file-organizer example](../../skills/openworker-harness-builder/references/local-script.md).

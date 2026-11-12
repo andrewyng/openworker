@@ -64,8 +64,9 @@ npx @openworkerai/openworker-harness-builder --agent claude --project .
 Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 For all your projects on this machine, replace `--project .` with `--global`.
-That installs to your user skills directory; neither mode overwrites an existing
-skill. Both project and global installation are available in the published Skill.
+That installs to your user skills directory. Existing installs prompt before
+replacement; `--replace-existing` skips the prompt. Both save a backup outside the
+active skills directory. Non-interactive updates require the flag.
 See the [skill installation guide](../../../skills/README.md) for availability,
 local candidate installation and invocation details.
 

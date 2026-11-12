@@ -24,8 +24,8 @@ npx @openworkerai/openworker-harness-builder --agent claude --project .
 
 These project commands create `.agents/skills/openworker-harness-builder/` for Codex or
 `.claude/skills/openworker-harness-builder/` for Claude Code. It supports quoted project paths
-on Windows and macOS, leaves global settings alone, and refuses to overwrite an
-existing skill. Review/back up an existing installation before replacing it.
+on Windows and macOS and leaves global settings alone. If a skill already exists,
+an interactive terminal asks before replacing it and saves the old copy as a backup.
 `references/installation.json` records the matching SDK version, without local
 checkout paths or credentials. Use `sdkVersion` from that file for the SDK. Skill and SDK package versions may
 differ; this skill release targets SDK `0.1.0-beta.3`.
@@ -46,8 +46,45 @@ This installs into `~/.claude/skills/openworker-harness-builder/` for Claude Cod
 `~/.agents/skills/openworker-harness-builder/` for Codex, making the skill available across
 projects for your user on this machine. It does not install into Claude web or
 Cowork, change account settings, or require `npm install -g` or administrator
-access. Choose either `--global` or `--project`, not both. Both modes preserve an
-existing installation.
+access. Choose either `--global` or `--project`, not both. Both modes require
+confirmation or the explicit replacement flag before replacing an existing skill.
+
+### Update an existing installation
+
+Run the same install command again. In an interactive terminal it asks:
+
+```text
+Replace the existing skill? A backup will be saved. [y/N]
+```
+
+Enter `y` or `yes` to replace it. Enter or `n` leaves it unchanged. For scripts,
+or to skip the prompt explicitly, use:
+
+```sh
+npx @openworkerai/openworker-harness-builder --agent claude --global --replace-existing
+```
+
+```sh
+npx @openworkerai/openworker-harness-builder --agent codex --project . --replace-existing
+```
+
+Non-interactive installs never prompt and require `--replace-existing` to update.
+Every replacement saves the complete old directory, including custom files, under
+`.claude/skill-backups/` or `.agents/skill-backups/` in the selected project or home.
+The installer prints the exact backup path. Backups are outside the active skills
+directory, so coding agents do not load duplicates. A new complete copy replaces
+the old one; obsolete files are not merged into it. If activation fails, the
+installer attempts to restore the previous copy and reports its backup location
+if automatic restoration fails. Review customizations before copying any back.
+
+An interrupted installer can leave an installation lock in `.claude/` or `.agents/`.
+If the next install reports that lock, first confirm no installer is running,
+then review and remove the reported lock directory before retrying. Existing
+backups are never automatically deleted.
+
+Skill and SDK publications are independent: updating this Skill does not replace
+the README inside an already-installed SDK package. Use the bundled version-matched
+references for these examples and `installation.json` for the exact SDK pin.
 
 Unversioned commands select npm's `latest` release. To pin an installation for
 reproducibility, append `@<version>` to the package name. The installer records
@@ -97,7 +134,7 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 Install the resulting archive into a temporary project or use it through npm exec:
 
 ```sh
-npm exec --package /absolute/new-skills-candidate/archives/openworkerai-openworker-harness-builder-0.1.0-beta.5.tgz -- openworker-harness-builder --agent codex --project /path/to/your-app
+npm exec --package /absolute/new-skills-candidate/archives/openworkerai-openworker-harness-builder-0.1.0-beta.6.tgz -- openworker-harness-builder --agent codex --project /path/to/your-app
 ```
 
 The preparer never publishes. Source package manifests remain private; staged
@@ -144,4 +181,4 @@ cancellation, graceful shutdown, unchanged session references after redeployment
 and real Anthropic recall of earlier conversation content. This qualifies the
 single-service recipe; it does not establish multi-replica or zero-downtime behavior.
 
-When upgrading from the earlier `openworker-apps` skill, review and remove that old skill from the same installation scope after installing the new name. The installer preserves existing skill directories and local customizations.
+When upgrading from the earlier `openworker-apps` skill, review and remove that old skill from the same installation scope after installing the new name. Replacement applies only to `openworker-harness-builder`; the old-named skill is left untouched.
