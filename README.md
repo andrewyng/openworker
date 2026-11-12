@@ -1,6 +1,6 @@
 <h1 align="center">OpenWorker</h1>
 
-<p align="center"><strong><a href="https://openworker.com">openworker.com</a></strong> · <a href="#download">Download</a> · <a href="https://github.com/andrewyng/openworker/issues">Issues</a></p>
+<p align="center"><strong><a href="https://openworker.com">openworker.com</a></strong> · <a href="#download">Download</a> · <a href="#build-with-the-openworker-harness-sdk">Harness SDK</a> · <a href="https://github.com/andrewyng/openworker/issues">Issues</a></p>
 
 <p align="center"><a href="https://trendshift.io/repositories/91434?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-91434" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91434/daily" alt="andrewyng%2Fopenworker | Trendshift" width="250" height="55"/></a></p>
 
@@ -12,11 +12,27 @@ It runs on your machine and doesn't lock you into any model: bring your own API 
 
 [![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
 
-## Download
+## Build with the OpenWorker Harness SDK
 
-Building your own agentic application? The [OpenWorker Harness](harness/README.md)
-release-candidate source includes Rust and TypeScript SDKs, desktop starters and
-server deployment references. It is separate from the Desktop app's Python engine.
+**Your app, powered by agents.** Build a desktop app, web app or local utility
+with your own interface and tools. The Harness SDK manages model calls, approvals,
+streaming and durable sessions, so you can focus on the product experience.
+
+Use the TypeScript SDK from npm, or embed the Rust engine in your application.
+Connect cloud or local models, add sub-agents and teams, isolate configured tools
+with NVIDIA OpenShell, and inspect runs through optional traces and telemetry.
+The Harness SDK is a separate Rust engine from the Desktop app's Python engine.
+
+```sh
+npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
+```
+
+[**Explore the Harness SDK →**](harness/README.md) ·
+[Desktop guide](docs/harness/guides/desktop.md) ·
+[Web guide](docs/harness/guides/server.md) ·
+[Build with Codex or Claude Code](skills/README.md)
+
+## Download
 
 [**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
 <sub>macOS 12+ · signed & notarized · auto-updates</sub>
@@ -139,6 +155,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | Directory | What's in it |
 |---|---|
 | `coworker/` | Python backend - agent engine, model providers, connectors, MCP client, memory, automations |
+| `harness/` | Rust agent runtime, Rust/TypeScript SDKs, service and SDK examples |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
 | `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |

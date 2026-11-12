@@ -16,3 +16,19 @@ profile, session/run IDs and sanitized error/event codes. Exclude API keys,
 provider tokens, prompts, file contents and private state directories.
 
 [Versions and compatibility](releases.md) · [Guardrails guide](guardrails.md)
+
+## Agent registration is rejected
+
+A generic “Harness rejected the request” can mean that the agent name already
+belongs to a different immutable definition. Check changes to instructions,
+tools and approval mode. Re-register the identical definition, or use a new name
+for the new definition; a new session alone does not change it. Keep existing
+state for old sessions. Do not log prompts or credentials to diagnose the conflict.
+
+## A tool action has an unknown outcome
+
+A disconnected stream is not evidence that execution failed. Save the session
+reference and submission ID, reattach, and inspect durable state. For a write
+with no known outcome, inspect the target system before retrying. Cancellation
+is not rollback. Use `session.cancel()` to request Stop; closing an observer only
+stops observation.

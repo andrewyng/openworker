@@ -18,6 +18,20 @@ environment-variable reference for server deployments; for desktop UI input,
 pass `credentials: { apiKey, storage: "memory" }` and use your application's secret
 store for persistence. Only choose SDK secure persistence on a supported platform.
 
+## Where credentials are read
+
+| Interface | What resolves an environment-key reference? |
+| --- | --- |
+| TypeScript `setModelProvider` / `modelProviders` | The Node process reads `apiKeyEnv` and sends the value over private stdio to the Rust child. |
+| Embedded Rust `Credentials::from_env` | The Rust application process reads its environment. |
+
+`inheritEnv` is unnecessary for the TypeScript provider convenience API. Use it
+only for variables that Rust or another child must resolve itself; avoid passing
+the whole environment. Neither SDK automatically loads env files. Memory-only
+credentials must be supplied when the application starts. Secure provider storage
+uses macOS Keychain or Windows DPAPI; on Linux choose memory-only credentials or
+server provisioning. Callback functions also need registration on app startup.
+
 A custom proxy can supply short-lived bearer tokens through the provider-auth
 callback interface and proactively rotate them. Authentication refresh does not
 create another session or silently change the selected model.
