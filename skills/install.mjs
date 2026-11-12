@@ -44,7 +44,14 @@ export async function install(options, {userHome = homedir()} = {}) {
  },null,2)+'\n');
  return destination;
 }
-if (process.argv[1] && await realpath(process.argv[1]).catch(() => resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
+// Canonicalize both sides: Windows may spell the same installed path with
+// different drive-letter casing or a short (8.3) temporary-directory name.
+const entryPath = process.argv[1] && await realpath(process.argv[1]).catch(() => resolve(process.argv[1]));
+const modulePath = await realpath(fileURLToPath(import.meta.url));
+const isMain = entryPath && (process.platform === 'win32'
+  ? entryPath.toLowerCase() === modulePath.toLowerCase()
+  : entryPath === modulePath);
+if (isMain) {
  const args=process.argv.slice(2);
  if(args.length===1 && args[0]==='--help') console.log(`${usage}\n--global installs for your user across projects on this machine (Codex: ~/.agents/skills; Claude Code: ~/.claude/skills).`);
  else {
