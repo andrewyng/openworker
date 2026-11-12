@@ -22,10 +22,10 @@ It runs on your machine. Bring your own model key or run locally with Ollama, an
 
 <a id="download"></a>
 
-[**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
+[⬇ macOS (Apple Silicon)](https://download.openworker.com/mac)
 <sub>macOS 12+ · signed & notarized · auto-updates</sub>
 
-[**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
+[⬇ Windows 10/11 (x64)](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
 Open the app, add a model key (or point it at Ollama), and ask for something real.
@@ -49,26 +49,93 @@ npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
 [Web guide](docs/harness/guides/server.md) ·
 [Build with Codex or Claude Code](skills/README.md)
 
-## Desktop App use cases
+The rest of this README focuses on the OpenWorker Desktop App. For SDK documentation, continue with the [Harness SDK README](harness/README.md).
 
-Pick a coworker, point it at real work, get a finished deliverable:
+<a id="use-cases"></a>
+<a id="desktop-app-use-cases"></a>
+<a id="what-it-can-do"></a>
 
-- **Security review** - scan a codebase and its dependencies for real risk. Findings come from deterministic scanners (like semgrep) plus model reasoning; proposed fixes are re-scanned and diff-reviewed before you approve them - the fixer is never the only checker.
-- **Cloud posture** - audit cloud configuration against common misconfiguration classes and draft the remediation plan.
-- **Incident triage** - work a security or ops incident: gather context across your tools, draft the timeline, prepare the report.
-- **Everyday work** - prep a customer call from your CRM and inbox, turn scattered notes into a shippable plan, produce documents and spreadsheets, keep your calendar and Slack threads handled.
-- **Standing automations** - a morning brief, a weekly report, a watch over a channel - on a schedule, with full transcripts.
+## What you can do with the Desktop App
 
-Specialist coworkers arrive with the tools, working style, and check-ins for one job already set up. Security coworkers ship first.
+| Your work | How OpenWorker helps |
+|---|---|
+| **Research and create** | Turn notes, files and research into briefs, documents, spreadsheets and reports. |
+| **Review security risks** | Scan code and dependencies, review cloud configuration, and investigate incidents. Proposed code fixes are re-scanned and reviewed before approval. |
+| **Work across your tools** | Bring together GitHub, Slack, email, calendars and other connected apps. Add tools through MCP. |
+| **Delegate from Slack** | Mention `@OpenWorker`; the task runs on your desktop and the reply returns to the thread. |
+| **Automate recurring work** | Schedule morning briefs, weekly reports and other repeatable tasks, with transcripts to review. |
+| **Choose your model** | Connect a cloud provider or use a local model through Ollama and other compatible servers. |
+| **Control agent actions** | Review approvals, inspect recorded actions, and isolate supported commands with OpenShell or platform sandboxing. |
+
+Specialist coworkers come with tools and instructions for a particular job. Security coworkers ship first.
 
 <a id="how-it-works"></a>
+<a id="how-the-desktop-app-works"></a>
 
-## How the Desktop App works
+## Try your first task
 
-1. Tell the OpenWorker Desktop App the outcome you want - "prepare a customer brief," "untangle my calendar," "draft a report," "check where the release stands across Jira and GitHub."
-2. It breaks the task into steps and works across your desktop, files, and connected apps.
-3. Before anything consequential - sending a message, changing a calendar, running a command - it checks in and you approve or redirect.
-4. You get the finished deliverable, not a to-do list.
+Start with a folder of meeting notes. No connected apps are needed for this example.
+
+1. **Choose a model.** Open **Settings → Models & Keys** and connect a provider or local model.
+2. **Choose your working folder.** Give the session access to a folder containing a few text or Markdown notes.
+3. **Ask for a brief.** Paste the request below, follow the tool activity, and review any approval requests before continuing.
+
+> Read the meeting notes in this folder. Create a one-page brief with the key decisions, open questions and next steps. Save it as `brief.md`. Leave the original notes unchanged and ask before writing the brief.
+
+![Example workflow: meeting notes become a brief after you review the proposed write](docs/assets/first-task.svg)
+
+Open `brief.md` in the working folder and review it. Continue in the same session: “Make the next steps more specific, and flag anything without an owner.”
+
+## Governed by design
+
+The Desktop App combines approvals, recorded tool activity and optional sandboxing. You can review proposed actions and decide how much autonomy to allow.
+
+<details>
+<summary>How approvals, audit trails and sandboxing work</summary>
+
+Governance is the architecture, not a plugin - the agent can't grant itself new permissions, and no prompt can talk it past a gate. Four tiers, all in this repo:
+
+1. **Hard floors.** A set of dangerous and irreversible operations is human-only, always. No mode - including full auto-approve - lowers these floors; they always escalate to you.
+2. **A ladder of earned autonomy.** Actions are approval-gated by default. One-off approvals can graduate into standing rules, then into config allowlists - each step explicit, visible, and revocable. In auto-approve mode a reviewer model lets routine actions through and escalates anything it isn't sure about to you; repeated denials trip a circuit breaker that pauses the reviewer and hands control back. Reviewer verdicts are judgments, not guarantees - the floors and the audit trail are what backstop them.
+3. **An audit trail that answers "who did this, and why?"** Every tool call is recorded with its approval provenance - auto-approved, user-approved, or denied, with the reviewer's reasoning attached - and persisted with the conversation.
+
+4. **A sandbox for what the agent runs.** A session's commands and file tools can run inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox — one Linux container per agent that holds the session's folders and nothing else: no keys, no other files, and only an allow list of network hosts. The agent loop, the model keys and the connectors stay outside the wall, so a prompt injection that reaches a command lands in a box that holds nothing. On a Mac the same protection is available with nothing to install, through the sandbox built into macOS; on Windows, through a hidden local account that cannot see your profile. See [docs/openshell.md](docs/openshell.md), [docs/macos-sandbox.md](docs/macos-sandbox.md) and [docs/windows-sandbox.md](docs/windows-sandbox.md).
+
+Unattended runs never self-approve: their asks park in an inbox until a human answers. Found a vulnerability? See [SECURITY.md](SECURITY.md).
+
+</details>
+
+## Bring your own model
+
+Connect OpenAI, Anthropic, Google Gemini, OpenRouter and other providers, or use a local model through Ollama, LM Studio, llama.cpp or vLLM. Choose and switch models in **Settings → Models & Keys**.
+
+See [Desktop App model setup](docs/desktop-models.md) for provider options, account connections and custom endpoints. SDK developers can use the separate [models and credentials guide](docs/harness/guides/providers.md).
+
+<a id="privacy"></a>
+
+## Desktop App privacy
+
+The OpenWorker Desktop App is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.
+
+## Documentation
+
+| Start here | What you’ll find |
+|---|---|
+| [Desktop App model setup](docs/desktop-models.md) | Cloud providers, OpenRouter accounts and custom endpoints. |
+| [Local models](docs/local-servers.md) | Connect models running on your own hardware. |
+| [Approvals and safety](#governed-by-design) | How the Desktop App handles permissions and records actions. |
+| [NVIDIA OpenShell](docs/openshell.md) | Set up sandboxed command and file execution for the Desktop App. |
+| [Harness SDK](harness/README.md) | SDK installation, architecture and examples. |
+| [Build a desktop app](docs/harness/guides/desktop.md) · [Build a web app](docs/harness/guides/server.md) | Learn the SDK through working applications. |
+| [App-building skill](skills/README.md) | Build with Codex or Claude Code. |
+| [SDK troubleshooting](docs/harness/guides/troubleshooting.md) | Diagnose SDK setup and runtime problems. |
+
+<a id="run-from-source"></a>
+
+## Run the Desktop App from source
+
+<details>
+<summary>Development setup and architecture</summary>
 
 The Desktop App uses a Python agent engine. The Harness SDK provides a separate Rust engine for applications you build.
 
@@ -85,56 +152,6 @@ Under the hood:
 └───────────────┴────────────────┴───────────────┘
 ```
 
-## Governed by design
-
-Governance is the architecture, not a plugin - the agent can't grant itself new permissions, and no prompt can talk it past a gate. Four tiers, all in this repo:
-
-1. **Hard floors.** A set of dangerous and irreversible operations is human-only, always. No mode - including full auto-approve - lowers these floors; they always escalate to you.
-2. **A ladder of earned autonomy.** Actions are approval-gated by default. One-off approvals can graduate into standing rules, then into config allowlists - each step explicit, visible, and revocable. In auto-approve mode a reviewer model lets routine actions through and escalates anything it isn't sure about to you; repeated denials trip a circuit breaker that pauses the reviewer and hands control back. Reviewer verdicts are judgments, not guarantees - the floors and the audit trail are what backstop them.
-3. **An audit trail that answers "who did this, and why?"** Every tool call is recorded with its approval provenance - auto-approved, user-approved, or denied, with the reviewer's reasoning attached - and persisted with the conversation.
-
-4. **A sandbox for what the agent runs.** A session's commands and file tools can run inside an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox — one Linux container per agent that holds the session's folders and nothing else: no keys, no other files, and only an allow list of network hosts. The agent loop, the model keys and the connectors stay outside the wall, so a prompt injection that reaches a command lands in a box that holds nothing. On a Mac the same protection is available with nothing to install, through the sandbox built into macOS; on Windows, through a hidden local account that cannot see your profile. See [docs/openshell.md](docs/openshell.md), [docs/macos-sandbox.md](docs/macos-sandbox.md) and [docs/windows-sandbox.md](docs/windows-sandbox.md).
-
-Unattended runs never self-approve: their asks park in an inbox until a human answers. Found a vulnerability? See [SECURITY.md](SECURITY.md).
-
-## What it can do
-
-- **Produce real deliverables** - documents, spreadsheets, reports, and web pages land as files you can open and share.
-- **Work from Slack** - mention `@OpenWorker` in a channel; a session opens on your desktop, the work happens with your tools, and the answer comes back as a thread reply.
-- **Use your everyday tools** - 25+ integrations including GitHub, Slack, Jira, Notion, Linear, HubSpot, Outlook, monday.com, Gmail, and Google Calendar, plus your **terminal and local files**. Any tool reachable over [MCP](https://modelcontextprotocol.io/) plugs in too, with per-tool control.
-- **Run on a schedule** - automations for recurring work: a morning brief, a weekly report, a standing watch over a channel. Runs land in the app with full transcripts.
-- **Run commands in a sandbox** - turn on [NVIDIA OpenShell](docs/openshell.md) for a machine and every agent's shell and file tools run in their own Linux container, with the session's folders and an allow-listed network and nothing else; on a Mac, the [built-in sandbox](docs/macos-sandbox.md) does the same with nothing to install, and on Windows a [hidden local account](docs/windows-sandbox.md) does.
-- **Ask before acting** - writes, sends, and shell commands are approval-gated, with an optional auto-approve mode that still escalates anything uncertain - see [Governed by design](#governed-by-design).
-
-## Bring your own model
-
-In the OpenWorker Desktop App, model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
-
-**OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm.
-
-A curated model list marks what we've verified for tool-calling work. Adding any model string works at your own risk.
-
-Azure OpenAI uses your own resource: paste its endpoint and key (or set `AZURE_OPENAI_API_KEY`), then add your deployment names as models — on Azure the model id is the deployment name.
-
-Another OpenAI-compatible server — a gateway, a proxy, a vendor not listed? In **Settings ▸ Models & Keys**, the **Add an OpenAI-compatible provider** box at the end of the API-keys group takes a name, its endpoint and key; it becomes its own card, and its models are selected as `<prefix>:<model-id>` (the prefix is derived from the name). Type the model ids, or fetch them from the server when it lists them.
-
-OpenRouter comes two ways under **Settings → Models & Keys**: **OpenRouter** (API
-keys) takes a key you paste; **OpenRouter account** (Subscriptions) signs you in
-through the browser and uses your OpenRouter credits — the key OpenRouter issues
-stays on this computer. On a remote backend choose **Use a manual code** and paste
-the code OpenRouter shows. Each card is its own provider with its own models, so
-disconnecting the account never falls back to a pasted key. To revoke the issued
-key on OpenRouter's side, use the **Manage or revoke keys on OpenRouter** link.
-
-<a id="privacy"></a>
-
-## Desktop App privacy
-
-The OpenWorker Desktop App is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.
-
-<a id="run-from-source"></a>
-
-## Run the Desktop App from source
 
 Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
@@ -164,6 +181,8 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
 Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+
+</details>
 
 ## Repository layout
 
