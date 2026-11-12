@@ -16,6 +16,7 @@ mod platform;
 const CHART_PINS: &[&str] = &[
     "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33", // 0.1.3
     "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a", // 0.1.7 official OCI archive
+    "271368019433b7e5c0668757cdd880302a044924eb37077aef82a95d814efd84", // 0.1.8 official OCI archive
 ];
 #[derive(Subcommand)]
 pub enum Command {
@@ -456,7 +457,7 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
         let sha = hash_path(archive)?;
         ensure!(
             CHART_PINS.contains(&sha.as_str()),
-            "OpenShell archive differs from reviewed 0.1.3/0.1.7 pins"
+            "OpenShell archive differs from reviewed 0.1.3/0.1.7/0.1.8 pins"
         );
         let v = read_json(values_file)?;
         ensure!(

@@ -82,7 +82,7 @@ wizard and publicly distributed release artifacts remain separate launch work.
 
 Package the matching release using `package.py --help`: Linux ARM64 for AWS,
 AMD64 for Azure, including `service-ui` when enabling the UI. New cloud deployments
-require the reviewed OpenShell0.1.7 archive. The current version does not assume
+require the reviewed OpenShell0.1.7 or0.1.8 archive. The current version does not assume
 public service images or a published Helm chart are already available.
 
 ## Cost estimates, not spending caps

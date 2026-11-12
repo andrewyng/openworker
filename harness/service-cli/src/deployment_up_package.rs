@@ -156,18 +156,9 @@ impl Snapshot {
         ] {
             f.validate()?;
         }
-        ensure!(
-            self.release.openshell_archive.sha256
-                == "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a",
-            "New deployment requires the reviewed OpenShell 0.1.7 archive"
-        );
         let values: Value =
             serde_json::from_slice(&fs::read(&self.release.openshell_values.file)?)?;
-        ensure!(
-            values["global"]["image"]["tag"] == "0.1.7"
-                && values["server"]["auth"]["allowUnauthenticatedUsers"] == false,
-            "OpenShell release/authentication mismatch"
-        );
+        check_openshell_release(&self.release.openshell_archive.sha256, &values)?;
         let ca = fs::read(&self.release.database_ca.file)?;
         let certificates =
             reqwest::Certificate::from_pem_bundle(&ca).context("Invalid database CA bundle")?;
@@ -261,5 +252,48 @@ mod tests {
         fs::write(d.path().join("Chart.yaml"), "name: test").unwrap();
         std::os::unix::fs::symlink(d.path(), d.path().join("loop")).unwrap();
         assert!(tree(d.path()).is_err());
+    }
+}
+
+fn check_openshell_release(sha: &str, values: &Value) -> Result<()> {
+    let version = match sha {
+        "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a" => "0.1.7",
+        "271368019433b7e5c0668757cdd880302a044924eb37077aef82a95d814efd84" => "0.1.8",
+        _ => anyhow::bail!("New deployment requires a reviewed OpenShell 0.1.7/0.1.8 archive"),
+    };
+    ensure!(
+        values["global"]["image"]["tag"] == version
+            && values["server"]["auth"]["allowUnauthenticatedUsers"] == false,
+        "OpenShell release/authentication mismatch"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod release_pin_tests {
+    use super::*;
+    #[test]
+    fn chart_hash_matches_exact_authenticated_release() {
+        for (hash, version) in [
+            (
+                "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a",
+                "0.1.7",
+            ),
+            (
+                "271368019433b7e5c0668757cdd880302a044924eb37077aef82a95d814efd84",
+                "0.1.8",
+            ),
+        ] {
+            let mut v = json!({"global":{"image":{"tag":version}},"server":{"auth":{"allowUnauthenticatedUsers":false}}});
+            check_openshell_release(hash, &v).unwrap();
+            v["global"]["image"]["tag"] = json!("latest");
+            assert!(check_openshell_release(hash, &v).is_err());
+            v["global"]["image"]["tag"] = json!(if version == "0.1.7" { "0.1.8" } else { "0.1.7" });
+            assert!(check_openshell_release(hash, &v).is_err());
+            v["global"]["image"]["tag"] = json!(version);
+            v["server"]["auth"]["allowUnauthenticatedUsers"] = json!(true);
+            assert!(check_openshell_release(hash, &v).is_err());
+        }
+        assert!(check_openshell_release(&"a".repeat(64), &json!({})).is_err());
     }
 }

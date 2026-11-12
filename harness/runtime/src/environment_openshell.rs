@@ -1,4 +1,4 @@
-//! Reviewed OpenShell 0.1.3/0.1.7 server provider. No CLI, local Docker fallback, host
+//! Reviewed OpenShell 0.1.3/0.1.7/0.1.8 server provider. No CLI, local Docker fallback, host
 //! mounts or automatic lifecycle retry. Credential providers require an explicit
 //! original provider/profile pin; they are absent from the default profile. The gateway and
 //! cluster operator remain trusted; app-owned objects must use this exact profile.
@@ -598,20 +598,20 @@ impl Connection for Stream {
 }
 
 // The lifecycle, authority, workspace and Exec wire fields used here are identical
-// in the official v0.1.3 and v0.1.7 protobuf contracts. Keep an exact allowlist;
+// in the official v0.1.3, v0.1.7 and v0.1.8 protobuf contracts. Keep an exact allowlist;
 // accepting a version does not replace functional qualification on each platform.
 fn checked_gateway(info: &Gateway) -> Result<()> {
-    if !matches!(info.version.as_str(), "0.1.3" | "0.1.7")
+    if !matches!(info.version.as_str(), "0.1.3" | "0.1.7" | "0.1.8")
         || info.drivers.len() != 1
         || info.drivers[0].name != "kubernetes"
     {
         bail!(
-            "Server provider requires reviewed OpenShell 0.1.3 or 0.1.7 with the Kubernetes driver"
+            "Server provider requires reviewed OpenShell 0.1.3, 0.1.7 or 0.1.8 with the Kubernetes driver"
         );
     }
     Ok(())
 }
-// Minimal wire messages shared by the reviewed public 0.1.3/0.1.7 protocols. Presence-only
+// Minimal wire messages shared by the reviewed public 0.1.3/0.1.7/0.1.8 protocols. Presence-only
 // fields use bytes/Empty when their contents are never authorized by this profile.
 #[derive(Clone, PartialEq, Message)]
 struct Empty {}
@@ -858,7 +858,7 @@ mod tests {
     use super::*;
     #[test]
     fn gateway_versions_are_exact_and_driver_authority_is_not_broadened() {
-        for version in ["0.1.3", "0.1.7"] {
+        for version in ["0.1.3", "0.1.7", "0.1.8"] {
             let mut info = Gateway {
                 version: version.into(),
                 drivers: vec![Driver {
@@ -877,7 +877,7 @@ mod tests {
             info.drivers.clear();
             assert!(checked_gateway(&info).is_err());
         }
-        for version in ["0.1.4", "0.1.6", "0.1.8", "0.1.7-dev", "latest", ""] {
+        for version in ["0.1.4", "0.1.6", "0.1.9", "0.1.8-dev", "latest", ""] {
             assert!(checked_gateway(&Gateway {
                 version: version.into(),
                 drivers: vec![Driver {
