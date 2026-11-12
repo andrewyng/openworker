@@ -1,13 +1,35 @@
 # OpenWorker TypeScript Harness SDK
 
-Registry candidate: **0.1.0-beta.2**. After publication, install with `npm install @openworkerai/harness-sdk@0.1.0-beta.2`; the matching native runtime is selected automatically. Until then, use the locally prepared client and platform archives. See the [Desktop guide](https://openworker.com/docs/sdk/desktop/) and [app-building skill](https://github.com/andrewyng/openworker/tree/main/skills).
+Published SDK: **0.1.0-beta.3**, for Node.js 20+ and ESM.
 
-Beta API, Node.js 20+, ESM. Registry-ready source/tarball distribution. The Rust host owns model/tool execution, policy, persistence,
-agent teams and run semantics. This package owns typed APIs and a managed private
-stdio connection. No browser runtime, native Node binding, REST server, or Python
-dependency. Python/Desktop remains separate.
+```sh
+npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.3
+```
 
-## Desktop QuickStart
+npm installs the matching native runtime for your platform. Keep optional
+dependencies enabled; no Rust compiler or startup binary download is needed.
+The Rust harness owns the agent loop, tools, approvals and durable sessions.
+TypeScript controls it through private stdio from a Node script, Electron main
+process or application server. Browser code calls your application's API or IPC.
+
+Start with `Harness.start()`, `setModelProvider()` and `createAgent()` below.
+The startup `agents` array, `setConnection()` and explicit executables remain
+available for advanced integrations; they are not required for a new application.
+
+For a coding agent to help build your app, install the
+[OpenWorker Harness Builder skill](../../skills/README.md):
+
+```sh
+npx @openworkerai/openworker-harness-builder --agent codex --project .
+# For Claude Code, use --agent claude. For user-wide installation, use --global.
+```
+
+See the [Desktop guide](https://openworker.com/docs/sdk/desktop/),
+[Web guide](https://openworker.com/docs/sdk/server/) or the bundled
+[plain Node file-organizer example](../../skills/openworker-harness-builder/references/local-script.md).
+The Skill includes tool registration, directory scope and an executable approval loop.
+
+## Create an agent with application tools
 
 For service deployments, [OpenShell integration](../../docs/harness/guides/openshell.md)
 covers `RuntimeProfile.gitAccess` and `runtimeProfileGrants(profile)`. These select
@@ -29,15 +51,16 @@ import { Harness } from '@openworkerai/harness-sdk';
 const harness = await Harness.start({ sandbox: 'off' }); // Trusted app callbacks only.
 await harness.setModelProvider({
   name: 'OpenAI', api: 'responses',
-  credentials: { apiKeyEnv: 'OPENAI_API_KEY', storage: 'secure' },
+  credentials: { apiKeyEnv: 'OPENAI_API_KEY', storage: 'memory' },
 });
-// A key collected by your UI can instead be supplied as { apiKey, storage: 'secure' }.
+// A key collected by your UI can instead be supplied as { apiKey, storage: 'memory' }.
 await harness.registerTools({ namespace: 'app', tools: {
   show_status: {
     description: 'Display a status update in the app.',
     inputSchema: { type: 'object', properties: { text: { type: 'string' } },
       required: ['text'], additionalProperties: false },
     execute: async (args, context) => {
+      context.signal.throwIfAborted();
       await context.progress('Updating app');
       // Forward args.text to your UI; honor context.signal for cancellation.
       return { displayed: true };
@@ -45,17 +68,38 @@ await harness.registerTools({ namespace: 'app', tools: {
   },
 }});
 const agent = harness.createAgent({
-  name: 'assistant', instructions: 'Help the user and report progress in the app.',
+  name: 'assistant-v1', instructions: 'Help the user and report progress in the app.',
   defaultModel: { provider: 'OpenAI', name: 'YOUR_MODEL_ID' },
   tools: ['app.show_status'],
+  approvals: { mode: 'always' },
+  builtinTools: { askUser: false, readHistory: false },
+  planning: false, memory: false, scheduling: false,
 });
+await agent.ready();
 const session = await agent.newSession();
 const reference = session.reference(); // Save in your app's project metadata.
 const run = await session.send('Help me plan my day.');
 for await (const event of run.events()) { /* render event */ }
-const result = await run.result(); // Check interruptions; do not assume success.
+const result = await run.result(); // An approval may leave status === 'interrupted'.
+// To handle the proposed tool and continue this turn, use the complete
+// streaming approval loop below. Do not send the original message again.
 await harness.shutdown();
 ```
+
+The UI owns status rendering and approval cards. The sample registers a callback
+and selects it explicitly; the model does not gain arbitrary access to Node APIs.
+Use the [approval loop](#approvals-and-questions) for an interactive tool-using app.
+For filesystem tools, start from the
+[scoped file handlers](../../skills/openworker-harness-builder/assets/local-script/file-tools.mjs).
+
+### Agent definitions are immutable
+
+Agent names identify persisted definitions. Re-registering the identical definition
+is safe; changing instructions, tools, approval mode or other definition fields
+requires a **new agent name**. Keep old identities for their existing sessions.
+A separate fresh `stateDir` is useful for disposable demos; it does not migrate
+existing sessions. A generic registration rejection can currently mean an agent
+name already has a different definition.
 
 For a guide that must only return text, set `tools: []`, `planning: false`,
 `memory: false` and `scheduling: false`. No implicit `ask_user` or `read_history`
@@ -103,6 +147,73 @@ private stdio, not a listening MCP server. Register them again after app restart
 The SDK rebinds retained callbacks after child restart but never replays uncertain
 side effects. Callbacks retain the app's privileges, not an OS sandbox's.
 
+## Credentials, workspace and directory scope
+
+For `setModelProvider()` and the startup `modelProviders` convenience option,
+**Node resolves `apiKeyEnv`**, then sends the value to the managed Rust harness
+over private stdio. `inheritEnv` is unnecessary for this path. The SDK does not
+load `~/.env` automatically: use Node's `--env-file` or your application's loader
+before configuring providers. `storage: 'memory'` credentials must be supplied
+again when the app starts. Secure provider storage uses macOS Keychain or Windows
+DPAPI; Linux requires memory-only credentials or server provisioning.
+
+`inheritEnv: ['VARIABLE_NAME']` is for variables that Rust or another child
+process must resolve itself. The child otherwise receives a small OS allowlist
+and declared database/telemetry variables. Avoid passing the entire environment.
+
+```typescript
+const session = await agent.newSession({
+  workspace: '/absolute/path/to/demo-files',
+  scratch: false,
+});
+```
+
+`workspace` selects the working directory and supplies the base for supported
+built-in path checks and execution-backend mounts. Omitting it normally allocates
+a private scratch workspace under the configured scratch root. `scratch: false`
+requires an explicit workspace; `scratch: true` cannot accompany one. Scratch does
+not mean files will be automatically deleted. State and workspace retention are
+application lifecycle decisions.
+
+With `sandbox: 'off'`, an application callback has the application's privileges.
+**Setting `workspace` does not confine arbitrary Node filesystem calls.** Enforce
+scope inside each callback, including both ends of a move. The bundled file tools
+canonicalize their root, reject traversal/absolute paths and symlinks, bound reads
+and avoid overwrites. They assume an app-owned directory without concurrent
+untrusted writers; path checks are not a kernel isolation boundary. Exposing a
+shell would give the model a way around those restricted handlers.
+
+For hostile code, run tools in an isolated execution backend such as OpenShell.
+Configuring that backend does not automatically move arbitrary Node callbacks
+inside its sandbox. See [tool scope](../../skills/openworker-harness-builder/references/tools.md)
+and [OpenShell integration](../../docs/harness/guides/openshell.md).
+
+## Tool names, arguments and activity
+
+Register/select `files.move_file`; its model-facing alias is `files__move_file`.
+Current events and approval requests may contain the alias. Use the tool registry's
+known mapping for UI labels and preserve the original identifiers in saved data.
+
+Typed `tool_started` / `tool_finished` summaries contain the name and `callId`,
+not arguments. Arguments are supplied directly to the application callback and
+are available in the raw start event:
+
+```typescript
+if (item.event.type === 'tool_started') {
+  const data = item.event.data as Record<string, unknown>;
+  updateActivity({ sessionId: item.sessionId, turnId: item.event.turn_id,
+    callId: data.call_id, tool: data.name, arguments: data.arguments });
+}
+```
+
+`updateActivity` is application UI code. Retain arguments from the start/callback
+for the finished row; support absent or withheld data. Upsert by
+`(sessionId, turnId, callId)`, because callback delivery can precede consumption of
+`tool_started`. Render only appropriate argument fields as escaped text; arguments
+can contain sensitive user data. `context.progress(message, data)` provides
+intermediate updates without adding polling. `model_activity` reports elapsed
+model waiting time, not completion of task work.
+
 ## Application-tool screenshots
 
 An application callback can explicitly return one image alongside JSON metadata:
@@ -116,7 +227,7 @@ return new ToolImageResult(
 );
 ```
 
-Requires a rebuilt host advertising `application_tool_images` and a vision-capable
+Requires a matching host advertising `application_tool_images` and a vision-capable
 model. JPEG/PNG only, one image, at most 768,000 base64 characters; ordinary metadata
 retains its 128,000-character bound. The host validates image signatures. Only the
 latest image per session is kept ephemerally for up to five minutes; durable events
@@ -142,14 +253,14 @@ Missing usage remains unknown, not zero. See
 
 For partner proxies with short-lived bearer JWTs, use `auth.getToken` and
 `harness.updateProviderCredentials()`. See [models and credentials](../../docs/harness/guides/providers.md) for provider setup.
-This requires rebuilding the native harness; access tokens stay in memory.
+Use a matching SDK/native runtime; access tokens stay in memory.
 
 The Rust host accepts both OpenAI's empty-choices usage trailer and OpenRouter's
 content-free usage trailer that repeats the finish reason. The latter must match
 the generation and finish reason, contain valid usage and no new text/tool payload,
 and still end with `[DONE]`. It does not create another message or execute a tool
 twice. This behavior lives in the Rust runtime: updating the TypeScript package
-alone will not fix an older bundled executable. Rebuild your partner runtime too.
+alone will not fix an older bundled executable. Update a custom partner executable too; the published SDK installs its matching runtime.
 
 Incremental text is available in `run.events()` as the raw event
 `event.type === "assistant_delta"`, with `event.data.text` and
@@ -251,16 +362,12 @@ const other = await builder.newSession({
 
 `listAgents()` reads the current catalog. The `agents` property is the startup
 snapshot. `resumeSession(reference)` checks the session's actual agent identity.
-The examples below also show the retained lower-level APIs. New applications should
-prefer shared providers and the desktop facade above.
+The advanced example below retains the lower-level API for custom integrations.
+New applications should use shared providers and `createAgent()` above.
 
 ## Install and pair with a runtime
 
-After publication:
-
-```sh
-npm install @openworkerai/harness-sdk@0.1.0-beta.2
-```
+The published SDK and all platform runtimes use version `0.1.0-beta.3`.
 
 The client installs the matching `@openworkerai/harness-runtime-<platform>-<arch>`
 optional dependency. That package contains the prebuilt executable. Keep optional
@@ -268,17 +375,9 @@ dependencies enabled: there is no postinstall download or compilation, and the
 application does not fetch a helper at startup. Electron apps must bundle the
 helper outside ASAR; `resolveRuntimeExecutable()` returns its installed path.
 
-Before publication, install the prepared client and your platform archive together:
-
-```sh
-npm install /absolute/release/openworkerai-harness-sdk-0.1.0-beta.2.tgz \
-  /absolute/release/openworkerai-harness-runtime-darwin-arm64-0.1.0-beta.2.tgz
-```
-
-Choose the actual platform/architecture. The source manifest intentionally remains
-private and does not list unpublished runtime dependencies; use the repository's
-release preparer to stage distributable packages instead of publishing the source
-folder directly.
+For an unpublished candidate, install the exact client and platform archives
+supplied by its maintainer together. A source manifest is not a registry release.
+The source package remains private; use the release preparer to stage artifacts.
 
 For a custom native tool registry, build a partner executable from the same SDK
 revision and pass its absolute path through `executable`. The partner entry point
@@ -286,7 +385,7 @@ registers those tools with `openworker_sdk::cli::main_with_registry(registry)`.
 Keep SDK and executable versions paired; protocol 0.1 alone does not promise
 compatibility between arbitrary releases.
 
-## QuickStart
+## Advanced: explicit executables and connection APIs
 
 Run the included example with an absolute `OPENWORKER_BIN`, an available model ID
 in `OPENWORKER_MODEL`, and a privately supplied `OPENAI_API_KEY`:
@@ -302,7 +401,8 @@ is the SDK default and requires the corresponding environment/setup and tool
 placement policy. Scripted acceptance can use `OW_EXAMPLE_SCRIPTED=1` with a
 test-support binary; that is not a live model demonstration.
 
-The core API in an installed consumer is:
+The following lower-level API is retained for integrations that need an explicit
+custom executable, startup agent definitions and per-agent connections:
 
 ```typescript
 import { Harness, type Agent } from '@openworkerai/harness-sdk';
@@ -348,22 +448,88 @@ The complete runnable echo example avoids this placeholder.
 
 ## Approvals and questions
 
-`session.run()` stops at completion, failure, cancellation or an interruption.
-After a real user decision:
+Configure `approvals` when creating an agent:
+
+| Configuration | Behavior | Typical use |
+| --- | --- | --- |
+| `{ mode: 'always' }` | Requests human approval unless a valid session grant covers the tool. This is the default. | Interactive control. |
+| `{ mode: 'only', tools: ['files.move_file'] }` | Requests approval for listed tools; ordinary unlisted tools receive application-policy approval. | Approve writes while allowing reads. |
+| `{ mode: 'auto', reviewerModel: { provider: 'OpenAI', name: modelId } }` | Uses an explicitly selected model to review eligible calls: allow executes, deny returns a denial, uncertain requests human input. | Model-assisted approval. |
+| `{ mode: 'never' }` | Bypasses approval review; hard security checks still apply. | Trusted unattended workflows. |
+
+`auto` does not mean unconditional approval. Read-only tools can be reviewed too;
+hard denials and valid session grants are handled first. Privileged dynamic
+agent-type/child-creation tools have additional checks: their absence from an
+`only` list does not automatically exempt them. None of these modes substitutes
+for sandbox isolation or callback scope checks.
+
+Human responses are `{ decision: 'once' }`, `{ decision: 'deny' }`, or
+`{ decision: 'session' }`. Use `once` when each mutation requires approval.
+A session grant covers the entire tool, including different valid arguments,
+and survives restart. It does not override hard security checks. Structured
+questions use `{ answer: userText }` separately; disable `builtinTools.askUser`
+if the product does not support questions.
+
+### Stream, approve and continue the same turn
+
+This helper supplies the full loop. The app provides escaped-text rendering,
+activity UI and an approval card showing both `pending.tool` and
+`pending.arguments`.
 
 ```typescript
-await session.respond(interruption, { decision: 'once' });
-// Or: { decision: 'session' }, { decision: 'deny' }, { answer: userText }
-const result = await session.resume();
+import { AttemptOutput, type Session, type RunEvent, type Interruption }
+  from '@openworkerai/harness-sdk';
+
+type Approval = Extract<Interruption, { kind: 'approval' }>;
+export async function streamWithApprovals(session: Session, text: string, ui: {
+  renderText(text: string): void;
+  renderActivity(event: RunEvent): void;
+  approve(proposal: Approval): Promise<boolean>;
+}) {
+  const display = new AttemptOutput();
+  let stream = (await session.send(text)).events();
+  while (true) {
+    for await (const event of stream) {
+      display.apply(event);
+      ui.renderText(display.text); // Replace; do not append the whole projection.
+      ui.renderActivity(event);
+    }
+    const result = await stream.result();
+    if (result.status !== 'interrupted') {
+      if (result.status === 'completed') ui.renderText(result.finalOutput ?? display.text);
+      else { display.interrupt(); ui.renderText(display.text); }
+      return result;
+    }
+    if (!result.interruptions.length) throw new Error('No pending interaction');
+    for (const pending of result.interruptions) {
+      if (pending.kind !== 'approval') return result; // Route questions/safety separately.
+      const allowed = await ui.approve(pending);
+      await session.respond(pending, { decision: allowed ? 'once' : 'deny' });
+    }
+    stream = await session.resumeStreamed(stream.checkpoint());
+  }
+}
 ```
 
-`session` approval covers the entire tool for this session, including changed
-valid arguments; grants survive restarts. `session.runWith(input, asyncHandler)`
-is available for inline UI/CLI handlers; return `{ defer: true }` to leave pending.
-Default policy asks. `approvals: { mode: 'only', tools: [...] }` is interrupt-on:
-the **Rust host approves unlisted tools once**, with durable `app_policy` attribution.
-Hard restrictions still apply. `reviewer` and `never` select the runtime reviewer
-and dangerous bypass modes; neither is a substitute for sandbox isolation.
+Do not resend the user message to continue after approval: retain the submission
+and consumed cursors. Use `session.cancel()` for Stop. Closing an observer does not
+cancel execution or justify automatic approval. Persist the session reference
+and stream checkpoint for crash recovery, then reconcile pending interactions.
+For a non-streaming flow, `session.runWith(input, handler)` invokes a real app
+handler for interruptions; `{ defer: true }` leaves the decision pending.
+
+### Auto-approver decisions in the UI
+
+The typed `auto_approved` summary currently means **application-policy approval**,
+such as an ordinary unlisted tool under `only`. It is not a model review verdict.
+Raw `interaction_required` / `interaction_resolved` events contain
+`event.data.review.verdict` and a safe `reason` when available, plus `origin` and
+nested `call.call_id`. Handle absent/withheld fields when displaying them.
+
+Currently, a denied tool response tells the working model that execution was denied
+and not to retry or evade the decision. The reviewer's reason is not included in
+that tool response. The application can display an available safe journal reason;
+do not assume the model has received it.
 
 ## Streaming and recovery
 
@@ -424,10 +590,9 @@ Add `subagents: [workerDefinition]` to a lead Agent. Starting the lead provision
 the team and member sessions. Worker approvals appear in the lead run, tagged by
 agent and worker session ID. `session.team()` exposes `board`, `events`,
 `createItem`, `assign`, `transition`, `postMessage` and `cancel`.
-At most 15 workers per lead, 16 profiles per host, one subagent level and 1–64
-selected tools per agent. Application callbacks return bounded JSON. Changed
-callback semantics should use a new qualified name/version; descriptor identity
-is immutable. Timers and steering are reported as unsupported by `state()`.
+Application callbacks return bounded JSON. Changed callback semantics should use
+a new qualified name/version; descriptor identity is immutable. Consult the
+installed declarations and runtime capabilities for team limits and timer support.
 
 ```typescript
 storage: {
@@ -457,22 +622,18 @@ an isolated `OW_PG_TEST_URL` to exercise both real managed-process adapters.
   app-configured MCP servers. Rust-native tools are compiled into the selected
   partner executable.
 - Agent definitions are serialized data; JS callbacks cannot cross stdio.
-- Agents are fixed at startup. Changing prompt/tools changes the pinned identity;
-  create new sessions for changed definitions.
-- Model keys go through `setConnection`, not configuration/argv/agent prompts.
-  They are memory-only by default, not cached by this SDK, and **must be supplied
-  again after a process restart**. The app owns secure credential sourcing.
-  Subscribe with `harness.onStateChange(listener)` to update the UI and resupply
-  connections on `ready` after recovery; it returns an unsubscribe function.
-  Handle asynchronous credential-provider errors in your application callback.
-  Process readiness does not imply that memory-only model keys are configured.
-  `persistence: 'secure'` is currently Windows DPAPI only; no plaintext fallback.
-- Only a small OS environment allowlist, the declared database/telemetry variables
-  and explicit `inheritEnv` names reach the child. Do not broadly forward secrets.
-- For Anthropic, use `provider: 'anthropic'` on the model connection and the
-  corresponding agent provider/fallback configuration. No TypeScript model driver.
-- No automatic binary download, npm publication, native in-process mode, browser
-  secret handling, arbitrary JS tool callbacks, or distributed scheduling here.
+- Agents can be registered after startup. Changing a persisted definition requires
+  a new agent name; new sessions alone do not replace that identity.
+- Configure shared providers through `setModelProvider`; keep credentials outside
+  prompts/configuration files/argv. The lower-level `setConnection` remains
+  available for advanced per-agent integrations.
+- Application callbacks must be registered again when the app starts. The SDK
+  rebinds retained callbacks after managed-child recovery but never automatically
+  replays uncertain side effects.
+- Readiness does not imply that memory-only provider keys have been configured.
+  Handle credential-provider errors and resupply credentials on application restart.
+- TypeScript does not embed Rust in-process or run in the browser. Local execution
+  and distributed service deployment are separate integration choices.
 
 ## Verification
 
@@ -510,34 +671,32 @@ This adapter currently shares the original team environment; nondefault remote
 workspace/new/member placement is still gated. See the
 [Sessions and teams](../../docs/harness/guides/sessions.md).
 
-### Standalone sub-agents (source preview)
+### Standalone sub-agents
 
 Set `subagents: { enabled: true }` on an ordinary agent to let its model create
 children, message them and wait for results. Each child starts fresh with an explicit
 tool subset. The legacy `subagents: Agent[]` form remains unchanged. This requires
-a matching feature runtime; it is not in published runtime 0.1.0-beta.2.
+a matching runtime advertising `standalone_subagents`, available in 0.1.0-beta.3.
 See [standalone sub-agents](../../docs/harness/guides/sessions.md#standalone-sub-agents)
 for limits, approvals and shared-sandbox behavior.
 
 
 ## Optional turn traces and evaluation evidence
 
-The source candidate includes opt-in recording, per-turn timeline/grouped queries,
+SDK/runtime 0.1.0-beta.3 includes opt-in recording, per-turn timeline/grouped queries,
 child drill-down and durable evaluation results. Recording and evaluation delivery
 are disabled until configured; browser UI is a separate optional component.
 See the [observability guide](../../docs/harness/guides/observability.md) for local
-SQLite/PostgreSQL, Langfuse export, content selection and audit references. These
-new APIs require matching local candidate builds and are not in the published
-0.1.0-beta.2 packages yet.
+SQLite/PostgreSQL, Langfuse export, content selection and audit references. These APIs require matching SDK/runtime versions and advertised capabilities.
 
-## User attachments (source preview)
+## User attachments
 
 Attach images, PDFs and UTF-8 text files to a session with ordered content and
 immutable recovery references. See [Attachments](../../docs/harness/guides/attachments.md)
 for the Rust/TypeScript APIs, service uploads, limits and upgrade instructions.
-This API requires matching source builds; it is not in npm `0.1.0-beta.2`.
+Available in SDK/runtime 0.1.0-beta.3; update a custom executable along with its client.
 
-### Reviewer and summary guidance
+### Auto-approver and compaction guidance
 
 Supply application facts to the auto-approver and extra instructions to the
 compactor when defining an agent or starting a session:

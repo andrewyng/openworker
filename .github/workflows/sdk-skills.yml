@@ -2,10 +2,10 @@ name: SDK skills
 
 on:
   pull_request:
-    paths: ["skills/**", "harness/release/**", ".github/workflows/sdk-skills.yml"]
+    paths: ["skills/**", "harness/release/**", "harness/typescript-sdk/README.md", ".github/workflows/sdk-skills.yml"]
   push:
     branches: [main]
-    paths: ["skills/**", "harness/release/**", ".github/workflows/sdk-skills.yml"]
+    paths: ["skills/**", "harness/release/**", "harness/typescript-sdk/README.md", ".github/workflows/sdk-skills.yml"]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
           node-version: 24
       # No Rust build, Docker daemon, cloud credentials or model calls required.
       - name: Test SDK compatibility and standalone skill installation
-        run: node --test skills/install.test.mjs skills/package.test.mjs harness/release/contract.test.mjs
+        run: node --test skills/install.test.mjs skills/package.test.mjs skills/local-script.test.mjs harness/release/contract.test.mjs
       - name: Compile skill examples against the SDK
         run: |
           npm --prefix harness/typescript-sdk ci

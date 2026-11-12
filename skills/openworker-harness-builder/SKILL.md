@@ -1,6 +1,6 @@
 ---
-name: openworker-apps
-description: Build or adapt desktop and web applications using the OpenWorker Harness SDK, including agent creation, streamed sessions, model configuration, application packaging and Railway deployment. Use for OpenWorker integrations, not general website design or unrelated agent frameworks.
+name: openworker-harness-builder
+description: Build or adapt desktop apps, web apps and Node.js scripts using the OpenWorker Harness SDK, including custom tools, approvals, streamed sessions, model configuration, application packaging and Railway deployment. Use for OpenWorker integrations, not general website design or unrelated agent frameworks.
 ---
 
 # Build apps with OpenWorker
@@ -11,8 +11,11 @@ Preserve their chosen UI framework, model and deployment target.
 ## Choose the track
 
 - Read [SDK integration](references/sdk.md) for the shared lifecycle and package contract.
+- For custom tools, directory scope and tool-activity display, read [Tools](references/tools.md).
+- For approval modes and the complete streaming/approval/resume loop, read [Approvals](references/approvals.md).
+- For a command-line demo or local utility without a frontend, read [Node scripts](references/local-script.md).
 - For provider configuration, retry-safe streaming, reasoning display, migrated
-  history or changing turn preferences, read [Runtime options](references/runtime-options.md).
+  history, auto-approver/compaction guidance or changing turn preferences, read [Runtime options](references/runtime-options.md).
 - For model-created child agents, read [Standalone sub-agents](references/subagents.md)
   and check its runtime-version gate before using the option.
 - For optional turn traces, Langfuse export or evaluation evidence, read
@@ -42,14 +45,19 @@ Do not fall back to similarly named third-party packages.
   IPC. Rust can embed the harness in-process.
 - Keep model credentials in that trusted process. The application owns its UI,
   authentication, session ownership and lifecycle.
+- Agent definitions are immutable within durable state. Changes to instructions,
+  tools or approval mode require a new agent name. Keep the previous identity
+  for existing sessions; use a separate fresh state directory for disposable demos.
 - Select tools deliberately. The directory-summary and PDF examples supply their
   own input, so use `tools: []` and disable planning, memory and scheduling there.
   Other apps may need tools. Disabling optional memory does not disable history.
 - File and document content is untrusted data. Render model text safely. The
   directory reader's exclusions are not a secret scanner or an OS sandbox.
 - The bundled examples select `sandbox: "off"` for application-owned input.
-  Tools in that mode have host privileges. Consult the OpenShell guide if the
-  product requires isolated tool execution.
+  Application callbacks in that mode have application privileges. `workspace`
+  is not an OS sandbox. Enforce directory scope in the callbacks as shown in
+  the bundled Tools reference. For strong isolation, use a supported sandbox
+  execution backend; enabling one does not sandbox arbitrary Node callbacks.
 
 ## Verify the integration
 

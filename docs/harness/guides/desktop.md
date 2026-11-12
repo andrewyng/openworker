@@ -35,7 +35,7 @@ Install the shared [OpenWorker app-building skill](../../../skills/README.md),
 then paste this prompt into Codex or Claude Code in your app project:
 
 ```text
-Use the openworker-apps skill to build a desktop app that summarizes a
+Use the openworker-harness-builder skill to build a desktop app that summarizes a
 selected code directory. Start from Code Atlas and explain the SDK calls as
 you build. Run the relevant tests and prepare a local package.
 ```
@@ -50,13 +50,13 @@ skill. No OpenWorker repository checkout is required.
 ### Codex
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent codex --project .
+npx @openworkerai/openworker-harness-builder --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent claude --project .
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->
@@ -65,7 +65,7 @@ Open a new coding-agent session in that project. The installer copies the same
 skill, SDK snippets and Desktop/Web references into the tool's project skills directory.
 For all your projects on this machine, replace `--project .` with `--global`.
 That installs to your user skills directory; neither mode overwrites an existing
-skill. The `--global` option is new in the pending skills `0.1.0-beta.2` release.
+skill. Both project and global installation are available in the published Skill.
 See the [skill installation guide](../../../skills/README.md) for availability,
 local candidate installation and invocation details.
 

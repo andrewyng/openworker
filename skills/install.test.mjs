@@ -8,14 +8,16 @@ for (const agent of ['codex','claude']) test(`install complete ${agent} skill; p
  const root=await mkdtemp(join(tmpdir(),'ow skill '));
  try {
   const dest=await install({agent,project:root});
+  assert.equal(dest,join(await realpath(root),agent==='codex'?'.agents':'.claude','skills/openworker-harness-builder'));
   const skill=await readFile(join(dest,'SKILL.md'),'utf8');
+  assert.match(skill,/^name: openworker-harness-builder$/m);
   for(const [,path] of skill.matchAll(/\]\((references\/[^)]+)\)/g)) assert.ok((await readFile(join(dest,path),'utf8')).length>0);
-  assert.ok((await readFile(join(dest,'agents/openai.yaml'),'utf8')).includes('$openworker-apps'));
+  assert.ok((await readFile(join(dest,'agents/openai.yaml'),'utf8')).includes('$openworker-harness-builder'));
   const metadata=JSON.parse(await readFile(join(dest,'references/installation.json'),'utf8'));
   const pkg=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8'));
   assert.equal(metadata.sdkPackage,'@openworkerai/harness-sdk');
   assert.equal(metadata.sdkVersion,pkg.openworkerSdkVersion);
-  assert.equal(metadata.package,'@openworkerai/build-with-sdk-skills');
+  assert.equal(metadata.package,'@openworkerai/openworker-harness-builder');
   assert.equal(metadata.checkout,undefined);
   await writeFile(join(dest,'SKILL.md'),'local customization');
   await assert.rejects(install({agent,project:root}),{code:'EEXIST'});
@@ -29,7 +31,7 @@ for (const agent of ['codex','claude']) test(`install ${agent} user-wide indepen
   await mkdir(userHome);await mkdir(project);
   const local=await install({agent,project});
   const destination=await install({agent,global:true},{userHome});
-  assert.equal(destination,join(await realpath(userHome),agent==='codex'?'.agents':'.claude','skills/openworker-apps'));
+  assert.equal(destination,join(await realpath(userHome),agent==='codex'?'.agents':'.claude','skills/openworker-harness-builder'));
   for(const name of ['SKILL.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore'])
    assert.equal(await readFile(join(destination,name),'utf8'),await readFile(join(local,name),'utf8'));
   await writeFile(join(destination,'SKILL.md'),'personal customization');
@@ -67,4 +69,17 @@ test('reject invalid agent and linked destination directories',async()=>{
   await assert.rejects(install({agent:'codex',project:root}),/real directory/);
   assert.deepEqual(await readdir(outside),[]);
  } finally {await rm(root,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
+});
+
+for(const agent of ['codex','claude'])test(`renamed ${agent} skill preserves the legacy install`,async()=>{
+ const project=await mkdtemp(join(tmpdir(),'ow-skill-rename-'));
+ try {
+  const legacy=join(project,agent==='codex'?'.agents':'.claude','skills/openworker-apps');
+  await mkdir(legacy,{recursive:true});
+  await writeFile(join(legacy,'SKILL.md'),'legacy customization');
+  const current=await install({agent,project});
+  assert.notEqual(current,legacy);
+  assert.equal(await readFile(join(legacy,'SKILL.md'),'utf8'),'legacy customization');
+  assert.match(await readFile(join(current,'SKILL.md'),'utf8'),/^name: openworker-harness-builder$/m);
+ }finally{await rm(project,{recursive:true,force:true});}
 });

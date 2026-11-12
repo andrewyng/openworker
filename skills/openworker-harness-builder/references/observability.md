@@ -1,12 +1,11 @@
 # Optional turn traces and evaluations
 
-The high-level recording, query and evaluation APIs are an unpublished source
-candidate, not available in the currently published 0.1.0-beta.2 runtime. Use them
-only when the supplied SDK declarations and runtime capabilities both support
+The high-level recording, query and evaluation APIs are available in SDK/runtime
+0.1.0-beta.3. Use them only when matching SDK declarations and runtime capabilities support
 `recording` (and `evaluations`/`evaluation_export` as needed). Otherwise use existing
 `model_usage` events or configured OTLP; do not invent a compatibility fallback.
 
-For a supported candidate:
+For a supported runtime:
 
 - Configure `Harness.start({recording:{database:{type:'sqlite',path:absolutePrivatePath}}})`
   only if local trace retention is wanted. Keep it outside model-accessible workspaces.

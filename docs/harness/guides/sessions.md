@@ -209,7 +209,7 @@ Defaults allow four active children and 32 retained child identities. Shared sco
 budgets count parent and child work; children cannot reset the allowance or spawn
 further descendants. Existing explicit teams remain available separately.
 
-See the [complete tool contract and configuration](../../../skills/openworker-apps/references/subagents.md).
+See the [complete tool contract and configuration](../../../skills/openworker-harness-builder/references/subagents.md).
 
 ## Teams
 
