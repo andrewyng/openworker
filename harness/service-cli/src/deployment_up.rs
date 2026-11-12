@@ -173,6 +173,7 @@ async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()
         ("openssl", vec!["version"]),
     ];
     if c.cloud.provider() == "azure" {
+        tools.push(("docker", vec!["buildx", "version"]));
         tools.push(("kubelogin", vec!["--version"]));
         if package
             .setup
