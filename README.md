@@ -1,27 +1,44 @@
 <h1 align="center">OpenWorker</h1>
 
-<p align="center"><strong><a href="https://openworker.com">openworker.com</a></strong> · <a href="#download">Download</a> · <a href="#build-with-the-openworker-harness-sdk">Harness SDK</a> · <a href="https://github.com/andrewyng/openworker/issues">Issues</a></p>
+<p align="center"><strong>A Desktop App for everyday work.<br>A Harness SDK to power your AI ideas.</strong></p>
+
+<p align="center"><strong><a href="https://openworker.com">openworker.com</a></strong> · <a href="#use-the-openworker-desktop-app">Desktop App</a> · <a href="#build-agentic-apps-using-openworker-harness-sdk">Harness SDK</a> · <a href="https://github.com/andrewyng/openworker/issues">Issues</a></p>
 
 <p align="center"><a href="https://trendshift.io/repositories/91434?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-91434" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91434/daily" alt="andrewyng%2Fopenworker | Trendshift" width="250" height="55"/></a></p>
 
-> **Beta** - OpenWorker is in open beta: fully usable, updates itself, and we're actively polishing rough edges. [Issues](https://github.com/andrewyng/openworker/issues) welcome.
+Use the **OpenWorker Desktop App** to research, write, review code, and carry out tasks across the tools you already use. Or build your own agentic desktop and web apps with the **OpenWorker Harness SDK**.
 
-**AI that gets your everyday tasks done.** OpenWorker is an open-source AI coworker that lives on your desktop and delivers **finished work**, not just chat: your code reviewed for vulnerabilities with fixes ready to go, a polished document, a Slack reply with the numbers, a triaged inbox. It ships **specialist Security coworkers** first — attackers already use AI, and defenders deserve the same leverage, governed.
+Bring your choice of cloud or local models. Set permissions for your agents and decide which actions need your approval.
 
-It runs on your machine and doesn't lock you into any model: bring your own API key for OpenAI, Anthropic, Google, or an open-weight provider, or run fully local with Ollama. Your data leaves your machine only through the model and integrations *you* choose. Every action an agent takes is governed and logged — see [Governed by design](#governed-by-design) — and its commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox.
+> This README mainly covers the **OpenWorker Desktop App**. For SDK setup, examples and architecture, see the [**OpenWorker Harness SDK README**](harness/README.md).
 
-[![How OpenWorker works](docs/assets/how-it-works.png)](https://openworker.com)
+## Use the OpenWorker Desktop App
 
-## Build with the OpenWorker Harness SDK
+An AI coworker for your everyday work. Go from a request to a prepared brief, an organized folder, or a reviewed pull request.
 
-**Your app, powered by agents.** Build a desktop app, web app or local utility
-with your own interface and tools. The Harness SDK manages model calls, approvals,
-streaming and durable sessions, so you can focus on the product experience.
+It runs on your machine. Bring your own model key or run locally with Ollama, and choose which integrations it can access. Commands can run inside an [NVIDIA OpenShell](docs/openshell.md) sandbox. See [Governed by design](#governed-by-design) for its approval and safety controls.
 
-Use the TypeScript SDK from npm, or embed the Rust engine in your application.
-Connect cloud or local models, add sub-agents and teams, isolate configured tools
-with NVIDIA OpenShell, and inspect runs through optional traces and telemetry.
-The Harness SDK is a separate Rust engine from the Desktop app's Python engine.
+[![How the OpenWorker Desktop App works](docs/assets/how-it-works.png)](https://openworker.com)
+
+<a id="download"></a>
+
+[**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
+<sub>macOS 12+ · signed & notarized · auto-updates</sub>
+
+[**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
+<sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
+
+Open the app, add a model key (or point it at Ollama), and ask for something real.
+
+The OpenWorker Desktop App is in open beta and supports automatic updates. [Issues](https://github.com/andrewyng/openworker/issues) welcome as we polish rough edges.
+
+<a id="build-with-the-openworker-harness-sdk"></a>
+
+## Build agentic apps using OpenWorker Harness SDK
+
+Bring agentic capabilities to your own desktop app, web app or local utility. Build the product experience while OpenWorker handles the agent loop, tool calls, approvals, streaming and durable sessions.
+
+Use the TypeScript SDK from npm, or embed the Rust engine in your application. Start with one agent. Add sub-agents, teams, OpenShell sandboxing and observability as your application grows.
 
 ```sh
 npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
@@ -32,25 +49,7 @@ npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
 [Web guide](docs/harness/guides/server.md) ·
 [Build with Codex or Claude Code](skills/README.md)
 
-## Download
-
-[**⬇ macOS (Apple Silicon)**](https://download.openworker.com/mac)
-<sub>macOS 12+ · signed & notarized · auto-updates</sub>
-
-[**⬇ Windows 10/11 (x64)**](https://download.openworker.com/windows)
-<sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
-
-Open the app, add a model key (or point it at Ollama), and ask for something real.
-
-OpenRouter comes two ways under **Settings → Models & Keys**: **OpenRouter** (API
-keys) takes a key you paste; **OpenRouter account** (Subscriptions) signs you in
-through the browser and uses your OpenRouter credits — the key OpenRouter issues
-stays on this computer. On a remote backend choose **Use a manual code** and paste
-the code OpenRouter shows. Each card is its own provider with its own models, so
-disconnecting the account never falls back to a pasted key. To revoke the issued
-key on OpenRouter's side, use the **Manage or revoke keys on OpenRouter** link.
-
-## Use cases
+## Desktop App use cases
 
 Pick a coworker, point it at real work, get a finished deliverable:
 
@@ -62,18 +61,22 @@ Pick a coworker, point it at real work, get a finished deliverable:
 
 Specialist coworkers arrive with the tools, working style, and check-ins for one job already set up. Security coworkers ship first.
 
-## How it works
+<a id="how-it-works"></a>
 
-1. Tell OpenWorker the outcome you want - "prepare a customer brief," "untangle my calendar," "draft a report," "check where the release stands across Jira and GitHub."
+## How the Desktop App works
+
+1. Tell the OpenWorker Desktop App the outcome you want - "prepare a customer brief," "untangle my calendar," "draft a report," "check where the release stands across Jira and GitHub."
 2. It breaks the task into steps and works across your desktop, files, and connected apps.
 3. Before anything consequential - sending a message, changing a calendar, running a command - it checks in and you approve or redirect.
 4. You get the finished deliverable, not a to-do list.
+
+The Desktop App uses a Python agent engine. The Harness SDK provides a separate Rust engine for applications you build.
 
 Under the hood:
 
 ```text
 ┌────────────────────────────────────────────────┐
-│              OpenWorker desktop app            │  native shell + GUI
+│              OpenWorker Desktop App            │  native shell + GUI
 ├────────────────────────────────────────────────┤
 │           local agent server (Python)          │  engine · tools · connectors - built on aisuite
 ├───────────────┬────────────────┬───────────────┤
@@ -105,7 +108,7 @@ Unattended runs never self-approve: their asks park in an inbox until a human an
 
 ## Bring your own model
 
-Model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
+In the OpenWorker Desktop App, model access is yours: pick a provider, paste your key, switch anytime. Supported out of the box:
 
 **OpenAI · Azure OpenAI · Anthropic · Google Gemini · BytePlus Ark · Volcengine Ark Agent Plan · Atlas Cloud · Inkling (Thinking Machines) · GLM (Z.ai) · DeepSeek · Kimi (Moonshot) · Qwen · MiniMax · Mistral · Grok (xAI) · Solar (Upstage) · Cohere** - plus aggregators **OrcaRouter**, **OpenRouter** and **Hugging Face Inference Providers**, open-weight models via **Together**, **Fireworks**, **Cerebras** and **SiliconFlow**, and fully local models via **Ollama**, llama.cpp, vLLM, LM Studio, Jan, Docker Model Runner or mlx-lm.
 
@@ -115,11 +118,23 @@ Azure OpenAI uses your own resource: paste its endpoint and key (or set `AZURE_O
 
 Another OpenAI-compatible server — a gateway, a proxy, a vendor not listed? In **Settings ▸ Models & Keys**, the **Add an OpenAI-compatible provider** box at the end of the API-keys group takes a name, its endpoint and key; it becomes its own card, and its models are selected as `<prefix>:<model-id>` (the prefix is derived from the name). Type the model ids, or fetch them from the server when it lists them.
 
-## Privacy
+OpenRouter comes two ways under **Settings → Models & Keys**: **OpenRouter** (API
+keys) takes a key you paste; **OpenRouter account** (Subscriptions) signs you in
+through the browser and uses your OpenRouter credits — the key OpenRouter issues
+stays on this computer. On a remote backend choose **Use a manual code** and paste
+the code OpenRouter shows. Each card is its own provider with its own models, so
+disconnecting the account never falls back to a pasted key. To revoke the issued
+key on OpenRouter's side, use the **Manage or revoke keys on OpenRouter** link.
 
-OpenWorker is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.
+<a id="privacy"></a>
 
-## Run from source
+## Desktop App privacy
+
+The OpenWorker Desktop App is local-first. Everything lives on your machine: the agent loop, your conversations, connector tokens, and model keys - all in the app's local secret store. The only cloud piece is a small service that brokers OAuth handshakes for connectors. You can always use the App without signing-in - use the connectors via manually-created credentials/API-keys.
+
+<a id="run-from-source"></a>
+
+## Run the Desktop App from source
 
 Prerequisites: Python 3.10+, Node 20+, and (for the desktop shell) the Rust toolchain via [rustup](https://rustup.rs/).
 
@@ -164,7 +179,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 
 ## Built on aisuite
 
-OpenWorker's engine is built on [**aisuite**](https://github.com/andrewyng/aisuite), a lightweight Python library providing a unified chat-completions API across LLM providers and an agents layer with tools, toolkits, and MCP support. If you want to build your own agent harness rather than use ours, start there; this repo is a working reference for what aisuite can carry.
+The OpenWorker Desktop App's engine is built on [**aisuite**](https://github.com/andrewyng/aisuite), a lightweight Python library providing a unified chat-completions API across LLM providers and an agents layer with tools, toolkits, and MCP support. If you want to build your own agent harness rather than use ours, start there; this repo is a working reference for what aisuite can carry.
 
 OpenWorker was originally developed inside the aisuite repository before moving to its own home here; thanks to the aisuite contributors whose work it builds on.
 
