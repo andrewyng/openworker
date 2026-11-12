@@ -75,7 +75,7 @@ needed for this fixture-based qualification.
 Requires Node.js 24+, npm, and the Rust toolchain for your OS. On Windows, use
 the MSVC Rust target with Visual Studio C++ build tools and Clang (SQLite build).
 
-From this repository's `native` directory:
+From this repository's `harness` directory:
 
 ```sh
 npm --prefix typescript-sdk ci

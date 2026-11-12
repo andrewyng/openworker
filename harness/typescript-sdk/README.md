@@ -9,7 +9,7 @@ OpenWorker manages the agent loop.
 ## Install
 
 ```sh
-npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
+npm install @openworkerai/harness-sdk
 ```
 
 Requires Node.js 20+ and ESM. This documentation-only client release uses the
