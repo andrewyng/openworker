@@ -25,6 +25,7 @@ pub use agents::{
 };
 pub use agents::{Run, Session, SessionInput, TurnLimits};
 pub use desktop::{DesktopOptions, SessionOptions, TurnOptions};
+pub use openworker_runtime::compaction::Instructions as CompactionOptions;
 pub use openworker_runtime::history_import::HistoryItem;
 pub use openworker_runtime::package::BuiltinTools;
 pub use openworker_runtime::turn_options::OutputOptions;

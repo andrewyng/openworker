@@ -536,3 +536,36 @@ Attach images, PDFs and UTF-8 text files to a session with ordered content and
 immutable recovery references. See [Attachments](../../docs/harness/guides/attachments.md)
 for the Rust/TypeScript APIs, service uploads, limits and upgrade instructions.
 This API requires matching source builds; it is not in npm `0.1.0-beta.2`.
+
+### Reviewer and summary guidance
+
+Supply application facts to the auto-approver and extra instructions to the
+compactor when defining an agent or starting a session:
+
+```ts
+const session = await agent.newSession({
+  autoApproverContext: "This is a staging workspace. Ask before publishing.",
+  compaction: {
+    additionalInstructions: "Preserve architectural decisions and unfinished tests.",
+  },
+});
+
+await session.run("Continue the implementation.", {
+  autoApproverContext: "For this turn, changes must remain inside src/.",
+  compaction: { additionalInstructions: "Keep the migration checklist." },
+});
+```
+
+Precedence is agent → session → turn. Session defaults and accepted turn options
+survive restart. Omit a field to inherit it; use `""` to clear inherited guidance
+for that scope. A turn override does not change the next turn's defaults. Each
+string is limited to 32,000 UTF-8 bytes and cannot contain NUL. Reusing a submission
+ID with different guidance is rejected. These options require an updated runtime
+advertising `application_guidance`.
+
+Reviewer context is separate from the working agent's instructions and from user
+history. Enable auto-approval with `approvals: { mode: "auto", reviewerModel }`;
+context alone never enables it or grants permissions. Hard restrictions still
+apply first. Summary guidance supplements the required summary structure.
+These options are available for embedded/managed SDK sessions; the service-cluster
+REST client does not yet expose these overrides.

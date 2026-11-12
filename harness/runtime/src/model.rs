@@ -24,7 +24,7 @@ pub struct Model {
     #[cfg(test)]
     pub summary_hook: Option<SummaryHook>,
     #[cfg(test)]
-    pub review_hook: Option<SummaryHook>,
+    pub review_hook: Option<ReviewHook>,
 }
 #[cfg(test)]
 type TestFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send>>;
@@ -33,7 +33,9 @@ pub type SampleHook = std::sync::Arc<
     dyn Fn(String, Vec<Value>, mpsc::Sender<Progress>) -> TestFuture<()> + Send + Sync,
 >;
 #[cfg(test)]
-pub type SummaryHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
+pub type ReviewHook = std::sync::Arc<dyn Fn(String) -> TestFuture<String> + Send + Sync>;
+#[cfg(test)]
+pub type SummaryHook = std::sync::Arc<dyn Fn(String, String) -> TestFuture<String> + Send + Sync>;
 pub enum Progress {
     Delta(String),
     Reasoning(crate::provider::ReasoningDelta),
@@ -480,7 +482,7 @@ impl Model {
     ) -> Result<String> {
         #[cfg(test)]
         if let Some(hook) = &self.summary_hook {
-            return hook(input.into()).await;
+            return hook(instructions.into(), input.into()).await;
         }
         if self.scripted {
             return Ok(crate::compaction::REFERENCE["cases"]

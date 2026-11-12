@@ -740,7 +740,7 @@ async fn exhausted_compaction_finishes_instead_of_parking_another_question() {
         |_, _| message("Stopped at the configured limit; compaction is incomplete."),
         1,
     );
-    m.summary_hook = Some(Arc::new(|_| {
+    m.summary_hook = Some(Arc::new(|_, _| {
         Box::pin(async { anyhow::bail!("Unavailable summarizer") })
     }));
     let (_tmp, rt, sid) = fixture(

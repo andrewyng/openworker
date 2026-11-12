@@ -361,3 +361,38 @@ Attach images, PDFs and UTF-8 text files to a session with ordered content and
 immutable recovery references. See [Attachments](../../docs/harness/guides/attachments.md)
 for the Rust/TypeScript APIs, service uploads, limits and upgrade instructions.
 This API requires matching source builds; it is not in npm `0.1.0-beta.2`.
+
+## Reviewer and compaction guidance
+
+```rust,no_run
+# use openworker_sdk::*;
+# async fn example(agent: AgentHandle) -> openworker_sdk::Result<()> {
+let session = agent.new_session_with(
+    SessionOptions::default()
+        .auto_approver_context("Staging workspace. Ask before publishing.")
+        .compaction(CompactionOptions::additional_instructions(
+            "Preserve architectural decisions and unfinished tests."
+        ))
+).await?;
+
+let run = session.send_with_options("Continue.", TurnOptions {
+    auto_approver_context: Some("Changes must remain inside src/.".into()),
+    compaction: Some(CompactionOptions::additional_instructions(
+        "Keep the migration checklist."
+    )),
+    ..Default::default()
+}).await?;
+let result = run.result().await?;
+# Ok(())
+# }
+```
+
+The same two setters on `Agent` define reusable defaults. Precedence is agent →
+session → turn. Omission inherits; an empty string clears inherited guidance.
+Session defaults and turn overrides are durable, separate from user history,
+and included in submission idempotency checks. Each string is bounded to 32,000
+UTF-8 bytes with no NUL. Context does not enable auto-approval: configure
+`Approvals::auto(reviewer_model)` separately. Hard policy checks still run first;
+summary guidance supplements the required summary sections. Both embedded and
+managed-subprocess transports support these options. Service REST session/turn
+overrides are not exposed yet.

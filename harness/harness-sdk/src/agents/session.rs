@@ -478,6 +478,13 @@ impl Session {
                 "Update the host to configure per-call output limits".into(),
             ));
         }
+        if (options.auto_approver_context.is_some() || options.compaction.is_some())
+            && self.client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
         if (options.instruction_addendum.is_some() || options.output.is_some())
             && self.client.info()["capabilities"]["turn_context"] != true
         {
@@ -494,6 +501,12 @@ impl Session {
             ));
         }
         let mut parameters = json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety});
+        if let Some(context) = options.auto_approver_context {
+            parameters["auto_approver_context"] = json!(context);
+        }
+        if let Some(compaction) = options.compaction {
+            parameters["compaction"] = json!(compaction);
+        }
         if let Some(addendum) = options.instruction_addendum {
             parameters["instruction_addendum"] = json!(addendum);
         }
@@ -603,6 +616,13 @@ impl Session {
         Self::create_options(client, options).await
     }
     pub(crate) async fn create_options(client: HarnessClient, options: Value) -> Result<Self> {
+        if (options.get("auto_approver_context").is_some() || options.get("compaction").is_some())
+            && client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
         if options.get("initial_history").is_some()
             && client.info()["capabilities"]["initial_history"] != true
         {
@@ -715,11 +735,18 @@ impl Session {
         input: crate::UserInput,
         options: crate::TurnOptions,
     ) -> Result<Run> {
+        if (options.auto_approver_context.is_some() || options.compaction.is_some())
+            && self.client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
         let parts = input.upload(&self.client, self.id()).await?;
         let id = options
             .submission_id
             .unwrap_or_else(|| openworker_runtime::id("sub"));
-        let value=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"content":parts},"limits":options.limits,"safety":options.safety,"instruction_addendum":options.instruction_addendum,"output":options.output})).await?;
+        let value=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"content":parts},"limits":options.limits,"safety":options.safety,"instruction_addendum":options.instruction_addendum,"auto_approver_context":options.auto_approver_context,"compaction":options.compaction,"output":options.output})).await?;
         Ok(Run {
             session: self.clone(),
             submission: id,

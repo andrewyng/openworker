@@ -24,6 +24,7 @@ fn session() -> Session {
         model_provider: Default::default(),
         model_selection: None,
         reviewer_selection: None,
+        auto_approver_context: None,
         scripted: true,
         workspace: "/workspace".into(),
         coworker: "assistant-example".into(),
@@ -60,6 +61,8 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
     let dir = tempfile::tempdir().unwrap();
     let mut db = Store::open(dir.path()).unwrap();
     let mut s = session();
+    s.auto_approver_context = Some("SESSION_REVIEW_DEFAULT".into());
+    s.compaction_config.additional_instructions = Some("SESSION_SUMMARY_DEFAULT".into());
     s.history = canonical(&[
         HistoryItem::User {
             text: "Previous request".into(),
@@ -90,6 +93,12 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
     let context = Context {
         content: None,
         instruction_addendum: Some("TURN_PRIVATE_CONTEXT".into()),
+        auto_approver_context: Some("TURN_REVIEW_GUIDANCE".into()),
+        compaction: Some(
+            openworker_runtime::compaction::Instructions::additional_instructions(
+                "TURN_SUMMARY_GUIDANCE",
+            ),
+        ),
         output: OutputOptions {
             reasoning: true,
             buffer_attempts: true,
@@ -107,12 +116,47 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
     drop(db);
     let mut db = Store::open(dir.path()).unwrap();
     let mut restored = db.get(&s.id).unwrap();
+
+    assert_eq!(restored.auto_approver_context, s.auto_approver_context);
+    assert_eq!(
+        restored.compaction_config.additional_instructions,
+        s.compaction_config.additional_instructions
+    );
+    for marker in ["TURN_REVIEW_GUIDANCE", "TURN_SUMMARY_GUIDANCE"] {
+        assert!(!serde_json::to_string(&restored.history)
+            .unwrap()
+            .contains(marker));
+    }
     assert_eq!(restored.history[..3], s.history);
     assert_eq!(
         restored.turn.as_ref().unwrap().instruction_addendum,
         context.instruction_addendum
     );
     assert_eq!(restored.turn.as_ref().unwrap().output, context.output);
+    assert_eq!(
+        restored.turn.as_ref().unwrap().auto_approver_context,
+        context.auto_approver_context
+    );
+    assert_eq!(
+        restored.turn.as_ref().unwrap().compaction,
+        context.compaction
+    );
+    for altered in [
+        Context {
+            auto_approver_context: Some("changed".into()),
+            ..context.clone()
+        },
+        Context {
+            compaction: Some(
+                openworker_runtime::compaction::Instructions::additional_instructions("changed"),
+            ),
+            ..context.clone()
+        },
+    ] {
+        assert!(db
+            .accept_with_context(&s.id, "first", "New request", None, None, altered)
+            .is_err());
+    }
     assert!(!db
         .history_page(&s.id, 0)
         .unwrap()
@@ -126,6 +170,16 @@ fn imported_history_and_turn_context_are_atomic_and_durable() {
         .unwrap();
     let (next, _, _) = db.accept(&s.id, "next", "Next request").unwrap();
     assert!(next.turn.as_ref().unwrap().instruction_addendum.is_none());
+    assert!(next.turn.as_ref().unwrap().auto_approver_context.is_none());
+    assert!(next.turn.as_ref().unwrap().compaction.is_none());
+    assert_eq!(
+        next.auto_approver_context.as_deref(),
+        Some("SESSION_REVIEW_DEFAULT")
+    );
+    assert_eq!(
+        next.compaction_config.additional_instructions.as_deref(),
+        Some("SESSION_SUMMARY_DEFAULT")
+    );
     assert_eq!(next.turn.as_ref().unwrap().output, OutputOptions::default());
     let (old, fresh, _) = db
         .accept_with_context(&s.id, "first", "New request", None, None, context.clone())

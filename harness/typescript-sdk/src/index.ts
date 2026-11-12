@@ -568,6 +568,8 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
     if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
       throw new HarnessError("Setup", "Update the host to import conversation history");
     if (
@@ -591,6 +593,8 @@ export class Harness {
         safety: await this.safetyOptions(options),
         compliance: options.compliance,
         auto_skip_questions: options.autoSkipQuestions,
+        auto_approver_context: options.autoApproverContext,
+        compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
         initial_history: options.initialHistory,
         name: options.name,
         ...(options.model
@@ -796,6 +800,8 @@ export class Session {
     options: RunOptions = {},
   ): Promise<Run | { accepted: true; runId: string | null }> {
     aborted(options.signal);
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.harness.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
     if ((options.instructionAddendum !== undefined || options.output !== undefined) && this.harness.capabilities.turn_context !== true)
       throw new HarnessError("Setup", "Update the host to configure turn context");
     if (options.limits?.maxOutputTokensPerCall !== undefined && this.harness.capabilities.per_call_output_limit !== true)
@@ -809,7 +815,7 @@ export class Session {
       value={content:await stageInput(value as UserInput,this.id,(m,p)=>this.harness.request(m,p),options.signal)} as unknown as typeof value;
     }
     const control = value.type === "approval" || value.type === "answer";
-    if (control && (options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
+    if (control && (options.autoApproverContext !== undefined||options.compaction !== undefined||options.limits !== undefined||options.guardrails||options.hooks||options.blockedOutputOptions||options.instructionAddendum !== undefined||options.output !== undefined)) {
       throw new HarnessError(
         "InvalidInput",
         "Limits apply only to new message turns",
@@ -844,6 +850,8 @@ export class Session {
         input: wire,
         limits: options.limits,
         instruction_addendum: options.instructionAddendum,
+        auto_approver_context: options.autoApproverContext,
+        compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
         output: options.output,
         safety: control?undefined:await this.harness.safetyOptions(options),
       }),
@@ -949,6 +957,8 @@ export class Session {
     options:RunOptions = {},
   ): Promise<Record<string, unknown>> {
     aborted(options.signal);
+    if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.harness.capabilities.application_guidance !== true)
+      throw new HarnessError("Setup", "Update the host to configure application guidance");
     let content:Record<string,unknown>[]|undefined;
     if(typeof input!=="string"){
       if(this.harness.capabilities.attachments!==true)throw new HarnessError("Setup","Host does not support attachments");
@@ -964,6 +974,8 @@ export class Session {
           content,
           limits:options.limits,
           instruction_addendum:options.instructionAddendum,
+          auto_approver_context:options.autoApproverContext,
+          compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
           output:options.output,
           safety:await this.harness.safetyOptions(options),
         }),

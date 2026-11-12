@@ -1131,6 +1131,7 @@ impl Host {
                 c.insert("telemetry_export".into(), json!(cfg!(feature = "otlp")));
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("turn_context".into(), json!(true));
+                c.insert("application_guidance".into(), json!(true));
                 c.insert(
                     "attachments".into(),
                     json!(

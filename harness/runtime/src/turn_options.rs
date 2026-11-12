@@ -16,6 +16,10 @@ pub struct Context {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<Vec<crate::attachments::Part>>,
     pub instruction_addendum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_approver_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<crate::compaction::Instructions>,
     pub output: OutputOptions,
 }
 impl Context {
@@ -24,6 +28,10 @@ impl Context {
         Ok(crate::bundle::digest(&serde_json::to_vec(self)?))
     }
     pub fn validate(&self) -> Result<()> {
+        validate_guidance("autoApproverContext", self.auto_approver_context.as_deref())?;
+        if let Some(options) = &self.compaction {
+            options.validate()?;
+        }
         if let Some(parts) = &self.content {
             crate::attachments::validate_parts(parts)?;
         }
@@ -51,6 +59,16 @@ impl Context {
                 .filter(|v| !v.is_null())
                 .map(|v| serde_json::from_value(v.clone()))
                 .transpose()?,
+            auto_approver_context: p
+                .get("auto_approver_context")
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?,
+            compaction: p
+                .get("compaction")
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?,
             output: p
                 .get("output")
                 .filter(|v| !v.is_null())
@@ -60,5 +78,41 @@ impl Context {
         };
         value.validate()?;
         Ok(value)
+    }
+}
+
+/// Validate without echoing application context, which may contain private facts.
+pub fn validate_guidance(name: &str, text: Option<&str>) -> Result<()> {
+    if let Some(text) = text {
+        ensure!(text.len() <= 32_000, "{name} exceeds 32,000 bytes");
+        ensure!(!text.contains('\0'), "{name} contains a null character");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn application_guidance_validation_and_legacy_digest() {
+        // Omitting the new options must preserve old submission receipts.
+        let old =
+            br#"{"instruction_addendum":null,"output":{"reasoning":false,"bufferAttempts":false}}"#;
+        assert_eq!(
+            Context::default().digest().unwrap(),
+            crate::bundle::digest(old)
+        );
+        for request in [
+            serde_json::json!({"auto_approver_context":false}),
+            serde_json::json!({"auto_approver_context":"secret\u{0}"}),
+            serde_json::json!({"auto_approver_context":"x".repeat(32001)}),
+            serde_json::json!({"compaction":{"additional_instructions":"x".repeat(32001)}}),
+            serde_json::json!({"compaction":{"enabled":false}}),
+        ] {
+            assert!(Context::from_request(&request).is_err());
+        }
+        for text in ["", "Preserve these decisions"] {
+            assert!(Context::from_request(&serde_json::json!({"auto_approver_context":text,"compaction":{"additional_instructions":text}})).is_ok());
+        }
     }
 }

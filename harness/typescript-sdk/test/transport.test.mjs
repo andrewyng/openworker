@@ -69,6 +69,11 @@ test("handshake, JSON framing, concurrent callers and safe environment", async (
 test("dynamic agent handles fail clearly against older hosts", async (t) => {
   const { h, root } = await setup(t);
   await assert.rejects(h.session("assistant", { autoSkipQuestions: true }), { code: "Setup" });
+  await assert.rejects(h.session("assistant", { autoApproverContext: "private" }), { code: "Setup" });
+  await assert.rejects(h.session("assistant", { compaction: { additionalInstructions: "keep decisions" } }), { code: "Setup" });
+  const legacy = await h.resume({ session_id: "s", agent: "assistant" });
+  await assert.rejects(legacy.send("Hello", { autoApproverContext: "private" }), { code: "Setup" });
+  await assert.rejects(legacy.run("Hello", { compaction: { additionalInstructions: "keep decisions" } }), { code: "Setup" });
   const agent = h.createAgent({
     name: "builder",
     instructions: "Build.",

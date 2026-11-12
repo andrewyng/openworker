@@ -176,7 +176,7 @@ impl Host {
         let started = self
             .retry_busy(
                 "turn/start",
-                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"output":context.output,"content":context.content}),
+                json!({"session_id":sid,"submission_id":submission,"text":input,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":context.instruction_addendum,"auto_approver_context":context.auto_approver_context,"compaction":context.compaction,"output":context.output,"content":context.content}),
             )
             .await;
         match started {
@@ -297,6 +297,8 @@ impl Host {
                 "input",
                 "limits",
                 "instruction_addendum",
+                "auto_approver_context",
+                "compaction",
                 "output",
                 "safety"
             ]
@@ -331,10 +333,12 @@ impl Host {
             "Safety overrides apply only to new turns"
         );
         if kind == "message" {
-            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"output":p["output"],"content":input["content"]})).await;
+            return self.run_start(&json!({"session_id":sid,"text":input["text"],"submission_id":text(p,"submission_id")?,"limits":p["limits"],"safety":p["safety"],"instruction_addendum":p["instruction_addendum"],"auto_approver_context":p["auto_approver_context"],"compaction":p["compaction"],"output":p["output"],"content":input["content"]})).await;
         }
         ensure!(
-            p.get("instruction_addendum").is_none_or(Value::is_null)
+            p.get("auto_approver_context").is_none_or(Value::is_null)
+                && p.get("compaction").is_none_or(Value::is_null)
+                && p.get("instruction_addendum").is_none_or(Value::is_null)
                 && p.get("output").is_none_or(Value::is_null),
             "Turn context applies only to new message turns"
         );
@@ -518,7 +522,8 @@ impl Host {
     }
 
     async fn agent_session(&self, p: &Value) -> Result<Value> {
-        // Reject malformed imports before creating scratch directories/sessions.
+        // Reject malformed guidance/imports before creating scratch directories/sessions.
+        openworker_runtime::turn_options::Context::from_request(p)?;
         openworker_runtime::history_import::from_request(p.get("initial_history"))?;
         ensure!(
             p.get("auto_skip_questions").is_none_or(Value::is_boolean),
@@ -591,6 +596,30 @@ impl Host {
             };
             let mut options = json!({"name": name, "coworker": id, "workspace": workspace,
                    "permissions": {"mode": mode, "auto_skip_questions": auto_skip_questions},"compaction":self.config.desktop.compaction});
+            let profile = self.profile(id);
+            options["auto_approver_context"] = profile
+                .auto_approver_context
+                .clone()
+                .map_or(Value::Null, |s| json!(s));
+            if let Some(additional) = profile
+                .compaction
+                .as_ref()
+                .and_then(|c| c.additional_instructions.as_ref())
+            {
+                options["compaction"]["additional_instructions"] = json!(additional);
+            }
+            if id == agent {
+                if let Some(context) = p.get("auto_approver_context").filter(|v| !v.is_null()) {
+                    options["auto_approver_context"] = context.clone();
+                }
+                if let Some(additional) = p
+                    .get("compaction")
+                    .and_then(|c| c.get("additional_instructions"))
+                    .filter(|v| !v.is_null())
+                {
+                    options["compaction"]["additional_instructions"] = additional.clone();
+                }
+            }
             if let Approvals::Auto(model) = self.profile(id).approvals {
                 options["reviewer_model"] = json!(model);
             }

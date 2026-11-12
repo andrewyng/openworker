@@ -111,6 +111,7 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
       compaction: {
         threshold_pct: options.compaction?.triggerAtContextFraction ?? 0.8,
         context_window: options.compaction?.contextWindow ?? 128000,
+        additional_instructions: options.compaction?.additionalInstructions,
       },
     },
     runner: options.runner ?? options.executable,
@@ -177,6 +178,8 @@ export function agentWire(a: Agent, depth = 0): object {
     memory_scope: a.memoryScope,
     scheduling: a.scheduling,
     auto_skip_questions: a.autoSkipQuestions,
+    auto_approver_context: a.autoApproverContext,
+    compaction: a.compaction === undefined ? undefined : { additional_instructions: a.compaction.additionalInstructions },
     approvals:
       a.approvals?.mode === "auto"
         ? {

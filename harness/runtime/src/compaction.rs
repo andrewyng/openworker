@@ -17,6 +17,9 @@ pub static DEVIATIONS: LazyLock<Value> = LazyLock::new(|| {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub enabled: bool,
+    /// Application summary guidance, additive to the required summary structure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_instructions: Option<String>,
     pub context_window: usize,
     pub threshold_pct: f64,
     pub cap_tokens: usize,
@@ -29,6 +32,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             enabled: true,
+            additional_instructions: None,
             context_window: 128_000,
             threshold_pct: 0.8,
             cap_tokens: 250_000,
@@ -40,6 +44,10 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        crate::turn_options::validate_guidance(
+            "compaction.additionalInstructions",
+            self.additional_instructions.as_deref(),
+        )?;
         if !(1024..=2_000_000).contains(&self.context_window)
             || !self.threshold_pct.is_finite()
             || !(0.1..=0.9).contains(&self.threshold_pct)
@@ -60,6 +68,34 @@ impl Config {
             self.threshold_pct,
             self.cap_tokens,
         )
+    }
+}
+/// Partial application guidance; omission inherits, an empty string clears guidance.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Instructions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_instructions: Option<String>,
+}
+impl Instructions {
+    pub fn validate(&self) -> Result<()> {
+        crate::turn_options::validate_guidance(
+            "compaction.additionalInstructions",
+            self.additional_instructions.as_deref(),
+        )
+    }
+    pub fn additional_instructions(text: impl Into<String>) -> Self {
+        Self {
+            additional_instructions: Some(text.into()),
+        }
+    }
+}
+/// The mandatory summary contract remains first, including all required sections.
+pub fn summary_instructions(additional: Option<&str>) -> String {
+    let base = REFERENCE["prompts"]["system"].as_str().unwrap();
+    match additional.filter(|s| !s.is_empty()) {
+        Some(text) => format!("{base}\n\nAdditional application summary guidance (preserve the required summary structure):\n{text}"),
+        None => base.into(),
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
