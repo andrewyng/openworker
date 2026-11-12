@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { parseArgs } from 'node:util';
 const source = dirname(fileURLToPath(import.meta.url));
-const usage = 'build-with-sdk-skills --agent codex|claude (--project /path/to/your-app | --global)';
+const usage = 'openworker-harness-builder --agent codex|claude (--project /path/to/your-app | --global)';
 const files = ['SKILL.md','references/desktop.md','references/web.md','references/sdk.md','references/runtime-options.md','references/subagents.md','references/observability.md','references/railway.md','assets/railway/Dockerfile','assets/railway/.dockerignore','agents/openai.yaml'];
 function validate({agent, project, global: userWide = false}) {
  if (!['codex','claude'].includes(agent) || typeof userWide !== 'boolean' ||
@@ -23,7 +23,7 @@ export async function install(options, {userHome = homedir()} = {}) {
  const {agent, project, global: userWide = false} = options;
  const pkg = JSON.parse(await readFile(join(source,'package.json'),'utf8'));
  // Validate package completeness before creating an installation directory.
- const content = await Promise.all(files.map(name => readFile(join(source,'openworker-apps',name))));
+ const content = await Promise.all(files.map(name => readFile(join(source,'openworker-harness-builder',name))));
  const root = await realpath(userWide ? userHome : project);
  if (!(await lstat(root)).isDirectory()) throw Error('Installation root must be an existing directory.');
  let parent = root;
@@ -33,7 +33,7 @@ export async function install(options, {userHome = homedir()} = {}) {
   const stat = await lstat(parent);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw Error(`Expected a real directory: ${parent}`);
  }
- const destination = join(parent, 'openworker-apps');
+ const destination = join(parent, 'openworker-harness-builder');
  await mkdir(destination); // Exclusive: an existing install must be reviewed by its owner.
  for (const [index,name] of files.entries()) {
   await mkdir(dirname(join(destination,name)), {recursive:true});
@@ -50,7 +50,7 @@ if (process.argv[1] && await realpath(process.argv[1]).catch(() => resolve(proce
  else {
   try {
    const options = parseInstallArgs(args);
-   console.log(`Installed: ${await install(options)}\nOpen a new coding-agent session${options.global ? '' : ' in that project'} to use openworker-apps.`);
+   console.log(`Installed: ${await install(options)}\nOpen a new coding-agent session${options.global ? '' : ' in that project'} to use openworker-harness-builder.`);
   } catch(error) { console.error(error.code==='EEXIST' ? 'An installation already exists. Review or back it up before replacing it.' : error.message);process.exitCode=1; }
  }
 }

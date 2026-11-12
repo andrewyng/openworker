@@ -35,7 +35,7 @@ Install the shared [OpenWorker app-building skill](../../../skills/README.md),
 then paste this prompt into Codex or Claude Code in your app project:
 
 ```text
-Use the openworker-apps skill to build a desktop app that summarizes a
+Use the openworker-harness-builder skill to build a desktop app that summarizes a
 selected code directory. Start from Code Atlas and explain the SDK calls as
 you build. Run the relevant tests and prepare a local package.
 ```
@@ -50,13 +50,13 @@ skill. No OpenWorker repository checkout is required.
 ### Codex
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent codex --project .
+npx @openworkerai/openworker-harness-builder --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent claude --project .
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->

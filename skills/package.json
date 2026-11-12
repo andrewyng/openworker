@@ -1,5 +1,5 @@
 {
-  "name": "@openworkerai/build-with-sdk-skills",
+  "name": "@openworkerai/openworker-harness-builder",
   "version": "0.1.0-beta.4",
   "description": "Install the OpenWorker app-building skill for Codex or Claude Code",
   "type": "module",
@@ -8,11 +8,11 @@
     "node": ">=20"
   },
   "bin": {
-    "build-with-sdk-skills": "install.mjs"
+    "openworker-harness-builder": "install.mjs"
   },
   "files": [
     "install.mjs",
-    "openworker-apps",
+    "openworker-harness-builder",
     "README.md",
     "LICENSE"
   ],

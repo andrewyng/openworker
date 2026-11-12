@@ -23,7 +23,7 @@ Native compilation and clean-machine testing are required on every claimed targe
 
 The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
-`@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
+`@openworkerai/openworker-harness-builder`, which installs the shared Desktop/Web
 skill into a Codex or Claude Code project, or user-wide with `--global`. The skill package has no runtime or
 SDK dependency. Its package version can advance independently;
 `openworkerSdkVersion` declares the compatible SDK release. To prepare just that archive without compiling Rust:
@@ -79,3 +79,5 @@ Publish Rust dependency crates before the SDK facade; publish all platform npm
 packages before the client and starter. Use `beta`, not `latest`. Test installation
 from the actual registries after promotion. First-package creation and npm trusted
 publisher configuration require the organization's registry owner.
+
+The native matrix also runs attachment and standalone-child regressions. `qualify-npm.mjs ARCHIVES NEW_CONSUMER_DIRECTORY` installs the actual prepared packages with a fresh offline cache, then tests guidance, attachments across three provider wire formats, recovery and standalone children using the shipped production runtime. It installs the renamed skill for both coding agents without importing SDK code from the checkout.

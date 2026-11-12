@@ -1,6 +1,6 @@
 # Build apps with the OpenWorker skill
 
-One `openworker-apps` skill helps Codex and Claude Code build Desktop and Web
+One `openworker-harness-builder` skill helps Codex and Claude Code build Desktop and Web
 applications with the OpenWorker Harness SDK. It includes version-matched SDK
 snippets and separate Desktop/Web references. No OpenWorker checkout is required
 for the packaged skill, and installing it does not install the SDK or a runtime.
@@ -13,17 +13,17 @@ attempt-aware streaming, per-turn session options, and reviewer/compaction guida
 From an existing app project, install the latest published skill:
 
 ```sh
-npx @openworkerai/build-with-sdk-skills --agent codex --project .
+npx @openworkerai/openworker-harness-builder --agent codex --project .
 ```
 
 For Claude Code:
 
 ```sh
-npx @openworkerai/build-with-sdk-skills --agent claude --project .
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
-These project commands create `.agents/skills/openworker-apps/` for Codex or
-`.claude/skills/openworker-apps/` for Claude Code. It supports quoted project paths
+These project commands create `.agents/skills/openworker-harness-builder/` for Codex or
+`.claude/skills/openworker-harness-builder/` for Claude Code. It supports quoted project paths
 on Windows and macOS, leaves global settings alone, and refuses to overwrite an
 existing skill. Review/back up an existing installation before replacing it.
 `references/installation.json` records the matching SDK version, without local
@@ -35,15 +35,15 @@ differ; this skill release targets SDK `0.1.0-beta.3`.
 For user-wide installation, use `--global` instead of `--project`:
 
 ```sh
-npx @openworkerai/build-with-sdk-skills --agent claude --global
+npx @openworkerai/openworker-harness-builder --agent claude --global
 ```
 
 ```sh
-npx @openworkerai/build-with-sdk-skills --agent codex --global
+npx @openworkerai/openworker-harness-builder --agent codex --global
 ```
 
-This installs into `~/.claude/skills/openworker-apps/` for Claude Code or
-`~/.agents/skills/openworker-apps/` for Codex, making the skill available across
+This installs into `~/.claude/skills/openworker-harness-builder/` for Claude Code or
+`~/.agents/skills/openworker-harness-builder/` for Codex, making the skill available across
 projects for your user on this machine. It does not install into Claude web or
 Cowork, change account settings, or require `npm install -g` or administrator
 access. Choose either `--global` or `--project`, not both. Both modes preserve an
@@ -54,16 +54,16 @@ reproducibility, append `@<version>` to the package name. The installer records
 the compatible SDK version separately; the skill and SDK versions may differ.
 
 The skill is discoverable in the selected scope. Restart the coding-agent session if it
-does not appear. Invoke `$openworker-apps` in Codex or `/openworker-apps` in Claude
+does not appear. Invoke `$openworker-harness-builder` in Codex or `/openworker-harness-builder` in Claude
 Code, or ask:
 
-> Use the openworker-apps skill to build a desktop app that summarizes a selected code directory. Explain the SDK calls as you build, test the app, and prepare an unpacked desktop package.
+> Use the openworker-harness-builder skill to build a desktop app that summarizes a selected code directory. Explain the SDK calls as you build, test the app, and prepare an unpacked desktop package.
 
 For the Web track:
 
-> Use the openworker-apps skill to build a web app where I can upload a PDF and ask questions with page references. Explain the agent and session code and test the application locally.
+> Use the openworker-harness-builder skill to build a web app where I can upload a PDF and ask questions with page references. Explain the agent and session code and test the application locally.
 
-The shared skill includes a [Railway deployment track](openworker-apps/references/railway.md)
+The shared skill includes a [Railway deployment track](openworker-harness-builder/references/railway.md)
 and Docker assets. The default is one Node service serving the frontend and API,
 with the Rust harness running as a managed child process. The recipe has been tested locally and on Railway with the
 published SDK, including streamed Claude responses and conversation recovery
@@ -73,7 +73,7 @@ follow separately. This installer targets local Codex and Claude Code sessions.
 ## Claude workspace uploads
 
 Claude's **Customize → Skills → Upload** is a separate installation route.
-For that flow, zip the complete installed `openworker-apps` directory, including
+For that flow, zip the complete installed `openworker-harness-builder` directory, including
 its references, Docker assets and `references/installation.json`; uploading only
 `SKILL.md` loses the supporting files. The npm `.tgz` package is not this upload
 format. Uploading a skill provides instructions, not an installed SDK, runtime,
@@ -97,7 +97,7 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 Install the resulting archive into a temporary project or use it through npm exec:
 
 ```sh
-npm exec --package /absolute/new-skills-candidate/archives/openworkerai-build-with-sdk-skills-0.1.0-beta.3.tgz -- build-with-sdk-skills --agent codex --project /path/to/your-app
+npm exec --package /absolute/new-skills-candidate/archives/openworkerai-openworker-harness-builder-0.1.0-beta.3.tgz -- openworker-harness-builder --agent codex --project /path/to/your-app
 ```
 
 The preparer never publishes. Source package manifests remain private; staged
@@ -137,3 +137,5 @@ unauthenticated requests, streamed output before model completion, explicit
 cancellation, graceful shutdown, unchanged session references after redeployment,
 and real Anthropic recall of earlier conversation content. This qualifies the
 single-service recipe; it does not establish multi-replica or zero-downtime behavior.
+
+When upgrading from the earlier `openworker-apps` skill, review and remove that old skill from the same installation scope after installing the new name. The installer preserves existing skill directories and local customizations.

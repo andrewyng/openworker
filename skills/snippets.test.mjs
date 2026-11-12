@@ -11,7 +11,7 @@ test('runtime-options examples compile against the matching SDK declarations', a
     await mkdir(join(root, 'node_modules/@openworkerai'), { recursive: true });
     await symlink(sdk, join(root, 'node_modules/@openworkerai/harness-sdk'), 'junction');
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    const text = (await Promise.all(['runtime-options.md','subagents.md'].map(name=>readFile('skills/openworker-apps/references/'+name,'utf8')))).join('\n');
+    const text = (await Promise.all(['runtime-options.md','subagents.md'].map(name=>readFile('skills/openworker-harness-builder/references/'+name,'utf8')))).join('\n');
     const files = [];
     for (const [index, match] of [...text.matchAll(/```typescript\r?\n([\s\S]*?)```/g)].entries()) {
       const file = join(root, `example-${index}.ts`);
@@ -21,6 +21,6 @@ test('runtime-options examples compile against the matching SDK declarations', a
     if (!files.length) throw Error('No examples found');
     execFileSync(process.execPath, [join(sdk, 'node_modules/typescript/bin/tsc'), ...files,
       '--noEmit', '--strict', '--skipLibCheck', '--target', 'es2022', '--module', 'nodenext',
-      '--typeRoots', join(sdk, 'node_modules/@types')], { stdio: 'pipe' });
+      '--typeRoots', join(sdk, 'node_modules/@types')], { stdio: 'inherit' });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

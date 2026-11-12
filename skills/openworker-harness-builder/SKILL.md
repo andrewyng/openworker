@@ -1,5 +1,5 @@
 ---
-name: openworker-apps
+name: openworker-harness-builder
 description: Build or adapt desktop and web applications using the OpenWorker Harness SDK, including agent creation, streamed sessions, model configuration, application packaging and Railway deployment. Use for OpenWorker integrations, not general website design or unrelated agent frameworks.
 ---
 

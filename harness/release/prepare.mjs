@@ -44,7 +44,7 @@ const npm=process.platform==='win32'?'npm.cmd':'npm';
 for(const directory of ['native','typescript-sdk','desktop-starters'])execFileSync(npm,['pack','--ignore-scripts','--json','--pack-destination',archives],{cwd:join(out,directory),stdio:'inherit',shell:process.platform==='win32'});
 const skillVersion=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8')).version;
 const skillArchives=await prepareSkills(join(out,'skills'));
-await cp(join(skillArchives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`),join(archives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`));
+await cp(join(skillArchives,`openworkerai-openworker-harness-builder-${skillVersion}.tgz`),join(archives,`openworkerai-openworker-harness-builder-${skillVersion}.tgz`));
 // Portable GitHub archive, with the same executable and metadata as npm.
 const archive=`openworker-harness-${manifest.version}-${target.rust}.tar.gz`;
 // A Windows drive letter is parsed as a remote host by GNU tar. Keep both

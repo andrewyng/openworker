@@ -46,12 +46,12 @@ jobs:
           workspaces: harness
       - name: Validate release contract and compile client
         run: |
-          node --test harness/release/contract.test.mjs harness/desktop-starters/test.mjs
+          node --test harness/release/contract.test.mjs harness/desktop-starters/test.mjs skills/install.test.mjs skills/package.test.mjs
           npm --prefix harness/typescript-sdk ci
           npm --prefix harness/typescript-sdk run build
-          node --test harness/typescript-sdk/test/runtime-package.test.mjs
+          node --test harness/typescript-sdk/test/runtime-package.test.mjs skills/snippets.test.mjs
       - name: Native lifecycle/provider qualification
-        run: cargo test --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --features test-support --test desktop_api --test tool_free -- --test-threads=1
+        run: cargo test --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --features test-support --test desktop_api --test tool_free --test attachments --test standalone_subagents -- --test-threads=1
       # Build after qualification so test-support cannot affect the shipped host.
       - name: Build native host
         run: cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export,recording-postgres,evaluation-export
@@ -59,6 +59,8 @@ jobs:
         run: node harness/release/prepare.mjs "$GITHUB_WORKSPACE/harness/target/release/${{ matrix.exe }}" '${{ matrix.target }}' .sdk-release
       - name: Install tarballs and run the exact TypeScript guide
         run: node harness/release/smoke-npm.mjs .sdk-release/archives
+      - name: Qualify production package options, attachments, recovery and sub-agents
+        run: node harness/release/qualify-npm.mjs .sdk-release/archives "$RUNNER_TEMP/production-sdk-consumer"
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-${{ matrix.target }}

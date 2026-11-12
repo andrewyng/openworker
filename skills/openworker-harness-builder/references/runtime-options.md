@@ -146,14 +146,19 @@ They apply to embedded Rust and managed-process sessions. The cluster REST clien
 does not expose session/turn guidance overrides yet.
 
 ```typescript
-const session = await agent.newSession({
-  autoApproverContext: 'Staging workspace. Ask before publishing.',
-  compaction: { additionalInstructions: 'Preserve decisions and unfinished tests.' },
-});
-await session.run('Continue.', {
-  autoApproverContext: 'For this turn, changes must stay inside src/.',
-  compaction: { additionalInstructions: 'Keep the migration checklist.' },
-});
+import type { AgentHandle } from '@openworkerai/harness-sdk';
+
+export async function continueWithGuidance(agent: AgentHandle) {
+  const session = await agent.newSession({
+    autoApproverContext: 'Staging workspace. Ask before publishing.',
+    compaction: { additionalInstructions: 'Preserve decisions and unfinished tests.' },
+  });
+  await session.run('Continue.', {
+    autoApproverContext: 'For this turn, changes must stay inside src/.',
+    compaction: { additionalInstructions: 'Keep the migration checklist.' },
+  });
+  return session;
+}
 ```
 
 Agent defaults → session → turn; omission inherits and `''` clears guidance in

@@ -35,7 +35,7 @@ Install the shared [OpenWorker app-building skill](../../../skills/README.md),
 then paste this prompt into Codex or Claude Code in your app project:
 
 ```text
-Use the openworker-apps skill to build a web app where I can upload a PDF
+Use the openworker-harness-builder skill to build a web app where I can upload a PDF
 and ask questions with page references. Start from PDF Notes, explain the
 agent and session code, and prepare container deployment files.
 ```
@@ -50,13 +50,13 @@ skill. No OpenWorker repository checkout is required.
 ### Codex
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent codex --project .
+npx @openworkerai/openworker-harness-builder --agent codex --project .
 ```
 
 ### Claude Code
 
 ```sh frame="none"
-npx @openworkerai/build-with-sdk-skills --agent claude --project .
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
 <!-- /sdk-install-tabs -->
