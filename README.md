@@ -41,7 +41,7 @@ Bring agentic capabilities to your own desktop app, web app or local utility. Bu
 Use the TypeScript SDK from npm, or embed the Rust engine in your application. Start with one agent. Add sub-agents, teams, OpenShell sandboxing and observability as your application grows.
 
 ```sh
-npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
+npm install @openworkerai/harness-sdk
 ```
 
 [**Explore the Harness SDK →**](harness/README.md) ·

@@ -4,23 +4,94 @@
 
 Build a document assistant, a file-organizing utility or a coding app with agents that can use tools and work together. Keep your interface and product workflow; OpenWorker manages the agent loop, model calls, approvals and durable sessions.
 
-<p align="center"><a href="#build-your-first-agent">Get started</a> · <a href="https://openworker.com/docs/sdk/">Documentation</a> · <a href="#build-with-your-coding-agent">Builder skill</a> · <a href="#choose-an-example-app">Example apps</a></p>
+<p align="center"><a href="#build-with-your-coding-agent">Get started</a> · <a href="https://openworker.com/docs/sdk/">Documentation</a> · <a href="#build-your-first-agent-by-writing-code-yourself">SDK reference</a> · <a href="#choose-an-example-app">Example apps</a></p>
 
 > **Under active development.** Please try the SDK and [open issues](https://github.com/andrewyng/openworker/issues) for bugs and feature requests. Please hold off on SDK pull requests while the API is evolving.
 
-## Build your first agent
+<a id="your-app-and-the-harness"></a>
 
-Use the code below, or [build with your coding agent](#build-with-your-coding-agent). You can start locally without a service cluster.
+## How it fits into your app
 
-### Write the code yourself
+Your app owns the UI, authentication and user/session ownership. It chooses the models, tools and policies. One Rust engine powers both SDKs: TypeScript manages it as a child process; Rust can embed it in-process. Browser code calls your application server or desktop IPC.
 
-Requires Node.js 20+ with ESM. npm includes the matching native runtime; no Rust compiler or Python installation is needed.
+![OpenWorker architecture: your application uses the TypeScript or Rust SDK to control one Rust harness, which connects to cloud/local models and app-owned or OpenShell-isolated tools.](../docs/harness/assets/architecture.svg)
+
+OpenShell isolates configured shell/file execution while the agent loop remains in the trusted harness. Application callbacks still run with your application’s privileges. See [execution boundaries](../docs/harness/guides/openshell.md).
+
+The existing OpenWorker Desktop App uses its separate Python engine. This SDK provides the Rust engine for applications you build.
+
+<a id="build-with-codex-or-claude-code"></a>
+
+## Build with your coding agent
+
+Install the builder skill in your app project:
 
 ```sh
-npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.4
+npx @openworkerai/openworker-harness-builder --agent claude --project .
 ```
 
-Save this as `agent.mjs`. It connects a model, creates an agent and runs its first request:
+Use `--agent codex` for Codex, or replace `--project .` with `--global` for all your projects. Open a new coding-agent session and give it a concrete task:
+
+> Use the openworker-harness-builder skill to build a local file-organizing app. Start with ten sample text files in a new demo directory. Restrict its file tools to that directory, ask me before creating subdirectories or moving files, and show tool activity as the agent works. Run the tests and explain how to launch it.
+
+The skill supplies SDK instructions and runnable examples; you do not need to clone this repository. See the [skill guide](../skills/README.md) for updates, replacement backups and the tested SDK version.
+
+<a id="build-your-first-agent"></a>
+
+## Build your first agent by writing code yourself
+
+We recommend building with a [coding agent and the builder skill](#build-with-your-coding-agent). The steps below serve as a quick reference, showing how little code it takes to start the harness in your app, create an agent and run a conversation.
+
+Install the SDK:
+
+```sh
+npm install @openworkerai/harness-sdk
+```
+
+### 1. Start the harness and connect a model
+
+Your app starts the harness once and supplies its model credentials. This text-only example uses OpenAI and does not need a sandbox.
+
+```typescript
+const harness = await Harness.start({
+  stateDir: resolve('.openworker-state'), sandbox: 'off',
+});
+await harness.setModelProvider({
+  name: 'OpenAI', api: 'responses',
+  baseUrl: process.env.OPENWORKER_MODEL_URL ?? 'https://api.openai.com/v1',
+  credentials: { apiKeyEnv: 'OPENAI_API_KEY', storage: 'memory' },
+});
+```
+
+### 2. Define the agent
+
+Give the agent instructions and select its model. Start without tools; add your application's tools when it needs to take actions.
+
+```typescript
+const agent = harness.createAgent({
+  name: 'first-agent-v1', instructions: 'Give concise, helpful answers.',
+  defaultModel: { provider: 'OpenAI', name: model },
+  tools: [], planning: false, memory: false, scheduling: false,
+});
+```
+
+### 3. Start a conversation
+
+Create a session, send a request and display the answer. Reuse the session for follow-up messages.
+
+```typescript
+const session = await agent.newSession();
+const result = await session.run('Suggest three names for a file-organizing app.');
+if (result.status !== 'completed') throw new Error(`Run ended: ${result.status}`);
+console.log(result.finalOutput);
+```
+
+<details>
+<summary>Complete runnable example and setup</summary>
+
+Save as `agent.mjs`. In a private env file outside your project, set `OPENAI_API_KEY` to your API key and `OPENWORKER_MODEL` to an exact model ID available to your account. The complete example includes imports and shuts down the harness even if a request fails.
+
+<!-- complete-first-agent -->
 
 ```typescript
 import { resolve } from 'node:path';
@@ -51,33 +122,19 @@ try {
 }
 ```
 
-In a private env file outside your project, set `OPENAI_API_KEY` to your API key and `OPENWORKER_MODEL` to an exact model ID available to your account. Then run:
+<!-- /complete-first-agent -->
 
 ```sh
 node --env-file=/path/to/private.env agent.mjs
 ```
 
-The program prints the agent’s answer. `OPENWORKER_MODEL_URL` optionally selects another Responses-compatible endpoint. See [models and credentials](../docs/harness/guides/providers.md) for Anthropic, other providers and local models.
+`OPENWORKER_MODEL_URL` optionally selects another Responses-compatible endpoint. The SDK runs in your Node process, Electron main process or application server; npm includes the matching Rust runtime. See the [TypeScript quickstart](typescript-sdk/README.md) for runtime requirements and lifecycle details.
 
-This first agent has no tools and explicitly disables sandboxing. When adding tools, choose their execution boundary: application callbacks retain your app’s privileges, and a workspace path alone does not confine filesystem access. Start with the [file-organizer example](../skills/openworker-harness-builder/references/local-script.md) for scoped tools and human approvals.
+</details>
 
-**Using Rust?** Follow the [complete Rust quickstart](harness-sdk/README.md) to embed the engine from a pinned checkout. It includes the current native-helper setup. The [TypeScript package README](typescript-sdk/README.md) covers application lifecycle and integration details.
+For other providers, see [models and credentials](../docs/harness/guides/providers.md). For a native app, follow the [Rust quickstart](harness-sdk/README.md).
 
-<a id="build-with-codex-or-claude-code"></a>
-
-### Build with your coding agent
-
-Install the builder skill in your app project:
-
-```sh
-npx @openworkerai/openworker-harness-builder --agent claude --project .
-```
-
-Use `--agent codex` for Codex, or replace `--project .` with `--global` for all your projects. Open a new coding-agent session and give it a concrete task:
-
-> Use the openworker-harness-builder skill to build a local file-organizing app. Start with ten sample text files in a new demo directory. Restrict its file tools to that directory, ask me before creating subdirectories or moving files, and show tool activity as the agent works. Run the tests and explain how to launch it.
-
-The skill supplies SDK instructions and runnable examples; you do not need to clone this repository. See the [skill guide](../skills/README.md) for updates, replacement backups and the tested SDK version.
+When adding tools, choose their execution boundary: application callbacks retain your app’s privileges, and a workspace path alone does not confine filesystem access. The [file-organizer example](../skills/openworker-harness-builder/references/local-script.md) demonstrates scoped tools and human approvals.
 
 <a id="choose-your-starting-point"></a>
 <a id="try-an-example"></a>
@@ -93,10 +150,6 @@ The skill supplies SDK instructions and runnable examples; you do not need to cl
 
 Code Atlas and PDF Notes share `examples/quickstart/`; they are two complete TypeScript apps. The file organizer is bundled with the skill. The checkout examples use the local SDK and need the runtime setup described in their READMEs.
 
-![Code Atlas desktop example with deterministic test data](../docs/harness/guides/images/code-atlas.png)
-
-*Code Atlas example UI, shown with deterministic test data.*
-
 <a id="what-your-application-gains"></a>
 
 ## What the SDK handles for you
@@ -110,18 +163,6 @@ Code Atlas and PDF Notes share `examples/quickstart/`; they are two complete Typ
 | **Agents that delegate** | Standalone sub-agents and teams with durable messages and boards. [Sessions and teams](../docs/harness/guides/sessions.md) |
 | **A choice of models** | Cloud and local providers with application-owned credentials. [Models](../docs/harness/guides/providers.md) |
 | **Visibility into each run** | Opt-in turn traces, token usage and telemetry export to tools such as Langfuse. [Observability](../docs/harness/guides/observability.md) |
-
-<a id="your-app-and-the-harness"></a>
-
-## How it fits into your app
-
-Your app owns the UI, authentication and user/session ownership. It chooses the models, tools and policies. One Rust engine powers both SDKs: TypeScript manages it as a child process; Rust can embed it in-process. Browser code calls your application server or desktop IPC.
-
-![OpenWorker architecture: your application uses the TypeScript or Rust SDK to control one Rust harness, which connects to cloud/local models and app-owned or OpenShell-isolated tools.](../docs/harness/assets/architecture.svg)
-
-OpenShell isolates configured shell/file execution while the agent loop remains in the trusted harness. Application callbacks still run with your application’s privileges. See [execution boundaries](../docs/harness/guides/openshell.md).
-
-The existing OpenWorker Desktop App uses its separate Python engine. This SDK provides the Rust engine for applications you build.
 
 <a id="deployment-and-operations"></a>
 
@@ -159,7 +200,7 @@ Use the [TypeScript](typescript-sdk/README.md) or [Rust](harness-sdk/README.md) 
 <details>
 <summary>Versions and native runtime compatibility</summary>
 
-The npm client **0.1.0-beta.4** uses native runtime **0.1.0-beta.3**. npm installs the matching platform package automatically; keep optional dependencies enabled. Source manifests and published package versions can differ. Follow the [release and compatibility guide](../docs/harness/guides/releases.md) when pinning or upgrading, rather than inferring registry availability from a source version string.
+npm installs the matching platform runtime package automatically; keep optional dependencies enabled. Source manifests and published package versions can differ. Follow the [release and compatibility guide](../docs/harness/guides/releases.md) when pinning or upgrading, rather than inferring registry availability from a source version string.
 
 Rust applications currently use a pinned source checkout. See the [Rust quickstart](harness-sdk/README.md); npm publication does not imply Cargo registry publication.
 
