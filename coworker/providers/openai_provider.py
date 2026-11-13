@@ -103,6 +103,132 @@ def _delta_reasoning(obj: Any) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+# -- inline `<think>…</think>` reasoning (issue #111) --------------------------------
+#
+# A model can stream its reasoning INSIDE the reply text, wrapped in `<think>…</think>`,
+# in the same `content` field as the answer (MiniMax M2.5). There is no
+# `reasoning_content` to read it from, so without a peel the tags land in the assistant's
+# visible message. The peel is gated on the model FAMILY — the same way the Anthropic
+# provider decides which thinking config a model takes (`_BUDGET_THINKING_PREFIXES`) —
+# so a model that merely talks about the tag keeps its text. Only a block that OPENS the
+# reply counts, so a `<think>` quoted later in an answer stays where it is.
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+_INLINE_THINK_PREFIXES = ("minimax",)
+
+
+def _partial_tag_tail(buffer: str, tag: str) -> str:
+    """The tail of `buffer` that could still grow into `tag` — a tag split across two
+    deltas ("<thi" + "nk>") must not be mistaken for content."""
+    for size in range(min(len(buffer), len(tag) - 1), 0, -1):
+        if buffer.endswith(tag[:size]):
+            return buffer[-size:]
+    return ""
+
+
+class _InlineThinkSplitter:
+    """Splits a reply that carries its reasoning inline into (reasoning, visible text).
+
+    Streaming-safe: the open and close tags can each straddle two deltas, so text is
+    held back until it is known which side of the tag it falls on."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        # "seek": still looking for the open tag (nothing but whitespace so far).
+        # "think": inside the reasoning block. "text": past it — the answer.
+        self._mode = "seek"
+
+    def feed(self, text: str) -> tuple[Optional[str], Optional[str]]:
+        """Absorb a chunk; return (reasoning, visible_text) — either side may be None."""
+        if not text:
+            return None, None
+        self._buf += text
+        return self._drain()
+
+    def flush(self) -> tuple[Optional[str], Optional[str]]:
+        """End of the reply: whatever is left belongs where it belongs."""
+        rest, self._buf = self._buf, ""
+        if not rest:
+            return None, None
+        if self._mode == "think":
+            # The reply ended inside the reasoning block (a truncated stream): it is
+            # reasoning, not answer text.
+            self._mode = "text"
+            return rest, None
+        self._mode = "text"
+        return None, rest
+
+    def _drain(self) -> tuple[Optional[str], Optional[str]]:
+        """Move whatever the buffer holds to the side it belongs on. One chunk can carry
+        both (the reasoning and the answer that follows it), so both are returned."""
+        reasoning_parts: list[str] = []
+        text_parts: list[str] = []
+        while True:
+            if self._mode == "text":
+                out, self._buf = self._buf, ""
+                if out:
+                    text_parts.append(out)
+                break
+            if self._mode == "think":
+                index = self._buf.find(_THINK_CLOSE)
+                if index < 0:
+                    # The close tag may still be split across deltas — hold the tail that
+                    # could be its prefix, emit the rest of the reasoning.
+                    tail = _partial_tag_tail(self._buf, _THINK_CLOSE)
+                    out, self._buf = self._buf[: len(self._buf) - len(tail)], tail
+                    if out:
+                        reasoning_parts.append(out)
+                    break
+                out, self._buf = self._buf[:index], self._buf[index + len(_THINK_CLOSE) :]
+                if out:
+                    reasoning_parts.append(out)
+                self._mode = "text"
+                continue
+            # "seek": the open tag has to come before any answer text.
+            stripped = self._buf.lstrip()
+            if stripped.startswith(_THINK_OPEN):
+                index = self._buf.index(_THINK_OPEN)
+                self._buf = self._buf[index + len(_THINK_OPEN) :]
+                self._mode = "think"
+                continue
+            if not stripped or _THINK_OPEN.startswith(stripped):
+                # Only whitespace so far, or the open tag is still arriving — hold it all.
+                break
+            self._mode = "text"
+            continue
+        return (
+            "".join(reasoning_parts) or None,
+            "".join(text_parts) or None,
+        )
+
+
+def _inline_think_splitter(model: str) -> Optional[_InlineThinkSplitter]:
+    """A splitter for the models that stream their reasoning inline, else None.
+
+    The provider is handed the BARE model id (the router strips a known provider
+    prefix), so the family is matched on the last segment either way."""
+    name = model.split(":", 1)[-1].lower()
+    if not name.startswith(_INLINE_THINK_PREFIXES):
+        return None
+    return _InlineThinkSplitter()
+
+
+def _split_inline_think(
+    content: Optional[str], model: str
+) -> tuple[Optional[str], Optional[str]]:
+    """(reasoning, visible text) of a whole reply that carries its reasoning inline.
+    Models that don't do that keep their text verbatim."""
+    splitter = _inline_think_splitter(model)
+    if splitter is None:
+        return None, content
+    reasoning, text = splitter.feed(content or "")
+    more_reasoning, more_text = splitter.flush()
+    return (
+        "".join(part for part in (reasoning, more_reasoning) if part) or None,
+        "".join(part for part in (text, more_text) if part) or None,
+    )
+
+
 def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop provider-private message sidecars (underscore-prefixed keys, e.g. `_gemini`
     thought signatures — see providers/base.py): they belong to other providers, and the
@@ -303,9 +429,15 @@ class OpenAIProvider(ProviderClient):
         choice = response.choices[0]
         message = choice.message
         text = getattr(message, "content", None)
+        reasoning_text = _delta_reasoning(message)
+        # A model that reasons inline (MiniMax M2.5) puts its thinking in the text; peel
+        # it off before the answer is read as content (#111).
+        inline_reasoning, inline_text = _split_inline_think(text, model)
+        if inline_reasoning:
+            reasoning_text = reasoning_text or inline_reasoning
+        text = inline_text
         tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
         text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
-        reasoning_text = _delta_reasoning(message)
         return AssistantTurn(
             text=text,
             tool_calls=tool_calls,
@@ -380,6 +512,9 @@ class OpenAIProvider(ProviderClient):
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         reasoning_field: Optional[str] = None
+        # Set for the models that stream their reasoning inline (`<think>…</think>` in
+        # the text itself — MiniMax M2.5). The tags are peeled off the answer (#111).
+        splitter = _inline_think_splitter(model)
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
         usage: Optional[TokenUsage] = None
@@ -413,8 +548,19 @@ class OpenAIProvider(ProviderClient):
                     yield StreamChunk(reasoning_delta=reasoning)
                 content = getattr(delta, "content", None)
                 if content:
-                    text_parts.append(content)
-                    yield StreamChunk(text_delta=content)
+                    if splitter is not None:
+                        # Reasoning inline in the text: split it out, so the answer
+                        # reaches the user without the tags (#111).
+                        inline_reasoning, inline_text = splitter.feed(content)
+                        if inline_reasoning:
+                            reasoning_parts.append(inline_reasoning)
+                            yield StreamChunk(reasoning_delta=inline_reasoning)
+                        if inline_text:
+                            text_parts.append(inline_text)
+                            yield StreamChunk(text_delta=inline_text)
+                    else:
+                        text_parts.append(content)
+                        yield StreamChunk(text_delta=content)
                 for tc in getattr(delta, "tool_calls", None) or []:
                     acc = tool_accum.setdefault(
                         getattr(tc, "index", 0), {"id": "", "name": "", "args": ""}
@@ -429,6 +575,17 @@ class OpenAIProvider(ProviderClient):
                             acc["args"] += fn.arguments
             if getattr(choice, "finish_reason", None):
                 finish_reason = choice.finish_reason
+
+        if splitter is not None:
+            # End of the reply: whatever the splitter still holds belongs to the side it
+            # was headed for (a truncated stream can end inside the reasoning block).
+            inline_reasoning, inline_text = splitter.flush()
+            if inline_reasoning:
+                reasoning_parts.append(inline_reasoning)
+                yield StreamChunk(reasoning_delta=inline_reasoning)
+            if inline_text:
+                text_parts.append(inline_text)
+                yield StreamChunk(text_delta=inline_text)
 
         tool_calls = []
         for index in sorted(tool_accum):
