@@ -103,9 +103,7 @@ impl Fixture {
                 "--out",
                 out.to_str().unwrap(),
                 "--timeout-seconds",
-                // Python startup is not the timeout behavior being tested in
-                // ordinary scenarios. Keep the intentional timeout case at1s.
-                if scenario == "timeout" { "1" } else { "3" },
+                "1",
                 "--overall-timeout-seconds",
                 // Leave room for Python fixture startup on loaded CI hosts.
                 // Timeout scenarios still have a one-second per-call deadline.
@@ -690,15 +688,7 @@ fn blocked_identity_policy_api_and_transport_cases_are_scrubbed_and_bounded() {
         ]
         .contains(&scenario)
         {
-            let calls = fs::read_to_string(f.home.path().join("calls.jsonl")).unwrap_or_else(|e| {
-                // A bounded failure before the fixture starts means zero calls,
-                // not an absent authorization gate. Other I/O errors still fail.
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    String::new()
-                } else {
-                    panic!("Cannot read fixture calls for {scenario}: {e}")
-                }
-            });
+            let calls = fs::read_to_string(f.home.path().join("calls.jsonl")).unwrap();
             assert!(!calls.contains("get-iam-policy"), "{scenario}");
         }
     }
