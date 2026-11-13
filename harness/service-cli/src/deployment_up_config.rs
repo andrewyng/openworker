@@ -10,13 +10,20 @@ pub(super) struct Config {
     pub name: String,
     pub cloud: Cloud,
     pub nodes: Nodes,
-    pub budget: Budget,
+    /// Compatibility with earlier experimental YAML only. New configs omit budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Budget>,
     #[serde(default)]
     pub trial: Option<Trial>,
     #[serde(default)]
     pub models: BTreeMap<String, Secret>,
     #[serde(default)]
     pub advanced: Advanced,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "managementUI")]
+    pub management_ui: Option<super::super::local::features::ManagementUI>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observability: Option<super::super::local::features::Observability>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -97,7 +104,7 @@ pub(super) struct Budget {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct Secret {
+pub(crate) struct Secret {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,7 +115,10 @@ pub(super) struct Secret {
 pub(super) struct Advanced {
     /// A reviewed release package can replace locally packaged repository assets.
     pub release: Option<PathBuf>,
+    /// Legacy profile import. New YAML embeds these fields below.
     pub setup_profile: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infrastructure: Option<Value>,
     pub network_cidr: Option<String>,
     pub kubernetes_version: Option<String>,
     pub azure: Option<AzureOptions>,
@@ -118,6 +128,10 @@ pub(super) struct Advanced {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct AzureOptions {
     pub tenant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_object_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_principal_type: Option<String>,
     pub resource_group: Option<String>,
     pub control_resource_group: Option<String>,
     #[serde(default)]
@@ -170,6 +184,12 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self, provider: &str) -> Result<()> {
+        if let Some(ui) = &self.management_ui {
+            ui.validate()?;
+        }
+        if let Some(obs) = &self.observability {
+            obs.validate()?;
+        }
         if let Some(t) = &self.trial {
             ensure!((1..=72).contains(&t.expires_after_hours)&&t.delete_data,"A disposable trial requires 1..72 hours and explicit deleteData:true; omit trial for persistent deployment");
         }
@@ -236,9 +256,12 @@ impl Config {
                 );
             }
         }
+        if let Some(b) = &self.budget {
+            ensure!((1..=100_000).contains(&b.alert_usd), "Legacy budget.limitUSD must be positive; omit it and use plan-only --max-estimated-cost-usd instead");
+        }
         ensure!(
-            (1..=100_000).contains(&self.budget.alert_usd),
-            "budget.limitUSD must be between 1 and 100000; it is not a hard cap"
+            self.advanced.setup_profile.is_none() || self.advanced.infrastructure.is_none(),
+            "Choose inline advanced.infrastructure, not both it and a legacy setupProfile"
         );
         ensure!(
             self.advanced.azure.is_none() || provider == "azure",
@@ -310,7 +333,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    pub(super) fn yaml() -> &'static str {
+    pub(crate) fn yaml() -> &'static str {
         "name: example\ncloud:\n  provider: azure\n  subscriptionId: 11111111-2222-4333-8444-555555555555\n  region: westus2\nnodes:\n  count: 2\n  requirements:\n    cpu: {min: 4, max: 8}\n    memoryGiB: {min: 16, max: 32}\nbudget:\n  limitUSD: 100\n"
     }
     #[test]
@@ -355,5 +378,56 @@ mod tests {
             },
         );
         c.validate("azure").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod feature_config_tests {
+    use super::*;
+    #[test]
+    fn cloud_settings_accept_independent_features_and_reject_unknown_inline_options() {
+        let base = tests::yaml();
+        for options in [
+            "managementUI: {enabled: true}\n",
+            "observability: {enabled: true, retentionDays: 14, databaseSecret: recording-db}\n",
+        ] {
+            let c: Config = serde_yaml::from_str(&format!("{base}{options}")).unwrap();
+            c.validate("azure").unwrap();
+        }
+        let c: Config = serde_yaml::from_str(base).unwrap();
+        let value = serde_json::to_value(c).unwrap();
+        assert!(value.get("managementUI").is_none() && value.get("observability").is_none());
+        assert!(serde_yaml::from_str::<Config>(&format!(
+            "{base}observability: {{enabled: true, connection: secret}}\n"
+        ))
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod reference_examples {
+    use super::*;
+    #[test]
+    fn cloud_reference_files_match_cli_schema_and_account_profiles() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/service/examples");
+        for provider in ["azure", "aws"] {
+            let c = Config::load(&root.join(provider).join("deployment.yaml"), provider).unwrap();
+            assert!(c.budget.is_none());
+            assert!(c.trial.is_none());
+            assert!(
+                c.management_ui.as_ref().unwrap().enabled
+                    && c.observability.as_ref().unwrap().enabled
+            );
+            assert!(c.advanced.setup_profile.is_none());
+            let infrastructure = c.advanced.infrastructure.clone().unwrap();
+            assert!(c.advanced.release.as_ref().unwrap().is_absolute());
+            if provider == "azure" {
+                let _: super::super::super::azure::Inputs =
+                    serde_json::from_value(infrastructure).unwrap();
+            } else {
+                let _: super::super::super::infrastructure::Inputs =
+                    serde_json::from_value(infrastructure).unwrap();
+            }
+        }
     }
 }

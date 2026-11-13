@@ -31,3 +31,5 @@ managementUI:
   # Must match the API TLS certificate (may use the cluster Service DNS name).
   serviceUrl: ""
   caSecret: "" # optional Secret containing ca.crt
+  caKey: ca.crt
+  tlsSecret: "" # optional private HTTPS preview using an existing API certificate

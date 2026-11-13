@@ -19,6 +19,16 @@ impl Native<'_> {
         if self.provider() != "aws" {
             return self.azure_images().await;
         }
+        // Recover journals written by an older coordinator which completed the
+        // outer stage from a read-only status without advancing native receipts.
+        let journal = self.document(&self.cloud_state().join("cloud-journal.json"))?;
+        if journal["phase"] != "infrastructure_ready" {
+            let reconciled = self.cloud_apply("foundation").await?;
+            ensure!(
+                reconciled["phase"] == "infrastructure_ready",
+                "Original AWS infrastructure receipts are not ready for image publication"
+            );
+        }
         let mut receipts = BTreeMap::<String, Value>::new();
         for (role, source) in [
             ("harness", Some(&self.package.release.images.harness)),
@@ -89,7 +99,21 @@ impl Native<'_> {
             let id=if i==0{"primary"}else{p.as_str()};
             json!({"id":id,"provider":p,"identity":format!("{}-{id}",plan.deployment_id),"key_env":if p=="anthropic"{"ANTHROPIC_API_KEY"}else{"OPENAI_API_KEY"}})
         }).collect();
-        let values = json!({"image":harness,"apiReplicas":1,"worker":{"replicas":1,"ownership":"manual","maxReplicas":2,"slots":2,"drainSeconds":30},"terminationGracePeriodSeconds":90,"secrets":{"model":if c.models.is_empty(){""}else{"ow-service-model"}},"config":{"service":{"id":plan.deployment_id,"namespace":"local","agent":"installed-tools","legacy_compatibility":false},"database_env":"OW_PG_URL","schema":"ow_service","database_loopback_plaintext":false,"database_ca":"/run/service/pg-ca.crt","state_root":"/state","bundle":"/opt/openworker/bundle","runner":"/opt/openworker/openworker","model":model,"scripted":false,"model_provider":provider,"model_connections":connections,"api_token_file":"/bootstrap/admin-token","actor":"deployment-admin","openshell":{"identity":plan.deployment_id,"endpoint":endpoint,"tls_server_name":format!("{fullname}.{ns}.svc.cluster.local"),"certificates":"/openshell","workspace":"default","image":runner},"artifacts":artifacts}});
+        let mut values = json!({"image":harness,"apiReplicas":1,"worker":{"replicas":1,"ownership":"manual","maxReplicas":2,"slots":2,"drainSeconds":30},"terminationGracePeriodSeconds":90,"secrets":{"model":if c.models.is_empty(){""}else{"ow-service-model"}},"config":{"service":{"id":plan.deployment_id,"namespace":"local","agent":"installed-tools","legacy_compatibility":false},"database_env":"OW_PG_URL","schema":"ow_service","database_loopback_plaintext":false,"database_ca":"/run/service/pg-ca.crt","state_root":"/state","bundle":"/opt/openworker/bundle","runner":"/opt/openworker/openworker","model":model,"scripted":false,"model_provider":provider,"model_connections":connections,"api_token_file":"/bootstrap/admin-token","actor":"deployment-admin","openshell":{"identity":plan.deployment_id,"endpoint":endpoint,"tls_server_name":format!("{fullname}.{ns}.svc.cluster.local"),"certificates":"/openshell","workspace":"default","image":runner},"artifacts":artifacts}});
+        if let Some(ui) = &c.management_ui {
+            super::super::super::local::features::configure_ui(
+                &mut values,
+                ui,
+                images["service-ui"]["image"].as_str(),
+                "ows",
+                "ow-service",
+            )?;
+        } else if let Some(image) = images["service-ui"]["image"].as_str() {
+            values["managementUI"] = json!({"enabled":false,"image":image});
+        }
+        if let Some(obs) = &c.observability {
+            super::super::super::local::features::configure_observability(&mut values, obs)?;
+        }
         self.exact_file("service-values.json", &values)?;
         let mut shell: Value =
             serde_json::from_slice(&fs::read(&self.package.release.openshell_values.file)?)?;
@@ -193,7 +217,7 @@ impl Native<'_> {
                 !cert.exists() && !key.exists(),
                 "Partial TLS generation; inspect private credential files before continuing"
             );
-            self.tool("openssl",vec!["req".into(),"-x509".into(),"-newkey".into(),"rsa:3072".into(),"-nodes".into(),"-days".into(),"30".into(),"-subj".into(),"/CN=ows-api.ow-service.svc.cluster.local".into(),"-addext".into(),"subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:ows-api.ow-service.svc.cluster.local,DNS:ows-api.ow-service.svc".into(),"-keyout".into(),arg(&key)?,"-out".into(),arg(&cert)?],None).await?;
+            self.tool("openssl",vec!["req".into(),"-x509".into(),"-newkey".into(),"rsa:3072".into(),"-nodes".into(),"-days".into(),"30".into(),"-subj".into(),"/CN=ows-api.ow-service.svc.cluster.local".into(),"-addext".into(),"basicConstraints=critical,CA:TRUE".into(),"-addext".into(),"keyUsage=critical,digitalSignature,keyCertSign,cRLSign".into(),"-addext".into(),"extendedKeyUsage=serverAuth".into(),"-addext".into(),"subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:ows-api.ow-service.svc.cluster.local,DNS:ows-api.ow-service.svc".into(),"-keyout".into(),arg(&key)?,"-out".into(),arg(&cert)?],None).await?;
         }
         #[cfg(unix)]
         {
@@ -241,7 +265,17 @@ impl Native<'_> {
     pub(super) async fn verify(&self) -> Result<Observation> {
         let result = self.installer("status", &[]).await?;
         let kube = self.root.join("handoff/kubeconfig.json");
-        for component in ["api", "worker", "controller", "platform"] {
+        let mut components = vec!["api", "worker", "controller", "platform"];
+        if self
+            .review
+            .config
+            .management_ui
+            .as_ref()
+            .is_some_and(|ui| ui.enabled)
+        {
+            components.push("ui");
+        }
+        for component in components {
             self.tool(
                 "kubectl",
                 vec![
@@ -258,7 +292,22 @@ impl Native<'_> {
             )
             .await?;
         }
-        let connection = json!({"deploymentId":self.review.deployment_id,"serviceId":self.review.deployment_id,"namespace":"local","url":"https://ows-api.ow-service.svc.cluster.local","access":"private cluster network","kubeconfig":kube,"caFile":self.root.join("credentials/api.crt"),"tokenFile":self.install_state().join("bootstrap-token"),"privatePreview":{"command":"kubectl","arguments":["--kubeconfig",arg(&kube)?,"-n","ow-service","port-forward","service/ows-api","8443:443","--address=127.0.0.1"],"url":"https://localhost:8443"},"modelSmokeTest":"not_run"});
+        let mut connection = json!({"deploymentId":self.review.deployment_id,"serviceId":self.review.deployment_id,"namespace":"local","url":"https://ows-api.ow-service.svc.cluster.local","access":"private cluster network","kubeconfig":kube,"caFile":self.root.join("credentials/api.crt"),"tokenFile":self.install_state().join("bootstrap-token"),"privatePreview":{"command":"kubectl","arguments":["--kubeconfig",arg(&kube)?,"-n","ow-service","port-forward","service/ows-api","8443:443","--address=127.0.0.1"],"url":"https://localhost:8443"},"modelSmokeTest":"not_run"});
+        if let Some(ui) = self
+            .review
+            .config
+            .management_ui
+            .as_ref()
+            .filter(|ui| ui.enabled)
+        {
+            connection["managementUI"] =
+                json!({"url":ui.browser_origin()?,"login":"existing service token"});
+            let url = reqwest::Url::parse(&ui.browser_origin()?)?;
+            if matches!(url.host_str(), Some("localhost" | "127.0.0.1")) {
+                connection["managementUI"]["privatePreview"] = json!({"command":"kubectl","arguments":["--kubeconfig",arg(&kube)?,"-n","ow-service","port-forward","service/ows-ui",format!("{}:443",url.port_or_known_default().unwrap()),"--address=127.0.0.1"],"caFile":self.root.join("credentials/api.crt")});
+            }
+        }
+        connection["observability"] = json!({"enabled":self.review.config.observability.as_ref().is_some_and(|obs|obs.enabled)});
         write_private(&self.root.join("connection.json"), &connection)?;
         Ok(Observation::Complete(
             json!({"nativeStatus":result,"rolloutsReady":true,"modelSmokeTest":"not_run","connectionFile":self.root.join("connection.json")}),

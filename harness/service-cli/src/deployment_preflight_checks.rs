@@ -703,6 +703,11 @@ async fn price(aws: &mut Aws, p: &Plan, kind: Product<'_>) -> Observed<Value> {
     Ok(selected.remove(0))
 }
 async fn cost(aws: &mut Aws, p: &Plan, allowance: u32) -> Observed<Value> {
+    if p.budget.estimate_check_disabled {
+        return Ok(
+            json!({"estimateCheck":"plan_mode_only","estimateAvailable":false,"withinAuthorizedBudget":null,"hardCap":false,"note":"This high-level deployment has no runtime spending cap; see its separate cost-estimate.json"}),
+        );
+    }
     let mut components = BTreeMap::new();
     let mut lines = vec![
         (
@@ -749,8 +754,8 @@ async fn cost(aws: &mut Aws, p: &Plan, allowance: u32) -> Observed<Value> {
     expect(fixed.is_finite())?;
     let fixed = (fixed * 100.0).ceil() / 100.0;
     let estimate = fixed + f64::from(allowance);
-    let mut detail = json!({"rateSource":"AWS Price List GetProducts OnDemand USD","components":components,"plannedHours":hours,"fixedCostEstimateUsd":fixed,"variableAllowanceUsd":allowance,"planningEstimateUsd":estimate,"authorizedBudgetUsd":p.budget.authorized_usd,"withinAuthorizedBudget":estimate<=f64::from(p.budget.authorized_usd),"hardCap":false,"monthHoursForProration":730,"excludedVariableCharges":["NAT processed bytes","data transfer","T4g CPU credits","S3/ECR storage and requests","guard, logs and control-plane requests","OpenShell workspace volume usage"],"allowanceIsNotAnUpperBound":true});
-    if estimate > f64::from(p.budget.authorized_usd) {
+    let mut detail = json!({"rateSource":"AWS Price List GetProducts OnDemand USD","components":components,"plannedHours":hours,"fixedCostEstimateUsd":fixed,"variableAllowanceUsd":allowance,"planningEstimateUsd":estimate,"authorizedBudgetUsd":if p.budget.estimate_check_disabled{Value::Null}else{json!(p.budget.authorized_usd)},"withinAuthorizedBudget":if p.budget.estimate_check_disabled{Value::Null}else{json!(estimate<=f64::from(p.budget.authorized_usd))},"hardCap":false,"monthHoursForProration":730,"excludedVariableCharges":["NAT processed bytes","data transfer","T4g CPU credits","S3/ECR storage and requests","guard, logs and control-plane requests","OpenShell workspace volume usage"],"allowanceIsNotAnUpperBound":true});
+    if !p.budget.estimate_check_disabled && estimate > f64::from(p.budget.authorized_usd) {
         detail["blockingReason"] = json!("budget_exceeded");
     }
     Ok(detail)

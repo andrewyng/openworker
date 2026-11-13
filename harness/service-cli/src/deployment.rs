@@ -13,7 +13,7 @@ mod guard;
 #[path = "deployment_infrastructure.rs"]
 mod infrastructure;
 #[path = "deployment_local.rs"]
-mod local;
+pub(crate) mod local;
 #[path = "deployment_preflight.rs"]
 mod preflight;
 #[path = "deployment_up.rs"]
@@ -33,6 +33,21 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Install from one YAML into an existing local kind cluster; requires kubeconfig.
+    LocalK8s {
+        #[command(subcommand)]
+        command: local::single_file::Command,
+    },
+    /// Roadmap: one-file Docker orchestration; existing Compose scripts remain available.
+    LocalDocker {
+        #[command(subcommand)]
+        command: RoadmapCommand,
+    },
+    /// Roadmap: customer-managed remote Kubernetes; not qualified yet.
+    RemoteK8s {
+        #[command(subcommand)]
+        command: RoadmapCommand,
+    },
     Guard {
         #[command(subcommand)]
         command: guard::Command,
@@ -87,6 +102,19 @@ pub enum Command {
         plan: PathBuf,
         #[arg(long)]
         deployment_id: String,
+    },
+}
+#[derive(Subcommand)]
+pub enum RoadmapCommand {
+    /// Unavailable until the mode is implemented/qualified. Never creates resources.
+    Up {
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Show that the mode is roadmap; does not validate a runnable deployment.
+    Plan {
+        #[arg(long)]
+        config: PathBuf,
     },
 }
 #[derive(Subcommand)]
@@ -226,6 +254,9 @@ enum Target {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Budget {
     authorized_usd: u32,
+    /// New high-level deployments use plan-mode estimates, not a runtime budget.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    estimate_check_disabled: bool,
     hard_cap: bool,
     estimate: Option<u64>,
 }
@@ -429,7 +460,10 @@ impl Plan {
             "Expiry must be within 72 hours of plan creation"
         );
         ensure!(
-            (1..=100_000).contains(&self.budget.authorized_usd)
+            ((1..=100_000).contains(&self.budget.authorized_usd)
+                || (self.budget.estimate_check_disabled
+                    && self.budget.authorized_usd == 0
+                    && !matches!(self.target, Target::Gcp { .. })))
                 && !self.budget.hard_cap
                 && self.budget.estimate.is_none(),
             "Offline plans require a positive budget, unknown estimate, and no hard-cap claim"
@@ -632,6 +666,18 @@ fn result(p: &Plan, m: &Manifest) -> Value {
 }
 pub async fn dispatch(command: &Command) -> Result<()> {
     match command {
+        Command::LocalK8s { command } => return local::single_file::run(command).await,
+        Command::LocalDocker { .. } | Command::RemoteK8s { .. } => {
+            let mode = if matches!(command, Command::LocalDocker { .. }) {
+                "local-docker"
+            } else {
+                "remote-k8s"
+            };
+            crate::output(
+                json!({"mode":mode,"phase":"roadmap","supported":false,"mutations":0,"clusterCreated":false}),
+            )?;
+            bail!("{mode} is roadmap, not a qualified deployment mode. No resources were created. See deploy/service/examples/README.md");
+        }
         Command::Aws {
             command: AwsCommand::Up(o),
         } => return up::run("aws", o).await,
@@ -750,7 +796,10 @@ pub fn run(command: &Command) -> Result<()> {
             command: AwsCommand::Lifecycle { .. },
         } => bail!("Cloud lifecycle requires asynchronous dispatch"),
         Command::Guard { command } => guard::run(command),
-        Command::Local { .. } => bail!("Local installer requires asynchronous dispatch"),
+        Command::Local { .. }
+        | Command::LocalK8s { .. }
+        | Command::LocalDocker { .. }
+        | Command::RemoteK8s { .. } => bail!("Deployment mode requires asynchronous dispatch"),
         Command::Cluster { .. } => bail!("Cluster installer requires asynchronous dispatch"),
         Command::Aws {
             command: AwsCommand::Preflight(_),
@@ -891,6 +940,7 @@ fn create(
         auto_expire: None,
         budget: Budget {
             authorized_usd: a.budget,
+            estimate_check_disabled: false,
             hard_cap: false,
             estimate: None,
         },
@@ -992,6 +1042,7 @@ mod tests {
             auto_expire: None,
             budget: Budget {
                 authorized_usd: 100,
+                estimate_check_disabled: false,
                 hard_cap: false,
                 estimate: None,
             },

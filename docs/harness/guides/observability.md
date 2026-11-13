@@ -165,3 +165,21 @@ proof of compliance. A metadata reader is not a content auditor. In server apps,
 authorize evidence access separately before returning it, and keep database/host
 APIs in the trusted backend. The service's existing compliance content permission
 continues to control audit reads. Cluster experiment/review tooling comes later.
+
+## Manage recording on a service cluster
+
+The source CLI supports independent UI and trace-storage controls:
+
+```sh
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability status --state ./deployment-state/installation
+owcluster observability disable --state ./deployment-state/installation
+owcluster management-ui enable --state ./deployment-state/installation
+```
+
+Use the installer state created by `owcluster deploy aws up` or `owcluster deploy azure up`.
+Enabling recording initializes its separate PostgreSQL schema before workloads
+restart. Disabling stops collection after the rollout and retains stored traces;
+it does not disable security audit or a separately configured exporter.
+See the [deployment configuration and private UI access](../../../deploy/service/up/README.md#management-ui-and-trace-storage)
+for the required pinned UI image, CA, database Secret and enable/disable options.

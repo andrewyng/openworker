@@ -6,12 +6,17 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command as Process,
 };
+#[path = "deployment_features.rs"]
+pub(crate) mod features;
+#[path = "deployment_kubernetes.rs"]
+pub(crate) mod single_file;
 const OWNER: &str = "openworker.io/installer-id";
 #[path = "deployment_cluster_platform.rs"]
 mod platform;
 const CHART_PINS: &[&str] = &[
     "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33", // 0.1.3
     "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a", // 0.1.7 official OCI archive
+    "271368019433b7e5c0668757cdd880302a044924eb37077aef82a95d814efd84", // 0.1.8 official OCI archive
 ];
 #[derive(Subcommand)]
 pub enum Command {
@@ -151,6 +156,8 @@ struct Journal {
     operations: BTreeMap<String, Operation>,
     #[serde(default)]
     confirmed_no_effect: Vec<Operation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    feature_updates: Vec<features::Update>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -450,7 +457,7 @@ fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
         let sha = hash_path(archive)?;
         ensure!(
             CHART_PINS.contains(&sha.as_str()),
-            "OpenShell archive differs from reviewed 0.1.3/0.1.7 pins"
+            "OpenShell archive differs from reviewed 0.1.3/0.1.7/0.1.8 pins"
         );
         let v = read_json(values_file)?;
         ensure!(
@@ -651,6 +658,10 @@ async fn install_release(
     owned(client, p, j, ns)
         .await?
         .context("Owned namespace missing")?;
+    if key == "service-release" && !j.feature_updates.is_empty() {
+        features::verify_current(client, p, j).await?;
+        return Ok(());
+    }
     if let Some(mut r) = client.release(ns, release).await? {
         let op = j
             .operations
@@ -692,7 +703,7 @@ async fn install_release(
                     .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty)),
                 "Hooks may have unknown effects; failed release requires manual review"
             );
-            ready_service(client, p).await?;
+            ready_service(client, p, j).await?;
             let job = client
                 .get("job", &format!("{release}-bootstrap"), Some(ns))
                 .await?
@@ -822,9 +833,12 @@ async fn prerequisites(client: &Client<'_>, eks: bool) -> Result<()> {
     );
     Ok(())
 }
-async fn ready_service(client: &Client<'_>, p: &Plan) -> Result<()> {
-    let values: Value = read_json(&p.config.service.values_file)?;
-    let mut roles = vec!["api", "worker", "controller", "platform"];
+async fn ready_service(client: &Client<'_>, p: &Plan, j: &Journal) -> Result<()> {
+    let values = features::effective_values(p, j)?;
+    let mut roles = vec!["api", "worker", "controller"];
+    if values["platformControllerEnabled"] != false {
+        roles.push("platform");
+    }
     if values["managementUI"]["enabled"] == true {
         roles.push("ui");
     }
@@ -1236,11 +1250,13 @@ async fn uninstall(
         .context("Owned namespace missing before uninstall")?;
     let delete = format!("uninstall:{key}");
     if let Some(r) = client.release(ns, release).await? {
-        let receipt = j
-            .operations
-            .get(key)
-            .and_then(|o| o.receipt.as_ref())
-            .context("Release identity was never confirmed")?;
+        let receipt = if key == "service-release" {
+            features::latest_receipt(j)
+        } else {
+            None
+        }
+        .or_else(|| j.operations.get(key).and_then(|o| o.receipt.as_ref()))
+        .context("Release identity was never confirmed")?;
         ensure!(
             r["uid"] == receipt["uid"] && r["revision"] == receipt["revision"],
             "Release identity changed before uninstall"
@@ -1447,6 +1463,7 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
         .await?;
     }
     let client = Client { c: &p.config };
+    features::reconcile(&client, &p, state, &mut j).await?;
     ensure!(
         client.cluster().await? == p.cluster_uid,
         "Cluster identity changed"
@@ -1709,7 +1726,7 @@ async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
                 },
             )
             .await?;
-            ready_service(&client, &p).await?;
+            ready_service(&client, &p, &j).await?;
             j.phase = "installed".into();
             save(state, "journal.json", &j)?;
         }

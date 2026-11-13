@@ -501,6 +501,39 @@ fn stale_wrong_or_incomplete_preflight_and_locked_state_prevent_all_calls() {
 }
 
 #[test]
+fn completed_remote_stack_requires_receipt_reconciliation_before_image_publication() {
+    let f = Fixture::new();
+    parsed(&f.apply("", false, true)); // guard accepted
+    parsed(&f.apply("", false, true)); // infrastructure accepted
+    let journal = f.home.path().join("state/cloud-journal.json");
+    let original = fs::read(&journal).unwrap();
+    let status = parsed(&f.status(""));
+    assert_eq!(status["observed"]["infra"]["status"], "CREATE_COMPLETE");
+    assert_eq!(status["phase"], "infra_creating");
+    assert_eq!(fs::read(&journal).unwrap(), original); // status remains read-only
+    let refused = f.publish("", false);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("must be ready"));
+    let creates = f.creates();
+    let before: Value = serde_json::from_slice(&original).unwrap();
+    let reconciled = parsed(&f.apply("", false, true));
+    assert_eq!(reconciled["phase"], "infrastructure_ready");
+    assert_eq!(f.creates(), creates);
+    let after: Value = serde_json::from_slice(&fs::read(&journal).unwrap()).unwrap();
+    for key in ["create:guard", "create:infra"] {
+        assert_eq!(
+            before["operations"][key]["token"],
+            after["operations"][key]["token"]
+        );
+        assert_eq!(
+            before["operations"][key]["arn"],
+            after["operations"][key]["arn"]
+        );
+    }
+    parsed(&f.publish("", false));
+    assert_eq!(f.creates(), creates);
+}
+#[test]
 fn existing_create_is_reconciled_with_stale_preflight_but_next_creation_is_blocked() {
     let f = Fixture::new();
     assert!(!f.apply("fail-after-create", false, true).status.success());

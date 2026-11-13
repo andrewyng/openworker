@@ -1,84 +1,120 @@
-# Deploy OpenWorker with one command
+# Deploy OpenWorker from one YAML
 
-This experimental coordinator installs a private service cluster, OpenShell and the OpenWorker service using a reviewed account setup profile. It resumes the same deployment when rerun. Fresh AWS and Azure installs with this coordinator still require live qualification; do not treat local tests as a production certificate.
+Use one `staging-deploy.yaml` or `prod-deploy.yaml` for deployment choices and
+advanced account/infrastructure overrides. There is no required setup-profile
+file. Generated release manifests, plans, credentials and recovery journals are
+separate installer artifacts, not additional configuration you must hand-author.
 
-Once the prerequisites below are installed, copy `aws.yaml` or `azure.yaml` to `deployment.yaml`, set your account/subscription and region, then run:
-
-```sh
-owcluster deploy aws up --config deployment.yaml
-# or
-owcluster deploy azure up --config deployment.yaml
-```
-
-The command resolves a supported VM size, writes a cost/permission review, and asks for approval before making cloud changes. Fixed node counts are supported; autoscaling is not. Requests with an uncertain outcome are observed using their original identity rather than blindly resubmitted.
-
-## One-time prerequisites
-
-Install `owcluster`, your cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs kubelogin and, for the management VM, SSH. AWS's optional operator bridge needs the Session Manager plugin. Authenticate with your own cloud identity. The command never creates long-lived cloud access keys.
-
-An administrator prepares a target-bound setup profile at:
-
-```text
-~/.config/ows/deployments/aws/<account-id>/<region>.json
-~/.config/ows/deployments/azure/<subscription-id>/<region>.json
-```
-
-Use `advanced.setupProfile` in YAML to select another file. The administrator reviews the scoped native bootstrap permission exports. AWS needs permission to create the reviewed bootstrap identity stack. Azure needs the reviewed RBAC authority at the workload/control groups and exact vault/secret scopes; its active login must match `setupObjectId`. Normal workload identities never receive these installation privileges. Azure resource groups, the Entra administrator group and the versioned database password in Key Vault already exist. The vault must use RBAC and allow ARM template deployment.
-
-The profile contains **references and version pins**, not passwords:
-
-```json
-{
-  "schemaVersion": 1,
-  "provider": "aws",
-  "account": "123456789012",
-  "region": "us-west-2",
-  "operatorArn": "arn:aws:iam::123456789012:role/approved-installer",
-  "infrastructure": {},
-  "release": "/absolute/path/to/release/release.json"
-}
-```
-
-Replace `infrastructure` with the reviewed native AWS input described in [`harness/service-cli/examples/README.md`](../../../harness/service-cli/examples/README.md). It includes zone/version pins and a versioned S3 reference to **this CLI release's packaged cleanup guard**. For Azure, use the existing Azure infrastructure input (Kubernetes version, supported VM size, SSH public key, administrator group IDs, control group, pinned external cleanup image and Key Vault secret reference). Its profile uses `provider: azure`, the subscription as `account`, and `resourceGroup`, `setupObjectId`, `setupPrincipalType` instead of `operatorArn`. Package the matching native cleanup image before running the installer. Existing control assets are retained, not silently taken over or deleted.
-
-This release does not assume public OpenWorker service images or a published Helm chart exist. Prepare a reviewed release manifest with `package.py --help`: it copies a chart, pinned OpenShell archive and values, platform manifest and database CA bundle, then hashes them. Supply immutable harness/runner image digests for Linux ARM64 on AWS or AMD64 on Azure. The supported OpenShell archive is 0.1.7. The CA bundle must contain 1–32 certificates. The installer publishes the selected images into its owned ECR/ACR registry. An optional UI image can be packaged, but browser ingress/UI exposure is not enabled by this initial coordinator.
-
-## Review, budget and resume
+Complete [Azure, AWS and local examples](../examples/README.md) show the supported
+schema. The service installer remains experimental until the current release
+passes a fresh cloud install, agent/recovery and cleanup qualification.
 
 ```sh
-owcluster deploy azure up --config deployment.yaml --plan-only
+owcluster deploy azure up --config staging-deploy.yaml --plan-only
+owcluster deploy aws up --config prod-deploy.yaml --plan-only
 ```
 
-The private `.ows/deployments/<target-and-name-hash>/` directory contains `review.json`, the exact native `infrastructure/` permission/template bundle and the durable journal. Keep it: it holds the original deployment identities. Do not delete or edit it to retry an uncertain cloud operation.
+Remove `--plan-only` to review/approve provisioning. `--accept-plan DIGEST` and
+`--accept-bootstrap DIGEST` provide separate noninteractive approvals of the exact
+saved review. The command never treats an uncertain result as permission to
+recreate resources. Rerun with the original state to reconcile unfinished work.
 
-`budget.limitUSD` is the reviewed experiment/planning budget used for cost checks. **It does not create cloud billing alerts and is not a hard cap.** Fixed costs, missing catalog rates and a separate variable-cost allowance are reported. Storage, logs, traffic, model usage and retained control resources can add costs; the allowance is not an upper bound. Persistent reviews use a 730-hour planning horizon; disposable trials use their specified lifetime. Set account billing alerts separately.
+## Application choices
 
-For automation, review the generated files, then supply their exact review digest:
+```yaml
+apiVersion: ows/v1alpha1
+name: my-agents
+cloud:
+  provider: azure
+  subscriptionId: "11111111-2222-4333-8444-555555555555"
+  region: westus2
+nodes:
+  count: 2
+  instanceType: Standard_D4as_v7
+managementUI:
+  enabled: true
+  port: 8444
+observability:
+  enabled: true
+  retentionDays: 14
+models:
+  anthropic: {env: ANTHROPIC_API_KEY}
+advanced:
+  # Inline the provider/identity overrides shown in the complete example.
+  release: /absolute/path/to/generated-release/release.json
+  infrastructure: {}
+  azure:
+    resourceGroup: rg-my-agents
+    setupObjectId: "22222222-3333-4444-8555-666666666666"
+    setupPrincipalType: User
+```
+
+The snippet omits infrastructure detail for readability; copy a complete example.
+Fixed node count or a CPU/memory size range is supported; autoscaling is roadmap.
+`models` supplies env/file credential references, currently OpenAI and Anthropic.
+It is not a general provider-routing configuration API. The installer stages keys
+privately after approval. Completion reports `modelSmokeTest: not_run`; deploy and
+submit an agent separately through the service SDK.
+
+## Advanced inputs and prerequisites
+
+`advanced.infrastructure` embeds the reviewed provider inputs previously kept in
+`setup.json`. AWS uses `advanced.aws.operatorArn`; Azure uses
+`advanced.azure.resourceGroup`, `setupObjectId` and `setupPrincipalType`.
+`advanced.release` selects a generated, checksum-verified release manifest with
+pinned service/runner/UI images and chart/CA/OpenShell artifacts. Relative paths
+in deployment YAML resolve against that YAML's directory. Generated release
+manifest paths are absolute. Legacy explicit `advanced.setupProfile` import is
+compatibility-only; new files do not use it or a hidden default account profile.
+
+Install `owcluster`, the cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs
+kubelogin and SSH for its optional management VM; AWS's SSM bridge needs the
+Session Manager plugin. Sign in using your existing cloud identity. The installer
+requires the reviewed provisioning/RBAC scopes, not merely a successful login.
+
+Current Azure prerequisites still include existing workload/control resource
+groups, an Entra administrator group, versioned database password in an RBAC Key
+Vault with ARM deployment access, and an independent pinned cleanup image.
+AWS requires the reviewed installer identity and a versioned S3 cleanup package.
+The native approval/bootstrap flow handles its supported grants; it does not
+magically create all account prerequisites. Default-pin discovery, account setup
+wizard and publicly distributed release artifacts remain separate launch work.
+
+Package the matching release using `package.py --help`: Linux ARM64 for AWS,
+AMD64 for Azure, including `service-ui` when enabling the UI. New cloud deployments
+require the reviewed OpenShell0.1.7 or0.1.8 archive. The current version does not assume
+public service images or a published Helm chart are already available.
+
+## Cost estimates, not spending caps
+
+There is no required `budget` field in new deployment YAML. Check an optional
+estimated-cost ceiling in plan mode:
 
 ```sh
-owcluster deploy azure up --config deployment.yaml \
-  --accept-plan <planDigest> --accept-bootstrap <planDigest>
+owcluster deploy azure up --config staging-deploy.yaml --plan-only \
+  --max-estimated-cost-usd 100
 ```
 
-AWS accepts the same options. Saved approvals apply only to that exact configuration, release and generated cloud graph. Rerunning observes unfinished operations and retains their receipts. Changed configuration requires a separate reviewed deployment/update; it is not applied in place.
+The CLI queries provider retail catalogs for the selected resources and saves a
+separate `cost-estimate.json` with timestamp, sources, quantities, missing prices,
+planned hours and ceiling result. The estimate covers modeled fixed infrastructure
+plus an explicit allowance; model usage, variable traffic/storage/requests, taxes,
+discounts and unmodeled resources are not a bill prediction or hard cap. A ceiling
+check fails if modeled prices are incomplete or exceed the ceiling. Without a
+ceiling, unknown prices remain visible rather than becoming zero or a passing
+budget claim. The option requires `--plan-only`.
 
-## Private management access
+Quotes expire after30minutes. Rerun plan mode to refresh the quote for the same
+frozen resource intent; its review digest and original operations do not change.
+Before a new deployment is admitted, expired or failed quote checks require a
+fresh plan review. Already dispatched deployments retain their original approval
+for recovery; price expiry never causes replacement/recreation. Estimates are not
+continuously enforced during execution. Cloud billing alerts are separate.
+Earlier experimental YAML/native CLI budgeting is compatibility behavior only.
 
-The command can use an existing private route. If your account input enables the operator bridge, it creates the native bridge resource and connects automatically: AWS SSM port forwarding or Azure SSH restricted to the configured operator IPv4. Azure's `advanced.azure.sshPrivateKeyFile` selects the matching local key; otherwise SSH uses your existing key/agent. SSH host keys are saved in the private deployment directory. The original Kubernetes hostname and CA remain verified through a loopback proxy.
+## Optional trial expiry
 
-Add `--keep-access` to keep that route open after readiness checks. In another terminal use `connection.json` for the private API URL, CA, token-file path and port-forward instructions. Ctrl-C closes the local route; subsequent commands can recreate it after reconciling the original SSM session. A changed operator address, unavailable SSM session, occupied local proxy port or missing private route produces an actionable error rather than making the Kubernetes management API public.
-
-## Model credentials and completion
-
-Use `models.openai: {env: OPENAI_API_KEY}` or `models.anthropic: {env: ANTHROPIC_API_KEY}` (a `file` reference also works). Keys are read only when staging Kubernetes Secrets and are never written to the immutable review. The private local credential staging directory contains secrets and must not be committed.
-
-An installation can complete without model credentials. Completion verifies component readiness; it explicitly reports `modelSmokeTest: not_run`. Submit an agent separately to qualify your chosen provider/model and application.
-
-## Persistent deployments and disposable trials
-
-Omitting `trial` disables automatic workload expiry. The older destructive teardown route refuses persistent deployments until a separate retention workflow is approved. It will not delete your database as a side effect of an expired provisioning deadline.
-
-For disposable tests only, set:
+Without `trial`, the workload does not automatically expire. For disposable data:
 
 ```yaml
 trial:
@@ -86,18 +122,57 @@ trial:
   deleteData: true
 ```
 
-This enables the existing independent cleanup controller. It retains the control/audit resources documented in the native review. A timeout or failure does not authorize deleting/recreating resources with uncertain outcomes. Read the original receipts and use the native lifecycle reconciliation/cleanup commands for the same deployment.
+This enables independent expiry cleanup and explicitly permits workload data
+deletion. It is not a guaranteed cost cap; failures and retained control/audit
+resources can still incur costs. Persistent destructive teardown remains refused
+pending a separately reviewed data-retention workflow.
 
-## Local checks
+## UI, trace storage and private access
 
-Run the CLI unit/integration suite with `cargo test --manifest-path harness/Cargo.toml -p openworker-service-cli`. Its cloud operations use fixtures. The cleanup guard and Helm rendering checks run with `node --test deploy/service/guard/guard.test.cjs deploy/service/chart.test.mjs`.
+`managementUI.port` is the operator's loopback HTTPS preview port. The CLI derives
+`https://localhost:PORT`; internal browser origin/CSRF checks remain strict. It
+emits port-forward commands and CA information, not tokens in URLs. Use a current
+service token to sign in. This does not create public ingress, DNS or a certificate
+for a company domain. Existing ingress users can retain the legacy explicit origin;
+`owcluster management-ui enable --ingress-url https://manage.example.com` selects it.
+Do not combine an explicit ingress origin and preview port.
 
-To exercise the actual `up --plan-only` entry point, package pins, approval gates and resume handling with trapped AWS commands:
+Use `--keep-access` to retain AWS SSM/Azure SSH private management connectivity.
+The original Kubernetes endpoint/hostname/CA stay verified through the loopback
+route. `connection.json` records API and enabled UI connection instructions.
+
+After an installation has recorded its original private-access route,
+`--access-only --keep-access` reopens that route for diagnosis without advancing
+installation or replacing resources. Stop the command to close the route.
+
+For Azure operators whose installation host cannot reach the database bootstrap
+secret in Key Vault, `--database-password-file /private/database-password` can
+supply that same database password. The file must be a bounded regular UTF-8 file
+with private permissions (0600 on Unix). Its content is not printed or saved in
+the installation review; the database host and TLS checks remain unchanged.
+
+UI and recording are independent and disabled unless configured. Recording uses
+its own connection/schema on execution PostgreSQL by default; an existing Secret
+selected by `observability.databaseSecret` may provide `database-url` and `ca.crt`
+for a separate database. That Secret must be staged in the owned namespace before
+service installation. Enabling initializes its schema before startup.
 
 ```sh
-python3 deploy/service/up/test-plan.py \
-  --ows /absolute/path/to/ows \
-  --openshell-archive /absolute/path/to/helm-chart-0.1.7.tgz
+owcluster management-ui enable --state ./deployment-state/installation --port 8444
+owcluster management-ui disable --state ./deployment-state/installation
+owcluster management-ui status --state ./deployment-state/installation
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability disable --state ./deployment-state/installation
+owcluster observability status --state ./deployment-state/installation
 ```
 
-That check uses the real pinned OpenShell archive, fixture image references and catalog responses. It performs no real cloud calls, does not install a cluster and must not be presented as cloud qualification.
+The commands save feature overrides in the installer journal, retain the original
+review and verify cluster/namespace/Helm identities. Unknown upgrades are observed,
+never replayed. Disabling recording retains stored data; its retention worker is
+also stopped until recording resumes. Execution state, security audit and independent
+OTLP exporters remain separate. A UI rollout requires sign-in again.
+
+For a separately signed API certificate, the UI can select a public CA Secret/key
+through `caSecret`/`caKey` or `--ca-secret`/`--ca-key`. Without an override it trusts
+the self-signed API certificate generated by the installer. The UI process gets
+only public trust material; its TLS sidecar gets the separate private-key mount.

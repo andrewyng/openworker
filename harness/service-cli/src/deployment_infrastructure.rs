@@ -673,7 +673,7 @@ fn review(p: &Plan, i: &Inputs, policies: &BTreeMap<String, Value>) -> String {
         r#"# {} AWS experiment review
 
 Deployment `{}`; account `{account}`; region `{region}`; resource prefix `{prefix}`.
-Budget authorization ${}; no verified estimate and no spending cap. Fixed expiry {}.
+Cost policy {}; no spending cap. Provisioning deadline {}.
 
 ## Generated, not provisioned
 
@@ -750,7 +750,11 @@ of the entire bundle. No cloud execution was performed to generate this review.
 "#,
         p.name,
         p.deployment_id,
-        p.budget.authorized_usd,
+        if p.budget.estimate_check_disabled {
+            "plan-only estimates; no runtime budget".into()
+        } else {
+            format!("legacy authorization ${}", p.budget.authorized_usd)
+        },
         p.expires_at_unix,
         i.vpc_cidr,
         i.availability_zones,

@@ -95,4 +95,31 @@ See [AWS deployment](../../docs/harness/guides/aws.md) and
 [deployment options](../../docs/harness/guides/deployment.md). Use an owned trial
 with an explicit budget and independent cleanup before production deployment.
 
-`owcluster` is the primary command. `ows` remains an alias, using the same commands, configuration and saved deployment state. Existing `.ows` paths and `OWS_*` settings remain valid.
+`owcluster` is the primary command. `owcluster` remains an alias, using the same commands, configuration and saved deployment state. Existing `.ows` paths and `OWS_*` settings remain valid.
+
+## Optional management UI and trace storage
+
+Select these features in `deployment.yaml` for the AWS/Azure `up` commands, or
+change them on an existing installation:
+
+```sh
+owcluster management-ui enable --state ./deployment-state/installation --port 8444
+owcluster management-ui disable --state ./deployment-state/installation
+owcluster management-ui status --state ./deployment-state/installation
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability disable --state ./deployment-state/installation
+owcluster observability status --state ./deployment-state/installation
+```
+
+`--state` is the original installer journal, using its Kubernetes credentials and
+verified cluster identity. UI and trace storage are independent. Disabling tracing
+retains data and leaves security audit and separately configured exporters intact.
+The CLI saves feature changes and reconciles lost Helm responses without repeating
+unknown upgrades. See [setup, UI image, private HTTPS and database options](../../deploy/service/up/README.md#management-ui-and-trace-storage).
+
+Complete [Azure, AWS and local kind reference files](../../deploy/service/examples/README.md)
+put deployment choices and advanced account/cluster inputs in one YAML. The CLI
+generates internal values/installer files; replace the documented placeholders
+before use. `local-docker` and `remote-k8s` are explicit roadmap modes, not
+qualified installers. New cloud configs omit budget; optional estimated-cost
+ceilings use `up --plan-only --max-estimated-cost-usd`.

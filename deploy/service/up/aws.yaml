@@ -1,18 +1,51 @@
-apiVersion: ows/v1alpha1
-name: my-agents
+# Single authored deployment file. Replace documented identity/artifact placeholders.
+# No trial by default: this deployment does not expire automatically.
+# For disposable data only, add trial: {expiresAfterHours: 6, deleteData: true}.
+# Cost estimates are checked with --plan-only --max-estimated-cost-usd, not a spending cap.
+apiVersion: "ows/v1alpha1"
+name: "aws-agents"
 cloud:
-  provider: aws
+  provider: "aws"
   accountId: "123456789012"
-  region: us-west-2
-  profile: default
+  region: "us-west-2"
+  profile: "default"
 nodes:
   count: 2
-  requirements:
-    cpu: {min: 2, max: 4}
-    memoryGiB: {min: 8, max: 16}
-budget:
-  limitUSD: 1000
-# Omit trial to keep the deployment running. For disposable test data only:
-# trial: {expiresAfterHours: 6, deleteData: true}
-# models:
-#   anthropic: {env: ANTHROPIC_API_KEY}
+  instanceType: "t4g.large"
+managementUI:
+  enabled: true
+  port: 8444
+observability:
+  enabled: true
+  retentionDays: 14
+models:
+  anthropic:
+    env: "ANTHROPIC_API_KEY"
+advanced:
+  release: "/absolute/path/to/arm64-release/release.json"
+  infrastructure:
+    schemaVersion: 1
+    availabilityZones:
+      - "us-west-2a"
+      - "us-west-2b"
+    vpcCidr: "10.94.0.0/16"
+    kubernetesVersion: "1.36"
+    nodeReleaseVersion: "1.36.4-20261007"
+    postgresVersion: "16.13"
+    addons:
+      vpcCni: "v1.21.1-eksbuild.1"
+      kubeProxy: "v1.36.4-eksbuild.1"
+      coreDns: "v1.13.1-eksbuild.1"
+      podIdentity: "v1.3.8-eksbuild.1"
+      ebsCsi: "v1.48.0-eksbuild.1"
+    guardCode:
+      bucket: "example-ows-qualified-artifacts"
+      key: "guard/cleanup.zip"
+      versionId: "EXAMPLE-not-an-uploaded-object"
+      sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    acknowledgeExperimentDataDeletion: true
+    operatorAccess:
+      mode: "ssm"
+      amiId: "ami-0123456789abcdef0"
+  aws:
+    operatorArn: "arn:aws:iam::123456789012:role/REPLACE_WITH_APPROVED_INSTALLER"

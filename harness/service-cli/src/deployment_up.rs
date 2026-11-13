@@ -2,18 +2,20 @@
 //! Desired state, reviewed observations and effect receipts remain distinct.
 use super::*;
 #[path = "deployment_up_config.rs"]
-mod config;
+pub(super) mod config;
 #[path = "deployment_up_native.rs"]
 mod native;
 #[path = "deployment_up_package.rs"]
 mod package;
 #[path = "deployment_up_pricing.rs"]
-mod pricing;
+pub(super) mod pricing;
 #[path = "deployment_up_resolve.rs"]
 mod resolve;
 #[path = "deployment_up_state.rs"]
 mod state;
 use config::Config;
+#[path = "deployment_up_cost.rs"]
+mod cost;
 
 #[derive(Args)]
 pub struct Options {
@@ -25,17 +27,27 @@ pub struct Options {
     /// Resolve and write the review without provisioning.
     #[arg(long)]
     plan_only: bool,
+    /// Check the priced fixed infrastructure estimate plus explicit allowance, never actual spend.
+    #[arg(long, requires = "plan_only", value_parser=clap::value_parser!(u32).range(1..=100000))]
+    max_estimated_cost_usd: Option<u32>,
     /// Noninteractive approval of this exact review digest, never a blanket yes.
     #[arg(long)]
     accept_plan: Option<String>,
     /// Separate approval of scoped identity grants in the exact reviewed plan.
     #[arg(long)]
     accept_bootstrap: Option<String>,
+    /// Azure only: private password file matching the reviewed database secret.
+    /// Avoids reading Key Vault data plane from the installer network.
+    #[arg(long)]
+    database_password_file: Option<PathBuf>,
     #[arg(long, default_value_t = 3600)]
     timeout_seconds: u64,
     /// Keep the private management route open after installation; Ctrl-C closes it.
     #[arg(long)]
     keep_access: bool,
+    /// Reopen the original private route for diagnosis without advancing installation.
+    #[arg(long, requires = "keep_access", conflicts_with = "plan_only")]
+    access_only: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -156,6 +168,11 @@ pub(super) fn operation_lock(root: &Path, name: &str) -> Result<fs::File> {
     Ok(f)
 }
 async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()> {
+    ensure!(
+        !c.management_ui.as_ref().is_some_and(|ui| ui.enabled)
+            || package.release.images.service_ui.is_some(),
+        "Enabling managementUI requires a digest-pinned service-ui image in the release manifest"
+    );
     let mut tools: Vec<(&str, Vec<&str>)> = vec![
         ("kubectl", vec!["version", "--client", "--output=json"]),
         ("helm", vec!["version", "--short"]),
@@ -163,6 +180,7 @@ async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()
         ("openssl", vec!["version"]),
     ];
     if c.cloud.provider() == "azure" {
+        tools.push(("docker", vec!["buildx", "version"]));
         tools.push(("kubelogin", vec!["--version"]));
         if package
             .setup
@@ -188,6 +206,10 @@ async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()
 }
 pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
     let config = Config::load(&o.config, provider)?;
+    ensure!(
+        o.database_password_file.is_none() || provider == "azure",
+        "database-password-file is Azure-only"
+    );
     let package = package::load(&config)?;
     ensure!(
         (10..=14400).contains(&o.timeout_seconds),
@@ -241,6 +263,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &value,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default(),
         }
         .artifact_digest()?;
@@ -255,6 +278,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &review,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default()
         }
         .artifact_digest()?
@@ -262,7 +286,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         "Generated infrastructure/permissions changed since review; do not reuse the old approval"
     );
     crate::output(
-        json!({"deploymentId":review.deployment_id,"state":state,"planDigest":review.digest,"nodeCount":config.nodes.count,"instanceType":review.resolution.node.instance_type,"price":review.resolution.price,"phase":"review","mutations":0}),
+        json!({"deploymentId":review.deployment_id,"state":state,"planDigest":review.digest,"nodeCount":config.nodes.count,"instanceType":review.resolution.node.instance_type,"price":review.resolution.price,"priceObservedAtUnix":review.resolution.observed_at_unix,"priceSnapshot":"original planning observation; refreshed prices live in cost-estimate.json","phase":"review","mutations":0}),
     )?;
     if o.plan_only {
         native::Native {
@@ -270,16 +294,26 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &review,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default(),
         }
         .review_bundle()
         .await?;
-        return Ok(());
+        return cost::review(&state, &review, &package, o.max_estimated_cost_usd).await;
     }
-    if let Some(subtotal) = review.resolution.price.known_hourly_subtotal_usd {
+    if let Some(path) = &o.database_password_file {
+        native::validate_password_input(path)?;
+    }
+    cost::validate_approval(&state, &review)?;
+    if let Some(subtotal) = review
+        .resolution
+        .price
+        .known_hourly_subtotal_usd
+        .filter(|_| config.budget.is_some())
+    {
         let minimum = subtotal * f64::from(review.resolution.price.planned_hours)
             + f64::from(review.resolution.price.variable_allowance_usd);
-        ensure!(minimum<=f64::from(config.budget.alert_usd),"Known planning estimate already exceeds budget.limitUSD. Review a new budget/size/lifetime before provisioning; no mutations performed.");
+        ensure!(minimum<=f64::from(config.budget.as_ref().unwrap().alert_usd),"Known planning estimate already exceeds budget.limitUSD. Review a new budget/size/lifetime before provisioning; no mutations performed.");
     }
     // Render the exact permission payloads before either approval prompt.
     let preview = native::Native {
@@ -287,6 +321,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         review: &review,
         package: package.clone(),
         bootstrap_approved: false,
+        database_password_file: None,
         bridge: Default::default(),
     };
     preview.review_bundle().await?;
@@ -309,6 +344,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         review: &review,
         package,
         bootstrap_approved: true,
+        database_password_file: o.database_password_file.clone(),
         bridge: Default::default(),
     };
     let path = state.join("up-journal.json");
@@ -319,6 +355,21 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         .is_some_and(|s| s.phase == state::Phase::Complete)
     {
         driver.restore_access().await?;
+    }
+    if o.access_only {
+        ensure!(
+            journal
+                .stages
+                .get(&state::Stage::PrivateAccess)
+                .is_some_and(|s| s.phase == state::Phase::Complete),
+            "Original private access receipt is required"
+        );
+        crate::output(
+            json!({"phase":"access_ready","state":state,"installationAdvanced":false,"close":"Ctrl-C"}),
+        )?;
+        tokio::signal::ctrl_c().await?;
+        driver.close_access().await?;
+        return Ok(());
     }
     let previously_complete = journal.complete();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(o.timeout_seconds);
@@ -421,6 +472,66 @@ mod route_tests {
 #[cfg(test)]
 mod approval_tests {
     use super::*;
+    #[test]
+    fn saved_review_preserves_catalog_prices_and_rejects_drift() {
+        let config: Config = serde_json::from_value(json!({
+            "name":"example",
+            "cloud":{"provider":"aws","accountId":"123456789012","region":"us-west-2"},
+            "nodes":{"count":2,"instanceType":"t4g.large"}
+        }))
+        .unwrap();
+        for rate in [
+            0.00015753424657534247_f64,
+            0.5438415068493151,
+            0.012712465753424657,
+            0.1534027397260274,
+        ] {
+            let resolution = serde_json::from_value(json!({
+            "node":{"instanceType":"t4g.large","cpu":2,"memoryGiB":8,"architecture":"arm64","eligible":true,"hourlyUsd":0.0672},
+            "price":{"currency":"USD","workerHourlyUsd":0.1344,"totalHourlyUsd":null,
+                "knownHourlySubtotalUsd":rate,
+                "components":{"databaseDisks":{"hourlyUsd":rate,"quantity":20.0,"source":"catalog fixture","meter":"disk"}},
+                "variableAllowanceUsd":15,"plannedHours":4,"unpricedComponents":["cluster"],"hardCap":false},
+            "observedAtUnix":1,"identity":{"accountId":"123456789012"}
+        }))
+        .unwrap();
+            let mut original = Review {
+                schema_version: 1,
+                config_digest: config.digest().unwrap(),
+                config: config.clone(),
+                deployment_id: "ows-0123456789abcdef0123456789abcdef".into(),
+                resolution,
+                package_digest: "a".repeat(64),
+                native_bundle_digest: "b".repeat(64),
+                digest: String::new(),
+            };
+            original.digest = original.digest().unwrap();
+            original.validate(&config).unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("review.json");
+            write_private(&path, &original).unwrap();
+            let mut restored: Review = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            assert_eq!(
+                restored.resolution.price.components["databaseDisks"]
+                    .hourly_usd
+                    .to_bits(),
+                rate.to_bits()
+            );
+            restored.validate(&config).unwrap();
+            assert_eq!(restored.digest, original.digest);
+            restored
+                .resolution
+                .price
+                .components
+                .get_mut("databaseDisks")
+                .unwrap()
+                .hourly_usd += 0.01;
+            assert!(
+                restored.validate(&config).is_err(),
+                "Actual price drift must still invalidate approval"
+            );
+        }
+    }
     #[test]
     fn approval_is_durable_scoped_and_rejects_changed_review() {
         let temp = tempfile::tempdir().unwrap();

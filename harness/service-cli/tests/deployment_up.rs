@@ -49,7 +49,7 @@ fn inline_secret_or_wrong_cloud_fails_without_login_or_secret_echo() {
     }
 }
 #[test]
-fn absent_account_profile_produces_prerequisite_instructions_without_cloud_calls() {
+fn missing_inline_infrastructure_produces_instructions_without_cloud_calls() {
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("deployment.yaml");
     fs::write(&config,"name: example\ncloud: {provider: azure, subscriptionId: '11111111-2222-4333-8444-555555555555', region: westus2}\nnodes: {count: 2, instanceType: Standard_D4as_v7}\nbudget: {limitUSD: 100}\n").unwrap();
@@ -69,6 +69,41 @@ fn absent_account_profile_produces_prerequisite_instructions_without_cloud_calls
         .unwrap();
     assert!(!r.status.success());
     let error = String::from_utf8_lossy(&r.stderr);
-    assert!(error.contains("setup profile is missing"), "{error}");
+    assert!(error.contains("advanced.infrastructure"), "{error}");
     assert!(!temp.path().join(".ows").exists());
+}
+
+#[test]
+fn estimated_ceiling_is_explicitly_plan_only_and_unqualified_modes_never_execute_tools() {
+    let out = Command::new(BIN)
+        .args([
+            "deploy",
+            "aws",
+            "up",
+            "--config",
+            "unused.yaml",
+            "--max-estimated-cost-usd",
+            "100",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--plan-only"));
+    let d = tempfile::tempdir().unwrap();
+    for mode in ["local-docker", "remote-k8s"] {
+        for action in ["plan", "up"] {
+            let o = Command::new(BIN)
+                .env_clear()
+                .env("HOME", d.path())
+                .env("PATH", d.path())
+                .args(["deploy", mode, action, "--config", "not-read.yaml"])
+                .output()
+                .unwrap();
+            assert!(!o.status.success());
+            let status: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+            assert_eq!(status["supported"], false);
+            assert_eq!(status["mutations"], 0);
+            assert!(String::from_utf8_lossy(&o.stderr).contains("roadmap"));
+        }
+    }
 }

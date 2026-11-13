@@ -36,8 +36,11 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
         {{- if $azure }}
         # This chart owns its explicit projection; prevent webhook injection of
-        # another token path or credentials into the TLS sidecar.
-        azure.workload.identity/skip-containers: {{ if eq $role "api" }}"harness;tls"{{ else }}"harness"{{ end }}
+        # another token path or credentials into TLS/schema-only containers.
+        {{- $skip := list "harness" -}}
+        {{- if eq $role "api" }}{{ $skip = append $skip "tls" }}{{ end -}}
+        {{- if hasKey $.Values.config "observability" }}{{ $skip = append $skip "recording-schema" }}{{ end }}
+        azure.workload.identity/skip-containers: {{ join ";" $skip | quote }}
         {{- end }}
     spec:
       automountServiceAccountToken: {{ eq $role "platform" }}
@@ -48,6 +51,23 @@ spec:
       {{- end }}
       terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
       securityContext: {fsGroup: 1000}
+      {{- if hasKey $.Values.config "observability" }}
+      # Explicit enable-time initialization; advisory-locked and idempotent.
+      # No first-admin bootstrap, provider key or sandbox credential required.
+      initContainers:
+        - name: recording-schema
+          image: {{ $.Values.image | quote }}
+          command: [/bin/sh, /opt/openworker/entrypoint.sh]
+          args: [recording-migrate]
+          securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+          volumeMounts:
+            - {name: service, mountPath: /run/service/database-url, subPath: database-url, readOnly: true}
+            - {name: service, mountPath: /run/service/pg-ca.crt, subPath: pg-ca.crt, readOnly: true}
+            - {name: service, mountPath: /run/service/config.json, subPath: config.json, readOnly: true}
+            {{- if $.Values.secrets.observability }}
+            - {name: observability, mountPath: /run/observability, readOnly: true}
+            {{- end }}
+      {{- end }}
       containers:
         - name: harness
           image: {{ $.Values.image | quote }}
