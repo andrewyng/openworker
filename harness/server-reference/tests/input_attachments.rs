@@ -33,7 +33,7 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
     let mut store = PostgresStore::open(db.clone()).unwrap();
     store.auth_bootstrap(ADMIN, "admin").unwrap();
     let admin = store.authorized(ADMIN).unwrap();
-    for sid in ["s_one", "s_two"] {
+    for sid in ["s_one", "s_two", "s_three"] {
         let mut session:Session=serde_json::from_value(json!({"id":sid,"name":"Input","workspace":"/work","coworker":"test","bundle_digest":"bundle","schema_digest":null,"interactions":[],"turn":null,"sandbox":null,"closed":false,"resource_policy":openworker_runtime::resource_policy::Resolved::default()})).unwrap();
         if sid == "s_two" {
             session
@@ -44,6 +44,20 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
                     "secret",
                     "SECRET_",
                     openworker_runtime::safety::Action::Block,
+                ));
+        }
+        if sid == "s_three" {
+            session
+                .safety
+                .guardrails
+                .user_input
+                .push(openworker_runtime::safety::Rule::regex(
+                    "redact-secret",
+                    "SECRET_[0-9]+",
+                    openworker_runtime::safety::Action::Redact {
+                        replacement: "[redacted]".into(),
+                        keep_last: 0,
+                    },
                 ));
         }
         store.save(&session, "session_created", json!({})).unwrap();
@@ -80,7 +94,9 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
         None,
         None,
         Default::default(),
-        Some(Box::new(store.clone())),
+        // An API replica does not own the worker's session leases. Sharing the
+        // worker store here concealed admission's accidental lease dependency.
+        Some(Box::new(PostgresStore::open(db.clone()).unwrap())),
     )
     .unwrap();
     let mut urls = vec![];
@@ -272,6 +288,70 @@ async fn uploads_cross_api_replicas_are_scoped_and_recoverable() {
         .unwrap()
         .input_attachment("s_one", "notes", Upload::Stat)
         .is_err());
+    // Guardrails still inspect documents and produce immutable replacement
+    // references without acquiring or changing the worker's session lease.
+    let original = b"Document includes SECRET_12345.";
+    let metadata = Metadata {
+        id: "original".into(),
+        name: "secret.txt".into(),
+        media_type: "text/plain".into(),
+        size: original.len(),
+        sha256: openworker_runtime::bundle::digest(original),
+    };
+    for upload in [
+        Upload::Begin { metadata },
+        Upload::Chunk {
+            offset: 0,
+            data: STANDARD.encode(original),
+        },
+        Upload::Commit,
+    ] {
+        store
+            .input_attachment("s_three", "original", upload)
+            .unwrap();
+    }
+    let redacted = post(
+        1,
+        ADMIN,
+        "/v1/sessions/s_three/turns".into(),
+        json!({"content":[{"type":"text","text":""},{"type":"document","attachment_id":"original"}]}),
+        "redaction",
+    )
+    .await
+    .unwrap();
+    let status = redacted.status();
+    let receipt: Value = redacted.json().await.unwrap();
+    assert_eq!(status, 202, "{receipt}");
+    let input = store
+        .submission_input("s_three", receipt["submissionId"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        input[0],
+        Part::Text {
+            text: String::new()
+        }
+    );
+    let Part::Document { attachment_id } = &input[1] else {
+        panic!("Document ordering changed")
+    };
+    assert_ne!(attachment_id, "original");
+    let blob = admin
+        .clone()
+        .input_attachment("s_three", attachment_id, Upload::Stat)
+        .unwrap();
+    assert_eq!(blob.bytes, b"Document includes [redacted].");
+    assert_eq!(
+        store
+            .input_attachment("s_three", "original", Upload::Stat)
+            .unwrap()
+            .bytes,
+        original
+    );
+    assert!(
+        store.get("s_three").is_ok(),
+        "API inspection must not steal the worker lease"
+    );
     for server in servers {
         server.abort();
         let _ = server.await;

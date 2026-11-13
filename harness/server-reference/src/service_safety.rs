@@ -36,6 +36,30 @@ async fn inspect_with(
             openworker_store_postgres::SubmissionError::InvalidRequest.into(),
         ));
     }
+    inspect_policy(app, sid, request, text, extra).await
+}
+/// UTF-8 documents have their own bounded upload limit, independent of the
+/// 32 KB conversational-text limit. Admission never claims a worker lease.
+pub(crate) async fn inspect_attachment_text(
+    app: &App,
+    sid: &str,
+    request: &str,
+    text: &str,
+) -> Result<String, ApiError> {
+    if text.len() > openworker_runtime::attachments::MAX_FILE {
+        return Err(ApiError(
+            openworker_store_postgres::SubmissionError::InvalidRequest.into(),
+        ));
+    }
+    inspect_policy(app, Some(sid), request, text, None).await
+}
+async fn inspect_policy(
+    app: &App,
+    sid: Option<&str>,
+    request: &str,
+    text: &str,
+    extra: Option<&Config>,
+) -> Result<String, ApiError> {
     let (config, pins) = if let Some(sid) = sid {
         let (session, pins) = app.store.input_safety_policy(sid)?;
         (app.config.safety.merge(&session)?, pins)
