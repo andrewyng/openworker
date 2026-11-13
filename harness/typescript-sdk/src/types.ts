@@ -67,6 +67,10 @@ export interface ToolContext {
   turnId: string;
   /** Scope with sessionId and turnId; callbacks may arrive before event consumption. */
   callId: string;
+  /** Exact registered application tool name. */
+  qualifiedName: string;
+  /** Model-facing alias when supplied by the host. */
+  modelAlias?: string;
   workspace: string;
   signal: AbortSignal;
   progress(message: string, data?: Json): Promise<void>;
@@ -243,7 +247,7 @@ export type Interruption = {
   session_id: string;
   agent: string;
 } & (
-  | { kind: "approval"; tool: string; arguments: Json; category?: string }
+  | { kind: "approval"; tool: string; qualified_name?: string; model_alias?: string; arguments: Json; category?: string }
   | { kind: "question"; question: string; options: string[] }
   | { kind: "safety"; code: string }
 );
@@ -335,8 +339,20 @@ export interface RunEvent {
         | { type: "model_activity"; attemptId: string; elapsedMs: number }
         | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
-            type: "tool_started" | "tool_finished";
+            type: "tool_started";
             tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
+            /** Released start-event content; absent on older hosts, null if withheld. */
+            arguments?: Json;
+            /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
+            callId: string;
+          }
+        | {
+            type: "tool_finished";
+            tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
             /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
             callId: string;
           }

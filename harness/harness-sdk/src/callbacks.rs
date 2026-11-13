@@ -195,7 +195,7 @@ impl Tool for Proxy {
                 bridge: self.bridge.clone(),
             };
             self.bridge.events.send(json!({"kind":"call","owner":owner,"invocation_id":id,"tool":self.descriptor.qualified_name,"arguments":arguments,
-                "context":{"session_id":context.session_id,"turn_id":context.turn_id,"call_id":context.call_id,"workspace":context.workspace}}))
+                "context":{"session_id":context.session_id,"turn_id":context.turn_id,"call_id":context.call_id,"workspace":context.workspace,"qualified_name":self.descriptor.qualified_name,"model_alias":openworker_tools::model_alias(&self.descriptor.qualified_name).ok()}}))
                 .map_err(|_|ToolError::new("outcome_unknown","Application callback delivery was lost; do not replay"))?;
             tokio::select! {
                 _=context.cancellation.cancelled()=>Err(ToolError::new("outcome_unknown","Application callback cancelled; effects may already have occurred")),
