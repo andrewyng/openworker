@@ -485,9 +485,20 @@ impl Driver for Native<'_> {
                 if !self.cloud_state().exists() {
                     return Ok(Observation::Absent);
                 }
-                let status = self.cloud_status().await?;
+                let mut status = self.cloud_status().await?;
                 if self.provider() == "aws" {
                     if status["observed"]["infra"]["status"] == "CREATE_COMPLETE" {
+                        // Status is intentionally read-only. Reconcile the original
+                        // create receipts before declaring this stage complete;
+                        // installation requires the durable lifecycle phase too.
+                        if status["phase"] != "infrastructure_ready" {
+                            let reconciled = self.cloud_apply("foundation").await?;
+                            ensure!(
+                                reconciled["phase"] == "infrastructure_ready",
+                                "Original AWS infrastructure receipts are not ready"
+                            );
+                            status = reconciled;
+                        }
                         return Ok(Observation::Complete(status));
                     }
                     let journal = self.document(&self.cloud_state().join("cloud-journal.json"))?;

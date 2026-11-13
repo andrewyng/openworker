@@ -19,6 +19,16 @@ impl Native<'_> {
         if self.provider() != "aws" {
             return self.azure_images().await;
         }
+        // Recover journals written by an older coordinator which completed the
+        // outer stage from a read-only status without advancing native receipts.
+        let journal = self.document(&self.cloud_state().join("cloud-journal.json"))?;
+        if journal["phase"] != "infrastructure_ready" {
+            let reconciled = self.cloud_apply("foundation").await?;
+            ensure!(
+                reconciled["phase"] == "infrastructure_ready",
+                "Original AWS infrastructure receipts are not ready for image publication"
+            );
+        }
         let mut receipts = BTreeMap::<String, Value>::new();
         for (role, source) in [
             ("harness", Some(&self.package.release.images.harness)),
