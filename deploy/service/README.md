@@ -1,16 +1,16 @@
 # OpenWorker Service on a local machine
 
-Run the API, controller, worker and PostgreSQL in Docker Compose. `ows` connects
+Run the API, controller, worker and PostgreSQL in Docker Compose. `owcluster` connects
 through HTTPS and submits agents to an existing NVIDIA OpenShell gateway.
 This reference is for local integration testing. It does not install Kubernetes
 or OpenShell, and it is not a production HA deployment.
 
-For the native `ows deploy local` Kubernetes installer, including pinned OpenShell
+For the native `owcluster deploy local` Kubernetes installer, including pinned OpenShell
 installation or reuse of an existing gateway, see the
 [Deployment options](../../docs/harness/guides/deployment.md).
 
 ```text
-ows / application SDK
+owcluster / application SDK
         │ HTTPS + bearer token; REST requests and SSE events
         ▼
 TLS ingress ── API ── PostgreSQL
@@ -53,14 +53,15 @@ cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-
 docker build --target runtime -f deploy/service/Dockerfile -t openworker-service:local .
 ```
 
-The host CLI is `harness/target/release/ows`. The image includes Linux `ows`, the
+The host CLI is `harness/target/release/owcluster`. The image includes Linux `owcluster`, the
 service executable and the runtime. Base image digests and the Cargo lockfile are
 pinned; system package downloads still use the distribution repository. Build on
 the intended architecture. This milestone was qualified on ARM64, not x86-64.
 
-For development with already-built **Linux** binaries, put `ows`,
+For development with already-built **Linux** binaries, put `owcluster`,
 `openworker-server-reference` and `openworker` in `.ow-service-build/out/` and use
-`--target prebuilt`. Never copy host macOS binaries into that directory.
+`--target prebuilt`. Include `ows` as a symlink to `owcluster` when supporting
+existing automation. Never copy host macOS binaries into that directory.
 The Docker build context excludes generated state and credentials.
 
 ## Configure and start
@@ -80,7 +81,7 @@ custom provider endpoints or hot credential rotation.
 ```sh
 node deploy/service/stack.mjs init .ow-service /absolute/connection.json openworker-service:local
 node deploy/service/stack.mjs up .ow-service
-harness/target/release/ows --config .ow-service/cli.json whoami
+harness/target/release/owcluster --config .ow-service/cli.json whoami
 ```
 
 Initialization creates a unique deployment/service ID, local CA, short-lived server
@@ -118,7 +119,7 @@ process-lifetime gaps; it is **not yet a passing long-running coding acceptance*
 Against a scripted deployment and a real local OpenShell gateway:
 
 ```sh
-node deploy/service/qualify.mjs .ow-service harness/target/release/ows
+node deploy/service/qualify.mjs .ow-service harness/target/release/owcluster
 ```
 
 This submits real file operations, answers approvals/questions, rejects wrong TLS
@@ -142,13 +143,13 @@ is pinned at initialization; retagging a changed image cannot silently upgrade a
 existing deployment. This milestone has no automated image-upgrade command.
 
 Before destruction, cancel/finish runs, close sessions and explicitly delete each
-environment using `ows`. Deletion is asynchronous: repeat with the **same** key to
+environment using `owcluster`. Deletion is asynchronous: repeat with the **same** key to
 observe it, or use `environment get`. The controller dispatches deletion once;
 after connection loss it only checks the original object's state. A permanently
 unknown outcome requires operator reconciliation, not a new delete request.
 
 ```sh
-ows --config .ow-service/cli.json environment list
+owcluster --config .ow-service/cli.json environment list
 node deploy/service/stack.mjs destroy .ow-service THE_EXACT_PRINTED_DEPLOYMENT_ID
 ```
 
@@ -163,7 +164,7 @@ are covered by the [Deployment options](../../docs/harness/guides/deployment.md)
 Hosted SSO follows later. Model connections/secrets and
 worker-slot settings currently remain deployment configuration.
 
-Cloud installation uses the same native installer through `ows deploy cluster`.
+Cloud installation uses the same native installer through `owcluster deploy cluster`.
 See the [AWS deployment guide](../../docs/harness/guides/aws.md)
 for planning, guard checks, image publication, private Secret handoff and recovery.
 The bounded Oregon/Linux ARM64 [Deployment options](../../docs/harness/guides/deployment.md)

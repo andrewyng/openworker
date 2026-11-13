@@ -679,8 +679,8 @@ Budget authorization ${}; no verified estimate and no spending cap. Fixed expiry
 
 This bundle contains private EKS/RDS/network/S3/ECR and independent guard templates,
 plus the identities and execution policies they reference. It has only been tested
-locally. Ordinary `ows deploy apply` remains disabled; the explicit experimental
-`ows deploy aws lifecycle` path requires opt-in and fresh preflight. No resources
+locally. Ordinary `owcluster deploy apply` remains disabled; the explicit experimental
+`owcluster deploy aws lifecycle` path requires opt-in and fresh preflight. No resources
 have been provisioned to generate this bundle.
 Cloud IAM behavior, supported versions, quotas, prices and guard behavior are NOT
 certified by offline validation. `guard-contract.json` is a mandatory qualification
