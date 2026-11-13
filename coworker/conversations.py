@@ -319,7 +319,11 @@ class ConversationStore:
             ).fetchall()
             for row in rows:
                 sid = row["session_id"]
-                jsonl = self._file(sid)
+                try:
+                    jsonl = self._file(sid)
+                except ValueError:
+                    # Leave an unsafe legacy row untouched and migrate the remaining sessions.
+                    continue
                 if jsonl.exists() and row["title"] and row["n_msgs"]:
                     continue  # already migrated
                 if jsonl.exists():
