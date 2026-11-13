@@ -1079,14 +1079,21 @@ document.addEventListener("keydown", (e) => {
 });
 window.addEventListener("hashchange", render);
 wireForm();
-fetch("/session")
+// Finish restoring the existing session before accepting a new token. Otherwise
+// a delayed initial 401 can clear a token or undo a successful fresh sign-in.
+fetch("/session", { signal: AbortSignal.timeout(10000) })
   .then(async (r) => {
     if (r.ok) {
       auth = await r.json();
       showApp();
     } else loggedOut();
   })
-  .catch(() => loggedOut("Service unavailable."));
+  .catch(() => loggedOut("Service unavailable."))
+  .finally(() => {
+    $("#token").disabled = false;
+    $("#login-form button").disabled = false;
+    $("#login-form").removeAttribute("aria-busy");
+  });
 
 window.addEventListener("beforeunload", (event) => {
   if (pending) {
