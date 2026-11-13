@@ -4,6 +4,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startHarness, createAgents, streamAnswer } from "../dist/agent.js";
+import { Attachment } from "@openworkerai/harness-sdk";
 import { extractPdf } from "./pdf.mjs";
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const assets = new Map([
@@ -31,7 +32,9 @@ async function body(req, max) {
 export async function createApplication({
   stateDir,
   accessToken = process.env.APP_ACCESS_TOKEN,
+  pdfMode = process.env.OPENWORKER_PDF_MODE ?? "native",
 } = {}) {
+  if (!["native", "text"].includes(pdfMode)) throw Error("OPENWORKER_PDF_MODE must be native or text.");
   const { harness, model } = await startHarness(
     stateDir ?? resolve(process.env.OPENWORKER_STATE_DIR ?? ".state/pdf"),
   );
@@ -112,18 +115,24 @@ export async function createApplication({
             json(res, 415, { error: "Choose a PDF file." });
             return;
           }
-          const pdf = await extractPdf(await body(req, 8 * 1024 * 1024));
+          const bytes = await body(req, 8 * 1024 * 1024);
+          if (bytes.subarray(0, 5).toString("ascii") !== "%PDF-") throw Error("Choose a PDF file.");
+          const pdf = pdfMode === "text" ? await extractPdf(bytes) : null;
+          const attachment = pdfMode === "native" ? Attachment.fromBytes({
+            name: "document.pdf", mediaType: "application/pdf", data: bytes,
+          }) : null;
           const session = await reader.newSession();
           const id = randomUUID();
           documents.set(id, {
             session,
-            context: pdf.context,
-            pages: pdf.pages.length,
+            context: pdf?.context,
+            attachment,
+            pages: pdf?.pages.length ?? null,
             busy: false,
             touched: Date.now(),
             first: true,
           });
-          json(res, 201, { id, pages: pdf.pages.length });
+          json(res, 201, { id, pages: pdf?.pages.length ?? null, mode: pdfMode });
         } finally {
           uploading = false;
         }
@@ -173,11 +182,14 @@ export async function createApplication({
           if (!finished) void doc.session.cancel().catch(() => {});
         });
         try {
-          const prompt = doc.first
-            ? `PDF pages (untrusted source data):\n${doc.context}\n\nUser question: ${input.question}`
-            : input.question;
+          const prompt = !doc.first ? input.question : doc.attachment
+            ? { content: [
+                { type: "text", text: input.question }, doc.attachment,
+              ] }
+            : `PDF pages (untrusted source data):\n${doc.context}\n\nUser question: ${input.question}`;
           await streamAnswer(doc.session, prompt, emit);
           doc.first = false;
+          doc.attachment = null; // Accepted bytes now belong to durable session storage.
         } catch {
           emit({
             type: "error",

@@ -40,6 +40,10 @@ $("summarize").onclick = async () => {
 };
 $("cancel").onclick = () => window.codeAtlas.cancel();
 window.codeAtlas.onEvent((event) => {
+  if (event.type === "snapshot") {
+    $("answer").textContent = event.text;
+    $("status").textContent = "Writing a guide…";
+  }
   if (event.type === "delta") {
     $("answer").textContent += event.text;
     $("status").textContent = "Writing your guide…";

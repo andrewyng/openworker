@@ -1,59 +1,89 @@
-# Versions and compatibility
+# Versions and installation
 
-Use the native runtime version pinned by your SDK release. During beta, pin a
-repository revision or an explicitly published release rather than following a
-moving branch in a production application.
+npm installs the SDK and the native runtime it requires.
 
-The published TypeScript client **0.1.0-beta.4** is a documentation-only update
-using native runtime **0.1.0-beta.3**. npm installs that exact dependency; keep
-optional dependencies enabled. Executable code and API declarations are unchanged
-from client beta.3. The native compatibility check remains strict: a client package
-version is not permission to substitute an arbitrary runtime version.
+## Published packages
 
-## Install from a checkout
+Verified on November 13, 2026:
 
-Source manifests are development packages. A version in a manifest does not mean
-that the corresponding package has been published to npm or crates.io. Follow the
-[desktop](desktop.md) or [web app](server.md) guide to build the examples from a
-checkout, and use the [release tooling](../../../harness/release/README.md) when
-preparing distributable artifacts.
+| Package | Version | Purpose |
+| --- | --- | --- |
+| `@openworkerai/harness-sdk` | **0.1.0-beta.4** | TypeScript/Node client |
+| Matching platform runtime | **0.1.0-beta.3** | Rust harness executable; selected automatically by npm |
+| `@openworkerai/openworker-harness-builder` | **0.1.0-beta.7** | App-building skill installer |
 
-For TypeScript, ship the matching native helper with your application. Packaged
-desktop apps should keep it outside ASAR and resolve its absolute path. For Rust,
-build the SDK and any ToolRunner/helper executable from the same revision.
+Install with `npm install @openworkerai/harness-sdk`, or append
+`@0.1.0-beta.4` to pin this release. Keep npm optional dependencies enabled and
+commit your lockfile. Node.js 20+ is supported; the complete Desktop/Web examples
+require **22.12+**. Native packages cover macOS, Windows and glibc Linux on ARM64
+and x64. Alpine/musl is not one of these targets.
+
+Client beta.4 updates documentation; executable code and declarations match
+beta.3. Its native dependency remains beta.3. Do not replace that binary based on
+the client version alone. Applications that set `OPENWORKER_EXECUTABLE` must
+supply the runtime required by their installed client.
+
+Builder beta.7 targets SDK beta.4. The installer records its tested SDK version in
+`references/installation.json`. Skill versions advance independently of the SDK.
+The previous `build-with-sdk-skills` package and `openworker-apps` skill name are
+legacy. Use the [current installer](../../../skills/README.md).
+
+## What this release includes
+
+The current runtime includes native user attachments, standalone sub-agents,
+attempt-aware streaming, provider usage/caching support and optional recording.
+Use [attachments](attachments.md), [delegation](subagents.md),
+[streaming](streaming.md) and [observability](observability.md) for their APIs.
+A remote service must advertise the corresponding capabilities too.
+
+Application-tool images and per-session reviewer guidance have their own capability
+checks. These guides identify limits; a feature in GitHub `main` is not automatically
+available in every older package or custom host.
+
+## Rust from source
+
+The npm release is not a crates.io publication. Use a pinned Git dependency for
+Rust. This docs revision uses the following source revision:
+
+```toml
+[dependencies]
+openworker-sdk = { git = "https://github.com/andrewyng/openworker.git", rev = "4af48474" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures-util = "0.3"
+anyhow = "1"
+```
+
+A text-only in-process agent needs no separate helper. If your selected tools or
+execution mode require a helper, build it from that same revision:
+
+```sh
+cargo build --manifest-path harness/Cargo.toml --locked --release \
+  -p openworker-sdk --bin openworker-harness
+```
+
+Run that command from the pinned checkout. Supply the resulting absolute path
+through the harness builder when needed. The repository Rust examples use local
+path dependencies; keep the SDK and helper source revision aligned.
+
+## Examples and source links
+
+The website source drawer contains the example snapshot built with this guide.
+The complete TypeScript examples pin the published npm package and resolve its
+runtime automatically. GitHub links generally show current development source;
+use a pinned checkout or the packaged skill when reproducing a released example.
+
+For TypeScript desktop packaging, place the runtime in application resources
+outside ASAR. Build and test on the target OS, including its signing requirements.
+See [Desktop](desktop.md) or [Web](server.md) for the runnable track.
 
 ## Upgrade an application
 
-1. Back up durable state before changing versions.
-2. Install the runtime dependency selected by the SDK; update an explicit/custom
-   executable to that required version. Retain the previous app package for rollback.
-3. Read the [storage migration instructions](guardrails.md#upgrade-an-existing-installation)
-   before restarting an application or service against existing state.
-4. For services, drain workers and coordinate API/worker upgrades. Do not downgrade
-   a database schema marker to make an older binary start.
-5. Exercise your application's model connections, tools and session recovery on
-   the target OS before distributing the updated package.
+1. Back up durable state.
+2. Update the SDK and use its selected runtime; update explicit/custom executables too.
+3. Follow [storage upgrades](upgrades.md) before opening existing state.
+4. For services, drain and coordinate API/worker upgrades.
+5. Resume a saved conversation and check the application's providers, tools and files.
 
-Protocol negotiation does not make arbitrary SDK and host releases interchangeable.
-The application controls when it upgrades; the harness does not replace its running
-executable automatically.
-
-## Session and streaming API updates
-
-The new turn options, history import, built-in tool controls and provider settings
-require a native harness that advertises those capabilities. They are not enabled by
-updating a TypeScript declaration file alone. Existing sessions and omitted
-configuration keep their previous tool selection and per-call limits.
-
-Rust applications using explicit `TurnLimits` or `TurnOptions` literals should
-include the new fields or use `..Default::default()`. Tool event variants now
-carry call and turn IDs, and there are new attempt/reasoning/diagnostic variants;
-update exhaustive matches, or use `..` when ignoring additional fields. See
-[session options](sessions.md) and [streaming and retries](streaming.md) for examples.
-
-Rust code that previously handled `assistant_delta` through `RunEvent::Other`
-should now match `RunEvent::TextDelta`. TypeScript's raw journal event names
-remain unchanged.
-
-See [troubleshooting](troubleshooting.md) for runtime discovery, version mismatch
-and storage errors.
+Protocol negotiation does not make arbitrary SDK/host releases interchangeable.
+Rust users with exhaustive event matches may need to handle new variants;
+`RunEvent::TextDelta` carries assistant output. See [streaming](streaming.md).

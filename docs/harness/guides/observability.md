@@ -4,9 +4,26 @@ Inspect each turn's timeline, model usage, tools and spawned tasks. Keep recordi
 locally, forward traces to a collector or Langfuse, or use both. These are separate
 options; neither is needed to run an agent.
 
-The high-level recording and evaluation APIs below are an **unpublished source
-candidate**. They are not in the current `0.1.0-beta.2` npm release. Use matching
-local SDK/runtime builds until the next release is reviewed.
+Available in native runtime beta.3 with matching SDK configuration. Recording,
+trace export and content capture are independently configurable. See [versions](releases.md).
+
+## What you can inspect
+
+| View | What it answers |
+| --- | --- |
+| Run search | Which session or run should I investigate? |
+| Session turns | What happened after each user message? |
+| Execution tree and waterfall | Which model call or tool took time, failed or retried? |
+| Step details | What usage, outcome and permitted input/output belong to this step? |
+| Child navigation | What did a delegated agent do? Open its session and return through the parent breadcrumb. |
+
+The [management UI](../../../harness/service-ui/README.md) provides these views for
+an authenticated service. Applications can also query recordings or embed the
+optional trace viewer. No UI dependency is added to the core runtime.
+
+![Session tracing: search, per-turn waterfall and model step details.](images/session-tracing.jpg)
+
+*The tracing component with synthetic sample data. Content capture is off.*
 
 ## Record locally
 
@@ -25,9 +42,10 @@ const harness = await Harness.start({
   },
 });
 // Create/run your agent as usual; then query its accepted turn.
-const turns = await harness.observability.listTurns({sessionId});
-const query = {sessionId, turnId: turns.turns[0].turn_id};
 await harness.observability.flush(5000);
+const turns = await harness.observability.listTurns({sessionId});
+if (!turns.turns.length) throw new Error("No recorded turn to inspect");
+const query = {sessionId, turnId: turns.turns[0].turn_id};
 const timeline = await harness.observability.timeline(query);
 const summary = await harness.observability.summary({...query, through: timeline.page.through});
 ```
@@ -63,7 +81,8 @@ const telemetry = langfuseTelemetry(
   'https://your-langfuse.example/api/public/otel',
   'LANGFUSE_AUTHORIZATION',
 );
-// Pass telemetry to Harness.start. The environment value is
+const harness = await Harness.start({ telemetry });
+// The environment value is
 // "Basic " + base64(publicKey + ":" + secretKey), stored only in the backend.
 ```
 
@@ -96,7 +115,12 @@ Usage/Timeline views, model/tool groups, child navigation and basic score displa
 Your app supplies an authorized browser adapter. Do not put SDK, database or
 exporter credentials in the browser.
 
-## Record evaluations
+<details><summary>Advanced: evaluation records, delivery and audit evidence</summary>
+
+These APIs store results supplied by your application. They do not run judges
+or provide a cluster evaluation UI.
+
+### Record evaluations
 
 Enable `recording.evaluations: true`, then submit results from your app or evaluator:
 
@@ -140,7 +164,7 @@ For caller-controlled one-shot export, import `exportLangfuseScore` from
 `@openworkerai/harness-sdk/evaluation-export`. It does not retry uncertain responses.
 Choose automatic or caller-controlled delivery for each destination.
 
-## Evidence and audits
+### Evidence and audits
 
 Set `recording.evidence` only when content is needed: `userInput`, `assistantOutput`,
 `toolArguments`, `toolResults`, and `maxBytes` (256–65,536). `evidence(query)` projects
@@ -165,3 +189,5 @@ proof of compliance. A metadata reader is not a content auditor. In server apps,
 authorize evidence access separately before returning it, and keep database/host
 APIs in the trusted backend. The service's existing compliance content permission
 continues to control audit reads. Cluster experiment/review tooling comes later.
+
+</details>

@@ -58,3 +58,27 @@ OpenShell compatibility and independent cleanup in your subscription before use.
 
 Start with the [service CLI](../../../harness/service-cli/README.md) and
 [deployment options](deployment.md).
+
+## Plan a deployment from source
+
+The service CLI is a source-built operator tool, separate from the npm SDK. This
+experimental flow requires authenticated cloud access, scoped bootstrap permissions,
+a prepared setup profile and a release manifest with pinned images. The config
+alone is not sufficient for a fresh account.
+
+```sh
+cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-service-cli
+cp deploy/service/up/azure.yaml deployment.yaml
+# Edit the account/subscription, region, sizing and reviewed setup references.
+harness/target/release/ows deploy azure up --config deployment.yaml --plan-only
+```
+
+Review the plan and prerequisites before provisioning. To apply that reviewed
+configuration, run the same command without `--plan-only`. It requests approval
+before cloud changes. Plan estimates and budget values are not hard billing caps.
+Keep the deployment state directory for resume and cleanup.
+
+Use the [complete coordinator instructions](../../../deploy/service/up/README.md)
+for setup identities, image preparation, private access and connection output.
+The forthcoming consolidated YAML and UI/recording controls are being qualified
+separately; do not assume an older `ows` binary accepts those options.

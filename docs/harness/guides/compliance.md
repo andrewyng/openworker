@@ -39,3 +39,49 @@ upload the whole conversation.
 See [guardrails](guardrails.md) and [observability](observability.md).
 This provides auditability, not a regulatory certification or tamper-proof storage
 against a database administrator. Legal holds and immutable archives are separate work.
+
+## Configure capture and delivery
+
+```typescript
+const page = await session.complianceActivity({ limit: 100 });
+const next = await session.complianceActivity({ after: page.nextAfter, limit: 100 });
+const health = await session.complianceDeliveryHealth();
+```
+
+The service provides:
+
+- `GET /v1/compliance/sessions/{id}/activities?after=0&limit=100`
+- `GET /v1/compliance/sessions/{id}/delivery`
+- `GET /v1/compliance/sessions/{id}/content?after=0` with separate content authority.
+
+A `compliance_reader` can read metadata only; a `compliance_auditor` can also read
+accepted conversation content. Both retain their session scope. General observer
+access does not grant compliance authority. Successful compliance reads are
+recorded in the security audit. The management UI's administrator Safety tab uses
+metadata only; the browser proxy does not expose the content endpoint.
+
+Enable the optional exporter in the host binary, then configure a sink:
+
+```typescript
+const harness = await Harness.start({
+  compliance: { retentionDays: 30, maxPendingEvents: 10000 },
+  complianceSinks: [{
+    name: "security-events-v1",
+    endpoint: "https://siem.example.com/openworker/events",
+    credentialEnv: "SIEM_TOKEN",
+  }],
+});
+```
+
+Only the named credential is inherited by the trusted child. The endpoint receives
+JSON batches of metadata activities with stable per-event IDs. The receiver should return 2xx only after durably accepting the batch. HTTP success
+acknowledges a batch; timeout/connection loss retries delivery with those same
+IDs. Changing a destination requires a new sink version. There are no redirects
+and no automatic tool retries. Restore a failed receiver before its pending
+backlog grows too large. The configured threshold blocks new turn/model/tool
+admission while allowing completion/cancellation evidence and export to drain.
+
+Metadata retention is independent of canonical conversation storage. Expired
+metadata is omitted from query pages; trusted maintenance can prune it. Registered
+unacknowledged export records are retained until delivered. This is not a legal
+hold, immutable archive or protection against a privileged database administrator.

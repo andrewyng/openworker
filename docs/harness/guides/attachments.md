@@ -1,14 +1,13 @@
 # Attach images, PDFs and text files
 
-**Source preview.** These APIs require the SDK and runtime from this branch;
-they are not included in the published `0.1.0-beta.2` packages. The host advertises
-`capabilities.attachments`; a remote service advertises `features.attachments`.
-An older host returns a setup error rather than dropping a file.
-
 Attach a screenshot, a PDF report or a UTF-8 text file to a user message. Files
 are model inputs: attaching a file does not place it in a sandbox, grant a tool
 permission or share it with a child agent. Choose a model that accepts the formats
 you use. Provider request/context limits still apply.
+
+Available in native runtime beta.3, installed automatically by the current npm
+SDK. See [versions](releases.md). A remote service must advertise
+`features.attachments`; an older host rejects the request rather than dropping files.
 
 ## Add files after a message
 

@@ -180,51 +180,11 @@ acknowledgement can repeat an ID; deduplicate external effects. Observer failure
 cannot allow, veto or replay agent actions. SIEM delivery has its own checkpoints
 and health rather than relying on an application observer.
 
-## Read evidence and export it
+## Audit policy decisions
 
-```typescript
-const page = await session.complianceActivity({ limit: 100 });
-const next = await session.complianceActivity({ after: page.nextAfter, limit: 100 });
-const health = await session.complianceDeliveryHealth();
-```
-
-The service provides:
-
-- `GET /v1/compliance/sessions/{id}/activities?after=0&limit=100`
-- `GET /v1/compliance/sessions/{id}/delivery`
-- `GET /v1/compliance/sessions/{id}/content?after=0` with separate content authority.
-
-A `compliance_reader` can read metadata only; a `compliance_auditor` can also read
-accepted conversation content. Both retain their session scope. General observer
-access does not grant compliance authority. Successful compliance reads are
-recorded in the security audit. The management UI's administrator Safety tab uses
-metadata only; the browser proxy does not expose the content endpoint.
-
-Enable the optional exporter in the host binary, then configure a sink:
-
-```typescript
-const harness = await Harness.start({
-  compliance: { retentionDays: 30, maxPendingEvents: 10000 },
-  complianceSinks: [{
-    name: "security-events-v1",
-    endpoint: "https://siem.example.com/openworker/events",
-    credentialEnv: "SIEM_TOKEN",
-  }],
-});
-```
-
-Only the named credential is inherited by the trusted child. The endpoint receives
-JSON batches of metadata activities with stable per-event IDs. The receiver should return 2xx only after durably accepting the batch. HTTP success
-acknowledges a batch; timeout/connection loss retries delivery with those same
-IDs. Changing a destination requires a new sink version. There are no redirects
-and no automatic tool retries. Restore a failed receiver before its pending
-backlog grows too large. The configured threshold blocks new turn/model/tool
-admission while allowing completion/cancellation evidence and export to drain.
-
-Metadata retention is independent of canonical conversation storage. Expired
-metadata is omitted from query pages; trusted maintenance can prune it. Registered
-unacknowledged export records are retained until delivered. This is not a legal
-hold, immutable archive or protection against a privileged database administrator.
+Policy decisions can be recorded and exported independently of performance traces.
+See [compliance capture and SIEM delivery](compliance.md#configure-capture-and-delivery)
+for runnable configuration, retention and access controls.
 
 ## Prisma AIRS and other scanners
 
@@ -290,23 +250,8 @@ is a separate future milestone, not part of this implementation.
 
 ## Upgrade an existing installation
 
-Back up state before upgrading. SQLite schema 7 upgrades to 8 while preserving
-sessions and history; the state-directory lock prevents concurrent runtimes.
-Older binaries reject schema 8. Earlier development formats remain unsupported.
-
-For PostgreSQL, drain workers and stop the old APIs/SDK processes before running
-the existing explicit migration command. Schema 5 upgrades transactionally to 6
-without resetting data. Migration refuses live execution leases; allow them to
-release/expire rather than deleting ownership records. Deploy the new API and
-worker binaries together. New databases start at schema 6.
-
-Old binaries refuse schema 6 at startup. Database triggers additionally reject
-writes from clients that have not negotiated schema 6, covering an old connection
-that races the upgrade. This is a compatibility fence, not an authorization
-mechanism against a database administrator. Do not downgrade the schema marker to
-run old binaries: they do not understand required guardrails. Direct administrative
-SQL that mutates execution tables must deliberately set `ow.runtime_schema` to
-`6` after confirming that it preserves the current invariants.
+Follow [storage upgrades](upgrades.md) for current schema versions, backup and
+migration steps. Use matching service/worker builds when changing policy support.
 
 ## Service deployment
 

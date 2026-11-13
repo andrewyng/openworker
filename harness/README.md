@@ -2,7 +2,7 @@
 
 <p align="center"><strong>Build your app. OpenWorker handles the agents.</strong></p>
 
-Build a document assistant, a file-organizing utility or a coding app with agents that can use tools and work together. Keep your interface and product workflow; OpenWorker manages the agent loop, model calls, approvals and durable sessions.
+Build and automate complex workflows with agents that use tools, delegate work and collaborate. Create an autonomous coding agent that implements and verifies changes, a support agent that investigates issues and takes action, or a team of agents that coordinates work across your systems. You own the product experience and decide what agents can do; OpenWorker handles the agent loop, model calls, approvals and durable sessions.
 
 <p align="center"><a href="#build-with-your-coding-agent">Get started</a> · <a href="https://openworker.com/docs/sdk/">Documentation</a> · <a href="#build-your-first-agent-by-writing-code-yourself">SDK reference</a> · <a href="#choose-an-example-app">Example apps</a></p>
 
@@ -145,10 +145,10 @@ When adding tools, choose their execution boundary: application callbacks retain
 | --- | --- | --- |
 | **Local utility** | [File organizer](../skills/openworker-harness-builder/references/local-script.md) · [Source](../skills/openworker-harness-builder/assets/local-script/) | Custom tools, directory restrictions, streaming and per-operation approvals. |
 | **Desktop app** | [Code Atlas walkthrough](../docs/harness/guides/desktop.md) · [Source](examples/quickstart/desktop/main.mjs) · [Setup](examples/quickstart/README.md) | Select a code directory and stream an explanation in an Electron UI. |
-| **Web app** | [PDF Notes walkthrough](../docs/harness/guides/server.md) · [Source](examples/quickstart/web/server.mjs) · [Setup](examples/quickstart/README.md#web-deployment) | Upload a text-based PDF and ask follow-up questions in its own session. |
+| **Web app** | [PDF Notes walkthrough](../docs/harness/guides/server.md) · [Source](examples/quickstart/web/server.mjs) · [Setup](examples/quickstart/README.md#web-deployment) | Attach a PDF and ask follow-up questions in its own session. |
 | **Game builder** | [Arcade Studio](examples/arcade/README.md) · [Source](examples/arcade/) | Build and preview games, approve versions and return to a saved library. |
 
-Code Atlas and PDF Notes share `examples/quickstart/`; they are two complete TypeScript apps. The file organizer is bundled with the skill. The checkout examples use the local SDK and need the runtime setup described in their READMEs.
+Code Atlas and PDF Notes share `examples/quickstart/`; they are two complete TypeScript apps. The file organizer is bundled with the skill. The quickstart examples install the published npm SDK and its native runtime. Follow each example README for configuration.
 
 <a id="what-your-application-gains"></a>
 

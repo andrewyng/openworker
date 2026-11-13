@@ -1,47 +1,46 @@
 # Build your product. OpenWorker handles the agents.
 
-Creating an app that uses AI should be easy. Builders should be able to focus on a
-useful, thoughtful product experience while the harness handles agent loops,
-permissions and alignment. **OpenWorker Harness SDK** gives you the foundation for
-Claude- or Codex-style agent experiences—conversation, tools, streamed activity and
-ongoing sessions—inside your own product.
+Build apps that put agents to work on complex tasks.
 
-Build a desktop app for your users, a web app deployed to your cloud, or both.
-The Rust and TypeScript SDKs let you choose the deployment that fits your product.
-Guardrails, sandbox integration, an optional auto-approver, session durability,
-agent alignment controls, service scaling and support for multiple LLM providers
-are built into the platform, so you can configure these capabilities instead of
-implementing them from scratch.
-
-You can configure **NVIDIA OpenShell** to isolate your agents' tool execution.
-The harness coordinates model calls, policy and sessions; the sandbox bounds what
-its ToolRunner can access. See [OpenShell integration](openshell.md) for that boundary.
+Create an autonomous coding agent, a support agent that investigates and resolves
+issues, or a team that coordinates a workflow across your systems. OpenWorker
+Harness SDK handles model calls, tool execution, delegation and durable sessions
+so you can focus on your product experience.
 
 ## Choose a track
 
-- **[Build a desktop app for your users](desktop.md).** Create Code Atlas: select a
-  code directory and stream a guide to its structure and entry points.
-- **[Build a web app and deploy to the cloud](server.md).** Create PDF Notes: upload
-  a PDF, ask questions and get answers with page references.
+- **[Build a desktop app](desktop.md).** Start with Code Atlas: select a code directory and stream an explanation. Then add tools and delegation for more capable workflows.
+- **[Build a web app](server.md).** Start with PDF Notes: upload a document and ask follow-up questions. Deploy the frontend and API together on Railway or your container platform.
 
-Both tracks include a small UI, agent creation and packaging/deployment instructions.
-Open the source drawer to explore the complete example files alongside the guide.
+The tutorials deliberately start small. The same SDK supports long-running work,
+multiple agents and remote service deployments as your application grows.
 
-```text
-       Desktop app                 Web application
-       Your interface              Your API + browser UI
-              │                          │
-              └────────────┬─────────────┘
-               OpenWorker Harness SDK
-                           │
-                  OpenWorker Harness
-           Models · Tools · Sessions · Teams
-          Guardrails · Approvals · Observability
-                           │
-           Tool execution: local or OpenShell
-```
+## Add the capabilities your product needs
 
-Start with the example, then choose the [models](providers.md),
-[tools](tools.md) and [deployment](deployment.md) your product needs.
-Read [versions and compatibility](releases.md) for package availability and safe
-application upgrades.
+| Your product needs | Start here |
+| --- | --- |
+| Agents that act on your systems | [Application tools and MCP](tools.md) |
+| Work split between agents | [Sub-agents and teams](subagents.md) |
+| Conversations that survive restarts | [Sessions and recovery](sessions.md) |
+| Images, PDFs and text files | [Attachments](attachments.md) |
+| Control over actions and sensitive content | [Approvals](alignment.md) · [Guardrails and hooks](guardrails.md) |
+| Visibility into latency, token usage and failures | [Observability](observability.md) |
+
+Choose cloud or local models. Run the Rust harness in-process in a Rust application,
+or as a managed child process through the TypeScript SDK. A browser talks to your
+application server; credentials stay there.
+
+## Understand the architecture
+
+![Your app connects through Rust or TypeScript to the harness, models and tools.](../assets/architecture.svg)
+
+Use NVIDIA OpenShell to isolate configured tool execution. The harness coordinates
+the agent outside that sandbox; application callbacks retain your application's
+privileges. See [architecture](architecture.md) for the process and storage boundaries.
+
+Start inside your app. Move to a shared service when you need independent worker
+capacity and shared storage. [Deployment options](deployment.md) distinguishes
+application hosting from experimental cluster setup.
+
+See [versions and installation](releases.md) for published packages, Rust setup
+and runtime compatibility.

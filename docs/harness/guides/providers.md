@@ -44,6 +44,30 @@ qualify the specific model/configuration used by your application.
 See [Streaming and retries](streaming.md) for provider reasoning display, explicit
 Anthropic thinking settings and structured failure diagnostics.
 
+## Register a cloud or local connection
+
+Choose one connection below, then use its name in the agent's `defaultModel`.
+The model ID must be available at that endpoint.
+
+```typescript
+// Anthropic: keep the key in your trusted process environment.
+await harness.setModelProvider({
+  name: 'Anthropic', api: 'anthropic',
+  credentials: { apiKeyEnv: 'ANTHROPIC_API_KEY', storage: 'memory' },
+});
+
+// Ollama: choose a model already installed on this machine.
+await harness.setModelProvider({
+  name: 'Ollama', api: 'chat-completions',
+  baseUrl: 'http://127.0.0.1:11434/v1',
+});
+```
+
+Use the [Desktop example](desktop.md#connect-a-model) for OpenAI Responses.
+For an authenticated OpenAI-compatible proxy, use `api: 'chat-completions'`, its
+`baseUrl` and application-owned credentials. A provider registration does not make
+a text-only model understand images or PDFs; see [attachments](attachments.md).
+
 ## Streaming token usage
 
 Chat Completions providers request `stream_options: { include_usage: true }` by

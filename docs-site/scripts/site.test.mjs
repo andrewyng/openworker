@@ -18,12 +18,14 @@ test('public Markdown builds default/versioned routes and removes stale private 
    assert.ok(!/\]\([^\s)]+\.md(?:#[^)]*)?\)/.test(text.replace(/https:\/\/[^)\s]+/g,'')));
   }
   assert.ok(readFileSync(join(site,'src/content/docs/index.md'),'utf8').includes(base+'/desktop/'));
-  for(const [page,image] of [['desktop','code-atlas'],['server','pdf-notes']]) {
-   assert.ok(readFileSync(join(site,'src/content/docs',page+'.md'),'utf8').includes(base+'/examples/'+image+'.png'));
-   assert.deepEqual(readFileSync(join(site,'public/examples',image+'.png')),readFileSync(join(site,'../docs/harness/guides/images',image+'.png')));
+  for(const [page,image] of [['server','pdf-notes']]) {
+   assert.ok(readFileSync(join(site,'src/content/docs',page+'.md'),'utf8').includes(base+'/examples/'+image+'.jpg'));
+   assert.deepEqual(readFileSync(join(site,'public/examples',image+'.jpg')),readFileSync(join(site,'../docs/harness/guides/images',image+'.jpg')));
   }
   assert.ok(readFileSync(join(site,'src/content/docs/server.md'),'utf8').includes(base+'/deployment/'));
   assert.equal(existsSync(join(site,'public/reference')),false);
+  assert.equal(existsSync(join(site,'public/examples/code-atlas.png')),false);
+  assert.ok(!readFileSync(join(site,'src/content/docs/desktop.md'),'utf8').includes('code-atlas.png'));
   for(const page of pages) assert.ok(page.source.startsWith('docs/harness/guides/'));
  }} finally {execFileSync(process.execPath,[join(site,'scripts/prepare.mjs')]);}
  pages.forEach((p,i)=>assert.equal(readFileSync(join(site,'..',p.source),'utf8'),originals[i]));
