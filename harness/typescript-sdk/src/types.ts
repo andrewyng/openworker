@@ -67,6 +67,10 @@ export interface ToolContext {
   turnId: string;
   /** Scope with sessionId and turnId; callbacks may arrive before event consumption. */
   callId: string;
+  /** Exact registered application tool name. */
+  qualifiedName: string;
+  /** Model-facing alias when supplied by the host. */
+  modelAlias?: string;
   workspace: string;
   signal: AbortSignal;
   progress(message: string, data?: Json): Promise<void>;
@@ -243,7 +247,7 @@ export type Interruption = {
   session_id: string;
   agent: string;
 } & (
-  | { kind: "approval"; tool: string; arguments: Json; category?: string }
+  | { kind: "approval"; tool: string; qualified_name?: string; model_alias?: string; arguments: Json; category?: string }
   | { kind: "question"; question: string; options: string[] }
   | { kind: "safety"; code: string }
 );
@@ -317,7 +321,19 @@ export interface JournalEvent {
   type: string;
   data: Json;
 }
+/** A persisted approval decision, not permission to execute a new action. */
+export interface ApprovalDecision {
+  interactionId: string;
+  callId: string;
+  tool: string;
+  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "hard_policy" | "bypass";
+  verdict: "allow" | "deny" | "unsure";
+  /** Bounded released display context; may be unavailable or withheld. */
+  reason?: string;
+}
+
 export interface RunEvent {
+  approvalDecision?: ApprovalDecision;
   agentId?: string;
   teamId?: string;
   /** Original parent session for standalone child events. */
@@ -335,8 +351,20 @@ export interface RunEvent {
         | { type: "model_activity"; attemptId: string; elapsedMs: number }
         | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
-            type: "tool_started" | "tool_finished";
+            type: "tool_started";
             tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
+            /** Released start-event content; absent on older hosts, null if withheld. */
+            arguments?: Json;
+            /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
+            callId: string;
+          }
+        | {
+            type: "tool_finished";
+            tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
             /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
             callId: string;
           }
@@ -403,11 +431,23 @@ export class HarnessError extends Error {
       submissionId?: string;
       requestId?: string;
       providerError?: ProviderDiagnostic;
+      reason?: "agent_definition_conflict";
+      agentId?: string;
+      conflictingFields?: string[];
     },
   ) {
     super(message);
     this.name = "HarnessError";
   }
+}
+
+/** Accept only identity/field metadata, never arbitrary remote error messages or values. */
+export function agentDefinitionConflict(value: unknown): {reason: "agent_definition_conflict"; agentId: string; conflictingFields: string[]} | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
+  if (typeof v.agent_id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.agent_id) || !Array.isArray(v.conflicting_fields) || v.conflicting_fields.length === 0 || v.conflicting_fields.length > fields.length || v.conflicting_fields.some(f => typeof f !== "string" || !fields.includes(f))) return undefined;
+  return {reason: "agent_definition_conflict", agentId: v.agent_id, conflictingFields: [...v.conflicting_fields] as string[]};
 }
 
 export type ProviderFailure = "rate_limit" | "transient" | "transport" | "incomplete_stream" | "invalid_response" | "context_overflow" | "truncated" | "authentication" | "configuration" | "safety_blocked";

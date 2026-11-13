@@ -512,6 +512,7 @@ async fn reviewer_context_excludes_agent_history_and_skipped_answers() {
     );
     let question = json!({"call_id":"q1","name":"ask_user","arguments":json!({"question":"Deploy now?","options":[]}).to_string()});
     s.interactions.push(Interaction {
+        approval_reason: None,
         requested_at_ms: None,
         resolved_at_ms: None,
         grant_id: None,
@@ -740,4 +741,86 @@ async fn application_guidance_cannot_bypass_hard_checks_or_invoke_reviewer_for_d
     assert_eq!(interaction.response.as_deref(), Some("deny"));
     assert_eq!(interaction.origin.as_deref(), Some("hard_policy"));
     assert_eq!(reviews.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn denial_explanation_is_durable_bounded_and_never_policy_error_text() {
+    let (_tmp, rt, sid, call) = fixture(
+        Mode::AutoApprove,
+        false,
+        reviewed(
+            r#"{"verdict":"deny","reason":"Contrary to the user's request"}"#,
+            Arc::new(AtomicUsize::new(0)),
+        ),
+        "example_echo",
+        json!({"text":"hello"}),
+    )
+    .await;
+    let interaction = rt.authorize_call(&sid, &call).await.unwrap();
+    let saved = rt
+        .store
+        .lock()
+        .unwrap()
+        .get(&sid)
+        .unwrap()
+        .interactions
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(saved.approval_reason, interaction.approval_reason);
+    let output = permissions::denied_output(&saved);
+    assert_eq!(output["reason"], "Contrary to the user's request");
+    assert_eq!(output["executed"], false);
+    assert!(output["message"].as_str().unwrap().contains("Do not retry"));
+    assert!(output["message"].as_str().unwrap().contains("evade"));
+    let mut withheld = saved.clone();
+    withheld.approval_reason = Some("Bearer PRIVATE".into());
+    assert!(!permissions::denied_output(&withheld)
+        .to_string()
+        .contains("PRIVATE"));
+    withheld.approval_reason = None;
+    for origin in ["human", "hard_policy", "reviewer", "unknown"] {
+        withheld.origin = Some(origin.into());
+        let output = permissions::denied_output(&withheld);
+        assert!(!output["reason"].as_str().unwrap().is_empty());
+        assert_eq!(output["denied"], true);
+    }
+}
+
+#[tokio::test]
+async fn protected_reviewer_reason_is_not_released_or_saved_as_denial_context() {
+    let (_tmp, rt, sid, call) = fixture(
+        Mode::AutoApprove,
+        false,
+        reviewed(
+            r#"{"verdict":"deny","reason":"PRIVATE_REASON"}"#,
+            Arc::new(AtomicUsize::new(0)),
+        ),
+        "example_echo",
+        json!({"text":"hello"}),
+    )
+    .await;
+    rt.update(&sid, "configure_safety", json!({}), |s| {
+        s.turn
+            .as_mut()
+            .unwrap()
+            .safety
+            .guardrails
+            .model_output
+            .push(crate::safety::Rule::regex(
+                "protect",
+                "never-match",
+                crate::safety::Action::Block,
+            ));
+        Ok(())
+    })
+    .unwrap();
+    let i = rt.authorize_call(&sid, &call).await.unwrap();
+    assert!(i.approval_reason.is_none());
+    let events = rt.store.lock().unwrap().events(&sid, 0).unwrap();
+    let decision = permissions::approval_decision(events.last().unwrap()).unwrap();
+    assert!(decision.reason.is_none());
+    assert!(!serde_json::to_string(&events)
+        .unwrap()
+        .contains("PRIVATE_REASON"));
 }

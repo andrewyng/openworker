@@ -323,7 +323,8 @@ async fn send(
             None,
         ),
         (None, Some(parts)) => {
-            let parts = crate::input_attachments::inspect(&app, &sid, &parts).await?;
+            let parts =
+                crate::input_attachments::inspect(&app, &sid, &submission_id, &parts).await?;
             let text = openworker_runtime::attachments::summary(&parts);
             (text, Some(parts))
         }

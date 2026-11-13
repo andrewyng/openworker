@@ -4,6 +4,10 @@ use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
 pub trait Endpoint: Send + Sync {
+    /// Explicitly allowlisted structured diagnostics; never arbitrary error context.
+    fn request_error(&self, _error: &anyhow::Error) -> Value {
+        Value::Null
+    }
     fn application_events(&self) -> Option<tokio::sync::broadcast::Receiver<Value>> {
         None
     }
@@ -132,7 +136,7 @@ pub async fn serve_endpoint(rt: impl Endpoint + 'static) -> Result<()> {
                             if method=="session/attach"{subscribed.insert(p["session_id"].as_str().unwrap().to_owned());}
                             Ok::<_,anyhow::Error>(result)
                         }.await;
-                        match result{Ok(result)=>json!({"jsonrpc":"2.0","id":id,"result":result}),Err(e)=>json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":e.to_string(),"attachment_inspection_unsupported":e.is::<crate::attachments::InspectionUnsupported>(),"provider_error":e.downcast_ref::<crate::provider::Error>().map(|e|e.diagnostic())}})}
+                        match result{Ok(result)=>json!({"jsonrpc":"2.0","id":id,"result":result}),Err(e)=>json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":e.to_string(),"agent_definition_conflict":rt.request_error(&e),"attachment_inspection_unsupported":e.is::<crate::attachments::InspectionUnsupported>(),"provider_error":e.downcast_ref::<crate::provider::Error>().map(|e|e.diagnostic())}})}
                     }
                 }
             },

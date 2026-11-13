@@ -404,8 +404,14 @@ impl Host {
                 lead = snapshot.clone();
             }
             cursors.insert(id.clone(), snapshot["cursor"].clone());
-            for i in snapshot["interactions"].as_array().into_iter().flatten() {
-                pending.push(interruption(id, agent, i, &snapshot));
+            for i in pending_interactions(&snapshot) {
+                let mut item = interruption(id, agent, i, &snapshot);
+                enrich_tool_identity(
+                    &mut item,
+                    i["call"]["name"].as_str(),
+                    &self.runtime(agent)?.bundle.tools,
+                );
+                pending.push(item);
             }
             if snapshot["turn"]["status"] == "waiting_safety" && !self.runtime(agent)?.is_busy(id) {
                 pending.push(safety_interruption(id, agent, &snapshot));
@@ -784,7 +790,7 @@ impl Host {
             let Ok(snap) = rt.snapshot(&sid) else {
                 continue;
             };
-            for i in snap["interactions"].as_array().into_iter().flatten() {
+            for i in pending_interactions(&snap) {
                 let tool = i["call"]["name"].as_str().unwrap_or_default();
                 let Some(id) = i["id"].as_str() else { continue };
                 pending.insert(id.to_owned());
@@ -936,7 +942,8 @@ impl Host {
                             break;
                         }
                         last = e.event_id;
-                        let mut item = stream_item(agent, e);
+                        let runtime = self.runtime(agent)?;
+                        let mut item = stream_item(agent, e, Some(&runtime.bundle.tools));
                         if let Some(member) = &membership {
                             if let Some(parent) = &parent_session {
                                 if parent != s {
@@ -963,7 +970,7 @@ impl Host {
                     interruptions.push(safety_interruption(s, agent, snap));
                 }
                 let approvals = self.profile(agent).approvals;
-                for raw in snap["interactions"].as_array().into_iter().flatten() {
+                for raw in pending_interactions(snap) {
                     let tool = raw["call"]["name"].as_str().unwrap_or_default();
                     // The auto-approver handles these unless it failed.
                     let failed = raw["id"]
@@ -972,7 +979,13 @@ impl Host {
                     if raw["kind"] == "approval" && approvals.auto_approves(tool) && !failed {
                         continue;
                     }
-                    interruptions.push(interruption(s, agent, raw, snap));
+                    let mut item = interruption(s, agent, raw, snap);
+                    enrich_tool_identity(
+                        &mut item,
+                        raw["call"]["name"].as_str(),
+                        &self.runtime(agent)?.bundle.tools,
+                    );
+                    interruptions.push(item);
                 }
             }
 
@@ -1108,6 +1121,19 @@ fn text<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     Ok(s)
 }
 
+/// Cancellation has already been admitted. Unanswered interactions can remain
+/// in the snapshot until asynchronous cleanup settles; they are not actionable.
+/// Keep waiting for the durable terminal status, including outcome-unknown.
+fn pending_interactions(snapshot: &Value) -> impl Iterator<Item = &Value> {
+    let status = snapshot["turn"]["status"].as_str().unwrap_or_default();
+    let visible = status != "cancelling" && !terminal(status);
+    snapshot["interactions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |_| visible)
+}
+
 fn terminal_status(turn: &Value) -> &'static str {
     match turn["status"].as_str().unwrap_or("") {
         "completed" | "" => "completed",
@@ -1157,9 +1183,31 @@ fn final_output(snapshot: &Value) -> Value {
     Value::Null
 }
 
+/// Resolve the installed binding, including custom aliases and native qualified names.
+/// Never guess a name by replacing underscores in model output.
+fn enrich_tool_identity(
+    item: &mut Value,
+    alias: Option<&str>,
+    tools: &openworker_runtime::bundle::Tools,
+) {
+    let Some(alias) = alias else {
+        return;
+    };
+    item["model_alias"] = json!(alias);
+    if let Some(binding) = tools.bindings.get(alias) {
+        if let Some(server) = tools.servers.get(&binding.server) {
+            item["qualified_name"] = json!(if server.program == "$NATIVE" {
+                binding.tool.clone()
+            } else {
+                format!("{}.{}", binding.server, binding.tool)
+            });
+        }
+    }
+}
+
 /// A journal event plus a small typed summary SDKs can map directly.
-fn stream_item(agent: &str, e: Event) -> Value {
-    let summary = match e.kind.as_str() {
+fn stream_item(agent: &str, e: Event, tools: Option<&openworker_runtime::bundle::Tools>) -> Value {
+    let mut summary = match e.kind.as_str() {
         "model_attempt_started"
         | "model_attempt_finished"
         | "assistant_delta"
@@ -1190,7 +1238,27 @@ fn stream_item(agent: &str, e: Event) -> Value {
         "plan_updated" => Some(json!({"type": "plan_updated", "plan": e.data["plan"]})),
         _ => None,
     };
-    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary})
+    if let Some(summary) = &mut summary {
+        if matches!(e.kind.as_str(), "tool_started" | "tool_finished") {
+            if let Some(tools) = tools {
+                enrich_tool_identity(
+                    summary,
+                    e.data["name"]
+                        .as_str()
+                        .or_else(|| e.data["call"]["name"].as_str()),
+                    tools,
+                );
+            }
+            if e.kind == "tool_started" {
+                // Project only already-released journal content; never reread callback args.
+                if let Some(arguments) = e.data.get("arguments") {
+                    summary["arguments"] = arguments.clone();
+                }
+            }
+        }
+    }
+    let approval_decision = openworker_runtime::permissions::approval_decision(&e);
+    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary, "approval_decision":approval_decision})
 }
 
 fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {
@@ -1211,11 +1279,123 @@ mod tests {
                 kind: kind.into(),
                 data: json!({"name":"app__preview","call_id":"call-preview"}),
             };
-            let item = stream_item("builder", event);
+            let item = stream_item("builder", event, None);
             assert_eq!(item["summary"]["type"], kind);
             assert_eq!(item["summary"]["call_id"], "call-preview");
             assert_eq!(item["summary"]["call_id"], item["event"]["data"]["call_id"]);
         }
+    }
+
+    #[test]
+    fn tool_metadata_uses_installed_bindings_and_only_released_arguments() {
+        use openworker_runtime::bundle::{Binding, Server, Tools};
+        let tools = Tools {
+            servers: [
+                (
+                    "native".into(),
+                    Server {
+                        id: "native".into(),
+                        program: "$NATIVE".into(),
+                        args: vec![],
+                    },
+                ),
+                (
+                    "repo".into(),
+                    Server {
+                        id: "repo".into(),
+                        program: "mcp-server".into(),
+                        args: vec![],
+                    },
+                ),
+            ]
+            .into(),
+            bindings: [
+                (
+                    "files__move_file".into(),
+                    Binding {
+                        server: "native".into(),
+                        tool: "files.move_file".into(),
+                    },
+                ),
+                (
+                    "inspect".into(),
+                    Binding {
+                        server: "repo".into(),
+                        tool: "scan_file".into(),
+                    },
+                ),
+            ]
+            .into(),
+        };
+        for (alias, qualified) in [
+            ("files__move_file", Some("files.move_file")),
+            ("inspect", Some("repo.scan_file")),
+            ("internal__unknown", None),
+        ] {
+            let mut approval = json!({"tool":alias});
+            enrich_tool_identity(&mut approval, Some(alias), &tools);
+            assert_eq!(approval["model_alias"], alias);
+            assert_eq!(approval["qualified_name"].as_str(), qualified);
+            for kind in ["tool_started", "tool_finished"] {
+                for arguments in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!({"path":"released.txt"})),
+                ] {
+                    let mut data = json!({"name":alias,"call_id":"call-1"});
+                    if let Some(value) = &arguments {
+                        data["arguments"] = value.clone();
+                    }
+                    let event = Event {
+                        event_id: 4,
+                        session_id: "session-1".into(),
+                        turn_id: Some("turn-1".into()),
+                        kind: kind.into(),
+                        data,
+                    };
+                    let item = stream_item("builder", event, Some(&tools));
+                    let summary = &item["summary"];
+                    assert_eq!(summary["tool"], alias);
+                    assert_eq!(summary["model_alias"], alias);
+                    assert_eq!(summary["qualified_name"].as_str(), qualified);
+                    assert_eq!(
+                        summary.get("arguments"),
+                        if kind == "tool_started" {
+                            arguments.as_ref()
+                        } else {
+                            None
+                        }
+                    );
+                    assert_eq!(item["session_id"], "session-1");
+                    assert_eq!(item["event"]["turn_id"], "turn-1");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_waits_do_not_reopen_approval_while_cleanup_is_pending() {
+        let mut snapshot = json!({"turn":{"status":"waiting"},"interactions":[{"id":"i","kind":"approval","call":{"name":"files__write","call_id":"c","arguments":"{}"}}]});
+        for (status, count) in [
+            ("waiting", 1),
+            ("recoverable", 1),
+            ("cancelling", 0),
+            ("cancelled", 0),
+            ("interrupted", 0),
+            ("completed", 0),
+        ] {
+            snapshot["turn"]["status"] = json!(status);
+            assert_eq!(pending_interactions(&snapshot).count(), count, "{status}");
+            assert_eq!(
+                snapshot["interactions"].as_array().unwrap().len(),
+                1,
+                "Filtering must not rewrite the durable approval history"
+            );
+        }
+        // Unknown admitted tool effects must still surface as failed/interrupted,
+        // never as a successful cancellation merely because approvals are hidden.
+        assert_eq!(terminal_status(&json!({"status":"interrupted"})), "failed");
+        assert_eq!(terminal_status(&json!({"status":"cancelled"})), "cancelled");
     }
 
     #[test]

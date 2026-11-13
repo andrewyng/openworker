@@ -24,6 +24,10 @@ impl std::error::Error for HistoryCursorError {}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Interaction {
+    /// Already-checked, bounded denial context needed after recovery. No raw
+    /// policy error or tool arguments are copied here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

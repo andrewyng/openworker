@@ -831,6 +831,7 @@ async fn compaction_retry_and_pending_approval_survive_the_same_restart_scenario
             t.queue = vec![call.clone()];
             t.status = "waiting".into();
             s.interactions.push(Interaction {
+                approval_reason: None,
                 requested_at_ms: None,
                 resolved_at_ms: None,
                 grant_id: None,

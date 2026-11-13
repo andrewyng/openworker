@@ -58,6 +58,21 @@ function aborted(signal?: AbortSignal): void {
       "Stopped waiting; agent execution was not cancelled",
     );
 }
+function approvalDecisionOf(value: unknown): import("./types.js").ApprovalDecision | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = record(value);
+  if (!["interaction_id", "call_id", "tool"].every(k => typeof v[k] === "string") ||
+      !["reviewer", "human", "app_policy", "session_grant", "hard_policy", "bypass"].includes(String(v.origin)) ||
+      !["allow", "deny", "unsure"].includes(String(v.verdict))) return undefined;
+  const reason = typeof v.reason === "string" && [...v.reason].length <= 512 ? v.reason : undefined;
+  return {
+    interactionId: String(v.interaction_id), callId: String(v.call_id), tool: String(v.tool),
+    origin: v.origin as import("./types.js").ApprovalDecision["origin"],
+    verdict: v.verdict as import("./types.js").ApprovalDecision["verdict"],
+    ...(reason !== undefined ? {reason} : {}),
+  };
+}
+
 function resultOf(value: unknown): RunResult {
   const v = record(value);
   if (
@@ -247,6 +262,8 @@ export class Harness {
           sessionId: String(context.session_id),
           turnId: String(context.turn_id),
           callId: String(context.call_id),
+          qualifiedName: String(event.tool),
+          ...(typeof context.model_alias === "string" ? {modelAlias:context.model_alias} : {}),
           workspace: String(context.workspace),
           signal: controller.signal,
           progress: async (message, data = null) => {
@@ -1108,7 +1125,13 @@ export class RunStream implements AsyncIterable<RunEvent> {
           const wireSummary = record(item.summary);
           // Older hosts retain the ID in the journal but omit it from summaries.
           const callId = wireSummary.call_id ?? record(event.data).call_id;
-          summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+          summary = {
+            type: summary.type, tool: summary.tool,
+            callId: typeof callId === "string" ? callId : "",
+            ...(typeof wireSummary.qualified_name === "string" ? {qualifiedName: wireSummary.qualified_name} : {}),
+            ...(typeof wireSummary.model_alias === "string" ? {modelAlias: wireSummary.model_alias} : {}),
+            ...(summary.type === "tool_started" && Object.hasOwn(wireSummary,"arguments") ? {arguments: wireSummary.arguments as Json} : {}),
+          };
         }
         if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
           const wire = record(item.summary);
@@ -1126,7 +1149,9 @@ export class RunStream implements AsyncIterable<RunEvent> {
             }
           }
         }
+        const approvalDecision = approvalDecisionOf(item.approval_decision);
         yield {
+          ...(approvalDecision ? {approvalDecision} : {}),
           agent: String(item.agent),
           ...(typeof item.agent_id === "string"
             ? { agentId: item.agent_id }

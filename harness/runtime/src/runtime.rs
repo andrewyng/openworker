@@ -241,6 +241,35 @@ impl Runtime {
         store: Option<Box<dyn StateStore>>,
         telemetry: Telemetry,
     ) -> Result<Arc<Self>> {
+        Self::open_instrumented_optional_runner(
+            root,
+            bundle,
+            Some(runner),
+            model,
+            backend,
+            policy,
+            resource_policy,
+            registry,
+            store,
+            telemetry,
+        )
+    }
+
+    /// Explicit runner-free mode for embedded, sandbox-off, tool-free profiles.
+    /// Adding a bound tool requires reopening the harness with its real helper.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_instrumented_optional_runner(
+        root: &Path,
+        bundle: &Path,
+        runner: Option<&Path>,
+        model: Model,
+        backend: Backend,
+        policy: Option<&Path>,
+        resource_policy: Option<&Path>,
+        registry: openworker_tools::ToolRegistry,
+        store: Option<Box<dyn StateStore>>,
+        telemetry: Telemetry,
+    ) -> Result<Arc<Self>> {
         #[cfg(windows)]
         if backend == Backend::Openshell {
             bail!("Native Windows sandboxing is not implemented; select --sandbox off explicitly. No fallback.");
@@ -277,12 +306,19 @@ impl Runtime {
         );
         let tool_policy = crate::tool_policy::ToolPolicy::load(policy, &bundle)?;
         let resource_policy = crate::resource_policy::Policy::load(resource_policy, &bundle)?;
-        let runner = runner
-            .canonicalize()
-            .context("Native runner executable unavailable")?;
-        let head = std::fs::read(&runner)?;
-        crate::platform::runner_executable(&head, backend)?;
-        let runner_digest = digest(&head);
+        let (runner, runner_digest) = if let Some(runner) = runner {
+            let runner = runner
+                .canonicalize()
+                .context("Native runner executable unavailable")?;
+            let head = std::fs::read(&runner)?;
+            crate::platform::runner_executable(&head, backend)?;
+            let runner_digest = digest(&head);
+            (Some(runner), runner_digest)
+        } else {
+            ensure!(backend == Backend::Off && bundle.tools.bindings.is_empty(),
+                "This profile requires a runner; restart the embedded harness with executable set to the matching openworker-harness helper");
+            (None, "embedded-tool-free-v1".into())
+        };
         let mut execution_identity = format!(
             "{}:{runner_digest}:{}:{}",
             bundle.digest, tool_policy.digest, resource_policy.digest
@@ -1201,6 +1237,7 @@ impl Runtime {
                 return Ok(CompactResult::Skipped);
             } else if !cfg.auto_trim_on_failure {
                 let i = Interaction {
+                    approval_reason: None,
                     requested_at_ms: Some(crate::store::now_ms()),
                     resolved_at_ms: None,
                     grant_id: None,
@@ -2154,11 +2191,8 @@ impl Runtime {
             bail!("Policy workspace must be canonical, without symlinks");
         }
         self.tool_policy.check_workspace(&workspace)?;
-        let mut protected = vec![
-            self.state_dir.clone(),
-            self.bundle.root.clone(),
-            self.sandbox.runner.clone(),
-        ];
+        let mut protected = vec![self.state_dir.clone(), self.bundle.root.clone()];
+        protected.extend(self.sandbox.runner.iter().cloned());
         protected.extend(self.bundle.registry.config_sources().iter().cloned());
         if let Some(p) = self.tool_policy.path() {
             protected.push(p.into());
@@ -2299,7 +2333,11 @@ impl Runtime {
         }
         let mut argv = vec![if backend == Backend::Off {
             let path = if server.program == "$OPENWORKER" {
-                self.sandbox.runner.clone()
+                self.sandbox
+                    .runner
+                    .as_ref()
+                    .context("Native runner required")?
+                    .clone()
             } else {
                 self.bundle.root.join(&server.program).canonicalize()?
             };
@@ -2368,9 +2406,15 @@ impl Runtime {
                 argv,
             )))
         } else if backend == Backend::Off {
-            let mut m =
-                crate::direct::Mcp::launch(&self.sandbox.runner, Path::new(&s.workspace), &argv)
-                    .await?;
+            let mut m = crate::direct::Mcp::launch(
+                self.sandbox
+                    .runner
+                    .as_deref()
+                    .context("Native runner required")?,
+                Path::new(&s.workspace),
+                &argv,
+            )
+            .await?;
             self.update(sid,"direct_process_registered",json!({"pid":m.identity.pid,"server":server.id,"sandbox":"off","enforcement":"none"}),|s|{
                 s.direct_processes.insert(server.id.clone(),m.identity.clone());Ok(())
             })?;
@@ -2412,8 +2456,15 @@ impl Runtime {
     ) -> Result<(Clients, Vec<Value>)> {
         self.check_backend(sid)?;
         let _preparing = self.prepare.lock().await;
-        if digest(&std::fs::read(&self.sandbox.runner)?) != self.runner_digest {
-            bail!("Native runner changed while runtime active");
+        if let Some(runner) = &self.sandbox.runner {
+            if digest(&std::fs::read(runner)?) != self.runner_digest {
+                bail!("Native runner changed while runtime active");
+            }
+        } else {
+            ensure!(
+                self.backend == Backend::Off && self.bundle.tools.bindings.is_empty(),
+                "Runner-free profiles cannot execute bound tools"
+            );
         }
         let s = self.store.lock().unwrap().get(sid)?;
         if let Some(config) = s
@@ -2688,6 +2739,7 @@ impl Runtime {
             serde_json::from_str(call["arguments"].as_str().context("Missing args")?)?;
         let binding = self.bundle.tools.bindings.get(alias);
         let mut i = Interaction {
+            approval_reason: None,
             requested_at_ms: None,
             resolved_at_ms: None,
             grant_id: None,
@@ -2834,7 +2886,19 @@ impl Runtime {
         };
         data["classification"] = serde_json::to_value(s.tool_policy.tools.get(alias))?;
         data["approval_mode"] = serde_json::to_value(s.permissions.mode)?;
+        let reason_withheld = self
+            .effective_safety(sid)?
+            .protects(crate::safety::Phase::ModelOutput, None);
+        if i.response.as_deref() == Some("deny") && !reason_withheld {
+            i.approval_reason = review
+                .as_ref()
+                .and_then(|v| permissions::approval_reason(&v.reason));
+        }
         data["review"] = serde_json::to_value(&review)?;
+        data["review_reason_withheld"] = json!(reason_withheld);
+        if reason_withheld && review.is_some() {
+            data["review"]["reason"] = Value::Null;
+        }
         data["hard_denial"] = serde_json::to_value(hard_denial)?;
         self.update(
             sid,
@@ -3204,7 +3268,7 @@ impl Runtime {
                         json!({"answer":response})
                     }
                 } else if response == "deny" {
-                    json!({"denied":true,"executed":false,"message":"Action denied. Do not retry this action or attempt a variation to evade the decision."})
+                    permissions::denied_output(interaction)
                 } else {
                     self.check_backend(sid)?;
                     // Recheck independently of the earlier label/approval (including
@@ -3921,7 +3985,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;

@@ -19,7 +19,23 @@ async fn history(h: &Harness, s: &Session) -> Value {
 }
 async fn invoke(h: &Harness, s: &Session, name: &str, args: Value) -> Value {
     let r = s.run(&plan(name, args)).await.unwrap();
-    assert_eq!(r.status, RunStatus::Completed, "{r:?}");
+    let diagnostic = if r.status != RunStatus::Completed {
+        Some(
+            h.client()
+                .request(
+                    "event/read",
+                    json!({"session_id":s.id(),"after":r.cursor.saturating_sub(30).max(0)}),
+                )
+                .await,
+        )
+    } else {
+        None
+    };
+    assert_eq!(
+        r.status,
+        RunStatus::Completed,
+        "{name}: {r:?}; recent events: {diagnostic:?}"
+    );
     let hist = history(h, s).await;
     let item = hist["items"]
         .as_array()

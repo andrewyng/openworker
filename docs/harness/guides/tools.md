@@ -152,3 +152,33 @@ and history contain a reference, not pixels. Older images must be recaptured whe
 needed. The provider receives pixels and applies its own retention rules. This API
 does not grant capture permission or make callbacks sandboxed: applications must
 authorize and constrain what they capture. Plain JSON return values are unchanged.
+
+## Display tool activity
+
+On `tool_started` and `tool_finished`, `summary.tool` keeps the model alias
+(for example, `files__move_file`). `summary.qualifiedName` identifies the
+registered tool (`files.move_file`), and `summary.modelAlias` explicitly records
+the alias. Names come from the installed registry, including custom MCP aliases.
+Older hosts may omit the additional fields.
+
+```typescript
+for await (const item of run.events()) {
+  const step = item.summary;
+  if (step?.type === 'tool_started') {
+    console.log(step.qualifiedName ?? step.tool, step.arguments);
+    // Correlate with the callback using item.sessionId,
+    // item.event.turn_id and step.callId.
+  }
+}
+```
+
+Start arguments come from the released journal event, after applicable input
+checks and transformations. They can be absent on older hosts or explicitly
+`null` when withheld. Finished events do not repeat them. Treat arguments as
+potentially sensitive when choosing what to display or log.
+
+Application callbacks receive `context.qualifiedName`, `context.modelAlias` and
+`context.callId` as well as session/turn IDs. Approval interruptions expose the
+same identities as `qualified_name` and `model_alias`, retaining the existing
+`tool` field. A callback can run before your UI consumes its recorded start event;
+use these IDs to reconcile activity, rather than assuming delivery order.
