@@ -81,14 +81,21 @@ Connect a trusted remote server or launch a local executable before creating the
 agent. Select only the discovered tools that the application needs.
 
 ```typescript
-await harness.connectMcpServer({
-  name: 'company', transport: 'streamable-http',
-  url: 'https://mcp.example.com/mcp',
-});
+import type { Harness } from '@openworkerai/harness-sdk';
+
+export async function connectCompanyTools(harness: Harness) {
+  await harness.connectMcpServer({
+    name: 'company', transport: 'streamable-http',
+    url: 'https://mcp.example.com/mcp',
+  });
+}
+
 // Or launch an app-installed executable:
-await harness.startMcpServer({
-  name: 'local-tools', program: '/absolute/path/to/mcp-server', args: [],
-});
+export async function startLocalTools(harness: Harness) {
+  await harness.startMcpServer({
+    name: 'local-tools', program: '/absolute/path/to/mcp-server', args: [],
+  });
+}
 ```
 
 These are alternative registrations with application-owned endpoints/programs.
