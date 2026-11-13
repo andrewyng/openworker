@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl/Keenable.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from coworker.web.providers import (
     DuckDuckGoProvider,
     ExaProvider,
     FirecrawlProvider,
+    KeenableProvider,
     SerperProvider,
     TavilyProvider,
     WebSearchProvider,
@@ -232,6 +233,8 @@ def test_keyed_providers_raise_on_http_errors(monkeypatch):
         FirecrawlProvider("k"),
         YouProvider(),
         YouProvider("k"),
+        KeenableProvider(),
+        KeenableProvider("k"),
     ):
         with pytest.raises(httpx.HTTPStatusError):
             provider.search("q")
@@ -247,6 +250,7 @@ def test_every_provider_has_a_name_and_a_key_page():
         assert cls.accepts_key == (cls.key_mode == "optional"), name
     assert DuckDuckGoProvider.key_mode == "none"
     assert YouProvider.key_mode == "optional"
+    assert KeenableProvider.key_mode == "optional"
     assert TavilyProvider.key_mode == "required"
 
 
@@ -379,6 +383,90 @@ def test_you_provider_truncates_to_max_results(monkeypatch):
     assert len(YouProvider().search("q", max_results=4)) == 4
 
 
+def test_build_provider_keenable_is_keyless_with_optional_key(monkeypatch):
+    monkeypatch.setenv("KEENABLE_API_KEY", "ignored")  # providers never read the environment
+    assert "keenable" in provider_names()
+    keyless = build_provider("keenable")  # no key needed
+    assert isinstance(keyless, KeenableProvider) and keyless.api_key is None
+    assert build_provider("keenable", "kn-x").api_key == "kn-x"  # key is passed through
+
+
+def _fake_keenable_post(captured, payload):
+    """Stand-in for httpx.post that records the request and replays a canned response."""
+    import httpx
+
+    def post(url, **kw):
+        captured.update(url=url, **kw)
+        return httpx.Response(200, request=httpx.Request("POST", url), json=payload)
+
+    return post
+
+
+def test_keenable_provider_keyless_request_and_parsing(monkeypatch):
+    import httpx
+
+    got = {}
+    long_text = "word " * 400 + "\n\n" + "tail"
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        _fake_keenable_post(
+            got,
+            {
+                "results": [
+                    {"title": "a", "url": "https://a", "description": "", "snippet": "line one\n  line two"},
+                    {"title": None, "url": "https://b", "description": "", "snippet": long_text},
+                    {"title": "c", "url": "https://c"},
+                ]
+            },
+        ),
+    )
+
+    out = KeenableProvider().search("openworker", max_results=3)
+    assert got["url"] == "https://api.keenable.ai/v1/search/public"  # free tier, no key
+    assert "X-API-Key" not in got["headers"]
+    assert got["headers"]["X-Keenable-Title"] == "OpenWorker"  # names the app keyless
+    assert got["json"] == {"query": "openworker", "max_results": 3}
+    assert [(r.title, r.url) for r in out] == [("a", "https://a"), ("", "https://b"), ("c", "https://c")]
+    assert out[0].snippet == "line one line two"  # whitespace collapsed
+    assert len(out[1].snippet) == KeenableProvider._SNIPPET_CHARS  # page text is capped
+    assert out[2].snippet == ""
+
+
+def test_keenable_provider_with_key_uses_keyed_endpoint(monkeypatch):
+    import httpx
+
+    got = {}
+    monkeypatch.setattr(httpx, "post", _fake_keenable_post(got, {"results": []}))
+
+    assert KeenableProvider("kn-123").search("q", max_results=2) == []
+    assert got["url"] == "https://api.keenable.ai/v1/search"
+    assert got["headers"]["X-API-Key"] == "kn-123"
+
+
+def test_keenable_provider_truncates_to_max_results(monkeypatch):
+    import httpx
+
+    rows = [{"title": f"r{i}", "url": f"https://x/{i}", "snippet": "s"} for i in range(10)]
+    monkeypatch.setattr(httpx, "post", _fake_keenable_post({}, {"results": rows}))
+    assert len(KeenableProvider().search("q", max_results=4)) == 4
+
+
+def test_resolve_provider_reads_the_keenable_key(tmp_path, monkeypatch):
+    from coworker.web import provider_host, resolve_provider
+
+    secrets = SecretStore(tmp_path / "secrets.json")
+    secrets.put("web_search:default", {"provider": "keenable"})
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
+    assert resolve_provider(secrets).api_key is None  # keyless works
+    assert provider_host(secrets) == "api.keenable.ai"
+    monkeypatch.setenv("KEENABLE_API_KEY", "from-env")
+    assert resolve_provider(secrets).api_key == "from-env"
+    secrets.put("web_search:default", {"provider": "keenable", "keys": {"keenable": "from-store"}})
+    assert resolve_provider(secrets).api_key == "from-store"  # the store wins
+    assert provider_host(secrets) == "api.keenable.ai"  # one host, keyed or not
+
+
 def test_tool_surfaces_missing_key_error(tmp_path):
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("web_search:default", {"provider": "tavily"})  # no api_key
@@ -423,8 +511,9 @@ def test_web_search_rest_lists_providers_in_registry_order(tmp_path, monkeypatch
         "has_key": False, "key_source": None, "key_env": "", "supports_fetch": False,
     }
     assert by["tavily"]["key_mode"] == "required" and by["tavily"]["supports_fetch"] is True
-    assert {n for n, p in by.items() if p["supports_fetch"]} == {"exa", "firecrawl", "tavily"}
+    assert {n for n, p in by.items() if p["supports_fetch"]} == {"exa", "firecrawl", "keenable", "tavily"}
     assert by["you"]["key_mode"] == "optional" and by["you"]["key_url"]
+    assert by["keenable"]["key_mode"] == "optional" and by["keenable"]["key_url"]
 
 
 def test_web_search_rest_key_from_environment(tmp_path, monkeypatch):
@@ -447,6 +536,8 @@ def test_web_search_rest_refuses_a_keyless_required_provider(tmp_path, monkeypat
     assert client.post("/v1/web-search", json={}).status_code == 400
     # You.com works keyless, so it can be chosen without a key.
     assert client.post("/v1/web-search", json={"provider": "you"}).json()["provider"] == "you"
+    # So does Keenable.
+    assert client.post("/v1/web-search", json={"provider": "keenable"}).json()["provider"] == "keenable"
 
 
 def test_web_search_rest_test_and_save_key(tmp_path, monkeypatch):

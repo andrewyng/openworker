@@ -1,7 +1,7 @@
 """`web_fetch` through the search service (Settings ▸ Customization).
 
-No network: httpx is stubbed. Covers the three providers' request/response shapes
-(Exa /contents, Firecrawl /v2/scrape, Tavily /extract), when `fetch_provider` picks one,
+No network: httpx is stubbed. Covers the four providers' request/response shapes
+(Exa /contents, Firecrawl /v2/scrape, Keenable /v1/fetch, Tavily /extract), when `fetch_provider` picks one,
 the address guard running before the provider is asked, the fallback to a local fetch
 with a notice, and the approval card's `fetch_provider` extra.
 """
@@ -19,6 +19,7 @@ from coworker.web.providers import (
     BraveProvider,
     ExaProvider,
     FirecrawlProvider,
+    KeenableProvider,
     TavilyProvider,
 )
 
@@ -31,8 +32,8 @@ def _post_stub(monkeypatch, status, payload, captured):
     monkeypatch.setattr(httpx, "post", fake_post)
 
 
-def test_only_exa_firecrawl_and_tavily_fetch_pages():
-    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {"exa", "firecrawl", "tavily"}
+def test_only_exa_firecrawl_keenable_and_tavily_fetch_pages():
+    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {"exa", "firecrawl", "keenable", "tavily"}
     with pytest.raises(NotImplementedError):
         BraveProvider("k").fetch_page("https://example.com")
 
@@ -89,6 +90,33 @@ def test_tavily_fetch_page_request_and_response(monkeypatch):
         TavilyProvider("tv-k").fetch_page("https://example.com")
 
 
+def test_keenable_fetch_page_request_and_response(monkeypatch):
+    got = {}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        got.update(url=url, headers=headers, params=params)
+        return httpx.Response(status, request=httpx.Request("GET", url), json=payload)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    status, payload = 200, {"url": "https://example.com", "title": "Hi", "content": "# Hi"}
+    assert KeenableProvider().fetch_page("https://example.com") == "# Hi"
+    assert got["url"] == "https://api.keenable.ai/v1/fetch/public"  # keyless
+    assert got["params"] == {"url": "https://example.com"}
+    assert got["headers"]["X-Keenable-Title"] == "OpenWorker" and "X-API-Key" not in got["headers"]
+
+    assert KeenableProvider("kn-k").fetch_page("https://example.com") == "# Hi"
+    assert got["url"] == "https://api.keenable.ai/v1/fetch"
+    assert got["headers"]["X-API-Key"] == "kn-k"
+
+    status, payload = 200, {"url": "https://example.com", "content": ""}
+    with pytest.raises(RuntimeError, match="no content returned"):
+        KeenableProvider().fetch_page("https://example.com")
+
+    status, payload = 502, {"error": "Bad gateway", "code": "target_unreachable"}
+    with pytest.raises(httpx.HTTPStatusError):
+        KeenableProvider().fetch_page("https://example.com")
+
+
 def _secrets(tmp_path, monkeypatch, **profile):
     for name in _PROVIDERS:
         monkeypatch.delenv(f"{name.upper()}_API_KEY", raising=False)
@@ -114,6 +142,9 @@ def test_fetch_provider_needs_the_switch_support_and_a_key(tmp_path, monkeypatch
     assert fetch_provider(s) is None
     monkeypatch.setenv("TAVILY_API_KEY", "env-k")
     assert fetch_provider(s).api_key == "env-k"
+    # A keyless provider that fetches needs no key at all.
+    s = _secrets(tmp_path, monkeypatch, provider="keenable", fetch_via_provider=True)
+    assert isinstance(fetch_provider(s), KeenableProvider) and fetch_provider(s).api_key is None
 
 
 def test_web_fetch_goes_through_the_provider_after_the_address_check(tmp_path, monkeypatch):
