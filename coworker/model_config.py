@@ -15,6 +15,8 @@ What a saved value does:
 - `temperature`, `top_p`: sampling.
 - `compaction_threshold_pct`: when to auto-compact, as a share of the window; overrides
   the machine-wide setting for this model.
+- `compaction_cap_tokens`: the token ceiling on that trigger; overrides the machine-wide
+  cap for this model, so one 1M-window model can run long while the rest compact early.
 - `default`: true on the model new sessions start with (the picker's default).
 
 Unset values mean "the recommendation, else the provider's default"
@@ -35,7 +37,7 @@ from .secrets import state_dir
 FILE_NAME = "model_config.json"
 
 # The keys a record may hold, with how each value is checked.
-_INT_KEYS = ("context_size", "max_output_tokens")
+_INT_KEYS = ("context_size", "max_output_tokens", "compaction_cap_tokens")
 _FLOAT_KEYS = ("temperature", "top_p", "compaction_threshold_pct")
 _BOOL_KEYS = ("thinking", "default")
 _STR_KEYS = ("reasoning_effort",)
@@ -89,6 +91,9 @@ def clean(values: dict[str, Any]) -> tuple[dict[str, Any], Optional[str]]:
         if key in _INT_KEYS:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 return {}, f"{key} must be a positive whole number"
+            # The same range the machine-wide cap accepts (manager.set_compaction_settings).
+            if key == "compaction_cap_tokens" and not 10_000 <= value <= 2_000_000:
+                return {}, "compaction_cap_tokens must be between 10000 and 2000000"
             out[key] = value
         elif key in _FLOAT_KEYS:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -171,6 +176,7 @@ def effective(model: str) -> dict[str, Any]:
     put("temperature", rec.sampling.get("temperature") if rec else None)
     put("top_p", rec.sampling.get("top_p") if rec else None)
     put("compaction_threshold_pct", None)
+    put("compaction_cap_tokens", None)
     out["default"] = {"value": bool(saved.get("default")), "from": "user"}
     if rec:
         out["recommendation"] = rec.as_dict()
@@ -212,3 +218,8 @@ def context_size_for(model: str) -> Optional[int]:
 def compaction_threshold_for(model: str) -> Optional[float]:
     value = get(model).get("compaction_threshold_pct")
     return float(value) if value else None
+
+
+def compaction_cap_for(model: str) -> Optional[int]:
+    value = get(model).get("compaction_cap_tokens")
+    return int(value) if value else None
