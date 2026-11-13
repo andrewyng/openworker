@@ -24,6 +24,7 @@ test(
       await rm(root, { recursive: true, force: true });
     });
     let calls = 0;
+    let callbackContext;
     const tools = {
       namespace: "app",
       tools: {
@@ -36,6 +37,7 @@ test(
           },
           execute: async (_, context) => {
             calls++;
+            callbackContext = context;
             await context.progress("Ready");
             return { shown: true };
           },
@@ -71,6 +73,9 @@ test(
     const result = await run.result();
     assert.equal(result.status, "interrupted");
     assert.equal(calls, 0);
+    assert.equal(result.interruptions[0].tool, "app__preview");
+    assert.equal(result.interruptions[0].qualified_name, "app.preview");
+    assert.equal(result.interruptions[0].model_alias, "app__preview");
     assert.equal((await session.state()).status, "waiting");
     await assert.rejects(session.send({ text: "yes", decision: "once" }));
     await session.send({
@@ -80,12 +85,31 @@ test(
     });
     assert.equal((await run.result()).status, "completed");
     assert.equal(calls, 1);
-    let events = 0;
+    const events = [];
     for await (const e of run.events()) {
       assert.ok(e.event);
-      events++;
+      events.push(e);
     }
-    assert.ok(events > 0);
+    assert.ok(events.length > 0);
+    const started = events.find(e => e.summary?.type === "tool_started");
+    const finished = events.find(e => e.summary?.type === "tool_finished");
+    assert.ok(started);
+    assert.ok(finished);
+    for (const item of [started, finished]) {
+      assert.equal(item.summary.tool, "app__preview");
+      assert.equal(item.summary.qualifiedName, "app.preview");
+      assert.equal(item.summary.modelAlias, "app__preview");
+      assert.equal(item.summary.callId, callbackContext.callId);
+      assert.equal(item.sessionId, callbackContext.sessionId);
+      assert.equal(item.event.turn_id, callbackContext.turnId);
+    }
+    assert.deepEqual(started.summary.arguments, {});
+    assert.equal(Object.hasOwn(finished.summary, "arguments"), false);
+    assert.equal(callbackContext.qualifiedName, "app.preview");
+    assert.equal(callbackContext.modelAlias, "app__preview");
+    const replay = [];
+    for await (const item of run.events()) replay.push(item);
+    assert.deepEqual(replay, events);
     const ref = session.reference();
     await h.shutdown();
     h = await Harness.start(options);

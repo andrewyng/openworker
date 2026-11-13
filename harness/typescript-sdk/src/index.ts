@@ -262,6 +262,8 @@ export class Harness {
           sessionId: String(context.session_id),
           turnId: String(context.turn_id),
           callId: String(context.call_id),
+          qualifiedName: String(event.tool),
+          ...(typeof context.model_alias === "string" ? {modelAlias:context.model_alias} : {}),
           workspace: String(context.workspace),
           signal: controller.signal,
           progress: async (message, data = null) => {
@@ -1123,7 +1125,13 @@ export class RunStream implements AsyncIterable<RunEvent> {
           const wireSummary = record(item.summary);
           // Older hosts retain the ID in the journal but omit it from summaries.
           const callId = wireSummary.call_id ?? record(event.data).call_id;
-          summary = { ...summary, callId: typeof callId === "string" ? callId : "" };
+          summary = {
+            type: summary.type, tool: summary.tool,
+            callId: typeof callId === "string" ? callId : "",
+            ...(typeof wireSummary.qualified_name === "string" ? {qualifiedName: wireSummary.qualified_name} : {}),
+            ...(typeof wireSummary.model_alias === "string" ? {modelAlias: wireSummary.model_alias} : {}),
+            ...(summary.type === "tool_started" && Object.hasOwn(wireSummary,"arguments") ? {arguments: wireSummary.arguments as Json} : {}),
+          };
         }
         if (summary && ["model_attempt_started", "model_attempt_finished", "assistant_delta", "reasoning_delta", "model_activity", "provider_error"].includes(summary.type)) {
           const wire = record(item.summary);

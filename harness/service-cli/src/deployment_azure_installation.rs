@@ -492,7 +492,7 @@ reviewed, pinned OpenShell archive/images (0.1.3 or 0.1.7). Installing OpenShell
 reviewed cluster-scoped Kubernetes rights; namespace RBAC alone is insufficient.
 No provider/plugin/component is installed implicitly by preparing this handoff.
 
-Run `ows deploy cluster plan --config cluster-install.json --out NEW_STATE`, then
+Run `owcluster deploy cluster plan --config cluster-install.json --out NEW_STATE`, then
 review its digest. Use shared `platform`, `apply --openshell-only`, `secrets`,
 `apply`, `status` and `destroy` commands with that exact digest. The installer
 checks live ARM/control ownership and a recent external heartbeat before new

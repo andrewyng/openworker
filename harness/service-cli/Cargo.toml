@@ -6,8 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 [[bin]]
+name = "owcluster"
+path = "src/owcluster.rs"
+[[bin]]
 name = "ows"
 path = "src/main.rs"
+test = false
+bench = false
 [dependencies]
 openworker-sdk = { path = "../harness-sdk" }
 anyhow = "1"

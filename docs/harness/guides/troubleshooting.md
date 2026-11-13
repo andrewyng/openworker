@@ -19,9 +19,12 @@ provider tokens, prompts, file contents and private state directories.
 
 ## Agent registration is rejected
 
-A generic “Harness rejected the request” can mean that the agent name already
-belongs to a different immutable definition. Check changes to instructions,
-tools and approval mode. Re-register the identical definition, or use a new name
+A changed immutable definition returns `AgentDefinitionConflict` in Rust.
+TypeScript retains error code `Remote` and exposes
+`context.reason: "agent_definition_conflict"`, `context.agentId` and
+`context.conflictingFields`. The diagnostic contains field names such as
+`instructions`, `tools` or `approvals`, never their values. Older hosts may still
+return the generic “Harness rejected the request” message. Re-register the identical definition, or use a new name
 for the new definition; a new session alone does not change it. Keep existing
 state for old sessions. Do not log prompts or credentials to diagnose the conflict.
 

@@ -9,7 +9,7 @@ The bounded node choices are `Standard_D4s_v5`, `Standard_D8s_v5` and
 with available quota and no applicable subscription restriction. The four-vCPU
 choices provide 16 GiB per node; the reference creates two Ubuntu nodes.
 
-When the exported plan includes infrastructure, `ows deploy azure preflight`
+When the exported plan includes infrastructure, `owcluster deploy azure preflight`
 also checks the selected SKU's architecture, capabilities and regional eligibility,
 plus unused regional and VM-family quota for the initial node pool. Zone-only
 restrictions remain visible because the reference does not request availability
@@ -22,7 +22,7 @@ Azure's SKU catalog can take over a minute to enumerate. For an infrastructure
 plan, allow a bounded longer read without changing the subscription or retrying:
 
 ```sh
-ows deploy azure preflight --plan ./azure-infrastructure --out ./azure-preflight \
+owcluster deploy azure preflight --plan ./azure-infrastructure --out ./azure-preflight \
   --timeout-seconds 180 --overall-timeout-seconds 300
 ```
 

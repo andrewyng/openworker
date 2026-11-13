@@ -49,6 +49,8 @@ pub enum InterruptionKind {
     /// (`provider__tool`); `category` is the engine's effect classification.
     Approval {
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
         arguments: Value,
         category: Option<String>,
     },
@@ -68,6 +70,8 @@ impl Interruption {
         } else if v["kind"] == "approval" {
             InterruptionKind::Approval {
                 tool: s("tool").unwrap_or_default(),
+                qualified_name: s("qualified_name"),
+                model_alias: s("model_alias"),
                 arguments: v["arguments"].clone(),
                 category: s("category"),
             }
@@ -216,6 +220,11 @@ pub enum RunEvent {
     ToolStarted {
         agent: String,
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
+        /// Arguments released in the durable start event; absent on older hosts.
+        arguments: Option<Value>,
+        session_id: String,
         /// Correlates with application ToolContext::call_id and the raw journal.
         call_id: String,
         /// Scope call IDs to their turn; providers may reuse IDs in later turns.
@@ -224,6 +233,9 @@ pub enum RunEvent {
     ToolFinished {
         agent: String,
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
+        session_id: String,
         call_id: String,
         turn_id: Option<String>,
     },
@@ -352,12 +364,19 @@ impl RunEvent {
             Some("tool_started") => RunEvent::ToolStarted {
                 agent,
                 tool: tool(),
+                qualified_name: summary["qualified_name"].as_str().map(str::to_owned),
+                model_alias: summary["model_alias"].as_str().map(str::to_owned),
+                arguments: summary.get("arguments").cloned(),
+                session_id,
                 call_id: call_id(),
                 turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("tool_finished") => RunEvent::ToolFinished {
                 agent,
                 tool: tool(),
+                qualified_name: summary["qualified_name"].as_str().map(str::to_owned),
+                model_alias: summary["model_alias"].as_str().map(str::to_owned),
+                session_id,
                 call_id: call_id(),
                 turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
@@ -1024,6 +1043,31 @@ mod tests {
                     }
                     other => panic!("unexpected tool event: {other:?}"),
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_metadata_preserves_missing_and_withheld_arguments() {
+        for arguments in [None, Some(Value::Null), Some(json!({"path":"safe.txt"}))] {
+            let mut item = json!({"agent":"builder", "summary":{"type":"tool_started","tool":"files__move_file","qualified_name":"files.move_file","model_alias":"files__move_file","call_id":"call-1"}, "event":{"session_id":"session-1","turn_id":"turn-1","data":{"arguments":{"private":"not released"}}}});
+            if let Some(value) = &arguments {
+                item["summary"]["arguments"] = value.clone();
+            }
+            match RunEvent::from_wire(&item).unwrap() {
+                RunEvent::ToolStarted {
+                    qualified_name,
+                    model_alias,
+                    arguments: actual,
+                    session_id,
+                    ..
+                } => {
+                    assert_eq!(qualified_name.as_deref(), Some("files.move_file"));
+                    assert_eq!(model_alias.as_deref(), Some("files__move_file"));
+                    assert_eq!(actual, arguments);
+                    assert_eq!(session_id, "session-1");
+                }
+                event => panic!("unexpected event: {event:?}"),
             }
         }
     }

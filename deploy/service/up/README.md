@@ -5,16 +5,16 @@ This experimental coordinator installs a private service cluster, OpenShell and 
 Once the prerequisites below are installed, copy `aws.yaml` or `azure.yaml` to `deployment.yaml`, set your account/subscription and region, then run:
 
 ```sh
-ows deploy aws up --config deployment.yaml
+owcluster deploy aws up --config deployment.yaml
 # or
-ows deploy azure up --config deployment.yaml
+owcluster deploy azure up --config deployment.yaml
 ```
 
 The command resolves a supported VM size, writes a cost/permission review, and asks for approval before making cloud changes. Fixed node counts are supported; autoscaling is not. Requests with an uncertain outcome are observed using their original identity rather than blindly resubmitted.
 
 ## One-time prerequisites
 
-Install `ows`, your cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs kubelogin and, for the management VM, SSH. AWS's optional operator bridge needs the Session Manager plugin. Authenticate with your own cloud identity. The command never creates long-lived cloud access keys.
+Install `owcluster`, your cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs kubelogin and, for the management VM, SSH. AWS's optional operator bridge needs the Session Manager plugin. Authenticate with your own cloud identity. The command never creates long-lived cloud access keys.
 
 An administrator prepares a target-bound setup profile at:
 
@@ -46,7 +46,7 @@ This release does not assume public OpenWorker service images or a published Hel
 ## Review, budget and resume
 
 ```sh
-ows deploy azure up --config deployment.yaml --plan-only
+owcluster deploy azure up --config deployment.yaml --plan-only
 ```
 
 The private `.ows/deployments/<target-and-name-hash>/` directory contains `review.json`, the exact native `infrastructure/` permission/template bundle and the durable journal. Keep it: it holds the original deployment identities. Do not delete or edit it to retry an uncertain cloud operation.
@@ -56,7 +56,7 @@ The private `.ows/deployments/<target-and-name-hash>/` directory contains `revie
 For automation, review the generated files, then supply their exact review digest:
 
 ```sh
-ows deploy azure up --config deployment.yaml \
+owcluster deploy azure up --config deployment.yaml \
   --accept-plan <planDigest> --accept-bootstrap <planDigest>
 ```
 

@@ -4,6 +4,13 @@ use anyhow::{ensure, Result};
 use std::sync::Arc;
 struct Endpoint(Arc<Host>);
 impl openworker_runtime::protocol::Endpoint for Endpoint {
+    fn request_error(&self, error: &anyhow::Error) -> serde_json::Value {
+        error
+            .downcast_ref::<crate::AgentDefinitionConflict>()
+            .filter(|diagnostic| diagnostic.valid())
+            .and_then(|diagnostic| serde_json::to_value(diagnostic).ok())
+            .unwrap_or(serde_json::Value::Null)
+    }
     fn application_events(&self) -> Option<tokio::sync::broadcast::Receiver<serde_json::Value>> {
         Some(self.0.callbacks.events.subscribe())
     }
