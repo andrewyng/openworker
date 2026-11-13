@@ -78,7 +78,7 @@ for (const database of ["sqlite", "postgres"]) {
       await harness.createAgent(definition).ready();
       await assert.rejects(
         harness.createAgent({ ...definition, instructions: "Changed" }).ready(),
-        { code: "Remote" },
+        e => e.code === "Remote" && e.context?.reason === "agent_definition_conflict" && e.context.agentId === "builder" && e.context.conflictingFields.includes("instructions"),
       );
       const session = await builder.newSession({ workspace });
       const ref = session.reference();

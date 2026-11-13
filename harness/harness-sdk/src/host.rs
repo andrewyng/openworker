@@ -632,10 +632,9 @@ impl Host {
         {
             let registry = self.registry.read().unwrap();
             if let Some(existing) = registry.definitions.get(&agent.id) {
-                ensure!(
-                    serde_json::to_value(existing)? == serde_json::to_value(&agent)?,
-                    "Agent identity already has a different definition; use a new name"
-                );
+                if let Some(conflict) = crate::AgentDefinitionConflict::between(existing, &agent)? {
+                    return Err(conflict.into());
+                }
                 // Also persist a definition originally supplied in HostConfig when
                 // the application explicitly registers it through this API.
                 self.catalog.insert(&agent)?;

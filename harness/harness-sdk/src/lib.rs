@@ -17,7 +17,9 @@ mod desktop;
 mod mcp;
 pub use agents::Approvals;
 pub use mcp::McpServer;
+mod definition_error;
 mod driver;
+pub use definition_error::AgentDefinitionConflict;
 pub mod host;
 mod providers;
 pub use agents::{
@@ -93,6 +95,7 @@ pub enum Error {
     InvalidInput(String),
     Remote(String),
     Provider(openworker_runtime::provider::Diagnostic),
+    AgentDefinitionConflict(AgentDefinitionConflict),
     Setup(String),
     Unavailable,
     /// May have committed or started. Reconcile durable IDs; do not blindly retry.
@@ -104,6 +107,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::InvalidInput(s) | Self::Remote(s) | Self::Setup(s) => f.write_str(s),
             Self::Provider(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
+            Self::AgentDefinitionConflict(diagnostic) => std::fmt::Display::fmt(diagnostic, f),
             Self::Unavailable => f.write_str("Harness unavailable or recovering; request not sent"),
             Self::OutcomeUnknown => f.write_str("Harness response lost; execution outcome unknown. Reconcile saved session before retrying."),
             Self::Closed => f.write_str("Harness client closed"),

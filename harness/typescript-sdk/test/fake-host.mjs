@@ -50,6 +50,8 @@ for await (const line of lines) {
   } else if (method === "malformed") process.stdout.write("invalid\n");
   else if (method === "huge") process.stdout.write("x".repeat(1024 * 1024 + 1));
   else if (method === "hang") await new Promise(() => {});
+  else if (method === "diagnostic_error")
+    process.stdout.write(JSON.stringify({jsonrpc:"2.0",id,error:{code:-1,message:"sk-do-not-leak-this-value",agent_definition_conflict:params.diagnostic}})+"\n");
   else if (method === "error")
     process.stdout.write(
       JSON.stringify({

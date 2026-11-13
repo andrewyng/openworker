@@ -11,6 +11,7 @@ import {
   ResolvedHarnessOptions,
   record,
   providerDiagnostic,
+  agentDefinitionConflict,
   type ConnectionState,
 } from "./types.js";
 
@@ -328,11 +329,15 @@ export class Transport {
                 ? frame.error.provider_error
                 : undefined,
             );
+            const conflict = agentDefinitionConflict(
+              typeof frame.error === "object" && "agent_definition_conflict" in frame.error
+                ? frame.error.agent_definition_conflict : undefined,
+            );
             p.reject(
               new HarnessError(
                 "Remote",
-                typeof frame.error === "object" && "attachment_inspection_unsupported" in frame.error && frame.error.attachment_inspection_unsupported === true ? "Binary attachments cannot be inspected by configured text-only input guardrails" : diagnostic ? `Provider ${diagnostic.category}${diagnostic.httpStatus ? ` (HTTP ${diagnostic.httpStatus})` : ""}` : "Harness rejected the request; inspect its configuration or durable session state",
-                diagnostic ? { providerError: diagnostic } : undefined,
+                conflict ? `Agent '${conflict.agentId}' already has a different definition (${conflict.conflictingFields.join(", ")}); use a new agent name` : typeof frame.error === "object" && "attachment_inspection_unsupported" in frame.error && frame.error.attachment_inspection_unsupported === true ? "Binary attachments cannot be inspected by configured text-only input guardrails" : diagnostic ? `Provider ${diagnostic.category}${diagnostic.httpStatus ? ` (HTTP ${diagnostic.httpStatus})` : ""}` : "Harness rejected the request; inspect its configuration or durable session state",
+                conflict ?? (diagnostic ? { providerError: diagnostic } : undefined),
               ),
             );
           } else p.resolve(frame.result);
