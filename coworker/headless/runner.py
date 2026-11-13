@@ -782,22 +782,49 @@ class UsageError(Exception):
     """The command line cannot be run as given: said on standard error, exit code 2."""
 
 
-def workspace_folder_name(workspace: Path) -> str:
+def workspace_folder_name(workspace: Path, *, max_length: int = 180) -> str:
     """The workspace's folder under sessions/: its full path with every character that is
     not a letter or a digit turned into a dash (`/Users/me/src/app` gives
     `-Users-me-src-app`), so one workspace's runs sit together and are found by path."""
     name = re.sub(r"[^A-Za-z0-9]", "-", str(workspace))
-    if len(name) > 180:  # a file name's limit is 255 on the common filesystems
+    if len(name) > max_length:  # a file name's limit is 255 on the common filesystems
         import hashlib
 
-        name = name[:160] + "-" + hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:12]
+        name = name[:min(160, max_length - 13)] + "-" + hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:12]
     return name
+
+
+def _windows_long_paths_enabled() -> bool:
+    """Python 3.6+ honors this Windows policy; unreadable policy uses the legacy budget."""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except (ImportError, OSError):
+        return False
 
 
 def session_folder(workspace: Path, run_id: str) -> Path:
     from ..secrets import state_dir
 
-    return state_dir() / "sessions" / workspace_folder_name(workspace) / run_id
+    base = state_dir() / "sessions"
+    name = workspace_folder_name(workspace)
+    if (
+        sys.platform == "win32"
+        and not str(base).startswith("\\\\?\\")
+        and not _windows_long_paths_enabled()
+    ):
+        # MAX_PATH includes the whole absolute path and its NUL. Reserve 100 code units
+        # below the run for generated records (tool-output names can take 93). Counting
+        # UTF-16 matters when the state root contains characters outside the BMP.
+        used = len(str((base / run_id).absolute()).encode("utf-16-le")) // 2
+        limit = min(180, 259 - used - 1 - 100)
+        if len(name) > limit:
+            if limit < 13:  # retain the hash that separates workspaces with the same prefix
+                raise UsageError("the state directory is too long for run records on Windows; use --out with a shorter path")
+            name = workspace_folder_name(workspace, max_length=limit)
+    return base / name / run_id
 
 
 def allowed_sites(args: argparse.Namespace) -> list[str]:
