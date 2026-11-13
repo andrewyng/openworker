@@ -119,7 +119,9 @@ pub struct HostConfig {
     #[serde(default)]
     pub desktop: crate::DesktopOptions,
     pub state_dir: PathBuf,
-    pub runner: PathBuf,
+    /// None is restricted to embedded, sandbox-off profiles with no bound tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<PathBuf>,
     #[serde(default)]
     pub storage: Storage,
     pub coworkers: Vec<CoworkerConfig>,
@@ -272,7 +274,7 @@ impl HostConfig {
             "Non-persistent sessions cannot select PostgreSQL"
         );
         ensure!(
-            self.state_dir.is_absolute() && self.runner.is_absolute(),
+            self.state_dir.is_absolute() && self.runner.as_ref().is_none_or(|p| p.is_absolute()),
             "Host paths must be absolute"
         );
         let agents = crate::agents::compile::flatten(&self.agents)
@@ -479,10 +481,10 @@ impl Host {
         let controller = started.controller;
         let mut profiles = BTreeMap::new();
         for (c, registry, bundle) in prepared {
-            let mut rt = Runtime::open_instrumented(
+            let mut rt = Runtime::open_instrumented_optional_runner(
                 &config.state_dir.join("profiles").join(&bundle.id),
                 &c.bundle,
-                &config.runner,
+                config.runner.as_deref(),
                 Model::new(c.model.clone(), config.scripted).with_provider(c.provider),
                 config.sandbox,
                 c.tool_policy.as_deref(),
@@ -667,10 +669,10 @@ impl Host {
                 }
                 let bundle =
                     openworker_runtime::bundle::Bundle::load_with_registry(&c.bundle, &registry)?;
-                let mut runtime = Runtime::open_instrumented(
+                let mut runtime = Runtime::open_instrumented_optional_runner(
                     &config.state_dir.join("profiles").join(&bundle.id),
                     &c.bundle,
-                    &config.runner,
+                    config.runner.as_deref(),
                     Model::new(c.model, config.scripted).with_provider(c.provider),
                     config.sandbox,
                     c.tool_policy.as_deref(),

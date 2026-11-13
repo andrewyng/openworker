@@ -113,10 +113,16 @@ pub(crate) fn default_state_dir() -> Result<PathBuf> {
         .join("state"))
 }
 pub(crate) fn default_executable() -> Result<PathBuf> {
+    optional_default_executable()?.ok_or_else(|| Error::Setup(
+        "Bundled openworker-harness not found; use a desktop starter or set executable explicitly".into(),
+    ))
+}
+
+pub(crate) fn optional_default_executable() -> Result<Option<PathBuf>> {
     if let Some(value) = std::env::var_os("OPENWORKER_EXECUTABLE") {
         let path = PathBuf::from(value);
         if path.is_absolute() && path.is_file() {
-            return Ok(path);
+            return Ok(Some(path));
         }
         return Err(Error::Setup(
             "OPENWORKER_EXECUTABLE must name an absolute bundled executable".into(),
@@ -140,13 +146,11 @@ pub(crate) fn default_executable() -> Result<PathBuf> {
         if path.is_file() {
             return path
                 .canonicalize()
+                .map(Some)
                 .map_err(|_| Error::Setup("Bundled harness is inaccessible".into()));
         }
     }
-    Err(Error::Setup(
-        "Bundled openworker-harness not found; use a desktop starter or set executable explicitly"
-            .into(),
-    ))
+    Ok(None)
 }
 
 /// Per-message options. Session and application safety requirements remain active.
