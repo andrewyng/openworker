@@ -1190,7 +1190,8 @@ fn stream_item(agent: &str, e: Event) -> Value {
         "plan_updated" => Some(json!({"type": "plan_updated", "plan": e.data["plan"]})),
         _ => None,
     };
-    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary})
+    let approval_decision = openworker_runtime::permissions::approval_decision(&e);
+    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary, "approval_decision":approval_decision})
 }
 
 fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {

@@ -429,6 +429,7 @@ fn submission_tool(f: &Fixture, sid: &str, name: &str, arguments: Value, key: &s
     let tid = turn.id.clone();
     s.schema_digest = Some("synthetic-handoff-schema".into());
     s.interactions.push(openworker_runtime::store::Interaction {
+        approval_reason: None,
         id: format!("approval-{key}"),
         turn_id: tid.clone(),
         kind: "approval".into(),
@@ -926,6 +927,7 @@ fn prepare_publication_tool(f: &Fixture, sid: &str, arguments: &Value, key: &str
     turn.queue = vec![call.clone()];
     s.schema_digest = Some("synthetic-native-schema".into());
     s.interactions.push(openworker_runtime::store::Interaction {
+        approval_reason: None,
         id: format!("native-{key}"),
         turn_id: tid.clone(),
         kind: "approval".into(),

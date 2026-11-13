@@ -243,6 +243,7 @@ fn recovery_preserves_pending_identity_but_never_replays_executing() {
         let t = s.turn.as_mut().unwrap();
         t.status = status.into();
         s.interactions.push(Interaction {
+            approval_reason: None,
             requested_at_ms: None,
             resolved_at_ms: None,
             grant_id: None,

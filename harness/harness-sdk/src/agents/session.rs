@@ -198,6 +198,7 @@ pub enum RunEvent {
         parent_session_id: String,
         event: Event,
         summary: Value,
+        approval_decision: Option<openworker_runtime::permissions::ApprovalDecision>,
     },
     /// Named-team events retain both instance and definition identities.
     TeamActivity {
@@ -206,6 +207,7 @@ pub enum RunEvent {
         team_id: String,
         event: Event,
         summary: Value,
+        approval_decision: Option<openworker_runtime::permissions::ApprovalDecision>,
     },
     Message {
         agent: String,
@@ -225,10 +227,17 @@ pub enum RunEvent {
         call_id: String,
         turn_id: Option<String>,
     },
+    ApprovalDecision {
+        agent: String,
+        session_id: String,
+        turn_id: Option<String>,
+        decision: openworker_runtime::permissions::ApprovalDecision,
+    },
     /// The host approved a call because the agent's `interrupt_on` excludes it.
     AutoApproved {
         agent: String,
         tool: String,
+        decision: Option<openworker_runtime::permissions::ApprovalDecision>,
     },
     PlanUpdated {
         agent: String,
@@ -249,6 +258,7 @@ impl RunEvent {
                 parent_session_id: parent_session_id.into(),
                 event: serde_json::from_value(item["event"].clone()).ok()?,
                 summary: item["summary"].clone(),
+                approval_decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
             });
         }
         if let (Some(agent_id), Some(team_id)) =
@@ -260,6 +270,7 @@ impl RunEvent {
                 team_id: team_id.into(),
                 event: serde_json::from_value(item["event"].clone()).ok()?,
                 summary: item["summary"].clone(),
+                approval_decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
             });
         }
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
@@ -284,6 +295,16 @@ impl RunEvent {
                 .unwrap_or_default()
                 .to_owned()
         };
+        if summary["type"] != "auto_approved" {
+            if let Ok(decision) = serde_json::from_value(item["approval_decision"].clone()) {
+                return Some(RunEvent::ApprovalDecision {
+                    agent,
+                    session_id,
+                    turn_id,
+                    decision,
+                });
+            }
+        }
         Some(match summary["type"].as_str() {
             Some("model_attempt_started") => RunEvent::AttemptStarted {
                 session_id,
@@ -343,6 +364,7 @@ impl RunEvent {
             Some("auto_approved") => RunEvent::AutoApproved {
                 agent,
                 tool: tool(),
+                decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
             },
             Some("plan_updated") => RunEvent::PlanUpdated {
                 agent,
@@ -1004,6 +1026,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn approval_projection_preserves_legacy_auto_approved_events() {
+        let decision = json!({"interaction_id":"i","call_id":"c","tool":"app__preview","origin":"reviewer","verdict":"unsure","reason":"Ask a human"});
+        let mut item = json!({"agent":"a","event":{"session_id":"s","turn_id":"t"},"approval_decision":decision,"summary":null});
+        assert!(
+            matches!(RunEvent::from_wire(&item), Some(RunEvent::ApprovalDecision {session_id, decision, ..}) if session_id=="s" && decision.verdict==openworker_runtime::permissions::VerdictKind::Unsure)
+        );
+        item["summary"] = json!({"type":"auto_approved","tool":"app__preview"});
+        assert!(matches!(
+            RunEvent::from_wire(&item),
+            Some(RunEvent::AutoApproved {
+                decision: Some(_),
+                ..
+            })
+        ));
+        item["approval_decision"] = Value::Null;
+        assert!(matches!(
+            RunEvent::from_wire(&item),
+            Some(RunEvent::AutoApproved { decision: None, .. })
+        ));
     }
 
     #[test]

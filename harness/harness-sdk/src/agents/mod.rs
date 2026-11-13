@@ -41,6 +41,11 @@
 //! # Ok(())
 //! # }
 //! ```
+/// Observed decisions; distinct from ApprovalDecision responses sent by an app.
+pub use openworker_runtime::permissions::{
+    ApprovalDecision as ApprovalVerdict, VerdictKind as ApprovalVerdictKind,
+};
+
 mod agent_team;
 mod bundle;
 pub mod coding;

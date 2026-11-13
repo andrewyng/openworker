@@ -176,3 +176,34 @@ cancel execution or justify automatic approval. Persist the session reference
 and stream checkpoint for crash recovery, then reconcile pending interactions.
 For a non-streaming flow, `session.runWith(input, handler)` invokes a real app
 handler for interruptions; `{ defer: true }` leaves the decision pending.
+
+## Show approval decisions
+
+A streamed event can contain `approvalDecision`, independently of its summary:
+
+```typescript
+for await (const item of run.events()) {
+  const decision = item.approvalDecision;
+  if (decision) {
+    console.log(decision.tool, decision.verdict, decision.reason ?? 'No explanation available');
+    // Scope interactionId/callId with item.sessionId and item.event.turn_id.
+  }
+}
+```
+
+`verdict` is `allow`, `deny` or `unsure`. `origin` distinguishes an LLM
+`reviewer` (the auto-approver), a human, a session grant, hard policy, bypass or
+application policy. `unsure` asks for human approval and does not execute the
+call. These are persisted decisions; observing or replaying them never approves
+another action or reruns a review. Rust exposes `RunEvent::ApprovalDecision`
+and `ApprovalVerdict`; existing `AutoApproved` events remain available and can
+carry the same decision metadata.
+
+Reasons are optional, limited to 512 characters, and omitted when content
+protection withholds them or obvious credential markers are detected. Configure
+content guardrails for your application's sensitive data; the bounding filter is
+not a general secret detector. Display explanations as untrusted text. A denied
+tool response includes a safe explanation when available, plus the instruction
+not to retry or evade the decision. Human and hard-policy denials use generic
+explanations, without copying private policy errors. Older journals may lack the
+metadata needed to identify a human decision or call; the SDK does not guess it.

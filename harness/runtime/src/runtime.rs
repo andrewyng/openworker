@@ -1201,6 +1201,7 @@ impl Runtime {
                 return Ok(CompactResult::Skipped);
             } else if !cfg.auto_trim_on_failure {
                 let i = Interaction {
+                    approval_reason: None,
                     requested_at_ms: Some(crate::store::now_ms()),
                     resolved_at_ms: None,
                     grant_id: None,
@@ -2688,6 +2689,7 @@ impl Runtime {
             serde_json::from_str(call["arguments"].as_str().context("Missing args")?)?;
         let binding = self.bundle.tools.bindings.get(alias);
         let mut i = Interaction {
+            approval_reason: None,
             requested_at_ms: None,
             resolved_at_ms: None,
             grant_id: None,
@@ -2834,7 +2836,19 @@ impl Runtime {
         };
         data["classification"] = serde_json::to_value(s.tool_policy.tools.get(alias))?;
         data["approval_mode"] = serde_json::to_value(s.permissions.mode)?;
+        let reason_withheld = self
+            .effective_safety(sid)?
+            .protects(crate::safety::Phase::ModelOutput, None);
+        if i.response.as_deref() == Some("deny") && !reason_withheld {
+            i.approval_reason = review
+                .as_ref()
+                .and_then(|v| permissions::approval_reason(&v.reason));
+        }
         data["review"] = serde_json::to_value(&review)?;
+        data["review_reason_withheld"] = json!(reason_withheld);
+        if reason_withheld && review.is_some() {
+            data["review"]["reason"] = Value::Null;
+        }
         data["hard_denial"] = serde_json::to_value(hard_denial)?;
         self.update(
             sid,
@@ -3204,7 +3218,7 @@ impl Runtime {
                         json!({"answer":response})
                     }
                 } else if response == "deny" {
-                    json!({"denied":true,"executed":false,"message":"Action denied. Do not retry this action or attempt a variation to evade the decision."})
+                    permissions::denied_output(interaction)
                 } else {
                     self.check_backend(sid)?;
                     // Recheck independently of the earlier label/approval (including
@@ -3921,7 +3935,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;
