@@ -6,6 +6,7 @@
 // first, long tail behind the scroll fold.
 
 import anthropic from "./logos/anthropic.svg";
+import anyrouter from "./logos/anyrouter.svg";
 import openai from "./logos/openai.svg";
 // Azure: a simplified "A" mark drawn in-house in Azure blues (no vendored asset).
 import azure from "./logos/azure.svg";
@@ -43,6 +44,7 @@ import upstage from "./logos/upstage.svg";
 
 export const PROVIDER_LOGOS: Record<string, string> = {
   anthropic,
+  anyrouter,
   openai,
   // The subscription provider wears the same vendor mark — it's the same models,
   // different billing (owner call 2026-08-21: no bare-letter monogram).
@@ -125,6 +127,7 @@ export const PROVIDER_ORDER = [
   "huggingface",
   "cohere",
   "siliconflow",
+  "anyrouter",
 ];
 
 export function providerRank(name: string): number {

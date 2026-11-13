@@ -598,8 +598,8 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     from coworker.providers.registry import get_descriptor
 
     for name in (
-        "together", "fireworks", "openrouter", "nebius", "orcarouter", "sambanova",
-        "novita", "groq",
+        "together", "fireworks", "openrouter", "nebius", "requesty", "orcarouter", "sambanova",
+        "novita", "groq", "trustedrouter", "anyrouter",
     ):
         d = get_descriptor(name)
         assert d is not None and d.needs_key
