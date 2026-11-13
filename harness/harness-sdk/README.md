@@ -19,16 +19,20 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1"
 ```
 
-The current builder also requires a runner helper, even when the agent loop is
-embedded and the agent has no tools. Build it from the same checkout:
+A tool-free agent running in-process with `Sandbox::Off` can start without a
+separate helper. Managed processes and profiles with bound tools still need the
+matching helper. Build it from the same checkout when adding those capabilities:
 
 ```sh
 cargo +1.96.0 build --manifest-path /absolute/path/to/openworker/harness/Cargo.toml \
   --locked -p openworker-sdk --bin openworker-harness
 ```
 
-Set `OPENWORKER_EXECUTABLE` to its absolute path under `harness/target/debug/`
-(`openworker-harness.exe` on Windows). Bundle this helper with a distributed app.
+Pass its absolute path with `.executable(path)` (`openworker-harness.exe` on
+Windows), or set `OPENWORKER_EXECUTABLE`. Existing bundled-helper discovery is
+preserved. A harness started without a helper rejects later registration of a
+profile with bound tools; restart with the matching helper to add them. Keep the
+same execution configuration when resuming existing sessions.
 
 ## Run your first agent
 
@@ -45,7 +49,6 @@ async fn main() -> anyhow::Result<()> {
     let model = std::env::var("OPENWORKER_MODEL")?;
     let harness = Harness::builder()
         .state_dir(std::env::current_dir()?.join(".openworker-state"))
-        .executable(std::env::var("OPENWORKER_EXECUTABLE")?)
         .sandbox(Sandbox::Off)
         .start().await?;
     let outcome = async {

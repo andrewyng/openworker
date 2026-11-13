@@ -404,7 +404,7 @@ impl Host {
                 lead = snapshot.clone();
             }
             cursors.insert(id.clone(), snapshot["cursor"].clone());
-            for i in snapshot["interactions"].as_array().into_iter().flatten() {
+            for i in pending_interactions(&snapshot) {
                 let mut item = interruption(id, agent, i, &snapshot);
                 enrich_tool_identity(
                     &mut item,
@@ -790,7 +790,7 @@ impl Host {
             let Ok(snap) = rt.snapshot(&sid) else {
                 continue;
             };
-            for i in snap["interactions"].as_array().into_iter().flatten() {
+            for i in pending_interactions(&snap) {
                 let tool = i["call"]["name"].as_str().unwrap_or_default();
                 let Some(id) = i["id"].as_str() else { continue };
                 pending.insert(id.to_owned());
@@ -970,7 +970,7 @@ impl Host {
                     interruptions.push(safety_interruption(s, agent, snap));
                 }
                 let approvals = self.profile(agent).approvals;
-                for raw in snap["interactions"].as_array().into_iter().flatten() {
+                for raw in pending_interactions(snap) {
                     let tool = raw["call"]["name"].as_str().unwrap_or_default();
                     // The auto-approver handles these unless it failed.
                     let failed = raw["id"]
@@ -1121,6 +1121,19 @@ fn text<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     Ok(s)
 }
 
+/// Cancellation has already been admitted. Unanswered interactions can remain
+/// in the snapshot until asynchronous cleanup settles; they are not actionable.
+/// Keep waiting for the durable terminal status, including outcome-unknown.
+fn pending_interactions(snapshot: &Value) -> impl Iterator<Item = &Value> {
+    let status = snapshot["turn"]["status"].as_str().unwrap_or_default();
+    let visible = status != "cancelling" && !terminal(status);
+    snapshot["interactions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(move |_| visible)
+}
+
 fn terminal_status(turn: &Value) -> &'static str {
     match turn["status"].as_str().unwrap_or("") {
         "completed" | "" => "completed",
@@ -1244,7 +1257,8 @@ fn stream_item(agent: &str, e: Event, tools: Option<&openworker_runtime::bundle:
             }
         }
     }
-    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary})
+    let approval_decision = openworker_runtime::permissions::approval_decision(&e);
+    json!({"agent": agent, "session_id": e.session_id, "event": e, "summary": summary, "approval_decision":approval_decision})
 }
 
 fn safety_interruption(sid: &str, agent: &str, snapshot: &Value) -> Value {
@@ -1357,6 +1371,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cancelled_waits_do_not_reopen_approval_while_cleanup_is_pending() {
+        let mut snapshot = json!({"turn":{"status":"waiting"},"interactions":[{"id":"i","kind":"approval","call":{"name":"files__write","call_id":"c","arguments":"{}"}}]});
+        for (status, count) in [
+            ("waiting", 1),
+            ("recoverable", 1),
+            ("cancelling", 0),
+            ("cancelled", 0),
+            ("interrupted", 0),
+            ("completed", 0),
+        ] {
+            snapshot["turn"]["status"] = json!(status);
+            assert_eq!(pending_interactions(&snapshot).count(), count, "{status}");
+            assert_eq!(
+                snapshot["interactions"].as_array().unwrap().len(),
+                1,
+                "Filtering must not rewrite the durable approval history"
+            );
+        }
+        // Unknown admitted tool effects must still surface as failed/interrupted,
+        // never as a successful cancellation merely because approvals are hidden.
+        assert_eq!(terminal_status(&json!({"status":"interrupted"})), "failed");
+        assert_eq!(terminal_status(&json!({"status":"cancelled"})), "cancelled");
     }
 
     #[test]

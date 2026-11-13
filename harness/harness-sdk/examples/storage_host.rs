@@ -19,7 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         HarnessClient::managed_stdio(
             HostProcessConfig {
-                program: config.runner.clone(),
+                program: config
+                    .runner
+                    .clone()
+                    .ok_or("Managed mode requires a runner executable")?,
                 host: config,
                 restart: RestartPolicy::default(),
             },

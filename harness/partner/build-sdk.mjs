@@ -161,7 +161,7 @@ pub fn config(state_dir: PathBuf, package_dir: &Path) -> HostConfig {
     HostConfig {
         state_dir,
         desktop: Default::default(),
-        runner: package_dir.join("bin").join(RUNTIME_NAME),
+        runner: Some(package_dir.join("bin").join(RUNTIME_NAME)),
         storage: Storage::Sqlite,
         coworkers: vec![],
         agents: vec![],
@@ -182,7 +182,7 @@ pub async fn start(config: HostConfig, deployment: Deployment) -> Result<agents:
         ).await?,
         Deployment::Subprocess => HarnessClient::managed_stdio(
             HostProcessConfig {
-                program: config.runner.clone(), host: config,
+                program: config.runner.clone().ok_or_else(|| Error::Setup("Managed mode requires a runner executable".into()))?, host: config,
                 restart: RestartPolicy::default(),
             }, ClientOptions::default(),
         ).await?,

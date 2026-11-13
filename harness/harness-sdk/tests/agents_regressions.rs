@@ -13,7 +13,7 @@ async fn connect(config: &HostConfig, process: bool) -> Harness {
     let c = if process {
         HarnessClient::managed_host(
             HostProcessConfig {
-                program: config.runner.clone(),
+                program: config.runner.clone().expect("fixture runner"),
                 host: config.clone(),
                 restart: RestartPolicy::default(),
             },
@@ -87,7 +87,7 @@ async fn exercise(postgres: bool, process: bool) {
     let config = HostConfig {
         desktop: Default::default(),
         state_dir: root.join("state"),
-        runner: PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host")),
+        runner: Some(PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"))),
         storage,
         coworkers: vec![],
         sandbox: Sandbox::Off,

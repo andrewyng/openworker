@@ -181,10 +181,10 @@ impl Host {
                     let bundle = openworker_runtime::bundle::Bundle::load_with_registry(
                         &c.bundle, &registry,
                     )?;
-                    let mut runtime = Runtime::open_instrumented(
+                    let mut runtime = Runtime::open_instrumented_optional_runner(
                         &config.state_dir.join("profiles").join(&bundle.id),
                         &c.bundle,
-                        &config.runner,
+                        config.runner.as_deref(),
                         Model::new(c.model, config.scripted).with_provider(c.provider),
                         config.sandbox,
                         c.tool_policy.as_deref(),

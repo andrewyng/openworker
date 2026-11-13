@@ -321,7 +321,19 @@ export interface JournalEvent {
   type: string;
   data: Json;
 }
+/** A persisted approval decision, not permission to execute a new action. */
+export interface ApprovalDecision {
+  interactionId: string;
+  callId: string;
+  tool: string;
+  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "hard_policy" | "bypass";
+  verdict: "allow" | "deny" | "unsure";
+  /** Bounded released display context; may be unavailable or withheld. */
+  reason?: string;
+}
+
 export interface RunEvent {
+  approvalDecision?: ApprovalDecision;
   agentId?: string;
   teamId?: string;
   /** Original parent session for standalone child events. */
