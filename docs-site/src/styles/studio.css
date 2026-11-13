@@ -53,3 +53,16 @@ button.guide-search{width:calc(100% - 8px);text-align:left;font-size:12px;color:
 .search-header input::-webkit-search-cancel-button{appearance:none}
 /* Preserve alignment in architecture diagrams and other literal text blocks. */
 .guide-prose pre[data-language='text']{white-space:pre;overflow-wrap:normal}
+/* Native captures remain untouched. Frame the useful settings content in the
+   article; each image link opens the full original for inspection. */
+.product-desktop .app-screenshot{overflow:hidden;border:1px solid #e7e8eb;border-radius:12px;margin:28px 0 12px;aspect-ratio:1.18;background:#f4f5f7}
+.product-desktop .app-screenshot p{margin:0}
+.product-desktop .app-screenshot img{display:block;width:190%;max-width:none;height:auto;margin:0 0 0 -45%;border:0;border-radius:0}
+.product-desktop .screenshot-voice{aspect-ratio:1.3}
+.product-desktop .screenshot-machines{aspect-ratio:1.75}
+.product-desktop .screenshot-coworkers{aspect-ratio:1.5}
+.product-desktop .screenshot-sandbox{aspect-ratio:3.1}
+.product-desktop .screenshot-auto-approve{aspect-ratio:2.75}
+.product-desktop .contents nav{border:0}
+.product-desktop .contents a{border:0;margin-left:0;border-radius:5px;padding-left:10px}
+.product-desktop .contents a[aria-current]{background:#f0f4fa}

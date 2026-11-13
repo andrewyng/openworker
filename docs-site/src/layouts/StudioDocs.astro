@@ -1,11 +1,12 @@
 ---
-import {navigation} from '../lib/navigation.mjs';
+import {docsProduct} from '../../product.mjs';
 import SourceDrawer from '../components/SourceDrawer.astro';
 import '../styles/studio.css';
 const {guide,slug='index',notFound=false}=Astro.props;
+const product=docsProduct(),navigation=product.navigation,isDesktop=product.id==='desktop';
 const base=import.meta.env.BASE_URL.replace(/\/$/,'');
 const routeSlug=slug==='index'?'':slug;
-const sourceTrack=slug==='desktop'?'desktop':slug==='server'?'web':null;
+const sourceTrack=isDesktop?null:slug==='desktop'?'desktop':slug==='server'?'web':null;
 const group=navigation.find(group=>group.links.some(([,link])=>link===routeSlug));
 const label=group?.links.find(([,link])=>link===routeSlug)?.[0]??guide.title;
 const sequence=navigation.flatMap(group=>group.links);
@@ -17,47 +18,47 @@ const description=guide.subtitle.replace(/<[^>]+>/g,'').trim();
 <html lang="en">
 <head>
  <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
- <title>{guide.title} | OpenWorker SDK</title>
+ <title>{guide.title===product.title?guide.title:`${guide.title} | ${product.title}`}</title>
  <meta name="description" content={description}/>
- {notFound?<meta name="robots" content="noindex"/>:<link rel="canonical" href={new URL(Astro.url.pathname,Astro.site)}/>}
+ {notFound||isDesktop?<meta name="robots" content="noindex"/>:<link rel="canonical" href={new URL(Astro.url.pathname,Astro.site)}/>}
 </head>
-<body class="apple studio">
+<body class:list={['apple','studio',{'product-desktop':isDesktop}]}>
  <a href="#article" class="skip-link">Skip to guide</a>
  <header class="masthead">
-  <a class="brand" href={`${base}/`} aria-label="OpenWorker documentation"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="rotate(90 12 12)" d="M12 1.8 13.35 9.66 20.83 6.9 14.7 12l6.13 5.1-7.48-2.76L12 22.2l-1.35-7.86-7.48 2.76L9.3 12 3.17 6.9l7.48 2.76L12 1.8Z"/></svg><span>OpenWorker</span><span class="brand-divider"></span><span class="brand-docs">Developer</span></a>
-  <div class="header-links"><button class="search-shortcut" type="button" data-open-search aria-label="Search documentation">Search <kbd>⌘ K</kbd></button><a class="repo-link" href="https://github.com/andrewyng/openworker/tree/main/harness">GitHub <span aria-hidden="true">↗</span></a></div>
+  <a class="brand" href={`${base}/`} aria-label="OpenWorker documentation"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="rotate(90 12 12)" d="M12 1.8 13.35 9.66 20.83 6.9 14.7 12l6.13 5.1-7.48-2.76L12 22.2l-1.35-7.86-7.48 2.76L9.3 12 3.17 6.9l7.48 2.76L12 1.8Z"/></svg><span>OpenWorker</span><span class="brand-divider"></span><span class="brand-docs">{isDesktop?'Desktop App':'Developer'}</span></a>
+  <div class="header-links"><button class="search-shortcut" type="button" data-open-search aria-label="Search documentation">Search <kbd>⌘ K</kbd></button><a class="repo-link" href={isDesktop?'https://github.com/andrewyng/openworker':'https://github.com/andrewyng/openworker/tree/main/harness'}>GitHub <span aria-hidden="true">↗</span></a></div>
  </header>
- <div class="docs-bar"><span>Documentation</span><button class="mobile-nav-toggle" type="button" aria-controls="docs-navigation" aria-expanded="false">Browse guides</button><a href={`${base}/`}>Harness SDK</a></div>
+ <div class="docs-bar"><span>Documentation</span><button class="mobile-nav-toggle" type="button" aria-controls="docs-navigation" aria-expanded="false">Browse guides</button><a href={isDesktop?'https://openworker.com/docs/sdk/':`${base}/`}>{isDesktop?'Building an app? Explore the SDK ↗':'Harness SDK'}</a></div>
  <aside id="docs-navigation" class="sidebar" aria-label="Documentation navigation">
-  <div class="sidebar-title">Harness SDK</div>
+  <div class="sidebar-title">{product.label}</div>
   <button class="guide-search" type="button" data-open-search><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><span>Search documentation</span></button>
   <nav>{navigation.map(section=>{
     const expanded=section===group;
     return <details class="nav-group" open={expanded}><summary>{section.title}</summary><div>{section.links.map(([text,path])=><a href={`${base}/${path?path+'/':''}`} aria-current={path===routeSlug?'page':undefined}>{text}</a>)}</div></details>;
   })}</nav>
-  <div class="sidebar-bottom"><a href={`${base}/`}>All documentation <span aria-hidden="true">↗</span></a></div>
+  <div class="sidebar-bottom"><a href={isDesktop?'https://openworker.com':`${base}/`}>{isDesktop?'openworker.com':'All documentation'} <span aria-hidden="true">↗</span></a></div>
  </aside>
  <main id="article" data-pagefind-body={!notFound?true:undefined}>
   <section class="page-hero" aria-labelledby="guide-title">
    <div class="hero-inner">
-    <div class="breadcrumb" data-pagefind-ignore><a href={`${base}/`}>Harness SDK</a>{slug!=='index'&&<><span aria-hidden="true">/</span><span>{group?.title}</span><span aria-hidden="true">/</span><span>{label}</span></>}</div>
+    <div class="breadcrumb" data-pagefind-ignore><a href={`${base}/`}>{product.label}</a>{slug!=='index'&&<><span aria-hidden="true">/</span><span>{group?.title}</span><span aria-hidden="true">/</span><span>{label}</span></>}</div>
     <h1 id="guide-title" data-pagefind-meta="title">{guide.title}</h1>
     {guide.subtitle&&<div class="hero-description" set:html={guide.subtitle}/>}
     {sourceTrack&&<div class="hero-actions" data-pagefind-ignore><a class="primary-action" href="#build-with-your-coding-agent">Build with AI <span aria-hidden="true">↗</span></a><button type="button" class="secondary-action" data-example-source={`${base}/examples/${sourceTrack}.json`}>View example source <span aria-hidden="true">↗</span></button></div>}
-    {slug==='index'&&<div class="hero-actions" data-pagefind-ignore><a class="primary-action" href={`${base}/desktop/`}>Build a desktop app <span aria-hidden="true">↗</span></a><a class="secondary-action" href={`${base}/server/`}>Build a web app <span aria-hidden="true">↗</span></a></div>}
-    <span class="hero-motif" aria-hidden="true" data-pagefind-ignore>{'{ }'}</span>
+    {slug==='index'&&(isDesktop?<div class="hero-actions" data-pagefind-ignore><a class="primary-action" href={`${base}/first-task/`}>Try your first task <span aria-hidden="true">→</span></a><a class="secondary-action" href="https://download.openworker.com/mac">Download for Mac <span aria-hidden="true">↗</span></a><a class="secondary-action" href="https://download.openworker.com/windows">Windows <span aria-hidden="true">↗</span></a></div>:<div class="hero-actions" data-pagefind-ignore><a class="primary-action" href={`${base}/desktop/`}>Build a desktop app <span aria-hidden="true">↗</span></a><a class="secondary-action" href={`${base}/server/`}>Build a web app <span aria-hidden="true">↗</span></a></div>)}
+    {!isDesktop&&<span class="hero-motif" aria-hidden="true" data-pagefind-ignore>{'{ }'}</span>}
    </div>
   </section>
   <div class:list={['reading-layout',{'no-contents':!guide.headings.length}]}>
    <article class="guide-prose" set:html={guide.html}/>
    {guide.headings.length>0&&<aside class="contents" aria-label="On this page" data-pagefind-ignore><span>On this page</span><nav>{guide.headings.map(heading=><a href={`#${heading.slug}`} data-section-link>{heading.text}</a>)}</nav></aside>}
   </div>
-  <footer class="article-footer" data-pagefind-ignore><span>OpenWorker Harness SDK</span>{next&&<a href={`${base}/${next[1]?next[1]+'/':''}`}>Next: {next[0]} <span aria-hidden="true">→</span></a>}</footer>
+  <footer class="article-footer" data-pagefind-ignore><span>OpenWorker {product.label}</span>{next&&<a href={`${base}/${next[1]?next[1]+'/':''}`}>Next: {next[0]} <span aria-hidden="true">→</span></a>}</footer>
  </main>
  {sourceTrack&&<SourceDrawer title={sourceTrack==='desktop'?'Code Atlas':'PDF Notes'}/>}
- <dialog id="docs-search" aria-label="Search documentation" data-search-base={base}>
-  <header class="search-header"><input type="search" placeholder="Search the SDK docs…" aria-label="Search the SDK docs" autocomplete="off"/><button type="button" data-close-search aria-label="Close search">×</button></header>
-  <p class="search-status" role="status">Search guides, examples and deployment instructions.</p>
+ <dialog id="docs-search" aria-label="Search documentation" data-search-base={base} data-search-intro={isDesktop?'Search Desktop guides and walkthroughs.':'Search guides, examples and deployment instructions.'}>
+  <header class="search-header"><input type="search" placeholder={isDesktop?'Search Desktop docs…':'Search the SDK docs…'} aria-label={isDesktop?'Search Desktop docs':'Search the SDK docs'} autocomplete="off"/><button type="button" data-close-search aria-label="Close search">×</button></header>
+  <p class="search-status" role="status">{isDesktop?'Search Desktop guides and walkthroughs.':'Search guides, examples and deployment instructions.'}</p>
   <div class="search-results"></div>
  </dialog>
  <script>

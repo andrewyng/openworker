@@ -4,22 +4,35 @@ import {dirname,resolve,join,posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {renderCodeTabs} from './code-tabs.mjs';
 import {writeSources,renderSourceButton} from './source-examples.mjs';
+import {docsProduct} from '../product.mjs';
 const site=resolve(dirname(fileURLToPath(import.meta.url)),'..'),root=resolve(site,'..');
-const pages=JSON.parse(readFileSync(join(site,'pages.json'),'utf8'));
-const output=join(site,'src/content/docs'),base=(process.env.OW_DOCS_BASE??'/docs/sdk').replace(/\/$/,'');
+const product=docsProduct(),pages=product.pages;
+const output=join(site,'src/content',product.content),base=product.base.replace(/\/$/,'');
 // Remove previously generated reference pages so an incremental build cannot
 // accidentally republish archived design/specification material.
 rmSync(join(site,'public/reference'),{recursive:true,force:true});
-const images=new Map(['pdf-notes'].map(name=>[
+const images=product.id==='desktop'?new Map([
+ ['docs/desktop/guides/images/notes-to-brief.svg','examples/notes-to-brief.svg'],
+ ['docs/desktop/samples/meeting-notes.zip','examples/meeting-notes.zip'],
+]):new Map(['pdf-notes'].map(name=>[
  `docs/harness/guides/images/${name}.jpg`, `examples/${name}.jpg`
 ]));
-images.set('docs/harness/assets/architecture.svg', 'examples/architecture.svg');
-images.set('docs/harness/guides/images/session-tracing.jpg', 'examples/session-tracing.jpg');
+if(product.id==='sdk') {
+ images.set('docs/harness/assets/architecture.svg', 'examples/architecture.svg');
+ images.set('docs/harness/guides/images/session-tracing.jpg', 'examples/session-tracing.jpg');
+} else {
+ for(const name of ['models','voice','machines','coworkers','sandbox','auto-approve'])
+  images.set(`docs/desktop/guides/images/${name}.jpg`, `examples/desktop/${name}.jpg`);
+}
+// This directory is generated. Clear the other product's assets as well so
+// switching build targets cannot leak SDK source bundles into Desktop output.
+rmSync(join(site,'public/examples'),{recursive:true,force:true});
 mkdirSync(join(site,'public/examples'),{recursive:true});
-rmSync(join(site,'public/examples/code-atlas.png'),{force:true});
-rmSync(join(site,'public/examples/pdf-notes.png'),{force:true});
-for(const [source,destination] of images) copyFileSync(join(root,source),join(site,'public',destination));
-writeSources(root,join(site,'public'));
+for(const [source,destination] of images) {
+ mkdirSync(dirname(join(site,'public',destination)),{recursive:true});
+ copyFileSync(join(root,source),join(site,'public',destination));
+}
+if(product.id==='sdk')writeSources(root,join(site,'public'));
 const route=new Map(pages.map(p=>[p.source,`${base}/${p.slug==='index'?'':p.slug+'/'}`]));
 rmSync(output,{recursive:true,force:true});mkdirSync(output,{recursive:true});
 for(const page of pages) {
@@ -35,4 +48,4 @@ for(const page of pages) {
  raw=renderSourceButton(renderCodeTabs(raw,page.slug),base);
  writeFileSync(join(output,page.slug+'.md'),`---\ntitle: ${JSON.stringify(title[1])}\n---\n\n${raw}`);
 }
-console.log(`Prepared ${pages.length} SDK pages from repository Markdown`);
+console.log(`Prepared ${pages.length} ${product.label} pages from repository Markdown`);
