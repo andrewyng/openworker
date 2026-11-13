@@ -10,8 +10,8 @@ schema. The service installer remains experimental until the current release
 passes a fresh cloud install, agent/recovery and cleanup qualification.
 
 ```sh
-ows deploy azure up --config staging-deploy.yaml --plan-only
-ows deploy aws up --config prod-deploy.yaml --plan-only
+owcluster deploy azure up --config staging-deploy.yaml --plan-only
+owcluster deploy aws up --config prod-deploy.yaml --plan-only
 ```
 
 Remove `--plan-only` to review/approve provisioning. `--accept-plan DIGEST` and
@@ -67,7 +67,7 @@ in deployment YAML resolve against that YAML's directory. Generated release
 manifest paths are absolute. Legacy explicit `advanced.setupProfile` import is
 compatibility-only; new files do not use it or a hidden default account profile.
 
-Install `ows`, the cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs
+Install `owcluster`, the cloud CLI, Docker, Helm, kubectl and OpenSSL. Azure also needs
 kubelogin and SSH for its optional management VM; AWS's SSM bridge needs the
 Session Manager plugin. Sign in using your existing cloud identity. The installer
 requires the reviewed provisioning/RBAC scopes, not merely a successful login.
@@ -91,7 +91,7 @@ There is no required `budget` field in new deployment YAML. Check an optional
 estimated-cost ceiling in plan mode:
 
 ```sh
-ows deploy azure up --config staging-deploy.yaml --plan-only \
+owcluster deploy azure up --config staging-deploy.yaml --plan-only \
   --max-estimated-cost-usd 100
 ```
 
@@ -134,12 +134,22 @@ pending a separately reviewed data-retention workflow.
 emits port-forward commands and CA information, not tokens in URLs. Use a current
 service token to sign in. This does not create public ingress, DNS or a certificate
 for a company domain. Existing ingress users can retain the legacy explicit origin;
-`ows management-ui enable --ingress-url https://manage.example.com` selects it.
+`owcluster management-ui enable --ingress-url https://manage.example.com` selects it.
 Do not combine an explicit ingress origin and preview port.
 
 Use `--keep-access` to retain AWS SSM/Azure SSH private management connectivity.
 The original Kubernetes endpoint/hostname/CA stay verified through the loopback
 route. `connection.json` records API and enabled UI connection instructions.
+
+After an installation has recorded its original private-access route,
+`--access-only --keep-access` reopens that route for diagnosis without advancing
+installation or replacing resources. Stop the command to close the route.
+
+For Azure operators whose installation host cannot reach the database bootstrap
+secret in Key Vault, `--database-password-file /private/database-password` can
+supply that same database password. The file must be a bounded regular UTF-8 file
+with private permissions (0600 on Unix). Its content is not printed or saved in
+the installation review; the database host and TLS checks remain unchanged.
 
 UI and recording are independent and disabled unless configured. Recording uses
 its own connection/schema on execution PostgreSQL by default; an existing Secret
@@ -148,12 +158,12 @@ for a separate database. That Secret must be staged in the owned namespace befor
 service installation. Enabling initializes its schema before startup.
 
 ```sh
-ows management-ui enable --state ./deployment-state/installation --port 8444
-ows management-ui disable --state ./deployment-state/installation
-ows management-ui status --state ./deployment-state/installation
-ows observability enable --state ./deployment-state/installation --retention-days 14
-ows observability disable --state ./deployment-state/installation
-ows observability status --state ./deployment-state/installation
+owcluster management-ui enable --state ./deployment-state/installation --port 8444
+owcluster management-ui disable --state ./deployment-state/installation
+owcluster management-ui status --state ./deployment-state/installation
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability disable --state ./deployment-state/installation
+owcluster observability status --state ./deployment-state/installation
 ```
 
 The commands save feature overrides in the installer journal, retain the original

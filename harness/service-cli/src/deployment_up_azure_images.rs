@@ -3,6 +3,52 @@
 use super::*;
 use zeroize::Zeroizing;
 struct Temporary(PathBuf);
+pub(super) fn private_password_file(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
+    use std::io::Read;
+    let meta = fs::symlink_metadata(path).context("Private database password file unavailable")?;
+    ensure!(
+        meta.is_file() && !meta.file_type().is_symlink() && meta.len() > 0 && meta.len() <= 4098,
+        "Use a bounded regular private password file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(
+            meta.permissions().mode() & 0o077 == 0,
+            "Database password file must be private (chmod 600)"
+        );
+    }
+    let file = fs::File::open(path).context("Private database password read failed")?;
+    let opened = file.metadata()?;
+    ensure!(
+        opened.is_file() && opened.len() == meta.len(),
+        "Database password file changed while opening"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ensure!(
+            opened.dev() == meta.dev() && opened.ino() == meta.ino() && opened.mode() & 0o077 == 0,
+            "Database password file identity changed"
+        );
+    }
+    let mut bytes = Zeroizing::new(vec![]);
+    file.take(4099)
+        .read_to_end(&mut bytes)
+        .context("Private database password read failed")?;
+    ensure!(
+        bytes.len() <= 4098 && bytes.len() as u64 == opened.len(),
+        "Database password file changed while reading"
+    );
+    let text = std::str::from_utf8(&bytes)
+        .context("Invalid database password encoding")?
+        .trim_end_matches(['\r', '\n']);
+    ensure!(
+        !text.is_empty() && text.len() <= 4096 && !text.contains(['\r', '\n', '\0']),
+        "Invalid private database password"
+    );
+    Ok(bytes)
+}
 fn source_acr(source: &str) -> Result<Option<(String, String)>> {
     let host = source.split('/').next().context("Image registry missing")?;
     let Some(name) = host.strip_suffix(".azurecr.io") else {
@@ -311,7 +357,11 @@ impl Native<'_> {
             "--subscription",
             self.review.config.cloud.account(),
         ]);
-        let raw = Zeroizing::new(self.tool("az", std::mem::take(&mut args), None).await?);
+        let raw = if let Some(path) = &self.database_password_file {
+            private_password_file(path)?
+        } else {
+            Zeroizing::new(self.tool("az", std::mem::take(&mut args), None).await?)
+        };
         let password = std::str::from_utf8(&raw)
             .context("Invalid secret encoding")?
             .trim_end_matches(['\r', '\n']);
@@ -339,6 +389,25 @@ impl Native<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn password_file_requires_private_regular_bounded_input_without_echoing_values() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("password");
+        fs::write(&path, b"private-canary\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(private_password_file(&path).is_ok());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let error = private_password_file(&path).unwrap_err().to_string();
+        assert!(!error.contains("private-canary"));
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&path, b"multiple\nlines").unwrap();
+        assert!(private_password_file(&path).is_err());
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(private_password_file(&link).is_err());
+    }
     #[test]
     fn isolated_auth_preserves_only_buildx_discovery_without_copying_global_credentials() {
         let value = plugin_config(&json!([{"Name":"buildx","Path":"/opt/docker/cli-plugins/docker-buildx","secret":"must-not-copy"}])).unwrap();

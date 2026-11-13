@@ -95,7 +95,7 @@ See [AWS deployment](../../docs/harness/guides/aws.md) and
 [deployment options](../../docs/harness/guides/deployment.md). Use an owned trial
 with an explicit budget and independent cleanup before production deployment.
 
-`owcluster` is the primary command. `ows` remains an alias, using the same commands, configuration and saved deployment state. Existing `.ows` paths and `OWS_*` settings remain valid.
+`owcluster` is the primary command. `owcluster` remains an alias, using the same commands, configuration and saved deployment state. Existing `.ows` paths and `OWS_*` settings remain valid.
 
 ## Optional management UI and trace storage
 
@@ -103,12 +103,12 @@ Select these features in `deployment.yaml` for the AWS/Azure `up` commands, or
 change them on an existing installation:
 
 ```sh
-ows management-ui enable --state ./deployment-state/installation --port 8444
-ows management-ui disable --state ./deployment-state/installation
-ows management-ui status --state ./deployment-state/installation
-ows observability enable --state ./deployment-state/installation --retention-days 14
-ows observability disable --state ./deployment-state/installation
-ows observability status --state ./deployment-state/installation
+owcluster management-ui enable --state ./deployment-state/installation --port 8444
+owcluster management-ui disable --state ./deployment-state/installation
+owcluster management-ui status --state ./deployment-state/installation
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability disable --state ./deployment-state/installation
+owcluster observability status --state ./deployment-state/installation
 ```
 
 `--state` is the original installer journal, using its Kubernetes credentials and

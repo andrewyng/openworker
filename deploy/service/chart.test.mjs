@@ -173,6 +173,17 @@ test("invalid ownership, mutable image and inadequate drain grace fail rendering
     }),
   );
 });
+test("Azure trace schema initializer is excluded from workload credential injection", async()=>{
+  const artifacts={kind:"azure",deployment:"ows-test",account:"owteststorage",container:"artifacts",tenant_id:"11111111-1111-4111-8111-111111111111",client_id:"22222222-2222-4222-8222-222222222222",federated_token_file:"/var/run/secrets/azure/tokens/azure-identity-token"};
+  const out=await render({config:{...base.config,artifacts,observability:{retention_days:14}}});
+  for(const role of ["api","worker"]){
+    const d=deployment(out,role);
+    assert.match(d,/azure.workload.identity\/skip-containers: "harness(?:;tls)?;recording-schema"/);
+    const init=d.split("initContainers:")[1].split("      containers:")[0];
+    assert.doesNotMatch(init,/azure-artifact-token|azure-identity-token|AZURE_/);
+    assert.equal((d.match(/name: azure-artifact-token\n/g)||[]).length,1);
+  }
+});
 test("management UI has no execution, database, or cluster authority", async () => {
   const uiValues = {
     enabled: true,

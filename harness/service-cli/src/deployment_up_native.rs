@@ -9,11 +9,15 @@ mod access;
 mod azure_images;
 #[path = "deployment_up_install.rs"]
 mod install;
+pub(super) fn validate_password_input(path: &Path) -> Result<()> {
+    azure_images::private_password_file(path).map(|_| ())
+}
 pub(super) struct Native<'a> {
     pub root: PathBuf,
     pub review: &'a Review,
     pub package: package::Snapshot,
     pub bootstrap_approved: bool,
+    pub database_password_file: Option<PathBuf>,
     pub bridge: std::cell::RefCell<Option<access::Bridge>>,
 }
 fn arg(path: &Path) -> Result<String> {
@@ -654,6 +658,7 @@ mod contract_tests {
                 review: &review,
                 package,
                 bootstrap_approved: false,
+                database_password_file: None,
                 bridge: Default::default(),
             };
             let plan = native.native_plan().unwrap();

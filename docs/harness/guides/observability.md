@@ -171,13 +171,13 @@ continues to control audit reads. Cluster experiment/review tooling comes later.
 The source CLI supports independent UI and trace-storage controls:
 
 ```sh
-ows observability enable --state ./deployment-state/installation --retention-days 14
-ows observability status --state ./deployment-state/installation
-ows observability disable --state ./deployment-state/installation
-ows management-ui enable --state ./deployment-state/installation
+owcluster observability enable --state ./deployment-state/installation --retention-days 14
+owcluster observability status --state ./deployment-state/installation
+owcluster observability disable --state ./deployment-state/installation
+owcluster management-ui enable --state ./deployment-state/installation
 ```
 
-Use the installer state created by `ows deploy aws up` or `ows deploy azure up`.
+Use the installer state created by `owcluster deploy aws up` or `owcluster deploy azure up`.
 Enabling recording initializes its separate PostgreSQL schema before workloads
 restart. Disabling stops collection after the rollout and retains stored traces;
 it does not disable security audit or a separately configured exporter.

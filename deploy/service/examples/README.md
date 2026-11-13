@@ -22,9 +22,9 @@ data only, optionally add `trial: {expiresAfterHours: 6, deleteData: true}`.
 ## Azure and AWS
 
 ```sh
-ows deploy azure up --config azure/deployment.yaml --plan-only \
+owcluster deploy azure up --config azure/deployment.yaml --plan-only \
   --max-estimated-cost-usd 100
-ows deploy aws up --config aws/deployment.yaml --plan-only
+owcluster deploy aws up --config aws/deployment.yaml --plan-only
 ```
 
 A cost ceiling is optional, is plan-only, and checks an estimate rather than actual
@@ -72,11 +72,11 @@ approval. Kubernetes must be able to reach PostgreSQL and pull/use those images.
 `scripted` is a local fixture option, not a substitute for live-provider qualification.
 
 ```sh
-ows deploy local-k8s plan --config local-k8s/deployment.yaml --state .ows/local
-ows deploy local-k8s up --config local-k8s/deployment.yaml --state .ows/local \
+owcluster deploy local-k8s plan --config local-k8s/deployment.yaml --state .ows/local
+owcluster deploy local-k8s up --config local-k8s/deployment.yaml --state .ows/local \
   --accept-plan PLAN_DIGEST
-ows deploy local-k8s status --state .ows/local
-ows management-ui status --state .ows/local/installation
+owcluster deploy local-k8s status --state .ows/local
+owcluster management-ui status --state .ows/local/installation
 ```
 
 Use the actual digest printed by plan. The shared installer checks cluster and
@@ -90,7 +90,7 @@ No new sandbox/model run is implied by successful installation readiness.
 The CLI generates the private API certificate and maps `managementUI.port` to the
 loopback preview. Keep and trust that CA; do not disable TLS verification.
 Set UI/recording preferences in YAML or use the independent feature commands.
-Native lower-level `ows deploy local` / `deploy cluster` remain compatibility
+Native lower-level `owcluster deploy local` / `deploy cluster` remain compatibility
 interfaces for existing journals; new examples use `local-k8s`.
 
 The new `local-docker` and `remote-k8s` command names are discoverable but report

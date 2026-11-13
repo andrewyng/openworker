@@ -36,8 +36,11 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
         {{- if $azure }}
         # This chart owns its explicit projection; prevent webhook injection of
-        # another token path or credentials into the TLS sidecar.
-        azure.workload.identity/skip-containers: {{ if eq $role "api" }}"harness;tls"{{ else }}"harness"{{ end }}
+        # another token path or credentials into TLS/schema-only containers.
+        {{- $skip := list "harness" -}}
+        {{- if eq $role "api" }}{{ $skip = append $skip "tls" }}{{ end -}}
+        {{- if hasKey $.Values.config "observability" }}{{ $skip = append $skip "recording-schema" }}{{ end }}
+        azure.workload.identity/skip-containers: {{ join ";" $skip | quote }}
         {{- end }}
     spec:
       automountServiceAccountToken: {{ eq $role "platform" }}

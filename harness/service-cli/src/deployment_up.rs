@@ -36,11 +36,18 @@ pub struct Options {
     /// Separate approval of scoped identity grants in the exact reviewed plan.
     #[arg(long)]
     accept_bootstrap: Option<String>,
+    /// Azure only: private password file matching the reviewed database secret.
+    /// Avoids reading Key Vault data plane from the installer network.
+    #[arg(long)]
+    database_password_file: Option<PathBuf>,
     #[arg(long, default_value_t = 3600)]
     timeout_seconds: u64,
     /// Keep the private management route open after installation; Ctrl-C closes it.
     #[arg(long)]
     keep_access: bool,
+    /// Reopen the original private route for diagnosis without advancing installation.
+    #[arg(long, requires = "keep_access", conflicts_with = "plan_only")]
+    access_only: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -199,6 +206,10 @@ async fn check_local_tools(c: &Config, package: &package::Snapshot) -> Result<()
 }
 pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
     let config = Config::load(&o.config, provider)?;
+    ensure!(
+        o.database_password_file.is_none() || provider == "azure",
+        "database-password-file is Azure-only"
+    );
     let package = package::load(&config)?;
     ensure!(
         (10..=14400).contains(&o.timeout_seconds),
@@ -252,6 +263,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &value,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default(),
         }
         .artifact_digest()?;
@@ -266,6 +278,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &review,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default()
         }
         .artifact_digest()?
@@ -281,11 +294,15 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
             review: &review,
             package: package.clone(),
             bootstrap_approved: false,
+            database_password_file: None,
             bridge: Default::default(),
         }
         .review_bundle()
         .await?;
         return cost::review(&state, &review, &package, o.max_estimated_cost_usd).await;
+    }
+    if let Some(path) = &o.database_password_file {
+        native::validate_password_input(path)?;
     }
     cost::validate_approval(&state, &review)?;
     if let Some(subtotal) = review
@@ -304,6 +321,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         review: &review,
         package: package.clone(),
         bootstrap_approved: false,
+        database_password_file: None,
         bridge: Default::default(),
     };
     preview.review_bundle().await?;
@@ -326,6 +344,7 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         review: &review,
         package,
         bootstrap_approved: true,
+        database_password_file: o.database_password_file.clone(),
         bridge: Default::default(),
     };
     let path = state.join("up-journal.json");
@@ -336,6 +355,21 @@ pub(super) async fn run(provider: &str, o: &Options) -> Result<()> {
         .is_some_and(|s| s.phase == state::Phase::Complete)
     {
         driver.restore_access().await?;
+    }
+    if o.access_only {
+        ensure!(
+            journal
+                .stages
+                .get(&state::Stage::PrivateAccess)
+                .is_some_and(|s| s.phase == state::Phase::Complete),
+            "Original private access receipt is required"
+        );
+        crate::output(
+            json!({"phase":"access_ready","state":state,"installationAdvanced":false,"close":"Ctrl-C"}),
+        )?;
+        tokio::signal::ctrl_c().await?;
+        driver.close_access().await?;
+        return Ok(());
     }
     let previously_complete = journal.complete();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(o.timeout_seconds);
