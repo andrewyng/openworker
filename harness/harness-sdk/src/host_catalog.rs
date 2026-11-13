@@ -115,10 +115,10 @@ impl Catalog {
             )
             .optional()?;
         if let Some(previous) = previous {
-            ensure!(
-                previous == encoded,
-                "Agent identity already has a different definition"
-            );
+            let existing = serde_json::from_str::<Agent>(&previous)?;
+            if let Some(conflict) = crate::AgentDefinitionConflict::between(&existing, agent)? {
+                return Err(conflict.into());
+            }
         } else {
             tx.execute(
                 "INSERT INTO agents(id,definition) VALUES(?1,?2)",
@@ -134,11 +134,9 @@ pub(super) fn merge(startup: &[Agent], saved: Vec<Agent>) -> Result<Vec<Agent>> 
     let mut result = startup.to_vec();
     for agent in saved {
         if let Some(existing) = result.iter().find(|a| a.id == agent.id) {
-            ensure!(
-                serde_json::to_value(existing)? == serde_json::to_value(&agent)?,
-                "Startup agent conflicts with persisted registration: {}",
-                agent.id
-            );
+            if let Some(conflict) = crate::AgentDefinitionConflict::between(existing, &agent)? {
+                return Err(conflict.into());
+            }
         } else {
             result.push(agent);
         }

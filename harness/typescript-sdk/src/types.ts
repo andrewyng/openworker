@@ -403,11 +403,23 @@ export class HarnessError extends Error {
       submissionId?: string;
       requestId?: string;
       providerError?: ProviderDiagnostic;
+      reason?: "agent_definition_conflict";
+      agentId?: string;
+      conflictingFields?: string[];
     },
   ) {
     super(message);
     this.name = "HarnessError";
   }
+}
+
+/** Accept only identity/field metadata, never arbitrary remote error messages or values. */
+export function agentDefinitionConflict(value: unknown): {reason: "agent_definition_conflict"; agentId: string; conflictingFields: string[]} | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
+  if (typeof v.agent_id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.agent_id) || !Array.isArray(v.conflicting_fields) || v.conflicting_fields.length === 0 || v.conflicting_fields.length > fields.length || v.conflicting_fields.some(f => typeof f !== "string" || !fields.includes(f))) return undefined;
+  return {reason: "agent_definition_conflict", agentId: v.agent_id, conflictingFields: [...v.conflicting_fields] as string[]};
 }
 
 export type ProviderFailure = "rate_limit" | "transient" | "transport" | "incomplete_stream" | "invalid_response" | "context_overflow" | "truncated" | "authentication" | "configuration" | "safety_blocked";
