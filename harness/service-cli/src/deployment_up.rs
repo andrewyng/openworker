@@ -473,6 +473,66 @@ mod route_tests {
 mod approval_tests {
     use super::*;
     #[test]
+    fn saved_review_preserves_catalog_prices_and_rejects_drift() {
+        let config: Config = serde_json::from_value(json!({
+            "name":"example",
+            "cloud":{"provider":"aws","accountId":"123456789012","region":"us-west-2"},
+            "nodes":{"count":2,"instanceType":"t4g.large"}
+        }))
+        .unwrap();
+        for rate in [
+            0.00015753424657534247_f64,
+            0.5438415068493151,
+            0.012712465753424657,
+            0.1534027397260274,
+        ] {
+            let resolution = serde_json::from_value(json!({
+            "node":{"instanceType":"t4g.large","cpu":2,"memoryGiB":8,"architecture":"arm64","eligible":true,"hourlyUsd":0.0672},
+            "price":{"currency":"USD","workerHourlyUsd":0.1344,"totalHourlyUsd":null,
+                "knownHourlySubtotalUsd":rate,
+                "components":{"databaseDisks":{"hourlyUsd":rate,"quantity":20.0,"source":"catalog fixture","meter":"disk"}},
+                "variableAllowanceUsd":15,"plannedHours":4,"unpricedComponents":["cluster"],"hardCap":false},
+            "observedAtUnix":1,"identity":{"accountId":"123456789012"}
+        }))
+        .unwrap();
+            let mut original = Review {
+                schema_version: 1,
+                config_digest: config.digest().unwrap(),
+                config: config.clone(),
+                deployment_id: "ows-0123456789abcdef0123456789abcdef".into(),
+                resolution,
+                package_digest: "a".repeat(64),
+                native_bundle_digest: "b".repeat(64),
+                digest: String::new(),
+            };
+            original.digest = original.digest().unwrap();
+            original.validate(&config).unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("review.json");
+            write_private(&path, &original).unwrap();
+            let mut restored: Review = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            assert_eq!(
+                restored.resolution.price.components["databaseDisks"]
+                    .hourly_usd
+                    .to_bits(),
+                rate.to_bits()
+            );
+            restored.validate(&config).unwrap();
+            assert_eq!(restored.digest, original.digest);
+            restored
+                .resolution
+                .price
+                .components
+                .get_mut("databaseDisks")
+                .unwrap()
+                .hourly_usd += 0.01;
+            assert!(
+                restored.validate(&config).is_err(),
+                "Actual price drift must still invalidate approval"
+            );
+        }
+    }
+    #[test]
     fn approval_is_durable_scoped_and_rejects_changed_review() {
         let temp = tempfile::tempdir().unwrap();
         let digest = "a".repeat(64);
