@@ -231,7 +231,7 @@ jobs:
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents
           node --test --test-concurrency=2 --test-reporter=tap typescript-sdk/test/chat-usage.test.mjs typescript-sdk/test/openrouter-streaming.test.mjs typescript-sdk/test/anthropic-caching.test.mjs typescript-sdk/test/gemini-compat.test.mjs typescript-sdk/test/session-options.test.mjs typescript-sdk/test/application-guidance.test.mjs typescript-sdk/test/stream-events.test.mjs typescript-sdk/test/attachments.test.mjs
-          node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/agent-team.test.mjs typescript-sdk/test/standalone-subagents.test.mjs
+          node --test --test-reporter=tap typescript-sdk/test/desktop-api.test.mjs typescript-sdk/test/cancel-approval.test.mjs typescript-sdk/test/agent-team.test.mjs typescript-sdk/test/standalone-subagents.test.mjs
           node --test --test-reporter=tap typescript-sdk/test/coding.test.mjs typescript-sdk/test/assistant.test.mjs
       - name: Starter and partner packaging
         run: |
