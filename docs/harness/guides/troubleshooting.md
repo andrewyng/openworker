@@ -3,7 +3,7 @@
 | Symptom | Check |
 |---|---|
 | Runtime not found | Install npm optional dependencies, or provide an absolute matching executable path. For packaged desktop apps, put it in resources outside ASAR. |
-| Release mismatch | Update SDK and helper together. Do not substitute a different binary merely because it implements protocol 0.1. |
+| Release mismatch | Use the native runtime required by your SDK. See [compatibility](releases.md) before substituting a custom executable. |
 | No model or authentication failure | Confirm provider name, exact model ID, API format, endpoint and credential source. Never put keys into a prompt. |
 | Run appears stopped | Inspect `session.state()` and interruptions. It may be waiting for approval, a question or a required safety check. |
 | Safety check unavailable | Restore the configured handler/service, then explicitly resume safety. Bypass is not a way around it. |

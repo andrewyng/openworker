@@ -12,7 +12,7 @@ Node 22.12+ is required (qualified here with Node 24). From this directory:
 npm run setup
 ```
 
-The example pins published SDK beta.4, which installs native runtime beta.3 automatically. Set `OPENWORKER_MODEL` to an exact model ID. Set `OPENAI_API_KEY` privately. Optional `OPENWORKER_MODEL_URL` selects a compatible OpenAI Responses endpoint. For Ollama, set `OPENWORKER_PROVIDER=Ollama`, an installed model ID, and optionally its chat-completions base URL; no cloud key is used. For PDF Notes with a text-only local model, also set `OPENWORKER_PDF_MODE=text`.
+The example pins its SDK dependency internally; npm installs the compatible native runtime automatically. Set `OPENWORKER_MODEL` to an exact model ID. Set `OPENAI_API_KEY` privately. Optional `OPENWORKER_MODEL_URL` selects a compatible OpenAI Responses endpoint. For Ollama, set `OPENWORKER_PROVIDER=Ollama`, an installed model ID, and optionally its chat-completions base URL; no cloud key is used. For PDF Notes with a text-only local model, also set `OPENWORKER_PDF_MODE=text`.
 
 ```sh
 npm run desktop

@@ -4,8 +4,7 @@ Inspect each turn's timeline, model usage, tools and spawned tasks. Keep recordi
 locally, forward traces to a collector or Langfuse, or use both. These are separate
 options; neither is needed to run an agent.
 
-Available in native runtime beta.3 with matching SDK configuration. Recording,
-trace export and content capture are independently configurable. See [versions](releases.md).
+Recording, trace export and content capture are independently configurable.
 
 ## What you can inspect
 

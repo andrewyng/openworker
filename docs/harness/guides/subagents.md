@@ -17,8 +17,8 @@ tests. Each child has its own conversation and a restricted tool catalog.
 
 ## Enable standalone sub-agents
 
-Requires a runtime advertising `standalone_subagents`, available in native
-runtime 0.1.0-beta.3. An ordinary agent can let its model delegate work:
+Enable delegation on an ordinary agent. The SDK supplies the tools its model
+uses to create and coordinate children:
 
 <!-- sdk-tabs -->
 ### TypeScript
