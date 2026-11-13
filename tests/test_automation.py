@@ -85,6 +85,7 @@ def test_compute_next_run_once_in_past_is_none():
     assert compute_next_run(t) is None
 
 
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="changing the process timezone for DST requires time.tzset")
 def test_compute_next_run_once_local_is_dst_aware(monkeypatch):
     """A one-time 'local' task set while EDT is in effect but firing on a winter EST date must
     fire at the requested wall-clock, not an hour off. Binding the naive datetime to the

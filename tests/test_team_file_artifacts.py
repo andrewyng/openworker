@@ -59,7 +59,7 @@ def test_publication_versions_shared_with_sibling_not_assigned_item(manager, tmp
 def test_text_pages_pin_version_and_replay(manager, tmp_path):
     _, _, item = create_item(manager)
     body = "α review finding\n" * 2000
-    (tmp_path / "report.txt").write_text(body, encoding="utf-8")
+    (tmp_path / "report.txt").write_bytes(body.encode("utf-8"))
     tools = tools_for(manager, tmp_path)
     published = tools["attach_file"](item["id"], "report.txt")
     first = tools["read_team_artifact"](published["artifact_id"], max_chars=1000)

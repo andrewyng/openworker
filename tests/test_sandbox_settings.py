@@ -184,6 +184,7 @@ def test_a_missing_base_image_shows_as_needs_download_not_as_ready(config_file, 
     from coworker.sandbox import selection
     from coworker.sandbox.providers.openshell import IMAGE_MISSING_PREFIX
 
+    monkeypatch.setattr(sys, "platform", "linux")
     message = f"{IMAGE_MISSING_PREFIX} (about 5 GB, one time). Run `openworker machine sandbox setup`."
     monkeypatch.setattr(selection, "openshell_problem", lambda fresh=False: message)
     snap = settings.snapshot()
