@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 pub const VERSION: &str = "0.0.116";
 pub struct Sandbox {
     pub root: PathBuf,
-    pub runner: PathBuf,
+    pub runner: Option<PathBuf>,
 }
 pub struct Mcp;
 pub fn config_home() -> Result<PathBuf> {

@@ -44,7 +44,7 @@ impl Fixture {
         if process {
             HarnessClient::managed_stdio(
                 ProcessConfig {
-                    program: self.config.runner.clone(),
+                    program: self.config.runner.clone().expect("fixture runner"),
                     runtime: self.config.clone(),
                     restart: RestartPolicy {
                         max_restarts: 2,
@@ -452,7 +452,7 @@ async fn malformed_startup_fails_and_does_not_leak_a_store_owner() {
     config.model = "sdk-malformed".into();
     assert!(HarnessClient::managed_stdio(
         ProcessConfig {
-            program: config.runner.clone(),
+            program: config.runner.clone().expect("fixture runner"),
             runtime: config,
             restart: RestartPolicy::default()
         },
@@ -469,7 +469,7 @@ async fn shutdown_during_backoff_never_restarts() {
     let f = Fixture::new();
     let c = HarnessClient::managed_stdio(
         ProcessConfig {
-            program: f.config.runner.clone(),
+            program: f.config.runner.clone().expect("fixture runner"),
             runtime: f.config.clone(),
             restart: RestartPolicy {
                 max_restarts: 3,

@@ -248,7 +248,7 @@ fn materialization_is_readonly_private_separate_from_runner_and_cleanable() {
     let s = f.resolve(&f.policy(), selected()).unwrap();
     let sandbox = Sandbox {
         root: f.root.join("state"),
-        runner: f.root.join("runner"),
+        runner: Some(f.root.join("runner")),
     };
     let dir = sandbox
         .prepare_credentials("owr-synthetic", &s)

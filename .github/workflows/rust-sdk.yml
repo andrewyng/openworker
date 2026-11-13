@@ -63,6 +63,7 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo test --locked -p openworker-sdk --features test-support --lib --test desktop_api --test agent_team --test attachments -- --test-threads=1
+          cargo test --locked -p openworker-sdk --features test-support --test tool_free responses_embedded
           cargo test --locked -p openworker-runtime --lib direct::windows::tests -- --test-threads=1
           cargo test --locked -p openworker-runtime --test windows --test connections --test model_endpoints --test direct_macos --test coding --test coding_extended --test assistant
           cargo test --locked -p openworker-sdk --features test-support --test coding --test assistant -- --test-threads=1

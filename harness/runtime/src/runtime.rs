@@ -241,6 +241,35 @@ impl Runtime {
         store: Option<Box<dyn StateStore>>,
         telemetry: Telemetry,
     ) -> Result<Arc<Self>> {
+        Self::open_instrumented_optional_runner(
+            root,
+            bundle,
+            Some(runner),
+            model,
+            backend,
+            policy,
+            resource_policy,
+            registry,
+            store,
+            telemetry,
+        )
+    }
+
+    /// Explicit runner-free mode for embedded, sandbox-off, tool-free profiles.
+    /// Adding a bound tool requires reopening the harness with its real helper.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_instrumented_optional_runner(
+        root: &Path,
+        bundle: &Path,
+        runner: Option<&Path>,
+        model: Model,
+        backend: Backend,
+        policy: Option<&Path>,
+        resource_policy: Option<&Path>,
+        registry: openworker_tools::ToolRegistry,
+        store: Option<Box<dyn StateStore>>,
+        telemetry: Telemetry,
+    ) -> Result<Arc<Self>> {
         #[cfg(windows)]
         if backend == Backend::Openshell {
             bail!("Native Windows sandboxing is not implemented; select --sandbox off explicitly. No fallback.");
@@ -277,12 +306,19 @@ impl Runtime {
         );
         let tool_policy = crate::tool_policy::ToolPolicy::load(policy, &bundle)?;
         let resource_policy = crate::resource_policy::Policy::load(resource_policy, &bundle)?;
-        let runner = runner
-            .canonicalize()
-            .context("Native runner executable unavailable")?;
-        let head = std::fs::read(&runner)?;
-        crate::platform::runner_executable(&head, backend)?;
-        let runner_digest = digest(&head);
+        let (runner, runner_digest) = if let Some(runner) = runner {
+            let runner = runner
+                .canonicalize()
+                .context("Native runner executable unavailable")?;
+            let head = std::fs::read(&runner)?;
+            crate::platform::runner_executable(&head, backend)?;
+            let runner_digest = digest(&head);
+            (Some(runner), runner_digest)
+        } else {
+            ensure!(backend == Backend::Off && bundle.tools.bindings.is_empty(),
+                "This profile requires a runner; restart the embedded harness with executable set to the matching openworker-harness helper");
+            (None, "embedded-tool-free-v1".into())
+        };
         let mut execution_identity = format!(
             "{}:{runner_digest}:{}:{}",
             bundle.digest, tool_policy.digest, resource_policy.digest
@@ -2154,11 +2190,8 @@ impl Runtime {
             bail!("Policy workspace must be canonical, without symlinks");
         }
         self.tool_policy.check_workspace(&workspace)?;
-        let mut protected = vec![
-            self.state_dir.clone(),
-            self.bundle.root.clone(),
-            self.sandbox.runner.clone(),
-        ];
+        let mut protected = vec![self.state_dir.clone(), self.bundle.root.clone()];
+        protected.extend(self.sandbox.runner.iter().cloned());
         protected.extend(self.bundle.registry.config_sources().iter().cloned());
         if let Some(p) = self.tool_policy.path() {
             protected.push(p.into());
@@ -2299,7 +2332,11 @@ impl Runtime {
         }
         let mut argv = vec![if backend == Backend::Off {
             let path = if server.program == "$OPENWORKER" {
-                self.sandbox.runner.clone()
+                self.sandbox
+                    .runner
+                    .as_ref()
+                    .context("Native runner required")?
+                    .clone()
             } else {
                 self.bundle.root.join(&server.program).canonicalize()?
             };
@@ -2368,9 +2405,15 @@ impl Runtime {
                 argv,
             )))
         } else if backend == Backend::Off {
-            let mut m =
-                crate::direct::Mcp::launch(&self.sandbox.runner, Path::new(&s.workspace), &argv)
-                    .await?;
+            let mut m = crate::direct::Mcp::launch(
+                self.sandbox
+                    .runner
+                    .as_deref()
+                    .context("Native runner required")?,
+                Path::new(&s.workspace),
+                &argv,
+            )
+            .await?;
             self.update(sid,"direct_process_registered",json!({"pid":m.identity.pid,"server":server.id,"sandbox":"off","enforcement":"none"}),|s|{
                 s.direct_processes.insert(server.id.clone(),m.identity.clone());Ok(())
             })?;
@@ -2412,8 +2455,15 @@ impl Runtime {
     ) -> Result<(Clients, Vec<Value>)> {
         self.check_backend(sid)?;
         let _preparing = self.prepare.lock().await;
-        if digest(&std::fs::read(&self.sandbox.runner)?) != self.runner_digest {
-            bail!("Native runner changed while runtime active");
+        if let Some(runner) = &self.sandbox.runner {
+            if digest(&std::fs::read(runner)?) != self.runner_digest {
+                bail!("Native runner changed while runtime active");
+            }
+        } else {
+            ensure!(
+                self.backend == Backend::Off && self.bundle.tools.bindings.is_empty(),
+                "Runner-free profiles cannot execute bound tools"
+            );
         }
         let s = self.store.lock().unwrap().get(sid)?;
         if let Some(config) = s

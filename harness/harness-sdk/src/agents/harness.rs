@@ -150,18 +150,23 @@ impl HarnessBuilder {
         self
     }
 
-    fn prepare(&self) -> Result<HostConfig> {
+    fn prepare(&self, managed: bool) -> Result<HostConfig> {
         let state_dir = self
             .state_dir
             .clone()
             .map(Ok)
             .unwrap_or_else(crate::desktop::default_state_dir)?;
-        let runner = self
-            .runner
-            .clone()
-            .map(Ok)
-            .unwrap_or_else(crate::desktop::default_executable)?;
-        if !state_dir.is_absolute() || !runner.is_absolute() {
+        let tool_free = super::compile::flatten(&self.agents)?
+            .iter()
+            .all(|(_, (agent, _))| agent.tools.is_empty());
+        let runner = match &self.runner {
+            Some(path) => Some(path.clone()),
+            None if !managed && self.sandbox == Sandbox::Off && tool_free => {
+                crate::desktop::optional_default_executable()?
+            }
+            None => Some(crate::desktop::default_executable()?),
+        };
+        if !state_dir.is_absolute() || runner.as_ref().is_some_and(|p| !p.is_absolute()) {
             return Err(Error::InvalidInput(
                 "State directory and runner paths must be absolute".into(),
             ));
@@ -189,7 +194,7 @@ impl HarnessBuilder {
 
     /// Run the engine inside this process (your Tokio runtime, your tools).
     pub async fn embedded(self) -> Result<Harness> {
-        let host = self.prepare()?;
+        let host = self.prepare(false)?;
         let client = HarnessClient::embedded_host(host, self.registry, self.options).await?;
         let harness = Harness::connect(client).await?;
         if self
@@ -214,7 +219,7 @@ impl HarnessBuilder {
 
     /// Run the engine in an SDK-owned child process with bounded restarts.
     pub async fn managed(self, program: PathBuf, restart: RestartPolicy) -> Result<Harness> {
-        let host = self.prepare()?;
+        let host = self.prepare(true)?;
         let client = HarnessClient::managed_host(
             HostProcessConfig {
                 program,
