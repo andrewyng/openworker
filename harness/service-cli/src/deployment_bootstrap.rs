@@ -165,7 +165,7 @@ Scope: `{}` in account `{account}`, region `{region}`.
 This bundle can create **two IAM roles only** when the customer explicitly runs
 `bash bootstrap.sh --apply-identities`. Generation and validation are offline.
 The script has not been qualified against live AWS. No cloud execution is part of
-local testing. `ows deploy apply` remains disabled.
+local testing. `owcluster deploy apply` remains disabled.
 
 ## Required customer authority
 

@@ -1,4 +1,4 @@
-//! Thin service client: no agent loop, provider credentials or local tool runner.
+// Thin service client: no agent loop, provider credentials or local tool runner.
 mod deployment;
 mod settings;
 use anyhow::{ensure, Context, Result};
@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 #[derive(Parser)]
 #[command(
-    name = "ows",
+    name = "owcluster",
+    bin_name = "owcluster",
     version,
     about = "Manage and submit agents to OpenWorker Service"
 )]
