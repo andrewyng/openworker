@@ -186,6 +186,79 @@ def test_tool_name_sanitizes():
     assert "." not in tool_name("a.b", "c.d")
 
 
+def test_tool_name_long_tools_stay_unique():
+    # #746: a plain cut at 64 chars collapsed `get_gmail_message_content` and
+    # `get_gmail_messages_content_batch` onto the same key, making one unreachable.
+    server = "hub-gmail-thresholdstack"  # 24-char key, like the reporter's aggregator
+    first = tool_name(server, "gmail-personal__get_gmail_message_content")
+    second = tool_name(server, "gmail-personal__get_gmail_messages_content_batch")
+    third = tool_name(server, "gmail-personal__get_gmail_attachment_content")
+    assert len(first) <= 64 and len(second) <= 64 and len(third) <= 64
+    assert len({first, second, third}) == 3
+    # Still deterministic, still recognizably the same tool.
+    assert first == tool_name(server, "gmail-personal__get_gmail_message_content")
+    assert first.startswith("mcp__hub-gmail-thresholdstack__gmail-personal__get_gmail_")
+
+
+def test_long_tools_dispatch_by_full_name(caplog):
+    # #746: the schema advertises the truncated name, but the model calls the full
+    # one it saw in skill text — that call must reach the right remote tool, not
+    # `unknown tool`.
+    import threading
+
+    from coworker.tools.registry import ToolRegistry
+
+    server = MCPServerDef(name="hub-gmail-personal", transport="http")
+    calls: list[tuple[str, dict]] = []
+
+    async def call_async(tool, args):
+        calls.append((tool, args))
+        return {}
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        fns = build_callables(
+            server,
+            [
+                _fake_tool("gmail-personal__get_gmail_message_content"),
+                _fake_tool("gmail-personal__get_gmail_messages_content_batch"),
+            ],
+            call_async,
+            loop,
+        )
+        registry = ToolRegistry()
+        registry.register_all(fns)
+
+        short = fns[0].__name__
+        full = "mcp__hub-gmail-personal__gmail-personal__get_gmail_message_content"
+        assert len(short) <= 64 < len(full)
+        # The alias resolves to the same spec; the model-visible surface is unchanged.
+        assert registry.get(full) is registry.get(short)
+        assert full not in registry.names()
+        assert full not in [s["function"]["name"] for s in registry.schemas()]
+
+        registry.execute(full, {"path": "msg-1"})
+        registry.execute(short, {"path": "msg-2"})
+        assert [c[0] for c in calls] == [
+            "gmail-personal__get_gmail_message_content",
+            "gmail-personal__get_gmail_message_content",
+        ]
+        # A different long tool's alias must not cross wires after truncation.
+        registry.execute(
+            "mcp__hub-gmail-personal__gmail-personal__get_gmail_messages_content_batch",
+            {"path": "msg-3"},
+        )
+        assert calls[-1][0] == "gmail-personal__get_gmail_messages_content_batch"
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+        loop.close()
+
+    assert any("hashed names" in r.message for r in caplog.records)
+
+
 def test_schema_and_metadata():
     server = MCPServerDef(name="fs", transport="stdio", requires_approval=True)
     fns = build_callables(

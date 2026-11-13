@@ -25,6 +25,11 @@ class ToolSpec:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        # Alternate dispatch names (e.g. the untruncated `mcp__…` name a model emits
+        # even though the schema showed a <=64-char one, #746). Aliases resolve to the
+        # canonical spec — they never add schemas or bypass the permission gates, which
+        # key on the spec the alias points at.
+        self._aliases: dict[str, str] = {}
 
     def register(
         self,
@@ -44,6 +49,8 @@ class ToolRegistry:
         )
         spec = ToolSpec(name=name, schema=resolved_schema, func=func, metadata=meta)
         self._tools[name] = spec
+        for alias in getattr(func, "__coworker_aliases__", None) or ():
+            self._aliases[alias] = name
         return spec
 
     def register_all(self, funcs: list[Callable[..., Any]]) -> None:
@@ -61,16 +68,24 @@ class ToolRegistry:
             if exclude and name in exclude:
                 continue
             out._tools[name] = spec
+        out._aliases = {
+            alias: target
+            for alias, target in self._aliases.items()
+            if target in out._tools
+        }
         return out
 
+    def _resolve(self, name: str) -> str:
+        return self._aliases.get(name, name)
+
     def get(self, name: str) -> Optional[ToolSpec]:
-        return self._tools.get(name)
+        return self._tools.get(self._resolve(name))
 
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.schema for spec in self._tools.values()]
 
     def execute(self, name: str, arguments: Optional[dict[str, Any]] = None) -> Any:
-        spec = self._tools.get(name)
+        spec = self._tools.get(self._resolve(name))
         if spec is None:
             raise KeyError(f"Tool not registered: {name}")
         return spec.func(**(arguments or {}))
