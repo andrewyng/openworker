@@ -38,6 +38,20 @@ fn endpoint(kube: &Value) -> Result<String> {
     );
     Ok(u.host_str().context("Endpoint host missing")?.into())
 }
+fn validate_connect(line: &str, host: &str) -> Result<()> {
+    let target = line.strip_prefix("CONNECT ").and_then(|rest| {
+        rest.strip_suffix(" HTTP/1.1")
+            .or_else(|| rest.strip_suffix(" HTTP/1.0"))
+    });
+    // DNS names are case-insensitive. URL parsing normalizes the reviewed host,
+    // while kubectl preserves the uppercase label returned by some EKS endpoints.
+    // Keep the method, port and exact destination restriction unchanged.
+    ensure!(
+        target.is_some_and(|target| target.eq_ignore_ascii_case(&format!("{host}:443"))),
+        "Proxy destination is outside the reviewed cluster"
+    );
+    Ok(())
+}
 async fn tunnel(mut incoming: tokio::net::TcpStream, host: &str, port: u16) -> Result<()> {
     let mut header = Vec::new();
     loop {
@@ -53,11 +67,7 @@ async fn tunnel(mut incoming: tokio::net::TcpStream, host: &str, port: u16) -> R
         .split("\r\n")
         .next()
         .unwrap_or("");
-    ensure!(
-        line == format!("CONNECT {host}:443 HTTP/1.1")
-            || line == format!("CONNECT {host}:443 HTTP/1.0"),
-        "Proxy destination is outside the reviewed cluster"
-    );
+    validate_connect(line, host)?;
     let mut upstream =
         tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     incoming
@@ -349,6 +359,31 @@ impl Native<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connect_accepts_dns_case_variation_but_no_other_destination_changes() {
+        let host = "3e2d511d.gr7.us-west-2.eks.amazonaws.com";
+        for protocol in ["HTTP/1.0", "HTTP/1.1"] {
+            assert!(validate_connect(&format!("CONNECT {host}:443 {protocol}"), host).is_ok());
+            assert!(validate_connect(
+                &format!("CONNECT {}:443 {protocol}", host.to_ascii_uppercase()),
+                host
+            )
+            .is_ok());
+        }
+        for target in [
+            format!("{host}:8443"),
+            format!("{host}.evil:443"),
+            format!("user@{host}:443"),
+            format!("{host}:443/path"),
+            format!("{host}:443?query"),
+            format!("https://{host}:443"),
+            "127.0.0.1:443".into(),
+        ] {
+            assert!(validate_connect(&format!("CONNECT {target} HTTP/1.1"), host).is_err());
+        }
+        assert!(validate_connect(&format!("connect {host}:443 HTTP/1.1"), host).is_err());
+        assert!(validate_connect(&format!("CONNECT {host}:443 HTTP/2.0"), host).is_err());
+    }
     #[test]
     fn private_endpoint_requires_original_ca_and_https() {
         let mut v = json!({"clusters":[{"cluster":{"server":"https://original.internal","certificate-authority-data":"CA"}}]});
