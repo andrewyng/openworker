@@ -160,8 +160,7 @@ interface Props {
   // Per-session token usage (OPE-42) — absent/empty hides the usage chip entirely
   // (older servers, backends that don't report usage, fresh sessions).
   usage?: SessionUsage;
-  // Context-window size (tokens) of the ACTIVE model, from the curated matrix;
-  // undefined hides the fill meter (unverified/custom models) but keeps the counts.
+  // Server-reported context window (tokens); saved model settings fill missing metadata.
   contextWindow?: number;
   // Settings toggle (default off): true shows the fill bar instead of the session total.
   contextBar?: boolean;
@@ -594,10 +593,11 @@ export function Composer(props: Props) {
   // inside the pill) needs a known window; the setting governs the ring, never the tooltip.
   const fullModelLabel = props.modelLabels?.[props.model] || shortModel(props.model);
   const modelName = fullModelLabel.split(" · ")[0];
+  const contextWindow = props.contextWindow ?? props.modelConfig?.[props.model]?.context_size;
   const hasUsage = !!props.usage && totalTokens(props.usage) > 0;
   const ctxPct =
-    hasUsage && props.contextWindow
-      ? Math.min(100, Math.round((props.usage!.context / props.contextWindow) * 100))
+    hasUsage && contextWindow
+      ? Math.min(100, Math.round((props.usage!.context / contextWindow) * 100))
       : null;
   const ctxLine = !hasUsage
     ? ""
@@ -605,7 +605,7 @@ export function Composer(props: Props) {
       ? t("onmachine.composer.context_line", {
           pct: ctxPct,
           used: formatTokens(props.usage!.context),
-          window: formatTokens(props.contextWindow as number),
+          window: formatTokens(contextWindow as number),
         })
       : t("onmachine.composer.context_unknown", { used: formatTokens(props.usage!.context) });
   const providerName =
@@ -957,7 +957,7 @@ export function Composer(props: Props) {
 
 // Context ring (OPE-42 meter, UX-048 placement): a small ring at the left of the model name
 // and inside its hover card. Accent arc = context-window fill, warn color from 80%; with no
-// known window (custom / Ollama models) the track renders empty. The old popover is gone —
+// known window the track renders empty. The old popover is gone —
 // the hover card carries the figures.
 function ContextRing({
   pct,
