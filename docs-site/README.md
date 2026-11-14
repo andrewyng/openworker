@@ -18,7 +18,7 @@ in local preview and deployment; publication is a separate action.
 
 The original Markdown preparation pipeline is retained. Studio now uses a
 shared custom Astro layout instead of Starlight presentation components. Pagefind
-indexes the 18 public guides after the static build; preview and error pages are
+indexes the public guides in `pages.json` after the static build; preview and error pages are
 excluded. The site does not require a private repository to build.
 
 ## Language tabs in plain Markdown

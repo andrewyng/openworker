@@ -32,9 +32,13 @@ export async function modelFixture() {
     for await (const chunk of req) raw += chunk;
     const request = JSON.parse(raw);
     requests.push(request);
-    const text = raw.includes("Orbit revenue")
+    const files = (request.input ?? []).flatMap(item => item.content ?? [])
+      .filter(part => part.type === "input_file").map(part =>
+        Buffer.from((part.file_data ?? "").split(",").at(-1), "base64").toString("utf8"));
+    const source = raw + files.join("\n");
+    const text = source.includes("Orbit revenue")
       ? "Revenue is 42 credits. [p. 1]"
-      : raw.includes("Cedar budget")
+      : source.includes("Cedar budget")
         ? "The budget is 17 credits. [p. 1]"
         : "This codebase exports a greeting from src/main.ts.";
     const frame = (value) => `data: ${JSON.stringify(value)}\n\n`;

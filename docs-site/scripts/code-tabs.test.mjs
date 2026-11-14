@@ -8,12 +8,12 @@ const snippets=s=>[...s.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].map(m=>m[1]);
 test('guide tabs retain all code and provide unique linked accessible panels',()=>{
  const result=renderCodeTabs(desktop,'desktop');
  assert.deepEqual(snippets(result),snippets(desktop));
- assert.equal((result.match(/data-sdk-tabs/g)||[]).length,5);
- assert.equal((result.match(/role="tablist"/g)||[]).length,5);
+ assert.equal((result.match(/data-sdk-tabs/g)||[]).length,6);
+ assert.equal((result.match(/role="tablist"/g)||[]).length,6);
  const ids=[...result.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
- assert.equal(ids.length,20);assert.equal(new Set(ids).size,ids.length);
+ assert.equal(ids.length,24);assert.equal(new Set(ids).size,ids.length);
  for(const [,target]of result.matchAll(/(?:aria-controls|aria-labelledby)="([^"]+)"/g))assert.ok(ids.includes(target));
- assert.equal((result.match(/class="sdk-tab-fallback"/g)||[]).length,10);
+ assert.equal((result.match(/class="sdk-tab-fallback"/g)||[]).length,12);
  assert.equal((result.match(/role="tabpanel"[^>]*\bhidden/g)||[]).length,0);
  assert.ok(!result.includes('<!-- sdk-tabs -->'));
  assert.ok(result.includes('data-tab-kind="installer"'));

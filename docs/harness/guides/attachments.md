@@ -1,14 +1,12 @@
 # Attach images, PDFs and text files
 
-**Source preview.** These APIs require the SDK and runtime from this branch;
-they are not included in the published `0.1.0-beta.2` packages. The host advertises
-`capabilities.attachments`; a remote service advertises `features.attachments`.
-An older host returns a setup error rather than dropping a file.
-
 Attach a screenshot, a PDF report or a UTF-8 text file to a user message. Files
 are model inputs: attaching a file does not place it in a sandbox, grant a tool
 permission or share it with a child agent. Choose a model that accepts the formats
 you use. Provider request/context limits still apply.
+
+npm installs the compatible native runtime automatically. A remote service must
+support attachments; an incompatible host rejects the request rather than dropping files.
 
 ## Add files after a message
 
@@ -162,12 +160,9 @@ text; keep capture disabled or redacted for sensitive documents.
 
 ## Upgrade an existing store
 
-Use matching SDK, service and worker builds. SQLite upgrades compatible versions
-7/8 to **9** while preserving records; older binaries refuse version 9. PostgreSQL
-requires an explicit migration to schema **7**. Drain API/worker processes and
-release or expire execution leases before running the migration. The database
-rejects writes from older workers so a queued file input cannot silently become
-a text-only turn. Back up persistent stores before an upgrade.
+Back up persistent stores before upgrading. Follow [storage upgrades](upgrades.md)
+for schema compatibility and PostgreSQL migration steps. Use compatible SDK,
+service and worker builds so queued attachments cannot become text-only turns.
 
 For a lightweight Rust build, disable default features and enable only what you
 need. Attachment admission/upload can be excluded with the `attachments` feature;

@@ -19,7 +19,7 @@ $("upload").onclick = async () => {
   }
   documentId = null;
   busy(true);
-  $("status").textContent = "Extracting text…";
+  $("status").textContent = "Preparing document…";
   try {
     const response = await fetch("/api/documents", {
       method: "POST",
@@ -30,7 +30,7 @@ $("upload").onclick = async () => {
     if (!response.ok) throw Error(result.error);
     documentId = result.id;
     $("document").textContent =
-      `${file.name} · ${result.pages} page${result.pages === 1 ? "" : "s"}`;
+      result.pages == null ? `${file.name} · PDF attached` : `${file.name} · ${result.pages} page${result.pages === 1 ? "" : "s"}`;
     $("answers").replaceChildren();
     $("answers").classList.remove("empty");
     $("status").textContent = "Document ready. Ask your first question.";
@@ -77,6 +77,10 @@ $("ask").onclick = async () => {
         buffer = buffer.slice(newline + 1);
         if (!line) continue;
         const event = JSON.parse(line);
+        if (event.type === "snapshot") {
+          answer.textContent = event.text;
+          $("status").textContent = "Writing an answer…";
+        }
         if (event.type === "delta") {
           answer.textContent += event.text;
           $("status").textContent = "Writing an answer…";

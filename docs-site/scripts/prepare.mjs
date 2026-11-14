@@ -10,10 +10,14 @@ const output=join(site,'src/content/docs'),base=(process.env.OW_DOCS_BASE??'/doc
 // Remove previously generated reference pages so an incremental build cannot
 // accidentally republish archived design/specification material.
 rmSync(join(site,'public/reference'),{recursive:true,force:true});
-const images=new Map(['code-atlas','pdf-notes'].map(name=>[
- `docs/harness/guides/images/${name}.png`, `examples/${name}.png`
+const images=new Map(['pdf-notes'].map(name=>[
+ `docs/harness/guides/images/${name}.jpg`, `examples/${name}.jpg`
 ]));
+images.set('docs/harness/assets/architecture.svg', 'examples/architecture.svg');
+images.set('docs/harness/guides/images/session-tracing.jpg', 'examples/session-tracing.jpg');
 mkdirSync(join(site,'public/examples'),{recursive:true});
+rmSync(join(site,'public/examples/code-atlas.png'),{force:true});
+rmSync(join(site,'public/examples/pdf-notes.png'),{force:true});
 for(const [source,destination] of images) copyFileSync(join(root,source),join(site,'public',destination));
 writeSources(root,join(site,'public'));
 const route=new Map(pages.map(p=>[p.source,`${base}/${p.slug==='index'?'':p.slug+'/'}`]));

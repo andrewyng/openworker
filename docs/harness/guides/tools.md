@@ -75,6 +75,35 @@ Callbacks use the application's privileges. For scoped filesystem operations,
 see the complete [file-organizer tools](../../../skills/openworker-harness-builder/assets/local-script/file-tools.mjs)
 and [Node example](../../../skills/openworker-harness-builder/references/local-script.md).
 
+## Connect an MCP server
+
+Connect a trusted remote server or launch a local executable before creating the
+agent. Select only the discovered tools that the application needs.
+
+```typescript
+import type { Harness } from '@openworkerai/harness-sdk';
+
+export async function connectCompanyTools(harness: Harness) {
+  await harness.connectMcpServer({
+    name: 'company', transport: 'streamable-http',
+    url: 'https://mcp.example.com/mcp',
+  });
+}
+
+// Or launch an app-installed executable:
+export async function startLocalTools(harness: Harness) {
+  await harness.startMcpServer({
+    name: 'local-tools', program: '/absolute/path/to/mcp-server', args: [],
+  });
+}
+```
+
+These are alternative registrations with application-owned endpoints/programs.
+Choose installed qualified tool names in the agent definition after discovery.
+A remote MCP server executes its tools remotely; a local MCP executable runs with
+its host process permissions. See the [SDK reference](reference.md) for connection
+options and [OpenShell](openshell.md) for the separate execution boundary.
+
 ## Tool names and directory scope
 
 Register/select `files.move_file`; the model-facing alias is `files__move_file`.

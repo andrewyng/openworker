@@ -1312,9 +1312,12 @@ impl Runtime {
             .iter()
             .filter(|i| {
                 i.response.is_none()
-                    && s.turn
-                        .as_ref()
-                        .is_some_and(|t| t.id == i.turn_id && !terminal(&t.status))
+                    && s.turn.as_ref().is_some_and(|t| {
+                        // Cancellation revokes responses immediately; cleanup
+                        // can finish later. Do not make SDK waiters return an
+                        // interrupted run with an already-unanswerable card.
+                        t.id == i.turn_id && !terminal(&t.status) && t.status != "cancelling"
+                    })
             })
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;

@@ -15,6 +15,43 @@ mean a request to fix a UI bug authorizes uploading the file to an external serv
 | Auto-approve | A separate reviewer evaluates eligible actions. Uncertainty or reviewer failure pauses for a human. |
 | Bypass | Human approval is skipped. Required access policy, sandbox limits and guardrails still apply. |
 
+The default is `approvals: { mode: "always" }`: tools require a human decision
+unless a valid session grant covers them. To use a model reviewer, register its
+provider first and select it explicitly:
+
+<!-- sdk-tabs -->
+### TypeScript
+
+```typescript
+const agent = harness.createAgent({
+  name: 'support-agent-v1',
+  instructions: 'Investigate the customer issue and propose or perform authorized fixes.',
+  defaultModel: { provider: 'OpenAI', name: workingModel },
+  tools: ['support.lookup', 'support.update_ticket'],
+  approvals: { mode: 'auto', reviewerModel: { provider: 'OpenAI', name: reviewModel } },
+});
+```
+
+### Rust
+
+```rust
+use openworker_sdk::{Agent, Approvals, Model};
+
+let agent = harness.create_agent(Agent::new("support-agent-v1")
+    .instructions("Investigate the issue and perform only authorized fixes.")
+    .default_model(Model::new("OpenAI", working_model))
+    .tool("support.lookup").tool("support.update_ticket")
+    .approvals(Approvals::auto(Model::new("OpenAI", review_model))))
+    .await?;
+```
+<!-- /sdk-tabs -->
+
+The application registers the two example tools and supplies its model IDs.
+Automatic review may allow, deny or ask a human. The UI still needs the
+[approval interruption loop](streaming.md#streaming-with-tool-approvals).
+Use `mode: "never"` only when your application intentionally bypasses that review;
+it does not disable hard permissions or guardrails. See [all approval modes](sessions.md#approvals-and-questions).
+
 Configure the reviewer's model separately from the working agent. Keep task context,
 tool effects and source-labelled information available to the review process.
 Tool output, memory and messages from another agent are data, not new human consent.

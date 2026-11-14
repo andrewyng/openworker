@@ -1,4 +1,4 @@
-# Sessions and teams
+# Sessions and recovery
 
 An agent is a reusable definition. A session is its durable conversation and
 execution state. Sending a message starts a run; the run exposes events and a final
@@ -22,6 +22,30 @@ allocates a private scratch workspace. `scratch: false` requires an explicit
 workspace; `scratch: true` cannot accompany one. Scratch does not promise automatic
 deletion. Keep state outside files available to tools, and enforce directory scope
 in app callbacks; a workspace is not an OS sandbox.
+
+## Continue after an application restart
+
+Save the session reference with your application's conversation and owner record:
+
+```typescript
+const session = await agent.newSession();
+const reference = session.reference(); // Persist in the application's database.
+await session.run('Investigate this support request.');
+```
+
+After starting the harness with the same persistent state and registering the
+same agent definition, load that record and reattach:
+
+```typescript
+const session = await agent.resumeSession(reference);
+const state = await session.state(); // Inspect pending work or interactions first.
+// Submit a new message only when the session is ready for it.
+const result = await session.run('What should we do next?');
+```
+
+Your app authorizes the user before loading the reference. Recovery uses the saved
+execution state; it does not rerun old tool calls as a new task. Restore model
+credentials at startup when using memory-only credential storage.
 
 ## Context and limits for each turn
 
@@ -203,58 +227,11 @@ existing agent definitions and session schema digests across upgrades.
 
 ## Standalone sub-agents
 
-Requires a runtime advertising `standalone_subagents`, available in native
-runtime 0.1.0-beta.3. An ordinary agent can let its model delegate work:
-
-<!-- sdk-tabs -->
-### TypeScript
-
-```typescript
-const assistant = harness.createAgent({
-  name: "assistant",
-  instructions: "Delegate source reviews and combine the findings.",
-  tools: ["coding.read_file", "coding.list_files"],
-  subagents: { enabled: true },
-});
-```
-
-### Rust
-
-```rust
-let assistant = Agent::new("assistant")
-    .instructions("Delegate source reviews and combine the findings.")
-    .tool("coding.read_file")
-    .tool("coding.list_files")
-    .allow_subagents(true);
-```
-<!-- /sdk-tabs -->
-
-The model receives `create_sub_agent`. It supplies an instance ID, system prompt,
-explicit task/context, a subset of its tools and `execution: "sync"` or `"async"`.
-Each child starts with a fresh conversation. No parent history is copied.
-Sync waits without occupying a worker slot; async returns a durable child identity.
-
-Parent and child exchange messages through durable inboxes. The parent can wait,
-cancel a running child or close it. A completed child can accept follow-up work;
-explicitly cancelled or closed children do not automatically resume. Creation uses
-normal approval policy and does not approve subsequent child tools.
-
-Children initially share the parent's workspace and sandbox; assign separate
-paths for concurrent edits. Service profiles must allow a shared environment.
-Defaults allow four active children and 32 retained child identities. Shared scope
-budgets count parent and child work; children cannot reset the allowance or spawn
-further descendants. Existing explicit teams remain available separately.
-
-See the [complete tool contract and configuration](../../../skills/openworker-harness-builder/references/subagents.md).
+Enable delegation on a normal agent, then let its model create and message children.
+See [sub-agents and teams](subagents.md) for configuration, the model-facing tool
+and workspace behavior.
 
 ## Teams
 
-A lead can create multiple instances of registered agent types, communicate through
-durable inboxes/board mentions and wait without keeping an execution slot occupied.
-Shared workspaces use separate worktrees; independent sandboxes exchange changes
-through explicit handoff. Team creation does not enlarge the lead's permissions.
-
-Continue with the [Rust SDK](../../../harness/harness-sdk/README.md) or
-[TypeScript SDK](../../../harness/typescript-sdk/README.md) for session and team
-APIs. See [alignment](alignment.md) for approval behavior and
-[deployment options](deployment.md) for shared service storage.
+Use an explicit team for named agent types, board communication and configurable
+sandbox placement. [Compare teams with standalone sub-agents](subagents.md#choose-how-agents-work-together).

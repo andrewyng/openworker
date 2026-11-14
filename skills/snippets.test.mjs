@@ -19,7 +19,9 @@ test('Skill, SDK READMEs and shared guide examples compile against the SDK decla
     const reference = "import { resolve } from 'node:path';\nimport { Harness } from '@openworkerai/harness-sdk';\nconst model = 'fixture';\n" + landingParts.slice(0, 3).join('\n');
     await writeFile(join(root, 'landing-reference.ts'), reference);
     const streaming = await readFile('docs/harness/guides/streaming.md','utf8');
-    const approvalSection = streaming.split('### Stream, approve and continue the same turn')[1];
+    // Only compile this complete helper; later sections may contain fragments
+    // that deliberately reuse variables introduced elsewhere on the page.
+    const approvalSection = streaming.split('### Stream, approve and continue the same turn')[1]?.split(/\n#{1,3} /)[0];
     if (!approvalSection) throw Error('Missing shared streaming approval loop');
     const tools = await readFile('docs/harness/guides/tools.md','utf8');
     const callbackSection = tools.split('## Register an application callback')[1]?.split('## Tool names and directory scope')[0];

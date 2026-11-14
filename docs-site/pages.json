@@ -74,5 +74,29 @@
   {
     "source": "docs/harness/guides/compliance.md",
     "slug": "compliance"
+  },
+  {
+    "source": "docs/harness/guides/architecture.md",
+    "slug": "architecture"
+  },
+  {
+    "source": "docs/harness/guides/attachments.md",
+    "slug": "attachments"
+  },
+  {
+    "source": "docs/harness/guides/subagents.md",
+    "slug": "subagents"
+  },
+  {
+    "source": "docs/harness/guides/railway.md",
+    "slug": "railway"
+  },
+  {
+    "source": "docs/harness/guides/reference.md",
+    "slug": "reference"
+  },
+  {
+    "source": "docs/harness/guides/upgrades.md",
+    "slug": "upgrades"
   }
 ]
