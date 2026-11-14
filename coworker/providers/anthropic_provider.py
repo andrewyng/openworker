@@ -163,7 +163,28 @@ def _cache_diagnostics_on() -> bool:
 
 
 def _needs_refusal_fallback(model: str) -> bool:
-    return model.startswith(("claude-fable", "claude-mythos"))
+    """Models whose safety classifiers can decline a request with HTTP 200 and
+    `stop_reason: "refusal"`, where the API re-runs it on a fallback model inside the
+    same call. The Fable/Mythos set was the original two; Anthropic's refusals doc
+    (read 2026-11-11, #873) adds the rest of the current Claude 5 line — Opus 5 runs
+    classifiers with server-side fallback recommended for every caller, Opus 5.5 runs
+    the cyber and bio classifiers, Sonnet 5.5 declines in five categories. Haiku 5.5
+    is deliberately absent: it has no server-side fallback. Without this, a false
+    positive on those models reached `_raise_on_refusal` and the user got an error
+    with Retry, where a fallback model would usually have answered."""
+    return model.startswith(
+        ("claude-fable", "claude-mythos", "claude-opus-5", "claude-sonnet-5")
+    )
+
+
+def _fallback_model(model: str) -> str:
+    """The model a refusal re-runs on. The permitted targets differ by model: Claude
+    Sonnet 5.5's array form may name only `claude-sonnet-5` (its docs recommend
+    `fallbacks: "default"`, which this provider does not send yet), so naming Opus 4.8
+    there would turn a handled refusal into a rejected request."""
+    if model.startswith("claude-sonnet-5"):
+        return "claude-sonnet-5"
+    return _FALLBACK_MODEL
 
 
 def _raise_on_refusal(stop_reason: Any, raw: Any) -> None:
@@ -609,7 +630,7 @@ class AnthropicProvider(ProviderClient):
                 with client.beta.messages.stream(
                     **kw,
                     betas=[_FALLBACK_BETA],
-                    fallbacks=[{"model": _FALLBACK_MODEL}],
+                    fallbacks=[{"model": _fallback_model(model)}],
                 ) as stream:
                     return stream.get_final_message()
             with client.messages.stream(**kw) as stream:
@@ -727,7 +748,7 @@ class AnthropicProvider(ProviderClient):
                 return client.beta.messages.create(
                     **kw,
                     betas=betas,
-                    fallbacks=[{"model": _FALLBACK_MODEL}],
+                    fallbacks=[{"model": _fallback_model(model)}],
                     **extra,
                 )
             if diagnosing:
