@@ -131,6 +131,11 @@ def test_nearest_supported_ties_go_up():
         ("claude-fable-5-1", "max", "max"),
         ("claude-sonnet-5", "low", "low"),
         ("claude-opus-5", "medium", "medium"),
+        # The 5.5 line: Opus 5.5 and Sonnet 5.5 inherit their family's full level set,
+        # Haiku 5.5 has its own row (docs read 2026-11-11: low-max, default medium).
+        ("claude-opus-5-5", "xhigh", "xhigh"),
+        ("claude-sonnet-5-5", "low", "low"),
+        ("claude-haiku-5-5", "max", "max"),
         ("claude-sonnet-4-6", "xhigh", "max"),  # no xhigh on 4.6 → nearest, tie up
         ("claude-opus-4-5-20251101", "max", "high"),  # low/medium/high only
         ("claude-opus-4-6", "xhigh", "max"),

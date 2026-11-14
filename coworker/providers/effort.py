@@ -105,6 +105,9 @@ _ANTHROPIC_EFFORT: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("claude-opus-4-5", ("low", "medium", "high")),
     ("claude-sonnet-5", _ALL),
     ("claude-sonnet-4-6", _NO_XHIGH),
+    # Claude Haiku 5.5 (docs read 2026-11-11): effort low-max, default medium, as on
+    # the rest of the 5 generation. Without a row its level passed through unrecorded.
+    ("claude-haiku-5-5", _ALL),
 )
 # Budget-thinking models (older Claude): the level becomes a thinking budget. Anthropic
 # requires budget_tokens >= 1,024 and < max_tokens; the provider floors max_tokens.

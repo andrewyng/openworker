@@ -35,6 +35,9 @@ REPO = Path(__file__).resolve().parents[1]
     [
         # platform.claude.com/docs/en/models/overview, read 2026-09-08: 1M is the default
         # and only context size on the Claude 5 generation; Haiku 4.5 stays at 200K.
+        ("anthropic:claude-opus-5-5", 1_000_000),
+        ("anthropic:claude-sonnet-5-5", 1_000_000),
+        ("anthropic:claude-haiku-5-5", 1_000_000),
         ("anthropic:claude-fable-5-1", 1_000_000),
         ("anthropic:claude-opus-5", 1_000_000),
         ("anthropic:claude-sonnet-5", 1_000_000),
@@ -63,7 +66,14 @@ def test_current_models_have_verified_windows(model, window):
 
 
 def test_claude_5_rows_are_vision_capable_and_labelled():
-    for mid in ("anthropic:claude-fable-5-1", "anthropic:claude-opus-5", "anthropic:claude-sonnet-5"):
+    for mid in (
+        "anthropic:claude-opus-5-5",
+        "anthropic:claude-sonnet-5-5",
+        "anthropic:claude-haiku-5-5",
+        "anthropic:claude-fable-5-1",
+        "anthropic:claude-opus-5",
+        "anthropic:claude-sonnet-5",
+    ):
         entry = MATRIX[mid]
         assert entry.caps.tools and entry.caps.vision and entry.caps.pdf, mid
         assert "Anthropic" in entry.label, mid
