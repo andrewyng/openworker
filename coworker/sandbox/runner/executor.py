@@ -25,6 +25,7 @@ when they exit or via `shell_task_kill`.
 
 from __future__ import annotations
 
+import base64
 import os
 import queue
 import signal
@@ -60,7 +61,7 @@ class Executor(ABC):
     def run_background(self, command: str) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
-    def background_output(self, task_id: str) -> dict[str, Any]:
+    def background_output(self, task_id: str, wait_seconds: float = 0) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
@@ -134,6 +135,17 @@ class _BackgroundTask:
             self._cursor = len(self._lines)
         return new
 
+    def has_new(self) -> bool:
+        """Unread output exists — without moving the cursor, so a waiter can look
+        without consuming what the caller is about to read."""
+        with self._lock:
+            return len(self._lines) > self._cursor
+
+    def drain(self, timeout: float) -> None:
+        """After the process exits, give the reader thread a moment to append the
+        last lines, so an exit-triggered read does not miss the final output."""
+        self._reader.join(timeout=timeout)
+
     def kill(self) -> None:
         if self.proc.poll() is not None:
             return
@@ -173,6 +185,8 @@ class LocalExecutor(Executor):
         self.default_timeout = default_timeout
         self.max_output_chars = max_output_chars
         self._marker = f"__COWORKER_DONE_{uuid.uuid4().hex}__"
+        # Ends the PowerShell parse check's answer (Windows only; see run()).
+        self._parse_marker = f"__COWORKER_PARSED_{uuid.uuid4().hex}__"
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
         self._bg_counter = 0
@@ -271,12 +285,28 @@ class LocalExecutor(Executor):
 
         timeout = timeout or self.default_timeout
         self._abort.clear()
+        deadline = time.monotonic() + timeout
+
+        if self._is_windows:
+            # PowerShell's `-Command -` REPL skips a line it cannot parse, so the trailer's
+            # `$?` still holds the previous (successful) trailer and the result said exit 0.
+            # An unclosed quote was worse: it swallowed the trailer and hung to the timeout.
+            # So parse first, with PowerShell's own parser; on errors nothing runs.
+            checked = self._powershell_parse_check(command, deadline)
+            if checked is not None:
+                return checked
+
         # Run the command, then emit a marker line with exit code + cwd.
         self._proc.stdin.write(command + "\n")
+        if self._is_windows and "\n" in command.strip("\n"):
+            # The REPL keeps reading a statement that spans lines (`foreach (...) {` ... `}`)
+            # until an empty line, as in an interactive console. Without one, the trailer
+            # was read into the block and the call hung until its timeout. The parse check
+            # above guarantees the command is complete, so this line only ends it.
+            self._proc.stdin.write("\n")
         self._proc.stdin.write(self._trailer())
         self._proc.stdin.flush()
 
-        deadline = time.monotonic() + timeout
         interrupted = False
         timed_out = False
         aborted = False
@@ -345,6 +375,67 @@ class LocalExecutor(Executor):
             error="interrupted by user" if aborted else None,
         )
 
+    def _powershell_parse_check(
+        self, command: str, deadline: float
+    ) -> Optional[dict[str, Any]]:
+        """Parse `command` in the running PowerShell before it is sent. Returns None when it
+        parses (the caller runs it), else the finished result: exit code 1 and PowerShell's
+        own error text, the same text and code `powershell -Command` gives. The command
+        travels as base64, so no quoting in it can break the check line; the check's
+        variables are removed again so the session never sees them.
+
+        When the command parses, the same line also clears `$LASTEXITCODE`, so the trailer
+        reads only a native program that ran in THIS command. Before, a failing cmdlet
+        reported the code of a native program from an earlier call (`cmd /c exit 3`, then
+        a failed `Get-Item`, said 3). Like bash, where the trailer's `printf` resets `$?`,
+        a later call no longer sees the previous call's code; each result carries its own."""
+        assert self._proc.stdin is not None
+        encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
+        self._proc.stdin.write(
+            "$__cwSrc=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("
+            f"'{encoded}'));$__cwErr=$null;"
+            "$null=[Management.Automation.Language.Parser]::ParseInput("
+            "$__cwSrc,[ref]$null,[ref]$__cwErr);$__cwN=@($__cwErr).Count;"
+            "if($__cwN){(New-Object Management.Automation.ParseException (,$__cwErr)).Message}"
+            "else{$global:LASTEXITCODE=$null};"
+            "Remove-Variable __cwSrc,__cwErr -ErrorAction Ignore;"
+            f'"`n{self._parse_marker} $__cwN";Remove-Variable __cwN -ErrorAction Ignore\n'
+        )
+        self._proc.stdin.flush()
+
+        lines: list[str] = []
+        while True:
+            aborted = self._abort.is_set()
+            remaining = deadline - time.monotonic()
+            if aborted or remaining <= 0:
+                # Same as a command that overran on Windows: kill the shell, the next
+                # run() respawns it in the last cwd.
+                self.close()
+                return self._result(
+                    command,
+                    None,
+                    "",
+                    timed_out=not aborted,
+                    error="interrupted by user" if aborted else None,
+                )
+            try:
+                item = self._queue.get(timeout=min(remaining, 0.5))
+            except queue.Empty:
+                continue
+            if item is None:
+                return self._result(
+                    command, None, "".join(lines), timed_out=False, error="shell exited"
+                )
+            if self._parse_marker in item:
+                count = _parse_exit_code(item, self._parse_marker)
+                break
+            lines.append(item)
+        if not count:
+            return None
+        # A parse error is the command failing, not the tool: like bash's syntax error,
+        # it is a non-zero exit code with the shell's message as the output.
+        return self._result(command, 1, "".join(lines).strip("\n") + "\n", timed_out=False)
+
     def interrupt_now(self) -> None:
         """User Stop: make an in-flight foreground `run()` bail on its next read tick
         (≤0.5s). Thread-safe; a no-op when nothing is running. Background tasks are
@@ -364,13 +455,28 @@ class LocalExecutor(Executor):
             "task_id": task_id,
             "command": command,
             "status": "running",
-            "note": "use shell_task_output to read its output, shell_task_kill to stop it",
+            "note": "use shell_task_output to read its output (wait_seconds=N to wait for "
+            "it to exit or print more), shell_task_kill to stop it",
         }
 
-    def background_output(self, task_id: str) -> dict[str, Any]:
+    def background_output(self, task_id: str, wait_seconds: float = 0) -> dict[str, Any]:
         task = self._bg_tasks.get(task_id)
         if task is None:
             return {"error": f"unknown task: {task_id}"}
+        # Wait (bounded) until the task exits or prints something new. Without this a
+        # model whose next step depends on the task has to poll, and every poll is a
+        # full model call: measured at 297 polls on one background job in a sealed
+        # evaluation run. A sleep via run_shell is the only alternative and cannot
+        # return early. Capped at the shell's own ceiling so a tool call never outlives
+        # what run_shell would allow.
+        started = time.monotonic()
+        deadline = started + max(0.0, min(float(wait_seconds or 0), _MAX_TIMEOUT))
+        while time.monotonic() < deadline:
+            if task.proc.poll() is not None or task.has_new() or self._abort.is_set():
+                break
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+        if task.proc.poll() is not None:
+            task.drain(0.5)
         output = task.read_new()
         truncated = len(output) > self.max_output_chars
         if truncated:
@@ -382,6 +488,7 @@ class LocalExecutor(Executor):
             "exit_code": exit_code,
             "output": output,
             "truncated": truncated,
+            "waited_seconds": round(time.monotonic() - started, 1),
         }
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
@@ -405,7 +512,9 @@ class LocalExecutor(Executor):
         command, so it must run as its own statement right after it."""
         if self._is_windows:
             # PowerShell: `$?` is the success bool; `$LASTEXITCODE` is the exit code of the
-            # last native program. Success → 0; else the program's code, falling back to 1.
+            # last native program in this command (cleared before it, see
+            # `_powershell_parse_check`). Success → 0; else the program's code, falling back
+            # to 1.
             return (
                 f'"`n{self._marker} '
                 f"$(if ($?) {{0}} else {{ if ($LASTEXITCODE) {{$LASTEXITCODE}} else {{1}} }}) "

@@ -1,0 +1,8 @@
+node_modules
+dist/
+dist-desktop/
+.astro/
+src/content/docs/
+src/content/desktop/
+public/reference/
+public/examples/

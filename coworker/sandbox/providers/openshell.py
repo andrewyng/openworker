@@ -40,6 +40,7 @@ from ..bundle import build_runner_zipapp
 from ..registry import REGISTRY_LABEL, registry_id
 from ..transport import Transport
 from .. import credentials as creds
+from .. import stages
 from . import openshell_policy as policy
 from . import openshell_wire as wire
 
@@ -92,15 +93,22 @@ def _cli(*args: str, timeout: float = _CLI_TIMEOUT, check: bool = True) -> subpr
     return done
 
 
+# What the last preflight learnt of the base image (True, False, None = cannot tell), for
+# the recording's setup stages: None means `sandbox create` may pull it (OB-13).
+_last_image_present: Optional[bool] = None
+
+
 def preflight() -> dict[str, Any]:
     """Refuse early, with a message a person can act on."""
+    global _last_image_present
     version = _cli("--version", timeout=15).stdout.strip().split()[-1]
     if version != PINNED_VERSION:
         raise OpenShellUnavailable(f"OpenShell {version} is installed; OpenWorker is tested with {PINNED_VERSION} only. Install that version (`openworker machine sandbox setup`).")
     status = _cli("status", timeout=30, check=False)
     if status.returncode != 0 or "Connected" not in status.stdout:
         raise OpenShellUnavailable("The OpenShell gateway is not running or cannot be reached (`openshell status`). On a headless machine, check `systemctl --user status openshell-gateway` and `loginctl enable-linger`.")
-    if image_present() is False:
+    present = _last_image_present = image_present()
+    if present is False:
         raise OpenShellImageMissing(
             f"{IMAGE_MISSING_PREFIX} (about 5 GB, one time). Run `openworker machine sandbox setup`, "
             f"or `{image_tool() or 'docker'} pull {sandbox_image()}`, then start the session again."
@@ -288,6 +296,7 @@ class DenialLog:
 
 class OpenShellProvider:
     name = "openshell"
+    reports_stages = True  # its start's inner stages go to the recording (stages.stage)
 
     def __init__(
         self,
@@ -352,17 +361,26 @@ class OpenShellProvider:
             raise
 
     def _create(self) -> None:
+        global _last_image_present
+        _last_image_present = None
         preflight()
         for root in self.roots:
             if not os.path.isdir(root["path"]):
                 raise RuntimeError(f"folder does not exist on this machine: {root['path']}")
         uid, gid = (os.getuid(), os.getgid()) if sys.platform.startswith("linux") else (None, None)
+        if self.grants:
+            stages.stage(self, "copy_logins")
         # The sandbox's private home with the copied credentials (section 11b), mounted at
         # the same path it has on the machine, read-write. With no grants it holds only
         # git's settings, and HOME stays the runtime folder.
         self.copied = creds.copy_in(self.grants, self._tmp) if self.grants else None
         home = self.copied.home if self.copied is not None else None
         self._identity = (uid, gid, home)
+        stages.stage(self, "create")
+        if _last_image_present is None:
+            # Nobody here can say whether the image is present: `sandbox create` may pull it,
+            # and how long that took cannot be told apart from the create.
+            stages.mark(self, "download_image", uncertain=True)
         policy_file = self._write_policy()
         driver_config = json.dumps(policy.mounts(self.roots, str(self._runner.parent), home))
         command = [policy.PYTHON, "-S", f"{policy.RUNNER_MOUNT}/{self._runner.name}", "serve", "--socket", _SOCKET, "--cwd", self.cwd]
@@ -396,6 +414,7 @@ class OpenShellProvider:
                 if docker_host_network() is False:
                     raise OpenShellUnavailable(f"{DOCKER_HOST_NETWORK_FIX}. Then start the session again.") from exc
             raise
+        stages.stage(self, "ready")
         self._wait_ready()
         self._denials = DenialLog(self.sandbox_name)  # what it refuses, for the agent and the card
         # Spike finding K: the first exec after a sandbox turns Ready hangs until it times

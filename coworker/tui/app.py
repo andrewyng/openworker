@@ -156,7 +156,7 @@ class CoworkerApp(App):
     async def run_turn(self, text: str) -> None:
         assert self.engine is not None
         try:
-            async for event in self.engine.run(text):
+            async for event in self.engine.run(text, trigger="user"):
                 self._render_event(event)
         except Exception as exc:  # pragma: no cover - surfaced to the user
             self._write(f"[red]error:[/red] {exc}")

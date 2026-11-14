@@ -33,7 +33,10 @@ from .openai_provider import OpenAIProvider
 from .openai_responses import OpenAIResponsesProvider
 from .vertex_provider import VertexProvider
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# 127.0.0.1, not localhost: on Windows `localhost` tries ::1 first, where Ollama does not
+# listen, and every new connection waits about 2 s before falling back (OPE-229). An
+# address the user typed is used as typed.
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 # The index deliberately lives in the SecretStore too: it names profiles which contain
 # credentials, and keeping the two together makes a future secure-store backend a drop-in.
 CUSTOM_PROVIDERS_PROFILE = "providers:custom"

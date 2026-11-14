@@ -160,6 +160,10 @@ class CompactionState:
     # (empty when the engine had nowhere to write it). Named in the compacted block so the
     # model can read back anything the summary dropped.
     transcript_path: str = ""
+    # OPE-235: the summary was written from outside content (web, email, connectors,
+    # downloads), so text from outside may survive in it. Carried into later compactions;
+    # the no-summary trim keeps the earlier summary and so keeps this too.
+    carries_outside: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -172,6 +176,7 @@ class CompactionState:
             "model_used": self.model_used,
             "trimmed": self.trimmed,
             "transcript_path": self.transcript_path,
+            "carries_outside": self.carries_outside,
         }
 
     @classmethod
@@ -188,6 +193,7 @@ class CompactionState:
             model_used=str(raw.get("model_used", "")),
             trimmed=bool(raw.get("trimmed", False)),
             transcript_path=str(raw.get("transcript_path", "") or ""),
+            carries_outside=bool(raw.get("carries_outside", False)),
         )
 
 

@@ -23,12 +23,19 @@ import {
   getTrustedWorkspaces,
   setAutoApprove,
   setAutoApproveShadow,
+  setAutoApproveReviewer,
+  setAutoApproveReviewerKey,
+  getShadowSummary,
+  exportShadowResults,
+  type ReviewerChoice,
+  type ShadowSummary,
   setCompactionSettings,
   setContextBar,
   setHideReasoningRunning,
   setOnboarded,
   setPdfSettings,
   setScratchBase,
+  setWorktreeSettings,
   setSessionsPeek,
   setWorkspaceTrusted,
   type CompactionSettings,
@@ -72,6 +79,7 @@ import { MachinesSection } from "./MachinesSection";
 import { RemoteConnectorsPanel } from "./RemoteConnectorsPanel";
 import { MemorySection } from "./MemorySection";
 import { SandboxSection } from "./SandboxSection";
+import { ObservabilitySection } from "./ObservabilitySection";
 import { CustomizationTab } from "./CustomizationTab";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
@@ -93,6 +101,8 @@ export type SetTab =
   | "voice"
   | "memory"
   | "sandbox"
+  // OB-6: record on or off, keep for, and sending recordings to Langfuse or OpenTelemetry.
+  | "observability"
   | "machines"
   | "connectors"
   // UX-058: the services behind the tools (web search provider + keys, fetch switch).
@@ -101,6 +111,113 @@ export type SetTab =
   // UX-049: per-connector glance pages (App group), shown once connected somewhere.
   | "slack"
   | "github";
+
+// Feature worktrees (Code coworker, owner ruling 2026-11-07): where a task's worktree
+// goes, how its branch is named, fetch-first, cleanup, and the per-repo setup command.
+// Six fields with defaults most people never touch; saved as one change.
+function WorktreesCard() {
+  const { t } = useTranslation();
+  const [settings, setSettings] = useState<ModelSettings | null>(null);
+  const [draft, setDraft] = useState<{
+    location: "in_repo" | "sibling" | "custom"; custom_dir: string; branch_prefix: string;
+    fetch_first: boolean; cleanup_on_archive: boolean; prune_days: number; setup_command: string;
+  } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const desktop = isTauri();
+
+  const refresh = () =>
+    getSettings()
+      .then((s) => {
+        setSettings(s);
+        setDraft({
+          location: s.worktree_location || "in_repo",
+          custom_dir: s.worktree_custom_dir || "",
+          branch_prefix: s.worktree_branch_prefix || "",
+          fetch_first: s.worktree_fetch_first !== false,
+          cleanup_on_archive: s.worktree_cleanup_on_archive !== false,
+          prune_days: s.worktree_prune_days || 14,
+          setup_command: s.worktree_setup_command || "",
+        });
+      })
+      .catch(() => setSettings(null));
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  if (!settings || !draft) return null;
+  const set = <K extends keyof typeof draft>(k: K, v: (typeof draft)[K]) => setDraft({ ...draft, [k]: v });
+  const save = async () => {
+    setMsg(null);
+    const res = await setWorktreeSettings(draft);
+    setMsg(res.ok ? t("settings.worktrees_saved") : res.error || t("settings.files_save_error"));
+    if (res.ok) refresh();
+  };
+
+  return (
+    <div className={CARD + " p-4 mb-4"} data-testid="worktrees-card">
+      <div className={FIELD_LABEL}>{t("settings.worktrees_title")}</div>
+      <div className={FIELD_HELP}>{t("settings.worktrees_help")}</div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_where")}</label>
+        <select
+          className={INPUT}
+          data-testid="worktree-location"
+          value={draft.location}
+          onChange={(e) => set("location", e.target.value as typeof draft.location)}
+        >
+          <option value="in_repo">{t("settings.worktrees_in_repo")}</option>
+          <option value="sibling">{t("settings.worktrees_sibling")}</option>
+          <option value="custom">{t("settings.worktrees_custom")}</option>
+        </select>
+      </div>
+      {draft.location === "custom" && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_custom_dir")}</label>
+          <input className={INPUT} type="text" value={draft.custom_dir} spellCheck={false}
+            onChange={(e) => set("custom_dir", e.target.value)} />
+          {desktop && (
+            <button className={BTN_BORDERED} onClick={async () => { const p = await pickFolder(); if (p) set("custom_dir", p); }}>
+              {t("settings.files_browse")}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_prefix")}</label>
+        <input className={INPUT} type="text" value={draft.branch_prefix} spellCheck={false}
+          placeholder={t("settings.worktrees_prefix_placeholder")}
+          onChange={(e) => set("branch_prefix", e.target.value)} />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_setup")}</label>
+        <input className={INPUT} type="text" value={draft.setup_command} spellCheck={false}
+          placeholder={t("settings.worktrees_setup_placeholder")}
+          onChange={(e) => set("setup_command", e.target.value)} />
+      </div>
+      <label className="mt-3 flex items-start gap-2 text-ui text-ink cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={draft.fetch_first}
+          onChange={(e) => set("fetch_first", e.target.checked)} />
+        <span>{t("settings.worktrees_fetch_first")}</span>
+      </label>
+      <label className="mt-2 flex items-start gap-2 text-ui text-ink cursor-pointer">
+        <input type="checkbox" className="mt-1" checked={draft.cleanup_on_archive}
+          onChange={(e) => set("cleanup_on_archive", e.target.checked)} />
+        <span>{t("settings.worktrees_cleanup")}</span>
+      </label>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="text-ui text-muted w-40 shrink-0">{t("settings.worktrees_prune")}</label>
+        <input className={INPUT + " max-w-[6rem]"} type="number" min={1} value={draft.prune_days}
+          onChange={(e) => set("prune_days", Math.max(1, Number(e.target.value) || 1))} />
+        <span className="text-meta text-muted">{t("settings.worktrees_prune_unit")}</span>
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button className={BTN_ACCENT} onClick={save} data-testid="worktrees-save">{t("settings.files_save")}</button>
+        {msg && <span className="text-ui text-muted">{msg}</span>}
+      </div>
+    </div>
+  );
+}
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-ui font-medium text-ink";
@@ -126,6 +243,7 @@ type SetIcon =
   | "refresh"
   | "plug"
   | "shield"
+  | "audit"
   | "user";
 // `labelKey` = the i18n key for the label; tabs without one yet show `label` as is.
 type TabDef = { key: SetTab; label: string; labelKey?: string; icon: SetIcon };
@@ -155,6 +273,7 @@ const SET_GROUPS: { name: string; nameKey?: string; scope: "app" | "machine" | "
       { key: "skills", label: "Skills", labelKey: "settings.tab.skills", icon: "book" },
       { key: "memory", label: "Memory", labelKey: "settings.tab.memory", icon: "archive" },
       { key: "sandbox", label: "Sandbox", labelKey: "settingsx.tab.sandbox", icon: "shield" },
+      { key: "observability", label: "Observability", labelKey: "settingsx.tab.observability", icon: "audit" },
       { key: "personas", label: "Coworkers", labelKey: "settings.tab.personas", icon: "sparkle" },
     ],
   },
@@ -401,6 +520,8 @@ export function SettingsView({
             />
           ) : tab === "sandbox" ? (
             <SandboxSection key={scopeId || "local"} machine={scoped} onProviderChanged={onSandboxProviderChanged} />
+          ) : tab === "observability" ? (
+            <ObservabilitySection key={scopeId || "local"} machine={scoped} />
           ) : tab === "customization" ? (
             <CustomizationTab key={scopeId || "local"} machine={scoped} />
           ) : tab === "machines" ? (
@@ -960,6 +1081,8 @@ function AppearanceSection() {
 
       <FilesCard />
 
+      <WorktreesCard />
+
       <TrustedWorkspacesCard />
 
       {desktop && (
@@ -1393,15 +1516,71 @@ function AutoApproveCard() {
   const { t } = useTranslation();
   const [on, setOn] = useState<boolean | null>(null);
   const [shadow, setShadow] = useState(false);
+  const [reviewer, setReviewer] = useState<ReviewerChoice>("session");
+  const [keys, setKeys] = useState<Record<string, boolean>>({});
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyError, setKeyError] = useState("");
+  const [summary, setSummary] = useState<ShadowSummary | null>(null);
+  const [exported, setExported] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  // Shadow results follow the chosen reviewer: reload when shadow turns on or the
+  // reviewer changes, so the line never mixes reviewers (OPE-224).
+  useEffect(() => {
+    setExported("");
+    if (!shadow) {
+      setSummary(null);
+      return;
+    }
+    getShadowSummary().then(setSummary).catch(() => setSummary(null));
+  }, [shadow, reviewer]);
+
+  const exportResults = async () => {
+    setExporting(true);
+    setExported("");
+    const r = await exportShadowResults().catch(() => ({ ok: false } as { ok: boolean; path?: string }));
+    setExporting(false);
+    // The time makes a repeat export visibly new: the file name is per day, so the path
+    // alone would not change between clicks.
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setExported(
+      r.ok && r.path
+        ? t("settingsx.auto_approve.shadow_export_saved", { path: r.path, time })
+        : t("settingsx.auto_approve.shadow_export_failed"),
+    );
+  };
 
   useEffect(() => {
     getSettings()
       .then((s) => {
         setOn(s.auto_approve === true);
         setShadow(s.auto_approve_shadow === true);
+        setReviewer(s.auto_approve_reviewer || "session");
+        setKeys(s.auto_approve_reviewer_keys || {});
       })
       .catch(() => setOn(false));
   }, []);
+
+  const saveReviewer = async (next: ReviewerChoice) => {
+    setReviewer(next);
+    setKeyDraft("");
+    setKeyError("");
+    await setAutoApproveReviewer(next);
+  };
+  const saveKey = async () => {
+    if (reviewer === "session" || !keyDraft.trim()) return;
+    const r = await setAutoApproveReviewerKey(reviewer, keyDraft.trim());
+    if (r.ok) {
+      setKeys(r.auto_approve_reviewer_keys || { ...keys, [reviewer]: true });
+      setKeyDraft("");
+      setKeyError("");
+    } else {
+      setKeyError(r.error || t("settingsx.auto_approve.reviewer_key_failed"));
+    }
+  };
+  const choices: ReviewerChoice[] = ["session", "openai-decisions", "jev"];
+  const choiceKey = (c: ReviewerChoice) =>
+    c === "session" ? "session" : c === "openai-decisions" ? "decisions" : "jev";
 
   const saveOn = async (next: boolean) => {
     setOn(next);
@@ -1431,7 +1610,59 @@ function AutoApproveCard() {
           </span>
         </span>
       </label>
-      <label className="flex items-start gap-3 py-2 pl-7">
+      {/* Which reviewer judges the checks (OPE-224). Shown only when something uses it:
+          Auto-approve mode, or shadow evaluation, which records that reviewer's verdicts. */}
+      {(on || shadow) && (
+      <div className="py-2" data-testid="auto-approve-reviewer">
+        <div className="flex items-center gap-2.5">
+          <span className="text-ui text-ink">{t("settingsx.auto_approve.reviewer_title")}</span>
+          <select
+            value={reviewer}
+            data-testid="auto-approve-reviewer-select"
+            className="px-2 py-1.5 rounded-lg border border-line bg-paper text-ui text-ink outline-none focus:border-accent"
+            onChange={(e) => saveReviewer(e.target.value as ReviewerChoice)}
+          >
+            {choices.map((c) => (
+              <option key={c} value={c}>
+                {t(`settingsx.auto_approve.reviewer_${choiceKey(c)}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={FIELD_HELP}>{t(`settingsx.auto_approve.reviewer_${choiceKey(reviewer)}_desc`)}</div>
+        {reviewer !== "session" && (
+          <div className="pt-2" data-testid="auto-approve-reviewer-key">
+            <div className="text-meta text-muted pb-1">{t("settingsx.auto_approve.reviewer_no_reasons")}</div>
+            {keys[reviewer] ? (
+              <div className="text-meta text-ok">{t("settingsx.auto_approve.reviewer_key_set")}</div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  className={INPUT}
+                  data-testid="auto-approve-reviewer-key-input"
+                  placeholder={t(`settingsx.auto_approve.reviewer_key_placeholder_${choiceKey(reviewer)}`)}
+                  value={keyDraft}
+                  onChange={(e) => setKeyDraft(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className={BTN_ACCENT}
+                  data-testid="auto-approve-reviewer-key-save"
+                  disabled={!keyDraft.trim()}
+                  onClick={saveKey}
+                >
+                  {t("settingsx.auto_approve.reviewer_key_save")}
+                </button>
+              </div>
+            )}
+            {keyError && <div className="text-meta text-danger pt-1">{keyError}</div>}
+          </div>
+        )}
+      </div>
+      )}
+      <label className="flex items-start gap-3 py-2">
         <input
           type="checkbox"
           className="mt-0.5"
@@ -1451,6 +1682,44 @@ function AutoApproveCard() {
           </span>
         </span>
       </label>
+      {shadow && summary && (
+        <div className="pl-7 pb-1 text-meta text-muted" data-testid="shadow-summary">
+          <div className="text-ink">
+            {t("settingsx.auto_approve.shadow_summary_title", {
+              days: summary.days,
+              reviewer: t(`settingsx.auto_approve.reviewer_${choiceKey(summary.reviewer)}`),
+            })}
+          </div>
+          {summary.checks === 0 ? (
+            <div>{t("settingsx.auto_approve.shadow_summary_empty")}</div>
+          ) : (
+            <>
+              <div>
+                {t("settingsx.auto_approve.shadow_summary_counts", {
+                  count: summary.checks, run: summary.run, asked: summary.asked, stopped: summary.stopped,
+                })}
+              </div>
+              {summary.decided > 0 && (
+                <div>{t("settingsx.auto_approve.shadow_summary_matched", { matched: summary.matched, decided: summary.decided })}</div>
+              )}
+              <button
+                type="button"
+                className="mt-1 text-accent hover:underline disabled:opacity-50"
+                data-testid="shadow-export"
+                disabled={exporting}
+                onClick={exportResults}
+              >
+                {exporting ? t("settingsx.auto_approve.shadow_exporting") : t("settingsx.auto_approve.shadow_export")}
+              </button>
+              {exported && (
+                <div className="select-all break-all" data-testid="shadow-export-path">
+                  {exported}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

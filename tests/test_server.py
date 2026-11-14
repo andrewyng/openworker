@@ -71,7 +71,7 @@ def test_agents_and_memory_rest(tmp_path):
     # ships:false personas (teams, ops, design) need OPENWORKER_UNSHIPPED=1.
     names = [a["name"] for a in agents]
     assert names[0] == "cowork"
-    assert set(names) == {"cowork", "security", "cloud-posture", "dep-audit", "reviewer"}
+    assert set(names) == {"cowork", "code", "security", "cloud-posture", "dep-audit", "reviewer"}
     assert "skills" in client.get("/v1/skills").json()  # catalog (may be empty)
 
     added = client.post("/v1/memory", json={"content": "prefer pathlib"}).json()
@@ -483,9 +483,6 @@ def test_ws_rate_limits_inbound_frames(tmp_path):
 
 
 def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
-    import sys
-    from types import SimpleNamespace
-
     from coworker.server import run as server_run
 
     seen = {}
@@ -494,15 +491,21 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(server_run, "_ensure_ca_bundle", lambda: None)
     monkeypatch.setattr(server_run, "_exit_when_orphaned", lambda: None)
     monkeypatch.setattr(server_run, "build_app", lambda *args: fake_app)
-    monkeypatch.setitem(
-        sys.modules,
-        "uvicorn",
-        SimpleNamespace(run=lambda app, **kwargs: seen.update(app=app, **kwargs)),
-    )
+    from coworker.server import ws_guard
+
+    class _Server:
+        # T3-3: the launcher runs uvicorn through GuardedServer (ws_guard.py)
+        def __init__(self, config):
+            seen.update(app=config.app, ws_max_size=config.ws_max_size, port=config.port)
+
+        def run(self):
+            seen["ran"] = True
+
+    monkeypatch.setattr(ws_guard, "GuardedServer", _Server)
 
     server_run.main(["--cwd", str(tmp_path), "--port", "8766"])
 
-    assert seen["app"] is fake_app
+    assert seen["app"] is fake_app and seen["ran"] and seen["port"] == 8766
     assert seen["ws_max_size"] == server_run._WS_MAX_FRAME_BYTES
 
 
@@ -549,6 +552,10 @@ def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
             self.calls = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
+            # The fire-and-forget auto-title call runs concurrently with the turn; it must
+            # not take the one scripted outage meant for the chat call.
+            if messages and "title chat sessions" in str(messages[0].get("content", "")):
+                return _text("A Title")
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("outage")
@@ -801,6 +808,13 @@ def test_ws_browser_tool_audit_round_trip(tmp_path):
     )
     assert any(r["tool"] == "browser_close" and r["stage"] == "finished" for r in rows)
 
+    # OPE-238: one tool call's rows, by its id (the GUI's "changes made without asking"
+    # summary links each item this way).
+    call_id = next(r["call_id"] for r in rows if r["stage"] == "finished")
+    one = client.get("/v1/audit", params={"call_id": call_id}).json()["events"]
+    assert one and {r["call_id"] for r in one} == {call_id}
+    assert client.get("/v1/audit", params={"call_id": "no-such-call"}).json()["events"] == []
+
 
 def test_open_and_recent_workspaces(tmp_path):
     proj = tmp_path / "proj"
@@ -1040,6 +1054,10 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         _drain(ws)
         ws.send_json({"type": "set_model", "model": "kimi:kimi-k2.6"})
         changed = ws.receive_json()
+        while changed["type"] == "step":
+            # Live Steps updates go out in 100 ms batches, so one can land after
+            # turn_done (observability; fix list C-1). They are not part of this test.
+            changed = ws.receive_json()
         assert changed["type"] == "model_changed"
         assert changed["data"]["model"] == "kimi:kimi-k2.6"
         assert "Kimi" in changed["data"]["text"]

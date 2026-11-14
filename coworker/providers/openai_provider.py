@@ -203,11 +203,19 @@ def _usage_from(usage: Any) -> Optional[TokenUsage]:
         return None
     prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
     details = getattr(usage, "prompt_tokens_details", None)
-    cached = int(getattr(details, "cached_tokens", 0) or 0)
+    cached = getattr(details, "cached_tokens", None)
+    # The cache write is inside the prompt count too (V-21), when the server sends it
+    # (OpenRouter does, V-13). A count not sent is unknown, not 0 (observability E3).
+    written = getattr(details, "cache_write_tokens", None)
+    reasoning = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
     return TokenUsage(
-        input=max(prompt - cached, 0),
+        input=max(prompt - int(cached or 0) - int(written or 0), 0),
         output=int(getattr(usage, "completion_tokens", 0) or 0),
-        cache_read=cached,
+        cache_read=int(cached or 0),
+        cache_write=int(written or 0),
+        reasoning=None if reasoning is None else int(reasoning),
+        cache_read_reported=cached is not None,
+        cache_write_reported=written is not None,
     )
 
 
@@ -229,7 +237,7 @@ class OpenAIProvider(ProviderClient):
         # inject a `client` directly, bypassing all of this.
         #
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
-        # provider router for Ollama (`http://localhost:11434/v1`, with a placeholder key) and,
+        # provider router for Ollama (`http://127.0.0.1:11434/v1`, with a placeholder key) and,
         # later, other OpenAI-shaped backends. When None, behavior is identical to stock OpenAI.
         #
         # `http_client` is an optional httpx.Client handed to the SDK. Ollama uses it to carry

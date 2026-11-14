@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "reference_sha": "c37b761499105b9216977f0d68b5e62dac2b3c1c",
+  "reason": "Known Python findings P1-P3; do not regenerate expected behavior blindly.",
+  "python": {
+    "failed_terminal_is_success": true,
+    "missing_terminal_is_success": true,
+    "failed_write_described_as_written": true,
+    "summary_still_waiting_after_interrupt": true
+  },
+  "rust": {
+    "failed_terminal_is_success": false,
+    "missing_terminal_is_success": false,
+    "failed_write_described_as_written": false,
+    "summary_still_waiting_after_interrupt": false
+  }
+}

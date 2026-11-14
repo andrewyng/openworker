@@ -1,0 +1,34 @@
+# Existing local kind cluster and PostgreSQL; does not create Kubernetes or a database.
+# Replace all example image digests and paths. No secrets belong in this file.
+apiVersion: "ows/v1alpha1"
+name: "local-agents"
+managementUI:
+  enabled: true
+  port: 8444
+observability:
+  enabled: true
+  retentionDays: 14
+models:
+  anthropic:
+    env: "ANTHROPIC_API_KEY"
+advanced:
+  kubernetes:
+    kubeconfig: "/absolute/path/to/local.kubeconfig"
+    context: "kind-openworker"
+    namespace: "ow-service-m4-local"
+    helm: "helm"
+  service:
+    chart: "../../chart"
+    image: "registry.example.com/openworker/service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    runnerImage: "registry.example.com/openworker/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    uiImage: "registry.example.com/openworker/ui@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    model: "claude-sonnet-4-6"
+  openshell:
+    mode: "existing"
+    namespace: "ow-helm-shell"
+    release: "ow-shell"
+    fullname: "ow-helm-gateway"
+  database:
+    url:
+      env: "OW_DATABASE_URL"
+    caFile: "/absolute/path/to/postgres-ca.crt"

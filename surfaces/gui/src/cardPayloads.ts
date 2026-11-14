@@ -52,7 +52,24 @@ export function approvalItemFromPayload(d: any): ApprovalItem {
 
 /** `plan_proposed`. */
 export function planItemFromPayload(d: any): PlanItem {
-  return { kind: "planreq", plan: d.plan || "" };
+  // OPE-237: steps arrive only from auto-approve; anything malformed is dropped.
+  const steps = Array.isArray(d.steps)
+    ? d.steps
+        .filter((s: any) => s && typeof s === "object" && typeof s.kind === "string" && typeof s.target === "string")
+        .map((s: any) => ({
+          kind: s.kind,
+          target: s.target,
+          destination: typeof s.destination === "string" && s.destination ? s.destination : undefined,
+          note: typeof s.note === "string" && s.note ? s.note : undefined,
+          risky: !!s.risky,
+        }))
+    : undefined;
+  return {
+    kind: "planreq",
+    plan: d.plan || "",
+    ...(steps ? { steps } : {}),
+    ...(d.auto_approve ? { autoApprove: true } : {}),
+  };
 }
 
 /** `team_proposed`, or a parked `gate: "team"` item. Fields an older server does not

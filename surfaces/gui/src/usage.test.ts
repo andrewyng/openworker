@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addTurnUsage, emptyUsage, formatTokens, teamUsage, totalTokens, usageFromMessages } from "./usage";
+import { addTurnUsage, emptyUsage, formatTokens, teamUsage, totalTokens, usageFromMessages, usageFromRecordings } from "./usage";
 import type { TurnUsage } from "./types";
 
 const turn = (over: Record<string, unknown> = {}) => ({
@@ -93,5 +93,22 @@ describe("teamUsage", () => {
     expect(t.byModel["ollama:qwen3-coder:30b"]).toMatchObject({ input: 7, output: 3 });
     expect(totalTokens(t)).toBe(195);
     expect(t.context).toBe(lead.context); // the lead's window, not a sum
+  });
+});
+
+describe("usageFromRecordings (P3-1)", () => {
+  it("adds every recorded call of the team, helpers included", () => {
+    const u = usageFromRecordings([
+      { recorded: true, by_model_parts: { "model-a": { input: 1000, cache: 400, output: 100 }, "model-a (title)": { input: 50, cache: 0, output: 5 } } },
+      { recorded: true, by_model_parts: { "model-b": { input: 200, cache: 0, output: 20 } } },
+      null,
+    ])!;
+    // input already holds the cached part, so it is not added twice
+    expect(totalTokens(u)).toBe(1000 + 100 + 50 + 5 + 200 + 20);
+    expect(Object.keys(u.byModel).sort()).toEqual(["model-a", "model-b"]);
+  });
+  it("is null when no session was recorded, so the transcript count stays", () => {
+    expect(usageFromRecordings([{ recorded: false }, null])).toBeNull();
+    expect(usageFromRecordings([])).toBeNull();
   });
 });

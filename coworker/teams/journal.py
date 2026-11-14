@@ -98,6 +98,14 @@ class JournalStore:
                 created_ts TEXT NOT NULL
             );
             """)
+        # Observability Phase 3 (E17a, TD3-15): the tool call that wrote an entry, and the
+        # calls that are its evidence ([{session_id, call_id}]). Pointers the app adds, so
+        # outside the hash chain, like persona, model and session_id (FO-137 would hash them).
+        for column in ("step_call_id TEXT", "evidence TEXT"):
+            try:
+                self._conn.execute(f"ALTER TABLE journal_entries ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass  # already there
         self._conn.commit()
 
     # ---------------------------------------------------------------------- verbs
@@ -114,6 +122,9 @@ class JournalStore:
         entities: Optional[list[str]] = None,
         refs: Optional[list[str]] = None,
         taint: bool = False,
+        severity: Optional[str] = None,
+        step_call_id: Optional[str] = None,
+        evidence: Optional[list[dict[str, str]]] = None,
     ) -> dict[str, Any]:
         if not (case or "").strip():
             raise BoardError("case is required")
@@ -145,6 +156,9 @@ class JournalStore:
                         "body": body,
                         "entities": sorted(set(entities or [])),
                         "refs": [str(ref) for ref in refs or []],
+                        # A finding's severity is the coworker's own claim: in the chain.
+                        # Only written when given, so older entries hash as before.
+                        **({"severity": severity} if severity else {}),
                     }
                 ),
                 "taint": 1 if taint else 0,
@@ -156,8 +170,9 @@ class JournalStore:
                     """
                     INSERT INTO journal_entries
                         (ts, case_id, kind, actor, actor_role, persona, model,
-                         session_id, space, item_id, payload, taint, prev_hash, hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         session_id, space, item_id, payload, taint, prev_hash, hash,
+                         step_call_id, evidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         ts,
@@ -174,6 +189,8 @@ class JournalStore:
                         record["taint"],
                         prev,
                         record["hash"],
+                        step_call_id,
+                        json.dumps(list(evidence or [])) if evidence is not None else None,
                     ),
                 )
                 if not exists:
@@ -193,7 +210,8 @@ class JournalStore:
             except Exception:
                 self._conn.rollback()
                 raise
-        return {**record, "seq": cursor.lastrowid}
+        return {**record, "seq": cursor.lastrowid, "step_call_id": step_call_id,
+                "evidence": list(evidence) if evidence is not None else None}
 
     def read(
         self,
@@ -428,6 +446,13 @@ def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
     entry["body"] = payload.get("body")
     entry["entities"] = payload.get("entities") or []
     entry["refs"] = payload.get("refs") or []
+    entry["severity"] = payload.get("severity")
+    # 1.3 (E17a): pointers outside the chain; None on entries written before them.
+    raw = entry.get("evidence")
+    try:
+        entry["evidence"] = json.loads(raw) if raw else None
+    except (TypeError, json.JSONDecodeError):
+        entry["evidence"] = None
     entry["author"] = entry.pop("actor")
     entry["role"] = entry.pop("actor_role")
     entry["item"] = entry.pop("item_id")

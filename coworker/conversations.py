@@ -82,6 +82,10 @@ class ConversationStore:
         self.db_path = self.base / "coworker.db"
 
         self._lock = threading.RLock()
+        # Per session: the message objects the .jsonl is known to hold, in order, as of
+        # this store's last save/load. Lets save() tell a pure append from a change in
+        # the middle without re-reading the file.
+        self._persisted: dict[str, list[dict]] = {}
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript("""
@@ -115,6 +119,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN actor TEXT",
             "ALTER TABLE sessions ADD COLUMN usage TEXT",
             "ALTER TABLE sessions ADD COLUMN spawn TEXT",
+            "ALTER TABLE sessions ADD COLUMN worktree TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -276,6 +281,35 @@ class ConversationStore:
             for m in messages:
                 f.write(json.dumps(m) + "\n")
 
+    def _rewrite(self, sid: str, messages: list[dict]) -> None:
+        # Atomic rewrite: write the full log to a temp file, then replace in one
+        # step. An in-place open(..., "w") truncates the file immediately, so a
+        # crash mid-rewrite would erase the conversation history (same
+        # tmp-then-replace pattern as subscriptions.ChannelBuffer._save).
+        path = self._file(sid)
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for m in messages:
+                f.write(json.dumps(m) + "\n")
+        tmp.replace(path)
+
+    def _saved_prefix_unchanged(self, sid: str, messages: list[dict], existing: int) -> bool:
+        """True when the first `existing` messages are exactly what the file already holds,
+        so the new ones can simply be appended. Checked by object identity against what
+        this store last saved or loaded for the session (cheap); without that record (first
+        save in this process, or load() changed the list), by comparing the file's lines."""
+        if existing == 0:
+            return True
+        if len(messages) < existing:
+            return False
+        known = self._persisted.get(sid)
+        if known is not None and len(known) == existing:
+            return all(a is b for a, b in zip(messages, known))
+        lines = [ln for ln in self._file(sid).read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return len(lines) == existing and all(
+            json.dumps(m) == ln for m, ln in zip(messages, lines)
+        )
+
     def _backfill_counts(self) -> None:
         """One-time per session: move any inline blob into a .jsonl and persist
         title + n_msgs in the index. Skips already-migrated rows on later startups."""
@@ -330,19 +364,16 @@ class ConversationStore:
                         self._append(sid, legacy)
 
             existing = self._count(sid)
-            if len(record.messages) > existing:
-                self._append(sid, record.messages[existing:])
-            elif len(record.messages) < existing:  # rare; not append-only
-                # Atomic rewrite: write the full log to a temp file, then replace in one
-                # step. An in-place open(..., "w") truncates the file immediately, so a
-                # crash mid-rewrite would erase the conversation history (same
-                # tmp-then-replace pattern as subscriptions.ChannelBuffer._save).
-                path = self._file(sid)
-                tmp = path.with_suffix(".tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    for m in record.messages:
-                        f.write(json.dumps(m) + "\n")
-                tmp.replace(path)
+            if self._saved_prefix_unchanged(sid, record.messages, existing):
+                if len(record.messages) > existing:
+                    self._append(sid, record.messages[existing:])
+            else:
+                # Not a pure append: a message was inserted, removed or moved before the
+                # end (load()'s pairing repair, the engine's dangling-call stubs, a shrink).
+                # Appending by count here would skip the inserted message and write the
+                # shifted tail twice, so rewrite the whole log instead.
+                self._rewrite(sid, record.messages)
+            self._persisted[sid] = list(record.messages)
 
             title = record.title or title_from(record.messages)
             self._conn.execute(
@@ -388,6 +419,7 @@ class ConversationStore:
         if not row:
             return None
         messages = self._read_jsonl(session_id)
+        from_file = messages is not None
         if messages is None:
             try:
                 messages = json.loads(row["messages"] or "[]")
@@ -396,7 +428,15 @@ class ConversationStore:
         # Self-heal: ensure every tool result immediately follows its call.
         # An interrupted turn can persist a user message between an assistant
         # tool_calls block and its tool result, which providers reject (400).
+        raw = messages
         messages = self._repair_tool_pairing(messages)
+        with self._lock:
+            if from_file and messages == raw and self._count(session_id) == len(raw):
+                self._persisted[session_id] = list(messages)
+            else:
+                # The healed list (or skipped corrupt lines) differs from the file: the
+                # next save must not treat it as an append.
+                self._persisted.pop(session_id, None)
         return SessionRecord(
             session_id=session_id,
             workspace=row["workspace"],
@@ -426,7 +466,18 @@ class ConversationStore:
             ),
             usage=_load_grants(row["usage"] if "usage" in row.keys() else None),
             spawn=_load_grants(row["spawn"] if "spawn" in row.keys() else None),
+            worktree=_load_grants(row["worktree"] if "worktree" in row.keys() else None),
         )
+
+    def set_worktree(self, session_id: str, worktree: dict) -> None:
+        """Persist the feature worktree `start_worktree` moved this session into (Code
+        coworker, 2026-11-07). Like `spawn`, the per-turn upsert never names this column."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE sessions SET worktree = ? WHERE session_id = ?",
+                (json.dumps(worktree or {}), session_id),
+            )
+            self._conn.commit()
 
     def set_spawn(self, session_id: str, spawn: dict) -> None:
         """Persist what a configuration started this session with (spec §10). Like
@@ -509,6 +560,7 @@ class ConversationStore:
                 team=_load_grants(r["team"] if "team" in r.keys() else None),
                 usage=_load_grants(r["usage"] if "usage" in r.keys() else None),
                 spawn=_load_grants(r["spawn"] if "spawn" in r.keys() else None),
+                worktree=_load_grants(r["worktree"] if "worktree" in r.keys() else None),
             )
             for r in rows
         ]
@@ -561,6 +613,7 @@ class ConversationStore:
                 "DELETE FROM sessions WHERE session_id = ?", (session_id,)
             )
             self._conn.commit()
+            self._persisted.pop(session_id, None)
         path = self._file(session_id)
         if path.exists():
             path.unlink()
@@ -594,6 +647,22 @@ class ConversationStore:
             )
             self._conn.commit()
         return cur.rowcount > 0
+
+    def display_title(self, session_id: str) -> Optional[str]:
+        """The title the sidebar shows, or None when the session has no row yet."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT title, auto_title, renamed FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return None if row is None else _display_title(row)
+
+    def agent_of(self, session_id: str) -> Optional[str]:
+        """The session's coworker id (`sessions.agent`), or None when it has no row. The
+        usage ledger's stand-in for turns recorded before `stamp.persona_id` (Phase 3)."""
+        with self._lock:
+            row = self._conn.execute("SELECT agent FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        return None if row is None else row["agent"]
 
     def title_state(self, session_id: str) -> Optional[dict]:
         """The auto-title guard inputs: whether the user renamed and whether a generated

@@ -1,0 +1,33 @@
+{
+  "name": "@openworkerai/openworker-harness-builder",
+  "version": "0.1.0-beta.6",
+  "description": "Install the OpenWorker app-building skill for Codex or Claude Code",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "openworker-harness-builder": "install.mjs"
+  },
+  "files": [
+    "install.mjs",
+    "openworker-harness-builder",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test install.test.mjs package.test.mjs local-script.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrewyng/openworker.git",
+    "directory": "skills"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
+  },
+  "private": true,
+  "openworkerSdkVersion": "0.1.0-beta.3"
+}

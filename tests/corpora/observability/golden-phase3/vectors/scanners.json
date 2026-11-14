@@ -1,0 +1,95 @@
+{
+ "rule": "signals.yaml scanners: the scanner a run_shell command runs, or null.",
+ "cases": [
+  {
+   "command": "semgrep scan --config auto --json --quiet -o /tmp/semgrep.json",
+   "scanner": {
+    "name": "semgrep",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "semgrep --version",
+   "scanner": {
+    "name": "semgrep",
+    "action": "version"
+   }
+  },
+  {
+   "command": "gitleaks detect --source . --report-path /tmp/gitleaks.json",
+   "scanner": {
+    "name": "gitleaks",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "gitleaks version",
+   "scanner": {
+    "name": "gitleaks",
+    "action": "version"
+   }
+  },
+  {
+   "command": "npm audit --json",
+   "scanner": {
+    "name": "npm-audit",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "npx --yes osv-scanner -r .",
+   "scanner": null
+  },
+  {
+   "command": "python -m pip-audit -f json",
+   "scanner": {
+    "name": "pip-audit",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "pip-audit --help",
+   "scanner": {
+    "name": "pip-audit",
+    "action": "version"
+   }
+  },
+  {
+   "command": "cd app && trivy fs .",
+   "scanner": {
+    "name": "trivy",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "FOO=1 checkov -d infra",
+   "scanner": {
+    "name": "checkov",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "C:\\tools\\gitleaks.exe detect",
+   "scanner": {
+    "name": "gitleaks",
+    "action": "scan"
+   }
+  },
+  {
+   "command": "grep -r semgrep docs",
+   "scanner": null
+  },
+  {
+   "command": "echo gitleaks",
+   "scanner": null
+  },
+  {
+   "command": "npm install",
+   "scanner": null
+  },
+  {
+   "command": "cat semgrep.json | jq .",
+   "scanner": null
+  }
+ ]
+}

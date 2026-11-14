@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { traceRows, type TraceRow } from "./obs3";
 import { useTranslation } from "react-i18next";
 import {
   announceInboxUnlock,
@@ -58,19 +59,23 @@ import type {
   Item,
   SessionInfo,
   SessionUsage,
+  ContextInfo,
   TodoItem,
   WsEvent,
 } from "./types";
 import {
   hasPendingApproval,
   initialSessionId,
+  initialActivityTab,
   initialSettingsTab,
+  reflectActivity,
   reflectSession,
 } from "./routes";
 import { fullPersonaName, isProjectScoped } from "./personaScope";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, teamUsage, usageFromMessages } from "./usage";
+import { canonicalModel, canonicalModels, coworkerModels } from "./modelNames";
 import { streamMode } from "./streamGate";
 import { InboxItemCard, approvalItemFromParked } from "./components/InboxItemCard";
 import { isTauri, macosMajor, platformOS, startWindowDrag } from "./tauri";
@@ -78,6 +83,7 @@ import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
+import { PlanDock } from "./components/PlanDock";
 import { Markdown } from "./components/Markdown";
 import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
@@ -93,6 +99,7 @@ import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
+import { useSessionFooters } from "./components/TurnFooter";
 import { InboxView } from "./components/InboxView";
 import {
   approvalItemFromPayload,
@@ -111,6 +118,7 @@ import { ConnectorRequestCard } from "./components/ConnectorRequestCard";
 import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { TeamView, TeamQuickLook } from "./components/TeamView";
+import { StepsPanel } from "./components/StepsPanel";
 import type { WorkerFilter } from "./teamRoster";
 import type { TeamSummary } from "./teamView";
 import { getTeamSummary } from "./api";
@@ -130,6 +138,13 @@ const SUGGESTION_KEYS = [
   { ico: "⚙", key: "hero.suggest_tests" },
   { ico: "✦", key: "hero.suggest_overview" },
   { ico: "↻", key: "hero.suggest_fix_build" },
+];
+// The Code coworker's starters match its discipline (a worktree per task, explore first,
+// prove it with tests) — owner call 2026-11-07.
+const CODE_SUGGESTION_KEYS = [
+  { ico: "✦", key: "hero.code_suggest_map" },
+  { ico: "⚙", key: "hero.code_suggest_tests" },
+  { ico: "⑂", key: "hero.code_suggest_review" },
 ];
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
@@ -262,6 +277,11 @@ export function App() {
   const [preparingSandbox, setPreparingSandbox] = useState<string | null>(null);
   // OPE-218: which walls this session runs behind, for the header chip. From `ready`.
   const [sandboxInfo, setSandboxInfo] = useState<SessionSandbox | null>(null);
+  // Window occupancy for the rail's Context section (FB-015): from `ready` (so a
+  // reopened session has it before any turn) and refreshed by each assistant_message.
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
+  // Async subagents (OPE-257): bumped by agent_task events; the rail refetches its list.
+  const [agentTaskKey, setAgentTaskKey] = useState(0);
   // The server refused to build this session (its sandbox cannot be used) and closed the
   // socket for good: no reconnect strip, the error notice in the transcript says why.
   const [sessionRefused, setSessionRefused] = useState(false);
@@ -298,6 +318,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // Context occupancy is session-owned: drop it on switch, before `ready` refills it.
+  useEffect(() => setContextInfo(null), [sessionId]);
   // Remote homes (UX-045): which joined machine the CURRENT session runs on
   // (null = This Mac). Fixed at creation via the setup row's runs-on chip;
   // restored from the session row on select/resume. Routes the session socket
@@ -370,6 +392,8 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // OPE-238: Activity opened on one tool call's audit rows (unset = all activity).
+  const [auditCallId, setAuditCallId] = useState<string | undefined>(undefined);
   const [surface, setSurface] = useState<
     "session" | "scheduled" | "audit" | "inbox" | "persona" | "settings"
   >("session");
@@ -380,6 +404,11 @@ export function App() {
     if (surface === "session") reflectSession(sessionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, surface]);
+  // T3-11: Activity has its own address too, with its tab, so a reload stays on it.
+  const [activityTab, setActivityTab] = useState<"log" | "usage">(initialActivityTab || "log");
+  useEffect(() => {
+    if (surface === "audit") reflectActivity(activityTab);
+  }, [surface, activityTab]);
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
   // possibly-deleted automation's dead detail.
@@ -394,13 +423,16 @@ export function App() {
   const [personaViewId, setPersonaViewId] = useState<string>("");
   // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
   // was opened from there (persona config now lives in Settings).
-  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
+  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings" | "activity">("session");
+  const [personaViewFocus, setPersonaViewFocus] = useState<"doing" | undefined>(undefined);
   const openPersona = (
     id: string,
-    from: "session" | "settings" = "session",
+    from: "session" | "settings" | "activity" = "session",
     machineId?: string | null,
   ) => {
     setPersonaViewReturn(from);
+    // T3-12: from Usage ▸ By coworker, the page opens at its history
+    setPersonaViewFocus(from === "activity" ? "doing" : undefined);
     setPersonaViewId(id);
     setPersonaViewMachine(machineId ?? null);
     setSurface("persona");
@@ -412,6 +444,15 @@ export function App() {
   boardSessionRef.current = sessionId;
   const [boardOwner, setBoardOwner] = useState("");
   const [teamViewOpen, setTeamViewOpen] = useState(false);
+  // Observability (UX-059 OB-1): the Steps panel takes the rail's full-view slot, like the
+  // team view; `stepsKey` moves on live step events and at a turn's end so it follows along.
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const [stepsKey, setStepsKey] = useState(0);
+  // A turn's answer opened the panel: the answer's time picks the turn (unix seconds).
+  const [stepsAt, setStepsAt] = useState<{ ts?: number; turnId?: string; n: number } | null>(null);
+  // OB-5 (Phase 3): the footers under each answer, read again when a turn ends.
+  const [footKey, setFootKey] = useState(0);
+  const [footers, setFooter] = useSessionFooters(sessionId, footKey);
   const [teamWorkerId, setTeamWorkerId] = useState<string | null>(null);
   const [teamWorkerFilter, setTeamWorkerFilter] = useState<WorkerFilter | null>(null);
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
@@ -731,6 +772,10 @@ export function App() {
           // a #/settings/{page} link opens Settings on that page.
           if (hasPendingApproval()) openSettings("machines");
           else if (initialSettingsTab) openSettings(initialSettingsTab as SetTab);
+          else if (initialActivityTab) {
+            setAuditCallId(undefined);
+            setSurface("audit");
+          }
           setModel(h.model);
           // First-run setup wizard (desktop): show until the user completes/dismisses it.
           if (isTauri()) {
@@ -845,16 +890,19 @@ export function App() {
   // fresh draft binds to the first entry this machine can run. Availability = the
   // machine's own selectable list (its keys, its Ollama); a draft on a remote machine
   // asks that machine's list, like the picker already does.
-  const personaModels = personaOf(agent)?.models ?? [];
+  // Ids are compared in canonical form (`canonicalModel`): a manifest's "openai:gpt-5.5"
+  // is the machine's "gpt-5.5".
+  const personaModels = canonicalModels(personaOf(agent)?.models ?? []);
   const selectableModels = machine ? machineSettings?.models || [] : models;
-  const pickerModels = personaModels.length ? personaModels : selectableModels;
-  const unavailableModels = personaModels.filter((m) => !selectableModels.includes(m));
+  const {
+    picker: pickerModels,
+    unavailable: unavailableModels,
+    bind: personaBind,
+  } = coworkerModels(personaModels, selectableModels, model);
   const selectableKey = selectableModels.join("|");
   useEffect(() => {
-    if (!personaModels.length || items.length > 0 || running) return;
-    if (personaModels.includes(model)) return;
-    const first = personaModels.find((m) => selectableModels.includes(m)) ?? personaModels[0];
-    if (first) changeModel(first);
+    if (items.length > 0 || running) return;
+    if (personaBind) changeModel(personaBind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, personas, items.length, running, selectableKey]);
 
@@ -905,9 +953,23 @@ export function App() {
           // intro screen. Which wall the session runs behind belongs in the header (OPE-207).
           setPreparingSandbox(null);
           break;
+        case "agent_task":
+          // A subagent started/finished/is waiting — the rail refetches the registry.
+          setAgentTaskKey((k) => k + 1);
+          break;
+        case "workspace_changed":
+          // start_worktree moved the session into its feature worktree: the folder and
+          // branch the Environment block shows follow it (Code coworker, 2026-11-07).
+          if (d.workspace) setWorkspace(d.workspace);
+          if (typeof d.branch === "string") setBranch(d.branch);
+          break;
         case "ready":
           setPreparingSandbox(null);
           setSandboxInfo(d.sandbox || null);
+          if (d.context) setContextInfo(d.context);
+          // Server truth on the branch (a reopened session has no folder pick to learn
+          // it from): the Environment block's branch tag survives reopen.
+          if (typeof d.branch === "string") setBranch(d.branch || null);
           setSessionRefused(false);
           setConnected(true);
           if (d.model) setModel(d.model);
@@ -962,6 +1024,7 @@ export function App() {
           break;
         case "assistant_message": {
           if (d.usage) setUsage((u) => addTurnUsage(u, d.usage));
+          if (d.context) setContextInfo(d.context);
           // The event's reasoning is authoritative (covers background-delivered turns);
           // the local buffer is the fallback for older servers.
           const reasoning = d.reasoning || reasoningRef.current;
@@ -984,7 +1047,7 @@ export function App() {
             setTodo(normalizeTodos(d.arguments.todos ?? d.arguments.items));
           setItems((p) => [
             ...p,
-            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…" },
+            { kind: "tool", id: newId(), name: d.name, args: d.arguments, status: "…", ...(d.tool_call_id ? { callId: String(d.tool_call_id) } : {}) },
           ]);
           break;
         case "permission_required":
@@ -1051,18 +1114,20 @@ export function App() {
             setItems(p => [...p, { kind: "teamcreated", teamId: c.team_id, workers: c.workers || [], ts: Date.now() / 1000 }]);
           }
           setItems((p) =>
-            updateLastTool(
-              p,
-              d.name,
-              d.status,
-              d.result_preview || d.reason,
-              d.display?.hidden_by_filters,
-              d.standing_rule,
-              d.reviewer_reason,
-              d.allow_anyway,
-              d.approval_origin,
-              d.approval_note,
-            ),
+            updateLastTool(p, d.name, d.status, d.result_preview || d.reason, {
+              hidden: d.display?.hidden_by_filters,
+              standingRule: d.standing_rule,
+              reviewerReason: d.reviewer_reason,
+              allowAnyway: d.allow_anyway,
+              approvalOrigin: d.approval_origin,
+              approvalNote: d.approval_note,
+              callId: d.tool_call_id,
+              effect: d.approval_effect,
+              tier: d.approval_tier,
+              ...("exit_code" in d ? { exitCode: d.exit_code } : {}),
+              timedOut: d.timed_out,
+              background: d.background,
+            }),
           );
           // §8.4 breaker: the reviewer paused itself for the rest of the turn — say so
           // where the user is looking (persisted server-side for reloads) and on the
@@ -1084,6 +1149,11 @@ export function App() {
           // engine stopped rather than report a cut-off reply as the answer.
           else if (d.status === "truncated")
             setItems((p) => [...p, { kind: "notice", tone: "warn", text: d.text || t("app.notice.truncated") }]);
+          break;
+        case "export_notice":
+          // OB-6: the company's policy sends this machine's content somewhere; a new session
+          // says what goes where (server-authored, persisted like mode_notice).
+          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "" }]);
           break;
         case "mode_notice":
           if (["interactive", "auto-approve", "bypass-approvals", "plan", "discuss", "custom"].includes(d.mode)) setMode(d.mode);
@@ -1150,8 +1220,14 @@ export function App() {
             { kind: "notice", tone: "warn", text: d.error || t("app.notice.input_rejected") },
           ]);
           break;
+        case "step":
+          // Recording events for the Steps panel (batched by the server every 100 ms).
+          setStepsKey((k) => k + 1);
+          break;
         case "turn_done":
           setRunning(false);
+          setStepsKey((k) => k + 1);
+          setFootKey((k) => k + 1);
           setReviewerPaused(false); // the pause is scoped to the turn
           refreshSessions();
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
@@ -1637,6 +1713,43 @@ export function App() {
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
+  // Phase 3: open one recorded turn's Steps, in its own session (Usage's heaviest turns,
+  // TeamView's events and evidence, an automation run's Steps).
+  // UX-060: the rail's trace index — one row per message of yours, joined to its recorded
+  // turn. Clicking a row goes to the message in the conversation and opens its trace.
+  const traceIndex = useMemo(
+    () => (agent === "chat" ? [] : traceRows(items as any, (footers?.turns || []).map((f) => ({
+      turn_id: f.turn_id, first_message_id: f.first_message_id, duration_ms: f.duration_ms,
+      status: f.status, issues: f.warn || 0,
+    })), running)),
+    [items, footers, running, agent],
+  );
+  const openTraceRow = (row: TraceRow) => {
+    {
+      const el = (row.mid && document.getElementById(`msg-${row.mid}`)) ||
+        document.querySelector<HTMLElement>(`[data-user-n="${row.n}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.remove("msg-flash");
+        void el.offsetWidth; // restart the animation when the same row is clicked twice
+        el.classList.add("msg-flash");
+        window.setTimeout(() => el.classList.remove("msg-flash"), 1600);
+      }
+    }
+    if (row.turnId && sessionId) openTurnSteps(sessionId, row.turnId);
+  };
+  const openTurnSteps = (sid: string, turnId: string) => {
+    const w = sessions.find((x) => x.session_id === sid);
+    const open = () => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    };
+    if (sid === sessionId) return open();
+    if (!w) return;
+    void selectSession(w.session_id, w.workspace, w.agent).then(open);
+  };
   const selectSession = async (id: string, ws: string, ag: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
@@ -1833,6 +1946,18 @@ export function App() {
     setSurface("session");
     setShowGate(false);
     selectSession(sessionId, ws, ag);
+  };
+  // OB-18: a run's Steps, at its first turn.
+  const openRunSteps = (sid: string, turnId: string, ws: string, ag: string, task?: { id: string; title: string }) => {
+    setRunContext(task ?? null);
+    setSurface("session");
+    setShowGate(false);
+    void selectSession(sid, ws, ag).then(() => {
+      setStepsAt((prev) => ({ turnId, n: (prev?.n || 0) + 1 }));
+      setStepsOpen(true);
+      setTeamViewOpen(false);
+      setRailHidden(false);
+    });
   };
   const runTaskNow = async (taskId: string, title?: string) => {
     const r = await runAutomation(taskId);
@@ -2070,7 +2195,11 @@ export function App() {
           setSurface("scheduled");
         }}
         onOpenIntegrations={() => openSettings("connectors")}
-        onOpenAudit={() => setSurface("audit")}
+        onOpenAudit={() => {
+          setAuditCallId(undefined);
+          setActivityTab("log");
+          setSurface("audit");
+        }}
         onOpenInbox={() => setSurface("inbox")}
         scheduledActive={surface === "scheduled"}
         integrationsActive={surface === "settings" && settingsTab === "connectors"}
@@ -2083,6 +2212,7 @@ export function App() {
       {surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
+          onOpenRunSteps={openRunSteps}
           onRunNow={runTaskNow}
           initialOpenId={scheduledOpenId}
         />
@@ -2120,15 +2250,18 @@ export function App() {
           }}
         />
       ) : surface === "audit" ? (
-        <AuditView />
+        <AuditView callId={auditCallId} initialTab={activityTab} onTabChange={setActivityTab} onOpenTurn={openTurnSteps}
+          onOpenPersona={(id) => openPersona(id, "activity")} />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
       ) : surface === "persona" ? (
         <PersonaView
           machine={machines.find((m) => m.id === personaViewMachine) ?? null}
           personaId={personaViewId || agent}
+          focus={personaViewFocus}
           onBack={() =>
-            personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
+            personaViewReturn === "settings" ? openSettings("personas")
+              : personaViewReturn === "activity" ? setSurface("audit") : setSurface("session")
           }
           onOpenIntegrations={() => openSettings("connectors")}
         />
@@ -2226,6 +2359,8 @@ export function App() {
             {surface === "session" && (
               <SandboxChip info={sandboxInfo} onOpenSettings={() => openSettings("sandbox")} />
             )}
+            {/* The trace is reached from the rail's Trace index and each answer's footer
+                (UX-060) — no top-bar button. */}
             {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
                 (the rail now carries Access, so code-family gets it too). */}
             {agent !== "chat" && (
@@ -2296,7 +2431,7 @@ export function App() {
                     {(
                       <div className="suggestions">
                         <div className="suggest-head">{t("hero.try_a_task")}</div>
-                        {SUGGESTION_KEYS.map((s, i) => (
+                        {(agent === "code" ? CODE_SUGGESTION_KEYS : SUGGESTION_KEYS).map((s, i) => (
                           <div className="suggest" key={i} onClick={() => workspace && send(t(s.key))}>
                             <span className="ico">{s.ico}</span>
                             {t(s.key)}
@@ -2315,7 +2450,21 @@ export function App() {
                     onRetry={retry}
                     onOpenConnectors={() => openSettings("connectors")}
                     onAllowAnyway={allowAnyway}
+                    onOpenAudit={(callId) => {
+                      // OPE-238: an item of "changes made without asking" → its audit rows.
+                      setAuditCallId(callId);
+                      setSurface("audit");
+                    }}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
+                    footers={agent !== "chat" ? footers : null}
+                    footerSessionId={sessionId || undefined}
+                    onFooterChange={setFooter}
+                    onOpenSteps={agent !== "chat" ? (ts, turnId) => {
+                      setStepsAt((prev) => ({ ts, turnId, n: (prev?.n || 0) + 1 }));
+                      setStepsOpen(true);
+                      setTeamViewOpen(false);
+                      setRailHidden(false);
+                    } : undefined}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
@@ -2431,6 +2580,9 @@ export function App() {
               </div>
             )}
             <Composer
+              /* The plan dock rides the composer (owner mock 2026-11-07): undefined
+                 when there is no plan, so the box keeps its rounded top. */
+              planSlot={todo.length > 0 ? <PlanDock todo={todo} /> : undefined}
               statusSlot={activeInfo?.liveness === "sleeping" && !running ? (
                 <div className="sleep-strip" data-testid="sleep-strip">
                   <span className="sleep-dot" />
@@ -2481,7 +2633,7 @@ export function App() {
                 (machine ? (machineSettings ? machineSettings.model_ready : true) : modelReady) &&
                 // A coworker bound to a model this machine cannot run shows the honest
                 // "No model" state, whatever the machine default says.
-                !(personaModels.length > 0 && unavailableModels.includes(model))
+                !(personaModels.length > 0 && unavailableModels.includes(canonicalModel(model)))
               }
               onConnectModel={openModelSetup}
               onOpenMemory={() => openSettings("memory")}
@@ -2592,7 +2744,7 @@ export function App() {
             />
                   </div>
           <RightRail
-            teamView={teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} /> : undefined}
+            teamView={stepsOpen && sessionId ? <StepsPanel sessionId={sessionId} refreshKey={stepsKey} openAt={stepsAt} conversation={items} onClose={() => setStepsOpen(false)} onOpenSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} /> : teamViewOpen ? <TeamView openKey={boardRailKey} board={boardOwner === sessionId ? board : null} summary={teamSummary?.lead_session === sessionId ? teamSummary : null} initialItem={boardDetailId} initialWorkerId={teamWorkerId} initialWorkerFilter={teamWorkerFilter} onOpenFullSession={(id) => { const w = sessions.find(s => s.session_id === id); if (w) void selectSession(w.session_id, w.workspace, w.agent); }} sessionId={sessionId} sessions={sessions} machine={machine} machineName={curSession?.machine_name} onClose={() => { setTeamViewOpen(false); setBoardDetailId(null); setTeamWorkerId(null); setTeamWorkerFilter(null); }} onRefresh={() => { void refreshBoard(); setBrowserRefreshKey(k => k + 1); }} onOpenSteps={openTurnSteps} /> : undefined}
             active={surface === "session" && agent !== "chat" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
@@ -2610,6 +2762,13 @@ export function App() {
             scratchPrimary={tempWorkspace || !isProjectScoped(personaOf(agent))}
             openAccessKey={accessKey}
             onOpenIntegrations={() => openSettings("connectors")}
+            context={contextInfo}
+            sessionUsage={usage}
+            traceRows={traceIndex}
+            onOpenTrace={openTraceRow}
+            agentTaskKey={agentTaskKey}
+            machineName={curSession?.machine_name}
+            machineOffline={!!curSession?.machine_offline}
             sandbox={sandboxInfo}
             onSandbox={setSandboxInfo}
             onOpenSandboxSettings={() => openSettings("sandbox")}
@@ -2711,35 +2870,61 @@ function WaitingForAgent({ label }: { label?: string }) {
   );
 }
 
-function updateLastTool(
+// Pairs a finished event with its pending tool item. By call id when the engine gave one
+// (OPE-238: two same-named calls in one batch finish in call order, and matching the LAST
+// pending item by name handed each one the other's result, exit code and audit link);
+// otherwise the last pending item with that name, as before.
+export function updateLastTool(
   items: Item[],
   name: string,
   status: string,
-  preview?: string,
-  hidden?: number,
-  standingRule?: string,
-  reviewerReason?: string,
-  allowAnyway?: boolean,
-  approvalOrigin?: string,
-  approvalNote?: string,
+  preview: string | undefined,
+  fields: {
+    hidden?: number;
+    standingRule?: string;
+    reviewerReason?: string;
+    allowAnyway?: boolean;
+    approvalOrigin?: string;
+    approvalNote?: string;
+    callId?: string;
+    effect?: string;
+    tier?: string;
+    exitCode?: number | null;
+    timedOut?: boolean;
+    background?: boolean;
+  } = {},
 ): Item[] {
   const copy = [...items];
-  for (let i = copy.length - 1; i >= 0; i--) {
-    const it = copy[i];
-    if (it.kind === "tool" && it.name === name && it.status === "…") {
-      copy[i] = {
-        ...it,
-        status,
-        preview,
-        ...(hidden ? { hidden } : {}),
-        ...(standingRule ? { standingRule } : {}),
-        ...(reviewerReason ? { reviewerReason } : {}),
-        ...(allowAnyway ? { allowAnyway } : {}),
-        ...(approvalOrigin ? { approvalOrigin } : {}),
-        ...(approvalNote ? { approvalNote } : {}),
-      };
-      break;
+  const { hidden, standingRule, reviewerReason, allowAnyway, approvalOrigin, approvalNote, callId, effect, tier, timedOut, background } = fields;
+  let at = -1;
+  if (callId) at = copy.findIndex((it) => it.kind === "tool" && it.callId === callId && it.status === "…");
+  if (at < 0)
+    for (let i = copy.length - 1; i >= 0; i--) {
+      const it = copy[i];
+      if (it.kind === "tool" && it.name === name && it.status === "…") {
+        at = i;
+        break;
+      }
     }
+  if (at >= 0) {
+    const it = copy[at] as Extract<Item, { kind: "tool" }>;
+    copy[at] = {
+      ...it,
+      status,
+      preview,
+      ...(hidden ? { hidden } : {}),
+      ...(standingRule ? { standingRule } : {}),
+      ...(reviewerReason ? { reviewerReason } : {}),
+      ...(allowAnyway ? { allowAnyway } : {}),
+      ...(approvalOrigin ? { approvalOrigin } : {}),
+      ...(approvalNote ? { approvalNote } : {}),
+      ...(callId ? { callId } : {}),
+      ...(effect ? { effect } : {}),
+      ...(tier ? { tier } : {}),
+      ...("exitCode" in fields ? { exitCode: fields.exitCode } : {}),
+      ...(timedOut ? { timedOut } : {}),
+      ...(background ? { background } : {}),
+    };
   }
   return copy;
 }

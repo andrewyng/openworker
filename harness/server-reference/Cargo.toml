@@ -1,0 +1,49 @@
+[package]
+name = "openworker-server-reference"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["compliance", "guardrails", "attachments"]
+attachments = ["openworker-runtime/attachments", "openworker-store-postgres/attachments"]
+compliance = ["openworker-runtime/compliance", "openworker-store-postgres/compliance"]
+security-adapters = ["guardrails", "dep:openworker-security-adapters"]
+compliance-export = ["compliance", "openworker-runtime/compliance-export"]
+guardrails = ["openworker-runtime/guardrails", "openworker-store-postgres/guardrails"]
+openshell-test = []
+trusted-git = ["dep:openworker-git-broker"]
+# Explicit disposable local Git remotes only; never enabled by deployment images.
+trusted-git-test = ["trusted-git", "openworker-git-broker/fixture"]
+team-test = ["openworker-store-postgres/test-support"]
+
+[dependencies]
+openworker-security-adapters = { path = "../security-adapters", optional = true }
+openworker-git-broker = { path = "../git-broker", optional = true }
+openworker-observability = { path = "../observability", features = ["postgres"] }
+openworker-tools = { path = "../tools-sdk" }
+openworker-artifacts = { path = "../artifacts", features = ["s3", "azure"] }
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+openworker-telemetry = { path = "../telemetry", features = ["otlp"] }
+openworker-runtime = { path = "../runtime", default-features = false }
+openworker-store-postgres = { path = "../store-postgres" }
+anyhow = "1"
+base64 = "0.22"
+axum = "0.7"
+async-stream = "0.3"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+zeroize = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json","stream","rustls-tls"] }
+
+[dev-dependencies]
+openworker-sdk = { path = "../harness-sdk" }
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+futures-util = "0.3"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

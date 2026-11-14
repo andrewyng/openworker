@@ -1,0 +1,7 @@
+{
+  "license": "MIT",
+  "copyright": "2026 OpenWorker contributors",
+  "art": "Original procedural car, courses, architecture, harbor scenery and shader water. Cover images captured from the actual rendered game by RALLY_CAPTURE_ART=1 node test/rally-ui.mjs. No third-party art downloads.",
+  "sound": "Original synthesized engine, collision and checkpoint tones via Web Audio. Sound is off until enabled.",
+  "dependencies": "Pinned Three.js. Upstream MIT license included in vendor/three-LICENSE.txt."
+}

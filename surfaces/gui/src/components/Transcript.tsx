@@ -8,6 +8,9 @@ import { TeamUpdateLine, TeamCreatedLine, foldTeamUpdates } from "./TeamUpdateLi
 import type { MessageSource } from "../api";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { UnaskedSummary, unaskedTools } from "./UnaskedSummary";
+import { TurnFooterLine, type FootersState } from "./TurnFooter";
+import { turnForAnswer, type TurnFooter as TurnFooterData } from "../obs3";
 
 // Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
 // threshold with a more…/less… toggle. Normal typed messages never see the control; the
@@ -36,6 +39,8 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
+// The trace itself is reached from the turn footer and the rail's Trace index (UX-060), so
+// this strip carries no third link to it.
 function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -191,6 +196,8 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
     origin !== "reviewer" &&
     origin !== "bypass" &&
     origin !== "run_grant" &&
+    origin !== "gate_tier" &&
+    origin !== "readonly_tier" &&
     !TRUST_ORIGINS.has(origin ?? "")
   )
     return null;
@@ -209,7 +216,11 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
                 ? t("transcript.approval.trusted_generic_title")
                 : origin === "run_grant"
                   ? t("transcript.approval.run_grant_title")
-                  : t("transcript.approval.bypass_title")
+                  : origin === "gate_tier"
+                    ? t("transcript.approval.gate_tier_title")
+                    : origin === "readonly_tier"
+                      ? t("transcript.approval.readonly_tier_title")
+                      : t("transcript.approval.bypass_title")
       }
     >
       {origin === "reviewer"
@@ -222,7 +233,11 @@ function originChip(origin: string | undefined, note: string | undefined, grant?
               ? t("transcript.approval.trusted_generic")
               : origin === "run_grant"
                 ? t("transcript.approval.run_grant")
-                : t("transcript.approval.bypassed")}
+                : origin === "gate_tier"
+                  ? t("transcript.approval.gate_tier")
+                  : origin === "readonly_tier"
+                    ? t("transcript.approval.readonly_tier")
+                    : t("transcript.approval.bypassed")}
     </span>
   );
 }
@@ -473,6 +488,16 @@ interface Props {
   onUndoMemory?: (id: number, previous?: string) => void;
   // §8.4 "Allow anyway" on a reviewer-denied tool: one-shot exact-action override.
   onAllowAnyway?: (name: string, args: any) => void;
+  // OPE-238: open Activity on one tool call's audit rows (from the "changes made without
+  // asking" summary). Without it the summary shows no audit links.
+  onOpenAudit?: (callId: string) => void;
+  // UX-059 OB-1: open the Steps panel at the turn that ended with this answer (its time),
+  // or at a given recorded turn (the OB-5 footer knows it).
+  onOpenSteps?: (ts?: number, turnId?: string) => void;
+  // OB-5 (Phase 3): the session's turn footers; with them each answer gets its footer line.
+  footers?: FootersState | null;
+  footerSessionId?: string;
+  onFooterChange?: (f: TurnFooterData) => void;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -532,14 +557,26 @@ function McpNotice({
 }
 
 
-export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onOpenConnectors, onUndoMemory, onAllowAnyway, onOpenAudit, onOpenSteps, footers, footerSessionId, onFooterChange }: Props) {
   const { t } = useTranslation();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
   // stay inside. A run with no activity at all is just bubbles (unchanged chat behavior).
-  const blocks: Array<{ turn: TurnItem[]; live?: boolean } | { item: Item; i: number; sources?: MessageSource[]; steps?: Item[] }> = [];
+  const blocks: Array<
+    | { turn: TurnItem[]; live?: boolean }
+    | { unasked: ToolItem[] }
+    | { item: Item; i: number; sources?: MessageSource[]; steps?: Item[] }
+  > = [];
   let run: TurnItem[] = [];
+  // OPE-238: what ran auto-approved in the turn so far. A notice inside a turn (compaction,
+  // continuation, a saved memory) breaks the step group but not the turn: the block is
+  // emitted once, after the answer, when the next user message arrives or the turn is over.
+  let pendingUnasked: ToolItem[] = [];
+  const emitUnasked = () => {
+    if (pendingUnasked.length) blocks.push({ unasked: pendingUnasked });
+    pendingUnasked = [];
+  };
   const flush = (live = false) => {
     if (!run.length) return;
     const turn = [...run];
@@ -554,6 +591,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
     if (turn.some((it) => it.kind !== "assistant")) blocks.push({ turn, live });
     else turn.forEach((t) => blocks.push({ item: t, i: -1 }));
     answers.forEach((a) => blocks.push({ item: a, i: -1 }));
+    if (!live) pendingUnasked.push(...unaskedTools(turn));
   };
   foldTeamUpdates(items).forEach(({ item, sources, steps }) => {
     const i = items.indexOf(item);
@@ -569,15 +607,47 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
       return;
     } else {
       flush();
+      if (item.kind === "user" || item.kind === "connector") emitUnasked();
       blocks.push({ item, i, sources, steps });
     }
   });
   flush(!!running);
+  if (!running) emitUnasked();
 
   const lastTurnIndex = blocks.reduce((acc, b, i) => ("turn" in b ? i : acc), -1);
+  // OB-5: an answer that ends its turn (no answer bubble follows it) carries the turn's footer.
+  const isAnswer = (b: (typeof blocks)[number] | undefined) =>
+    !!b && "item" in b && b.item.kind === "assistant" && !!b.item.text;
+  const answerEnds: number[] = [];
+  blocks.forEach((b, i) => {
+    if (isAnswer(b) && !isAnswer(blocks[i + 1])) answerEnds.push(i);
+  });
+  const footerFor = (bi: number, item: Extract<Item, { kind: "assistant" }>) => {
+    if (!footers || !footerSessionId || running && bi === answerEnds[answerEnds.length - 1]) return null;
+    const idx = answerEnds.indexOf(bi);
+    if (idx < 0) return null;
+    const f = turnForAnswer(footers.turns, item.ts, idx, item.mid);
+    if (!f) return null;
+    return (
+      <TurnFooterLine
+        sessionId={footerSessionId}
+        footer={f}
+        recording={footers.recording}
+        last={idx === answerEnds.length - 1}
+        defaultWhere={footers.where}
+        onChange={onFooterChange}
+        onOpenSteps={onOpenSteps ? () => onOpenSteps(item.ts, f.turn_id) : undefined}
+      />
+    );
+  };
+  // UX-060: the n-th message of yours, so the trace index can land on it before the
+  // message has a server id (a live send). `data-user-n` on each user bubble.
+  let userN = 0;
   return (
     <div className="transcript">
       {blocks.map((block, bi) => {
+        if ("unasked" in block)
+          return <UnaskedSummary tools={block.unasked} onOpenAudit={onOpenAudit} key={bi} />;
         if ("turn" in block)
           return (
             <TurnGroup
@@ -604,7 +674,8 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
             return <TeamCreatedLine key={bi} workers={item.workers} />;
           case "user":
             return (
-              <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}>
+              <div className="group self-end max-w-[78%] flex flex-col items-end" key={bi}
+                   id={item.mid ? `msg-${item.mid}` : undefined} data-mid={item.mid} data-user-n={++userN}>
                 <div className="bubble-user px-3.5 py-2.5 rounded-[14px_14px_4px_14px] bg-solid text-onSolid text-body leading-relaxed whitespace-pre-wrap">
                   {item.attachments && item.attachments.length > 0 && (
                     <div className="bubble-attachments">
@@ -636,6 +707,7 @@ export function Transcript({ items, running, streamingText, onRetry, onOpenConne
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" />
+                {footerFor(bi, item)}
               </div>
             );
           case "dirreq":

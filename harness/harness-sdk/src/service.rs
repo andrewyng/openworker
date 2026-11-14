@@ -1,0 +1,1143 @@
+//! Remote REST/SSE client. No worker ownership, agent loop or tool replay.
+use futures_util::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio_util::sync::CancellationToken;
+use zeroize::Zeroizing;
+
+pub use openworker_runtime::coding_handoff::config::{
+    Choice as CodingSourceChoice, Source as CodingSource, TeamConfig as CodingTeamDefaults,
+};
+pub use openworker_runtime::coding_handoff::ObjectFormat as GitObjectFormat;
+pub use openworker_runtime::team_definition::Sandbox as TeamSandbox;
+
+#[cfg(feature = "recording")]
+#[path = "service_observability.rs"]
+mod observability;
+#[cfg(feature = "recording")]
+pub use observability::Observability;
+
+pub fn new_idempotency_key() -> String {
+    openworker_runtime::id("idem")
+}
+pub type Result<T> = std::result::Result<T, Error>;
+#[derive(Debug)]
+pub struct Error {
+    pub code: &'static str,
+    pub status: u16,
+    pub idempotency_key: Option<String>,
+    pub operation_id: Option<String>,
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OpenWorker service: {}", self.code)
+    }
+}
+impl std::error::Error for Error {}
+fn error(code: &'static str) -> Error {
+    Error {
+        code,
+        status: 0,
+        idempotency_key: None,
+        operation_id: None,
+    }
+}
+pub type TokenFuture = Pin<Box<dyn std::future::Future<Output = Result<Zeroizing<String>>> + Send>>;
+#[derive(Clone)]
+pub enum Credential {
+    Environment(String),
+    Callback(Arc<dyn Fn(bool) -> TokenFuture + Send + Sync>),
+}
+impl Credential {
+    async fn token(&self, rejected: bool) -> Result<Zeroizing<String>> {
+        let token = match self {
+            Self::Environment(name) => {
+                Zeroizing::new(std::env::var(name).map_err(|_| error("credential_unavailable"))?)
+            }
+            Self::Callback(f) => f(rejected).await?,
+        };
+        if token.len() < 32 || token.len() > 4096 || !token.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(error("credential_unavailable"));
+        }
+        Ok(token)
+    }
+}
+#[derive(Clone)]
+pub struct ConnectOptions {
+    pub url: String,
+    pub fallback_urls: Vec<String>,
+    pub namespace: String,
+    pub credentials: Credential,
+    pub ca_pem: Option<Vec<u8>>,
+}
+impl ConnectOptions {
+    pub fn new(
+        url: impl Into<String>,
+        namespace: impl Into<String>,
+        token_env: impl Into<String>,
+    ) -> Self {
+        Self {
+            url: url.into(),
+            fallback_urls: vec![],
+            namespace: namespace.into(),
+            credentials: Credential::Environment(token_env.into()),
+            ca_pem: None,
+        }
+    }
+}
+struct Inner {
+    options: ConnectOptions,
+    urls: Vec<String>,
+    client: reqwest::Client,
+    endpoint: AtomicUsize,
+    stop: CancellationToken,
+    capabilities: Value,
+    identity: Value,
+}
+#[derive(Clone)]
+pub struct Service(Arc<Inner>);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRef {
+    pub service_id: String,
+    pub namespace: String,
+    pub session_id: String,
+    pub agent: String,
+    pub environment_id: String,
+}
+#[derive(Clone)]
+pub struct Agent {
+    service: Service,
+    pub id: String,
+}
+#[derive(Clone)]
+pub struct Session {
+    service: Service,
+    reference: SessionRef,
+}
+#[derive(Clone)]
+pub struct Run {
+    session: Session,
+    pub id: String,
+    pub submission_id: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunResult {
+    pub status: String,
+    pub session_id: String,
+    pub run_id: String,
+    pub submission_id: String,
+    pub cursor: i64,
+    pub final_output: Option<String>,
+    pub failure: Option<String>,
+    pub interruptions: Vec<Value>,
+}
+pub use openworker_store_postgres::service_catalog::{
+    Entry as CatalogEntry, Operation as ServiceOperation, Profile as RuntimeProfile,
+    Release as AgentRelease,
+};
+#[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<openworker_runtime::connections::Choice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<openworker_runtime::budget::Limits>,
+}
+pub type Events = Pin<Box<dyn Stream<Item = Result<openworker_runtime::store::Event>> + Send>>;
+fn id(value: &str) -> Result<&str> {
+    if value.is_empty()
+        || value.len() > 256
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.@".contains(&b))
+    {
+        Err(error("invalid_identifier"))
+    } else {
+        Ok(value)
+    }
+}
+pub fn endpoint(raw: &str) -> Result<String> {
+    let u = reqwest::Url::parse(raw).map_err(|_| error("invalid_service_url"))?;
+    let local = matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if (u.scheme() != "https" && !(u.scheme() == "http" && local))
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || u.query().is_some()
+        || u.fragment().is_some()
+    {
+        return Err(error("invalid_service_url"));
+    }
+    Ok(u.to_string().trim_end_matches('/').into())
+}
+impl Service {
+    pub async fn connect(options: ConnectOptions) -> Result<Self> {
+        id(&options.namespace)?;
+        let urls = std::iter::once(&options.url)
+            .chain(&options.fallback_urls)
+            .map(|u| endpoint(u))
+            .collect::<Result<Vec<_>>>()?;
+        if urls.len() > 8 {
+            return Err(error("too_many_endpoints"));
+        }
+        let mut client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(45));
+        if let Some(pem) = &options.ca_pem {
+            client = client.add_root_certificate(
+                reqwest::Certificate::from_pem(pem).map_err(|_| error("invalid_ca"))?,
+            );
+        }
+        let mut service = Self(Arc::new(Inner {
+            options,
+            urls,
+            client: client.build().map_err(|_| error("client_setup"))?,
+            endpoint: AtomicUsize::new(0),
+            stop: CancellationToken::new(),
+            capabilities: Value::Null,
+            identity: Value::Null,
+        }));
+        for i in 0..service.0.urls.len() {
+            service.0.endpoint.store(i, Ordering::Relaxed);
+            let cap = service.json("GET", "/v1/capabilities", None, None).await?;
+            if cap["apiVersion"] != "1"
+                || cap["namespace"] != service.0.options.namespace
+                || !cap["serviceId"].is_string()
+            {
+                return Err(error("incompatible_service"));
+            }
+            if i == 0 {
+                Arc::get_mut(&mut service.0).unwrap().capabilities = cap;
+            } else if cap["serviceId"] != service.0.capabilities["serviceId"] {
+                return Err(error("service_identity_mismatch"));
+            }
+        }
+        service.0.endpoint.store(0, Ordering::Relaxed);
+        let identity = service.json("GET", "/v1/auth/me", None, None).await?;
+        Arc::get_mut(&mut service.0).unwrap().identity = identity;
+        Ok(service)
+    }
+    pub fn capabilities(&self) -> &Value {
+        &self.0.capabilities
+    }
+    pub fn identity(&self) -> &Value {
+        &self.0.identity
+    }
+    pub fn disconnect(&self) {
+        self.0.stop.cancel();
+    }
+    async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        key: Option<&str>,
+        cursor: Option<i64>,
+    ) -> Result<reqwest::Response> {
+        if self.0.stop.is_cancelled() {
+            return Err(error("disconnected"));
+        }
+        if let Some(k) = key {
+            if k.is_empty() || k.len() > 100 || !k.bytes().all(|b| b.is_ascii_graphic()) {
+                return Err(error("invalid_idempotency_key"));
+            }
+        }
+        for attempt in 0..2 {
+            let token = self.0.options.credentials.token(attempt > 0).await?;
+            let index = self.0.endpoint.load(Ordering::Relaxed) % self.0.urls.len();
+            let mut r = self
+                .0
+                .client
+                .request(
+                    method.parse().map_err(|_| error("invalid_method"))?,
+                    format!("{}{}", self.0.urls[index], path),
+                )
+                .bearer_auth(&*token)
+                .header("x-openworker-namespace", &self.0.options.namespace);
+            if let Some(identity) = self.0.capabilities["serviceId"].as_str() {
+                r = r.header("x-openworker-service-id", identity);
+            }
+            if let Some(body) = &body {
+                r = r.json(body);
+            }
+            if let Some(key) = key {
+                r = r.header("idempotency-key", key);
+            }
+            if let Some(c) = cursor {
+                r = r.header("last-event-id", c);
+            } else {
+                r = r.timeout(Duration::from_secs(30));
+            }
+            let response = tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),r=r.send()=>r.map_err(|_|Error{code:if method=="GET"{"unavailable"}else{"outcome_unknown"},status:0,idempotency_key:key.map(String::from),operation_id:None})?};
+            if response.status().as_u16() == 401
+                && attempt == 0
+                && matches!(self.0.options.credentials, Credential::Callback(_))
+            {
+                continue;
+            }
+            if !response.status().is_success() {
+                return Err(Error {
+                    code: match response.status().as_u16() {
+                        401 => "unauthorized",
+                        403 => "forbidden",
+                        409 => "conflict",
+                        _ => "request_rejected",
+                    },
+                    status: response.status().as_u16(),
+                    idempotency_key: key.map(String::from),
+                    operation_id: None,
+                });
+            }
+            if response
+                .headers()
+                .get("x-openworker-namespace")
+                .and_then(|v| v.to_str().ok())
+                != Some(self.0.options.namespace.as_str())
+            {
+                return Err(error("namespace_mismatch"));
+            }
+            if let Some(identity) = self.0.capabilities["serviceId"].as_str() {
+                if response
+                    .headers()
+                    .get("x-openworker-service-id")
+                    .and_then(|v| v.to_str().ok())
+                    != Some(identity)
+                {
+                    return Err(error("service_identity_mismatch"));
+                }
+            }
+            return Ok(response);
+        }
+        Err(error("unauthorized"))
+    }
+    pub async fn json(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        key: Option<&str>,
+    ) -> Result<Value> {
+        let mut stream = self
+            .request(method, path, body, key, None)
+            .await?
+            .bytes_stream();
+        let mut bytes = vec![];
+        loop {
+            let next = tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),v=stream.next()=>v};
+            let Some(chunk) = next else { break };
+            let chunk = chunk.map_err(|_| Error {
+                code: if method == "GET" {
+                    "invalid_response"
+                } else {
+                    "outcome_unknown"
+                },
+                status: 0,
+                idempotency_key: key.map(String::from),
+                operation_id: None,
+            })?;
+            if bytes.len() + chunk.len() > 1048576 {
+                return Err(error("response_too_large"));
+            }
+            bytes.extend(chunk);
+        }
+        serde_json::from_slice(&bytes).map_err(|_| Error {
+            code: if method == "GET" {
+                "invalid_response"
+            } else {
+                "outcome_unknown"
+            },
+            status: 0,
+            idempotency_key: key.map(String::from),
+            operation_id: None,
+        })
+    }
+    pub async fn agent(&self, name: &str) -> Result<Agent> {
+        let a = self
+            .json("GET", &format!("/v1/agents/{}", id(name)?), None, None)
+            .await?;
+        if a["id"].as_str().is_none_or(str::is_empty) {
+            return Err(error("invalid_agent"));
+        }
+        Ok(Agent {
+            service: self.clone(),
+            id: a["id"].as_str().unwrap().into(),
+        })
+    }
+    pub async fn resume(&self, reference: SessionRef) -> Result<Session> {
+        if reference.service_id != self.0.capabilities["serviceId"]
+            || reference.namespace != self.0.options.namespace
+        {
+            return Err(error("reference_identity_mismatch"));
+        }
+        if self.agent(&reference.agent).await?.id != reference.agent {
+            return Err(error("reference_identity_mismatch"));
+        }
+        let s = Session {
+            service: self.clone(),
+            reference,
+        };
+        let snap = s.snapshot().await?;
+        let actual = snap["service"]["releaseId"]
+            .as_str()
+            .or_else(|| self.capabilities()["agent"].as_str());
+        if actual != Some(s.reference.agent.as_str()) {
+            return Err(error("release_identity_mismatch"));
+        }
+        if snap["session"]["environment"]["environment_id"] != s.reference.environment_id {
+            return Err(error("environment_identity_mismatch"));
+        }
+        Ok(s)
+    }
+    pub fn events(&self, sid: String, mut after: i64) -> Events {
+        let service = self.clone();
+        Box::pin(async_stream::try_stream! {
+            id(&sid)?;if after<0{Err(error("invalid_cursor"))?;}let mut failures=0;
+            loop {
+                if service.0.stop.is_cancelled(){break;}
+                let response=service.request("GET",&format!("/v1/sessions/{sid}/events"),None,None,Some(after)).await;
+                match response {
+                    Ok(r)=>{
+                        if !r.headers().get("content-type").and_then(|v|v.to_str().ok()).is_some_and(|s|s.contains("text/event-stream")){Err(error("invalid_event_stream"))?;}
+                        let mut bytes=r.bytes_stream();let mut decoder=Sse::default();
+                        loop{let chunk=tokio::select!{_=service.0.stop.cancelled()=>None,c=bytes.next()=>c};let Some(Ok(chunk))=chunk else{break};
+                            let decoded=match decoder.push(&chunk){Ok(v)=>v,Err(e) if e.code=="stream_reconcile"=>break,Err(e)=>Err(e)?};for event in decoded{if event.session_id!=sid{Err(error("invalid_event"))?;}
+                            if event.event_id<=after{continue;}after=event.event_id;failures=0;yield event;}
+                        }
+                    }
+                    Err(e) if e.code=="unavailable"=>{},
+                    Err(e)=>Err(e)?,
+                }
+                if service.0.stop.is_cancelled(){break;}
+                failures+=1;if failures>5{Err(error("reconnect_exhausted"))?;}
+                service.0.endpoint.fetch_add(1,Ordering::Relaxed);
+                tokio::select!{_=service.0.stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(200*failures))=>{}}
+            }
+        })
+    }
+}
+impl Agent {
+    pub async fn new_session(&self, environment_id: &str, key: Option<&str>) -> Result<Session> {
+        self.new_session_with(
+            SessionOptions {
+                environment_id: Some(environment_id.into()),
+                ..Default::default()
+            },
+            key,
+        )
+        .await
+    }
+    pub async fn admit_session(&self, options: SessionOptions, key: &str) -> Result<Value> {
+        if options.limits.is_some() {
+            return Err(error("turn_limits_require_message"));
+        }
+        if options.environment_id.is_some() && options.runtime_profile.is_some() {
+            return Err(error("conflicting_environment_options"));
+        }
+        let mut input =
+            serde_json::to_value(options).map_err(|_| error("invalid_session_options"))?;
+        input["agent"] = json!(self.id);
+        self.service
+            .json("POST", "/v1/sessions", Some(input), Some(key))
+            .await
+    }
+    pub async fn new_session_with(
+        &self,
+        options: SessionOptions,
+        key: Option<&str>,
+    ) -> Result<Session> {
+        let generated = openworker_runtime::id("idem");
+        let key = key.unwrap_or(&generated);
+        let mut value = self.admit_session(options, key).await?;
+        if let Some(operation) = value["operation"]["id"].as_str() {
+            let op = self
+                .service
+                .wait_operation(operation, Duration::from_secs(300))
+                .await
+                .map_err(|mut e| {
+                    e.idempotency_key = Some(key.into());
+                    e
+                })?;
+            value = op.receipt.ok_or_else(|| error("invalid_reference"))?;
+        }
+        let reference: SessionRef =
+            serde_json::from_value(value).map_err(|_| error("invalid_reference"))?;
+        if reference.service_id != self.service.capabilities()["serviceId"]
+            || reference.namespace != self.service.capabilities()["namespace"]
+            || reference.agent != self.id
+        {
+            return Err(error("invalid_reference"));
+        }
+        Ok(Session {
+            service: self.service.clone(),
+            reference,
+        })
+    }
+}
+impl Service {
+    pub async fn submit(
+        &self,
+        agent: &str,
+        options: SessionOptions,
+        text: &str,
+        key: &str,
+    ) -> Result<ServiceOperation> {
+        if self.capabilities()["features"]["combinedSubmission"] != true {
+            return Err(error("unsupported_combined_submission"));
+        }
+        if options.environment_id.is_some() && options.runtime_profile.is_some() {
+            return Err(error("conflicting_environment_options"));
+        }
+        let mut body =
+            serde_json::to_value(options).map_err(|_| error("invalid_session_options"))?;
+        body["agent"] = json!(agent);
+        body["text"] = json!(text);
+        serde_json::from_value(
+            self.json("POST", "/v1/submissions", Some(body), Some(key))
+                .await?["operation"]
+                .clone(),
+        )
+        .map_err(|_| error("invalid_operation"))
+    }
+    pub async fn register_runtime_profile(
+        &self,
+        profile: &RuntimeProfile,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json("POST", "/v1/profiles", Some(json!(profile)), Some(key))
+                .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn deploy_agent(&self, release: &AgentRelease, key: &str) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json("POST", "/v1/releases", Some(json!(release)), Some(key))
+                .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn activate_runtime_profile(
+        &self,
+        profile: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        self.activate("profiles", profile, alias, key).await
+    }
+    pub async fn activate_agent(
+        &self,
+        release: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        self.activate("releases", release, alias, key).await
+    }
+    async fn activate(
+        &self,
+        kind: &str,
+        target: &str,
+        alias: Option<&str>,
+        key: &str,
+    ) -> Result<CatalogEntry> {
+        serde_json::from_value(
+            self.json(
+                "POST",
+                &format!("/v1/{kind}/{}/activate", id(target)?),
+                Some(json!({"alias":alias})),
+                Some(key),
+            )
+            .await?,
+        )
+        .map_err(|_| error("invalid_catalog_entry"))
+    }
+    pub async fn environment(&self, environment: &str) -> Result<Value> {
+        self.json(
+            "GET",
+            &format!("/v1/environments/{}", id(environment)?),
+            None,
+            None,
+        )
+        .await
+    }
+    pub async fn operation(&self, operation: &str) -> Result<ServiceOperation> {
+        serde_json::from_value(
+            self.json(
+                "GET",
+                &format!("/v1/operations/{}", id(operation)?),
+                None,
+                None,
+            )
+            .await?,
+        )
+        .map_err(|_| error("invalid_operation"))
+    }
+    /// Dropping this future cancels only the wait. Retain the admission receipt
+    /// (or its idempotency key) to inspect the original provisioning operation.
+    pub async fn wait_operation(
+        &self,
+        operation: &str,
+        timeout: Duration,
+    ) -> Result<ServiceOperation> {
+        self.wait_operation_inner(operation, timeout)
+            .await
+            .map_err(|mut error| {
+                error.operation_id = Some(operation.into());
+                error
+            })
+    }
+    async fn wait_operation_inner(
+        &self,
+        operation: &str,
+        timeout: Duration,
+    ) -> Result<ServiceOperation> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let op = self.operation(operation).await?;
+            if op.status == "complete" {
+                return Ok(op);
+            }
+            if op.status == "failed" {
+                return Err(error("provisioning_failed"));
+            }
+            tokio::select! {_=self.0.stop.cancelled()=>return Err(error("disconnected")),_=tokio::time::sleep_until(deadline)=>return Err(error("provisioning_pending")),_=tokio::time::sleep(Duration::from_millis(250))=>{}}
+        }
+    }
+}
+
+impl Session {
+    pub fn id(&self) -> &str {
+        &self.reference.session_id
+    }
+    pub fn environment_id(&self) -> &str {
+        &self.reference.environment_id
+    }
+    pub fn reference(&self) -> SessionRef {
+        self.reference.clone()
+    }
+    pub async fn snapshot(&self) -> Result<Value> {
+        self.service
+            .json(
+                "GET",
+                &format!("/v1/sessions/{}", id(self.id())?),
+                None,
+                None,
+            )
+            .await
+    }
+    pub async fn send(&self, text: &str, key: Option<&str>) -> Result<Run> {
+        self.send_with_limits(text, None, key).await
+    }
+    pub async fn send_with_limits(
+        &self,
+        text: &str,
+        limits: Option<openworker_runtime::budget::Limits>,
+        key: Option<&str>,
+    ) -> Result<Run> {
+        let mut body = json!({"text":text});
+        if let Some(limits) = limits {
+            limits
+                .validate()
+                .map_err(|_| error("invalid_turn_limits"))?;
+            body["limits"] = json!(limits);
+        }
+        let generated = openworker_runtime::id("idem");
+        let r = self
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/turns", id(self.id())?),
+                Some(body),
+                Some(key.unwrap_or(&generated)),
+            )
+            .await?;
+        Ok(Run {
+            session: self.clone(),
+            id: r["runId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+            submission_id: r["submissionId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+        })
+    }
+    /// Upload immutable inputs over the authenticated service boundary, then
+    /// submit their ordered references using the caller's idempotency key.
+    pub async fn send_input(
+        &self,
+        input: crate::UserInput,
+        limits: Option<openworker_runtime::budget::Limits>,
+        key: Option<&str>,
+    ) -> Result<Run> {
+        let _ = id(self.id())?;
+        let content = input
+            .upload_service(&self.service, self.id())
+            .await
+            .map_err(|e| {
+                error(if matches!(e, crate::Error::OutcomeUnknown) {
+                    "outcome_unknown"
+                } else {
+                    "attachment_upload_failed"
+                })
+            })?;
+        if let Some(limits) = &limits {
+            limits
+                .validate()
+                .map_err(|_| error("invalid_turn_limits"))?;
+        }
+        let generated = openworker_runtime::id("idem");
+        let r = self
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/turns", id(self.id())?),
+                Some(json!({"content":content,"limits":limits})),
+                Some(key.unwrap_or(&generated)),
+            )
+            .await?;
+        Ok(Run {
+            session: self.clone(),
+            id: r["runId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+            submission_id: r["submissionId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+        })
+    }
+    pub async fn resume_run(&self, submission: &str) -> Result<Run> {
+        let r = self
+            .service
+            .json(
+                "GET",
+                &format!("/v1/sessions/{}/turns/{}", id(self.id())?, id(submission)?),
+                None,
+                None,
+            )
+            .await?;
+        Ok(Run {
+            session: self.clone(),
+            id: r["runId"]
+                .as_str()
+                .ok_or_else(|| error("invalid_receipt"))?
+                .into(),
+            submission_id: submission.into(),
+        })
+    }
+    pub async fn resume_safety(&self, run: &str, key: Option<&str>) -> Result<Value> {
+        self.control(run, json!({"kind":"resume_safety"}), key)
+            .await
+    }
+    pub async fn control(&self, run: &str, action: Value, key: Option<&str>) -> Result<Value> {
+        let generated = openworker_runtime::id("idem");
+        self.service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/controls", id(self.id())?),
+                Some(json!({"runId":run,"action":action})),
+                Some(key.unwrap_or(&generated)),
+            )
+            .await
+    }
+    pub async fn control_receipt(&self, receipt: &str) -> Result<Value> {
+        self.service
+            .json(
+                "GET",
+                &format!("/v1/sessions/{}/controls/{}", id(self.id())?, id(receipt)?),
+                None,
+                None,
+            )
+            .await
+    }
+}
+impl Run {
+    pub async fn snapshot(&self) -> Result<RunResult> {
+        serde_json::from_value(
+            self.session
+                .service
+                .json(
+                    "GET",
+                    &format!(
+                        "/v1/sessions/{}/turns/{}",
+                        id(self.session.id())?,
+                        id(&self.submission_id)?
+                    ),
+                    None,
+                    None,
+                )
+                .await?,
+        )
+        .map_err(|_| error("invalid_result"))
+    }
+    pub fn events(&self, after: i64) -> Events {
+        let run = self.clone();
+        Box::pin(async_stream::try_stream! {
+            let initial = run.snapshot().await?;
+            if initial.status != "running" && after >= initial.cursor { return; }
+            let mut events = run.session.service.events(run.session.id().into(), after);
+            while let Some(event) = events.next().await {
+                let event = event?;
+                let cursor = event.event_id;
+                if event.turn_id.as_deref() == Some(&run.id) {
+                    // A worker claim/recovery can continue this same turn after
+                    // applying a durable approval. Recovery alone is not completion.
+                    let end = event.kind == "turn_completed" ||
+                        (event.kind == "turn_recovered" && matches!(event.data["status"].as_str(),
+                            Some("failed" | "cancelled" | "interrupted" | "truncated")));
+                    let check = matches!(event.kind.as_str(),"interaction_required"|"safety_waiting");
+                    yield event;
+                    if end { break; }
+                    if check && run.snapshot().await?.status == "interrupted" { break; }
+                }
+                if cursor >= initial.cursor && initial.status != "running" { break; }
+            }
+        })
+    }
+    pub async fn result(&self) -> Result<RunResult> {
+        let state = self.snapshot().await?;
+        if state.status != "running" {
+            return Ok(state);
+        }
+        let mut events = self.events(state.cursor);
+        while let Some(event) = events.next().await {
+            event?;
+        }
+        self.snapshot().await
+    }
+}
+#[derive(Default)]
+pub struct Sse {
+    pending: Vec<u8>,
+    data: String,
+    id: String,
+    event: String,
+    size: usize,
+}
+impl Sse {
+    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<openworker_runtime::store::Event>> {
+        self.pending.extend_from_slice(chunk);
+        if self.pending.len() > 1048576 {
+            return Err(error("event_too_large"));
+        }
+        let mut out = vec![];
+        while let Some(n) = self.pending.iter().position(|b| *b == b'\n') {
+            let bytes: Vec<_> = self.pending.drain(..=n).collect();
+            let line = std::str::from_utf8(&bytes)
+                .map_err(|_| error("invalid_event"))?
+                .trim_end_matches(['\n', '\r']);
+            self.size += line.len();
+            if self.size > 1048576 {
+                return Err(error("event_too_large"));
+            }
+            if line.is_empty() {
+                if !self.data.is_empty() {
+                    if self.event == "stream_error" {
+                        return Err(Error {
+                            code: "stream_reconcile",
+                            status: 503,
+                            idempotency_key: None,
+                            operation_id: None,
+                        });
+                    }
+                    if self.event != "progress" {
+                        return Err(error("invalid_event"));
+                    }
+                    let e: openworker_runtime::store::Event =
+                        serde_json::from_str(&self.data).map_err(|_| error("invalid_event"))?;
+                    if self.id.parse::<i64>().ok() != Some(e.event_id) || e.event_id < 0 {
+                        return Err(error("invalid_event"));
+                    }
+                    out.push(e);
+                }
+                self.data.clear();
+                self.id.clear();
+                self.event.clear();
+                self.size = 0;
+                continue;
+            }
+            if line.starts_with(':') {
+                continue;
+            }
+            let (field, value) = line.split_once(':').unwrap_or((line, ""));
+            let value = value.strip_prefix(' ').unwrap_or(value);
+            match field {
+                "data" => {
+                    if !self.data.is_empty() {
+                        self.data.push('\n');
+                    }
+                    self.data.push_str(value)
+                }
+                "id" => self.id = value.into(),
+                "event" => self.event = value.into(),
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Both the existing local-client constructor and remote options use Harness::connect.
+pub trait ConnectTarget {
+    type Connected;
+    type Error;
+    #[allow(clippy::type_complexity)] // Associated output/error types support both connection targets.
+    fn connect(
+        self,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<Output = std::result::Result<Self::Connected, Self::Error>>
+                + Send,
+        >,
+    >;
+}
+impl ConnectTarget for ConnectOptions {
+    type Connected = Service;
+    type Error = Error;
+    fn connect(self) -> Pin<Box<dyn std::future::Future<Output = Result<Service>> + Send>> {
+        Box::pin(Service::connect(self))
+    }
+}
+impl ConnectTarget for crate::HarnessClient {
+    type Connected = crate::agents::Harness;
+    type Error = crate::Error;
+    fn connect(
+        self,
+    ) -> Pin<Box<dyn std::future::Future<Output = crate::Result<crate::agents::Harness>> + Send>>
+    {
+        Box::pin(crate::agents::Harness::connect_client(self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn endpoints_require_tls_except_exact_loopback() {
+        for value in [
+            "http://remote.example",
+            "https://user:secret@host",
+            "https://host/?key=secret",
+            "https://host/#fragment",
+        ] {
+            assert!(endpoint(value).is_err());
+        }
+        assert_eq!(
+            endpoint("http://127.0.0.1:123/").unwrap(),
+            "http://127.0.0.1:123"
+        );
+    }
+    #[test]
+    fn sse_decodes_bytewise_unicode_and_checks_cursor() {
+        let mut decoder = Sse::default();
+        let mut events = vec![];
+        let wire = format!(
+            ": ping\r\n\r\nevent: progress\r\nid: 1\r\ndata: {}\r\n\r\n",
+            json!({"event_id":1,"session_id":"s","turn_id":"t","type":"text","data":{"text":"😀"}})
+        );
+        for byte in wire.bytes() {
+            events.extend(decoder.push(&[byte]).unwrap());
+        }
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data["text"], "😀");
+        let invalid = wire.replace("id: 1", "id: 2");
+        assert!(Sse::default().push(invalid.as_bytes()).is_err());
+        assert!(Sse::default().push(&vec![b'x'; 1048577]).is_err());
+    }
+}
+
+/// Approved release IDs are deployment configuration; the model sees only the
+/// named agent types, never arbitrary release or environment credentials.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTeamOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coding: Option<openworker_runtime::coding_handoff::config::TeamConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_defaults: Option<openworker_runtime::team_workspace_defaults::WorktreeDefaults>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<openworker_runtime::team_definition::Delegation>,
+    pub agent_id: String,
+    pub agent_types: std::collections::BTreeMap<String, String>,
+    pub policy: openworker_runtime::team_coordination::Policy,
+    pub limits: Option<openworker_runtime::budget::Limits>,
+}
+#[derive(Clone)]
+pub struct AgentTeam {
+    pub lead: Session,
+}
+impl Session {
+    pub async fn create_team(&self, options: AgentTeamOptions) -> Result<AgentTeam> {
+        self.service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team", id(self.id())?),
+                Some(serde_json::to_value(options).map_err(|_| error("invalid_team"))?),
+                None,
+            )
+            .await?;
+        Ok(AgentTeam { lead: self.clone() })
+    }
+    pub async fn resume_team(&self) -> Result<AgentTeam> {
+        let team = AgentTeam { lead: self.clone() };
+        team.snapshot().await?;
+        Ok(team)
+    }
+}
+impl AgentTeam {
+    pub async fn stop(&self, key: &str) -> Result<Value> {
+        self.command(key, "stop", json!({})).await
+    }
+    pub async fn snapshot(&self) -> Result<Value> {
+        self.lead
+            .service
+            .json(
+                "GET",
+                &format!("/v1/sessions/{}/team", id(self.lead.id())?),
+                None,
+                None,
+            )
+            .await
+    }
+    pub async fn spawn(
+        &self,
+        key: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+    ) -> Result<Value> {
+        self.spawn_with_options(
+            key,
+            agent_type,
+            agent_id,
+            message,
+            crate::agents::ChildOptions::default(),
+        )
+        .await
+    }
+    pub async fn spawn_with_options(
+        &self,
+        key: &str,
+        agent_type: &str,
+        agent_id: &str,
+        message: &str,
+        options: crate::agents::ChildOptions,
+    ) -> Result<Value> {
+        let mut args = serde_json::to_value(options).map_err(|_| error("invalid_team_spawn"))?;
+        args["agent_type"] = json!(agent_type);
+        args["agent_id"] = json!(agent_id);
+        args["message"] = json!(message);
+        self.command(key, "team_spawn", args).await
+    }
+    pub async fn members(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        let mut args = json!({"action":"list","limit":limit});
+        if let Some(after) = after {
+            args["after"] = json!(after);
+        }
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/commands", id(self.lead.id())?),
+                Some(json!({"operation":"team_manage","arguments":args})),
+                None,
+            )
+            .await
+    }
+    /// Bounded same-team handoff catalog. Reports remain attributed claims.
+    pub async fn submissions(&self, after: Option<&str>, limit: usize) -> Result<Value> {
+        self.lead.service.json("POST",&format!("/v1/sessions/{}/team/commands",id(self.lead.id())?),Some(json!({"operation":"team_list_submissions","arguments":{"after":after,"limit":limit}})),None).await
+    }
+    pub async fn retire(
+        &self,
+        key: &str,
+        agent_id: &str,
+        mode: crate::agents::RetirementMode,
+    ) -> Result<Value> {
+        self.command(
+            key,
+            "team_manage",
+            json!({"action":"retire","agent_id":agent_id,"mode":mode}),
+        )
+        .await
+    }
+    pub async fn post(&self, key: &str, message: &str) -> Result<Value> {
+        self.command(key, "team_post_board", json!({"message":message}))
+            .await
+    }
+    pub async fn send_message(&self, key: &str, agent_id: &str, message: &str) -> Result<Value> {
+        self.command(
+            key,
+            "team_send_message",
+            json!({"agent_id":agent_id,"message":message}),
+        )
+        .await
+    }
+    pub async fn history(
+        &self,
+        query: openworker_runtime::team_coordination::HistoryQuery,
+    ) -> Result<Value> {
+        query
+            .validate()
+            .map_err(|_| error("invalid_team_history"))?;
+        let direction =
+            if query.direction == openworker_runtime::team_coordination::Direction::After {
+                "after"
+            } else {
+                "before"
+            };
+        let anchor = query
+            .message_id
+            .as_deref()
+            .map(id)
+            .transpose()?
+            .map(|v| format!("&message_id={v}"))
+            .unwrap_or_default();
+        self.lead
+            .service
+            .json(
+                "GET",
+                &format!(
+                    "/v1/sessions/{}/team/messages?direction={direction}&limit={}{anchor}",
+                    id(self.lead.id())?,
+                    query.limit
+                ),
+                None,
+                None,
+            )
+            .await
+    }
+
+    async fn command(&self, key: &str, operation: &str, arguments: Value) -> Result<Value> {
+        self.lead
+            .service
+            .json(
+                "POST",
+                &format!("/v1/sessions/{}/team/commands", id(self.lead.id())?),
+                Some(json!({"operation":operation,"arguments":arguments})),
+                Some(key),
+            )
+            .await
+    }
+}

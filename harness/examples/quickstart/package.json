@@ -1,0 +1,55 @@
+{
+  "name": "openworker-quickstart-examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "build": "tsc -p tsconfig.json",
+    "desktop": "npm run build && electron .",
+    "web": "npm run build && node web/server.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "package:desktop": "npm run build && node scripts/bundle-runtime.mjs && electron-builder --dir"
+  },
+  "dependencies": {
+    "@openworkerai/harness-sdk": "0.1.0-beta.4",
+    "pdfjs-dist": "4.10.38"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "@types/node": "^22.0.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.openworker.code-summary.example",
+    "productName": "Code Atlas",
+    "files": [
+      "desktop/**",
+      "public/**",
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin"
+      }
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "identity": null
+    }
+  },
+  "description": "Small desktop and web apps built with OpenWorker",
+  "author": "OpenWorker contributors"
+}
