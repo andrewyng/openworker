@@ -71,11 +71,8 @@ def test_verify_openai_ok(monkeypatch):
     assert verify_provider_key("openai", api_key="sk-x") == {"ok": True}
     assert cap["url"] == "https://api.openai.com/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer sk-x"
-    # The completions-route probe follows the /models reachability check.
-    assert [c["url"] for c in cap["calls"]] == [
-        "https://api.openai.com/v1/models",
-        "https://api.openai.com/v1/chat/completions",
-    ]
+    # OpenAI's own endpoint needs no path check: one call (OPE-268).
+    assert [c["url"] for c in cap["calls"]] == ["https://api.openai.com/v1/models"]
 
 
 def test_verify_openai_custom_endpoint(monkeypatch):
@@ -116,6 +113,34 @@ def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     assert verify_provider_key("novita", api_key="sk-nov") == {"ok": True}
     assert cap["url"] == "https://api.novita.ai/openai/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer sk-nov"
+
+
+@pytest.mark.parametrize("name", ["kimi", "groq", "minimax"])
+def test_verify_a_vendors_default_endpoint_skips_the_completions_route_probe(monkeypatch, name):
+    """Moonshot, Groq and MiniMax answer 404 to a GET on /chat/completions while serving
+    it fine; the #431 path check is for a typed endpoint, never a vendor's own (OPE-268)."""
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, route_status=404, capture=cap)
+    assert verify_provider_key(name, api_key="k-1") == {"ok": True}
+    assert cap["url"].endswith("/models")
+    assert all("/chat/completions" not in c["url"] for c in cap["calls"])
+
+
+def test_verify_a_typed_endpoint_still_checks_the_completions_route(monkeypatch):
+    _patch_get(monkeypatch, status=200, route_status=404)
+    res = verify_provider_key("kimi", api_key="k-1", base_url="http://127.0.0.1:1234")
+    assert res["ok"] is False and "completions route 404s" in res["error"]
+
+
+def test_verify_xai_answers_a_bad_key_with_400_and_a_sentence(monkeypatch):
+    def fake_get(url, **kwargs):
+        return SimpleNamespace(status_code=400, text='{"code": "Client specified an invalid argument", "error": "Incorrect API key provided: xai-ab***. You can obtain an API key from https://console.x.ai."}')
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    assert verify_provider_key("xai", api_key="xai-bad") == {"ok": False, "error": "Invalid API key."}
+    # any other 400 is still reported as what it is
+    monkeypatch.setattr("httpx.get", lambda url, **kw: SimpleNamespace(status_code=400, text='{"error": "bad request"}'))
+    assert verify_provider_key("xai", api_key="xai-1")["error"] == "xAI (Grok) returned HTTP 400."
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):
