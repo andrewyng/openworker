@@ -260,6 +260,19 @@ MATRIX: dict[str, ModelEntry] = {
     # api.novita.ai/openai/v1/models (keyless, read 2026-10-25: `context_size` 1,048,576,
     # `features` lists function-calling).
     "novita:zai-org/glm-5.2": ModelEntry("GLM-5.2 · via Novita", _AGENTIC, 1_048_576),
+    # -- multi-model gateways ---------------------------------------------------
+    # The first prefix selects OpenWorker's provider; the remaining slash-delimited id is sent
+    # unchanged to TrustedRouter's OpenAI-compatible API. Its own presets route each call to
+    # a model of its choosing; windows are the `context_length` values
+    # api.trustedrouter.com/v1/models reports (keyless, read 2026-10-25). `auto` lists
+    # `tools` among its supported parameters; `zdr` lists only `max_tokens` there, so tool
+    # calls depend on the model the zero-retention route picks.
+    "trustedrouter:trustedrouter/auto": ModelEntry(
+        "Auto · TrustedRouter (automatic fallback)", _AGENTIC, 1_048_576
+    ),
+    "trustedrouter:trustedrouter/zdr": ModelEntry(
+        "ZDR · TrustedRouter (zero-retention routes)", _AGENTIC, 1_050_000
+    ),
     # -- resellers (their model namespaces, verbatim) -----------------------------
     "together:thinkingmachines/Inkling": ModelEntry("Inkling · via Together"),
     # Together windows below are the `context_length` values its /v1/models catalog
