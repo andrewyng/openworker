@@ -1,4 +1,5 @@
-# Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe) — and
+# Desktop release builds — macOS (.dmg, arm64 + Intel), Windows (.msi + NSIS .exe) and Linux
+# (AppImage + .deb, x86_64 + aarch64; packaging/build_linux_app.sh) — and
 # the `openworker` command-line program for Linux (.tar.gz, x86_64 + aarch64;
 # packaging/build_linux.sh) and for macOS (.tar.gz, arm64 + x86_64; packaging/build_macos_cli.sh).
 #
@@ -10,6 +11,8 @@
 #   - tag push `v*`  → builds all targets and attaches them to a DRAFT GitHub Release
 #                      (review, then publish by hand).
 #   - manual run     → builds and uploads workflow artifacts only (no release).
+#   - branch push    → builds ONLY the Linux desktop app (AppImage + .deb) and uploads it as
+#                      workflow artifacts (no release). macOS/Windows/CLI stay tag-or-manual.
 #
 # Each installer is uploaded twice: once with its versioned name (archive) and once with a
 # stable name (OpenWorker-macos-arm64.dmg, …) so the website can link to
@@ -33,6 +36,7 @@ name: Release
 on:
   push:
     tags: ["v*", "app-v*"]
+    branches: ["**"]
   workflow_dispatch:
 
 defaults:
@@ -41,6 +45,8 @@ defaults:
 
 jobs:
   build:
+    # Branch pushes build only the Linux desktop app; everything else waits for a tag or manual run.
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
@@ -174,6 +180,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
@@ -206,9 +213,87 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+  linux-desktop:
+    # The desktop app for Linux: AppImage (auto-updates) + .deb, via packaging/build_linux_app.sh.
+    # Ubuntu 22.04 is the oldest image with webkit2gtk-4.1 (Tauri 2); building there keeps the
+    # app and its frozen server runnable on glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36+).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            arch: x86_64
+          - os: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (webkit2gtk, tray, audio, whisper.cpp toolchain)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file patchelf pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            libasound2-dev cmake clang libclang-dev libfuse2 xdg-utils
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: surfaces/gui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: surfaces/gui/src-tauri
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up the sidecar venv (.venv)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[bedrock,openshell]" pyinstaller typer
+          .venv/bin/python -c "import aisuite, coworker"
+
+      - name: npm ci
+        working-directory: surfaces/gui
+        run: npm ci
+
+      - name: Build AppImage + .deb
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bash packaging/build_linux_app.sh
+
+      - name: Stage artifacts (versioned + stable names)
+        run: |
+          mkdir -p out
+          BUNDLE=surfaces/gui/src-tauri/target/release/bundle
+          A=${{ matrix.arch }}
+          cp "$BUNDLE"/appimage/*.AppImage out/
+          cp "$BUNDLE"/appimage/*.AppImage out/OpenWorker-linux-$A.AppImage
+          cp "$BUNDLE"/deb/*.deb out/
+          cp "$BUNDLE"/deb/*.deb out/OpenWorker-linux-$A.deb
+          # Updater signatures (present only when the updater key secret is configured).
+          SIG=$(ls "$BUNDLE"/appimage/*.AppImage.sig 2>/dev/null | head -1 || true)
+          [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-linux-$A.AppImage.sig
+          SIG=$(ls "$BUNDLE"/deb/*.deb.sig 2>/dev/null | head -1 || true)
+          [ -n "$SIG" ] && cp "$SIG" out/OpenWorker-linux-$A.deb.sig
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, linux]
+    needs: [build, linux, linux-desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write

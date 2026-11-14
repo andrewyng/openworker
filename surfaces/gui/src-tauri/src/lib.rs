@@ -207,8 +207,8 @@ fn sidecar_env() -> std::collections::HashMap<String, String> {
 /// Path to the server entrypoint. Resolution order:
 ///   1. `COWORKER_SERVER_BIN` env override.
 ///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
-///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
-///      (next to the app exe) on Windows.
+///      `sidecar/` folder lands in Contents/Resources on macOS, in the install dir
+///      (next to the app exe) on Windows, and in <prefix>/lib/OpenWorker/ on Linux.
 ///   3. Legacy onefile slot: `openworker-server[.exe]` next to the app binary (pre-onedir
 ///      builds used Tauri externalBin).
 ///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
@@ -229,6 +229,21 @@ fn server_bin() -> PathBuf {
             let mut candidates = vec![dir.join("sidecar").join(exe_name)];
             if let Some(contents) = dir.parent() {
                 candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
+                // Linux (.deb and AppImage): the binary is <prefix>/bin/<app> and Tauri puts
+                // resources in <prefix>/lib/<productName>/ (tauri-utils resource_dir), so
+                // the sidecar is at <prefix>/lib/OpenWorker/sidecar/. Inside an AppImage the
+                // prefix is $APPDIR/usr, which this relative lookup covers too.
+                if cfg!(target_os = "linux") {
+                    for name in ["OpenWorker", "openworker-desktop"] {
+                        candidates.push(
+                            contents
+                                .join("lib")
+                                .join(name)
+                                .join("sidecar")
+                                .join(exe_name),
+                        );
+                    }
+                }
             }
             candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
             for c in candidates {
