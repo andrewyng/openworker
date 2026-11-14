@@ -2,8 +2,8 @@
 
 `duckduckgo` works with no API key (our "starting version of our own"). `you` is also usable
 keyless and takes an optional key to lift the free-tier limits. `tavily`, `brave`, `serper`,
-`exa` and `firecrawl` give better results but need a key (configured via the SecretStore /
-env). All providers return a uniform `list[SearchResult]`; the heavy client libs are
+`serply`, `exa` and `firecrawl` give better results but need a key (configured via the
+SecretStore / env). All providers return a uniform `list[SearchResult]`; the heavy client libs are
 lazy-imported.
 """
 
@@ -255,6 +255,44 @@ class SerperProvider(WebSearchProvider):
         ]
 
 
+class SerplyProvider(WebSearchProvider):
+    """Google search results via serply.io. Requires a key from https://serply.io."""
+
+    name = "serply"
+    display_name = "Serply"
+    key_url = "https://serply.io"
+    key_mode = "required"
+    requires_key = True
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+        import httpx
+
+        resp = httpx.get(
+            "https://api.serply.io/v1/search/",
+            headers={
+                "X-Api-Key": self.api_key,
+                "Accept": "application/json",
+                # Serply's edge rejects some default client user agents.
+                "User-Agent": "openworker",
+            },
+            params={"q": query, "num": max_results},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [
+            SearchResult(
+                title=r.get("title", ""),
+                url=r.get("link", ""),
+                snippet=r.get("description", ""),
+            )
+            for r in data.get("results", [])[:max_results]
+        ]
+
+
 class ExaProvider(WebSearchProvider):
     name = "exa"
     display_name = "Exa"
@@ -385,6 +423,7 @@ _PROVIDERS = {
     "tavily": TavilyProvider,
     "brave": BraveProvider,
     "serper": SerperProvider,
+    "serply": SerplyProvider,
     "exa": ExaProvider,
     "firecrawl": FirecrawlProvider,
 }

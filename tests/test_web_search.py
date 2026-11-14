@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Serply/Exa/Firecrawl.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from coworker.web.providers import (
     ExaProvider,
     FirecrawlProvider,
     SerperProvider,
+    SerplyProvider,
     TavilyProvider,
     WebSearchProvider,
     YouProvider,
@@ -91,6 +92,9 @@ def test_build_provider_third_party_requires_key():
     assert isinstance(build_provider("serper", "srp-x"), SerperProvider)
     assert "serper" in provider_names()
     with pytest.raises(ValueError):
+        build_provider("serply")  # no key
+    assert isinstance(build_provider("serply", "sply-x"), SerplyProvider)
+    with pytest.raises(ValueError):
         build_provider("exa")  # no key
     assert isinstance(build_provider("exa", "exa-x"), ExaProvider)
     with pytest.raises(ValueError):
@@ -137,6 +141,43 @@ def test_serper_sends_correct_request_and_maps_organic_results(monkeypatch):
     assert results[0].title == "Example Title"
     assert results[0].url == "https://example.com"
     assert results[0].snippet == "An example snippet."
+
+
+def test_serply_sends_correct_request_and_maps_results(monkeypatch):
+    """Verify the Serply API request shape and response mapping without a network call."""
+    import httpx
+
+    sent = {}
+
+    class _Resp:
+        @staticmethod
+        def raise_for_status():
+            pass
+
+        @staticmethod
+        def json():
+            return {
+                "results": [
+                    {"title": "First", "link": "https://a.example", "description": "One."},
+                    {"title": "Second", "link": "https://b.example", "description": "Two."},
+                ]
+            }
+
+    def fake_get(url, **kwargs):
+        sent.update(url=url, **kwargs)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    results = build_provider("serply", "sply-test-key").search("openworker", max_results=1)
+
+    assert sent["url"] == "https://api.serply.io/v1/search/"
+    assert sent["headers"]["X-Api-Key"] == "sply-test-key"
+    assert sent["headers"]["User-Agent"] == "openworker"
+    assert sent["params"] == {"q": "openworker", "num": 1}
+    assert [(r.title, r.url, r.snippet) for r in results] == [
+        ("First", "https://a.example", "One.")
+    ]
 
 
 def test_exa_provider_parses_highlights(monkeypatch):
@@ -228,6 +269,7 @@ def test_keyed_providers_raise_on_http_errors(monkeypatch):
         TavilyProvider("k"),
         BraveProvider("k"),
         SerperProvider("k"),
+        SerplyProvider("k"),
         ExaProvider("k"),
         FirecrawlProvider("k"),
         YouProvider(),
