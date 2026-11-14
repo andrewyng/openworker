@@ -95,6 +95,7 @@ import { Onboarding } from "./components/Onboarding";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { reconcileResolvedGates, retireFinishedGate } from "./gateReconciliation";
 import { ScheduledView } from "./components/ScheduledView";
+import { BotsView } from "./components/BotsView";
 import { RightRail } from "./components/RightRail";
 import { SettingsView, type SetTab } from "./components/SettingsView";
 import { PersonaView } from "./components/PersonaView";
@@ -395,7 +396,7 @@ export function App() {
   // OPE-238: Activity opened on one tool call's audit rows (unset = all activity).
   const [auditCallId, setAuditCallId] = useState<string | undefined>(undefined);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "audit" | "inbox" | "persona" | "settings"
+    "session" | "scheduled" | "bots" | "audit" | "inbox" | "persona" | "settings"
   >("session");
   // The active session rides the URL (#/s/{id}) so refresh and bookmarks
   // come back here. Deep-link intent (approve) wins until consumed, and the
@@ -2190,6 +2191,8 @@ export function App() {
           openPersona(id, "session");
         }}
         onOpenScheduled={() => setSurface("scheduled")}
+        onOpenBots={() => setSurface("bots")}
+        botsActive={surface === "bots"}
         onOpenAutomation={(id) => {
           setScheduledOpenId(id);
           setSurface("scheduled");
@@ -2209,7 +2212,7 @@ export function App() {
         onCollapse={toggleNav}
         onPeekLeave={() => setNavPeek(false)}
       />
-      {surface === "scheduled" ? (
+      {surface === "bots" ? <BotsView onOpen={(sid, ws, ag) => openRunSession(sid, ws, ag)} onConfigureMachines={() => openSettings("machines")} /> : surface === "scheduled" ? (
         <ScheduledView
           onOpenRun={openRunSession}
           onOpenRunSteps={openRunSteps}

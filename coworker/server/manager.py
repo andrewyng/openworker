@@ -21,7 +21,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
 from .. import model_config as _model_config
@@ -509,6 +509,9 @@ class SessionManager:
         # Automation: scheduled tasks store + the tick scheduler (started in the lifespan).
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
         self.task_store = TaskStore(base / "automation.db")
+        from ..bots import BotService
+
+        self.bots = BotService(self, base)
         self.scheduler = Scheduler(
             self.task_store, self._run_scheduled_task, extra_tick=self._scheduler_tick
         )
@@ -875,6 +878,8 @@ class SessionManager:
     def get_engine(self, session_id: str, **kwargs: Any) -> Optional[TurnEngine]:
         """The session's engine, built on first use. A build is serialized per session
         (see `_engine_build_locks`); an engine that exists is returned without waiting."""
+        if not self.bots.permits_session(session_id):
+            return None
         if session_id in self._engines:
             return self._build_or_get_engine(session_id, **kwargs)
         with self._engine_build_lock(session_id):
@@ -7626,6 +7631,10 @@ class SessionManager:
             handle.cancel()
         self._team_batch_handles.clear()
         await self.scheduler.stop()
+        await self.bots.stop()
+        if self.bots.dedicated:
+            # Flush this bot's persistent browser profile before its host exits.
+            await asyncio.to_thread(browser_close_session)
         await self.stop_gateway()
         await self.mcp.aclose()
         self.audit_store.close()
@@ -8340,6 +8349,7 @@ class SessionManager:
             await self.team_tick()
         except Exception:
             logger.exception("team tick failed")
+        await self.bots.tick()
         await self.resume_due_wakes()
 
     async def resume_due_wakes(self) -> int:
@@ -8349,6 +8359,9 @@ class SessionManager:
         """
         resumed = 0
         for wake in self.wakes.due():
+            bot = self.bots.store.for_session(wake.session_id)
+            if bot and (not bot["enabled"] or wake.session_id in self.bots._inflight):
+                continue
             self.reconcile_activity_receipts(wake.session_id)
             if wake not in self.wakes.pending(wake.session_id):
                 continue
@@ -8431,6 +8444,8 @@ class SessionManager:
     async def deliver_to_session(
         self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None, wake=None,
         wake_info: Optional[dict[str, Any]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+        idle_only: bool = False,
     ) -> bool:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -8439,6 +8454,9 @@ class SessionManager:
         by self-wake and channel-subscription delivery. `source` is the display-only MessageSource
         sidecar for connector messages (framed `message` stays the model-facing text).
         """
+        bot = self.bots.store.for_session(session_id)
+        if bot and not bot["enabled"]:
+            return False
         engine = self.get_engine(session_id)
         if engine is None:
             return False
@@ -8453,6 +8471,8 @@ class SessionManager:
             if (source or {}).get("board", {}).get("rows"):
                 return False
         if not self.try_mark_running(session_id):
+            if idle_only:
+                return False
             if board_delivery or wake is not None:
                 if board_delivery:
                     self._note_held(session_id, "busy")
@@ -8500,6 +8520,8 @@ class SessionManager:
                 # tool failure would otherwise vanish. Log it and park it in the dead-letter store.
                 if event.type.value == "error":
                     reason = (event.data or {}).get("error", "unknown error")
+                    if on_error is not None:
+                        on_error(str(reason))
                     logger.warning(
                         "background turn failed for %s: %s", session_id, reason
                     )
@@ -8509,6 +8531,8 @@ class SessionManager:
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
+            if on_error is not None:
+                on_error(str(exc))
             logger.warning("background turn crashed for %s: %s", session_id, exc)
             self.unrouted.record(session_id, "-", message, reason=str(exc))
             await self.broadcast_session(
@@ -8779,6 +8803,9 @@ class SessionManager:
         """The user's standing rules plus, for a configuration-started session,
         the configuration's instructions — for that session only."""
         base = self.memory_settings.user_rules or ""
+        bot_rules = self.bots.instructions(session_id)
+        if bot_rules:
+            base = f"{base}\n\n{bot_rules}" if base else bot_rules
         record = self.session_store.load(session_id)
         extra = str(((record.spawn if record else {}) or {}).get("instructions") or "").strip()
         if not extra:

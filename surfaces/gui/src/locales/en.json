@@ -4277,5 +4277,46 @@
       "error": "error",
       "not_recorded": "no recorded turn"
     }
+  },
+  "bots": {
+    "title": "Bots",
+    "description": "Personal assistants with a persistent conversation, workspace and task queue.",
+    "host_notice": "Local bots require this computer to stay running. Dedicated cloud bots run on their own host and continue when this desktop closes.",
+    "active": "Active",
+    "paused": "Paused",
+    "new": "New bot",
+    "loading": "Loading…",
+    "no_schedule": "Check-ins are off",
+    "next": "Next check-in: {{time}}",
+    "conversation": "Open conversation",
+    "pause": "Pause bot",
+    "resume": "Resume bot",
+    "task": "Delegate a task",
+    "queue_paused": "This task will wait in the queue until you resume the bot.",
+    "delegate": "Add to queue",
+    "tasks": "Task history",
+    "no_tasks": "No delegated tasks yet.",
+    "checkin": "Check-in",
+    "delegation": "Delegation",
+    "name": "Name",
+    "instructions": "Role, goals and standing instructions",
+    "schedule": "Optional check-in schedule (cron)",
+    "schedule_help": "Five fields: minute hour day month weekday. Timezone: {{timezone}}. Leave blank for delegated work only.",
+    "permissions": "Starts with approvals required. Background questions and approvals go to Inbox. Pause interrupts current work and holds queued tasks.",
+    "create": "Create bot",
+    "states": {
+      "queued": "Queued",
+      "running": "Running / waiting for approval",
+      "done": "Turn finished — review the conversation",
+      "error": "Failed",
+      "interrupted": "Interrupted — review before retrying"
+    },
+    "local": "This computer",
+    "dedicated": "Dedicated runtime",
+    "shared": "Shared local runtime",
+    "location": "Where this bot runs",
+    "offline": "This runtime is offline. Reconnect it to delegate work or change its state.",
+    "cloud_help": "Choose an unused dedicated runtime deployed on your cloud host. Each runtime has its own state, browser profile and keys; it accepts one bot.",
+    "configure_cloud": "Connect a cloud runtime"
   }
 }

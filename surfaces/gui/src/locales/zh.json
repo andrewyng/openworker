@@ -4200,5 +4200,46 @@
       "error": "错误",
       "not_recorded": "没有记录的轮次"
     }
+  },
+  "bots": {
+    "title": "專責助理",
+    "description": "具備持久對話、工作空間與任務佇列的個人助理。",
+    "host_notice": "本機助理需要這台電腦持續運作。獨立雲端助理在自己的主機執行，關閉桌面端仍可繼續工作。",
+    "active": "啟用中",
+    "paused": "已暫停",
+    "new": "新增助理",
+    "loading": "載入中…",
+    "no_schedule": "未開啟定時檢查",
+    "next": "下次檢查：{{time}}",
+    "conversation": "開啟對話",
+    "pause": "暫停助理",
+    "resume": "恢復助理",
+    "task": "委派任務",
+    "queue_paused": "任務會保留在佇列，待你恢復助理後執行。",
+    "delegate": "加入佇列",
+    "tasks": "任務紀錄",
+    "no_tasks": "尚無委派任務。",
+    "checkin": "定時檢查",
+    "delegation": "委派",
+    "name": "名稱",
+    "instructions": "角色、目標與長期指示",
+    "schedule": "定時檢查排程（cron，選填）",
+    "schedule_help": "五個欄位：分 時 日 月 星期。時區：{{timezone}}。留白則只處理委派任務。",
+    "permissions": "預設需要核准操作。背景執行遇到問題或需要核准時會送至收件匣。暫停會中斷目前工作，並保留佇列任務。",
+    "create": "建立助理",
+    "states": {
+      "queued": "排隊中",
+      "running": "執行中／等待核准",
+      "done": "本輪已結束，請查看對話結果",
+      "error": "執行失敗",
+      "interrupted": "已中斷，重試前請先檢查結果"
+    },
+    "local": "這台電腦",
+    "dedicated": "獨立執行環境",
+    "shared": "共用本機環境",
+    "location": "助理執行位置",
+    "offline": "執行環境已離線。重新連線後才能委派任務或變更狀態。",
+    "cloud_help": "選擇已部署在雲端主機、尚未使用的獨立執行環境。每個環境各自保存狀態、瀏覽器資料與金鑰，僅接受一個助理。",
+    "configure_cloud": "連接雲端執行環境"
   }
 }

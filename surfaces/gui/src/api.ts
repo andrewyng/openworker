@@ -3206,6 +3206,128 @@ export async function getAutomations(): Promise<Automation[]> {
   return [...local, ...remote];
 }
 
+export interface PersonalBot {
+  id: string;
+  name: string;
+  instructions: string;
+  session_id: string;
+  workspace: string;
+  agent: string;
+  enabled: boolean;
+  cron: string;
+  timezone: string;
+  next_check: number | null;
+  execution?: "shared" | "dedicated";
+  machine_id?: string;
+  machine_name?: string;
+  machine_offline?: boolean;
+}
+export interface BotJob {
+  id: string;
+  prompt: string;
+  trigger: string;
+  state: "queued" | "running" | "done" | "error" | "interrupted";
+  error: string | null;
+}
+async function botRequest(path = "", method = "GET", body?: unknown, machine?: string | null) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), method === "GET" ? 5000 : 30000);
+  try {
+    const response = await fetch(`${engineBase(machine)}/v1/bots${path}`, {
+      method, signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "Bot request failed");
+    return result;
+  } finally { clearTimeout(timer); }
+}
+const botLocations = new Map<string, string | null>();
+const botCache = new Map<string, PersonalBot>();
+
+async function botMachines(): Promise<Machine[]> {
+  const [local, cloud] = await Promise.all([
+    getMachines().catch(() => ({ machines: [] as Machine[] })),
+    getCloudMachines().catch(() => ({ machines: [] as Machine[] })),
+  ]);
+  return [...new Map([...local.machines, ...cloud.machines].map(m => [m.id, m])).values()];
+}
+
+function locateBot(bot: PersonalBot, machine?: Machine): PersonalBot {
+  const located = machine ? { ...bot, machine_id: machine.id, machine_name: machine.name,
+    machine_offline: !machine.connected } : bot;
+  botLocations.set(bot.id, machine?.id ?? null);
+  registerSessionMachine(bot.session_id, machine?.id);
+  botCache.set(bot.id, located);
+  return located;
+}
+
+export async function getBotRuntimes(): Promise<Machine[]> {
+  const machines = await botMachines();
+  const eligible = await Promise.all(machines.filter(m => m.connected).map(async m => {
+    try {
+      const runtime = await botRequest("/runtime", "GET", undefined, m.id);
+      return runtime.dedicated && runtime.bot_count === 0 ? m : null;
+    } catch { return null; }
+  }));
+  return eligible.filter((m): m is Machine => m !== null);
+}
+
+export async function getBots(): Promise<PersonalBot[]> {
+  const [local, machines] = await Promise.all([
+    botRequest(), botMachines(),
+  ]);
+  const rows: PersonalBot[] = (local.bots || []).map((b: PersonalBot) => locateBot(b));
+  const remote = await Promise.all(machines.map(async machine => {
+    if (!machine.connected) {
+      return [...botCache.values()].filter(b => b.machine_id === machine.id)
+        .map(b => ({ ...b, machine_offline: true }));
+    }
+    try {
+      const result = await botRequest("", "GET", undefined, machine.id);
+      return (result.bots || []).map((b: PersonalBot) => locateBot(b, machine));
+    } catch {
+      return [...botCache.values()].filter(b => b.machine_id === machine.id)
+        .map(b => ({ ...b, machine_offline: true }));
+    }
+  }));
+  return [...rows, ...remote.flat()];
+}
+
+async function botLocation(id: string): Promise<string | null> {
+  if (!botLocations.has(id)) await getBots();
+  if (!botLocations.has(id)) throw new Error("Bot unavailable; reconnect its host before trying again");
+  return botLocations.get(id)!;
+}
+
+export async function getBot(id: string): Promise<{ bot: PersonalBot; jobs: BotJob[]; running: boolean }> {
+  const result = await botRequest(`/${encodeURIComponent(id)}`, "GET", undefined, await botLocation(id));
+  return { ...result, bot: { ...botCache.get(id), ...result.bot } };
+}
+export async function createBot(
+  body: { name: string; instructions: string; cron: string; timezone: string }, machine?: string,
+): Promise<{ bot: PersonalBot }> {
+  if (machine) {
+    const runtime = await botRequest("/runtime", "GET", undefined, machine);
+    if (!runtime.dedicated || runtime.bot_count !== 0) throw new Error("Choose an unused dedicated bot runtime");
+  }
+  const result = await botRequest("", "POST", { ...body, ...(machine ? { dedicated: true } : {}) }, machine);
+  const target = machine ? (await botMachines()).find(m => m.id === machine) : undefined;
+  // Register the route even if a machine disappears from discovery after creation.
+  const row = locateBot(result.bot, target);
+  if (machine && !target) {
+    botLocations.set(row.id, machine);
+    registerSessionMachine(row.session_id, machine);
+    row.machine_id = machine;
+  }
+  return { bot: row };
+}
+export const setBotEnabled = async (id: string, enabled: boolean): Promise<{ bot: PersonalBot }> =>
+  botRequest(`/${encodeURIComponent(id)}`, "PATCH", { enabled }, await botLocation(id));
+export const delegateBotTask = async (id: string, prompt: string): Promise<{ job_id: string }> =>
+  botRequest(`/${encodeURIComponent(id)}/tasks`, "POST", { prompt }, await botLocation(id));
+
 // Fired after any automation mutation the sidebar should reflect immediately
 // (mark-seen, create, delete) — its poll covers the rest.
 export const AUTOMATIONS_CHANGED = "coworker:automations-changed";

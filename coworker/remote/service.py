@@ -39,6 +39,7 @@ _EMPTY_STUBS: dict[str, dict[str, Any]] = {
     "/v1/personas": {"personas": []},
     "/v1/inbox": {"items": []},
     "/v1/subscriptions": {"subscriptions": []},
+    "/v1/bots": {"bots": []},
 }
 
 
