@@ -1,4 +1,4 @@
-# OpenWorker SDK documentation site
+# OpenWorker documentation site
 
 Plain Markdown in `docs/harness/` is authoritative and readable on GitHub.
 `pages.json` chooses the public navigation; `scripts/prepare.mjs` adds site-only
@@ -20,6 +20,30 @@ The original Markdown preparation pipeline is retained. Studio now uses a
 shared custom Astro layout instead of Starlight presentation components. Pagefind
 indexes the public guides in `pages.json` after the static build; preview and error pages are
 excluded. The site does not require a private repository to build.
+
+## Desktop App preview
+
+Desktop user guides live in `docs/desktop/guides/`. `desktop-pages.json` is their
+explicit publication manifest. They reuse Studio, with their own navigation,
+content directory, output and search index; the normal build remains the SDK.
+
+```sh
+npm run desktop:build
+npm run desktop:preview -- --host 127.0.0.1 --port 4330
+# http://127.0.0.1:4330/docs/desktop/
+python3 scripts/verify-built.py dist-desktop /docs/desktop desktop
+```
+
+The Desktop scripts above use POSIX environment assignment. On other shells,
+set `OW_DOCS_PRODUCT=desktop`, then run `npm run prepare-content`, `npx astro build`
+and `npx pagefind --site dist-desktop --root-selector "[data-pagefind-body]"`.
+Keep that variable set for `npm run preview` too. Build products sequentially;
+the generated public asset directory is refreshed for the selected product.
+
+The initial Desktop pages are a local, noindex preview. SDK design-comparison
+routes and source bundles are excluded from the Desktop build. Publication is a
+separate step: the existing hosting preparation and router target `/docs/sdk/`
+and must not be used to deploy Desktop output without a reviewed hosting change.
 
 ## Language tabs in plain Markdown
 
