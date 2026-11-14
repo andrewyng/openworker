@@ -197,9 +197,10 @@ def test_ollama_model_facts_read_tools_thinking_and_context(monkeypatch):
         name = json.loads(request.content)["model"]
         return httpx.Response(200, json=shows[name])
 
+    from coworker.providers import probe_http
+
     fake = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr(httpx, "get", lambda url, timeout=None: fake.get(url))
-    monkeypatch.setattr(httpx, "post", lambda url, json=None, timeout=None: fake.post(url, json=json))
+    monkeypatch.setattr(probe_http, "_client", fake)  # probes use the shared client, not httpx.get
     monkeypatch.setattr(local_machine, "model_memory_bytes", lambda: 32 * local_machine.GB)
     ollama_facts.forget_all()
     rows = {r["name"]: r for r in ollama_facts.model_facts("http://localhost:11434/v1", fresh=True)}

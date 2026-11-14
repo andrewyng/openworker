@@ -41,6 +41,10 @@ export function ModelChecklist({
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState("");
+  // The Add button shows it is working and says why a save failed (OPE-250: a click
+  // that did nothing visible for seconds, and a failure that said nothing at all).
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const families = MODEL_FAMILIES[provider];
   const [family, setFamily] = useState(families?.[0]?.value || "");
 
@@ -73,15 +77,25 @@ export function ModelChecklist({
   };
   const add = async () => {
     let typed = draft.trim();
-    if (!typed) return;
+    if (!typed || adding) return;
     // Fold the family choice into the id unless the user already typed one.
     if (families && !families.some((f) => typed.startsWith(`${f.value}/`))) {
       typed = `${family}/${typed}`;
     }
-    const res = await addModel(prefixed(typed));
-    if (res.ok) {
-      setDraft("");
-      onChanged({ models: res.models, model: res.model });
+    setAdding(true);
+    setAddError(null);
+    try {
+      const res = await addModel(prefixed(typed));
+      if (res.ok) {
+        setDraft("");
+        onChanged({ models: res.models, model: res.model });
+      } else {
+        setAddError(res.error || t("models.add_failed"));
+      }
+    } catch {
+      setAddError(t("models.add_failed"));
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -136,10 +150,15 @@ export function ModelChecklist({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
-        <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
-          {t("models.add_btn")}
+        <button className="btn-primary sm" onClick={add} disabled={!draft.trim() || adding} aria-busy={adding}>
+          {adding ? t("models.adding") : t("models.add_btn")}
         </button>
       </div>
+      {addError && (
+        <p className="text-meta text-danger" role="alert" data-testid="mlist-add-error">
+          {addError}
+        </p>
+      )}
     </div>
   );
 }

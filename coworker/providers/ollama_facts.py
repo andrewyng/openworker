@@ -19,7 +19,7 @@ from typing import Any, Optional
 import httpx
 
 from .. import model_config
-from . import local_machine
+from . import local_machine, probe_http
 from .ollama_context import context_length_from_show, resolve_num_ctx
 from .recommended import recommendation_for
 
@@ -59,18 +59,21 @@ def forget_all() -> None:
 
 
 def _fetch(base: str) -> list[dict[str, Any]]:
-    # Module-level httpx calls, so a test can stand the server in with two fakes.
-    try:
-        from .local_server import probe_timeout
+    # Every request goes through the shared probe client (probe_http.py: a fresh client
+    # per call cost about 2 s on Windows); a test stands the server in with probe_http.use.
+    from .local_server import probe_timeout
 
-        tags = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 4.0)).json()
+    try:
+        tags = probe_http.get(base + "/api/tags", timeout=probe_timeout(base, 4.0)).json()
     except (httpx.HTTPError, ValueError, OSError):
         return []
     items = [item for item in tags.get("models") or [] if item.get("name")]
 
     def show_of(name: str) -> dict[str, Any]:
+        # The same short loopback connect as the listing: a profile saved as `localhost`
+        # tries ::1 first, and on Windows that connect waited about 2 s per call (OPE-250).
         try:
-            show = httpx.post(base + "/api/show", json={"model": name}, timeout=4.0).json()
+            show = probe_http.post(base + "/api/show", json={"model": name}, timeout=probe_timeout(base, 4.0)).json()
         except (httpx.HTTPError, ValueError, OSError):
             return {}
         return show if isinstance(show, dict) else {}
