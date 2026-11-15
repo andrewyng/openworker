@@ -6,15 +6,82 @@
 export const isTauri = (): boolean =>
   typeof (globalThis as any).__TAURI__ !== "undefined";
 
+import type { TFunction } from "i18next";
+
+export type PlatformOS = "macos" | "windows" | "linux";
+
+let cachedBackendPlatform: PlatformOS | null = null;
+export function setBackendPlatform(os: string | null | undefined): void {
+  if (!os) return;
+  const lower = os.toLowerCase();
+  if (lower === "win32" || lower === "windows") cachedBackendPlatform = "windows";
+  else if (lower === "darwin" || lower === "macos") cachedBackendPlatform = "macos";
+  else if (lower.startsWith("linux")) cachedBackendPlatform = "linux";
+}
+
 // "macos" | "windows" | "linux" — injected by the shell (std::env::consts::OS) before the
 // SPA loads; userAgent fallback covers browser dev. The macOS overlay-titlebar layout (and
 // its traffic-light compensations) must NEVER apply on Windows, which keeps its native
 // title bar (alignment bug, caught on Windows 2026-07-21).
-export const platformOS = (): string => {
+export const platformOS = (): PlatformOS => {
+  if (cachedBackendPlatform) return cachedBackendPlatform;
   const injected = (globalThis as any).__OCW_PLATFORM__;
-  if (typeof injected === "string" && injected) return injected;
-  return /mac/i.test(navigator.userAgent) ? "macos" : /win/i.test(navigator.userAgent) ? "windows" : "linux";
+  if (typeof injected === "string" && injected) {
+    const lower = injected.toLowerCase();
+    if (lower === "win32" || lower === "windows") return "windows";
+    if (lower === "darwin" || lower === "macos") return "macos";
+    if (lower.startsWith("linux")) return "linux";
+  }
+  if (typeof navigator !== "undefined") {
+    const ua = navigator.userAgent || "";
+    const platform = (navigator as any).userAgentData?.platform || navigator.platform || "";
+    if (/win/i.test(platform) || /win/i.test(ua)) return "windows";
+    if (/mac/i.test(platform) || /mac/i.test(ua)) return "macos";
+    if (/linux/i.test(platform) || /linux/i.test(ua)) return "linux";
+  }
+  return "linux";
 };
+
+export const isWindows = (): boolean => platformOS() === "windows";
+export const isMac = (): boolean => platformOS() === "macos";
+export const isLinux = (): boolean => platformOS() === "linux";
+
+/** User-facing label for the local machine (e.g. "This PC" on Windows, "This Mac" on macOS, "This Linux PC" on Linux). */
+export function thisMachineName(t?: TFunction | ((key: string) => string)): string {
+  const os = platformOS();
+  if (t) {
+    if (os === "windows") return (t as any)("machines.this_pc");
+    if (os === "linux") return (t as any)("machines.this_linux");
+    return (t as any)("machines.this_mac");
+  }
+  if (os === "windows") return "This PC";
+  if (os === "linux") return "This Linux PC";
+  return "This Mac";
+}
+
+export function thisMachineOption(t?: TFunction | ((key: string) => string)): string {
+  const os = platformOS();
+  if (t) {
+    if (os === "windows") return (t as any)("settingsx.this_pc_option");
+    if (os === "linux") return (t as any)("settingsx.this_linux_option");
+    return (t as any)("settingsx.this_mac_option");
+  }
+  if (os === "windows") return "⌂ This PC";
+  if (os === "linux") return "⌂ This Linux PC";
+  return "⌂ This Mac";
+}
+
+export function onMachineThisMachine(t?: TFunction | ((key: string) => string)): string {
+  const os = platformOS();
+  if (t) {
+    if (os === "windows") return (t as any)("onmachine.this_pc");
+    if (os === "linux") return (t as any)("onmachine.this_linux");
+    return (t as any)("onmachine.this_mac");
+  }
+  if (os === "windows") return "This PC";
+  if (os === "linux") return "This Linux PC";
+  return "This Mac";
+}
 
 // macOS major version (26 for Tahoe), injected by the shell; 0 when unknown (browser dev).
 // macOS 26 places the traffic lights itself, higher than the position the shell asks for,

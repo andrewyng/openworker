@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SessionSites } from "./SessionSites";
 import type { SessionSandbox } from "./SandboxChip";
 import { Trans, useTranslation } from "react-i18next";
+import { onMachineThisMachine } from "../tauri";
 import {
   CLOUD_CHANGED,
   getCloudStatus,
@@ -613,7 +614,7 @@ function ChannelsInline({
   }, [held]);
   const where = held
     ? held.holder.machine_id === "desktop" || !held.holder.machine_id
-      ? tt("onmachine.this_mac")
+      ? onMachineThisMachine(tt)
       : machineNames[held.holder.machine_id] || tt("onmachine.access.another_machine")
     : "";
   return (

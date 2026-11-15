@@ -469,12 +469,15 @@ def mount_acceptor(
 
     @app.get("/v1/machines")
     async def list_machines(request: Request) -> Any:
+        import sys
+
         tenant = await _tenant(request)
         if tenant is None:
             return _unauthorized
         return {
             "machines": acceptor.machines(tenant["org_id"]),
             "armed": acceptor.armed,
+            "platform": sys.platform,
         }
 
     @app.patch("/v1/machines/{machine_id}")

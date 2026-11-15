@@ -34,6 +34,7 @@ import {
 import { sealTo } from "../seal";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
 import { useMachineData } from "../useMachineData";
+import { thisMachineName } from "../tauri";
 import { CachedNote, LoadingRow, UnreachableRow } from "./ScopedStatus";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, TAG_QUIET } from "./connectors/ui";
 
@@ -216,7 +217,7 @@ function ConnectedRow({
   const tools = c.tools || [];
   const mine = brokerMachineId(machine);
   const nameOf = (id: string) =>
-    id === "desktop" ? t("machines.this_mac") : machines.find((m) => brokerMachineId(m) === id)?.name || id;
+    id === "desktop" ? thisMachineName(t) : machines.find((m) => brokerMachineId(m) === id)?.name || id;
   const others = (cloud?.holders || [])
     .map((h) => h.machine_id)
     .filter((id) => id && id !== mine)
@@ -389,7 +390,7 @@ function HeldRow({
     ? machines.find((m) => brokerMachineId(m) === sourceHolder.machine_id)
     : undefined;
   const sourceName = localConnected
-    ? t("machines.this_mac")
+    ? thisMachineName(t)
     : sourceMachine?.name || sourceHolder?.machine_id || t("machines.connectors.another_machine");
   const account = cloud?.provider_account ? `${cloud.provider_account} · ` : "";
 
