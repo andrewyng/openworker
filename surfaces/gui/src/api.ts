@@ -3211,8 +3211,10 @@ async function listAutomations(signal?: AbortSignal) {
   try {
     const machineResponse = await fetchMachines(signal);
     const body: { machines?: Machine[] } = await machineResponse.json();
-    if (Array.isArray(body?.machines)) machines = body.machines.filter((machine) => machine.connected);
-    complete = complete && machineResponse.ok && Array.isArray(body?.machines);
+    if (Array.isArray(body?.machines)) {
+      machines = body.machines.filter((machine) => machine.connected);
+    }
+    complete = complete && machineResponse.ok && Array.isArray(body?.machines) && machines.length === body.machines.length;
   } catch (error) {
     if (signal?.aborted) throw error;
     complete = false;

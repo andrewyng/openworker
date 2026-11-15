@@ -46,24 +46,29 @@ describe("automations on joined machines", () => {
     expect(machineOfSession("__run__run-9")).toBe("m1");
   });
 
-  it("can retry discovery when an unknown remote task's machine temporarily fails", async () => {
-    const remoteTask = task("task-remote-retry");
-    let lookupCount = 0;
+  it.each([
+    { outage: "returns an error", remoteId: "task-remote-error", connected: true },
+    { outage: "is disconnected", remoteId: "task-remote-disconnected", connected: false },
+  ])("can retry discovery when an unknown remote task's machine $outage", async ({ remoteId, connected }) => {
+    const remoteTask = task(remoteId);
+    let available = false;
     vi.stubGlobal("fetch", async (url: string) => {
       const path = new URL(url).pathname;
       const response = (body: object, status = 200) => new Response(JSON.stringify(body), { status });
-      if (path === "/v1/machines") return response({ machines: [{ id: "m1", name: "remote", connected: true }] });
-      if (path === "/v1/machines/m1/p/v1/automations") {
-        lookupCount += 1;
-        return lookupCount === 1 ? response({ error: "unavailable" }, 503) : response({ tasks: [remoteTask] });
+      if (path === "/v1/machines") {
+        return response({ machines: [{ id: "m1", name: "remote", connected: available || connected }] });
       }
-      if (path === "/v1/machines/m1/p/v1/automations/task-remote-retry") return response({ task: remoteTask, runs: [] });
-      if (path === "/v1/automations/task-remote-retry") return response({ error: "not found" });
+      if (path === "/v1/machines/m1/p/v1/automations") {
+        return available ? response({ tasks: [remoteTask] }) : response({ error: "unavailable" }, 503);
+      }
+      if (path === `/v1/machines/m1/p/v1/automations/${remoteId}`) return response({ task: remoteTask, runs: [] });
+      if (path === `/v1/automations/${remoteId}`) return response({ error: "not found" });
       return response({ tasks: [] });
     });
 
-    await expect(getAutomation(remoteTask.id)).rejects.toThrow();
-    await expect(getAutomation(remoteTask.id)).resolves.toMatchObject({ task: { id: remoteTask.id, machine_id: "m1" } });
+    await expect(getAutomation(remoteId)).rejects.toThrow();
+    available = true;
+    await expect(getAutomation(remoteId)).resolves.toMatchObject({ task: { id: remoteId, machine_id: "m1" } });
   });
 });
 
