@@ -211,21 +211,46 @@ def test_service_needs_a_joined_machine_and_a_supported_platform(tmp_path, capsy
 
 # -- packaging/install.sh --------------------------------------------------------------
 
+import os
 import shutil
 import subprocess
+import sys
 
 INSTALL_SH = Path(__file__).resolve().parents[1] / "packaging" / "install.sh"
 
 
+def _installer_shell() -> str | None:
+    shell = shutil.which("sh")
+    if shell is None and sys.platform == "win32":
+        git = shutil.which("git")
+        if git:
+            # Git for Windows normally adds cmd/ to PATH, while sh is in usr/bin/.
+            git_root = Path(git).resolve().parent.parent
+            shell = shutil.which(str(git_root / "usr" / "bin" / "sh.exe"))
+    return shell
+
+
+def _run_installer(tmp_path: Path, **overrides: str) -> subprocess.CompletedProcess[str]:
+    shell = _installer_shell()
+    if shell is None:
+        pytest.skip("installer execution requires a POSIX shell")
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "HOME": str(tmp_path), **overrides}
+    if sys.platform == "win32":
+        # MSYS converts the native PATH list and finds the stub scripts before its tools.
+        env["PATH"] = os.pathsep.join((str(tmp_path), str(Path(shell).parent)))
+        env["SystemRoot"] = os.environ["SystemRoot"]
+        env["TMPDIR"] = tmp_path.as_posix()
+    return subprocess.run([shell, str(INSTALL_SH)], env=env, capture_output=True, encoding="utf-8")
+
+
 def test_install_script_is_valid_posix_shell_and_runs_nothing_if_truncated():
-    text = INSTALL_SH.read_text()
+    text = INSTALL_SH.read_text(encoding="utf-8")
     # One function, called on the last line: a download cut off half-way defines nothing runnable.
     assert text.rstrip().endswith('main "$@"')
     assert text.count("\nmain() {") == 1
-    for shell in ("sh", "dash"):
-        exe = shutil.which(shell)
-        if exe:
-            assert subprocess.run([exe, "-n", str(INSTALL_SH)]).returncode == 0
+    for shell in (_installer_shell(), shutil.which("dash")):
+        if shell:
+            assert subprocess.run([shell, "-n", str(INSTALL_SH)]).returncode == 0
     # No sudo, and it points people at the public command spelling.
     assert "sudo" not in text.replace("(no sudo)", "")
     assert "openworker join <link>" in text
@@ -233,24 +258,26 @@ def test_install_script_is_valid_posix_shell_and_runs_nothing_if_truncated():
 
 def test_install_script_refuses_an_unsupported_os(tmp_path):
     fake = tmp_path / "uname"
-    fake.write_text("#!/bin/sh\necho Plan9\n")
+    fake.write_text("#!/bin/sh\necho Plan9\n", encoding="utf-8", newline="\n")
     fake.chmod(0o755)
-    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "HOME": str(tmp_path)}
-    done = subprocess.run(["sh", str(INSTALL_SH)], env=env, capture_output=True, text=True)
+    done = _run_installer(tmp_path)
     assert done.returncode == 1 and "Linux and macOS" in done.stderr
 
 
 def test_install_script_downloads_the_program_on_a_mac(tmp_path):
     """A Mac gets the program, like Linux, not the Python package (which needs PyPI)."""
     fake = tmp_path / "uname"
-    fake.write_text('#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo Darwin ;; esac\n')
+    fake.write_text('#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo Darwin ;; esac\n', encoding="utf-8", newline="\n")
     fake.chmod(0o755)
     # A curl that records the first address asked for and fails, so nothing is installed.
     curl = tmp_path / "curl"
-    curl.write_text('#!/bin/sh\nfor a in "$@"; do case "$a" in http*) echo "$a" > "$ASKED" ;; esac; done\nexit 22\n')
+    curl.write_text(
+        '#!/bin/sh\nfor a in "$@"; do case "$a" in http*) echo "$a" > "$ASKED" ;; esac; done\nexit 22\n',
+        encoding="utf-8",
+        newline="\n",
+    )
     curl.chmod(0o755)
-    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "HOME": str(tmp_path), "ASKED": str(tmp_path / "asked")}
-    done = subprocess.run(["sh", str(INSTALL_SH)], env=env, capture_output=True, text=True)
+    done = _run_installer(tmp_path, ASKED=str(tmp_path / "asked"))
     assert done.returncode == 1 and "could not download" in done.stderr
     asked = (tmp_path / "asked").read_text().strip()
     assert asked.endswith("/releases/latest/download/openworker-macos-arm64.tar.gz")

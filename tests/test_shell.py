@@ -114,24 +114,36 @@ def test_exit_code_captured(executor):
 
 @pytest.mark.skipif(not _WIN, reason="PowerShell's REPL skips a line it cannot parse")
 @pytest.mark.parametrize(
-    "command, message",
+    "command, error_id",
     [
         # Round-2 F-8: `@notes.txt` (curl's upload syntax) is splatting to PowerShell.
-        ("Write-Output @notes.txt", "splatting operator"),
-        ("if (1 {", "Missing closing"),
+        ("Write-Output @notes.txt", "SplattingNotPermitted"),
+        ("if (1 {", "MissingEndParenthesisAfterStatement"),
         # An unclosed quote used to swallow the trailer and hang until the timeout.
-        ("Write-Output 'unclosed", "missing the terminator"),
+        ("Write-Output 'unclosed", "TerminatorExpectedAtEndOfString"),
     ],
 )
-def test_powershell_parse_error_is_a_failure(executor, command, message):
+def test_powershell_parse_error_is_a_failure(executor, command, error_id):
+    # ScriptBlock.Create supplies the native diagnostic, including the source position,
+    # in this session's language. Parser error IDs are independent of that language.
+    quoted = command.replace("'", "''")
+    native = executor.run(
+        f"try {{ [void][scriptblock]::Create('{quoted}') }} catch {{ "
+        "$_.Exception.InnerException.Errors.ErrorId -join ','; "
+        "$_.Exception.InnerException.Message }"
+    )
+    assert native["exit_code"] == 0
+    ids, _, diagnostic = native["output"].strip().partition("\n")
+    assert error_id in ids.split(",")
+    assert f"+ {command}\n" in diagnostic
+
     start = time.monotonic()
     result = executor.run("Write-Output before")  # a success first: `$?` was left true
     assert result["exit_code"] == 0
     result = executor.run(command)
     assert result["exit_code"] == 1
     assert result["timed_out"] is False
-    assert message in result["output"]
-    assert "At line:1 char:" in result["output"]
+    assert result["output"].strip() == diagnostic
     assert time.monotonic() - start < 8.0
     # Nothing of the check is left in the session, and the shell carries on.
     after = executor.run("Get-Variable __cw* -ErrorAction SilentlyContinue | Measure-Object | % Count")
