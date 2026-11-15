@@ -1,0 +1,10 @@
+[package]
+name = "openworker-content-reader-example"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+openworker-sdk = { path = "../../../harness-sdk" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures-util = "0.3"
+anyhow = "1"

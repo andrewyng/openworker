@@ -1,0 +1,42 @@
+{{- if and .Values.config.artifacts (has .Values.config.artifacts.kind (list "s3" "azure")) }}
+apiVersion: v1
+kind: ServiceAccount
+{{- if eq .Values.config.artifacts.kind "azure" }}
+metadata:
+  name: {{ .Release.Name }}-artifacts
+  annotations:
+    azure.workload.identity/client-id: {{ .Values.config.artifacts.client_id | quote }}
+    azure.workload.identity/tenant-id: {{ .Values.config.artifacts.tenant_id | quote }}
+{{- else }}
+metadata: {name: {{ .Release.Name }}-artifacts}
+{{- end }}
+automountServiceAccountToken: false
+---
+{{- end }}
+{{- if .Values.platformControllerEnabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: {{ .Release.Name }}-platform}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ .Release.Name }}-platform}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Release.Name }}-worker]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [{{ .Release.Name }}-worker]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ .Release.Name }}-platform}
+subjects: [{kind: ServiceAccount, name: {{ .Release.Name }}-platform}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}-platform}
+{{- end }}

@@ -1,0 +1,332 @@
+{
+ "wire": "openai_responses",
+ "source": "live: runs/live/openai_gpt-5.4-mini-20261031-103305, step s2",
+ "note": "Response body is an excerpt of the captured one (see recording-format.md section 6.6); expected values are computed from this excerpt.",
+ "request": {
+  "method": "POST",
+  "url": "https://api.openai.com/v1/responses",
+  "headers": {
+   "accept": "application/json",
+   "accept-encoding": "gzip, deflate",
+   "connection": "keep-alive",
+   "content-length": "24016",
+   "content-type": "application/json",
+   "host": "api.openai.com",
+   "user-agent": "OpenAI/Python 3.41.0",
+   "x-stainless-arch": "other:amd64",
+   "x-stainless-async": "false",
+   "x-stainless-lang": "python",
+   "x-stainless-os": "Windows",
+   "x-stainless-package-version": "3.41.0",
+   "x-stainless-read-timeout": "600",
+   "x-stainless-retry-count": "0",
+   "x-stainless-runtime": "CPython",
+   "x-stainless-runtime-version": "3.12.10"
+  },
+  "body_sha256": "fdf6754667ce7a961d5618291c2c4aa87c642b588c62b8b27fc9a41238688b16",
+  "body_size": 24016,
+  "params": {
+   "include": [
+    "reasoning.encrypted_content"
+   ],
+   "model": "gpt-5.4-mini",
+   "reasoning": {
+    "summary": "auto"
+   },
+   "store": false,
+   "stream": true,
+   "tools_offered": 6
+  },
+  "manifest_keys": [
+   "include",
+   "input",
+   "instructions",
+   "model",
+   "reasoning",
+   "store",
+   "stream",
+   "tools"
+  ]
+ },
+ "response": {
+  "status": 200,
+  "headers": {
+   "access-control-expose-headers": "X-Request-ID, Server-Timing-Total, CF-Ray, CF-Ray",
+   "alt-svc": "h3=\":443\"; ma=86400",
+   "cf-cache-status": "DYNAMIC",
+   "cf-ray": "<redacted>",
+   "connection": "keep-alive",
+   "content-type": "text/event-stream; charset=utf-8",
+   "date": "Sat, 31 Oct 2026 05:02:58 GMT",
+   "openai-organization": "<redacted>",
+   "openai-processing-ms": "533",
+   "openai-project": "<redacted>",
+   "openai-version": "2020-10-01",
+   "server": "cloudflare",
+   "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+   "transfer-encoding": "chunked",
+   "x-content-type-options": "nosniff",
+   "x-ratelimit-limit-requests": "5000",
+   "x-ratelimit-limit-tokens": "2000000",
+   "x-ratelimit-remaining-requests": "4999",
+   "x-ratelimit-remaining-tokens": "1995025",
+   "x-ratelimit-reset-requests": "12ms",
+   "x-ratelimit-reset-tokens": "149ms",
+   "x-request-id": "req_d09c538188174a33898283efd7e9913d"
+  },
+  "body_is_excerpt": true,
+  "body": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_0b2612a77a29e7cd016ae57681d1f887d2ba8f11cc84904762\",\"object\":\"response\",\"created_at\":1793422977,\"status\":\"in_progress\",\"access_programs\":null,\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"You are a careful assistant working on a small Python project. (shortened)\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-mini-2026-03-17\",\"moderation\":null,\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":\"24h\",\"reasoning\":{\"context\":\"current_turn\",\"effort\":\"none\",\"mode\":\"standard\",\"summary\":\"detailed\"},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":false,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"auto\",\"tool_usage\":{\"image_gen\":{\"input_tokens\":0,\"input_tokens_details\":{\"image_tokens\":0,\"text_tokens\":0},\"output_tokens\":0,\"output_tokens_details\":{\"image_tokens\":0,\"text_tokens\":0},\"total_tokens\":0},\"web_search\":{\"num_requests\":0}},\"tools\":[{\"type\":\"function\",\"name\":\"read_file\",\"(shortened)\":true}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":0}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_0b2612a77a29e7cd016ae57681d1f887d2ba8f11cc84904762\",\"object\":\"response\",\"created_at\":1793422977,\"status\":\"completed\",\"access_programs\":null,\"background\":false,\"completed_at\":1793422978,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"You are a careful assistant working on a small Python project. (shortened)\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-mini-2026-03-17\",\"moderation\":null,\"output\":[{\"type\":\"function_call\",\"name\":\"read_file\",\"arguments\":\"{\\\"q\\\":\\\"notes.txt\\\"}\",\"(shortened)\":true}],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":\"24h\",\"reasoning\":{\"context\":\"current_turn\",\"effort\":\"none\",\"mode\":\"standard\",\"summary\":\"detailed\"},\"safety_identifier\":null,\"service_tier\":\"default\",\"store\":false,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"auto\",\"tool_usage\":{\"image_gen\":{\"input_tokens\":0,\"input_tokens_details\":{\"image_tokens\":0,\"text_tokens\":0},\"output_tokens\":0,\"output_tokens_details\":{\"image_tokens\":0,\"text_tokens\":0},\"total_tokens\":0},\"web_search\":{\"num_requests\":0}},\"tools\":[{\"type\":\"function\",\"name\":\"read_file\",\"(shortened)\":true}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":{\"input_tokens\":4520,\"input_tokens_details\":{\"cache_write_tokens\":0,\"cached_tokens\":4352},\"output_tokens\":19,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":4539},\"user\":null,\"metadata\":{}},\"sequence_number\":11}\n\n",
+  "body_blob": null
+ },
+ "expected": {
+  "provider_meta": {
+   "wire": "openai_responses",
+   "status": 200,
+   "request": {
+    "include": [
+     "reasoning.encrypted_content"
+    ],
+    "model": "gpt-5.4-mini",
+    "reasoning": {
+     "summary": "auto"
+    },
+    "store": false,
+    "stream": true,
+    "tools_offered": 6
+   },
+   "headers": {
+    "access-control-expose-headers": "X-Request-ID, Server-Timing-Total, CF-Ray, CF-Ray",
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "<redacted>",
+    "connection": "keep-alive",
+    "content-type": "text/event-stream; charset=utf-8",
+    "date": "Sat, 31 Oct 2026 05:02:58 GMT",
+    "openai-organization": "<redacted>",
+    "openai-processing-ms": "533",
+    "openai-project": "<redacted>",
+    "openai-version": "2020-10-01",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "x-content-type-options": "nosniff",
+    "x-ratelimit-limit-requests": "5000",
+    "x-ratelimit-limit-tokens": "2000000",
+    "x-ratelimit-remaining-requests": "4999",
+    "x-ratelimit-remaining-tokens": "1995025",
+    "x-ratelimit-reset-requests": "12ms",
+    "x-ratelimit-reset-tokens": "149ms",
+    "x-request-id": "req_d09c538188174a33898283efd7e9913d"
+   },
+   "event_counts": {
+    "response.created": 1,
+    "response.completed": 1
+   },
+   "events": {
+    "response.created": {
+     "type": "response.created",
+     "response": {
+      "id": "resp_0b2612a77a29e7cd016ae57681d1f887d2ba8f11cc84904762",
+      "object": "response",
+      "created_at": 1793422977,
+      "status": "in_progress",
+      "access_programs": null,
+      "background": false,
+      "completed_at": null,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+       "context": "current_turn",
+       "effort": "none",
+       "mode": "standard",
+       "summary": "detailed"
+      },
+      "safety_identifier": null,
+      "service_tier": "auto",
+      "store": false,
+      "temperature": 1.0,
+      "text": {
+       "format": {
+        "type": "text"
+       },
+       "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+       "image_gen": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+         "image_tokens": 0,
+         "text_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+         "image_tokens": 0,
+         "text_tokens": 0
+        },
+        "total_tokens": 0
+       },
+       "web_search": {
+        "num_requests": 0
+       }
+      },
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": null,
+      "user": null,
+      "metadata": {}
+     },
+     "sequence_number": 0
+    },
+    "response.completed": {
+     "type": "response.completed",
+     "response": {
+      "id": "resp_0b2612a77a29e7cd016ae57681d1f887d2ba8f11cc84904762",
+      "object": "response",
+      "created_at": 1793422977,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "completed_at": 1793422978,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+       "context": "current_turn",
+       "effort": "none",
+       "mode": "standard",
+       "summary": "detailed"
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": false,
+      "temperature": 1.0,
+      "text": {
+       "format": {
+        "type": "text"
+       },
+       "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+       "image_gen": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+         "image_tokens": 0,
+         "text_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+         "image_tokens": 0,
+         "text_tokens": 0
+        },
+        "total_tokens": 0
+       },
+       "web_search": {
+        "num_requests": 0
+       }
+      },
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+       "input_tokens": 4520,
+       "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 4352
+       },
+       "output_tokens": 19,
+       "output_tokens_details": {
+        "reasoning_tokens": 0
+       },
+       "total_tokens": 4539
+      },
+      "user": null,
+      "metadata": {}
+     },
+     "sequence_number": 11
+    }
+   }
+  },
+  "provider_facts": {
+   "served_model": "gpt-5.4-mini-2026-03-17",
+   "provider_request_id": "req_d09c538188174a33898283efd7e9913d",
+   "provider_response_id": "resp_0b2612a77a29e7cd016ae57681d1f887d2ba8f11cc84904762",
+   "served_by": null,
+   "reasoning": 0,
+   "cache_read": 4352,
+   "cache_write": 0,
+   "cache_write_by_ttl": null,
+   "provider_total": 4539,
+   "requested": {
+    "effort": null,
+    "max_tokens": null,
+    "temperature": null,
+    "service_tier": null
+   },
+   "applied": {
+    "effort": "none",
+    "service_tier": "default",
+    "prompt_cache_retention": "24h",
+    "truncation": "disabled"
+   },
+   "stop": {
+    "reason": "completed",
+    "details": null
+   },
+   "provider_timing": {
+    "processing_ms": "533",
+    "created_at": 1793422977,
+    "completed_at": 1793422978
+   },
+   "rate_limit": {
+    "x-ratelimit-limit-requests": "5000",
+    "x-ratelimit-limit-tokens": "2000000",
+    "x-ratelimit-remaining-requests": "4999",
+    "x-ratelimit-remaining-tokens": "1995025",
+    "x-ratelimit-reset-requests": "12ms",
+    "x-ratelimit-reset-tokens": "149ms"
+   },
+   "hosted_tools": {
+    "image_gen": {
+     "input_tokens": 0,
+     "input_tokens_details": {
+      "image_tokens": 0,
+      "text_tokens": 0
+     },
+     "output_tokens": 0,
+     "output_tokens_details": {
+      "image_tokens": 0,
+      "text_tokens": 0
+     },
+     "total_tokens": 0
+    },
+    "web_search": {
+     "num_requests": 0
+    }
+   },
+   "cost_reported": null
+  }
+ },
+ "lab_provider_facts_differs": []
+}

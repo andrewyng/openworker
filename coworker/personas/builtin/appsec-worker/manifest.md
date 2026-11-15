@@ -11,6 +11,7 @@ team: worker
 tools: [code_files, git, search, shell, todo]
 connectors: [github]
 skills: [semgrep-review, security-fix-pr]
+coverage: [code]
 models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
 default_permission_mode: interactive
 description: An application-security coworker that works team-style — it takes assigned code-review items from a security lead, drives scanners (semgrep), triages findings in context, fixes what matters, and hands off through review with evidence.

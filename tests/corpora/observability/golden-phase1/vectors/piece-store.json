@@ -1,0 +1,74 @@
+{
+ "note": "Constructed, not captured: a small request in the shape of an Anthropic call, stored the lab's way.",
+ "request_bytes_sent": "{\"model\":\"claude-haiku-4-5\",\"max_tokens\":1024,\"stream\":true,\"system\":[{\"type\":\"text\",\"text\":\"You are a careful assistant.\"}],\"messages\":[{\"role\":\"user\",\"content\":\"Read notes.txt\"},{\"role\":\"assistant\",\"content\":\"The release is planned for Friday.\"}],\"tools\":[{\"name\":\"read_file\",\"description\":\"Read a file\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}}]}",
+ "exchange": {
+  "request": {
+   "method": "POST",
+   "url": "https://api.anthropic.com/v1/messages",
+   "headers": {
+    "content-type": "application/json",
+    "anthropic-version": "2026-10-21"
+   },
+   "body_sha256": "f9014d83c2850243ceb7017f53a679a0d084cc84929d09e27c725a8bc5749bf4",
+   "body_size": 381,
+   "manifest": {
+    "model": "claude-haiku-4-5",
+    "max_tokens": 1024,
+    "stream": true,
+    "system": [
+     {
+      "$blob": "c67700dbcac3b29cb58c155e49720133f5f4a636469008332113e758330d5c3d"
+     }
+    ],
+    "messages": [
+     {
+      "$blob": "4439b689d920477ac0ebc6f376a03908bd2018c530ea783c50f1fde742057fbf"
+     },
+     {
+      "$blob": "e6dc06e3631cd0d7e766f1e7dfdf6e3994c0523fccc2916bfe492124adebb649"
+     }
+    ],
+    "tools": [
+     {
+      "$blob": "2d00c896f13b34b11a557ee8c7ba9ea8a18f83f6c452371016a8747eb9050c6b"
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "content-type": "application/json"
+   },
+   "body_blob": "d218fc4edbaf8db89d746267eced538f68c28dd7c4f237f8fe2ef209b548c645",
+   "body_size": 80
+  }
+ },
+ "pieces": [
+  {
+   "sha256": "c67700dbcac3b29cb58c155e49720133f5f4a636469008332113e758330d5c3d",
+   "size": 53,
+   "data": "{\"text\":\"You are a careful assistant.\",\"type\":\"text\"}"
+  },
+  {
+   "sha256": "4439b689d920477ac0ebc6f376a03908bd2018c530ea783c50f1fde742057fbf",
+   "size": 42,
+   "data": "{\"content\":\"Read notes.txt\",\"role\":\"user\"}"
+  },
+  {
+   "sha256": "e6dc06e3631cd0d7e766f1e7dfdf6e3994c0523fccc2916bfe492124adebb649",
+   "size": 67,
+   "data": "{\"content\":\"The release is planned for Friday.\",\"role\":\"assistant\"}"
+  },
+  {
+   "sha256": "2d00c896f13b34b11a557ee8c7ba9ea8a18f83f6c452371016a8747eb9050c6b",
+   "size": 121,
+   "data": "{\"description\":\"Read a file\",\"input_schema\":{\"properties\":{\"path\":{\"type\":\"string\"}},\"type\":\"object\"},\"name\":\"read_file\"}"
+  },
+  {
+   "sha256": "d218fc4edbaf8db89d746267eced538f68c28dd7c4f237f8fe2ef209b548c645",
+   "size": 80,
+   "data": "{\"id\":\"msg_example\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}"
+  }
+ ]
+}

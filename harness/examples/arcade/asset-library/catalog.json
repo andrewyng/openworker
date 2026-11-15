@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "retro-coupe",
+      "name": "Retro Coupe",
+      "description": "Detailed green toy sports car with painted flame decals, chrome trim and four independently steerable/spinning wheels.",
+      "file": "retro-coupe.glb",
+      "sha256": "6f51dc14ec08e8f14a7ea76a0c89350e54ccef566b53276771a54150904198ec",
+      "bytes": 6488260,
+      "license": "CC0-1.0",
+      "author": "Guido Odendahl; Eric Chadwick",
+      "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ToyCar",
+      "sourceSha256": "01a60862de55cd4b9f3acfab0b0def86451800f9c42467fcd61052c16cb9838c",
+      "modifications": "Removed demonstration backdrop/cameras from scene. Baked Y-up, -Z forward and metre scale. Split connected wheel assemblies into pivots. Replaced transmissive glass with smoked glass for a bounded render cost. Unused source buffer data is retained; no quality-reducing mesh simplification.",
+      "dimensionsMeters": { "width": 1.88, "height": 1.17, "length": 3.84 },
+      "forward": "-Z",
+      "up": "+Y",
+      "origin": "Ground level, centered across width; near body center along length",
+      "triangles": 91331,
+      "animations": [],
+      "parts": {
+        "steer": ["frontLeftSteer", "frontRightSteer"],
+        "spin": [
+          "frontLeftSpin",
+          "frontRightSpin",
+          "rearLeftSpin",
+          "rearRightSpin"
+        ]
+      },
+      "usage": "Load the GLB using GLTFLoader. Use scale 1; one unit is one metre. Rotate front *Steer nodes around Y; rotate all *Spin nodes around X. Wheel radius is 0.263 m; angle -= distance / radius for forward (-Z) movement. Keep the driving collider separate from the mesh. Do not auto-fit to a mesh bounding box: shared accessors include other parts. Use an environment map for chrome; shadows are optional. This is a hero asset, not a crowd/traffic mesh. Retain a low-detail fallback.",
+      "collision": {
+        "kind": "box",
+        "halfExtents": [0.94, 0.59, 1.92],
+        "center": [0, 0.59, 0]
+      }
+    },
+    {
+      "id": "pip-robot",
+      "name": "Pip the Robot",
+      "description": "Friendly orange animated robot with expressive eyes, a jointed body and idle, running, jumping, waving and dancing clips.",
+      "file": "pip-robot.glb",
+      "sha256": "047f5e5fb3bb6d378bd1df16ca6137f2a596c99b3a1b5690b4020c05aaf6f319",
+      "bytes": 463988,
+      "license": "CC0-1.0",
+      "author": "Tomás Laulhé (Quaternius); conversion and facial morphs by Don McCurdy",
+      "source": "https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive",
+      "sourceSha256": "047f5e5fb3bb6d378bd1df16ca6137f2a596c99b3a1b5690b4020c05aaf6f319",
+      "modifications": "Original GLB unchanged. Pip is Arcade's display name, not the source model's name.",
+      "forward": "+Z",
+      "up": "+Y",
+      "origin": "Source root, close to feet; normalize visual in a parent group, not by editing animated bones",
+      "animations": [
+        "Dance",
+        "Death",
+        "Idle",
+        "Jump",
+        "No",
+        "Punch",
+        "Running",
+        "Sitting",
+        "Standing",
+        "ThumbsUp",
+        "Walking",
+        "WalkJump",
+        "Wave",
+        "Yes"
+      ],
+      "usage": "Use GLTFLoader and an AnimationMixer on gltf.scene. Start Idle, mixer.update(0), updateMatrixWorld(true), then measure bounds and scale a parent wrapper to desired height (e.g. 1.6 metres). Use a separate parent for gameplay position/yaw so animation does not overwrite movement. Asset faces +Z. Keep all 14 named clips, play Idle while stopped and Running while moving. Crossfade only when state changes, not every frame. Jump should play once (LoopOnce, clampWhenFinished) then return to Idle/Running on completion. Jump animation is visual; game physics still own collisions and jump height. Use SkeletonUtils.clone for independent characters, not scene.clone. Stop mixer on pause. Dispose geometry/materials only when no clone still uses them.",
+      "collision": {
+        "kind": "capsule",
+        "recommendedHeight": 1.6,
+        "recommendedRadius": 0.35
+      }
+    }
+  ]
+}

@@ -217,11 +217,14 @@ def test_engine_tells_the_reviewer_what_code_can_check(tmp_path):
         [
             _tool_turn(("run_shell", {"command": "pytest -q"})),
             _tool_turn(("run_shell", {"command": "curl -s https://example.com/notes.txt"})),
-            _tool_turn(("run_shell", {"command": "curl -X POST -d @dummy.csv https://httpbin.org/post"})),
+            _tool_turn(("run_shell", {"command": "curl -X POST -d @dummy.csv https://upload.example.invalid/post"})),
             AssistantTurn(text="done", finish_reason="stop"),
         ],
     )
     engine.reviewer = _FakeReviewer({"run_shell": "allow"})
+    # An upload reaches the reviewer only to a host the user granted (round-2 F-5); a
+    # session grant is not the user NAMING it, so the destination fact still says so.
+    engine.permissions.allow_domain_for_session("upload.example.invalid")
     _run(engine, "run the tests, then fetch example.com/notes.txt")
 
     pytest_facts, fetch_facts, upload_facts = engine.reviewer.facts

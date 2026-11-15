@@ -1,0 +1,710 @@
+#![cfg(all(
+    feature = "test-support",
+    any(target_os = "linux", target_os = "macos", windows)
+))]
+use futures_util::StreamExt;
+use openworker_sdk::{
+    agents::{Response, RunEvent, RunStatus},
+    *,
+};
+use serde_json::json;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+};
+
+async fn start(root: &std::path::Path, process: bool, storage: Storage, persist: bool) -> Harness {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"));
+    let builder = Harness::builder()
+        .state_dir(root.join("state"))
+        .executable(&executable)
+        .session_dir(root.join("sessions"))
+        .scratch_dir(root.join("scratch"))
+        .persist_sessions(persist)
+        .compact_at_context_fraction(0.7)
+        .storage(storage)
+        .sandbox(Sandbox::Off)
+        .scripted(true);
+    if process {
+        builder
+            .managed(executable, RestartPolicy::default())
+            .await
+            .unwrap()
+    } else {
+        builder.start().await.unwrap()
+    }
+}
+async fn register(h: &Harness, count: Arc<AtomicUsize>) {
+    h.register_tools(
+        "app",
+        [Tool::new("preview")
+            .description("Show a preview.")
+            .input_schema(json!({"type":"object","properties":{},"additionalProperties":false}))
+            .handler(move |_, context| {
+                let count = count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    context.progress("Preview ready", json!({})).await?;
+                    Ok(json!({"shown":true}))
+                }
+            })],
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn portable_history_turn_options_and_builtin_optouts_cross_both_transports() {
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        let effects = Arc::new(AtomicUsize::new(0));
+        register(&h, effects.clone()).await;
+        let agent = h
+            .create_agent(
+                Agent::new("migration")
+                    .instructions("Help with names.")
+                    .tool("app.preview")
+                    .builtin_tools(BuiltinTools {
+                        ask_user: Some(false),
+                        read_history: Some(false),
+                    })
+                    .approvals(Approvals::Never)
+                    .limits(TurnLimits {
+                        max_output_tokens: 100000,
+                        max_output_tokens_per_call: 24000,
+                        ..Default::default()
+                    }),
+            )
+            .await
+            .unwrap();
+        let history = vec![
+            HistoryItem::User {
+                text: "Old request".into(),
+            },
+            HistoryItem::ToolCall {
+                call_id: "old-call".into(),
+                name: "app__preview".into(),
+                arguments: json!({}),
+            },
+            HistoryItem::ToolResult {
+                call_id: "old-call".into(),
+                output: "Previously displayed".into(),
+            },
+            HistoryItem::Assistant {
+                text: "Done previously".into(),
+            },
+        ];
+        let before = h.client().request("session/list", json!({})).await.unwrap();
+        assert!(agent
+            .new_session_with(SessionOptions::default().initial_history(vec![
+                HistoryItem::ToolResult {
+                    call_id: "orphan".into(),
+                    output: "bad".into()
+                }
+            ]))
+            .await
+            .is_err());
+        assert_eq!(
+            h.client().request("session/list", json!({})).await.unwrap(),
+            before
+        );
+        let session = agent
+            .new_session_with(SessionOptions::default().initial_history(history))
+            .await
+            .unwrap();
+        assert_eq!(effects.load(Ordering::SeqCst), 0);
+        let text = format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__preview","arguments":{}}])
+        );
+        let options = TurnOptions {
+            submission_id: Some("preferences".into()),
+            instruction_addendum: Some("Prefer .ai; $40 budget".into()),
+            output: Some(OutputOptions::default()),
+            ..Default::default()
+        };
+        let result = session
+            .send_with_options(&text, options.clone())
+            .await
+            .unwrap()
+            .result()
+            .await
+            .unwrap();
+        assert_eq!(result.status, RunStatus::Completed);
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let snap = session.snapshot().await.unwrap();
+        assert_eq!(
+            snap["turn"]["instruction_addendum"],
+            "Prefer .ai; $40 budget"
+        );
+        assert_eq!(
+            snap["turn"]["budget"]["limits"]["maxOutputTokensPerCall"],
+            24000
+        );
+        let page = h
+            .client()
+            .request("history/read", json!({"session_id":session.id(),"after":0}))
+            .await
+            .unwrap();
+        assert!(page.to_string().contains("old-call"));
+        assert!(!page.to_string().contains("Prefer .ai"));
+        assert_eq!(
+            session
+                .send_with_options(&text, options.clone())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    instruction_addendum: Some("Different".into()),
+                    ..options
+                }
+            )
+            .await
+            .is_err());
+        assert_eq!(
+            session
+                .send_with_limits(
+                    "TEST_RESOURCE_GRANTS []",
+                    TurnLimits {
+                        max_output_tokens: 2048,
+                        max_output_tokens_per_call: 128,
+                        ..Default::default()
+                    }
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert!(session.snapshot().await.unwrap()["turn"]["instruction_addendum"].is_null());
+        for name in ["read_history", "ask_user"] {
+            let s = agent.new_session().await.unwrap();
+            let request = format!(
+                "TEST_RESOURCE_GRANTS {}",
+                json!([{"name":name,"arguments":{}}])
+            );
+            assert!(matches!(
+                s.run(&request).await.unwrap().status,
+                RunStatus::Failed(_)
+            ));
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        h.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn callback_ids_match_delayed_raw_and_typed_tool_events() {
+    // Exercise both application callback transports with the same-name tool
+    // called twice. Event consumption deliberately starts after execution ends.
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured = calls.clone();
+        h.register_tools(
+            "app",
+            [Tool::new("preview")
+                .description("Record callback identity.")
+                .handler(move |_, context| {
+                    let captured = captured.clone();
+                    async move {
+                        captured.lock().unwrap().push(context.call_id);
+                        Ok(json!({"shown":true}))
+                    }
+                })],
+        )
+        .await
+        .unwrap();
+        let agent = h
+            .create_agent(
+                Agent::new("builder")
+                    .instructions("Use preview.")
+                    .tool("app.preview")
+                    .approvals(Approvals::Never),
+            )
+            .await
+            .unwrap();
+        let session = agent.new_session().await.unwrap();
+        let run = session
+            .send(format!(
+                "TEST_RESOURCE_GRANTS {}",
+                json!([
+                    {"name":"app__preview","arguments":{}},
+                    {"name":"app__preview","arguments":{}}
+                ])
+            ))
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), run.result())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, RunStatus::Completed);
+        let ids = calls.lock().unwrap().clone();
+        assert_eq!(ids.len(), 2);
+        assert!(!ids[0].is_empty());
+        assert_ne!(ids[0], ids[1]);
+
+        let raw = h
+            .client()
+            .request(
+                "run/wait",
+                json!({
+                    "session_id":session.id(), "submission_id":run.id(),
+                    "cursors":{(session.id()):0}, "wait_ms":0, "max_events":1000
+                }),
+            )
+            .await
+            .unwrap();
+        let mut raw_started = Vec::new();
+        let mut raw_finished = Vec::new();
+        for item in raw["events"].as_array().unwrap() {
+            let kind = item["event"]["type"].as_str().unwrap();
+            if kind == "tool_started" || kind == "tool_finished" {
+                let id = item["event"]["data"]["call_id"].as_str().unwrap();
+                assert_eq!(item["summary"]["call_id"], id);
+                if kind == "tool_started" {
+                    raw_started.push(id.to_owned());
+                } else {
+                    raw_finished.push(id.to_owned());
+                }
+            }
+        }
+        assert_eq!(raw_started, ids);
+        assert_eq!(raw_finished, ids);
+
+        let mut started = Vec::new();
+        let mut finished = Vec::new();
+        let mut events = run.events();
+        while let Some(event) = events.next().await {
+            match event.unwrap() {
+                RunEvent::ToolStarted { call_id, .. } => started.push(call_id),
+                RunEvent::ToolFinished { call_id, .. } => finished.push(call_id),
+                _ => {}
+            }
+        }
+        assert_eq!(started, ids);
+        assert_eq!(finished, ids);
+        h.shutdown().await.unwrap();
+    }
+}
+
+async fn exercise(process: bool, postgres: bool, persist: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let storage = if postgres {
+        Storage::Postgres {
+            connection_env: "OW_PG_TEST_URL".into(),
+            schema: openworker_runtime::id("ow_desktop"),
+            ca_file: None,
+            loopback_plaintext: true,
+        }
+    } else {
+        Storage::Sqlite
+    };
+    storage.migrate().unwrap();
+    let h = start(&root, process, storage.clone(), persist).await;
+    let count = Arc::new(AtomicUsize::new(0));
+    register(&h, count.clone()).await;
+    let definition = Agent::new("builder")
+        .instructions("Use preview.")
+        .tool("app.preview");
+    let agent = h.create_agent(definition.clone()).await.unwrap();
+    assert!(!root.join("scratch").exists());
+    let session = agent.new_session().await.unwrap();
+    let reference = session.reference().clone();
+    assert!(root.join("scratch").exists());
+    assert_eq!(session.state().await.unwrap()["status"], "idle");
+    assert!(h.client().request("session/send",json!({"session_id":session.id(),"submission_id":"bad","input":{"text":"yes","decision":"once"}})).await.is_err());
+    let run = session
+        .send(&format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__preview","arguments":{}}])
+        ))
+        .await
+        .unwrap();
+    let result = run.result().await.unwrap();
+    assert_eq!(result.status, RunStatus::Interrupted);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    let state = session.state().await.unwrap();
+    assert_eq!(state["status"], "waiting");
+    assert_eq!(state["can_accept_message"], false);
+    assert!(state["last_outcome"].is_null());
+    assert!(h
+        .client()
+        .request(
+            "application/result",
+            json!({"owner":"wrong","invocation_id":"expired","output":{}})
+        )
+        .await
+        .is_err());
+    assert!(session.send("Do another thing").await.is_err());
+    session
+        .respond(
+            &result.interruptions[0],
+            Response::Approve(ApprovalDecision::Session),
+        )
+        .await
+        .unwrap();
+    assert_eq!(run.result().await.unwrap().status, RunStatus::Completed);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    let mut events = run.events();
+    let mut seen = 0;
+    while let Some(event) = events.next().await {
+        event.unwrap();
+        seen += 1;
+    }
+    assert!(seen > 0);
+    assert_eq!(run.result().await.unwrap().status, RunStatus::Completed);
+    assert_eq!(session.state().await.unwrap()["status"], "idle");
+    assert!(session
+        .send(SessionInput::Approval {
+            interaction_id: result.interruptions[0].id.clone(),
+            target_session_id: None,
+            decision: ApprovalDecision::Once
+        })
+        .await
+        .is_err());
+    h.shutdown().await.unwrap();
+    assert_eq!(
+        root.join("sessions/runtime.sqlite3").exists(),
+        persist && !postgres
+    );
+    let h = start(&root, process, storage, persist).await;
+    register(&h, count.clone()).await;
+    let agent = h.create_agent(definition).await.unwrap();
+    if persist {
+        let restored = agent.resume_session(reference).await.unwrap();
+        assert_eq!(restored.state().await.unwrap()["status"], "idle");
+        let run = restored
+            .send(&format!(
+                "TEST_RESOURCE_GRANTS {}",
+                json!([{"name":"app__preview","arguments":{}}])
+            ))
+            .await
+            .unwrap();
+        assert_eq!(run.result().await.unwrap().status, RunStatus::Completed);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    } else {
+        assert!(agent.resume_session(reference).await.is_err());
+    }
+    h.shutdown().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn sqlite_embedded() {
+    exercise(false, false, true).await
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn sqlite_managed() {
+    exercise(true, false, true).await
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn ephemeral_embedded() {
+    exercise(false, false, false).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn startup_providers_mcp_and_separate_reviewer_are_durable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"));
+    let server = McpServer::streamable_http("device", "http://127.0.0.1:54321/mcp");
+    let h = Harness::builder()
+        .state_dir(root.join("state"))
+        .executable(&executable)
+        .sandbox(Sandbox::Off)
+        .scripted(true)
+        .mcp_server(server.clone())
+        .model_provider(
+            ModelProvider::chat_completions("Local").base_url("http://127.0.0.1:11434/v1"),
+        )
+        .model_provider(
+            ModelProvider::chat_completions("Reviewer").base_url("http://127.0.0.1:11435/v1"),
+        )
+        .start()
+        .await
+        .unwrap();
+    h.connect_mcp_server(server.clone()).await.unwrap();
+    assert!(h
+        .connect_mcp_server(McpServer::streamable_http(
+            "device",
+            "http://127.0.0.1:54322/mcp"
+        ))
+        .await
+        .is_err());
+    register(&h, Arc::new(AtomicUsize::new(0))).await;
+    let agent = h
+        .create_agent(
+            Agent::new("worker")
+                .instructions("Be helpful.")
+                .tool("app.preview")
+                .default_model(Model::new("Local", "local:8b"))
+                .approvals(Approvals::auto(Model::new("Reviewer", "review:4b"))),
+        )
+        .await
+        .unwrap();
+    let session = agent.new_session().await.unwrap();
+    let snapshot = h.client().snapshot(session.id()).await.unwrap();
+    assert_eq!(
+        snapshot["session"]["model_selection"]["connection"],
+        "Local"
+    );
+    assert_eq!(
+        snapshot["session"]["reviewer_selection"]["connection"],
+        "Reviewer"
+    );
+    let reference = session.reference().clone();
+    h.shutdown().await.unwrap();
+    let h = Harness::builder()
+        .state_dir(root.join("state"))
+        .executable(&executable)
+        .sandbox(Sandbox::Off)
+        .scripted(true)
+        .start()
+        .await
+        .unwrap();
+    h.connect_mcp_server(server).await.unwrap();
+    assert_eq!(
+        h.resume(reference).await.unwrap().state().await.unwrap()["status"],
+        "idle"
+    );
+    h.shutdown().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires OW_PG_TEST_URL"]
+async fn postgres_embedded() {
+    exercise(false, true, true).await
+}
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "Requires OW_PG_TEST_URL"]
+async fn postgres_managed() {
+    exercise(true, true, true).await
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn managed_callback_crash_is_not_replayed_and_binding_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let h = start(&root, true, Storage::Sqlite, true).await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    h.register_tools("app",[Tool::new("effect").description("Test callback.").input_schema(json!({"type":"object","properties":{"block":{"type":"boolean"}},"required":["block"],"additionalProperties":false})).handler(move|args,context|{let counter=counter.clone();async move{counter.fetch_add(1,Ordering::SeqCst);if args["block"]==true{context.cancellation().cancelled().await;}Ok(json!({"done":true}))}})]).await.unwrap();
+    let agent = h
+        .create_agent(
+            Agent::new("worker")
+                .instructions("Use callback.")
+                .tool("app.effect")
+                .approvals(Approvals::Never),
+        )
+        .await
+        .unwrap();
+    let session = agent.new_session().await.unwrap();
+    let prompt = |block| {
+        format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__effect","arguments":{"block":block}}])
+        )
+    };
+    let run = session.send(prompt(true)).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while calls.load(Ordering::SeqCst) != 1 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut connection = h.client().connection();
+    let old = match *connection.borrow() {
+        ConnectionState::Ready {
+            process_id: Some(pid),
+            ..
+        } => pid,
+        _ => panic!("missing child"),
+    };
+    assert!(std::process::Command::new("/bin/kill")
+        .args(["-KILL", &old.to_string()])
+        .status()
+        .unwrap()
+        .success());
+    tokio::time::timeout(std::time::Duration::from_secs(30),async{loop{connection.changed().await.unwrap();if matches!(*connection.borrow(),ConnectionState::Ready{process_id:Some(pid),..} if pid!=old){break;}}}).await.unwrap();
+    assert!(matches!(
+        run.result().await.unwrap().status,
+        RunStatus::Failed(_)
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        session
+            .send(prompt(false))
+            .await
+            .unwrap()
+            .result()
+            .await
+            .unwrap()
+            .status,
+        RunStatus::Completed
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    h.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn application_guidance_defaults_overrides_and_restart_cross_both_transports() {
+    for process in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        register(&h, Arc::new(AtomicUsize::new(0))).await;
+        let agent = h
+            .create_agent(
+                Agent::new("guided")
+                    .instructions("Help.")
+                    .tool("app.preview")
+                    .approvals(Approvals::Never)
+                    .auto_approver_context("AGENT_REVIEW")
+                    .compaction(CompactionOptions::additional_instructions("AGENT_SUMMARY")),
+            )
+            .await
+            .unwrap();
+        let defaults = agent.new_session().await.unwrap().snapshot().await.unwrap();
+        assert_eq!(defaults["session"]["auto_approver_context"], "AGENT_REVIEW");
+        assert_eq!(
+            defaults["session"]["compaction_config"]["additional_instructions"],
+            "AGENT_SUMMARY"
+        );
+        assert_eq!(
+            defaults["session"]["compaction_config"]["threshold_pct"],
+            0.7
+        );
+        let session = agent
+            .new_session_with(
+                SessionOptions::default()
+                    .auto_approver_context("SESSION_REVIEW")
+                    .compaction(CompactionOptions::additional_instructions(
+                        "SESSION_SUMMARY",
+                    )),
+            )
+            .await
+            .unwrap();
+        let text = format!(
+            "TEST_RESOURCE_GRANTS {}",
+            json!([{"name":"app__preview","arguments":{}}])
+        );
+        let options = TurnOptions {
+            submission_id: Some("guided-turn".into()),
+            auto_approver_context: Some("TURN_REVIEW".into()),
+            compaction: Some(CompactionOptions::additional_instructions("TURN_SUMMARY")),
+            ..Default::default()
+        };
+        assert_eq!(
+            session
+                .send_with_options(&text, options.clone())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(
+            session.snapshot().await.unwrap()["turn"]["auto_approver_context"],
+            "TURN_REVIEW"
+        );
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    auto_approver_context: Some("different".into()),
+                    ..options.clone()
+                }
+            )
+            .await
+            .is_err());
+        assert!(session
+            .send_with_options(
+                &text,
+                TurnOptions {
+                    compaction: Some(CompactionOptions::additional_instructions("different")),
+                    ..options
+                }
+            )
+            .await
+            .is_err());
+        let reference = session.reference().clone();
+        h.shutdown().await.unwrap();
+        let h = start(&root, process, Storage::Sqlite, true).await;
+        register(&h, Arc::new(AtomicUsize::new(0))).await;
+        let session = h.resume(reference).await.unwrap();
+        let restored = session.snapshot().await.unwrap();
+        assert_eq!(
+            restored["session"]["auto_approver_context"],
+            "SESSION_REVIEW"
+        );
+        assert_eq!(
+            restored["session"]["compaction_config"]["additional_instructions"],
+            "SESSION_SUMMARY"
+        );
+        assert_eq!(
+            restored["turn"]["compaction"]["additional_instructions"],
+            "TURN_SUMMARY"
+        );
+        assert_eq!(
+            session
+                .send_with_options(
+                    &text,
+                    TurnOptions {
+                        auto_approver_context: Some(String::new()),
+                        compaction: Some(CompactionOptions::additional_instructions("")),
+                        ..Default::default()
+                    }
+                )
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        assert_eq!(
+            session.snapshot().await.unwrap()["turn"]["auto_approver_context"],
+            ""
+        );
+        assert_eq!(
+            session
+                .send_with_options(&text, TurnOptions::default())
+                .await
+                .unwrap()
+                .result()
+                .await
+                .unwrap()
+                .status,
+            RunStatus::Completed
+        );
+        let next = session.snapshot().await.unwrap();
+        assert!(next["turn"]["auto_approver_context"].is_null());
+        assert!(next["turn"]["compaction"].is_null());
+        assert_eq!(next["session"]["auto_approver_context"], "SESSION_REVIEW");
+        h.shutdown().await.unwrap();
+    }
+}

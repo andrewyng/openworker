@@ -56,6 +56,10 @@ class Agent:
     team: Optional[str] = None
     # Designer-authored context for Auto-approve, not an access grant.
     approval_guidance: str = ""
+    # The scan areas the coworker promises (manifest `coverage:`, observability 1.3,
+    # Phase 3 TD3-24): code, secrets, deps, iac. Only coworkers that declare it are held to
+    # the coverage checks.
+    coverage: tuple[str, ...] = ()
 
     def build_tools(self, context: AgentContext) -> list:
         return list(self.tool_factory(context)) if self.tool_factory else []

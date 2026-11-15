@@ -1,0 +1,8 @@
+{
+  "server": {"id":"workspace-tools","program":"$OPENWORKER","args":["mcp-example","--workspace","$WORKSPACE"]},
+  "bindings": {
+    "read_file":{"server":"workspace-tools","tool":"read_file"},
+    "write_file":{"server":"workspace-tools","tool":"write_file"},
+    "run_shell":{"server":"workspace-tools","tool":"run_shell"}
+  }
+}

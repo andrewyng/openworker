@@ -53,14 +53,15 @@ def test_resolve_prefers_the_first_runnable_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(mgr, "_provider_configured", lambda name: False)
     assert mgr.resolve_persona_model("ops") == "anthropic:claude-opus-4-8"
     assert mgr.persona_models_available("ops") == []
-    # Only OpenAI configured: the first RUNNABLE entry wins over the list head.
+    # Only OpenAI configured: the first RUNNABLE entry wins over the list head, named the
+    # way the machine's model list names it (no default-provider prefix).
     monkeypatch.setattr(mgr, "_provider_configured", lambda name: name == "openai")
-    assert mgr.resolve_persona_model("ops") == "openai:gpt-5.5"
+    assert mgr.resolve_persona_model("ops") == "gpt-5.5"
     assert mgr.persona_models_available("ops") == ["openai:gpt-5.5"]
     # A requested model ON the list is honoured even when unrunnable (user's pick).
     assert mgr.resolve_persona_model("ops", "anthropic:claude-opus-4-8") == "anthropic:claude-opus-4-8"
     # A requested model OFF the list resolves back onto it.
-    assert mgr.resolve_persona_model("ops", "ollama:llama3") == "openai:gpt-5.5"
+    assert mgr.resolve_persona_model("ops", "ollama:llama3") == "gpt-5.5"
 
 
 def test_no_list_means_any_model(tmp_path, monkeypatch):
@@ -89,7 +90,7 @@ def test_new_session_binds_to_the_list(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path, monkeypatch)
     monkeypatch.setattr(mgr, "_provider_configured", lambda name: name == "openai")
     engine = mgr.get_engine("s-ops", agent="ops")
-    assert engine is not None and engine.model == "openai:gpt-5.5"
+    assert engine is not None and engine.model == "gpt-5.5"
     plain = mgr.get_engine("s-plain", agent="cowork")
     assert plain is not None and plain.model == mgr.model
 
@@ -100,7 +101,28 @@ def test_socket_set_model_off_the_list_resolves_onto_it(tmp_path, monkeypatch):
     client = TestClient(create_app(mgr))
     with client.websocket_connect("/ws/session/s-ws?agent=ops") as ws:
         ready = ws.receive_json()
-        assert ready["type"] == "ready" and ready["data"]["model"] == "openai:gpt-5.5"
+        assert ready["type"] == "ready" and ready["data"]["model"] == "gpt-5.5"
         ws.send_json({"type": "set_model", "model": "ollama:llama3"})
         # The rebind is a no-op (resolved back onto the same model): no notice frame.
-    assert mgr.get_engine("s-ws").model == "openai:gpt-5.5"
+    assert mgr.get_engine("s-ws").model == "gpt-5.5"
+
+
+def test_bare_and_prefixed_spellings_are_one_model(tmp_path, monkeypatch):
+    """The machine's list says `gpt-5.5`; the manifest says `openai:gpt-5.5`. Same model:
+    a requested bare id is ON the list, and the session records the bare id."""
+    mgr = _mgr(tmp_path, monkeypatch)
+    monkeypatch.setattr(mgr, "_provider_configured", lambda name: name == "openai")
+    assert mgr.resolve_persona_model("ops", "gpt-5.5") == "gpt-5.5"
+    assert mgr.resolve_persona_model("ops", "openai:gpt-5.5") == "gpt-5.5"
+    # Other prefixes are kept as written.
+    assert mgr.resolve_persona_model("ops", "anthropic:claude-opus-4-8") == "anthropic:claude-opus-4-8"
+    assert mgr.resolve_persona_model("cowork", "openai:gpt-test-1") == "gpt-test-1"
+    assert mgr.resolve_persona_model("cowork", "ollama:qwen-test:32b") == "ollama:qwen-test:32b"
+
+
+def test_anthropic_only_list_stays_unrunnable_without_an_anthropic_key(tmp_path, monkeypatch):
+    mgr = _mgr(tmp_path, monkeypatch)
+    monkeypatch.setattr(mgr, "_provider_configured", lambda name: name == "openai")
+    monkeypatch.setattr(mgr, "persona_models", lambda pid: ["anthropic:model-a", "anthropic:model-b"])
+    assert mgr.persona_models_available("ops") == []
+    assert mgr.resolve_persona_model("ops") == "anthropic:model-a"

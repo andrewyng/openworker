@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getAudit, type AuditEvent } from "../api";
 import { PanelHead } from "./IntegrationsView";
+import { UsagePage } from "./UsagePage";
 
 // Activity — connector/browser tool history, restructured onto the IntegrationsView page shell
 // (centered panel + PanelHead + cards), replacing the legacy `page-view` layout. Read-only:
@@ -12,7 +13,20 @@ const BTN_ACCENT = "text-ui px-3 py-1.5 rounded-lg bg-accent text-white shrink-0
 
 // `callId` (OPE-238): opened from the "changes made without asking" summary — show that one
 // tool call's rows, with the filter visible and clearable.
-export function AuditView({ callId }: { callId?: string } = {}) {
+// Phase 3 (OB-8): the page gains a tab bar, Log | Usage. A call filter always opens the Log.
+export function AuditView({ callId, initialTab = "log", onTabChange, onOpenTurn, onOpenPersona }: {
+  callId?: string;
+  initialTab?: "log" | "usage";
+  /** T3-11: the open tab, for the page's address */
+  onTabChange?: (tab: "log" | "usage") => void;
+  onOpenTurn?: (sessionId: string, turnId: string) => void;
+  onOpenPersona?: (personaId: string) => void;
+} = {}) {
+  const [tab, setTab] = useState<"log" | "usage">(callId ? "log" : initialTab);
+  useEffect(() => {
+    onTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [sessionFilter, setSessionFilter] = useState("");
   const [connectorFilter, setConnectorFilter] = useState("");
@@ -34,6 +48,7 @@ export function AuditView({ callId }: { callId?: string } = {}) {
   useEffect(() => {
     setCallFilter(callId || "");
     refresh(callId || "");
+    if (callId) setTab("log");
   }, [callId]);
 
   return (
@@ -42,8 +57,17 @@ export function AuditView({ callId }: { callId?: string } = {}) {
         <div className="max-w-4xl mx-auto px-7 py-6">
           <PanelHead
             title={t("audit.title")}
-            sub={t("audit.sub")}
+            sub={tab === "usage" ? t("p3.usage.sub") : t("audit.sub")}
           />
+          <div className="p3-tabs mb-4" role="tablist" data-testid="activity-tabs">
+            <button role="tab" aria-selected={tab === "log"} data-testid="activity-tab-log" onClick={() => setTab("log")}>
+              {t("p3.usage.tab_log")}
+            </button>
+            <button role="tab" aria-selected={tab === "usage"} data-testid="activity-tab-usage" onClick={() => setTab("usage")}>
+              {t("p3.usage.tab_usage")}
+            </button>
+          </div>
+          {tab === "usage" ? <UsagePage onOpenTurn={onOpenTurn} onOpenPersona={onOpenPersona} /> : (<>
 
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <input className={INPUT} placeholder={t("audit.placeholder_session")} value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} />
@@ -78,6 +102,7 @@ export function AuditView({ callId }: { callId?: string } = {}) {
               ))}
             </div>
           )}
+          </>)}
         </div>
       </div>
     </main>

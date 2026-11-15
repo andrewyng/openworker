@@ -1,0 +1,245 @@
+{
+ "steps": [
+  {
+   "after_turn": false,
+   "attrs": {
+    "block_hash": null,
+    "per_turn": {
+     "folders": 0,
+     "mode_note": null,
+     "sandbox_note": false,
+     "skills_hash": null,
+     "skills_menu": 0
+    },
+    "session_prompt_hash": null,
+    "session_start": {
+     "agents_md": 0,
+     "memories": [],
+     "memory_mode": "full",
+     "rules": 0
+    },
+    "size_chars": 0
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 5,
+   "kind": "context",
+   "message_id": null,
+   "name": "context",
+   "parent_step_id": null,
+   "seq": 1,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 0,
+   "status": "ok",
+   "step_id": "s1",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": null,
+    "finish_reason": "tool_calls",
+    "model": "openai:gpt-5.1",
+    "provider": "openai",
+    "provider_title": "OpenAI",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 8000,
+     "cache_write": null,
+     "input_fresh": 2000,
+     "output": 300,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 2000,
+   "kind": "model",
+   "message_id": "m2",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 2,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 0,
+   "status": "ok",
+   "step_id": "s2",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "decision": {
+     "origin": "low_risk",
+     "path": [
+      {
+       "detail": "low_risk",
+       "outcome": "allowed",
+       "stage": "permission"
+      }
+     ]
+    },
+    "result_bytes": 12,
+    "risk_class": "read",
+    "sandbox": null
+   },
+   "call_id": "c1",
+   "call_index": 0,
+   "content": {},
+   "duration_ms": 300,
+   "kind": "tool",
+   "message_id": "m3",
+   "name": "grep",
+   "parent_step_id": null,
+   "seq": 3,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 2000,
+   "status": "ok",
+   "step_id": "s3",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": null,
+    "finish_reason": "tool_calls",
+    "model": "openai:gpt-5.1",
+    "provider": "openai",
+    "provider_title": "OpenAI",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 10000,
+     "cache_write": null,
+     "input_fresh": 500,
+     "output": 200,
+     "reasoning": null,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1500,
+   "kind": "model",
+   "message_id": "m4",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 4,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 2300,
+   "status": "ok",
+   "step_id": "s4",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "decision": {
+     "origin": "low_risk",
+     "path": [
+      {
+       "detail": "low_risk",
+       "outcome": "allowed",
+       "stage": "permission"
+      }
+     ]
+    },
+    "result_bytes": 12,
+    "risk_class": "read",
+    "sandbox": null
+   },
+   "call_id": "c2",
+   "call_index": 0,
+   "content": {},
+   "duration_ms": 300,
+   "kind": "tool",
+   "message_id": "m5",
+   "name": "read_file",
+   "parent_step_id": null,
+   "seq": 5,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 3800,
+   "status": "ok",
+   "step_id": "s5",
+   "turn_id": "sess_A:turn_1"
+  },
+  {
+   "after_turn": false,
+   "attrs": {
+    "context_window": null,
+    "finish_reason": "stop",
+    "model": "openai:gpt-5.1",
+    "provider": "openai",
+    "provider_title": "OpenAI",
+    "purpose": "main",
+    "stream": true,
+    "tools_hash": "f671e3",
+    "tools_offered": 6,
+    "ttft_ms": null,
+    "usage": {
+     "cache_read": 10400,
+     "cache_write": null,
+     "input_fresh": 600,
+     "output": 400,
+     "reasoning": 120,
+     "reported": true
+    }
+   },
+   "call_id": null,
+   "call_index": null,
+   "content": {},
+   "duration_ms": 1500,
+   "kind": "model",
+   "message_id": "m6",
+   "name": "model",
+   "parent_step_id": null,
+   "seq": 6,
+   "session_id": "sess_A",
+   "shadow": false,
+   "started_at": 4100,
+   "status": "ok",
+   "step_id": "s6",
+   "turn_id": "sess_A:turn_1"
+  }
+ ],
+ "turns": [
+  {
+   "approval_mode": "interactive",
+   "attended": true,
+   "duration_ms": 5600,
+   "first_message_id": "m1",
+   "incomplete": false,
+   "kind": "run",
+   "last_message_id": "m6",
+   "reviewer": {
+    "active": false,
+    "kind": null,
+    "model": null,
+    "shadow": false
+   },
+   "schema_version": 1,
+   "seq": 1,
+   "session_id": "sess_A",
+   "stamp": {},
+   "started_at": 0,
+   "status": "completed",
+   "trigger": "user",
+   "turn_id": "sess_A:turn_1"
+  }
+ ]
+}

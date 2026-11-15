@@ -1,0 +1,86 @@
+[
+  {
+    "source": "docs/desktop/guides/index.md",
+    "slug": "index"
+  },
+  {
+    "source": "docs/desktop/guides/first-task.md",
+    "slug": "first-task"
+  },
+  {
+    "source": "docs/desktop/guides/how-it-works.md",
+    "slug": "how-it-works"
+  },
+  {
+    "source": "docs/desktop/guides/models.md",
+    "slug": "models"
+  },
+  {
+    "source": "docs/desktop/guides/local-models.md",
+    "slug": "local-models"
+  },
+  {
+    "source": "docs/desktop/guides/voice.md",
+    "slug": "voice"
+  },
+  {
+    "source": "docs/desktop/guides/coworkers.md",
+    "slug": "coworkers"
+  },
+  {
+    "source": "docs/desktop/guides/coding.md",
+    "slug": "coding"
+  },
+  {
+    "source": "docs/desktop/guides/sessions-files.md",
+    "slug": "sessions-files"
+  },
+  {
+    "source": "docs/desktop/guides/connectors.md",
+    "slug": "connectors"
+  },
+  {
+    "source": "docs/desktop/guides/skills-memory.md",
+    "slug": "skills-memory"
+  },
+  {
+    "source": "docs/desktop/guides/automations.md",
+    "slug": "automations"
+  },
+  {
+    "source": "docs/desktop/guides/security.md",
+    "slug": "security"
+  },
+  {
+    "source": "docs/desktop/guides/machines.md",
+    "slug": "machines"
+  },
+  {
+    "source": "docs/desktop/guides/run-location.md",
+    "slug": "run-location"
+  },
+  {
+    "source": "docs/desktop/guides/sandbox.md",
+    "slug": "sandbox"
+  },
+  {
+    "source": "docs/desktop/guides/native-sandbox.md",
+    "slug": "native-sandbox"
+  },
+  {
+    "source": "docs/desktop/guides/openshell.md",
+    "slug": "openshell"
+  },
+  {
+    "source": "docs/desktop/guides/approvals.md",
+    "slug": "approvals"
+  },
+  {
+    "source": "docs/desktop/guides/privacy.md",
+    "slug": "privacy"
+  },
+  {
+    "source": "docs/desktop/guides/troubleshooting.md",
+    "slug": "troubleshooting"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "id": "lumen-garden",
+  "version": "1.0.0",
+  "title": "Lumen Garden",
+  "description": "Turn the stems and guide golden light to every bloom. Six handcrafted gardens, a little curiosity, and no ticking clock.",
+  "engine": "canvas",
+  "entrypoint": "index.html",
+  "cover": "cover.svg",
+  "license": "MIT",
+  "tags": [
+    "Puzzle",
+    "2D"
+  ],
+  "files": [
+    "index.html",
+    "styles.css",
+    "game.js",
+    "cover.svg",
+    "LICENSE.txt",
+    "hero.svg"
+  ],
+  "hero": "hero.svg"
+}

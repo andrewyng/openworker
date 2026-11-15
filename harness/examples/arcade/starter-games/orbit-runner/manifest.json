@@ -1,0 +1,12 @@
+{
+  "id": "orbit-runner",
+  "version": "1.0.0",
+  "title": "Orbit Runner",
+  "description": "Three lanes. A sky full of stars. Find your rhythm, collect gold rings, and dodge the coral blocks.",
+  "engine": "three",
+  "entrypoint": "index.html",
+  "cover": "cover.svg",
+  "license": "MIT",
+  "tags": ["Runner", "3D"],
+  "files": ["index.html", "styles/game.css", "src/game.js", "cover.svg", "LICENSE.txt"]
+}

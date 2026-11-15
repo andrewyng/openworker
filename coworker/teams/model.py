@@ -61,8 +61,11 @@ class Actor:
     session_id: str = ""
 
 
-LINK_KINDS = ("parent", "blocks")  # link(src, "parent", dst): dst is src's parent
+LINK_KINDS = ("parent", "blocks", "verifies")  # link(src, "parent", dst): dst is src's parent
                                    # link(src, "blocks", dst): src blocks dst
+                                   # link(src, "verifies", dst): src re-checks dst's fix
+                                   # (observability Phase 3, E17d: who verified a fix is a
+                                   # board fact, not a guess from proposal metadata)
 
 # `note` is any observation — the journal is not only for investigations. `raw` is
 # a capture (log excerpt, command output); reads skip raw unless asked, and large

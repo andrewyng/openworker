@@ -7,6 +7,27 @@ build/
 dist/
 .coverage
 
+# Rust harness build caches, package dependencies and local deployment state
+/harness/target/
+/harness/test-output/
+/harness/**/node_modules
+/.ow-aws/
+/.ow-stack/
+/.ow-helm/
+/.ow-recovery/
+
+# Local OpenWorker Service packaging and qualification
+/.ow-service/
+/.ow-service-build/
+
+/.ow-service-m4/
+
+# Local service qualification state contains generated credentials.
+/.ow-service*/
+
+# Local SDK release artifacts
+/.sdk-release*/
+
 # Local secrets (live-smoke BYO keys) — never committed
 .env
 .claude/settings.local.json

@@ -1,0 +1,341 @@
+{
+ "frozen_with_format": "1.0",
+ "frozen": "2026-10-31",
+ "shape": "recording format 1.0 (recording-format.md): events and expected recordings validate against recording-format.schema.json",
+ "made_by": "phase-1/lab/make_golden.py",
+ "checked_by": "phase-1/lab/check_golden.py",
+ "scenarios": [
+  {
+   "id": "S1-01",
+   "title": "One model call, no tools (Anthropic)",
+   "events": 6,
+   "turns": 1,
+   "steps": 2,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-02",
+   "title": "Tools one after another (OpenAI Chat)",
+   "events": 14,
+   "turns": 1,
+   "steps": 6,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-03",
+   "title": "Two tools at the same time",
+   "events": 12,
+   "turns": 1,
+   "steps": 5,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-04",
+   "title": "Ask for approval, approved after a wait",
+   "events": 13,
+   "turns": 1,
+   "steps": 5,
+   "known_gaps": {},
+   "simulated": {
+    "resolved_by c1": "who answered comes from an audit row the lab stamps the way the manager does"
+   },
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-05",
+   "title": "Auto-approve: allow, block, unsure",
+   "events": 33,
+   "turns": 1,
+   "steps": 15,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-06",
+   "title": "Auto-approve with a decision-model reviewer",
+   "events": 14,
+   "turns": 1,
+   "steps": 6,
+   "known_gaps": {},
+   "simulated": {
+    "*": "decision-model reviewers are not on main (PR #759); the verdict is scripted"
+   },
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-07",
+   "title": "Shadow evaluation: one mismatch, one match",
+   "events": 30,
+   "turns": 1,
+   "steps": 12,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-08",
+   "title": "Auto-approver could not run (no key)",
+   "events": 17,
+   "turns": 1,
+   "steps": 7,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-09",
+   "title": "Provider fails, then Retry",
+   "events": 12,
+   "turns": 2,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-10",
+   "title": "A summary in the middle of a turn",
+   "events": 15,
+   "turns": 1,
+   "steps": 6,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-11",
+   "title": "Two explore helpers at the same time",
+   "events": 24,
+   "turns": 1,
+   "steps": 11,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": false
+  },
+  {
+   "id": "S1-12",
+   "title": "Session title after the first turn",
+   "events": 8,
+   "turns": 1,
+   "steps": 3,
+   "known_gaps": {},
+   "simulated": {
+    "*": "the title call is made by the lab the way manager.py does it, through a title-tagged view"
+   },
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-13",
+   "title": "Sandboxed command blocked from a website",
+   "events": 10,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {
+    "blocked sites with counts (content)": "V-04"
+   },
+   "simulated": {
+    "turn stamp: sandbox": "the stamp is passed in the way the engine would read describe()",
+    "*": "no real sandbox: the real network_note code runs on a stand-in workspace"
+   },
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "S1-16",
+   "title": "Unattended run parked in the Inbox",
+   "events": 13,
+   "turns": 1,
+   "steps": 5,
+   "known_gaps": {},
+   "simulated": {
+    "trigger": "the trigger is passed by whoever starts the turn (the manager); the lab passes it"
+   },
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-01a",
+   "title": "Stop pressed while a tool runs",
+   "events": 8,
+   "turns": 1,
+   "steps": 3,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-01b",
+   "title": "Stop pressed while the model is writing",
+   "events": 5,
+   "turns": 1,
+   "steps": 2,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-02",
+   "title": "A call that does not report usage",
+   "events": 14,
+   "turns": 1,
+   "steps": 6,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-03",
+   "title": "Resume after a restart with an approval pending",
+   "events": 11,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-04",
+   "title": "Grants: allow for the session, then no card",
+   "events": 21,
+   "turns": 1,
+   "steps": 9,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-05",
+   "title": "Five reviewer denials: the breaker trips",
+   "events": 55,
+   "turns": 1,
+   "steps": 26,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-06a",
+   "title": "Summary after the provider says the conversation is too long",
+   "events": 13,
+   "turns": 1,
+   "steps": 5,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-06c",
+   "title": "Summary due but nothing old enough to summarise",
+   "events": 10,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-07",
+   "title": "A made-up tool and arguments that did not parse",
+   "events": 12,
+   "turns": 1,
+   "steps": 5,
+   "known_gaps": {
+    "bad-arguments step found only via the transcript (C-5)": "C-5 (until E1 adds the id)"
+   },
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-08",
+   "title": "Step limit reached",
+   "events": 18,
+   "turns": 1,
+   "steps": 8,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-09",
+   "title": "Two sessions through one router, plus a proxy call",
+   "events": 16,
+   "turns": 2,
+   "steps": 6,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-10",
+   "title": "The title call races the next turn",
+   "events": 14,
+   "turns": 2,
+   "steps": 5,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-12",
+   "title": "A non-streamed call, then a stream that dies",
+   "events": 10,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-13",
+   "title": "Attendance 'auto' refuses a card by rule",
+   "events": 10,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-14",
+   "title": "Plan mode refuses a write",
+   "events": 10,
+   "turns": 1,
+   "steps": 4,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  },
+  {
+   "id": "M-17",
+   "title": "A shadow check that fails is not shown as a failure",
+   "events": 18,
+   "turns": 1,
+   "steps": 7,
+   "known_gaps": {},
+   "simulated": {},
+   "events_identical_on_second_run": true
+  }
+ ],
+ "not_in_golden": [
+  {
+   "id": "S1-14",
+   "title": "Machine and provider stamp",
+   "why": "standalone: runs no turn through the recorder; covered by recording-format.md"
+  },
+  {
+   "id": "S1-15",
+   "title": "Coworker fingerprint across a skill edit",
+   "why": "standalone: runs no turn through the recorder; covered by recording-format.md"
+  },
+  {
+   "id": "M-11",
+   "title": "Token mapping test vectors for every provider family",
+   "why": "standalone: runs no turn through the recorder; covered by recording-format.md"
+  }
+ ]
+}

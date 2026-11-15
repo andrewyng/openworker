@@ -1,0 +1,17 @@
+node_modules/
+build/
+dist/
+release/
+release-next/
+release-discovery/
+release-skybound/
+release-rally/
+release-dev/
+release-rally12/
+release-assets/
+release-adventure/
+release-playtest/
+release-review/
+bin/
+test-results/
+*.tsbuildinfo

@@ -37,6 +37,7 @@ VALID_MODES = {
 VALID_REC_KINDS = {"connector", "mcp"}
 VALID_REC_TIERS = {"core", "optional"}
 VALID_GROUPS = {"general", "engineering", "security"}
+VALID_COVERAGE = ("code", "secrets", "deps", "iac")
 
 
 class ManifestError(ValueError):
@@ -109,6 +110,10 @@ class PersonaManifest:
     # Settings-page grouping ("general" | "security"). Cosmetic — grouping never
     # gates behavior, so a third-party persona claiming "security" is harmless.
     group: str = "general"
+    # Observability Phase 3 (TD3-24): the scan areas this coworker promises to cover
+    # (code, secrets, deps, iac). Recorded on its turns as `stamp.persona_coverage`; the
+    # coverage checks run only on coworkers that declare it.
+    coverage: tuple[str, ...] = ()
     builtin: bool = False
     source: Optional[str] = (
         None  # where it was loaded from (path / url), for provenance
@@ -146,6 +151,7 @@ class PersonaManifest:
             connectors=self.connectors,
             team=self.team,
             approval_guidance=self.approval_guidance,
+            coverage=tuple(self.coverage),
         )
 
 
@@ -356,6 +362,12 @@ def parse_manifest(
             " (omit for a solo coworker)"
         )
 
+    coverage = _strlist(meta, "coverage")
+    bad = [a for a in coverage if a not in VALID_COVERAGE]
+    if bad:
+        raise ManifestError(
+            f"persona {persona_id!r}: coverage areas must be among {list(VALID_COVERAGE)}, not {bad}")
+
     approval_guidance = meta.get("approval_guidance", "")
     if not isinstance(approval_guidance, str) or len(approval_guidance) > 2400:
         raise ManifestError("approval_guidance must be text of at most 2400 characters")
@@ -388,6 +400,7 @@ def parse_manifest(
         recommends=recommends,
         ships=bool(meta.get("ships", True)),
         group=group,
+        coverage=tuple(dict.fromkeys(coverage)),
         builtin=builtin,
         source=source,
     )

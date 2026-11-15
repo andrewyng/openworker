@@ -1,0 +1,327 @@
+{
+ "turns": [
+  {
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "seq": 1,
+   "kind": "run",
+   "trigger": "user",
+   "started_at": 1792486800000,
+   "duration_ms": 60000,
+   "status": "completed",
+   "incomplete": false,
+   "approval_mode": "interactive",
+   "attended": true,
+   "reviewer": {
+    "active": false,
+    "shadow": false,
+    "kind": null,
+    "model": null
+   },
+   "stamp": {
+    "machine": {
+     "kind": "this_machine",
+     "id": null,
+     "name": "laptop",
+     "app_version": "0.3.0"
+    },
+    "model": {
+     "id": "model-x",
+     "kind": "api_key",
+     "provider_title": "Provider X"
+    },
+    "sandbox": {
+     "provider": "direct",
+     "enforcement": "none",
+     "expected": false
+    },
+    "persona_fp": "a1b2c3",
+    "persona_id": "general"
+   },
+   "first_message_id": null,
+   "last_message_id": null,
+   "schema_version": 1,
+   "max_iterations": 150,
+   "wake": {
+    "kinds": [],
+    "item_ids": [],
+    "board_seq": null,
+    "batched": null,
+    "deferred": null,
+    "by": null,
+    "reason": "user"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "step_id": "S00002253",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": null,
+   "seq": 1,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1792486801000,
+   "duration_ms": 3000,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "main",
+    "provider": "provider-x",
+    "provider_title": "Provider X",
+    "model": "model-x",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 200000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 100,
+     "cache_read": 2500,
+     "cache_write": 0,
+     "output": 400,
+     "reasoning": 0
+    },
+    "tools_offered": 3
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002254",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": null,
+   "seq": 2,
+   "kind": "tool",
+   "name": "explore",
+   "started_at": 1792486805000,
+   "duration_ms": 30000,
+   "status": "ok",
+   "call_id": "call_S00002254",
+   "call_index": 0,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "risk_class": "read",
+    "connector": null,
+    "result_bytes": 100,
+    "exit_code": null,
+    "decision": {
+     "path": [
+      {
+       "stage": "permission",
+       "outcome": "allowed",
+       "detail": "low_risk"
+      }
+     ],
+     "origin": "low_risk"
+    },
+    "sandbox": null,
+    "helper": {
+     "model_calls": 2,
+     "tool_calls": 0,
+     "index": 1,
+     "status": "ok",
+     "tokens": 3000
+    }
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002257",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": null,
+   "seq": 3,
+   "kind": "tool",
+   "name": "explore",
+   "started_at": 1792486805000,
+   "duration_ms": 30000,
+   "status": "ok",
+   "call_id": "call_S00002257",
+   "call_index": 0,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "risk_class": "read",
+    "connector": null,
+    "result_bytes": 100,
+    "exit_code": null,
+    "decision": {
+     "path": [
+      {
+       "stage": "permission",
+       "outcome": "allowed",
+       "detail": "low_risk"
+      }
+     ],
+     "origin": "low_risk"
+    },
+    "sandbox": null,
+    "helper": {
+     "model_calls": 2,
+     "tool_calls": 0,
+     "index": 2,
+     "status": "ok",
+     "tokens": 3000
+    }
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002255",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": "S00002254",
+   "seq": 4,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1792486806000,
+   "duration_ms": 2000,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "helper",
+    "provider": "provider-x",
+    "provider_title": "Provider X",
+    "model": "model-z",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 200000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 100,
+     "cache_read": 1500,
+     "cache_write": 0,
+     "output": 400,
+     "reasoning": 0
+    },
+    "tools_offered": 3
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002258",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": "S00002257",
+   "seq": 5,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1792486806000,
+   "duration_ms": 2000,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "helper",
+    "provider": "provider-x",
+    "provider_title": "Provider X",
+    "model": "model-z",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 200000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 100,
+     "cache_read": 1500,
+     "cache_write": 0,
+     "output": 400,
+     "reasoning": 0
+    },
+    "tools_offered": 3
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002256",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": "S00002254",
+   "seq": 6,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1792486809000,
+   "duration_ms": 2000,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "helper",
+    "provider": "provider-x",
+    "provider_title": "Provider X",
+    "model": "model-z",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 200000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 100,
+     "cache_read": 800,
+     "cache_write": 0,
+     "output": 100,
+     "reasoning": 0
+    },
+    "tools_offered": 3
+   },
+   "content": {}
+  },
+  {
+   "step_id": "S00002259",
+   "turn_id": "T00002252",
+   "session_id": "edge-08",
+   "parent_step_id": "S00002257",
+   "seq": 7,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1792486809000,
+   "duration_ms": 2000,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "helper",
+    "provider": "provider-x",
+    "provider_title": "Provider X",
+    "model": "model-z",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 200000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 100,
+     "cache_read": 800,
+     "cache_write": 0,
+     "output": 100,
+     "reasoning": 0
+    },
+    "tools_offered": 3
+   },
+   "content": {}
+  }
+ ]
+}

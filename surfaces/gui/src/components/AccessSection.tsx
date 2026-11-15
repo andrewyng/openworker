@@ -265,6 +265,12 @@ export function AccessSection({
           >
             {summary}
           </span>
+          {/* Recommended-but-unconnected count: the header's one attention signal. */}
+          {(conns?.attention ?? 0) > 0 && (
+            <span className="rail-summary attention shrink-0" data-testid="access-attention">
+              {t("access.summary_attention", { count: conns!.attention })}
+            </span>
+          )}
         </button>
       </div>
       {open && (

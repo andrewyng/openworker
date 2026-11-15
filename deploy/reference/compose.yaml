@@ -1,0 +1,68 @@
+# Native harness/console bind loopback on the host. Only backing services here.
+# Isolated named volumes survive `down`. No Docker socket or privileged mounts.
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_USER: openworker
+      POSTGRES_DB: openworker
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    ports: ["127.0.0.1:${PG_PORT}:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    networks: [database]
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U openworker -d openworker"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  objects:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: [mini, "-dir=/data", "-s3.config=/run/secrets/s3_config", "-bucket=openworker-artifacts", "-admin.ui=false", "-webdav=false", "-volume.max=4"]
+    secrets: [s3_config]
+    ports: ["127.0.0.1:${S3_PORT}:8333"]
+    volumes: ["objects:/data"]
+    networks: [objects]
+    mem_limit: 768m
+    stop_grace_period: 30s
+  observability:
+    profiles: [observability]
+    image: grafana/otel-lgtm:0.36.0@sha256:57c04cbd8e7022f32bb84c4ac005d79baf8b08e2c5be44facf11f5f1f9944ba2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/openworker/dashboard.json
+      ENABLE_OBI: "false"
+      ENABLE_LOGS_GRAFANA: "true"
+    entrypoint: ["/bin/sh", "/reference/observability-entrypoint.sh"]
+    secrets: [grafana_password]
+    ports: ["127.0.0.1:${GRAFANA_PORT}:3000", "127.0.0.1:${OTLP_PORT}:4318"]
+    volumes:
+      - telemetry:/data
+      - ./observability-entrypoint.sh:/reference/observability-entrypoint.sh:ro
+      - ./dashboards/provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/openworker.yaml:ro
+      - ./dashboards/dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/openworker/dashboard.json:ro
+      - ${STATE_DIR}/operations-dashboard.json:/otel-lgtm/grafana/conf/provisioning/dashboards/openworker/operations-v1.json:ro
+      - ${STATE_DIR}/operations-alerts.json:/otel-lgtm/grafana/conf/provisioning/alerting/openworker.json:ro
+    networks: [telemetry]
+    mem_limit: 2g
+    stop_grace_period: 30s
+secrets:
+  postgres_password:
+    file: ${STATE_DIR}/private/postgres-password
+  s3_config:
+    file: ${STATE_DIR}/private/s3.json
+  grafana_password:
+    file: ${STATE_DIR}/private/grafana-password
+volumes:
+  postgres:
+  objects:
+  telemetry:
+networks:
+  database:
+  objects:
+  telemetry:

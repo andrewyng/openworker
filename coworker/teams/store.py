@@ -574,9 +574,11 @@ class TeamStore:
         description: str = "",
         parent: Optional[int] = None,
         case: Optional[str] = None,
+        verifies: Optional[int] = None,
     ) -> dict[str, Any]:
         """New item, `open` and unassigned. Acceptance criteria are load-bearing —
-        required.
+        required. `verifies` names the item whose fix this one re-checks (a `verifies`
+        link, observability Phase 3 E17d).
 
         Workers may create too — a bug spotted in passing, a follow-up — because
         filing is harmless: nothing runs until the item is ASSIGNED, and assign
@@ -619,6 +621,12 @@ class TeamStore:
                     "case": case,
                 },
             )
+            if verifies is not None:
+                self._item(space, int(verifies))
+                if int(verifies) == item_id:
+                    raise BoardError("an item cannot verify itself")
+                event = self.append_event(space, ITEM_LINKED, actor, item_id=item_id,
+                                          payload={"src": item_id, "kind": "verifies", "dst": int(verifies)})
             if self.journal is not None and case:
                 self.journal.ensure_case(case, actor.id)
         return self.get_item(space, item_id, actor=actor, seq=event["seq"])
@@ -871,8 +879,10 @@ class TeamStore:
         comment: str = "",
         refs: Optional[list[str]] = None,
         taint: bool = False,
+        coverage: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         target = ItemState(to)
+        report = _coverage_report(coverage) if coverage else None
         with self._lock:
             item = self._item(space, item_id)
             current = ItemState(item["state"])
@@ -896,6 +906,9 @@ class TeamStore:
                     "to": target.value,
                     "comment": comment,
                     "refs": list(refs or []),
+                    # Observability Phase 3 (E17c): the hand-off's structured coverage
+                    # report, the coworker's own claim; only written when given.
+                    **({"coverage": report} if report else {}),
                 },
                 taint=taint,
             )
@@ -1323,7 +1336,7 @@ class TeamStore:
             if row["src"] == item_id:
                 out.append({"kind": row["kind"], "item": row["dst"]})
             else:
-                inverse = "child" if row["kind"] == "parent" else "blocked_by"
+                inverse = {"parent": "child", "verifies": "verified_by"}.get(row["kind"], "blocked_by")
                 out.append({"kind": inverse, "item": row["src"]})
         return out
 
@@ -1514,3 +1527,28 @@ def text_page(text: str, offset: int, max_chars: int) -> dict:
     end = min(len(text), offset + max_chars)
     return {"text": text[offset:end], "offset": offset, "next_offset": end,
             "total_chars": len(text), "has_more": end < len(text)}
+
+
+COVERAGE_AREAS = ("code", "secrets", "deps", "iac")
+
+
+def _coverage_report(raw: Any) -> dict[str, dict[str, Any]]:
+    """A hand-off's coverage report, `{area: {ran, findings, reason?}}` (observability Phase 3,
+    E17c): areas from the fixed list, `ran` a flag, `findings` a count, `reason` a short text
+    (why a scan could not run). Anything else is refused, so the checks read only facts."""
+    if not isinstance(raw, dict):
+        raise BoardError("coverage must be an object of {area: {ran, findings, reason}}")
+    out: dict[str, dict[str, Any]] = {}
+    for area, value in raw.items():
+        if area not in COVERAGE_AREAS:
+            raise BoardError(f"coverage area must be one of {list(COVERAGE_AREAS)}, not {area!r}")
+        if not isinstance(value, dict) or not isinstance(value.get("ran"), bool):
+            raise BoardError(f"coverage[{area!r}] needs ran: true or false")
+        findings = value.get("findings", 0)
+        if isinstance(findings, bool) or not isinstance(findings, int) or findings < 0:
+            raise BoardError(f"coverage[{area!r}].findings must be a count")
+        entry: dict[str, Any] = {"ran": value["ran"], "findings": findings}
+        if value.get("reason"):
+            entry["reason"] = str(value["reason"])[:300]
+        out[area] = entry
+    return out

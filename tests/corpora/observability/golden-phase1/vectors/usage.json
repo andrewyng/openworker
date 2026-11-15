@@ -1,0 +1,397 @@
+[
+ {
+  "id": "anthropic-m11",
+  "family": "anthropic",
+  "source": "scripted: lab/scenarios.py m11()",
+  "raw": {
+   "input_tokens": 6200,
+   "output_tokens": 610,
+   "cache_read_input_tokens": 22600,
+   "cache_creation_input_tokens": 2400
+  },
+  "expected": {
+   "input_fresh": 6200,
+   "cache_read": 22600,
+   "cache_write": 2400,
+   "output": 610,
+   "reasoning": null
+  },
+  "expected_total_input": 31200,
+  "lab_family": "anthropic",
+  "lab_gap": null
+ },
+ {
+  "id": "anthropic-live",
+  "family": "anthropic",
+  "source": "live: runs/live/anthropic_claude-haiku-4-5-20261031-103239, step s3 (final message_delta usage)",
+  "raw": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 130
+   },
+   "cache_creation_input_tokens": 130,
+   "cache_read_input_tokens": 5194,
+   "inference_geo": "not_available",
+   "input_tokens": 5,
+   "output_tokens": 23,
+   "service_tier": "standard",
+   "speed": "standard",
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   }
+  },
+  "expected": {
+   "input_fresh": 5,
+   "cache_read": 5194,
+   "cache_write": 130,
+   "output": 23,
+   "reasoning": 0
+  },
+  "expected_total_input": 5329,
+  "lab_family": "anthropic",
+  "lab_gap": "V-15: the app's mapping does not read output_tokens_details.thinking_tokens (until E3)"
+ },
+ {
+  "id": "openai-chat-m11",
+  "family": "openai_chat",
+  "source": "scripted: lab/scenarios.py m11()",
+  "raw": {
+   "prompt_tokens": 10000,
+   "completion_tokens": 300,
+   "prompt_tokens_details": {
+    "cached_tokens": 8000
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 120
+   }
+  },
+  "expected": {
+   "input_fresh": 2000,
+   "cache_read": 8000,
+   "cache_write": null,
+   "output": 300,
+   "reasoning": 120
+  },
+  "expected_total_input": 10000,
+  "lab_family": "openai_chat",
+  "lab_gap": null
+ },
+ {
+  "id": "openai-chat-design-6.2",
+  "family": "openai_chat",
+  "source": "technical design §6.2, worked test vector",
+  "raw": {
+   "prompt_tokens": 28800,
+   "completion_tokens": 610,
+   "prompt_tokens_details": {
+    "cached_tokens": 22600
+   }
+  },
+  "expected": {
+   "input_fresh": 6200,
+   "cache_read": 22600,
+   "cache_write": null,
+   "output": 610,
+   "reasoning": null
+  },
+  "expected_total_input": 28800,
+  "lab_family": "openai_chat",
+  "lab_gap": null
+ },
+ {
+  "id": "openai-chat-probe-call-1",
+  "family": "openai_chat",
+  "source": "live: runs/live/cache-write-probe-20261031-171940/probe.json, call 1 (OpenRouter, Claude Haiku 4.5 served by Amazon Bedrock)",
+  "raw": {
+   "prompt_tokens": 4330,
+   "completion_tokens": 5,
+   "total_tokens": 4335,
+   "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 0,
+    "cache_write_tokens": 4321,
+    "video_tokens": 0
+   },
+   "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": null,
+    "image_tokens": 0
+   }
+  },
+  "expected": {
+   "input_fresh": 9,
+   "cache_read": 0,
+   "cache_write": 4321,
+   "output": 5,
+   "reasoning": 0
+  },
+  "expected_total_input": 4330,
+  "lab_family": "openai_chat",
+  "lab_gap": "V-21: the app does not read cache_write_tokens, so the written tokens are counted as fresh input (until E3)"
+ },
+ {
+  "id": "openai-chat-probe-call-2",
+  "family": "openai_chat",
+  "source": "live: runs/live/cache-write-probe-20261031-171940/probe.json, call 2 (OpenRouter, Claude Haiku 4.5 served by Amazon Bedrock)",
+  "raw": {
+   "prompt_tokens": 4330,
+   "completion_tokens": 4,
+   "total_tokens": 4334,
+   "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cached_tokens": 4321,
+    "cache_write_tokens": 0,
+    "video_tokens": 0
+   },
+   "completion_tokens_details": {
+    "accepted_prediction_tokens": null,
+    "audio_tokens": 0,
+    "reasoning_tokens": 0,
+    "rejected_prediction_tokens": null,
+    "image_tokens": 0
+   }
+  },
+  "expected": {
+   "input_fresh": 9,
+   "cache_read": 4321,
+   "cache_write": 0,
+   "output": 4,
+   "reasoning": 0
+  },
+  "expected_total_input": 4330,
+  "lab_family": "openai_chat",
+  "lab_gap": "V-13: the app records cache_write as not reported although the provider sent 0 (until E3)"
+ },
+ {
+  "id": "openai-chat-openrouter-live",
+  "family": "openai_chat",
+  "source": "live: runs/live/openrouter_deepseek_deepseek-v4-pro-20261031-103410, step s2",
+  "raw": {
+   "prompt_tokens": 4862,
+   "completion_tokens": 66,
+   "total_tokens": 4928,
+   "prompt_tokens_details": {
+    "audio_tokens": 0,
+    "cache_write_tokens": 0,
+    "cached_tokens": 4608,
+    "video_tokens": 0
+   },
+   "completion_tokens_details": {
+    "audio_tokens": 0,
+    "image_tokens": 0,
+    "reasoning_tokens": 23
+   }
+  },
+  "expected": {
+   "input_fresh": 254,
+   "cache_read": 4608,
+   "cache_write": 0,
+   "output": 66,
+   "reasoning": 23
+  },
+  "expected_total_input": 4862,
+  "lab_family": "openai_chat",
+  "lab_gap": "V-13: the app records cache_write as not reported although the provider sent 0 (until E3)"
+ },
+ {
+  "id": "openai-responses-m11",
+  "family": "openai_responses",
+  "source": "scripted: lab/scenarios.py m11()",
+  "raw": {
+   "input_tokens": 5000,
+   "input_tokens_details": {
+    "cached_tokens": 3000
+   },
+   "output_tokens": 400,
+   "output_tokens_details": {
+    "reasoning_tokens": 150
+   }
+  },
+  "expected": {
+   "input_fresh": 2000,
+   "cache_read": 3000,
+   "cache_write": null,
+   "output": 400,
+   "reasoning": 150
+  },
+  "expected_total_input": 5000,
+  "lab_family": "openai_responses",
+  "lab_gap": null
+ },
+ {
+  "id": "openai-responses-live",
+  "family": "openai_responses",
+  "source": "live: runs/live/openai_gpt-5.4-mini-20261031-103305, step s2",
+  "raw": {
+   "input_tokens": 4520,
+   "input_tokens_details": {
+    "cache_write_tokens": 0,
+    "cached_tokens": 4352
+   },
+   "output_tokens": 19,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 4539
+  },
+  "expected": {
+   "input_fresh": 168,
+   "cache_read": 4352,
+   "cache_write": 0,
+   "output": 19,
+   "reasoning": 0
+  },
+  "expected_total_input": 4520,
+  "lab_family": "openai_responses",
+  "lab_gap": "V-13: the app records cache_write as not reported although the provider sent 0 (until E3)"
+ },
+ {
+  "id": "openai-decisions-live",
+  "family": "openai_decisions",
+  "source": "live: runs/live/decision-reviewers-20261031-103449, first OpenAI Decisions check",
+  "raw": {
+   "input_tokens": 2822,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 2822
+  },
+  "expected": {
+   "input_fresh": 2822,
+   "cache_read": 0,
+   "cache_write": 0,
+   "output": 0,
+   "reasoning": 0
+  },
+  "expected_total_input": 2822,
+  "lab_family": null,
+  "lab_gap": "not mapped by the app's provider code: decision reviewers call their service directly (E23)"
+ },
+ {
+  "id": "typesafe-jev-live",
+  "family": "typesafe_jev",
+  "source": "live: runs/live/decision-reviewers-20261031-103449, first TypeSafe Jev check",
+  "raw": {
+   "input_tokens": 6203,
+   "output_tokens": 529
+  },
+  "expected": {
+   "input_fresh": 6203,
+   "cache_read": null,
+   "cache_write": null,
+   "output": 529,
+   "reasoning": null
+  },
+  "expected_total_input": 6203,
+  "lab_family": null,
+  "lab_gap": "not mapped by the app's provider code: decision reviewers call their service directly (E23)"
+ },
+ {
+  "id": "gemini-m11",
+  "family": "gemini",
+  "source": "scripted: lab/scenarios.py m11() (scripted only: no Gemini key yet, no live run)",
+  "raw": {
+   "prompt_token_count": 6000,
+   "cached_content_token_count": 2000,
+   "candidates_token_count": 300,
+   "thoughts_token_count": 120
+  },
+  "expected": {
+   "input_fresh": 4000,
+   "cache_read": 2000,
+   "cache_write": null,
+   "output": 420,
+   "reasoning": 120
+  },
+  "expected_total_input": 6000,
+  "lab_family": "gemini",
+  "lab_gap": null
+ },
+ {
+  "id": "bedrock-converse-m11",
+  "family": "bedrock_converse",
+  "source": "scripted: lab/scenarios.py m11() (scripted only: no AWS credentials yet, no live run)",
+  "raw": {
+   "inputTokens": 1000,
+   "outputTokens": 50,
+   "cacheReadInputTokens": 4000,
+   "cacheWriteInputTokens": 500
+  },
+  "expected": {
+   "input_fresh": 1000,
+   "cache_read": 4000,
+   "cache_write": 500,
+   "output": 50,
+   "reasoning": null
+  },
+  "expected_total_input": 5500,
+  "lab_family": "bedrock",
+  "lab_gap": null
+ },
+ {
+  "id": "ollama-m11",
+  "family": "ollama",
+  "source": "scripted: lab/scenarios.py m11()",
+  "raw": {
+   "prompt_eval_count": 900,
+   "prompt_eval_cached_count": 700,
+   "eval_count": 80
+  },
+  "expected": {
+   "input_fresh": 200,
+   "cache_read": 700,
+   "cache_write": null,
+   "output": 80,
+   "reasoning": null
+  },
+  "expected_total_input": 900,
+  "lab_family": "ollama",
+  "lab_gap": "V-20: the app ignores prompt_eval_cached_count (until E3)"
+ },
+ {
+  "id": "ollama-older-m11",
+  "family": "ollama",
+  "source": "scripted: lab/scenarios.py m11() (older Ollama: no cached count)",
+  "raw": {
+   "prompt_eval_count": 900,
+   "eval_count": 80
+  },
+  "expected": {
+   "input_fresh": 900,
+   "cache_read": null,
+   "cache_write": null,
+   "output": 80,
+   "reasoning": null
+  },
+  "expected_total_input": 900,
+  "lab_family": "ollama",
+  "lab_gap": "V-20: the app ignores prompt_eval_cached_count (until E3)"
+ },
+ {
+  "id": "ollama-live",
+  "family": "ollama",
+  "source": "live: runs/live/ollama_qwen3_0.6b-20261031-172105, step s3 (last line, done: true)",
+  "raw": {
+   "prompt_eval_count": 4804,
+   "prompt_eval_cached_count": 4641,
+   "eval_count": 102
+  },
+  "expected": {
+   "input_fresh": 163,
+   "cache_read": 4641,
+   "cache_write": null,
+   "output": 102,
+   "reasoning": null
+  },
+  "expected_total_input": 4804,
+  "lab_family": "ollama",
+  "lab_gap": "V-20: the app ignores prompt_eval_cached_count (until E3)"
+ }
+]

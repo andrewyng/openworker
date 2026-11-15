@@ -1,0 +1,51 @@
+# No credentials or generated Secrets in this chart. Supply existing Secrets.
+image: ""
+proxyImage: nginx@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+allowMutableImages: false
+imagePullSecrets: []
+api:
+  replicas: 2
+  serviceAccountName: ""
+worker:
+  replicas: 2
+  slots: 1
+  drainTimeoutSeconds: 300
+  shutdownTimeoutSeconds: 45
+  serviceAccountName: ""
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}
+proxyResources:
+  requests: {cpu: 20m, memory: 32Mi}
+  limits: {cpu: 250m, memory: 128Mi}
+terminationGracePeriodSeconds: 360
+databaseReadiness:
+  enabled: false
+  host: ""
+  image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+secrets:
+  database: ""
+  databaseCA: ""
+  openshell: ""
+  apiTLS: ""
+  probe: ""
+  objectStore: ""
+  objectStoreCA: ""
+  model: ""
+# Non-secret reference-server configuration. Paths follow the README contract.
+config: {}
+nodeSelector: {}
+tolerations: []
+network:
+  enabled: true
+  # Additional namespaces allowed to reach the API's TLS listener.
+  clientNamespaces: []
+  # OpenShell/backing-service namespaces allowed on listed internal service ports.
+  serviceNamespaces: []
+  extraEgress: []
+taskDesk:
+  enabled: false
+  image: ""
+  accessSecret: ""
+  apiCASecret: ""
+  config: {}

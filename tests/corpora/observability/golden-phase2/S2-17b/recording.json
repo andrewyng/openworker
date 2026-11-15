@@ -1,0 +1,171 @@
+{
+ "turns": [
+  {
+   "turn_id": "01JP2TRN000000000000000000",
+   "session_id": "golden-s2-17b",
+   "seq": 1,
+   "status": "completed",
+   "approval_mode": "interactive",
+   "attended": true,
+   "reviewer": {
+    "active": false,
+    "shadow": false,
+    "kind": null,
+    "model": null
+   },
+   "stamp": {
+    "sandbox": {
+     "provider": "direct",
+     "enforcement": "none"
+    }
+   },
+   "max_iterations": 50,
+   "kind": "run",
+   "trigger": "user",
+   "started_at": 1793600000000,
+   "incomplete": false,
+   "first_message_id": "01JP2MSG000000000000000000",
+   "last_message_id": "01JP2MSG000000000000000000",
+   "schema_version": 1,
+   "duration_ms": 1200034
+  }
+ ],
+ "steps": [
+  {
+   "step_id": "01JP2STP000000000000000000",
+   "turn_id": "01JP2TRN000000000000000000",
+   "session_id": "golden-s2-17b",
+   "parent_step_id": null,
+   "seq": 1,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1793600000000,
+   "duration_ms": 10,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": "01JP2MSG000000000000000010",
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "main",
+    "provider": "testprov",
+    "provider_title": "Test provider",
+    "model": "testprov:model-a",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 100000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 1000,
+     "cache_read": 0,
+     "cache_write": null,
+     "output": 100,
+     "reasoning": null
+    },
+    "tools_offered": 3,
+    "max_output": 4096
+   },
+   "content": {}
+  },
+  {
+   "step_id": "01JP2STP000000000000000000",
+   "turn_id": "01JP2TRN000000000000000000",
+   "session_id": "golden-s2-17b",
+   "parent_step_id": null,
+   "seq": 2,
+   "kind": "wait",
+   "name": "approval",
+   "started_at": 1793600000011,
+   "duration_ms": 1200000,
+   "status": "ok",
+   "call_id": "call_3",
+   "call_index": null,
+   "message_id": null,
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "for_call_id": "call_3",
+    "kind": "approval",
+    "where": "inbox",
+    "attended": true,
+    "outcome": "approved",
+    "inbox_at": 1793601000011
+   },
+   "content": {}
+  },
+  {
+   "step_id": "01JP2STP000000000000000000",
+   "turn_id": "01JP2TRN000000000000000000",
+   "session_id": "golden-s2-17b",
+   "parent_step_id": null,
+   "seq": 3,
+   "kind": "tool",
+   "name": "run_shell",
+   "started_at": 1793601200012,
+   "duration_ms": 10,
+   "status": "ok",
+   "call_id": "call_3",
+   "call_index": 0,
+   "message_id": "01JP2MSG000000000000000020",
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "risk_class": "exec",
+    "decision": {
+     "path": [],
+     "origin": "low_risk"
+    },
+    "args_hash": "363379",
+    "repeat_ok": false,
+    "result_error": false,
+    "error_kind": null,
+    "connector": null,
+    "result_bytes": 120,
+    "exit_code": null,
+    "sandbox": null,
+    "reaches_network": false
+   },
+   "content": {}
+  },
+  {
+   "step_id": "01JP2STP000000000000000000",
+   "turn_id": "01JP2TRN000000000000000000",
+   "session_id": "golden-s2-17b",
+   "parent_step_id": null,
+   "seq": 4,
+   "kind": "model",
+   "name": "model",
+   "started_at": 1793601200023,
+   "duration_ms": 10,
+   "status": "ok",
+   "call_id": null,
+   "call_index": null,
+   "message_id": "01JP2MSG000000000000000010",
+   "shadow": false,
+   "after_turn": false,
+   "attrs": {
+    "purpose": "main",
+    "provider": "testprov",
+    "provider_title": "Test provider",
+    "model": "testprov:model-a",
+    "stream": true,
+    "finish_reason": "stop",
+    "ttft_ms": 5,
+    "context_window": 100000,
+    "usage": {
+     "reported": true,
+     "input_fresh": 1000,
+     "cache_read": 0,
+     "cache_write": null,
+     "output": 100,
+     "reasoning": null
+    },
+    "tools_offered": 3,
+    "max_output": 4096
+   },
+   "content": {}
+  }
+ ]
+}

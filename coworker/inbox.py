@@ -27,7 +27,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
@@ -114,7 +114,18 @@ class InboxStore:
         self._items: dict[str, InboxItem] = {}
         self._waiters: dict[str, asyncio.Event] = {}
         self._waiter_loops: dict[str, asyncio.AbstractEventLoop] = {}
+        # Told of every new item and every item moved to the Inbox (observability: where a
+        # waiting call's card is shown). Best-effort: its failures never touch the store.
+        self.on_change: Optional[Callable[[InboxItem], None]] = None
         self._load()
+
+    def _changed(self, item: "InboxItem") -> None:
+        if self.on_change is None:
+            return
+        try:
+            self.on_change(item)
+        except Exception:  # noqa: BLE001
+            pass
 
     # -- persistence ------------------------------------------------------------
     def _load(self) -> None:
@@ -180,6 +191,7 @@ class InboxStore:
             if source is not None and source.state == STATE_RESOLVED:
                 self._supersede_locked(item, source)
             self._save()
+        self._changed(item)
         return item
 
     def for_tool_call(self, session_id: str, tool_call_id: str) -> Optional[InboxItem]:
@@ -476,6 +488,8 @@ class InboxStore:
                     changed.append(item)
             if changed:
                 self._save()
+        for item in changed:
+            self._changed(item)
         return changed
 
     # -- resume reconciliation --------------------------------------------------

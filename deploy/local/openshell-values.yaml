@@ -1,0 +1,17 @@
+# Local, private ClusterIP evaluation only. Never expose this developer principal
+# to a shared network. TLS and the sandbox enforcement boundary remain enabled.
+global:
+  image:
+    tag: "0.1.3"
+server:
+  telemetryEnabled: false
+  auth:
+    allowUnauthenticatedUsers: true
+  workspaceDefaultStorageSize: 1Gi
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi

@@ -321,11 +321,8 @@ def test_a_sequence_of_reads_is_still_a_read(tmp_path, command):
         "git config user.name",
         "git config --list --show-origin",
         "git config user.email a@b.c",
-        "git config --global user.name 'A B'",
         "git config set --local init.defaultBranch main",
-        "git config --global core.longpaths true",
         "git config push.autoSetupRemote true",
-        "git config --global push.default simple",
         "git config fetch.prune true",
         "git config rebase.autoStash true",
         "git config merge.conflictStyle zdiff3",
@@ -335,6 +332,23 @@ def test_a_sequence_of_reads_is_still_a_read(tmp_path, command):
 def test_other_shell_commands_are_unaffected(tmp_path, case_insensitive, command):
     d = _shell(tmp_path, command, shell_kind="bash")
     assert not d.human_only, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --global user.name 'A B'",
+        "git config --global core.longpaths true",
+        "git config --global push.default simple",
+    ],
+)
+def test_a_plain_global_git_setting_is_not_a_protected_file(tmp_path, case_insensitive, command):
+    # Not this floor's: no file here runs later. Round-2 F-5 still sends a change to the
+    # user's global settings to a person in Auto-Approve (tests/test_settings_floor.py),
+    # and the other modes keep their ordinary card.
+    d = _shell(tmp_path, command, shell_kind="bash")
+    assert d.human_only and d.reason == permissions.USER_SETTINGS_REASON, command
+    assert not _shell(tmp_path, command, Mode.INTERACTIVE, shell_kind="bash").human_only, command
 
 
 @pytest.mark.parametrize(

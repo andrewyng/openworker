@@ -61,21 +61,30 @@ def forget_all() -> None:
 def _fetch(base: str) -> list[dict[str, Any]]:
     # Module-level httpx calls, so a test can stand the server in with two fakes.
     try:
-        tags = httpx.get(base + "/api/tags", timeout=4.0).json()
+        from .local_server import probe_timeout
+
+        tags = httpx.get(base + "/api/tags", timeout=probe_timeout(base, 4.0)).json()
     except (httpx.HTTPError, ValueError, OSError):
         return []
-    rows = []
-    for item in tags.get("models") or []:
-        name = item.get("name")
-        if not name:
-            continue
-        show: dict[str, Any] = {}
+    items = [item for item in tags.get("models") or [] if item.get("name")]
+
+    def show_of(name: str) -> dict[str, Any]:
         try:
             show = httpx.post(base + "/api/show", json={"model": name}, timeout=4.0).json()
         except (httpx.HTTPError, ValueError, OSError):
-            show = {}
-        rows.append(_row(name, item, show if isinstance(show, dict) else {}))
-    return rows
+            return {}
+        return show if isinstance(show, dict) else {}
+
+    # One /api/show per model, asked at the same time (T3-2: one after another, five
+    # models took about 4 s of the Models & Keys page's wait).
+    if len(items) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(4, len(items)), thread_name_prefix="ollama-show") as pool:
+            shows = list(pool.map(show_of, [item["name"] for item in items]))
+    else:
+        shows = [show_of(item["name"]) for item in items]
+    return [_row(item["name"], item, show) for item, show in zip(items, shows)]
 
 
 def _row(name: str, tag: dict[str, Any], show: dict[str, Any]) -> dict[str, Any]:

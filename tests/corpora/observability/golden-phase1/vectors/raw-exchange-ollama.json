@@ -1,0 +1,130 @@
+{
+ "wire": "ollama",
+ "source": "live: runs/live/ollama_qwen3_0.6b-20261031-172105, step s3",
+ "note": "Response body is an excerpt of the captured one (see recording-format.md section 6.6); expected values are computed from this excerpt.",
+ "request": {
+  "method": "POST",
+  "url": "http://localhost:11434/api/chat",
+  "headers": {
+   "content-length": "25030",
+   "content-type": "application/json",
+   "host": "localhost:11434"
+  },
+  "body_sha256": "27076b0c7b676eff6a1b056b505bef8fac111d8451f53ebec9c706d6634a55e9",
+  "body_size": 25030,
+  "params": {
+   "model": "qwen3:0.6b",
+   "options": {
+    "num_ctx": 16384,
+    "num_predict": 32000
+   },
+   "shift": false,
+   "stream": true,
+   "tools_offered": 6
+  },
+  "manifest_keys": [
+   "messages",
+   "model",
+   "options",
+   "shift",
+   "stream",
+   "tools"
+  ]
+ },
+ "response": {
+  "status": 200,
+  "headers": {
+   "content-type": "application/x-ndjson",
+   "date": "Sat, 31 Oct 2026 11:50:21 GMT",
+   "transfer-encoding": "chunked"
+  },
+  "body_is_excerpt": true,
+  "body": "{\"model\":\"qwen3:0.6b\",\"created_at\":\"2026-10-31T11:50:21.6924318Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\",\"thinking\":\"Okay\"},\"done\":false}\n{\"model\":\"qwen3:0.6b\",\"created_at\":\"2026-10-31T11:50:36.6256182Z\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\",\"total_duration\":19252494900,\"load_duration\":20054700,\"prompt_eval_count\":4804,\"prompt_eval_cached_count\":4641,\"prompt_eval_duration\":3904031000,\"eval_count\":102,\"eval_duration\":15233262000}\n",
+  "body_blob": null
+ },
+ "expected": {
+  "provider_meta": {
+   "wire": "ollama",
+   "status": 200,
+   "request": {
+    "model": "qwen3:0.6b",
+    "options": {
+     "num_ctx": 16384,
+     "num_predict": 32000
+    },
+    "shift": false,
+    "stream": true,
+    "tools_offered": 6
+   },
+   "headers": {
+    "content-type": "application/x-ndjson",
+    "date": "Sat, 31 Oct 2026 11:50:21 GMT",
+    "transfer-encoding": "chunked"
+   },
+   "event_counts": {
+    "chunk": 1,
+    "done": 1
+   },
+   "events": {
+    "chunk": {
+     "model": "qwen3:0.6b",
+     "created_at": "2026-10-31T11:50:21.6924318Z",
+     "message": {
+      "role": "assistant"
+     },
+     "done": false
+    },
+    "done": {
+     "model": "qwen3:0.6b",
+     "created_at": "2026-10-31T11:50:36.6256182Z",
+     "message": {
+      "role": "assistant"
+     },
+     "done": true,
+     "done_reason": "stop",
+     "total_duration": 19252494900,
+     "load_duration": 20054700,
+     "prompt_eval_count": 4804,
+     "prompt_eval_cached_count": 4641,
+     "prompt_eval_duration": 3904031000,
+     "eval_count": 102,
+     "eval_duration": 15233262000
+    }
+   }
+  },
+  "provider_facts": {
+   "served_model": "qwen3:0.6b",
+   "provider_request_id": null,
+   "provider_response_id": null,
+   "served_by": null,
+   "reasoning": null,
+   "cache_read": 4641,
+   "cache_write": null,
+   "cache_write_by_ttl": null,
+   "provider_total": null,
+   "requested": {
+    "num_ctx": 16384,
+    "max_tokens": 32000,
+    "temperature": null,
+    "think": null,
+    "shift": false,
+    "keep_alive": null
+   },
+   "applied": {},
+   "stop": {
+    "reason": "stop"
+   },
+   "provider_timing": {
+    "total_duration": 19252494900,
+    "load_duration": 20054700,
+    "prompt_eval_duration": 3904031000,
+    "eval_duration": 15233262000,
+    "created_at": "2026-10-31T11:50:36.6256182Z"
+   },
+   "rate_limit": null,
+   "hosted_tools": null,
+   "cost_reported": null
+  }
+ },
+ "lab_provider_facts_differs": []
+}

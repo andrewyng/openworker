@@ -1,0 +1,1879 @@
+//! Shared kind/verified-EKS installer. The local alias forbids cloud bindings.
+//! Namespace UIDs, Helm receipts and input hashes protect existing installations.
+use super::*;
+use std::{process::Stdio, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command as Process,
+};
+#[path = "deployment_features.rs"]
+pub(crate) mod features;
+#[path = "deployment_kubernetes.rs"]
+pub(crate) mod single_file;
+const OWNER: &str = "openworker.io/installer-id";
+#[path = "deployment_cluster_platform.rs"]
+mod platform;
+const CHART_PINS: &[&str] = &[
+    "5a82e27d6cf4089fa16d96c87d9fc0fe62f65fa05341465bc749ba5ab91abb33", // 0.1.3
+    "5ce3e63648d1a80f96f748063e44444069667ae9049457b8aded35cdb2a6171a", // 0.1.7 official OCI archive
+    "271368019433b7e5c0668757cdd880302a044924eb37077aef82a95d814efd84", // 0.1.8 official OCI archive
+];
+#[derive(Subcommand)]
+pub enum Command {
+    Platform {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        allow_experimental_cloud: bool,
+    },
+    Plan {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    Apply {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        openshell_only: bool,
+        /// Only after independently proving an uncertain operation had no effect.
+        #[arg(long)]
+        confirm_no_effect: Option<String>,
+        /// Confirm original hook-free service resources are ready after Helm timed out.
+        #[arg(long)]
+        reconcile_ready_release: Option<String>,
+    },
+    /// Record the original terminal failed release for cleanup; never reinstall it.
+    RecordFailedRelease {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        accept_plan: String,
+        #[arg(long)]
+        release: String,
+    },
+    Status {
+        #[arg(long)]
+        state: PathBuf,
+    },
+    /// Create only declared Secrets in the owned namespace, via private stdin.
+    Secrets {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        accept_plan: String,
+    },
+    Destroy {
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        deployment_id: String,
+    },
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Config {
+    schema_version: u16,
+    kubeconfig: PathBuf,
+    context: String,
+    helm: PathBuf,
+    service: Service,
+    openshell: Shell,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cloud: Option<cloud::Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    azure: Option<azure::InstallationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    platform: Option<platform::Artifact>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Service {
+    namespace: String,
+    release: String,
+    chart: PathBuf,
+    values_file: PathBuf,
+    fixture_database: bool,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase", deny_unknown_fields)]
+enum Shell {
+    #[serde(rename_all = "camelCase")]
+    Install {
+        namespace: String,
+        release: String,
+        fullname: String,
+        archive: PathBuf,
+        values_file: PathBuf,
+    },
+    Existing {
+        namespace: String,
+        release: String,
+        fullname: String,
+    },
+}
+impl Shell {
+    fn scope(&self) -> (&str, &str, &str) {
+        match self {
+            Self::Install {
+                namespace,
+                release,
+                fullname,
+                ..
+            }
+            | Self::Existing {
+                namespace,
+                release,
+                fullname,
+            } => (namespace, release, fullname),
+        }
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Plan {
+    schema_version: u16,
+    id: String,
+    config: Config,
+    hashes: BTreeMap<String, String>,
+    cluster_uid: String,
+    digest: String,
+}
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Journal {
+    schema_version: u16,
+    plan_digest: String,
+    phase: String,
+    namespaces: BTreeMap<String, String>,
+    operations: BTreeMap<String, Operation>,
+    #[serde(default)]
+    confirmed_no_effect: Vec<Operation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    feature_updates: Vec<features::Update>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Operation {
+    status: String,
+    request_id: String,
+    receipt: Option<Value>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    label_provenance: bool,
+}
+struct Client<'a> {
+    c: &'a Config,
+}
+pub(super) async fn exec(bin: &Path, a: &[String], input: Option<Vec<u8>>) -> Result<Vec<u8>> {
+    exec_with_env(bin, a, input, &BTreeMap::new()).await
+}
+pub(super) async fn exec_with_env(
+    bin: &Path,
+    a: &[String],
+    input: Option<Vec<u8>>,
+    env: &BTreeMap<String, String>,
+) -> Result<Vec<u8>> {
+    let mut child = Process::new(bin)
+        .envs(env)
+        .args(a)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("Local installer tool could not start")?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    async fn bytes<R: tokio::io::AsyncRead + Unpin>(s: R, max: u64) -> std::io::Result<Vec<u8>> {
+        let mut b = vec![];
+        s.take(max + 1).read_to_end(&mut b).await?;
+        Ok(b)
+    }
+    let operation = async {
+        tokio::try_join!(
+            child.wait(),
+            bytes(stdout, 8 * 1024 * 1024),
+            bytes(stderr, 65536),
+            async move {
+                if let Some(v) = input {
+                    let v = zeroize::Zeroizing::new(v);
+                    stdin.write_all(&v).await?;
+                }
+                drop(stdin);
+                Ok(())
+            }
+        )
+    };
+    match tokio::time::timeout(Duration::from_secs(240), operation).await {
+        Ok(Ok((status, out, err, _))) => {
+            ensure!(
+                out.len() <= 8 * 1024 * 1024 && err.len() <= 65536,
+                "Local tool output limit exceeded; inspect original operation"
+            );
+            ensure!(status.success(),"Local tool failed; result may be unknown. Inspect scoped resources before retrying. Tool output withheld to protect credentials");
+            Ok(out)
+        }
+        _ => {
+            let _ = child.kill().await;
+            bail!("Local tool timed out/failed; inspect original operation before retrying")
+        }
+    }
+}
+fn args(a: &[&str]) -> Vec<String> {
+    a.iter().map(|s| s.to_string()).collect()
+}
+impl Client<'_> {
+    async fn kube(&self, a: Vec<String>, input: Option<Vec<u8>>) -> Result<Vec<u8>> {
+        let mut all = args(&[
+            "--kubeconfig",
+            self.c
+                .kubeconfig
+                .to_str()
+                .context("Invalid kubeconfig path")?,
+            "--context",
+            &self.c.context,
+        ]);
+        all.extend(a);
+        exec(Path::new("kubectl"), &all, input).await
+    }
+    async fn get(&self, kind: &str, name: &str, namespace: Option<&str>) -> Result<Option<Value>> {
+        let mut a = args(&["get", kind, name, "--ignore-not-found=true", "-o", "json"]);
+        if let Some(ns) = namespace {
+            a.extend(args(&["-n", ns]));
+        }
+        let b = self.kube(a, None).await?;
+        if b.iter().all(u8::is_ascii_whitespace) {
+            return Ok(None);
+        }
+        Ok(Some(
+            serde_json::from_slice(&b).context("Invalid cluster response")?,
+        ))
+    }
+    async fn helm(&self, a: Vec<String>) -> Result<Vec<u8>> {
+        let mut all = a;
+        all.extend(args(&[
+            "--kubeconfig",
+            self.c.kubeconfig.to_str().unwrap(),
+            "--kube-context",
+            &self.c.context,
+        ]));
+        exec(&self.c.helm, &all, None).await
+    }
+    async fn release(&self, ns: &str, name: &str) -> Result<Option<Value>> {
+        let rows: Value = serde_json::from_slice(
+            &self
+                .helm(args(&[
+                    "list", "-n", ns, "--all", "--max", "256", "-o", "json",
+                ]))
+                .await?,
+        )?;
+        let rows = rows.as_array().context("Invalid Helm list")?;
+        ensure!(rows.len() < 256, "Release list truncated");
+        if !rows.iter().any(|v| v["name"] == name) {
+            return Ok(None);
+        }
+        let status: Value = serde_json::from_slice(
+            &self
+                .helm(args(&["status", name, "-n", ns, "-o", "json"]))
+                .await?,
+        )?;
+        let revision = status["version"]
+            .as_u64()
+            .context("Helm revision unavailable")?;
+        let secret = self
+            .get(
+                "secret",
+                &format!("sh.helm.release.v1.{name}.v{revision}"),
+                Some(ns),
+            )
+            .await?
+            .context("Helm release receipt missing")?;
+        ensure!(
+            secret["metadata"]["uid"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "Helm release UID missing"
+        );
+        let mut receipt = json!({"name":name,"namespace":ns,"revision":revision,"status":status["info"]["status"],"description":status["info"]["description"],"uid":secret["metadata"]["uid"]});
+        if secret["metadata"]["labels"][OWNER].is_string()
+            && secret["metadata"]["labels"]["openworker.io/operation-id"].is_string()
+        {
+            receipt["installerId"] = secret["metadata"]["labels"][OWNER].clone();
+            receipt["operationId"] =
+                secret["metadata"]["labels"]["openworker.io/operation-id"].clone();
+        }
+        Ok(Some(receipt))
+    }
+    async fn cluster(&self) -> Result<String> {
+        let ns = self
+            .get("namespace", "kube-system", None)
+            .await?
+            .context("Cluster identity missing")?;
+        Ok(ns["metadata"]["uid"]
+            .as_str()
+            .context("Cluster UID missing")?
+            .to_string())
+    }
+}
+fn read_json(p: &Path) -> Result<Value> {
+    let parent = p
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Ok(serde_json::from_slice(&super::read_file(
+        parent,
+        p.file_name()
+            .and_then(|s| s.to_str())
+            .context("Invalid file path")?,
+    )?)?)
+}
+fn bounded_name(s: &str) -> bool {
+    (3..=50).contains(&s.len())
+        && s.as_bytes()[0].is_ascii_lowercase()
+        && s.as_bytes().last().unwrap().is_ascii_alphanumeric()
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+fn hash_path(path: &Path) -> Result<String> {
+    let meta = fs::symlink_metadata(path)?;
+    ensure!(
+        !meta.file_type().is_symlink(),
+        "Installer inputs cannot be links"
+    );
+    if meta.is_file() {
+        ensure!(meta.len() <= 4 * 1024 * 1024, "Installer input too large");
+        return Ok(hash(&fs::read(path)?));
+    }
+    ensure!(meta.is_dir(), "Invalid chart input");
+    fn walk(root: &Path, p: &Path, files: &mut BTreeMap<String, String>) -> Result<()> {
+        for (index, entry) in fs::read_dir(p)?.enumerate() {
+            ensure!(index < 200, "Chart directory entry limit exceeded");
+            let path = entry?.path();
+            let m = fs::symlink_metadata(&path)?;
+            ensure!(!m.file_type().is_symlink(), "Chart links forbidden");
+            if m.is_dir() {
+                ensure!(
+                    path.components().count() - root.components().count() < 12,
+                    "Chart nesting too deep"
+                );
+                walk(root, &path, files)?;
+            } else {
+                ensure!(m.is_file() && m.len() <= 1024 * 1024, "Invalid chart file");
+                files.insert(
+                    path.strip_prefix(root)?
+                        .to_str()
+                        .context("Invalid chart filename")?
+                        .to_owned(),
+                    hash(&fs::read(path)?),
+                );
+                ensure!(files.len() <= 200, "Chart file limit exceeded");
+            }
+        }
+        Ok(())
+    }
+    let mut files = BTreeMap::new();
+    walk(path, path, &mut files)?;
+    ensure!(!files.is_empty(), "Empty chart");
+    Ok(hash(&serde_json::to_vec(&files)?))
+}
+fn pinned(s: &str) -> bool {
+    s.rsplit_once("@sha256:").is_some_and(|(name, h)| {
+        !name.is_empty()
+            && h.len() == 64
+            && h.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    })
+}
+fn inputs(c: &Config) -> Result<BTreeMap<String, String>> {
+    ensure!(
+        !(c.cloud.is_some() && c.azure.is_some()),
+        "Only one cloud installation binding is allowed"
+    );
+    ensure!(
+        c.schema_version == 1
+            && (c.cloud.is_some() || c.azure.is_some() || c.context.starts_with("kind-"))
+            && c.kubeconfig.is_absolute(),
+        "Explicit reviewed cluster kubeconfig/context required"
+    );
+    let (ns, release, fullname) = c.openshell.scope();
+    for name in [
+        &c.service.namespace,
+        &c.service.release,
+        ns,
+        release,
+        fullname,
+    ] {
+        ensure!(bounded_name(name), "Invalid namespace/release name");
+    }
+    ensure!(
+        (c.service.namespace.starts_with("ow-service-m4-")
+            || ((c.cloud.is_some() || c.azure.is_some()) && c.service.namespace == "ow-service"))
+            && c.service.namespace != ns,
+        "Dedicated local service namespace required"
+    );
+    let v = read_json(&c.service.values_file)?;
+    ensure!(
+        v["image"].as_str().is_some_and(pinned),
+        "Service image must be digest pinned"
+    );
+    ensure!(
+        v["config"]["service"]["id"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("ows-")
+                && s.len() <= 50
+                && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
+        "Invalid service identity"
+    );
+    let expected = format!("https://{fullname}.{ns}.svc.cluster.local:8080");
+    ensure!(
+        v["config"]["openshell"]["endpoint"] == expected,
+        "Service and gateway endpoint differ"
+    );
+    let mut hashes = BTreeMap::from([
+        ("service-chart".into(), hash_path(&c.service.chart)?),
+        ("service-values".into(), hash_path(&c.service.values_file)?),
+    ]);
+    if c.cloud.is_some() || c.azure.is_some() {
+        hashes.insert("cluster-kubeconfig".into(), hash_path(&c.kubeconfig)?);
+    }
+    if let Some(artifact) = &c.platform {
+        platform::validate(artifact)?;
+        hashes.insert("platform".into(), artifact.sha256.clone());
+    }
+    if let Shell::Install {
+        archive,
+        values_file,
+        ..
+    } = &c.openshell
+    {
+        let sha = hash_path(archive)?;
+        ensure!(
+            CHART_PINS.contains(&sha.as_str()),
+            "OpenShell archive differs from reviewed 0.1.3/0.1.7/0.1.8 pins"
+        );
+        let v = read_json(values_file)?;
+        ensure!(
+            v["fullnameOverride"] == fullname
+                && v["server"]["auth"]["allowUnauthenticatedUsers"] == false,
+            "OpenShell must use the explicit name and authenticated gateway"
+        );
+        for pointer in [
+            "/gateway/image/digest",
+            "/sandboxRuntime/image/digest",
+            "/supervisor/image/digest",
+            "/sandbox/image/digest",
+        ] {
+            ensure!(
+                v.pointer(pointer)
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| pinned(&format!("image@{s}"))),
+                "Trusted OpenShell images must be digest pinned"
+            );
+        }
+        hashes.insert("openshell-chart".into(), sha);
+        hashes.insert("openshell-values".into(), hash_path(values_file)?);
+    }
+    Ok(hashes)
+}
+fn digest(p: &Plan) -> Result<String> {
+    Ok(hash(&serde_json::to_vec(&(
+        &p.schema_version,
+        &p.id,
+        &p.config,
+        &p.hashes,
+        &p.cluster_uid,
+    ))?))
+}
+fn save(root: &Path, name: &str, value: &impl Serialize) -> Result<()> {
+    let path = root.join(format!(".{name}-{}", uuid::Uuid::new_v4().simple()));
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    let mut f = o.open(&path)?;
+    f.write_all(&json_bytes(value)?)?;
+    f.sync_all()?;
+    fs::rename(path, root.join(name))?;
+    #[cfg(unix)]
+    fs::File::open(root)?.sync_all()?;
+    Ok(())
+}
+fn load(root: &Path) -> Result<(Plan, Journal, fs::File)> {
+    let m = fs::symlink_metadata(root)?;
+    ensure!(
+        m.is_dir() && !m.file_type().is_symlink(),
+        "Invalid installer state directory"
+    );
+    let lock_path = root.join("installer.lock");
+    if let Ok(meta) = fs::symlink_metadata(&lock_path) {
+        ensure!(
+            meta.is_file() && !meta.file_type().is_symlink(),
+            "Invalid installer lock"
+        );
+    }
+    let mut o = fs::OpenOptions::new();
+    o.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    let lock = o.open(lock_path)?;
+    lock.try_lock()
+        .map_err(|_| anyhow::anyhow!("Another installer process holds this journal"))?;
+    let p: Plan = serde_json::from_slice(&super::read_file(root, "local-plan.json")?)?;
+    ensure!(
+        p.schema_version == 1 && p.digest == digest(&p)?,
+        "Local plan digest mismatch"
+    );
+    let j: Journal = serde_json::from_slice(&super::read_file(root, "journal.json")?)?;
+    ensure!(
+        j.schema_version == 1 && j.plan_digest == p.digest,
+        "Journal/plan mismatch"
+    );
+    Ok((p, j, lock))
+}
+fn begin(root: &Path, j: &mut Journal, step: &str) -> Result<()> {
+    ensure!(
+        !j.operations.contains_key(step),
+        "Operation already has an intent"
+    );
+    j.operations.insert(
+        step.into(),
+        Operation {
+            status: "intent".into(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            receipt: None,
+            label_provenance: ["openshell-release", "service-release"].contains(&step),
+        },
+    );
+    save(root, "journal.json", j)
+}
+fn complete(root: &Path, j: &mut Journal, step: &str, receipt: Value) -> Result<()> {
+    let op = j
+        .operations
+        .get_mut(step)
+        .context("Operation intent missing")?;
+    op.status = "complete".into();
+    op.receipt = Some(receipt);
+    save(root, "journal.json", j)
+}
+async fn namespace(
+    client: &Client<'_>,
+    p: &Plan,
+    root: &Path,
+    j: &mut Journal,
+    name: &str,
+    service_id: &str,
+) -> Result<()> {
+    let step = format!("namespace:{name}");
+    let existing = client.get("namespace", name, None).await?;
+    if let Some(ns) = existing {
+        ensure!(
+            ns["metadata"]["labels"][OWNER] == p.id,
+            "Namespace is not owned by this installer"
+        );
+        let uid = ns["metadata"]["uid"]
+            .as_str()
+            .context("Namespace UID missing")?;
+        if let Some(expected) = j.namespaces.get(name) {
+            ensure!(expected == uid, "Namespace identity changed");
+        }
+        ensure!(
+            j.operations.contains_key(&step),
+            "Refusing to adopt a namespace without an original intent"
+        );
+        j.namespaces.insert(name.into(), uid.into());
+        complete(root, j, &step, json!({"uid":uid}))?;
+        return Ok(());
+    }
+    ensure!(
+        !j.operations.contains_key(&step),
+        "Namespace outcome unknown or owned namespace missing; inspect before retrying"
+    );
+    begin(root, j, &step)?;
+    let ns = json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":name,"labels":{OWNER:p.id,"openworker.io/qualification":service_id}}});
+    client
+        .kube(args(&["create", "-f", "-"]), Some(serde_json::to_vec(&ns)?))
+        .await?;
+    let ns = client
+        .get("namespace", name, None)
+        .await?
+        .context("Namespace creation outcome unknown")?;
+    ensure!(
+        ns["metadata"]["labels"][OWNER] == p.id,
+        "Namespace ownership mismatch"
+    );
+    let uid = ns["metadata"]["uid"]
+        .as_str()
+        .context("Namespace UID missing")?;
+    j.namespaces.insert(name.into(), uid.into());
+    complete(root, j, &step, json!({"uid":uid}))
+}
+async fn owned(client: &Client<'_>, p: &Plan, j: &Journal, name: &str) -> Result<Option<Value>> {
+    let ns = client.get("namespace", name, None).await?;
+    if let Some(v) = &ns {
+        ensure!(
+            v["metadata"]["labels"][OWNER] == p.id
+                && j.namespaces.get(name).map(String::as_str) == v["metadata"]["uid"].as_str(),
+            "Namespace ownership/UID mismatch"
+        );
+    }
+    Ok(ns)
+}
+struct ReleaseInstall<'a> {
+    key: &'a str,
+    ns: &'a str,
+    release: &'a str,
+    chart: &'a Path,
+    values: &'a Path,
+    reconcile_ready: bool,
+}
+async fn install_release(
+    client: &Client<'_>,
+    p: &Plan,
+    root: &Path,
+    j: &mut Journal,
+    install: ReleaseInstall<'_>,
+) -> Result<()> {
+    let ReleaseInstall {
+        key,
+        ns,
+        release,
+        chart,
+        values,
+        reconcile_ready,
+    } = install;
+    owned(client, p, j, ns)
+        .await?
+        .context("Owned namespace missing")?;
+    if key == "service-release" && !j.feature_updates.is_empty() {
+        features::verify_current(client, p, j).await?;
+        return Ok(());
+    }
+    if let Some(mut r) = client.release(ns, release).await? {
+        let op = j
+            .operations
+            .get(key)
+            .context("Refusing to adopt an existing Helm release")?;
+        ensure!(
+            if op.label_provenance {
+                r["installerId"] == p.id && r["operationId"] == op.request_id
+            } else {
+                r["description"] == format!("ows:{}:{}", p.id, op.request_id)
+            },
+            "Helm release provenance mismatch"
+        );
+        if let Some(original) = &op.receipt {
+            ensure!(
+                original["uid"] == r["uid"] && original["revision"] == r["revision"],
+                "Helm release identity/revision changed"
+            );
+        }
+        if r["status"] != "deployed" {
+            ensure!(
+                key == "service-release"
+                    && r["status"] == "failed"
+                    && (reconcile_ready
+                        || op
+                            .receipt
+                            .as_ref()
+                            .is_some_and(|v| v["qualifiedAfterTimeout"] == true)),
+                "Helm release is pending/failed; inspect original release, no automatic reinstall"
+            );
+            let details: Value = serde_json::from_slice(
+                &client
+                    .helm(args(&["status", release, "-n", ns, "-o", "json"]))
+                    .await?,
+            )?;
+            ensure!(
+                details
+                    .get("hooks")
+                    .is_none_or(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty)),
+                "Hooks may have unknown effects; failed release requires manual review"
+            );
+            ready_service(client, p, j).await?;
+            let job = client
+                .get("job", &format!("{release}-bootstrap"), Some(ns))
+                .await?
+                .context("Original bootstrap Job not observed")?;
+            ensure!(
+                job["status"]["succeeded"].as_u64().is_some_and(|n| n > 0),
+                "Bootstrap Job is not complete"
+            );
+            r["qualifiedAfterTimeout"] = json!(true);
+        }
+        complete(root, j, key, r)?;
+        return Ok(());
+    }
+    ensure!(!j.operations.contains_key(key),"Helm operation outcome unknown: no release observed. Confirm no effect explicitly before reissuing");
+    begin(root, j, key)?;
+    let nonce = &j.operations[key].request_id;
+    client
+        .helm(args(&[
+            "install",
+            release,
+            chart.to_str().context("Invalid chart path")?,
+            "-n",
+            ns,
+            "-f",
+            values.to_str().context("Invalid values path")?,
+            "--description",
+            &format!("ows:{}:{nonce}", p.id),
+            "--labels",
+            &format!("{OWNER}={},openworker.io/operation-id={nonce}", p.id),
+            "--wait",
+            "--wait-for-jobs",
+            "--timeout",
+            "180s",
+        ]))
+        .await?;
+    let r = client
+        .release(ns, release)
+        .await?
+        .context("Helm installation outcome unknown")?;
+    ensure!(
+        r["status"] == "deployed" && r["installerId"] == p.id && r["operationId"] == *nonce,
+        "Helm installation not confirmed"
+    );
+    complete(root, j, key, r)
+}
+async fn prerequisites(client: &Client<'_>, eks: bool) -> Result<()> {
+    let crd = client
+        .get("crd", "sandboxes.agents.x-k8s.io", None)
+        .await?
+        .context("Agent Sandbox CRD required")?;
+    ensure!(
+        crd["spec"]["versions"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|v| v["served"] == true
+                && ["v1alpha1", "v1beta1"].contains(&v["name"].as_str().unwrap_or("")))),
+        "Supported Agent Sandbox API required"
+    );
+    let controller = client
+        .get(
+            "deployment",
+            "agent-sandbox-controller",
+            Some("agent-sandbox-system"),
+        )
+        .await?
+        .context("Local qualification requires the Agent Sandbox controller")?;
+    ensure!(
+        controller["status"]["availableReplicas"]
+            .as_u64()
+            .is_some_and(|n| n > 0),
+        "Agent Sandbox controller must be available"
+    );
+    let classes: Value = serde_json::from_slice(
+        &client
+            .kube(args(&["get", "storageclasses", "-o", "json"]), None)
+            .await?,
+    )?;
+    ensure!(
+        classes["items"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|s| s["metadata"]["annotations"]
+                ["storageclass.kubernetes.io/is-default-class"]
+                == "true")),
+        "Default storage provisioner required"
+    );
+    if client.c.azure.is_some() {
+        azure::installation_storage(&classes)?;
+        return Ok(());
+    }
+    if eks {
+        let binding = client.c.cloud.as_ref().context("Cloud binding required")?;
+        let (deployment, _) = cloud::install_scope(binding)?;
+        let defaults: Vec<_> = classes["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| {
+                s["metadata"]["annotations"]["storageclass.kubernetes.io/is-default-class"]
+                    == "true"
+            })
+            .collect();
+        ensure!(
+            defaults.len() == 1
+                && defaults[0]["provisioner"] == "ebs.csi.aws.com"
+                && defaults[0]["reclaimPolicy"] == "Delete"
+                && defaults[0]["volumeBindingMode"] == "WaitForFirstConsumer"
+                && defaults[0]["parameters"]["encrypted"] == "true"
+                && defaults[0]["parameters"]["tagSpecification_1"]
+                    == format!("ows:deployment-id={deployment}"),
+            "Cloud default storage must be the sole encrypted, ownership-tagged EBS class"
+        );
+        cloud::verify_network(binding).await?;
+        return Ok(());
+    }
+    let ds: Value = serde_json::from_slice(
+        &client
+            .kube(args(&["get", "daemonsets", "-A", "-o", "json"]), None)
+            .await?,
+    )?;
+    ensure!(
+        ds["items"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|s| s["metadata"]["name"] == "calico-node"
+                && s["status"]["desiredNumberScheduled"]
+                    .as_u64()
+                    .is_some_and(|n| n > 0 && s["status"]["numberReady"] == n))),
+        "Local qualification requires ready Calico; functional enforcement must also be probed"
+    );
+    Ok(())
+}
+async fn ready_service(client: &Client<'_>, p: &Plan, j: &Journal) -> Result<()> {
+    let values = features::effective_values(p, j)?;
+    let mut roles = vec!["api", "worker", "controller"];
+    if values["platformControllerEnabled"] != false {
+        roles.push("platform");
+    }
+    if values["managementUI"]["enabled"] == true {
+        roles.push("ui");
+    }
+    for role in roles {
+        client
+            .kube(
+                args(&[
+                    "-n",
+                    &p.config.service.namespace,
+                    "rollout",
+                    "status",
+                    &format!("deployment/{}-{role}", p.config.service.release),
+                    "--timeout=180s",
+                ]),
+                None,
+            )
+            .await?;
+    }
+    Ok(())
+}
+async fn quiet_database(client: &Client<'_>, p: &Plan) -> Result<()> {
+    let ns = &p.config.service.namespace;
+    if !p.config.service.fixture_database {
+        let observed: Value = serde_json::from_slice(
+            &client
+                .kube(
+                    args(&[
+                        "-n",
+                        ns,
+                        "exec",
+                        &format!("deployment/{}-worker", p.config.service.release),
+                        "-c",
+                        "harness",
+                        "--",
+                        "/bin/sh",
+                        "/opt/openworker/entrypoint.sh",
+                        "service-install-status",
+                    ]),
+                    None,
+                )
+                .await?,
+        )?;
+        ensure!(
+            observed["schemaVersion"] == 1
+                && [
+                    "openSessions",
+                    "liveEnvironments",
+                    "pendingAdmissions",
+                    "queuedTurns"
+                ]
+                .iter()
+                .all(|key| observed[*key] == 0),
+            "Close sessions, delete environments and finish pending admissions before teardown"
+        );
+        return Ok(());
+    }
+    let exists = client.get("deployment", "postgres", Some(ns)).await?;
+    if exists.is_none() {
+        ensure!(
+            client
+                .release(ns, &p.config.service.release)
+                .await?
+                .is_none(),
+            "Database unavailable for safe teardown"
+        );
+        return Ok(());
+    }
+    let v = read_json(&p.config.service.values_file)?;
+    let schema = v["config"]["schema"]
+        .as_str()
+        .context("Schema unavailable")?;
+    ensure!(
+        schema.starts_with("ow_")
+            && schema.len() <= 48
+            && schema
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+        "Invalid fixture schema"
+    );
+    let sql = |q: &str| {
+        args(&[
+            "-n",
+            ns,
+            "exec",
+            "deployment/postgres",
+            "--",
+            "psql",
+            "-U",
+            "openworker",
+            "-d",
+            "openworker",
+            "-Atc",
+            q,
+        ])
+    };
+    let exists=String::from_utf8(client.kube(sql(&format!("SELECT to_regclass('{schema}.sessions') IS NOT NULL, to_regclass('{schema}.environments') IS NOT NULL")),None).await?)?;
+    if exists.trim() == "f|f" {
+        return Ok(());
+    }
+    ensure!(
+        exists.trim() == "t|t",
+        "Partial schema requires manual cleanup review"
+    );
+    let q=format!("SELECT (SELECT count(*) FROM {schema}.environments WHERE data->>'phase' IS DISTINCT FROM 'deleted')+(SELECT count(*) FROM {schema}.sessions WHERE NOT COALESCE((data->>'closed')::boolean,FALSE))");
+    let count = String::from_utf8(client.kube(sql(&q), None).await?)?;
+    ensure!(
+        count.trim() == "0",
+        "Close sessions and delete their environments before teardown"
+    );
+    Ok(())
+}
+async fn stage_secrets(
+    client: &Client<'_>,
+    p: &Plan,
+    root: &Path,
+    j: &mut Journal,
+    input: &Path,
+) -> Result<()> {
+    owned(client, p, j, &p.config.service.namespace)
+        .await?
+        .context("Owned service namespace missing")?;
+    let meta = fs::symlink_metadata(input)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        ensure!(
+            meta.permissions().mode() & 0o077 == 0,
+            "Secret input must be private (0600)"
+        );
+    }
+    ensure!(
+        meta.is_file() && !meta.file_type().is_symlink(),
+        "Secret input must be a private regular file"
+    );
+    let mut values = read_json(input)?;
+    let object = values.as_object().context("Invalid secret input")?;
+    ensure!(
+        object
+            .keys()
+            .all(|k| ["database", "apiTLS", "model"].contains(&k.as_str())),
+        "Only database, apiTLS and model inputs are accepted"
+    );
+    if let Some(binding) = &p.config.cloud {
+        ensure!(
+            values["database"].get("database-url").is_none(),
+            "Cloud database URL comes from the bound managed secret"
+        );
+        values["database"]["database-url"] = json!(cloud::database_url(binding).await?);
+    }
+    if let Some(binding) = &p.config.azure {
+        azure::installation_database(
+            binding,
+            values["database"]["database-url"]
+                .as_str()
+                .context("Azure database URL required in private secret input")?,
+        )?;
+    }
+    for (group, required, allowed) in [
+        (
+            "database",
+            vec!["database-url", "pg-ca.crt"],
+            vec!["database-url", "pg-ca.crt"],
+        ),
+        (
+            "apiTLS",
+            vec!["tls.crt", "tls.key"],
+            vec!["tls.crt", "tls.key", "ca.crt"],
+        ),
+    ] {
+        let data = values[group]
+            .as_object()
+            .context("Required secret group missing")?;
+        ensure!(
+            required.iter().all(|k| data
+                .get(*k)
+                .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())))
+                && data.keys().all(|k| allowed.contains(&k.as_str())),
+            "Secret group has missing/unsupported entries"
+        );
+    }
+    let v = read_json(&p.config.service.values_file)?;
+    let secret_name = |key: &str, default: &str| -> Result<String> {
+        let name = v["secrets"][key].as_str().unwrap_or(default);
+        ensure!(bounded_name(name), "Invalid declared secret name");
+        Ok(name.into())
+    };
+    let (ns, release, _) = p.config.openshell.scope();
+    let peer = client
+        .release(ns, release)
+        .await?
+        .context("Gateway release absent")?;
+    let receipt = j
+        .operations
+        .get(if matches!(p.config.openshell, Shell::Existing { .. }) {
+            "external-openshell"
+        } else {
+            "openshell-release"
+        })
+        .and_then(|o| o.receipt.as_ref())
+        .context("Gateway identity not confirmed")?;
+    ensure!(peer == *receipt, "Gateway release identity changed");
+    let tls = client
+        .get("secret", "openshell-client-tls", Some(ns))
+        .await?
+        .context("Gateway client TLS unavailable")?;
+    let material = tls["data"]
+        .as_object()
+        .context("Gateway TLS material missing")?;
+    ensure!(
+        ["ca.crt", "tls.crt", "tls.key"].iter().all(|k| material
+            .get(*k)
+            .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()))),
+        "Incomplete gateway client TLS"
+    );
+    let mut secrets = BTreeMap::new();
+    secrets.insert(secret_name("openshell","ow-service-openshell")?,json!({"ca.crt":material["ca.crt"],"tls.crt":material["tls.crt"],"tls.key":material["tls.key"]}));
+    let encode = |data: &Value| -> Result<Value> {
+        use base64::Engine;
+        let mut result = serde_json::Map::new();
+        for (k, v) in data.as_object().context("Invalid secret data")? {
+            let text = v.as_str().context("Secret values must be strings")?;
+            ensure!(text.len() <= 256 * 1024, "Secret value too large");
+            result.insert(
+                k.clone(),
+                json!(base64::engine::general_purpose::STANDARD.encode(text)),
+            );
+        }
+        Ok(Value::Object(result))
+    };
+    secrets.insert(
+        secret_name("database", "ow-service-database")?,
+        encode(&values["database"])?,
+    );
+    secrets.insert(
+        secret_name("apiTLS", "ow-service-tls")?,
+        encode(&values["apiTLS"])?,
+    );
+    if !values["model"].is_null() {
+        ensure!(
+            v["secrets"]["model"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "Declare secrets.model in Helm values so the worker mounts the provided model keys"
+        );
+        ensure!(
+            values["model"].as_object().is_some_and(|m| !m.is_empty()
+                && m.keys()
+                    .all(|k| ["openai", "anthropic"].contains(&k.as_str()))),
+            "Unsupported model secret entries"
+        );
+        secrets.insert(
+            secret_name("model", "ow-service-model")?,
+            encode(&values["model"])?,
+        );
+    } else {
+        ensure!(
+            v["secrets"]["model"].as_str().is_none_or(str::is_empty),
+            "Declared model Secret requires explicit private input"
+        );
+    }
+    fn token(root: &Path, name: &str) -> Result<String> {
+        if root.join(name).exists() {
+            return Ok(String::from_utf8(super::read_file(root, name)?)?);
+        }
+        let value = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut f = options.open(root.join(name))?;
+        f.write_all(value.as_bytes())?;
+        f.sync_all()?;
+        Ok(value)
+    }
+    let admin = token(root, "bootstrap-token")?;
+    let probe = token(root, "probe-token")?;
+    // Persist the observer spec once: retrying staging must not silently extend its expiry.
+    let spec_file = root.join("probe-spec.json");
+    if !spec_file.exists() {
+        let data = json!({"principal":"readiness","role":"observer","scope":{"kind":"all"},"expires_at":super::now()?+86400});
+        save(root, "probe-spec.json", &data)?;
+    }
+    let spec = String::from_utf8(super::read_file(root, "probe-spec.json")?)?;
+    secrets.insert(
+        secret_name("bootstrap", "ow-service-bootstrap")?,
+        encode(&json!({"admin-token":admin,"probe":probe,"probe.json":spec}))?,
+    );
+    secrets.insert(
+        secret_name("probe", "ow-service-probe")?,
+        encode(&json!({"curl.conf":format!("header = \"Authorization: Bearer {probe}\"\n")}))?,
+    );
+    ensure!(
+        secrets.len() == if values["model"].is_null() { 5 } else { 6 },
+        "Declared Secret names must be distinct"
+    );
+    for (name, data) in secrets {
+        let key = format!("secret:{name}");
+        let existing = client
+            .get("secret", &name, Some(&p.config.service.namespace))
+            .await?;
+        if let Some(secret) = existing {
+            let op = j
+                .operations
+                .get(&key)
+                .context("Refusing to adopt an existing Secret")?;
+            ensure!(
+                secret["metadata"]["annotations"]["openworker.io/operation-id"] == op.request_id
+                    && secret["metadata"]["labels"][OWNER] == p.id
+                    && secret["data"] == data,
+                "Secret ownership/content changed; no automatic overwrite"
+            );
+            if let Some(receipt) = &op.receipt {
+                ensure!(
+                    receipt["uid"] == secret["metadata"]["uid"],
+                    "Secret UID changed"
+                );
+            }
+            complete(root, j, &key, json!({"uid":secret["metadata"]["uid"]}))?;
+        } else {
+            ensure!(
+                !j.operations.contains_key(&key),
+                "Secret creation outcome unknown; inspect original intent"
+            );
+            begin(root, j, &key)?;
+            let secret = json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":name,"namespace":p.config.service.namespace,"labels":{OWNER:p.id},"annotations":{"openworker.io/operation-id":j.operations[&key].request_id}},"type":"Opaque","data":data});
+            client
+                .kube(
+                    args(&["create", "-f", "-"]),
+                    Some(serde_json::to_vec(&secret)?),
+                )
+                .await?;
+            let actual = client
+                .get("secret", &name, Some(&p.config.service.namespace))
+                .await?
+                .context("Secret creation not confirmed")?;
+            ensure!(
+                actual["data"] == secret["data"]
+                    && actual["metadata"]["annotations"] == secret["metadata"]["annotations"],
+                "Secret creation receipt mismatch"
+            );
+            complete(root, j, &key, json!({"uid":actual["metadata"]["uid"]}))?;
+        }
+    }
+    crate::output(
+        json!({"secretsReady":true,"valuesPersistedInJournal":false,"bootstrapTokenFile":root.join("bootstrap-token")}),
+    )
+}
+async fn delete_namespace(
+    client: &Client<'_>,
+    p: &Plan,
+    root: &Path,
+    j: &mut Journal,
+    ns: &str,
+) -> Result<()> {
+    let key = format!("delete-namespace:{ns}");
+    let existing = owned(client, p, j, ns).await?;
+    if existing.is_none() {
+        ensure!(
+            j.operations.contains_key(&key),
+            "Namespace absent without destruction intent"
+        );
+        return complete(root, j, &key, json!({"absent":true}));
+    }
+    if !j.operations.contains_key(&key) {
+        begin(root, j, &key)?;
+    }
+    // The DELETE body carries a UID precondition: checking a name before delete
+    // alone would allow a replacement namespace to be deleted in a race.
+    let options =
+        json!({"apiVersion":"v1","kind":"DeleteOptions","preconditions":{"uid":j.namespaces[ns]}});
+    client
+        .kube(
+            args(&[
+                "delete",
+                "--raw",
+                &format!("/api/v1/namespaces/{ns}"),
+                "-f",
+                "-",
+            ]),
+            Some(serde_json::to_vec(&options)?),
+        )
+        .await?;
+    for _ in 0..180 {
+        if owned(client, p, j, ns).await?.is_none() {
+            return complete(root, j, &key, json!({"absent":true}));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    bail!("Namespace deletion pending; resume the same journal")
+}
+async fn uninstall(
+    client: &Client<'_>,
+    p: &Plan,
+    root: &Path,
+    j: &mut Journal,
+    key: &str,
+    ns: &str,
+    release: &str,
+) -> Result<()> {
+    owned(client, p, j, ns)
+        .await?
+        .context("Owned namespace missing before uninstall")?;
+    let delete = format!("uninstall:{key}");
+    if let Some(r) = client.release(ns, release).await? {
+        let receipt = if key == "service-release" {
+            features::latest_receipt(j)
+        } else {
+            None
+        }
+        .or_else(|| j.operations.get(key).and_then(|o| o.receipt.as_ref()))
+        .context("Release identity was never confirmed")?;
+        ensure!(
+            r["uid"] == receipt["uid"] && r["revision"] == receipt["revision"],
+            "Release identity changed before uninstall"
+        );
+        ensure!(
+            !j.operations.contains_key(&delete),
+            "Uninstall outcome unknown; inspect original release instead of replaying"
+        );
+        begin(root, j, &delete)?;
+        client
+            .helm(args(&[
+                "uninstall",
+                release,
+                "-n",
+                ns,
+                "--wait",
+                "--timeout",
+                "180s",
+            ]))
+            .await?;
+    } else if !j.operations.contains_key(&delete) {
+        begin(root, j, &delete)?;
+    }
+    ensure!(
+        client.release(ns, release).await?.is_none(),
+        "Uninstall not confirmed"
+    );
+    complete(root, j, &delete, json!({"absent":true}))
+}
+/// Verify a real teardown on the originally bound cluster. Not a user-supplied
+/// boolean receipt: check current kube-system UID and absence over TLS.
+pub(super) async fn verify_teardown(
+    root: &Path,
+    cloud_state: &Path,
+    profile: &str,
+    kubeconfig: &Value,
+) -> Result<()> {
+    let (p, j, _lock) = load(root)?;
+    ensure!(
+        j.phase == "destroyed",
+        "Installation teardown has not completed"
+    );
+    let binding = p
+        .config
+        .cloud
+        .as_ref()
+        .context("Cloud-bound installation receipt required")?;
+    ensure!(
+        binding.state.canonicalize()? == cloud_state.canonicalize()? && binding.profile == profile,
+        "Installation belongs to a different cloud lifecycle/profile"
+    );
+    ensure!(
+        super::up::original_kubeconfig(&read_json(&p.config.kubeconfig)?)? == *kubeconfig,
+        "Installation cluster endpoint/CA/profile changed"
+    );
+    let client = Client { c: &p.config };
+    ensure!(
+        client.cluster().await? == p.cluster_uid,
+        "Installation cluster identity changed"
+    );
+    ensure!(
+        client
+            .get("namespace", &p.config.service.namespace, None)
+            .await?
+            .is_none(),
+        "Service namespace still exists"
+    );
+    if let Shell::Install { namespace, .. } = &p.config.openshell {
+        ensure!(
+            client.get("namespace", namespace, None).await?.is_none(),
+            "Owned gateway namespace still exists"
+        );
+    }
+    Ok(())
+}
+pub(super) async fn run(command: &Command) -> Result<()> {
+    run_scoped(command, true).await
+}
+pub(super) async fn run_cluster(command: &Command) -> Result<()> {
+    run_scoped(command, false).await
+}
+async fn run_scoped(command: &Command, local_only: bool) -> Result<()> {
+    if let Command::Plan { config, out } = command {
+        let mut c: Config = serde_json::from_value(read_json(config)?)?;
+        c.kubeconfig = c.kubeconfig.canonicalize()?;
+        c.service.chart = c.service.chart.canonicalize()?;
+        c.service.values_file = c.service.values_file.canonicalize()?;
+        if let Some(platform) = &mut c.platform {
+            platform.file = platform.file.canonicalize()?;
+        }
+        if let Shell::Install {
+            archive,
+            values_file,
+            ..
+        } = &mut c.openshell
+        {
+            *archive = archive.canonicalize()?;
+            *values_file = values_file.canonicalize()?;
+        }
+        let hashes = inputs(&c)?;
+        ensure!(
+            !local_only || (c.cloud.is_none() && c.azure.is_none() && c.service.fixture_database),
+            "Use deploy cluster for managed-database/cloud installations"
+        );
+        if let Some(binding) = &c.cloud {
+            cloud::verify_installation(
+                binding,
+                &c.kubeconfig,
+                &c.context,
+                &c.service.values_file,
+                true,
+            )
+            .await?;
+        }
+        if let Some(binding) = &c.azure {
+            azure::verify_installation(
+                binding,
+                &c.kubeconfig,
+                &c.context,
+                &c.service.values_file,
+                true,
+            )
+            .await?;
+        }
+        let client = Client { c: &c };
+        let cluster_uid = client.cluster().await?;
+        let mut p = Plan {
+            schema_version: 1,
+            id: format!("ows-local-{}", uuid::Uuid::new_v4().simple()),
+            config: c,
+            hashes,
+            cluster_uid,
+            digest: String::new(),
+        };
+        p.digest = digest(&p)?;
+        let mut d = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            d.mode(0o700);
+        }
+        d.create(out)
+            .context("Local state directory must not exist")?;
+        save(out, "local-plan.json", &p)?;
+        save(
+            out,
+            "journal.json",
+            &Journal {
+                schema_version: 1,
+                plan_digest: p.digest.clone(),
+                phase: "planned".into(),
+                ..Default::default()
+            },
+        )?;
+        return crate::output(
+            json!({"deploymentId":p.id,"planDigest":p.digest,"state":"planned","scope":if p.config.cloud.is_some(){"aws-eks"}else if p.config.azure.is_some(){"azure-aks"}else{"local-kind"}}),
+        );
+    }
+    let state = match command {
+        Command::Apply { state, .. }
+        | Command::Platform { state, .. }
+        | Command::RecordFailedRelease { state, .. }
+        | Command::Status { state }
+        | Command::Secrets { state, .. }
+        | Command::Destroy { state, .. } => state,
+        _ => unreachable!(),
+    };
+    let (p, mut j, _lock) = load(state)?;
+    ensure!(
+        !local_only
+            || (p.config.cloud.is_none()
+                && p.config.azure.is_none()
+                && p.config.service.fixture_database),
+        "Use deploy cluster for managed-database/cloud installations"
+    );
+    if let Some(binding) = &p.config.cloud {
+        cloud::verify_installation(
+            binding,
+            &p.config.kubeconfig,
+            &p.config.context,
+            &p.config.service.values_file,
+            !matches!(
+                command,
+                Command::Status { .. }
+                    | Command::Destroy { .. }
+                    | Command::RecordFailedRelease { .. }
+            ),
+        )
+        .await?;
+    }
+    if let Some(binding) = &p.config.azure {
+        azure::verify_installation(
+            binding,
+            &p.config.kubeconfig,
+            &p.config.context,
+            &p.config.service.values_file,
+            !matches!(
+                command,
+                Command::Status { .. }
+                    | Command::Destroy { .. }
+                    | Command::RecordFailedRelease { .. }
+            ),
+        )
+        .await?;
+    }
+    let client = Client { c: &p.config };
+    features::reconcile(&client, &p, state, &mut j).await?;
+    ensure!(
+        client.cluster().await? == p.cluster_uid,
+        "Cluster identity changed"
+    );
+    if let Command::Status { .. } = command {
+        let mut observed = BTreeMap::new();
+        for name in j.namespaces.keys() {
+            observed.insert(name.clone(), owned(&client,&p,&j,name).await?.map(|v|json!({"uid":v["metadata"]["uid"],"terminating":v["metadata"].get("deletionTimestamp").is_some()})));
+        }
+        let (ns, release, _) = p.config.openshell.scope();
+        let gateway = client.release(ns, release).await?;
+        let service = client
+            .release(&p.config.service.namespace, &p.config.service.release)
+            .await?;
+        return crate::output(
+            json!({"deploymentId":p.id,"phase":j.phase,"operations":j.operations,"confirmedNoEffect":j.confirmed_no_effect,"observedNamespaces":observed,"observedGateway":gateway,"observedService":service,"clusterIdentityVerified":true,"readOnly":true}),
+        );
+    }
+    ensure!(
+        inputs(&p.config)? == p.hashes,
+        "Installer inputs changed; regenerate and review a new plan"
+    );
+    if let Command::RecordFailedRelease {
+        accept_plan,
+        release: key,
+        ..
+    } = command
+    {
+        ensure!(accept_plan == &p.digest, "Accepted plan digest mismatch");
+        let (ns, release) = match key.as_str() {
+            "openshell-release" if matches!(p.config.openshell, Shell::Install { .. }) => {
+                let (ns, release, _) = p.config.openshell.scope();
+                (ns, release)
+            }
+            "service-release" => (
+                &p.config.service.namespace[..],
+                &p.config.service.release[..],
+            ),
+            _ => bail!("Invalid original release operation"),
+        };
+        owned(&client, &p, &j, ns)
+            .await?
+            .context("Owned namespace missing")?;
+        let op = j
+            .operations
+            .get(key)
+            .context("No original install intent; refusing adoption")?;
+        ensure!(
+            ["intent", "failed-confirmed"].contains(&op.status.as_str()),
+            "Only a failed original install may be recorded"
+        );
+        let r = client
+            .release(ns, release)
+            .await?
+            .context("Original release absent; outcome remains unknown")?;
+        ensure!(
+            r["status"] == "failed" && r["revision"] == 1,
+            "Expected original terminal failed install revision 1"
+        );
+        ensure!(
+            if op.label_provenance {
+                r["installerId"] == p.id && r["operationId"] == op.request_id
+            } else {
+                r["description"] == format!("ows:{}:{}", p.id, op.request_id)
+            },
+            "Helm release provenance mismatch"
+        );
+        if let Some(original) = &op.receipt {
+            ensure!(
+                original["uid"] == r["uid"] && original["revision"] == r["revision"],
+                "Helm release identity/revision changed"
+            );
+        }
+        // A failed hook can have side effects. This receipt permits identity-checked
+        // cleanup only; it must never authorize retrying the original installation.
+        let op = j.operations.get_mut(key).unwrap();
+        op.receipt = Some(r);
+        op.status = "failed-confirmed".into();
+        save(state, "journal.json", &j)?;
+        return crate::output(
+            json!({"deploymentId":p.id,"operation":key,"status":"failed-confirmed","cleanupOnly":true,"remoteMutation":false}),
+        );
+    }
+    if let Command::Secrets {
+        input, accept_plan, ..
+    } = command
+    {
+        ensure!(*accept_plan == p.digest, "Accepted plan digest mismatch");
+        ensure!(
+            j.phase == "openshell_ready",
+            "Prepare the authenticated gateway before handing off Secrets"
+        );
+        if let Some(binding) = &p.config.cloud {
+            cloud::installation_intent(binding)?;
+        }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
+        }
+        return stage_secrets(&client, &p, state, &mut j, input).await;
+    }
+    if let Command::Platform {
+        accept_plan,
+        allow_experimental_cloud,
+        ..
+    } = command
+    {
+        ensure!(*accept_plan == p.digest, "Accepted plan digest mismatch");
+        ensure!(
+            ["planned", "platform_ready", "platform_configuring"].contains(&j.phase.as_str()),
+            "Platform preparation must precede gateway/service installation"
+        );
+        if let Some(binding) = &p.config.cloud {
+            cloud::installation_intent(binding)?;
+        }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
+        }
+        return platform::apply(&client, &p, state, &mut j, *allow_experimental_cloud).await;
+    }
+    if let Command::Apply {
+        accept_plan,
+        openshell_only,
+        confirm_no_effect,
+        reconcile_ready_release,
+        ..
+    } = command
+    {
+        ensure!(accept_plan == &p.digest, "Accepted plan digest mismatch");
+        ensure!(
+            reconcile_ready_release
+                .as_ref()
+                .is_none_or(|s| s == "service-release"),
+            "Only a hook-free original service release may be readiness-reconciled"
+        );
+        ensure!(
+            !["destroying", "destroyed"].contains(&j.phase.as_str()),
+            "Deployment is being/has been destroyed"
+        );
+        if let Some(binding) = &p.config.cloud {
+            cloud::installation_intent(binding)?;
+        }
+        if let Some(binding) = &p.config.azure {
+            azure::installation_intent(binding).await?;
+        }
+        prerequisites(&client, p.config.cloud.is_some()).await?;
+        if let Some(step) = confirm_no_effect {
+            let old = j
+                .operations
+                .get(step)
+                .context("No such uncertain operation")?;
+            ensure!(
+                old.status == "intent" && step.ends_with("-release"),
+                "Only an unconfirmed Helm install may be reset"
+            );
+            let (ns, release, _) = if step == "openshell-release" {
+                p.config.openshell.scope()
+            } else if step == "service-release" {
+                (
+                    &p.config.service.namespace[..],
+                    &p.config.service.release[..],
+                    "",
+                )
+            } else {
+                bail!("Invalid recovery step")
+            };
+            ensure!(
+                client.release(ns, release).await?.is_none(),
+                "A release exists; reconcile it instead"
+            );
+            ensure!(
+                j.confirmed_no_effect.len() < 32,
+                "Recovery history limit reached"
+            );
+            j.confirmed_no_effect
+                .push(j.operations.remove(step).unwrap());
+            save(state, "journal.json", &j)?;
+        }
+        let v = read_json(&p.config.service.values_file)?;
+        let service_id = v["config"]["service"]["id"].as_str().unwrap();
+        namespace(
+            &client,
+            &p,
+            state,
+            &mut j,
+            &p.config.service.namespace,
+            service_id,
+        )
+        .await?;
+        let (ns, release, _) = p.config.openshell.scope();
+        match &p.config.openshell {
+            Shell::Install {
+                archive,
+                values_file,
+                ..
+            } => {
+                namespace(&client, &p, state, &mut j, ns, service_id).await?;
+                install_release(
+                    &client,
+                    &p,
+                    state,
+                    &mut j,
+                    ReleaseInstall {
+                        key: "openshell-release",
+                        ns,
+                        release,
+                        chart: archive,
+                        values: values_file,
+                        reconcile_ready: false,
+                    },
+                )
+                .await?;
+            }
+            Shell::Existing { .. } => {
+                let r = client
+                    .release(ns, release)
+                    .await?
+                    .context("Existing gateway release absent")?;
+                ensure!(
+                    r["status"] == "deployed",
+                    "Existing gateway is not deployed"
+                );
+                if let Some(op) = j.operations.get("external-openshell") {
+                    ensure!(
+                        op.receipt.as_ref() == Some(&r),
+                        "Existing gateway changed during installation"
+                    );
+                } else {
+                    begin(state, &mut j, "external-openshell")?;
+                    complete(state, &mut j, "external-openshell", r)?;
+                }
+            }
+        }
+        j.phase = "openshell_ready".into();
+        save(state, "journal.json", &j)?;
+        if !openshell_only {
+            for key in ["database", "openshell", "apiTLS", "bootstrap", "probe"] {
+                let name = v["secrets"][key].as_str().unwrap_or(match key {
+                    "database" => "ow-service-database",
+                    "openshell" => "ow-service-openshell",
+                    "apiTLS" => "ow-service-tls",
+                    "bootstrap" => "ow-service-bootstrap",
+                    _ => "ow-service-probe",
+                });
+                client.get("secret",name,Some(&p.config.service.namespace)).await?.context("Required service Secret absent; stage credentials/fixtures before service installation")?;
+            }
+            install_release(
+                &client,
+                &p,
+                state,
+                &mut j,
+                ReleaseInstall {
+                    key: "service-release",
+                    ns: &p.config.service.namespace,
+                    release: &p.config.service.release,
+                    chart: &p.config.service.chart,
+                    values: &p.config.service.values_file,
+                    reconcile_ready: reconcile_ready_release
+                        .as_ref()
+                        .is_some_and(|s| s == "service-release"),
+                },
+            )
+            .await?;
+            ready_service(&client, &p, &j).await?;
+            j.phase = "installed".into();
+            save(state, "journal.json", &j)?;
+        }
+        return crate::output(
+            json!({"deploymentId":p.id,"phase":j.phase,"functionalSandboxQualification":"required_separately"}),
+        );
+    }
+    if let Command::Destroy { deployment_id, .. } = command {
+        ensure!(deployment_id == &p.id, "Deployment identity mismatch");
+        if j.phase == "destroyed" {
+            return crate::output(json!({"deploymentId":p.id,"phase":"destroyed"}));
+        }
+        if owned(&client, &p, &j, &p.config.service.namespace)
+            .await?
+            .is_some()
+        {
+            let service_dispatched = j.operations.contains_key("service-release");
+            if !service_dispatched {
+                for role in ["api", "worker"] {
+                    ensure!(client.get("deployment", &format!("{}-{role}",p.config.service.release), Some(&p.config.service.namespace)).await?.is_none(),
+                        "Unexpected service process without an installer intent; inspect before cleanup");
+                }
+            }
+            if service_dispatched && j.phase != "destroying" {
+                quiet_database(&client, &p).await?;
+            }
+            if client
+                .get(
+                    "deployment",
+                    &format!("{}-api", p.config.service.release),
+                    Some(&p.config.service.namespace),
+                )
+                .await?
+                .is_some()
+            {
+                client
+                    .kube(
+                        args(&[
+                            "-n",
+                            &p.config.service.namespace,
+                            "scale",
+                            &format!("deployment/{}-api", p.config.service.release),
+                            "--replicas=0",
+                        ]),
+                        None,
+                    )
+                    .await?;
+                client
+                    .kube(
+                        args(&[
+                            "-n",
+                            &p.config.service.namespace,
+                            "wait",
+                            "--for=delete",
+                            "pod",
+                            "-l",
+                            &format!("app={}-api", p.config.service.release),
+                            "--timeout=90s",
+                        ]),
+                        None,
+                    )
+                    .await?;
+                if j.phase != "destroying" {
+                    quiet_database(&client, &p).await?;
+                }
+            }
+            j.phase = "destroying".into();
+            save(state, "journal.json", &j)?;
+            uninstall(
+                &client,
+                &p,
+                state,
+                &mut j,
+                "service-release",
+                &p.config.service.namespace,
+                &p.config.service.release,
+            )
+            .await?;
+            delete_namespace(&client, &p, state, &mut j, &p.config.service.namespace).await?;
+        } else {
+            ensure!(
+                j.operations.is_empty()
+                    || j.operations
+                        .contains_key(&format!("delete-namespace:{}", p.config.service.namespace)),
+                "Service namespace unexpectedly missing"
+            );
+        }
+        if let Shell::Install {
+            namespace: ns,
+            release,
+            ..
+        } = &p.config.openshell
+        {
+            if owned(&client, &p, &j, ns).await?.is_some() {
+                let sandboxes: Value = serde_json::from_slice(
+                    &client
+                        .kube(
+                            args(&["get", "sandboxes.agents.x-k8s.io", "-n", ns, "-o", "json"]),
+                            None,
+                        )
+                        .await?,
+                )?;
+                ensure!(
+                    sandboxes["items"].as_array().is_some_and(Vec::is_empty),
+                    "Owned OpenShell still has sandboxes; remove them through the service first"
+                );
+                uninstall(&client, &p, state, &mut j, "openshell-release", ns, release).await?;
+                delete_namespace(&client, &p, state, &mut j, ns).await?;
+            }
+        }
+        j.phase = "destroyed".into();
+        save(state, "journal.json", &j)?;
+        return crate::output(
+            json!({"deploymentId":p.id,"phase":j.phase,"existingGatewayPreserved":matches!(p.config.openshell,Shell::Existing{..})}),
+        );
+    }
+    unreachable!()
+}
+
+pub(crate) async fn verify_azure_teardown(
+    root: &Path,
+    binding: &azure::InstallationBinding,
+) -> Result<()> {
+    let (p, j, _lock) = load(root)?;
+    ensure!(
+        j.phase == "destroyed"
+            && p.config.azure.as_ref() == Some(binding)
+            && p.config.cloud.is_none(),
+        "Original Azure shared-installer teardown binding required"
+    );
+    let client = Client { c: &p.config };
+    ensure!(
+        client.cluster().await? == p.cluster_uid,
+        "Installation cluster UID changed"
+    );
+    ensure!(
+        client
+            .get("namespace", &p.config.service.namespace, None)
+            .await?
+            .is_none(),
+        "Service namespace still exists"
+    );
+    if let Shell::Install { namespace, .. } = &p.config.openshell {
+        ensure!(
+            client.get("namespace", namespace, None).await?.is_none(),
+            "Owned OpenShell namespace still exists"
+        );
+    }
+    Ok(())
+}

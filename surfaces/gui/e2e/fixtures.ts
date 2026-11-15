@@ -614,6 +614,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // Session roots — the primary (writable, non-removable) scratch plus any added folders. Mutable so
   // the RO/RW add/toggle round-trips through the real UI. POST upserts by path (a toggle re-adds).
   const roots: any[] = [{ ...PRIMARY_ROOT }];
+  // Async subagents: starts empty; the scripted spawn turn fills it and fires events.
+  const agentTasks: any[] = [];
   // Session connections — PER-TEST copy so the Access section's mute toggle (POST) can flip
   // `enabled` without leaking into sibling tests.
   const connections = {
@@ -703,7 +705,18 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // The page's session id, from the socket URL — team approval stamps THIS session
     // as the lead (the active conversation IS the lead; workers hang off it).
     const sid = ws.url().split("/ws/session/")[1]?.split("?")[0] || "sess-lead";
-    send("ready", sid === "resume-live-1" ? { running: true } : {});
+    // Context occupancy (FB-015) rides `ready` like the real server's, so the rail's
+    // Context section has a value before any turn runs: 68k of 200k = 34%.
+    const contextPayload = {
+      window: 200_000,
+      used: 68_000,
+      estimated: false,
+      breakdown: { system: 10_000, tools: 8_000, messages: 50_000 },
+    };
+    send("ready", {
+      context: contextPayload,
+      ...(sid === "resume-live-1" ? { running: true } : {}),
+    });
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
@@ -793,6 +806,82 @@ export async function mockApi(page: import("@playwright/test").Page) {
           return;
         }
         // A deliverable turn ending in an artifact chip (§34) — for the chip-open flow.
+        // Plan dock: every step done — the receipt state with the ✕.
+        if (/finish the plan/i.test(msg.text)) {
+          send("tool_proposed", {
+            name: "todo_write",
+            arguments: {
+              todos: [
+                { content: "Read README, config and deployment setup", status: "done" },
+                { content: "Read server and client source", status: "done" },
+                { content: "Check tests and git history", status: "done" },
+                { content: "Assess and propose improvements", status: "done" },
+              ],
+            },
+          });
+          send("tool_finished", { name: "todo_write", status: "ok" });
+          send("assistant_message", { text: "All steps are done." });
+          send("turn_done");
+          return;
+        }
+        // Plan dock: a todo_write mid-task — the dock above the composer mirrors it.
+        if (/make a plan/i.test(msg.text)) {
+          send("tool_proposed", {
+            name: "todo_write",
+            arguments: {
+              todos: [
+                { content: "Read README, config and deployment setup", status: "done" },
+                { content: "Read server and client source", status: "done" },
+                { content: "Check tests and git history", status: "in_progress" },
+                { content: "Assess and propose improvements", status: "pending" },
+              ],
+            },
+          });
+          send("tool_finished", { name: "todo_write", status: "ok" });
+          send("assistant_message", { text: "Filed the plan; working through it." });
+          send("turn_done");
+          return;
+        }
+        // Async subagents (OPE-257): spawn → the registry row + started event arrive
+        // while the parent carries on; the finish event lands after the turn, like a
+        // real background run.
+        if (/spawn a subagent/i.test(msg.text)) {
+          const t: any = {
+            id: "agent-1", label: "repo survey", task: "survey the repo layout",
+            mode: "read_only", status: "running", created: Date.now() / 1000, icon_seed: 1,
+          };
+          agentTasks.unshift(t);
+          send("agent_task", { kind: "agent_task_started", ...t });
+          send("assistant_message", { text: "Spawned a subagent; carrying on." });
+          send("turn_done");
+          setTimeout(() => {
+            t.status = "done";
+            t.finished = Date.now() / 1000;
+            send("agent_task", { kind: "agent_task_finished", ...t });
+          }, 400);
+          return;
+        }
+        // Auto-compaction (OPE-27) + the rail's Context panel in ONE flow, like the
+        // real server: the transient `compacting` signal, then the divider marker,
+        // then an assistant_message whose fresh `context` carries the compaction
+        // stamp. (Two separate handlers once shadowed each other — owner-visible
+        // breakage caught 2026-11-07.)
+        if (/compact the context/i.test(msg.text)) {
+          send("compacting", {});
+          setTimeout(() => {
+            send("compacted", { text: "Context compacted — earlier turns were summarized" });
+            send("assistant_message", {
+              text: "Still on it — continuing where I left off.",
+              context: {
+                ...contextPayload,
+                used: 41_000,
+                compaction: { created_at: 1724200000, messages: 12, trimmed: false },
+              },
+            });
+            send("turn_done");
+          }, 400);
+          return;
+        }
         if (/show the report/i.test(msg.text)) {
           send("assistant_message", {
             text: "Done — [Security review](artifact:reports/security-review.html)",
@@ -867,18 +956,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
             });
             send("turn_done");
           }, 120);
-          return;
-        }
-        // Auto-compaction (OPE-27): the server signals `compacting` (the transient
-        // spinner label), summarizes for a beat, then emits the marker and the turn
-        // continues normally — the divider must render inline.
-        if (/compact the context/i.test(msg.text)) {
-          send("compacting", {});
-          setTimeout(() => {
-            send("compacted", { text: "Context compacted — earlier turns were summarized" });
-            send("assistant_message", { text: "Still on it — continuing where I left off." });
-            send("turn_done");
-          }, 400);
           return;
         }
         // A turn that dies on a provider error; the follow-up {type:"retry"} recovers.
@@ -1205,6 +1282,11 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const b = req.postDataJSON() || {};
       (projectNames[b.kind] ||= []).unshift({ name: b.name, key: "/Users/u/fleet/ro4d/demo-universe/notes" });
       return json({ ok: true, kind: b.kind, name: b.name });
+    }
+    // Async subagents (OPE-257): the Subagents section's registry view. Mutated by
+    // the "spawn a subagent" scripted turn below.
+    if (/\/v1\/sessions\/[^/]+\/tasks$/.test(p)) {
+      return json({ agents: agentTasks });
     }
     if (/\/v1\/sessions\/[^/]+\/roots$/.test(p)) {
       if (m === "POST") {

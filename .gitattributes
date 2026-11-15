@@ -1,0 +1,5 @@
+# Preserve these imported game/third-party asset bytes, including their original
+# whitespace. Content/provenance checks must not be changed by formatting cleanup.
+harness/examples/arcade/starter-games/neon-drift/hero.svg -whitespace
+harness/examples/arcade/starter-games/orbit-runner/src/game.js -whitespace
+harness/examples/arcade/starter-games/pip-garden/assets/kenney-license.txt -whitespace

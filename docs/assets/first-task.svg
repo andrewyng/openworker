@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300" role="img" aria-labelledby="title desc">
+  <title id="title">From meeting notes to a brief</title>
+  <desc id="desc">Illustrative workflow: give OpenWorker meeting notes, review its proposed write, then open brief.md with decisions, questions and next steps.</desc>
+  <rect width="1000" height="300" rx="20" fill="#f6f7f9"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <text x="32" y="36" font-size="13" fill="#667085">EXAMPLE WORKFLOW</text>
+    <g fill="white" stroke="#e1e4e8">
+      <rect x="32" y="58" width="280" height="208" rx="14"/>
+      <rect x="360" y="58" width="280" height="208" rx="14"/>
+      <rect x="688" y="58" width="280" height="208" rx="14"/>
+    </g>
+    <g fill="none" stroke="#8c95a3" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M324 160h24m-6-6 6 6-6 6M652 160h24m-6-6 6 6-6 6"/>
+      <path d="M56 104V86h13l5 5h22v25H56v-12z"/>
+      <path d="M384 88h30v24h-30z m7 8 4 4 9-9"/>
+      <path d="M712 84h20l10 10v24h-30z M732 84v11h10 M719 102h16 M719 109h12"/>
+    </g>
+    <g fill="#1d232b" font-size="21" font-weight="600">
+      <text x="56" y="151">Your notes</text>
+      <text x="384" y="151">Your approval</text>
+      <text x="712" y="151">Your brief</text>
+    </g>
+    <g fill="#525d6b" font-size="15">
+      <text x="56" y="181">Meeting notes in a folder</text>
+      <text x="56" y="204">you choose.</text>
+      <text x="384" y="181">Review the proposed write</text>
+      <text x="384" y="204">before it goes ahead.</text>
+      <text x="712" y="181">Decisions, open questions</text>
+      <text x="712" y="204">and next steps.</text>
+    </g>
+    <g font-size="13" fill="#2463b4">
+      <text x="56" y="242">Read the source material</text>
+      <text x="384" y="242">Approve or redirect</text>
+      <text x="712" y="242">Open brief.md · refine together</text>
+    </g>
+  </g>
+</svg>

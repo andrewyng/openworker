@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openworker
+description: OpenWorker API and worker deployment; existing PostgreSQL, object store and OpenShell
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

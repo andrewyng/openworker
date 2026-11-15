@@ -1,0 +1,210 @@
+{
+ "format": "1.3",
+ "signals_version": "0.7",
+ "built": true,
+ "groupings": [
+  "all",
+  "day",
+  "session",
+  "persona_fp",
+  "persona_id",
+  "machine",
+  "trigger",
+  "purpose",
+  "model",
+  "day+purpose",
+  "persona_fp+model"
+ ],
+ "scenarios": [
+  {
+   "id": "S3-01",
+   "kind": "rollup",
+   "check": "every grouping"
+  },
+  {
+   "id": "S3-02",
+   "kind": "rollup",
+   "check": "S3-02",
+   "hand": {
+    "2026-10-12": 15000,
+    "2026-10-13": 0
+   }
+  },
+  {
+   "id": "S3-03",
+   "kind": "rollup",
+   "check": "S3-03",
+   "hand": {
+    "turn_total": 3150,
+    "day": "2026-10-14"
+   }
+  },
+  {
+   "id": "S3-04",
+   "kind": "rollup",
+   "check": "proxy line",
+   "hand": {
+    "no_turn_total": 36,
+    "no_turn_calls": 1
+   }
+  },
+  {
+   "id": "S3-05",
+   "kind": "rollup",
+   "check": "S3-05",
+   "hand": {
+    "unreported": 1,
+    "total": 2000
+   }
+  },
+  {
+   "id": "S3-06",
+   "kind": "rollup",
+   "check": "S3-06",
+   "hand": {
+    "failed": 1,
+    "total": 4000,
+    "unreported": 0
+   }
+  },
+  {
+   "id": "S3-07",
+   "kind": "rollup",
+   "check": "S3-07",
+   "hand": {
+    "auto_approver_tokens": 1600,
+    "live_checks": 1
+   }
+  },
+  {
+   "id": "S3-08",
+   "kind": "rollup",
+   "check": "S3-08",
+   "hand": {
+    "total": 9000,
+    "helper": 6000
+   }
+  },
+  {
+   "id": "S3-09",
+   "kind": "rollup",
+   "check": "S3-09",
+   "hand": {
+    "total": 1200,
+    "active_ms": null
+   }
+  },
+  {
+   "id": "S3-10",
+   "kind": "rollup",
+   "check": "S3-10",
+   "hand": {
+    "2026-10-25": 2,
+    "2026-10-26": 0
+   }
+  },
+  {
+   "id": "S3-11",
+   "kind": "rollup",
+   "check": "deleted session"
+  },
+  {
+   "id": "S3-13",
+   "kind": "rollup",
+   "check": "S3-13",
+   "hand": {
+    "approvals": 1
+   }
+  },
+  {
+   "id": "S3-14",
+   "kind": "rollup",
+   "check": "S3-14",
+   "hand": {
+    "turns": 2,
+    "checked": 1,
+    "with_warn": 1
+   }
+  },
+  {
+   "id": "S3-15",
+   "kind": "rollup",
+   "check": "S3-15",
+   "hand": {
+    "active_ms": 20000
+   }
+  },
+  {
+   "id": "S3-40",
+   "kind": "coverage",
+   "check": "scan_missing, no_findings_without_scan",
+   "should": "fire"
+  },
+  {
+   "id": "S3-41",
+   "kind": "coverage",
+   "check": "scanner_failed, scan_missing",
+   "should": "fire"
+  },
+  {
+   "id": "S3-42",
+   "kind": "coverage",
+   "check": "finding_without_evidence, self_verified",
+   "should": "fire"
+  },
+  {
+   "id": "S3-44",
+   "kind": "coverage",
+   "check": "every coverage check",
+   "should": "stay quiet"
+  },
+  {
+   "id": "S3-50",
+   "kind": "team",
+   "check": "lead_polling, wake_capped",
+   "should": "fire"
+  },
+  {
+   "id": "S3-53",
+   "kind": "approvals",
+   "check": "same_approval_twice",
+   "should": "fire"
+  },
+  {
+   "id": "S3-54",
+   "kind": "board",
+   "check": "reviewed_before_prereq",
+   "should": "fire"
+  },
+  {
+   "id": "S3-54c",
+   "kind": "board",
+   "check": "reviewed_before_prereq",
+   "should": "stay quiet"
+  },
+  {
+   "id": "S3-60",
+   "kind": "automation",
+   "check": "failed_in_a_row",
+   "should": "fire"
+  },
+  {
+   "id": "S3-61",
+   "kind": "automation",
+   "check": "failed_in_a_row",
+   "should": "stay quiet"
+  },
+  {
+   "id": "S3-61b",
+   "kind": "automation",
+   "check": "failed_in_a_row",
+   "should": "fire"
+  },
+  {
+   "id": "S3-62",
+   "kind": "automation",
+   "check": "failed_in_a_row",
+   "should": "fire"
+  }
+ ]
+}

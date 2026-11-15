@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "computer-tools"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+[dependencies]
+openworker-tools = { path = "../../tools-sdk" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+[target.'cfg(windows)'.dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi"] }

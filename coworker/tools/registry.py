@@ -53,6 +53,16 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    def clone(self, *, exclude: Optional[set[str]] = None) -> "ToolRegistry":
+        """A new registry over the same ToolSpecs, minus `exclude` — how a subagent
+        inherits its parent's tools without the spawn tools themselves (no recursion)."""
+        out = ToolRegistry()
+        for name, spec in self._tools.items():
+            if exclude and name in exclude:
+                continue
+            out._tools[name] = spec
+        return out
+
     def get(self, name: str) -> Optional[ToolSpec]:
         return self._tools.get(name)
 

@@ -1,0 +1,34 @@
+{
+  "id": "neon",
+  "name": "Neon Harbor",
+  "subtitle": "AFTER HOURS / COASTAL CIRCUIT",
+  "description": "The waterfront is yours tonight. Follow the lights, brake before the bends, and find your line.",
+  "width": 13,
+  "laps": 3,
+  "gold": 42,
+  "silver": 65,
+  "points": [
+    [0, 0, 0],
+    [0, 0, -85],
+    [30, 0, -135],
+    [105, 0, -155],
+    [180, 0, -130],
+    [215, 0, -70],
+    [200, 0, 20],
+    [155, 0, 65],
+    [110, 0, 40],
+    [60, 0, 80],
+    [10, 0, 60]
+  ],
+  "palette": {
+    "sky": "#090f25",
+    "fog": "#111a32",
+    "sea": "#102b40",
+    "road": "#263748",
+    "land": "#21343c",
+    "curb": "#63d9dc",
+    "accent": "#9af4df",
+    "building": ["#253047", "#32404e", "#263c4d"],
+    "roof": "#152238"
+  }
+}

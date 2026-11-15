@@ -1,0 +1,31 @@
+{
+ "turns": {},
+ "pills": {},
+ "rollups": {
+  "all": {},
+  "day": {},
+  "session": {},
+  "persona_fp": {},
+  "persona_id": {},
+  "machine": {},
+  "trigger": {},
+  "purpose": {},
+  "model": {},
+  "day+purpose": {},
+  "persona_fp+model": {}
+ },
+ "turn_counts": {
+  "all": {},
+  "day": {},
+  "persona_id": {},
+  "persona_fp": {}
+ },
+ "no_turn": {
+  "calls": 1,
+  "total": 36
+ },
+ "approver": {
+  "by_result": {},
+  "tokens": 0
+ }
+}

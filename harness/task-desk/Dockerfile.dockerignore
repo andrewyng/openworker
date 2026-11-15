@@ -1,0 +1,6 @@
+**
+!harness/
+!harness/task-desk/
+!harness/task-desk/server.mjs
+!harness/task-desk/public/
+!harness/task-desk/public/**

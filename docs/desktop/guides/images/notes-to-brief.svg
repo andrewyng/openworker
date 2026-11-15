@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 310" role="img" aria-labelledby="title desc">
+ <title id="title">From meeting notes to a useful brief</title>
+ <desc id="desc">Share three notes with OpenWorker. It reads and drafts, you review the proposed write, and a brief is saved with decisions and next steps.</desc>
+ <defs><linearGradient id="surface" x2="1" y2="1"><stop stop-color="#f5f7fa"/><stop offset="1" stop-color="#fafbfc"/></linearGradient></defs>
+ <rect width="920" height="310" rx="20" fill="url(#surface)"/>
+ <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif" fill="#20242a">
+  <rect x="30" y="48" width="238" height="212" rx="12" fill="#fff" stroke="#e6e8ec"/>
+  <path d="M51 76h15l5 5h20v18H51z" fill="none" stroke="#737e8e" stroke-width="1.6" stroke-linejoin="round"/>
+  <text x="51" y="127" font-size="16" font-weight="600">Your meeting notes</text>
+  <g font-size="13" fill="#697180"><text x="51" y="158">01-kickoff.md</text><text x="51" y="185">02-design-review.md</text><text x="51" y="212">03-launch-check.md</text></g>
+  <g fill="none" stroke="#9aa5b4" stroke-width="1.5"><path d="M285 154h40m-6-6 6 6-6 6"/><path d="M595 154h40m-6-6 6 6-6 6"/></g>
+  <rect x="342" y="48" width="238" height="212" rx="12" fill="#fff" stroke="#dce4ee"/>
+  <g stroke="#506a8b" stroke-width="1.6" fill="none" stroke-linecap="round"><path d="m367 75 3 8 8 3-8 3-3 8-3-8-8-3 8-3z"/></g>
+  <text x="363" y="127" font-size="16" font-weight="600">OpenWorker</text>
+  <text x="363" y="157" font-size="13" fill="#697180">Read. Connect. Draft.</text>
+  <rect x="362" y="180" width="198" height="49" rx="8" fill="#f0f4f9"/>
+  <path d="m376 204 4 4 7-8" stroke="#526b8a" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="397" y="209" font-size="12" fill="#48617d">You review the action</text>
+  <rect x="652" y="48" width="238" height="212" rx="12" fill="#fff" stroke="#e6e8ec"/>
+  <path d="M675 75h15l7 7v18h-22zm15 0v8h7" fill="none" stroke="#737e8e" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="673" y="127" font-size="16" font-weight="600">A brief you can use</text>
+  <g font-size="13" fill="#697180"><text x="673" y="158">Decisions, with sources</text><text x="673" y="185">Questions and risks</text><text x="673" y="212">Next steps and owners</text></g>
+ </g>
+</svg>

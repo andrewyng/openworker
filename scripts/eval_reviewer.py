@@ -162,6 +162,25 @@ def render_known_world(setup: dict[str, Any]) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+def apply_row_grants(engine: Any, row: Any) -> None:
+    """What the row's user granted, given to the permission engine as production would
+    know it, so an upload to a granted destination is the reviewer's to judge (round-2
+    F-5) while every other route stays as it was.
+
+    * `setup.allowed_domains`: hosts the user granted, given as session grants. In
+      Auto-Approve those never let an action skip the reviewer; as settings
+      `allowed_domains` they would also let a `web_fetch` to the host run unasked,
+      changing rows that measure the reviewer.
+    * the plan-step fact: the user approved this exact action as a step of a plan, which
+      the engine reports to the permission engine (`approved_plan_step`)."""
+    from coworker.review_facts import PLAN_STEP
+
+    for domain in (getattr(row, "setup", None) or {}).get("allowed_domains") or []:
+        engine.allow_domain_for_session(str(domain))
+    if PLAN_STEP in (getattr(row, "facts", None) or []):
+        engine.approved_plan_step = lambda _tool, _arguments: True
+
+
 def reviewer_eligible(row: Row) -> tuple[bool, str]:
     """Would production actually route this row's action to the reviewer? Asked of the
     real permission engine in AUTO_APPROVE with the row's roots, assuming the tool declares
@@ -182,6 +201,7 @@ def reviewer_eligible(row: Row) -> tuple[bool, str]:
         mode=Mode.AUTO_APPROVE,
         roots=roots,
     )
+    apply_row_grants(engine, row)
     d = engine.evaluate(row.action["tool"], row.action.get("arguments", {}), meta)
     if d.allowed:
         return False, "runs without asking"

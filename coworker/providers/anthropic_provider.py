@@ -42,12 +42,40 @@ def _usage_from(usage: Any) -> Optional[TokenUsage]:
     """Messages-API usage object → normalized counts (input_tokens excludes cache)."""
     if usage is None:
         return None
+    read = getattr(usage, "cache_read_input_tokens", None)
+    write = getattr(usage, "cache_creation_input_tokens", None)
+    thinking = getattr(getattr(usage, "output_tokens_details", None), "thinking_tokens", None)
     return TokenUsage(
         input=int(getattr(usage, "input_tokens", 0) or 0),
         output=int(getattr(usage, "output_tokens", 0) or 0),
-        cache_read=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
-        cache_write=int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+        cache_read=int(read or 0),
+        cache_write=int(write or 0),
+        reasoning=None if thinking is None else int(thinking),
+        cache_read_reported=read is not None,
+        cache_write_reported=write is not None,
     )
+
+
+def _merge_final_usage(usage: Optional[TokenUsage], final: Any) -> Optional[TokenUsage]:
+    """The stream's last `message_delta` usage holds the call's totals (observability E3):
+    every count it carries replaces the opening event's."""
+    if final is None:
+        return usage
+    usage = usage or TokenUsage()
+    for attr, field in (("input_tokens", "input"), ("output_tokens", "output")):
+        value = getattr(final, attr, None)
+        if value:
+            setattr(usage, field, int(value))
+    read = getattr(final, "cache_read_input_tokens", None)
+    if read is not None:
+        usage.cache_read, usage.cache_read_reported = int(read), True
+    write = getattr(final, "cache_creation_input_tokens", None)
+    if write is not None:
+        usage.cache_write, usage.cache_write_reported = int(write), True
+    thinking = getattr(getattr(final, "output_tokens_details", None), "thinking_tokens", None)
+    if thinking is not None:
+        usage.reasoning = int(thinking)
+    return usage
 
 # Required by the Messages API; a ceiling, not a spend target. Sized for file
 # generation, not just chat: a coworker writing a self-contained HTML report ships the
@@ -788,13 +816,8 @@ class AnthropicProvider(ProviderClient):
                 reason = getattr(last_message_delta, "stop_reason", None)
                 if reason:
                     stop_reason = reason
-                # Final (cumulative) output-token count rides message_delta.usage.
-                out = int(
-                    getattr(getattr(event, "usage", None), "output_tokens", 0) or 0
-                )
-                if out:
-                    usage = usage or TokenUsage()
-                    usage.output = out
+                # The final (cumulative) counts ride message_delta.usage.
+                usage = _merge_final_usage(usage, getattr(event, "usage", None))
 
         _raise_on_refusal(stop_reason, last_message_delta)
         tool_calls = []

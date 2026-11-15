@@ -814,6 +814,20 @@ def mount_acceptor(
             )
         return {"ok": True, "revoked": names}
 
+    def _cached_rollup(machine_id: str, query: str):
+        """An offline machine's last answer to this same rollup request, labelled with when it
+        was fetched (TD3-6). Only the same period, grouping and coworker count (P3B-3). The
+        desktop never adds it to the live totals without that label."""
+        found = registry.last_rollup(machine_id, query)
+        if found is None:
+            return None
+        try:
+            body = json.loads(found["payload"])
+        except ValueError:
+            return None
+        body["cached"] = {"as_of": int(found["updated_at"] * 1000), "query": found["query"]}
+        return JSONResponse(body, status_code=200)
+
     @app.api_route(
         "/v1/machines/{machine_id}/p/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -827,8 +841,10 @@ def mount_acceptor(
             return JSONResponse({"error": "unknown machine"}, status_code=404)
         _touch(machine_id)
         live = await _live_or_wake(machine_id)
+        rollup = request.method == "GET" and path == "v1/observability/rollup"
         if live is None:
-            return JSONResponse({"error": "machine offline"}, status_code=503)
+            cached = _cached_rollup(machine_id, request.url.query) if rollup else None
+            return cached or JSONResponse({"error": "machine offline"}, status_code=503)
         target = "/" + path
         if request.url.query:
             target += "?" + request.url.query
@@ -847,7 +863,14 @@ def mount_acceptor(
         except asyncio.TimeoutError:
             return JSONResponse({"error": "machine timed out"}, status_code=504)
         except ConnectionError:
-            return JSONResponse({"error": "machine disconnected"}, status_code=503)
+            cached = _cached_rollup(machine_id, request.url.query) if rollup else None
+            return cached or JSONResponse({"error": "machine disconnected"}, status_code=503)
+        # Phase 3 (E28): each machine's last answer per Usage request, for when it is off.
+        if rollup and status == 200:
+            try:
+                registry.save_rollup(machine_id, request.url.query, payload.decode("utf-8"))
+            except Exception:
+                pass
         # Tier-2 snapshot: every successful unfiltered session-list fetch doubles
         # as the offline fallback (greyed, never vanished). Metadata only.
         if (

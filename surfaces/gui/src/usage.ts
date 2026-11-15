@@ -54,6 +54,22 @@ export function usageFromMessages(messages: ConversationMessage[]): SessionUsage
   return acc;
 }
 
+/** A team's tokens from its sessions' recordings (P3-1): every call the Steps pill counts,
+ * titles, helpers and auto-approver checks included, which the transcript's per-message
+ * counts leave out. `input` here is the call's whole input, so the total adds up the same.
+ * Null when none of the sessions was recorded. */
+export function usageFromRecordings(recs: any[]): SessionUsage | null {
+  const used = (recs || []).filter((r) => r && r.recorded);
+  if (!used.length) return null;
+  let acc = emptyUsage();
+  for (const r of used) {
+    for (const [key, p] of Object.entries((r.by_model_parts || {}) as Record<string, any>)) {
+      acc = addTurnUsage(acc, { model: key.split(" (")[0], input: p.input, output: p.output, cache_read: 0, cache_write: 0 });
+    }
+  }
+  return { byModel: acc.byModel, context: 0 };
+}
+
 /** All tokens consumed this session, across models and directions (chip headline). */
 export function totalTokens(u: SessionUsage): number {
   return Object.values(u.byModel).reduce(

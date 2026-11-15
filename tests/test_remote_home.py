@@ -2499,3 +2499,82 @@ async def test_browser_sealed_managed_grant_lands_on_the_box(tmp_path):
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
+
+
+async def test_offline_machine_serves_its_last_usage_rollup_as_of(tmp_path):
+    """Observability Phase 3 (E28, TD3-6): the desktop keeps each machine's last Usage rollup
+    per request; while the machine is offline the proxy answers the same request with it, labelled `cached`
+    with the time it was fetched, never as live numbers."""
+    async with _Server(_controller(tmp_path)) as server:
+        join_url = await _arm(server.base)
+        _, token = parse_join_url(join_url)
+        state = tmp_path / "rollup-state"
+        state.mkdir()
+        box_manager = SessionManager(data_dir=tmp_path / "rollup-data")
+        task = asyncio.create_task(
+            run_joined(state=state, controller=server.base, name="usage-box", token=token,
+                       app=create_app(box_manager), once=True, log=lambda *_: None)
+        )
+        machines = await _wait_connected(server.base)
+        mid = machines[0]["id"]
+        async with httpx.AsyncClient() as client:
+            live = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                    params={"group": "all", "from": 0})
+            assert live.status_code == 200 and "cached" not in live.json()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            deadline = asyncio.get_running_loop().time() + 5
+            while True:
+                listing = await client.get(f"{server.base}/v1/machines")
+                if not any(m["connected"] for m in listing.json()["machines"]):
+                    break
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.05)
+            off = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                   params={"group": "all", "from": 0})
+            assert off.status_code == 200
+            body = off.json()
+            assert body["cached"]["as_of"] > 0 and body["groups"] == live.json()["groups"]
+            # another grouping was never fetched: no copy, the machine is just offline
+            none = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                    params={"group": "day"})
+            assert none.status_code == 503
+            # P3B-3: the same grouping for another period or another coworker is another
+            # question; the copy for "from 0" never stands in for it
+            other_period = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                            params={"group": "all", "from": 1000})
+            assert other_period.status_code == 503
+            other_coworker = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                              params={"group": "all", "from": 0, "persona_id": "p-x"})
+            assert other_coworker.status_code == 503
+            # the same question with its parameters in another order still finds its copy
+            reordered = await client.get(f"{server.base}/v1/machines/{mid}/p/v1/observability/rollup",
+                                         params={"from": 0, "group": "all"})
+            assert reordered.status_code == 200 and reordered.json()["cached"]["as_of"] > 0
+
+
+async def test_a_joined_machine_stamps_its_turns_with_the_controllers_id(tmp_path, monkeypatch):
+    """Phase 3 V3-17: the machine id on a joined machine's turns (`stamp.machine.id`) is the id
+    the controller lists it under, so the Usage page's machine rows line up with Machines."""
+    from coworker.observability import stamps
+
+    monkeypatch.setattr(stamps, "_machine", {"kind": "this_machine", "id": None, "name": "box", "app_version": "1"})
+    async with _Server(_controller(tmp_path)) as server:
+        join_url = await _arm(server.base)
+        _, token = parse_join_url(join_url)
+        state = tmp_path / "id-state"
+        state.mkdir()
+        task = asyncio.create_task(
+            run_joined(state=state, controller=server.base, name="id-box", token=token,
+                       app=_box_app(tmp_path, "id-data"), once=True, log=lambda *_: None)
+        )
+        try:
+            machines = await _wait_connected(server.base)
+            stamp = stamps.machine_stamp()
+            assert stamp["id"] == machines[0]["id"]
+            assert stamp["kind"] == "own_machine"
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task

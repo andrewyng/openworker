@@ -93,6 +93,10 @@ class AuditStore:
             # (OPE-224): "session", "openai-decisions" or "jev". Lets shadow results be
             # summarised per reviewer instead of mixing them.
             ("reviewer", "TEXT DEFAULT ''"),
+            # Async subagents (OPE-262): the background child that made this call, as
+            # its task id ("agent-3"), under the PARENT session's id — so one query
+            # answers "what did agent-3 touch" without leaving the session's log.
+            ("subagent", "TEXT DEFAULT ''"),
         ):
             try:
                 self._conn.execute(
@@ -137,8 +141,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, reviewer)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, call_id, tokens_in, tokens_out, cache_read, cache_write, actor, approved_by, reviewer, subagent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -161,6 +165,7 @@ class AuditStore:
                     str(event.get("actor") or ""),
                     str(event.get("approved_by") or ""),
                     str(event.get("reviewer") or ""),
+                    str(event.get("subagent") or ""),
                 ),
             )
             self._conn.commit()

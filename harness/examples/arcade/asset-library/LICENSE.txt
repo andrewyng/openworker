@@ -1,0 +1,18 @@
+Curated pilot assets — CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Retro Coupe is a prepared derivative of ToyCar:
+Model: Guido Odendahl. Materials/scene: Eric Chadwick. Copyright 2020, Public.
+Source and license: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ToyCar
+
+Pip the Robot is the unchanged RobotExpressive model:
+Model by Tomás Laulhé (Quaternius). CC0 1.0.
+Don McCurdy added three facial-expression morph targets, converted with FBX2GLTF,
+removed duplicate materials and reduced material metalness.
+Source and license: https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive
+Support the original creator: https://www.patreon.com/quaternius
+
+The original models are dedicated under CC0, not relicensed under the game's MIT
+code license. Attribution is retained voluntarily. These models are not Meshy
+outputs and do not demonstrate Meshy generation quality.
+See the adjacent asset JSON for exact source hashes and preparation changes.

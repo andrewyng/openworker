@@ -1,0 +1,407 @@
+{
+ "recording": {
+  "turns": [
+   {
+    "turn_id": "golden-approve-lead-t1-0",
+    "session_id": "golden-approve-lead",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600000000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "devsecops-lead",
+     "team": {
+      "team_id": "team-1",
+      "role": "lead"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": 200,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "review"
+    }
+   },
+   {
+    "turn_id": "golden-approve-maya-t1-1",
+    "session_id": "golden-approve-maya",
+    "seq": 1,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600120000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": 201,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    }
+   },
+   {
+    "turn_id": "golden-approve-maya-t2-2",
+    "session_id": "golden-approve-maya",
+    "seq": 2,
+    "kind": "run",
+    "trigger": "team_wake",
+    "started_at": 1793600240000,
+    "duration_ms": 30000,
+    "status": "completed",
+    "incomplete": false,
+    "approval_mode": "interactive",
+    "attended": true,
+    "reviewer": {
+     "active": false,
+     "shadow": false,
+     "kind": null,
+     "model": null
+    },
+    "stamp": {
+     "machine": {
+      "kind": "this_machine",
+      "id": null,
+      "name": "laptop",
+      "app_version": "0.3.0"
+     },
+     "model": {
+      "id": "model-x",
+      "kind": "api_key",
+      "provider_title": "Provider X"
+     },
+     "sandbox": {
+      "provider": "direct",
+      "enforcement": "none",
+      "expected": false
+     },
+     "persona_fp": "a1b2c3",
+     "persona_id": "appsec-worker",
+     "team": {
+      "team_id": "team-1",
+      "role": "worker"
+     }
+    },
+    "first_message_id": null,
+    "last_message_id": null,
+    "schema_version": 1,
+    "max_iterations": 150,
+    "wake": {
+     "kinds": [],
+     "item_ids": [
+      "14"
+     ],
+     "board_seq": 202,
+     "batched": null,
+     "deferred": null,
+     "by": null,
+     "reason": "assigned"
+    }
+   }
+  ],
+  "steps": [
+   {
+    "step_id": "golden-approve-lead-t1-0-w",
+    "turn_id": "golden-approve-lead-t1-0",
+    "session_id": "golden-approve-lead",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "wait",
+    "name": "approval",
+    "started_at": 1793600000000,
+    "duration_ms": 20000,
+    "status": "ok",
+    "call_id": "call_s353_0",
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "for_call_id": "call_s353_0",
+     "kind": "approval",
+     "where": "session",
+     "attended": true,
+     "outcome": "approved",
+     "inbox_at": null
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-approve-lead-t1-0-t",
+    "turn_id": "golden-approve-lead-t1-0",
+    "session_id": "golden-approve-lead",
+    "parent_step_id": null,
+    "seq": 2,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600020000,
+    "duration_ms": 900,
+    "status": "ok",
+    "call_id": "call_s353_0",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 40,
+     "exit_code": 0,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "needs_user"
+       },
+       {
+        "stage": "card",
+        "outcome": "shown_session"
+       },
+       {
+        "stage": "resolved",
+        "outcome": "approved_once"
+       }
+      ],
+      "origin": "user"
+     },
+     "sandbox": null,
+     "args_hash": "a1b2c3",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": true,
+     "scanner": null,
+     "result_sha256": null
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-approve-maya-t1-1-w",
+    "turn_id": "golden-approve-maya-t1-1",
+    "session_id": "golden-approve-maya",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "wait",
+    "name": "approval",
+    "started_at": 1793600120000,
+    "duration_ms": 20000,
+    "status": "ok",
+    "call_id": "call_s353_1",
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "for_call_id": "call_s353_1",
+     "kind": "approval",
+     "where": "session",
+     "attended": true,
+     "outcome": "approved",
+     "inbox_at": null
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-approve-maya-t1-1-t",
+    "turn_id": "golden-approve-maya-t1-1",
+    "session_id": "golden-approve-maya",
+    "parent_step_id": null,
+    "seq": 2,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600140000,
+    "duration_ms": 900,
+    "status": "ok",
+    "call_id": "call_s353_1",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 40,
+     "exit_code": 0,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "needs_user"
+       },
+       {
+        "stage": "card",
+        "outcome": "shown_session"
+       },
+       {
+        "stage": "resolved",
+        "outcome": "approved_once"
+       }
+      ],
+      "origin": "user"
+     },
+     "sandbox": null,
+     "args_hash": "ffee00",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": true,
+     "scanner": null,
+     "result_sha256": null
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-approve-maya-t2-2-w",
+    "turn_id": "golden-approve-maya-t2-2",
+    "session_id": "golden-approve-maya",
+    "parent_step_id": null,
+    "seq": 1,
+    "kind": "wait",
+    "name": "approval",
+    "started_at": 1793600240000,
+    "duration_ms": 20000,
+    "status": "ok",
+    "call_id": "call_s353_2",
+    "call_index": null,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "for_call_id": "call_s353_2",
+     "kind": "approval",
+     "where": "session",
+     "attended": true,
+     "outcome": "approved",
+     "inbox_at": null
+    },
+    "content": {}
+   },
+   {
+    "step_id": "golden-approve-maya-t2-2-t",
+    "turn_id": "golden-approve-maya-t2-2",
+    "session_id": "golden-approve-maya",
+    "parent_step_id": null,
+    "seq": 2,
+    "kind": "tool",
+    "name": "run_shell",
+    "started_at": 1793600260000,
+    "duration_ms": 900,
+    "status": "ok",
+    "call_id": "call_s353_2",
+    "call_index": 0,
+    "message_id": null,
+    "shadow": false,
+    "after_turn": false,
+    "attrs": {
+     "risk_class": "exec",
+     "connector": null,
+     "result_bytes": 40,
+     "exit_code": 0,
+     "decision": {
+      "path": [
+       {
+        "stage": "permission",
+        "outcome": "needs_user"
+       },
+       {
+        "stage": "card",
+        "outcome": "shown_session"
+       },
+       {
+        "stage": "resolved",
+        "outcome": "approved_once"
+       }
+      ],
+      "origin": "user"
+     },
+     "sandbox": null,
+     "args_hash": "a1b2c3",
+     "repeat_ok": false,
+     "result_error": false,
+     "error_kind": null,
+     "reaches_network": true,
+     "scanner": null,
+     "result_sha256": null
+    },
+    "content": {}
+   }
+  ]
+ }
+}

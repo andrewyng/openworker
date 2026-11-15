@@ -1,0 +1,12 @@
+{
+ "finding_without_evidence": [
+  {
+   "finding": 8
+  }
+ ],
+ "self_verified": [
+  {
+   "actor": "appsec-worker#1"
+  }
+ ]
+}

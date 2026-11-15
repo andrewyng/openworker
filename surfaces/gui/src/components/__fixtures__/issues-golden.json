@@ -1,0 +1,4124 @@
+[
+ {
+  "scenario": "S2-01",
+  "kind": "issue",
+  "check": "repeated_step",
+  "text": "read_file was called 3 times in a row with the same arguments. That cost 4,400 extra tokens.",
+  "facts": {
+   "words": 1,
+   "count": 3,
+   "extra_tokens": 4400,
+   "name": "read_file"
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (4 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 4,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-01",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (5 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 5,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-01c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "issue",
+  "check": "off_plan",
+  "text": "A plan step was dropped before it was done (1 of 3).",
+  "facts": {
+   "words": 1,
+   "kind": "dropped",
+   "dropped": 1,
+   "of": 3
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (3 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 3,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-02",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "issue",
+  "check": "off_plan",
+  "text": "It kept acting after it marked every plan step done: run_shell.",
+  "facts": {
+   "words": 1,
+   "kind": "after_done",
+   "name": "run_shell"
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (4 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 4,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-02b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "off_plan",
+  "text": "No plan step was dropped (2 of 2 done)",
+  "facts": {
+   "words": 1,
+   "done": 2,
+   "items": 2
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (4 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 4,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-02c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-02n",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "issue",
+  "check": "refused",
+  "text": "You refused run_shell.",
+  "facts": {
+   "words": 1,
+   "by": "user",
+   "name": "run_shell"
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-03",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-03b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "issue",
+  "check": "overridden",
+  "text": "The auto-approver blocked run_shell and you used Allow anyway.",
+  "facts": {
+   "words": 1,
+   "name": "run_shell"
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Auto-approver checked 1 action: 0 allowed, 0 asked you, 1 blocked; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "live",
+   "count": 1,
+   "allowed": 0,
+   "asked": 0,
+   "blocked": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "reviewer_paused",
+  "text": "Auto-approver was never paused",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver let nothing leave the machine without asking you",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-04",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-04n",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "issue",
+  "check": "reviewer_could_not_run",
+  "text": "The auto-approver could not check an action, so it was shown to you instead.",
+  "facts": {
+   "words": 1,
+   "name": "an action"
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "overridden",
+  "text": "You did not override the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "reviewer_paused",
+  "text": "Auto-approver was never paused",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver let nothing leave the machine without asking you",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-05",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "overridden",
+  "text": "You did not override the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Auto-approver checked 1 action: 1 allowed, 0 asked you, 0 blocked; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "live",
+   "count": 1,
+   "allowed": 1,
+   "asked": 0,
+   "blocked": 0
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "reviewer_paused",
+  "text": "Auto-approver was never paused",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver let nothing leave the machine without asking you",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-05c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "issue",
+  "check": "reviewer_paused",
+  "text": "The auto-approver paused after 3 refusals in a row. Later actions were shown to you.",
+  "facts": {
+   "words": 1,
+   "denials": 3
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "overridden",
+  "text": "You did not override the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Auto-approver checked 1 action: 0 allowed, 0 asked you, 1 blocked; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "live",
+   "count": 1,
+   "allowed": 0,
+   "asked": 0,
+   "blocked": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver let nothing leave the machine without asking you",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-06",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "issue",
+  "check": "shadow_disagreed",
+  "text": "The shadow reviewer would have said allow on an action.",
+  "facts": {
+   "words": 1,
+   "result": "allow",
+   "name": "an action"
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Shadow reviewer checked 1 action; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "shadow",
+   "count": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-07",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "issue",
+  "check": "tool_failed",
+  "text": "run_shell failed with exit code 2.",
+  "facts": {
+   "words": 1,
+   "recovered": false,
+   "name": "run_shell",
+   "exit_code": 2,
+   "how": "exit"
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-08",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "issue",
+  "check": "tool_failed",
+  "text": "read_file failed.",
+  "facts": {
+   "words": 1,
+   "recovered": false,
+   "name": "read_file",
+   "exit_code": null,
+   "how": "result_error"
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-08b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "issue",
+  "check": "made_up_tool",
+  "text": "The model asked for a tool that does not exist: nope.",
+  "facts": {
+   "words": 1,
+   "kind": "unknown_tool",
+   "name": "nope"
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-08c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "issue",
+  "check": "model_failed",
+  "text": "The model call failed (auth). The turn stopped here.",
+  "facts": {
+   "words": 1,
+   "purpose": "main",
+   "error_type": "auth",
+   "stopped": true
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-09",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-09c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "issue",
+  "check": "retried",
+  "text": "The model call needed 2 tries (main).",
+  "facts": {
+   "words": 1,
+   "attempts": 2,
+   "how": "wire",
+   "purpose": "main"
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-10",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-10b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "issue",
+  "check": "cut_off",
+  "text": "The model stopped at its output limit. The answer may be incomplete.",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-11",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "issue",
+  "check": "step_limit",
+  "text": "The turn stopped after 2 steps, the limit.",
+  "facts": {
+   "words": 1,
+   "iterations": 2
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-12",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "issue",
+  "check": "made_up_tool",
+  "text": "The model asked for a tool that does not exist: search_web_pages.",
+  "facts": {
+   "words": 1,
+   "kind": "unknown_tool",
+   "name": "search_web_pages"
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "issue",
+  "check": "made_up_tool",
+  "text": "The model sent arguments that do not fit write_file.",
+  "facts": {
+   "words": 1,
+   "kind": "bad_arguments",
+   "name": "write_file"
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-13",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "issue",
+  "check": "context_full",
+  "text": "The conversation became too long for the model, so it was summarised in a hurry.",
+  "facts": {
+   "words": 1,
+   "kind": "overflow"
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 79% of the window); summarised 1 time(s) at the normal point",
+  "facts": {
+   "words": 1,
+   "pct": 79,
+   "normal": 1
+  }
+ },
+ {
+  "scenario": "S2-14b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "issue",
+  "check": "context_full",
+  "text": "The context was 96% full on this call.",
+  "facts": {
+   "words": 1,
+   "kind": "hard_fill",
+   "fill": 0.96,
+   "pct": 96
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (1 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 1,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-14d",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "issue",
+  "check": "blocked_by_sandbox",
+  "text": "The sandbox blocked 2 network request(s) during run_shell, which exited with code 6.",
+  "facts": {
+   "words": 1,
+   "count": 2,
+   "name": "run_shell",
+   "exit_code": 6
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-15",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "blocked_by_sandbox",
+  "text": "The sandbox blocked nothing",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-15c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "issue",
+  "check": "ran_without_sandbox",
+  "text": "This machine has a sandbox switched on, but this turn ran 1 action(s) without it.",
+  "facts": {
+   "words": 1,
+   "count": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-16",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "ran_without_sandbox",
+  "text": "Ran inside the sandbox",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-16c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "issue",
+  "check": "waited_unwatched",
+  "text": "waited 20 min in the Inbox for an answer while nobody was at the app.",
+  "facts": {
+   "words": 1,
+   "minutes": 20,
+   "inbox": true
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-17b",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-17c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "issue",
+  "check": "waited_unwatched",
+  "text": "waited 18 min for an answer while nobody was at the app.",
+  "facts": {
+   "words": 1,
+   "minutes": 18,
+   "inbox": false
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-17d",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "issue",
+  "check": "sandbox_failed",
+  "text": "The sandbox could not start at create: OpenShellImageMissing.",
+  "facts": {
+   "words": 1,
+   "stage": "create",
+   "type": "OpenShellImageMissing"
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (0 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 0,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "blocked_by_sandbox",
+  "text": "The sandbox blocked nothing",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "blocked_by_sandbox",
+  "text": "The sandbox blocked nothing",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "sandbox_failed",
+  "text": "The sandbox started (openshell, 41 s)",
+  "facts": {
+   "words": 1,
+   "provider": "openshell",
+   "seconds": 41
+  }
+ },
+ {
+  "scenario": "S2-18c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "issue",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver allowed run_shell without asking you. It sends data off the machine.",
+  "facts": {
+   "words": 1,
+   "name": "run_shell"
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "overridden",
+  "text": "You did not override the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Auto-approver checked 1 action: 1 allowed, 0 asked you, 0 blocked; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "live",
+   "count": 1,
+   "allowed": 1,
+   "asked": 0,
+   "blocked": 0
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "reviewer_paused",
+  "text": "Auto-approver was never paused",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-19",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "repeated_step",
+  "text": "No step repeated 3 times in a row",
+  "facts": {
+   "words": 1,
+   "min_run": 3
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "refused",
+  "text": "No actions were refused by you, a rule or the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "overridden",
+  "text": "You did not override the auto-approver",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "reviewer_could_not_run",
+  "text": "Auto-approver checked 1 action: 1 allowed, 0 asked you, 0 blocked; none failed to run",
+  "facts": {
+   "words": 1,
+   "variant": "live",
+   "count": 1,
+   "allowed": 1,
+   "asked": 0,
+   "blocked": 0
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "reviewer_paused",
+  "text": "Auto-approver was never paused",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "reviewer_allowed_send",
+  "text": "The auto-approver let nothing leave the machine without asking you",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "tool_failed",
+  "text": "No tool failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "model_failed",
+  "text": "No model call failed",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "retried",
+  "text": "No model call needed a second try",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "cut_off",
+  "text": "No answers were cut off (length limit)",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "step_limit",
+  "text": "Stayed under the step limit (2 of 50)",
+  "facts": {
+   "words": 1,
+   "iterations": 2,
+   "cap": 50
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "made_up_tool",
+  "text": "No unknown tools or invalid arguments",
+  "facts": {
+   "words": 1
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "context_full",
+  "text": "Context had room (at most 1% of the window)",
+  "facts": {
+   "words": 1,
+   "pct": 1,
+   "normal": 0
+  }
+ },
+ {
+  "scenario": "S2-19c",
+  "kind": "fine",
+  "check": "waited_unwatched",
+  "text": "Nothing waited long for an answer while nobody was watching",
+  "facts": {
+   "words": 1
+  }
+ }
+]

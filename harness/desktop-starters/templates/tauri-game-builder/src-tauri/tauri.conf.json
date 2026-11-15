@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Arcade",
+  "version": "0.1.0",
+  "identifier": "com.openworker.arcade",
+  "build": {
+    "beforeDevCommand": "npm exec vite -- --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Arcade",
+        "width": 1280,
+        "height": 850,
+        "minWidth": 820,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src arcade-preview: http://arcade-preview.localhost; object-src 'none'; base-uri 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:5173; frame-src arcade-preview: http://arcade-preview.localhost; object-src 'none'; base-uri 'none'",
+      "capabilities": [
+        {
+          "identifier": "main-ui",
+          "windows": ["main"],
+          "permissions": [
+            "allow-action",
+            "core:event:allow-listen",
+            "core:event:allow-unlisten"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/openworker-harness"],
+    "icon": ["icons/icon.icns", "icons/icon.ico", "icons/icon.png"]
+  }
+}

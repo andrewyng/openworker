@@ -16,7 +16,9 @@ import logging
 from copy import deepcopy
 
 import asyncio
+import inspect
 import functools
+import hashlib
 import json
 import time
 from dataclasses import dataclass, replace
@@ -33,6 +35,14 @@ from . import toolchain as _toolchain
 from . import toolresult
 from . import unattended as _attendance
 from .events import Event, EventType
+from .observability.decision import DecisionPath
+from .observability.engine_hooks import ToolRun, TurnRecording, set_tool_run
+from .observability.recorder import short_hash as _short_hash
+from .observability import stamps as _stamps
+from .observability.canonical import short_hash as _args_hash, text_hash as _text_hash
+from .observability.scopes import recorded_scanner as _recorded_scanner
+from .observability.provider_view import tag as _tag_provider, view_for_engine
+from .observability.ids import new_ulid
 
 # §8.4 retry guard: the reviewer pauses for the rest of the turn after this many denials
 # IN A ROW (2→5 + streak semantics, owner ruling 2026-08-24 — a cumulative 2 silently
@@ -190,6 +200,134 @@ def _summarizes_turn(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..
     return wrapper
 
 
+# The engine's reviewer choice -> the recorded reviewer kind (recording format 1.0).
+_REVIEWER_KINDS = {"session": "session_model", "openai-decisions": "openai_decisions", "jev": "typesafe_jev"}
+
+
+def _records_turn(kind: str) -> Callable[[Callable[..., AsyncIterator[Event]]], Callable[..., AsyncIterator[Event]]]:
+    """Record a turn entry point (run / retry / resume) for observability (E1).
+
+    `turn_started` goes out when the entry point emits TURN_START, `turn_ended` at its
+    TURN_END, INTERRUPTED or ERROR, and, for the paths that end with none of these (a
+    resume stopped mid-tools, a generator the surface abandoned), in the `finally`: then the
+    status is `interrupted` if Stop was pressed, else `unknown`. The caller says who started
+    the turn with `trigger=` (user, channel, schedule, team_wake; `unknown` if it does not
+    say), and a team worker's caller who woke it with `woken_by=` (1.2). Format 1.3: the
+    caller says why the turn started with `wake=` (`turn.wake`), an automation run's own
+    turn with `automation=`, and a team member's `team=` (`stamp.team`); with no `wake=`, the
+    reason follows the trigger (user, channel, schedule). While recording, UI events also
+    carry `turn_id`, `ts_ms`, and a tool's `step_id`."""
+
+    def deco(gen_fn: Callable[..., AsyncIterator[Event]]) -> Callable[..., AsyncIterator[Event]]:
+        @functools.wraps(gen_fn)
+        async def wrapper(self: "TurnEngine", *args: Any, trigger: str = "unknown",
+                          woken_by: Optional[dict[str, Any]] = None, wake: Optional[dict[str, Any]] = None,
+                          automation: Optional[dict[str, Any]] = None, team: Optional[dict[str, Any]] = None,
+                          **kwargs: Any) -> AsyncIterator[Event]:
+            inner = gen_fn(self, *args, **kwargs)
+            obs = getattr(self, "_obs", None)
+            if obs is None or not obs.enabled:
+                try:
+                    async for event in inner:
+                        yield event
+                finally:
+                    await inner.aclose()
+                return
+            started = False
+            try:
+                async for event in inner:
+                    if event.type is EventType.TURN_START and not started:
+                        started = True
+                        self._begin_recorded_turn(kind, trigger, woken_by, wake=wake,
+                                                  automation=automation, team=team)
+                    if started and obs.in_turn:
+                        self._observe_event(event)
+                    yield event
+            finally:
+                await inner.aclose()
+                if started:
+                    self._end_recorded_turn("interrupted" if self._cancel.is_set() else "unknown")
+
+        return wrapper
+
+    return deco
+
+
+# `_wait_tool` kind by tool (observability §5.4); any other wait is an approval card.
+_WAIT_KINDS = {
+    "ask_user": "question",
+    "propose_plan": "plan",
+    "propose_team": "team",
+    "propose_work_items": "items",
+    "request_connector": "connector",
+    "grant_connector": "connector",
+    "request_tool": "tool_install",
+    "request_directory": "directory",
+}
+
+
+def _result_sha256(result: Any) -> Optional[str]:
+    """SHA-256 of a tool's raw result, as the bytes `result_bytes` counts (1.3)."""
+    try:
+        data = (result.encode("utf-8") if isinstance(result, str)
+                else json.dumps(result, default=str, ensure_ascii=False).encode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def _accepts_view(reviewer: Any) -> bool:
+    """Whether this reviewer's `review` takes the provider view for its check (the session
+    model reviewer does; decision-model reviewers call their own service, E23)."""
+    try:
+        import inspect
+
+        return "view" in inspect.signature(reviewer.review).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _verdict_matches(result: str, approved: bool) -> bool:
+    """A shadow check matched you when it would have allowed what you approved, or denied
+    what you denied; an unsure never matches."""
+    return (result == "allow" and approved) or (result == "deny" and not approved)
+
+
+def _reviewer_skip(engine: "TurnEngine", decision: Any) -> str:
+    """Why the auto-approver was not consulted on a call that needed a person (§8.2)."""
+    if decision.human_only:
+        return "skipped_human_only"
+    if engine.reviewer is not None and engine._reviewer_denials >= _REVIEWER_TRIP:
+        return "skipped_paused"
+    try:
+        attended = bool(engine.is_attended and engine.is_attended())
+    except Exception:  # noqa: BLE001
+        attended = False
+    if engine.reviewer is not None and engine.reviewer_enabled and not attended:
+        return "skipped_unattended"
+    return "skipped_off"
+
+
+def _wait_outcome(result: Any, interrupted: Any, kind: str, *, stopped: bool) -> str:
+    """A wait step's `outcome`: approved, denied, answered or interrupted (§5.4). An approval
+    card's "interrupted" value is the same DENY a person can click, so Stop is told apart by
+    whether it was pressed."""
+    if result is interrupted and stopped:
+        return "interrupted"
+    if isinstance(result, ApprovalOutcome):
+        if result is ApprovalOutcome.DENY:
+            return "denied"
+        return "answered" if result is ApprovalOutcome.SUPERSEDED else "approved"
+    if isinstance(result, dict):
+        if result.get("error") == "interrupted by user":
+            return "interrupted"
+        if kind == "question":
+            return "answered" if result.get("answer") or result.get("answers") else "denied"
+        ok = result.get("approved") or result.get("granted") or result.get("installed")
+        return "approved" if ok else "denied"
+    return "answered" if result else "denied"
+
+
 def _action_failed(action: dict[str, Any]) -> bool:
     """A listed action that changed nothing: the call errored, the command exited
     non-zero, or it timed out. A background start is neither done nor failed."""
@@ -220,6 +358,21 @@ def _settings_changed(verdict: Any) -> Any:
     msg = "Approval settings changed during review; a human decision is required."
     extra = {"card_reason": msg} if hasattr(verdict, "card_reason") else {}
     return replace(verdict, verdict="unsure", reason=msg, **extra)
+
+
+def _args_fit(spec: Any, arguments: Any) -> bool:
+    """Whether the arguments fit the tool's own parameters: no name it lacks, no required
+    one missing. True when that cannot be told (no function, or one taking anything)."""
+    func = getattr(spec, "func", None)
+    if func is None or not isinstance(arguments, dict):
+        return True
+    try:
+        inspect.signature(func).bind(**arguments)
+    except TypeError:
+        return False
+    except ValueError:  # no signature to read
+        return True
+    return True
 
 
 class TurnEngine:
@@ -354,6 +507,11 @@ class TurnEngine:
         # into the tool message's `_display` sidecar, so the quiet provenance chips
         # survive reload (owner ruling 2026-08-24) — display-only, never provider-visible.
         self._approval_origins: dict[str, dict[str, str]] = {}
+        # Per-call override for the denied-tool-result text, keyed by tool_call id. An
+        # approver that resolves a request itself (a subagent's expired approval wait)
+        # sets this before returning DENY, so the model reads WHY instead of the
+        # generic "denied by user" (OPE-255 ruling: the response must say it expired).
+        self._deny_notes: dict[str, str] = {}
         # OPE-232: set once a shell command has been cleared in the batch being authorized.
         # The batch runs only after every call is cleared, and the shell persists, so a
         # later command's folder is unknown from then on (see `current_shell_cwd`).
@@ -419,6 +577,9 @@ class TurnEngine:
         # secret-looking value into a file it is now sending.
         if getattr(permissions, "agent_file_has_secret", None) is None:
             permissions.agent_file_has_secret = self._agent_files.carries_secret
+        # Round-2 F-5: an upload the user approved as a plan step is a granted destination.
+        if getattr(permissions, "approved_plan_step", None) is None:
+            permissions.approved_plan_step = self._is_approved_plan_step
         # OPE-235: whether outside content (web, email, connectors, downloads) has entered
         # the agent's context this session; one of the reviewer's computed facts.
         self._external_read = False
@@ -434,10 +595,46 @@ class TurnEngine:
         self._step = 0
         self._last_context_tokens: Optional[int] = None
         self.audit_context: dict[str, Any] = {}
+        # Observability (E1): the turn and step events this engine sends to its recorder.
+        # Off until a recorder is set (`engine.recorder = ...`), like the other surface hooks.
+        self._obs = TurnRecording(None, lambda: str(self.audit_context.get("session_id") or ""))
+        # The engine's own tagged view of its provider (observability E2, §3.3): every call
+        # it makes is recorded as a model step of the current turn, purpose `main`.
+        self.provider = view_for_engine(self.provider, self._obs)
+        self._call_index: dict[str, int] = {}
+        # Each proposed call's arguments, for the 1.2 tool fields of calls that never ran.
+        self._call_args: dict[str, Any] = {}
+        # Whether this machine has a sandbox switched on (stamp.sandbox.expected, 1.2): set
+        # by whoever builds the engine from the machine's setting; None = not known.
+        self.sandbox_expected: Optional[bool] = None
+        # Who answered a waiting call's card (observability §5.4): set by the server, which
+        # reads it from the Inbox.
+        self.resolver_of: Optional[Callable[[str], str]] = None
+        # Each tool call's decision path, built in `_authorize`, attached to its tool step
+        # (observability E4, §8.3); and where its card was shown.
+        self._decisions: dict[str, DecisionPath] = {}
+        self._card_where: dict[str, str] = {}
+        # Auto-approver check steps by tool call (E12), and shadow checks waiting to be
+        # compared with your answer: call id -> (step id, verdict or None).
+        self._review_steps: dict[str, str] = {}
+        self._turn_end_tasks: set[asyncio.Task] = set()
+        # The coworker fingerprint and the session-start context facts, set by the session
+        # build (observability E16, E5); and this turn's context block, to spot a change.
+        self.persona_fp: Optional[str] = None
+        # 1.3: which coworker ran (E25a) and the scan areas its manifest promises (E17c).
+        self.persona_id: Optional[str] = None
+        self.persona_coverage: list[str] = []
+        self.context_facts: dict[str, Any] = {}
+        self._last_context_block = ""
+        self._turn_context_hash: Optional[str] = None
+        self._context_turn: Optional[str] = None
+        self._stamp_seen: dict[str, Any] = {}
+        self._shadow_checks: dict[str, tuple[Optional[str], Any]] = {}
+        self._user_answers: dict[str, bool] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
-            self.messages.insert(0, {"role": "system", "content": instructions})
+            self._add_message({"role": "system", "content": instructions}, at=0)
         self._cancel = asyncio.Event()
         # Whether the latest assistant turn hit the output-token limit — decides which
         # diagnosis a mangled (unparseable-args) tool call gets answered with.
@@ -453,6 +650,21 @@ class TurnEngine:
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
+    def _reset_cancel(self) -> None:
+        """A new turn starts not stopped. The Stop flag is an asyncio.Event, which belongs to
+        the event loop that first waited on it; a turn running on another loop (each test
+        client socket has its own) could not wait on the old one: the wait failed at once,
+        the stream was read as stopped, and the turn ended with an empty answer while its
+        model call went on outside it. So a turn on a new loop gets a new flag."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and getattr(self._cancel, "_loop", None) not in (None, loop):
+            self._cancel = asyncio.Event()
+        else:
+            self._cancel.clear()
+
     def request_interrupt(self) -> None:
         """Stop the turn as soon as possible, from ANY state: mid-stream (the producer
         thread drops the stream between chunks), mid-tool (interrupt hooks kill the
@@ -483,12 +695,335 @@ class TurnEngine:
         finally:
             cancel_wait.cancel()
 
-    async def _wait_tool(self, tool_call, coro, interrupted):
+    async def _wait_tool(self, tool_call, coro, interrupted, kind: Optional[str] = None):
         started, clock = time.time(), time.perf_counter()
+        # Observability E20: a wait step from the moment the card is shown to the answer, so
+        # a slow answer is never mistaken for a slow agent (§5.4).
+        kind = kind or _WAIT_KINDS.get(tool_call.name, "approval")
         try:
-            return await self._interruptible(coro, interrupted)
+            attended = bool(self.is_attended and self.is_attended())
+        except Exception:  # noqa: BLE001 - a broken getter must not break the wait
+            attended = False
+        step_id = self._obs.start_step(
+            kind="wait", name=kind, call_id=tool_call.id,
+            attrs={"for_call_id": tool_call.id, "kind": kind, "attended": attended,
+                   "where": "session" if attended else "inbox",
+                   "inbox_at": None if attended else int(started * 1000)},
+        )
+        self._obs.track_wait(tool_call.id, step_id)
+        result: Any = interrupted
+        failed = False
+        try:
+            result = await self._interruptible(coro, interrupted)
+            return result
+        except BaseException:
+            failed = True
+            raise
         finally:
             self._tool_timings.setdefault(tool_call.id, {}).update(waited_started=started, waited_ms=(time.perf_counter() - clock) * 1000)
+            self._obs.end_wait(tool_call.id)
+            if step_id is not None:
+                who = ""
+                if self.resolver_of is not None:
+                    try:
+                        who = str(self.resolver_of(tool_call.id) or "")
+                    except Exception:  # noqa: BLE001
+                        who = ""
+                self._obs.end_step(
+                    step_id, status="error" if failed else "ok",
+                    attrs={"outcome": "interrupted" if failed else _wait_outcome(
+                        result, interrupted, kind, stopped=self._cancel.is_set())},
+                    content={"resolved_by": who} if who else {},
+                )
+
+    def note_wait_where(self, call_id: Optional[str], where: str) -> None:
+        """Where a waiting call's card is shown, `session` or `inbox` (observability §5.4)."""
+        if call_id:
+            self._card_where[call_id] = where
+        self._obs.wait_where(call_id, where)
+
+    @property
+    def recorder(self) -> Any:
+        return self._obs.recorder
+
+    @recorder.setter
+    def recorder(self, value: Any) -> None:
+        self._obs.recorder = value
+
+    def _begin_recorded_turn(self, kind: str, trigger: str,
+                             woken_by: Optional[dict[str, Any]] = None, *,
+                             wake: Optional[dict[str, Any]] = None,
+                             automation: Optional[dict[str, Any]] = None,
+                             team: Optional[dict[str, Any]] = None) -> None:
+        """`turn_started` (E1, technical design §4). For `run` the turn opens with your
+        message; for `resume`, with the assistant message whose calls are resumed; a `retry`
+        opens with the first message it adds, so its start waits for that."""
+        first: Optional[str] = None
+        if kind == "run":
+            first = next((m.get("mid") for m in reversed(self.messages) if m.get("role") == "user"), None)
+        elif kind == "resume":
+            first = next(
+                (m.get("mid") for m in reversed(self.messages)
+                 if m.get("role") == "assistant" and m.get("tool_calls")),
+                None,
+            )
+        attended, reviewer = self._attended_now(), self._reviewer_facts()
+        stamp = self._turn_stamp()
+        if team and team.get("team_id") and team.get("role") in ("lead", "worker"):
+            stamp["team"] = {"team_id": str(team["team_id"]), "role": team["role"]}  # 1.3, E18b
+        if wake is None:
+            # 1.3 (E18a): with no word from the caller, the reason follows the trigger.
+            wake = {"reason": {"user": "user", "channel": "channel", "schedule": "schedule"}.get(trigger, "unknown")}
+        turn_id = self._obs.begin_turn(
+            kind=kind,
+            trigger=trigger,
+            attrs={
+                "approval_mode": self.permissions.mode.value,
+                "attended": attended,
+                "reviewer": reviewer,
+                "max_iterations": self.max_iterations,
+                "woken_by": woken_by,
+                "wake": wake,
+                "automation": automation,
+            },
+            stamp=stamp,
+            first_message_id=first,
+            wait_for_first_message=kind == "retry",
+        )
+        # What `stamp_changed` compares against for the rest of the turn (V2-27).
+        self._stamp_seen = {"turn": turn_id, "attended": attended, "reviewer": reviewer,
+                            "sandbox": stamp.get("sandbox")}
+
+    def _attended_now(self) -> bool:
+        try:
+            return bool(self.is_attended and self.is_attended())
+        except Exception:  # noqa: BLE001 - a broken getter must not break the turn
+            return False
+
+    def _reviewer_facts(self) -> dict[str, Any]:
+        """The turn's `reviewer` (observability §4): as at turn start, or now."""
+        reviewer_kind = (
+            _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
+            if self.reviewer is not None else None
+        )
+        return {
+            "active": self._reviewer_active() if self.reviewer is not None else False,
+            "shadow": bool(self.reviewer_shadow),
+            "kind": reviewer_kind,
+            "model": getattr(self.reviewer, "model", None) if reviewer_kind == "session_model" else None,
+        }
+
+    def _sandbox_stamp(self) -> Optional[dict[str, Any]]:
+        """The stamp's sandbox group now, with `expected` (format 1.2) when it is known. The
+        turn's stamp and the mid-turn comparison both use this, so they cannot differ by it."""
+        sandbox = _stamps.sandbox_stamp(getattr(self, "sandbox_workspace", None))
+        if sandbox and self.sandbox_expected is not None:
+            sandbox["expected"] = bool(self.sandbox_expected)
+        return sandbox
+
+    def _note_stamp(self) -> None:
+        """A `stamp_changed` notice when attendance, the reviewer or the sandbox differ from
+        the turn's start or the last notice (observability §9, V2-27). The Unattended toggle
+        and the reviewer settings apply mid-turn, and the first turn makes the sandbox after
+        its stamp was taken, so the runner version arrives here. Only the keys that changed,
+        with their new values."""
+        obs = self._obs
+        seen = getattr(self, "_stamp_seen", None) or {}
+        if (not obs.enabled or not obs.in_turn or not getattr(obs, "records_context", True)
+                or seen.get("turn") != obs.turn_id):
+            return
+        changed: dict[str, Any] = {}
+        attended, reviewer = self._attended_now(), self._reviewer_facts()
+        if attended != seen.get("attended"):
+            changed["attended"] = seen["attended"] = attended
+        if reviewer != seen.get("reviewer"):
+            changed["reviewer"] = seen["reviewer"] = reviewer
+        try:
+            sandbox = self._sandbox_stamp()
+        except Exception:  # noqa: BLE001 - a stamp never breaks a turn
+            sandbox = seen.get("sandbox")
+        if sandbox and sandbox != seen.get("sandbox"):
+            changed["stamp"] = {"sandbox": sandbox}
+            seen["sandbox"] = sandbox
+        if changed:
+            obs.instant_step(kind="notice", name="stamp_changed", status="ok", attrs=changed)
+
+    def _turn_stamp(self) -> dict[str, Any]:
+        """Facts saved with the turn (observability §9): machine, model, sandbox, coworker."""
+        stamp: dict[str, Any] = {}
+        try:
+            stamp["machine"] = _stamps.machine_stamp()
+            stamp["model"] = _stamps.model_stamp(self.model)
+            sandbox = self._sandbox_stamp()
+            if sandbox:
+                stamp["sandbox"] = sandbox
+            if self.persona_fp:
+                stamp["persona_fp"] = self.persona_fp
+            if self.persona_id:
+                stamp["persona_id"] = self.persona_id  # 1.3, E25a
+            if self.persona_coverage:
+                stamp["persona_coverage"] = list(self.persona_coverage)  # 1.3, E17c
+        except Exception:  # noqa: BLE001 - a stamp never breaks a turn
+            logger.exception("observability: could not stamp the turn")
+        return stamp
+
+    def _sandbox_note_added(self) -> bool:
+        """Whether this turn's context holds the sandbox's own note: the agent's context
+        adds `sandbox_workspace.context()` when it returns text. A workspace with no
+        sandbox has no such text, so no note (fix list F-1: it was true whenever the
+        workspace could describe itself, which the no-sandbox one can)."""
+        context = getattr(getattr(self, "sandbox_workspace", None), "context", None)
+        if not callable(context):
+            return False
+        try:
+            return bool(context())
+        except Exception:  # noqa: BLE001 - a recording never breaks a turn
+            return False
+
+    def _note_context(self) -> None:
+        """The context step at the turn's first model call, and a `context_changed` notice
+        when the per-turn block changes later in the turn (observability E5, §5.6)."""
+        obs = self._obs
+        if not obs.enabled or not obs.in_turn or not getattr(obs, "records_context", True):
+            return
+        block = self._last_context_block or ""
+        block_hash = _short_hash(block) if block else None
+        # The menu this turn's block offered (set by the agent's context provider, which
+        # leaves out skills disabled for the session); else every skill the loader found.
+        offered = getattr(self, "skills_offered", None)
+        skills = sorted(offered if offered is not None
+                        else getattr(getattr(self, "skill_loader", None), "_skills", None) or {})
+        per_turn = {
+            "mode_note": self.permissions.mode.value if self.permissions.mode in (Mode.PLAN, Mode.DISCUSS) else None,
+            "folders": len(getattr(self.permissions, "roots", None) or []),
+            "sandbox_note": self._sandbox_note_added(),
+            "skills_menu": len(skills),
+            "skills_hash": _short_hash(",".join(skills)) if skills else None,
+        }
+        if self._context_turn != obs.turn_id:
+            self._context_turn, self._turn_context_hash = obs.turn_id, block_hash
+            system = self.messages[0].get("content") if self.messages and self.messages[0].get("role") == "system" else None
+            attrs: dict[str, Any] = {
+                "session_prompt_hash": _short_hash(system) if isinstance(system, str) else None,
+                "per_turn": per_turn,
+                "size_chars": len(block),
+                "block_hash": block_hash,
+            }
+            if self.context_facts and not getattr(self, "_context_session_told", False):
+                attrs["session_start"] = dict(self.context_facts)
+                self._context_session_told = True
+            obs.instant_step(kind="context", name="context", status="ok", attrs=attrs)
+        elif block_hash != self._turn_context_hash:
+            self._turn_context_hash = block_hash
+            obs.instant_step(kind="notice", name="context_changed", status="ok",
+                             attrs={"per_turn": per_turn, "size_chars": len(block), "block_hash": block_hash})
+
+    def _observe_event(self, event: Event) -> None:
+        """Ids on a UI event, a call that never ran as a zero-length tool step, and the turn's
+        end (E1). The app ignores fields it does not know, so older screens keep working."""
+        obs = self._obs
+        event.data.setdefault("turn_id", obs.turn_id)
+        event.data.setdefault("ts_ms", time.time_ns() // 1_000_000)
+        if event.type is EventType.TOOL_PROPOSED and event.data.get("tool_call_id"):
+            self._call_args[str(event.data["tool_call_id"])] = event.data.get("arguments")
+        if event.type in (EventType.TOOL_STARTED, EventType.TOOL_FINISHED):
+            call_id = str(event.data.get("tool_call_id") or "")
+            if event.type is EventType.TOOL_FINISHED and call_id:
+                mid = next(
+                    (m.get("mid") for m in reversed(self.messages)
+                     if m.get("role") == "tool" and m.get("tool_call_id") == call_id),
+                    None,
+                )
+                attrs: dict[str, Any] = {"risk_class": self._risk_class(str(event.data.get("name") or ""))}
+                path = self._decisions.pop(call_id, None)
+                if path is not None and obs.step_for_call(call_id) is None:
+                    attrs["decision"] = path.finish(ran=event.data.get("status") == "ok")
+                elif path is None:
+                    # An interactive tool (question, plan, folder…) skips the permission
+                    # flow: no stage decided it (recording-format: origin null).
+                    attrs["decision"] = {"path": [], "origin": None}
+                data = event.data
+                created = (data.get("display") or {}).get("team_created") if data.get("name") == "propose_team" else None
+                if created and created.get("team_id"):
+                    # The team it created and its worker sessions: ids only (1.2, OB-7).
+                    attrs["team"] = {"team_id": str(created["team_id"]), "worker_session_ids": [
+                        str(w.get("session_id")) for w in created.get("workers") or [] if w.get("session_id")]}
+                if obs.step_for_call(call_id) is None:
+                    attrs.update(self._call_facts(
+                        str(data.get("name") or ""), self._call_args.get(call_id), ran=False,
+                        status=str(data.get("status") or ""), reason=str(data.get("reason") or ""),
+                    ))
+                answered_by_stop = path is not None and (path.stage("resolved") or {}).get("outcome") == "interrupted"
+                if (data.get("status") == "denied" and self._cancel.is_set()
+                        and (data.get("name") in _WAIT_KINDS or answered_by_stop)):
+                    # A Stop while a card waited (approval, question, plan, folder) is not a
+                    # refusal: the handler answers "denied", the step says interrupted (§5.3).
+                    data = {**data, "status": "interrupted"}
+                obs.tool_finished(
+                    data, message_id=mid, call_index=self._call_index.get(call_id),
+                    attrs=attrs,
+                )
+            step_id = obs.step_for_call(call_id)
+            if step_id:
+                event.data.setdefault("step_id", step_id)
+        if event.type is EventType.TURN_END:
+            status = str(event.data.get("status") or "completed")
+            if status in ("max_iterations_exceeded", "truncated"):
+                obs.instant_step(kind="notice", name="step_limit" if status == "max_iterations_exceeded" else "truncated",
+                                 status="ok", attrs={})
+            self._end_recorded_turn(status)
+        elif event.type is EventType.INTERRUPTED:
+            self._end_recorded_turn("interrupted")
+        elif event.type is EventType.ERROR:
+            self._end_recorded_turn("error")
+
+    def _end_recorded_turn(self, status: str) -> None:
+        """`turn_ended` with this moment's time. If shadow checks are still running in the
+        background, it is sent once they end (at most 30 s later), so their steps are not
+        closed as interrupted while they run; the turn's recorded end stays this moment."""
+        pending = self._obs.close_turn(status)
+        if pending is None:
+            return
+        running = [t for t in self._shadow_tasks if not t.done()]
+        if not running:
+            self._obs.emit_turn_ended(pending)
+            return
+
+        async def after_shadows() -> None:
+            try:
+                await asyncio.wait_for(asyncio.gather(*running, return_exceptions=True), 30)
+            except Exception:  # noqa: BLE001 - a slow shadow check must not lose the turn's end
+                pass
+            self._obs.emit_turn_ended(pending)
+
+        task = asyncio.ensure_future(after_shadows())
+        self._turn_end_tasks.add(task)
+        task.add_done_callback(self._turn_end_tasks.discard)
+
+    def _risk_class(self, tool_name: str) -> Optional[str]:
+        try:
+            spec = self.registry.get(tool_name)
+            return _classify_risk(
+                tool_name, spec.metadata if spec else None, self.permissions.risk_overrides
+            ).value
+        except Exception:  # noqa: BLE001 - a fact, never a reason to fail a call
+            return None
+
+    def _add_message(self, message: dict[str, Any], *, at: Optional[int] = None) -> None:
+        """Append (or, with `at`, insert) one message into the history, stamping its `mid`.
+
+        `mid` is a ULID that never changes, so a recorded step can point at the message it
+        produced even after a stub is inserted mid-history or the file is rewritten
+        (observability E21). It is a sidecar like `ts`: stripped before any provider sees it.
+        """
+        message.setdefault("mid", new_ulid())
+        if at is None:
+            self.messages.append(message)
+        else:
+            self.messages.insert(at, message)
+        obs = getattr(self, "_obs", None)
+        if obs is not None:
+            obs.note_message(message)
 
     def _timed_result(self, tool_call, result):
         message = _tool_result_message(tool_call, result)
@@ -503,6 +1038,7 @@ class TurnEngine:
         self._steering.append((text, source, activity))
 
     # -- main loop --------------------------------------------------------------
+    @_records_turn("run")
     @_summarizes_turn
     async def run(
         self,
@@ -536,8 +1072,8 @@ class TurnEngine:
             message["_display"] = display
         if activity:
             message["_activity"] = activity
-        self.messages.append(message)
-        self._cancel.clear()
+        self._add_message(message)
+        self._reset_cancel()
         if not self._dangerous_warned:
             if self.permissions.mode is Mode.DANGEROUSLY_BYPASS_APPROVALS:
                 # Once per engine: the name is the warning, and the transcript keeps it.
@@ -643,8 +1179,12 @@ class TurnEngine:
         if text:
             notice["text"] = text
         notice.update({k: v for k, v in fields.items() if v is not None})
-        self.messages.append(notice)
+        self._add_message(notice)
+        if kind in ("interrupted", "error", "reviewer_paused"):
+            # A zero-length marker on the timeline (observability §5.8).
+            self._obs.instant_step(kind="notice", name=kind, status="ok", attrs={})
 
+    @_records_turn("retry")
     @_summarizes_turn
     async def retry(self) -> AsyncIterator[Event]:
         """Re-run the model loop after a provider error — no new user message; the failed
@@ -654,7 +1194,7 @@ class TurnEngine:
         is the intended recovery path (owner-hit 2026-07-23)."""
         if not self._tail_is_retriable_error():
             return
-        self._cancel.clear()
+        self._reset_cancel()
         yield Event(EventType.TURN_START, {"input": ""})
         async for event in self._start_sandbox():
             yield event
@@ -675,15 +1215,48 @@ class TurnEngine:
         provider = str(getattr(getattr(workspace, "provider", None), "name", "") or "sandbox")
         yield Event(EventType.SANDBOX_PREPARING, {"provider": provider})
         try:
-            await asyncio.to_thread(start)
+            if "trigger" in inspect.signature(start).parameters:
+                await asyncio.to_thread(start, "turn_start")
+            else:
+                await asyncio.to_thread(start)
         except Exception as exc:
             text = f"The {provider} sandbox could not start: {exc}"
             self._append_notice("error", text)
             yield Event(EventType.ERROR, {"error": text, "error_type": type(exc).__name__})
             return
         info = workspace.describe()
+        self._note_stamp()  # the runner's version is known only now (V2-28)
         yield Event(EventType.SANDBOX_READY, {k: info.get(k) for k in ("provider", "enforcement", "reason", "sandbox") if info.get(k) is not None})
 
+    def on_sandbox(self, event: str, data: dict[str, Any]) -> None:
+        """What the sandbox workspace tells the recording (observability OB-13): its start as a
+        `sandbox` setup step with its stages, and a restart as a `sandbox_restarted` notice.
+        Called from the thread that starts or restarts the sandbox; outside a turn nothing is
+        written."""
+        obs = self._obs
+        if not obs.enabled or not obs.in_turn:
+            return
+        provider = str(getattr(getattr(getattr(self, "sandbox_workspace", None), "provider", None), "name", "") or "sandbox")
+        if event == "setup_started":
+            self._sandbox_setup_step = obs.start_step(
+                kind="sandbox", name="setup",
+                attrs={"provider": provider, "stages": [], "failed_stage": None, "trigger": data.get("trigger") or "turn_start"},
+            )
+        elif event == "setup_ended":
+            step_id, self._sandbox_setup_step = getattr(self, "_sandbox_setup_step", None), None
+            log = data.get("log")
+            if step_id is None or log is None:
+                return
+            failed = data.get("error") is not None
+            obs.end_step(step_id, status="error" if failed else "ok",
+                         attrs=log.attrs(provider, data.get("trigger") or "turn_start"))
+            if not failed and data.get("trigger") == "first_tool":
+                self._note_stamp()  # the runner's version, as after a start at the turn's start
+        elif event == "restarted":
+            obs.instant_step(kind="notice", name="sandbox_restarted", status="ok",
+                             attrs={"provider": provider, "reason": data.get("reason"), "how": data.get("how")})
+
+    @_records_turn("resume")
     @_summarizes_turn
     async def resume(self) -> AsyncIterator[Event]:
         """Continue a turn that was suspended at a prompt and persisted — durable resume after a
@@ -694,7 +1267,7 @@ class TurnEngine:
         pending = self._unanswered_trailing_tool_calls()
         if not pending:
             return
-        self._cancel.clear()
+        self._reset_cancel()
         self._yield_for_wake = False
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):
@@ -740,7 +1313,7 @@ class TurnEngine:
                             }
                         )
             for offset, stub in enumerate(stubs, start=1):
-                self.messages.insert(i + offset, stub)
+                self._add_message(stub, at=i + offset)
             i += 1 + len(stubs)
 
     def _unanswered_trailing_tool_calls(self) -> list[ToolCall]:
@@ -840,7 +1413,7 @@ class TurnEngine:
                 # Same contract as the stop path below: the partial the user watched
                 # arrive survives the failure.
                 if streamed or streamed_reasoning:
-                    self.messages.append(_assistant_message(_partial_turn()))
+                    self._add_message(_assistant_message(_partial_turn()))
                 friendly = friendly_model_error(self.model, exc)
                 payload = {
                     "error": friendly or str(exc),
@@ -854,7 +1427,7 @@ class TurnEngine:
             if self._cancel.is_set() and turn is None:
                 # Stopped mid-stream: persist exactly what the user watched arrive.
                 if streamed or streamed_reasoning:
-                    self.messages.append(_assistant_message(_partial_turn()))
+                    self._add_message(_assistant_message(_partial_turn()))
                 self._append_notice("interrupted")
                 yield Event(EventType.INTERRUPTED, {"iterations": iterations})
                 return
@@ -877,7 +1450,7 @@ class TurnEngine:
                     cleaned, self.registry.schemas() or None
                 ):
                     turn.text = cleaned
-            self.messages.append(
+            self._add_message(
                 _assistant_message(
                     turn,
                     model=self.model,
@@ -905,6 +1478,8 @@ class TurnEngine:
                 payload["reasoning_effort"] = effort_record
             if turn.served_by:
                 payload["served_by"] = turn.served_by
+            # Context panel (FB-015): the window occupancy after this reply landed.
+            payload["context"] = self.context_snapshot()
             yield Event(EventType.ASSISTANT_MESSAGE, payload)
 
             if not turn.tool_calls:
@@ -921,7 +1496,7 @@ class TurnEngine:
                         cut["replay"] = "stub"
                     if self._continuations < MAX_TRUNCATION_CONTINUATIONS:
                         self._continuations += 1
-                        self.messages.append(
+                        self._add_message(
                             {
                                 "role": "user",
                                 "content": TRUNCATION_NUDGE,
@@ -1076,6 +1651,41 @@ class TurnEngine:
         state = self.compaction_state
         return state.as_dict() if state is not None else None
 
+    def context_snapshot(self) -> dict[str, Any]:
+        """What occupies the model's window right now (FB-015), for the GUI's Context
+        panel: `used` is the provider-reported prompt-side total from the latest round
+        trip when one exists (estimate fallback otherwise, flagged `estimated`); the
+        category split — system prompt / tool schemas / conversation — is always the
+        chars/4 estimate, so surfaces must present it as proportion, not ledger."""
+        msgs = self._outbound_messages()
+        system = _compaction.estimate_tokens(
+            [m for m in msgs if m.get("role") == "system"]
+        )
+        convo = _compaction.estimate_tokens(
+            [m for m in msgs if m.get("role") != "system"]
+        )
+        schemas = self.registry.schemas() or []
+        tools = (
+            len(json.dumps(schemas, ensure_ascii=False)) // 4 if schemas else 0
+        )
+        reported = int(self._last_context_tokens or 0)
+        snapshot: dict[str, Any] = {
+            "window": self._compaction_config().get("context_window"),
+            "used": reported or (system + tools + convo),
+            "estimated": not reported,
+            "breakdown": {"system": system, "tools": tools, "messages": convo},
+        }
+        state = self.compaction_state
+        if state is not None:
+            # Duck-typed on purpose: tests and embedders stub compaction_state with
+            # partial objects; the snapshot must degrade, never raise.
+            snapshot["compaction"] = {
+                "created_at": getattr(state, "created_at", None),
+                "messages": getattr(state, "boundary_index", None),
+                "trimmed": bool(getattr(state, "trimmed", False)),
+            }
+        return snapshot
+
     async def _compact_now(self, *, force: bool = False) -> Optional[str]:
         """Run the compaction policy. Callers gate on `_compaction_due()` (or `force`,
         the overflow path). Returns the user-facing notice text when the outbound view
@@ -1095,11 +1705,38 @@ class TurnEngine:
             cfg.get("summary_max_tokens") or _compaction.SUMMARY_MAX_TOKENS
         )
         model = str(cfg.get("model") or "") or self.model
+        # Observability E4: a summary step, written only if a summary or trim happens (§5.7);
+        # its model calls are nested under it.
+        summary_step = self._obs.reserve_step()
+        tokens_before = self._last_context_tokens
+        try:
+            notice = await self._compact_with(summary_step, force=force, cfg=cfg, trigger=trigger,
+                                              keep=keep, user_budget=user_budget,
+                                              summary_max=summary_max, model=model)
+        except BaseException:
+            self._obs.drop_reserved(summary_step)
+            raise
+        children = self._obs.model_children(summary_step)
+        if notice is not None or children:
+            trimmed = notice is not None and notice.startswith("Context trimmed")
+            self._obs.finish_reserved(
+                summary_step, kind="summary", name="trim" if trimmed else "summary",
+                status="ok" if notice is not None else "error",
+                attrs={"reason": "overflow" if force else "threshold", "tokens_before": tokens_before,
+                       "model_step_id": None if trimmed or not children else children[-1]},
+                wait_for_tokens_after=notice is not None,
+            )
+        else:
+            self._obs.drop_reserved(summary_step)
+        return notice
 
+    async def _compact_with(self, summary_step: Optional[str], *, force: bool, cfg: dict[str, Any],
+                            trigger: int, keep: int, user_budget: int, summary_max: int,
+                            model: str) -> Optional[str]:
         def _build() -> Optional[_compaction.CompactionState]:
             return _compaction.build_state(
                 self.messages,
-                provider=self.provider,
+                provider=_tag_provider(self.provider, purpose="summary", parent=summary_step),
                 model=model,
                 keep_tokens=keep,
                 prior=self.compaction_state,
@@ -1118,6 +1755,11 @@ class TurnEngine:
                 failed = True
         if failed and self.question_asker is not None and self.is_attended and self.is_attended():
             while True:
+                # The "Retry or trim?" question is a wait, nested under the summary (E20).
+                wait_step = self._obs.start_step(
+                    kind="wait", name="question", parent_step_id=summary_step,
+                    attrs={"for_call_id": None, "kind": "question", "attended": True, "where": "session"},
+                )
                 answer = await self._interruptible(
                     self.question_asker(
                         {
@@ -1133,6 +1775,7 @@ class TurnEngine:
                     ),
                     interrupted=None,
                 )
+                self._obs.end_step(wait_step, attrs={"outcome": "answered" if answer else "interrupted"})
                 if not answer or answer.get("answer") != "Retry":
                     break
                 try:
@@ -1209,6 +1852,8 @@ class TurnEngine:
             self._outbound_messages(),
             self.model_settings,
         )
+        self._note_context()
+        self._note_stamp()
         provider = self.provider
 
         def produce():
@@ -1260,6 +1905,16 @@ class TurnEngine:
         # sequential because approval cards are interactive and must reach the human one
         # at a time, in call order.
         self._shell_cleared_in_batch = False
+        # Each call's position in the model's list for this reply (canonical step order).
+        ids = {tc.id for tc in tool_calls}
+        listed = next(
+            (m["tool_calls"] for m in reversed(self.messages)
+             if m.get("role") == "assistant" and m.get("tool_calls")
+             and ids & {tc.get("id") for tc in m["tool_calls"]}),
+            [],
+        )
+        order = [tc.get("id") for tc in listed] or [tc.id for tc in tool_calls]
+        self._call_index = {cid: i for i, cid in enumerate(order) if cid}
         await self._preconsult_reviewer(tool_calls)
         cleared: list[ToolCall] = []
         for tool_call in tool_calls:
@@ -1333,7 +1988,7 @@ class TurnEngine:
 
         if concurrent:
             for tool_call in concurrent:
-                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name, "tool_call_id": tool_call.id})
                 self._audit(tool_call, stage="started")
             outcomes = await asyncio.gather(
                 *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
@@ -1345,7 +2000,7 @@ class TurnEngine:
             if self._cancel.is_set():
                 yield self._interrupted_tool(tool_call)
                 continue
-            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name, "tool_call_id": tool_call.id})
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
@@ -1374,18 +2029,18 @@ class TurnEngine:
                 "received nothing. `_raw` is not a parameter — it is the unparsed text of "
                 "the failed call. Re-issue the call using the tool's declared parameters."
             )
-        self.messages.append(_tool_error_message(tool_call, reason))
+        self._add_message(_tool_error_message(tool_call, reason))
         self._audit(tool_call, stage="finished", status="error", reason=reason)
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "error", "reason": reason},
+            {"name": tool_call.name, "tool_call_id": tool_call.id, "status": "error", "reason": reason},
         )
 
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
         """The stop-path answer for a call that will not run: a tool-error result in the
         history (hosted chat templates reject orphaned tool_calls, and durable-resume
         would otherwise re-prompt it) + the finished event for the tool card."""
-        self.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+        self._add_message(_tool_error_message(tool_call, "interrupted by user"))
         self._audit(
             tool_call, stage="finished", status="interrupted", reason="user stop"
         )
@@ -1568,23 +2223,28 @@ class TurnEngine:
             )
         except Exception:  # noqa: BLE001 - facts inform the reviewer, never gate it
             facts = []
-        if self._approved_plan:
-            # OPE-237: one fixed line, matched by code; the plan's text never travels.
-            # Only when the action IS a step: an action outside the plan gets exactly
-            # the facts it would get without one (a "not in the plan" line made the
-            # reviewer refuse harmless extras, found live 26 Oct 2026).
-            if plan_steps.match_step(
-                self._approved_plan,
-                tool_call.name,
-                tool_call.arguments or {},
-                resolve=self.permissions._candidate,
-                egress_host=self.permissions.egress_host,
-                # A command's paths are judged from the shell's folder (OPE-232); when it
-                # cannot be known, no shell action is a step.
-                shell_base=self.permissions.shell_cwd,
-            ):
-                facts.append(review_facts.PLAN_STEP)
+        # OPE-237: one fixed line, matched by code; the plan's text never travels.
+        # Only when the action IS a step: an action outside the plan gets exactly
+        # the facts it would get without one (a "not in the plan" line made the
+        # reviewer refuse harmless extras, found live 26 Oct 2026).
+        if self._is_approved_plan_step(tool_call.name, tool_call.arguments or {}):
+            facts.append(review_facts.PLAN_STEP)
         return {"facts": facts} if facts else {}
+
+    def _is_approved_plan_step(self, tool_name: str, arguments: dict[str, Any]) -> bool:
+        """Whether this exact call is a step of the plan the user approved (OPE-237)."""
+        if not self._approved_plan:
+            return False
+        return bool(plan_steps.match_step(
+            self._approved_plan,
+            tool_name,
+            arguments or {},
+            resolve=self.permissions._candidate,
+            egress_host=self.permissions.egress_host,
+            # A command's paths are judged from the shell's folder (OPE-232); when it
+            # cannot be known, no shell action is a step.
+            shell_base=self.permissions.shell_cwd,
+        ))
 
     async def _preconsult_reviewer(self, tool_calls: list[ToolCall]) -> None:
         """Fire one reviewer request per call that will escalate, all concurrently, and
@@ -1623,7 +2283,8 @@ class TurnEngine:
         settings_epoch = self.reviewer_settings_epoch
         verdicts = await asyncio.gather(
             *[
-                consulted_reviewer.review(
+                self._recorded_review(
+                    consulted_reviewer, tc,
                     request=request,
                     history=history,
                     tool_name=tc.name,
@@ -1641,8 +2302,77 @@ class TurnEngine:
                     or not self._reviewer_active()
                     or (request, history, context) != self._review_inputs()):
                 verdict = _settings_changed(verdict)
+                self._review_context_changed(tc.id)
             self._reviewer_verdicts[tc.id] = verdict
             self._reviewer_input_snapshots[tc.id] = (request, history, context)
+
+    async def _recorded_review(self, reviewer: Any, tool_call: ToolCall, *, shadow: bool = False,
+                               **review_kw: Any) -> Any:
+        """One auto-approver check, recorded as its own step (observability E12, §5.5),
+        linked to the tool call by `call_id`; the reviewer's model call is nested in it."""
+        kind = _REVIEWER_KINDS.get(getattr(self, "reviewer_choice", "session"), "session_model")
+        step_id = self._obs.start_step(
+            kind="auto_approver", name=tool_call.name, call_id=tool_call.id, shadow=shadow,
+            attrs={"mode": "shadow" if shadow else "live",
+                   "reviewer": {"kind": kind, "external": kind != "session_model",
+                                "model": getattr(reviewer, "model", None) if kind == "session_model" else None}},
+        )
+        if step_id is not None and _accepts_view(reviewer):
+            # A decision-model reviewer has no provider of its own: its request is recorded
+            # through the engine's view (E23).
+            review_kw["view"] = _tag_provider(getattr(reviewer, "provider", None) or self.provider,
+                                              parent=step_id, call_id=tool_call.id,
+                                              shadow=shadow, purpose="auto_approver")
+        try:
+            verdict = await reviewer.review(**review_kw)
+        except BaseException:
+            self._obs.end_step(step_id, status="error", attrs={"result": "could_not_run"})
+            raise
+        if step_id is not None:
+            failed = bool(getattr(verdict, "error", False))
+            result = "could_not_run" if failed else verdict.verdict
+            attrs: dict[str, Any] = {"result": result,
+                                     "usage_reported": self._obs.child_usage_reported(step_id)}
+            for key in ("score", "cutoff"):
+                if getattr(verdict, key, None) is not None:
+                    attrs[key] = getattr(verdict, key)
+            if shadow:
+                answer = self._user_answers.pop(tool_call.id, None)
+                attrs["matched_user"] = None if failed or answer is None else _verdict_matches(result, answer)
+                if answer is None and not failed:
+                    self._shadow_checks[tool_call.id] = (step_id, result)
+            else:
+                denials = self._reviewer_denials + 1 if result == "deny" else 0
+                attrs["breaker"] = {"denials_in_row": denials, "tripped": denials >= _REVIEWER_TRIP}
+                self._review_steps[tool_call.id] = step_id
+            reason = getattr(verdict, "reason", "") or ""
+            content: dict[str, Any] = {"reason": reason} if reason else {}
+            # A decision model's answers: each question's probability of "yes" (§5.5, §5.9).
+            # There is no single score or cut-off (several questions, each with its own
+            # threshold), so those stay null.
+            probabilities = getattr(verdict, "probabilities", None)
+            if isinstance(probabilities, dict) and probabilities:
+                content["questions"] = [
+                    {"name": name, "answer": "yes" if float(p) >= 0.5 else "no", "score": round(float(p), 4)}
+                    for name, p in probabilities.items()
+                    if not str(name).startswith("_") and isinstance(p, (int, float))
+                ]
+            self._obs.end_step(step_id, status="error" if failed else "ok", attrs=attrs, content=content)
+        return verdict
+
+    def _review_context_changed(self, call_id: str) -> None:
+        """The request, history or settings changed while the check ran: the engine treats
+        it as unsure, and the step's result says so (§8.2)."""
+        self._obs.update_step(self._review_steps.pop(call_id, None), attrs={"result": "context_changed"})
+
+    def _note_user_answer(self, call_id: str, *, approved: bool) -> None:
+        """Your answer on a card, compared with a shadow check's verdict (`matched_user`)."""
+        waiting = self._shadow_checks.pop(call_id, None)
+        if waiting is not None:
+            step_id, result = waiting
+            self._obs.update_step(step_id, attrs={"matched_user": _verdict_matches(result, approved)})
+        elif self.reviewer_shadow:
+            self._user_answers[call_id] = approved
 
     async def _consult_reviewer(self, tool_call: ToolCall) -> Any:
         """The parked verdict from `_preconsult_reviewer`, or a fresh single call."""
@@ -1651,6 +2381,7 @@ class TurnEngine:
         if verdict is not None:
             if snapshot is not None and snapshot != self._review_inputs():
                 from .reviewer import Verdict
+                self._review_context_changed(tool_call.id)
                 return Verdict("unsure", "Approval context changed since review; a human must decide.")
             return verdict
         request, history, context = self._review_inputs()
@@ -1659,7 +2390,8 @@ class TurnEngine:
             from .reviewer import Verdict
             if delegated.get("hard_deny") or delegated.get("human_only"):
                 return Verdict("unsure", delegated["reason"])
-            verdict = await self.reviewer.review(
+            verdict = await self._recorded_review(
+                self.reviewer, tool_call,
                 request=request, history=history,
                 tool_name=delegated["tool"], arguments=delegated["arguments"],
                 provenance=delegated.get("provenance", ""),
@@ -1668,7 +2400,8 @@ class TurnEngine:
             if delegated != self._delegated_context(tool_call) or (request, history, context) != self._review_inputs():
                 return Verdict("unsure", "The worker request or its permissions changed during review. Review the current request.")
             return verdict
-        result = await self.reviewer.review(
+        result = await self._recorded_review(
+            self.reviewer, tool_call,
             request=request,
             history=history,
             tool_name=tool_call.name,
@@ -1679,6 +2412,7 @@ class TurnEngine:
         )
         if (request, history, context) != self._review_inputs():
             from .reviewer import Verdict
+            self._review_context_changed(tool_call.id)
             return Verdict("unsure", "Approval context changed during review; review the current request.")
         return result
 
@@ -1752,7 +2486,8 @@ class TurnEngine:
 
         async def _shadow() -> None:
             try:
-                verdict = await self.reviewer.review(
+                verdict = await self._recorded_review(
+                    self.reviewer, tool_call, shadow=True,
                     request=request,
                     history=history,
                     provenance=prov,
@@ -1781,9 +2516,12 @@ class TurnEngine:
         task.add_done_callback(self._shadow_tasks.discard)
 
     async def drain_shadow_reviews(self) -> None:
-        """Await in-flight shadow verdicts (tests and orderly shutdown; never the hot path)."""
+        """Await in-flight shadow verdicts (tests and orderly shutdown; never the hot path),
+        and the recorded turn ends that waited for them."""
         if self._shadow_tasks:
             await asyncio.gather(*list(self._shadow_tasks), return_exceptions=True)
+        if self._turn_end_tasks:
+            await asyncio.gather(*list(self._turn_end_tasks), return_exceptions=True)
 
     async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
@@ -1835,6 +2573,19 @@ class TurnEngine:
                     needs_user=True,
                     human_only=True,
                 )
+
+        path = self._decisions[tool_call.id] = DecisionPath()
+        path.permission(
+            allowed=allowed, needs_user=decision.needs_user, human_only=decision.human_only,
+            reason=reason, tier=decision.tier if allowed else None,
+        )
+        if not allowed and decision.needs_user:
+            try:
+                # A session grant covered it, but Auto-Approve hands it to the reviewer (§8.3).
+                if self.permissions.session_grant_suspended(tool_call.name, tool_call.arguments, metadata):
+                    path.add("grant", "suspended_in_auto_approve")
+            except Exception:  # noqa: BLE001 - a recording fact never breaks a call
+                pass
 
         # OPE-233: an Auto-Approve gate tier let this call run without the reviewer —
         # recorded, never invisible (transcript chip + audit row), like every other
@@ -1912,6 +2663,7 @@ class TurnEngine:
             # deny card. One-shot — consumed above; a different action never matches.
             allowed = True
             reason = "approved by user (allow anyway)"
+            path.add("grant", "allow_anyway")
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
 
         # A lead DENYING one of its workers' waiting calls runs nothing: the worker is told
@@ -1929,6 +2681,7 @@ class TurnEngine:
         ):
             allowed = True
             reason = "a lead's denial of a worker's call runs nothing"
+            path.add("grant", "lead_denial")
             self._audit(tool_call, stage="auto_allowed", status="allowed", reason=reason)
 
         consulted_live = False
@@ -1951,10 +2704,14 @@ class TurnEngine:
             consulted_reviewer = self.reviewer
             settings_epoch = self.reviewer_settings_epoch
             verdict = await self._consult_reviewer(tool_call)
-            if (self.reviewer is not consulted_reviewer
-                    or self.reviewer_settings_epoch != settings_epoch
-                    or not self._reviewer_active()):
+            settings_changed = (self.reviewer is not consulted_reviewer
+                                or self.reviewer_settings_epoch != settings_epoch
+                                or not self._reviewer_active())
+            if settings_changed:
                 verdict = _settings_changed(verdict)
+                self._review_context_changed(tool_call.id)
+            path.add("auto_approver", "context_changed" if settings_changed
+                     else "could_not_run" if getattr(verdict, "error", False) else verdict.verdict)
             self._audit(
                 tool_call,
                 stage="reviewer_verdict",
@@ -2005,7 +2762,7 @@ class TurnEngine:
                     "approval_origin": "reviewer_denied",
                     **({"approval_note": card_note} if card_note else {}),
                 }
-                self.messages.append(deny_msg)
+                self._add_message(deny_msg)
                 self._audit(
                     tool_call,
                     stage="finished",
@@ -2020,6 +2777,10 @@ class TurnEngine:
                 unsure_note = card_note
                 if not card_note:
                     unsure_silent_kind = "reviewer_unavailable" if verdict.error else "reviewer_asks"
+
+        if (not allowed and decision.needs_user and not consulted_live
+                and self.permissions.mode is Mode.AUTO_APPROVE):
+            path.add("auto_approver", _reviewer_skip(self, decision))
 
         if not allowed and decision.needs_user and self._nobody_answers_cards():
             # Attendance "auto": nobody can answer a card, and the mode did not allow
@@ -2040,6 +2801,7 @@ class TurnEngine:
                 reason=reason,
             )
             decision = replace(decision, needs_user=False)
+            path.add("card", "auto_refused")
 
         if not allowed and decision.needs_user:
             escalation = (
@@ -2123,7 +2885,7 @@ class TurnEngine:
                 call_id=tool_call.id,
             )
             outcome = await self._wait_tool(tool_call,
-                self.approver(
+                kind="approval", coro=self.approver(
                     PermissionRequest(
                         tool_name=tool_call.name,
                         arguments=tool_call.arguments,
@@ -2141,13 +2903,20 @@ class TurnEngine:
                 ),
                 interrupted=ApprovalOutcome.DENY,
             )
+            path.add("card", "parked_inbox" if self._card_where.pop(tool_call.id, "") == "inbox" else "shown_session")
+            path.resolved(
+                outcome.value if isinstance(outcome, ApprovalOutcome) else str(outcome),
+                interrupted=outcome is ApprovalOutcome.DENY and self._cancel.is_set(),
+            )
+            if not self._cancel.is_set() and outcome is not ApprovalOutcome.SUPERSEDED:
+                self._note_user_answer(tool_call.id, approved=outcome is not ApprovalOutcome.DENY)
             if outcome is ApprovalOutcome.SUPERSEDED:
                 result = {
                     "skipped": True,
                     "reason": "The worker request was already resolved. No further action was taken.",
                 }
                 self._approval_origins.pop(tool_call.id, None)
-                self.messages.append(self._timed_result(tool_call, result))
+                self._add_message(self._timed_result(tool_call, result))
                 self._audit(tool_call, stage="approval_resolved", call_id=tool_call.id, status="superseded", reason=result["reason"])
                 self._audit(tool_call, stage="finished", status="skipped", reason=result["reason"])
                 yield Event(EventType.TOOL_FINISHED, {
@@ -2159,7 +2928,8 @@ class TurnEngine:
             if outcome is ApprovalOutcome.DENY:
                 allowed, reason = (
                     False,
-                    "interrupted by user" if self._cancel.is_set() else "denied by user",
+                    self._deny_notes.pop(tool_call.id, None)
+                    or ("interrupted by user" if self._cancel.is_set() else "denied by user"),
                 )
                 self._approval_origins[tool_call.id] = {
                     "origin": "user",
@@ -2243,7 +3013,7 @@ class TurnEngine:
                     **({"approval_note": origin["note"]} if origin.get("note") else {}),
                     **({"approval_grant": origin["grant"]} if origin.get("grant") else {}),
                 }
-            self.messages.append(err_msg)
+            self._add_message(err_msg)
             yield Event(
                 EventType.TOOL_FINISHED,
                 {"name": tool_call.name, "status": "denied", "reason": reason},
@@ -2253,7 +3023,7 @@ class TurnEngine:
             return
 
         if spec is None:
-            self.messages.append(
+            self._add_message(
                 _tool_error_message(tool_call, f"unknown tool: {tool_call.name}")
             )
             yield Event(
@@ -2287,7 +3057,134 @@ class TurnEngine:
         return "read"
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
-        """Execute one authorized call (runs in a worker thread)."""
+        """Execute one authorized call (runs in a worker thread). Recorded as a tool step
+        from here to the RAW result, before `_record_result` shortens it (E1)."""
+        step_id = self._obs.start_step(
+            kind="tool", name=tool_call.name, call_id=tool_call.id,
+            call_index=self._call_index.get(tool_call.id),
+        )
+        # A tool that starts its own work (the explore helper, E6) records it under this step.
+        outer = set_tool_run(ToolRun(step_id=step_id, turn_id=self._obs.turn_id,
+                                     view=self.provider, recording=self._obs, call_id=tool_call.id))
+        try:
+            result, status = self._execute_call(tool_call)
+        finally:
+            set_tool_run(outer)
+        blocked = result.pop("_blocked", None) if isinstance(result, dict) else None
+        if step_id is not None:
+            attrs = self._tool_step_attrs(tool_call, {**result, "_blocked": blocked} if blocked else result, status)
+            step_status = status
+            if self._cancel.is_set() and isinstance(result, dict) and result.get("error"):
+                # Stop killed it (a shell command answers "interrupted by user"): §7.4.
+                step_status = "interrupted"
+            self._obs.end_step(
+                step_id, status=step_status, attrs=attrs,
+                content={"blocked": blocked} if blocked else {},
+                wait_for_tool_message=True,
+            )
+        return result, status
+
+    def _tool_step_attrs(self, tool_call: ToolCall, result: Any, status: str = "ok") -> dict[str, Any]:
+        attrs: dict[str, Any] = {"risk_class": self._risk_class(tool_call.name)}
+        path = self._decisions.pop(tool_call.id, None)
+        if path is not None:
+            attrs["decision"] = path.finish(ran=True)
+        try:
+            attrs["result_bytes"] = len(
+                result.encode("utf-8") if isinstance(result, str)
+                else json.dumps(result, default=str, ensure_ascii=False).encode("utf-8")
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if isinstance(result, dict) and isinstance(result.get("exit_code"), int):
+            attrs["exit_code"] = result["exit_code"]
+        attrs["sandbox"] = self._sandbox_facts(result)
+        attrs.update(self._call_facts(tool_call.name, tool_call.arguments, ran=True,
+                                      status=status, result=result, risk=attrs["risk_class"]))
+        return attrs
+
+    def _call_facts(self, name: str, arguments: Any, *, ran: bool, status: str, result: Any = None,
+                    reason: str = "", risk: Optional[str] = None) -> dict[str, Any]:
+        """The tool fields of recording format 1.2 that the Issues checks read (phase-2
+        design §4): ids and flags only, never text. Facts never break a call."""
+        out: dict[str, Any] = {}
+        try:
+            mangled = isinstance(arguments, dict) and "_raw" in arguments
+            out["args_hash"] = None if mangled or arguments is None else _args_hash(arguments)
+            spec = self.registry.get(name)
+            out["repeat_ok"] = bool(getattr(getattr(spec, "metadata", None), "repeat_ok", False))
+            out["result_error"] = bool(ran and status == "ok" and isinstance(result, dict) and result.get("error"))
+            if status != "error":
+                out["error_kind"] = None
+            elif ran:
+                # Arguments the tool does not take, or a required one missing, fail at the call
+                # itself: the model's mistake, not the tool's (found by the labelling judge).
+                out["error_kind"] = "raised" if _args_fit(spec, arguments) else "bad_arguments"
+            elif mangled:
+                out["error_kind"] = "bad_arguments"
+            elif spec is None or reason.startswith("unknown tool"):
+                out["error_kind"] = "unknown_tool"
+            else:
+                out["error_kind"] = "raised"
+            if not ran:
+                out["reaches_network"] = None
+            else:
+                command = arguments.get("command") if isinstance(arguments, dict) and name == "run_shell" else None
+                out["reaches_network"] = bool(
+                    (risk or self._risk_class(name)) == "egress"
+                    or (isinstance(command, str) and review_facts.shell_reaches_network(command))
+                )
+            if name == "run_shell":
+                # 1.3 (E17b): the scanner this command runs, by the signals.yaml word rule.
+                # A scanner that is not installed did not scan (signals 0.7 `scanners.not_found`,
+                # P3B-1): on Windows that exits 1, the same code as "found something", so its
+                # output and error tell them apart.
+                command = arguments.get("command") if isinstance(arguments, dict) else None
+                res = result if isinstance(result, dict) else {}
+                out["scanner"] = _recorded_scanner(command, ran=ran and bool(res), exit_code=res.get("exit_code"),
+                                                   output=res.get("output"), error=res.get("error"))
+            # 1.3 (E17b): the full SHA-256 of the raw result, the evidence card's "output sha256".
+            out["result_sha256"] = _result_sha256(result) if ran else None
+            if name == "todo_write" and isinstance(arguments, dict):
+                entries = arguments.get("todos", arguments.get("items")) or []
+                items = []
+                for entry in entries if isinstance(entries, list) else []:
+                    text = str(entry.get("content", "")) if isinstance(entry, dict) else str(entry)
+                    st = entry.get("status", "pending") if isinstance(entry, dict) else "pending"
+                    st = "done" if st in ("done", "completed") else st if st in ("pending", "in_progress") else "pending"
+                    items.append({"h": _text_hash(text), "s": st})
+                out["plan"] = {"items": items}
+        except Exception:  # noqa: BLE001 - recording never breaks a call
+            logger.exception("observability: could not record a tool call's facts")
+        return out
+
+    @staticmethod
+    def _sandbox_notice_id(text: Any) -> Optional[str]:
+        """`restart` or `regrant` for the sandbox notice a command's result carries, else None."""
+        if not isinstance(text, str) or not text:
+            return None
+        from .sandbox.workspace import REGRANT_NOTICE, RESTART_NOTICE
+
+        return "restart" if text == RESTART_NOTICE else "regrant" if text == REGRANT_NOTICE else None
+
+    def _sandbox_facts(self, result: Any) -> Optional[dict[str, Any]]:
+        """Per-call sandbox facts (observability E13, §9.3): whether this sandbox can report
+        blocked sites now, and how many connections it refused during the call. None when
+        the call did not run in a sandbox."""
+        ws = getattr(self, "sandbox_workspace", None)
+        if ws is None or not hasattr(ws, "reports_blocked"):
+            return None
+        blocked = result.get("_blocked") if isinstance(result, dict) else None
+        told = result.get("sandbox_notice") if isinstance(result, dict) else None
+        return {
+            "blocked_known": bool(getattr(ws, "reports_blocked", False)),
+            "blocked_count": sum(int(b.get("count") or 0) for b in blocked or []),
+            # The restart the agent was told of with this result (OB-13): the same short id
+            # as the `sandbox_restarted` notice's `how`.
+            "notice": self._sandbox_notice_id(told),
+        }
+
+    def _execute_call(self, tool_call: ToolCall) -> tuple[Any, str]:
         started, clock = time.time(), time.perf_counter()
         try:
             delegated = self._authorized_delegates.pop(tool_call.id, None)
@@ -2384,7 +3281,7 @@ class TurnEngine:
             if self._tool_result_spill_dir is not None:
                 for spilled in self._tool_result_spill_dir.glob(f"{self._step:04d}-*"):
                     self._agent_files.mark_outside(spilled)
-        self.messages.append(message)
+        self._add_message(message)
         hidden = int((display or {}).get("hidden_by_filters") or 0)
         stripped = int((display or {}).get("hidden_fields") or 0)
         if hidden or stripped:
@@ -2519,7 +3416,7 @@ class TurnEngine:
             ) or {"approved": False, "error": "no response"}
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2571,11 +3468,11 @@ class TurnEngine:
                     "The user declined. Carry on without it and say plainly what you could not do.",
                 )
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(tool_call, stage="finished", status=status, result=result, result_preview=_preview(result))
         yield Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": status, "result_preview": _preview(result)},
+            {"name": tool_call.name, "tool_call_id": tool_call.id, "status": status, "result_preview": _preview(result)},
         )
 
     async def _handle_team_proposal(self, tool_call: ToolCall) -> AsyncIterator[Event]:
@@ -2627,7 +3524,7 @@ class TurnEngine:
         if result.get("approved") and result.get("team_id"):
             created = {"team_id": result["team_id"], "workers": result.get("workers") or []}
             message["_display"] = {"team_created": created}
-        self.messages.append(message)
+        self._add_message(message)
         self._audit(
             tool_call,
             stage="finished",
@@ -2700,7 +3597,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2712,6 +3609,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -2775,7 +3673,7 @@ class TurnEngine:
                 }
 
         status = "ok" if result.get("approved") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2894,7 +3792,7 @@ class TurnEngine:
                 )
 
         status = "ok" if result.get("installed") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -2906,6 +3804,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -2989,7 +3888,7 @@ class TurnEngine:
             }
 
         status = "ok" if result.get("granted") else "denied"
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -3001,6 +3900,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -3070,7 +3970,7 @@ class TurnEngine:
         )
         if status == "ok":
             self._note_ask_replies(result, question)
-        self.messages.append(self._timed_result(tool_call, result))
+        self._add_message(self._timed_result(tool_call, result))
         self._audit(
             tool_call,
             stage="finished",
@@ -3082,6 +3982,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -3126,14 +4027,14 @@ class TurnEngine:
                 message["source"] = source
             if activity:
                 message["_activity"] = activity
-            self.messages.append(message)
+            self._add_message(message)
         self._steering = []
 
     def _outbound_messages(self) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
 
-        Every message is stripped of the display-only sidecars — `source`, `_display`, and
-        `ts` — (providers reject unknown keys), unconditionally — whether or not a
+        Every message is stripped of the display-only sidecars — `source`, `_display`, `ts`
+        and `mid` — (providers reject unknown keys), unconditionally — whether or not a
         `<system-context>` block is added. When a context
         provider yields a non-empty string, an ephemeral `<system-context>` block is appended to the
         last user message. A partial assistant turn abandoned by a turn that died mid-stream —
@@ -3142,7 +4043,7 @@ class TurnEngine:
         Never mutates `self.messages`, so none of this is persisted/replayed.
         """
         # Strip the display-only sidecars — `source` (connector cards), `_display`
-        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `reasoning`
+        # (e.g. filter-hidden counts), `ts` (append-time timestamps), `mid` (stable message ids), `reasoning`
         # (thinking text), `usage` (token counts), `finish_reason` (how the reply ended)
         # and `max_output_tokens` (the ceiling sent) — copying only messages that carry
         # one. Whole `notice` messages (error/interrupted/model-switch markers) are
@@ -3154,6 +4055,7 @@ class TurnEngine:
             "_display",
             "_outside",
             "ts",
+            "mid",
             "reasoning",
             "usage",
             "finish_reason",
@@ -3283,6 +4185,7 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
+        self._last_context_block = context
         if not context:
             return out
         # The block rides on the LAST user message — one shape for every provider. In a

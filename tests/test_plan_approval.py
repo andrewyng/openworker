@@ -130,10 +130,10 @@ def test_an_action_outside_the_plan_gets_normal_review(tmp_path):
         ],
     )
     _run(engine, "Do the tasks in TODO.md.")
-    # No plan line at all: the plan neither helps nor hurts an action outside it.
-    assert PLAN_STEP not in engine.reviewer.facts[0]
-    assert not any("plan" in f for f in engine.reviewer.facts[0])
-    assert approvals == ["run_shell"]  # the reviewer was unsure: a card, as without a plan
+    # The plan neither helps nor hurts an action outside it: an upload to a host nobody
+    # granted goes to a person without the reviewer (round-2 F-5), as without a plan.
+    assert engine.reviewer.facts == []
+    assert approvals == ["run_shell"]
 
 
 def test_the_plan_text_never_reaches_the_reviewer(tmp_path):
@@ -372,7 +372,8 @@ def test_a_url_whose_login_looks_like_the_host_is_not_the_approved_upload(tmp_pa
     )
     _run(engine, "Do the tasks in TODO.md.")
     assert approvals == ["run_shell"]
-    assert PLAN_STEP not in engine.reviewer.facts[0]
+    # Not the approved step, so the upload check (round-2 F-5) sent it to a person.
+    assert engine.reviewer.facts == []
 
 
 def test_an_upload_that_sends_more_than_the_step_gets_a_card(tmp_path):
@@ -386,7 +387,8 @@ def test_an_upload_that_sends_more_than_the_step_gets_a_card(tmp_path):
     )
     _run(engine, "Do the tasks in TODO.md.")
     assert approvals == ["run_shell"]
-    assert PLAN_STEP not in engine.reviewer.facts[0]
+    # Not the approved step, so the upload check (round-2 F-5) sent it to a person.
+    assert engine.reviewer.facts == []
 
 
 class _Shell:
@@ -465,7 +467,8 @@ def test_a_run_step_with_a_login_in_its_url_is_sent_back_to_the_agent(tmp_path):
     result = next(m for m in engine.messages if m.get("role") == "tool" and "dropped_steps" in str(m.get("content")))
     assert "login before '@'" in str(result["content"])
     assert approvals == ["run_shell"]
-    assert PLAN_STEP not in engine.reviewer.facts[0]
+    # Not the approved step, so the upload check (round-2 F-5) sent it to a person.
+    assert engine.reviewer.facts == []
 
 
 def test_a_run_step_that_reaches_the_network_shows_its_host_on_the_card(tmp_path):

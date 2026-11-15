@@ -1,0 +1,482 @@
+:root {
+  font:
+    15px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #f7f4e6;
+  background: #b8d9d7;
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+}
+button,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #ffffff40;
+  background: #203e37e8;
+  color: #fff9e9;
+  border-radius: 12px;
+  padding: 10px 17px;
+  transition: background 0.15s;
+}
+button:hover:not(:disabled),
+button.held {
+  background: #476c54;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+button:focus-visible,
+select:focus-visible {
+  outline: 3px solid #f4cb80;
+  outline-offset: 3px;
+}
+[hidden] {
+  display: none !important;
+}
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+header {
+  position: fixed;
+  top: 22px;
+  left: 28px;
+  right: 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.brand {
+  font:
+    600 22px/1.2 Georgia,
+    serif;
+  color: #173c33;
+  text-shadow: 0 1px #fff9;
+}
+.brand span {
+  display: table;
+  margin-top: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #fff8e8d9;
+  font: 600 12px/1.6 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: #24483c;
+  text-shadow: none;
+}
+.tools {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.tools button {
+  padding: 8px 14px;
+  font-size: 14px;
+}
+#objective {
+  position: fixed;
+  left: 28px;
+  top: 104px;
+  padding: 14px 18px;
+  border: 1px solid #ffffff60;
+  border-radius: 16px;
+  background: #25483ee8;
+  box-shadow: 0 8px 30px #17362615;
+  max-width: 320px;
+  pointer-events: none;
+}
+#objective small {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #cbd9b8;
+}
+h2 {
+  font-size: 17px;
+  margin: 4px 0;
+}
+#objective p {
+  font-size: 13px;
+  color: #e1e7d6;
+  margin: 0;
+}
+#panel {
+  position: fixed;
+  left: 5%;
+  bottom: 8%;
+  width: min(470px, 90vw);
+  padding: 30px 34px;
+  background: #fff9edef;
+  color: #25483e;
+  border-radius: 23px;
+  box-shadow: 0 18px 70px #193c3330;
+  border: 1px solid #fff9;
+  backdrop-filter: blur(14px);
+  z-index: 3;
+}
+.chapter {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: #6c795f;
+}
+h1 {
+  font:
+    500 clamp(32px, 4vw, 47px) / 1.08 Georgia,
+    serif;
+  letter-spacing: -0.03em;
+  margin: 15px 0;
+}
+#panel-copy {
+  color: #5f6d5e;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0 0 20px;
+}
+.menu-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.primary {
+  background: #315846;
+  border-color: #315846;
+  padding: 13px 22px;
+  font-weight: 600;
+}
+.menu-actions button:not(.primary) {
+  background: transparent;
+  border-color: #49654940;
+  color: #375845;
+  padding: 10px;
+  font-size: 12px;
+}
+.menu-actions button:not(.primary):hover {
+  background: #e3ead8;
+}
+.controls {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #788271;
+  margin: 17px 0 0;
+}
+.options {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 22px;
+  border-top: 1px solid #314e3920;
+  padding-top: 15px;
+  font-size: 11px;
+  color: #617159;
+}
+select {
+  background: transparent;
+  border: 0;
+  color: #365540;
+  font-size: 11px;
+}
+/* Minimap: canvas shown at its native 144×250 pixels so drawn labels stay crisp. */
+#map-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  background: #1f3d35f0;
+  border: 1px solid #ffffff40;
+  border-radius: 14px;
+  padding: 8px;
+  width: 160px;
+  pointer-events: none;
+  box-shadow: 0 6px 22px #13302a30;
+}
+#map {
+  display: block;
+  width: 144px;
+  height: 250px;
+  border-radius: 8px;
+}
+#lights {
+  display: block;
+  font: 600 13px/1.2 system-ui, sans-serif;
+  color: #fff4d6;
+  text-align: center;
+  margin: 2px 0 7px;
+  letter-spacing: 0.02em;
+}
+.legend {
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  font: 500 11px/1.3 system-ui, sans-serif;
+  color: #e3ecdc;
+}
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.part {
+  background: #f0b04a;
+  box-shadow: 0 0 0 1px #7a4a1680;
+}
+.dot.lantern {
+  background: #fffbea;
+  box-shadow: 0 0 0 1px #ffffff60;
+}
+#interaction {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  background: #234b40ee;
+  padding: 12px 20px;
+  border: 1px solid #eff8dc80;
+  border-radius: 16px;
+  min-width: 250px;
+  max-width: 390px;
+  text-align: center;
+  box-shadow: 0 5px 25px #17332e20;
+}
+#interaction-label {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+}
+#clue {
+  display: block;
+  font-size: 12px;
+  color: #d4ddc7;
+  margin: 4px 0 10px;
+}
+#interaction button {
+  font-size: 12px;
+  padding: 6px 12px;
+  background: #f4dfac;
+  color: #304b39;
+}
+kbd {
+  font: 600 11px system-ui;
+  margin-right: 7px;
+}
+#toast {
+  position: fixed;
+  top: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(430px, calc(100vw - 520px));
+  min-width: 220px;
+  text-align: center;
+  background: #fff6dfed;
+  color: #365a42;
+  padding: 10px 18px;
+  border-radius: 14px;
+  font-size: 13px;
+  box-shadow: 0 3px 16px #1a362818;
+  z-index: 2;
+}
+.touch {
+  position: fixed;
+  bottom: 18px;
+  left: 28px;
+  right: 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.touch button {
+  pointer-events: auto;
+  touch-action: none;
+  background: #25473bce;
+}
+.pad {
+  display: grid;
+  grid-template-columns: repeat(3, 43px);
+  gap: 4px;
+}
+.pad button {
+  padding: 6px;
+}
+.pad [data-k="up"] {
+  grid-column: 2;
+}
+.pad [data-k="left"] {
+  grid-row: 2;
+  grid-column: 1;
+}
+.pad [data-k="down"] {
+  grid-row: 2;
+  grid-column: 2;
+}
+.pad [data-k="right"] {
+  grid-row: 2;
+  grid-column: 3;
+}
+.touch > [data-k="jump"] {
+  height: 48px;
+  min-width: 76px;
+}
+/* Touch devices keep on-screen controls; lift map/prompt above them. */
+@media (pointer: coarse), (hover: none) {
+  #map-panel {
+    bottom: 84px;
+  }
+  #interaction {
+    bottom: 106px;
+  }
+}
+/* Mouse + keyboard desktops: keyboard controls cover movement, so hide the pad. */
+@media (hover: hover) and (pointer: fine) {
+  .touch {
+    display: none;
+  }
+}
+@media (max-height: 680px) {
+  header {
+    top: 16px;
+  }
+  .brand {
+    font-size: 19px;
+  }
+  .brand span {
+    margin-top: 4px;
+  }
+  #objective {
+    top: 84px;
+    left: 24px;
+    padding: 10px 14px;
+    max-width: 280px;
+  }
+  h2 {
+    font-size: 15px;
+    margin: 2px 0;
+  }
+  #objective p {
+    font-size: 12px;
+  }
+  #panel {
+    bottom: 20px;
+    padding: 22px 26px;
+  }
+  #map-panel {
+    right: 16px;
+    bottom: 16px;
+  }
+  .controls {
+    margin-top: 10px;
+  }
+  .options {
+    margin-top: 14px;
+  }
+  #interaction {
+    bottom: 24px;
+  }
+}
+@media (max-height: 680px) and ((pointer: coarse) or (hover: none)) {
+  #map-panel {
+    bottom: 80px;
+  }
+  #interaction {
+    bottom: 85px;
+  }
+}
+@media (max-height: 470px) {
+  #map {
+    width: 115px;
+    height: 200px;
+  }
+  #map-panel {
+    width: 131px;
+  }
+  .legend {
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+}
+@media (max-width: 700px) {
+  header {
+    left: 16px;
+    right: 16px;
+    top: 15px;
+  }
+  .brand {
+    font-size: 18px;
+  }
+  .tools button {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  #objective {
+    left: 16px;
+    top: 80px;
+    width: 230px;
+  }
+  #map-panel {
+    right: 12px;
+    width: 131px;
+  }
+  #map {
+    width: 115px;
+    height: 200px;
+  }
+  .legend {
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  #interaction {
+    max-width: 240px;
+    min-width: 0;
+    left: 40%;
+  }
+  #panel {
+    left: 4%;
+    width: 80%;
+  }
+  .touch {
+    left: 16px;
+    right: 16px;
+  }
+  #toast {
+    top: 62px;
+    max-width: 260px;
+    min-width: 0;
+    font-size: 11px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+}
+body:has(#panel:not([hidden])) .touch,
+body:has(#panel:not([hidden])) #interaction,
+body:has(#panel:not([hidden])) #objective,
+body:has(#panel:not([hidden])) #map-panel {
+  visibility: hidden;
+}
