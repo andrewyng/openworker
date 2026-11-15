@@ -49,6 +49,8 @@ pub enum InterruptionKind {
     /// (`provider__tool`); `category` is the engine's effect classification.
     Approval {
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
         arguments: Value,
         category: Option<String>,
     },
@@ -68,6 +70,8 @@ impl Interruption {
         } else if v["kind"] == "approval" {
             InterruptionKind::Approval {
                 tool: s("tool").unwrap_or_default(),
+                qualified_name: s("qualified_name"),
+                model_alias: s("model_alias"),
                 arguments: v["arguments"].clone(),
                 category: s("category"),
             }
@@ -192,6 +196,14 @@ pub enum RunEvent {
         attempt_id: String,
         diagnostic: openworker_runtime::provider::Diagnostic,
     },
+    /// Child events keep their original journal identity; do not add their usage twice.
+    SubagentActivity {
+        agent_id: String,
+        parent_session_id: String,
+        event: Event,
+        summary: Value,
+        approval_decision: Option<openworker_runtime::permissions::ApprovalDecision>,
+    },
     /// Named-team events retain both instance and definition identities.
     TeamActivity {
         agent_id: String,
@@ -199,6 +211,7 @@ pub enum RunEvent {
         team_id: String,
         event: Event,
         summary: Value,
+        approval_decision: Option<openworker_runtime::permissions::ApprovalDecision>,
     },
     Message {
         agent: String,
@@ -207,6 +220,11 @@ pub enum RunEvent {
     ToolStarted {
         agent: String,
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
+        /// Arguments released in the durable start event; absent on older hosts.
+        arguments: Option<Value>,
+        session_id: String,
         /// Correlates with application ToolContext::call_id and the raw journal.
         call_id: String,
         /// Scope call IDs to their turn; providers may reuse IDs in later turns.
@@ -215,13 +233,23 @@ pub enum RunEvent {
     ToolFinished {
         agent: String,
         tool: String,
+        qualified_name: Option<String>,
+        model_alias: Option<String>,
+        session_id: String,
         call_id: String,
         turn_id: Option<String>,
+    },
+    ApprovalDecision {
+        agent: String,
+        session_id: String,
+        turn_id: Option<String>,
+        decision: openworker_runtime::permissions::ApprovalDecision,
     },
     /// The host approved a call because the agent's `interrupt_on` excludes it.
     AutoApproved {
         agent: String,
         tool: String,
+        decision: Option<openworker_runtime::permissions::ApprovalDecision>,
     },
     PlanUpdated {
         agent: String,
@@ -233,6 +261,18 @@ pub enum RunEvent {
 }
 impl RunEvent {
     fn from_wire(item: &Value) -> Option<Self> {
+        if let (Some(agent_id), Some(parent_session_id)) = (
+            item["agent_id"].as_str(),
+            item["parent_session_id"].as_str(),
+        ) {
+            return Some(Self::SubagentActivity {
+                agent_id: agent_id.into(),
+                parent_session_id: parent_session_id.into(),
+                event: serde_json::from_value(item["event"].clone()).ok()?,
+                summary: item["summary"].clone(),
+                approval_decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
+            });
+        }
         if let (Some(agent_id), Some(team_id)) =
             (item["agent_id"].as_str(), item["team_id"].as_str())
         {
@@ -242,6 +282,7 @@ impl RunEvent {
                 team_id: team_id.into(),
                 event: serde_json::from_value(item["event"].clone()).ok()?,
                 summary: item["summary"].clone(),
+                approval_decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
             });
         }
         let agent = item["agent"].as_str().unwrap_or_default().to_owned();
@@ -266,6 +307,16 @@ impl RunEvent {
                 .unwrap_or_default()
                 .to_owned()
         };
+        if summary["type"] != "auto_approved" {
+            if let Ok(decision) = serde_json::from_value(item["approval_decision"].clone()) {
+                return Some(RunEvent::ApprovalDecision {
+                    agent,
+                    session_id,
+                    turn_id,
+                    decision,
+                });
+            }
+        }
         Some(match summary["type"].as_str() {
             Some("model_attempt_started") => RunEvent::AttemptStarted {
                 session_id,
@@ -313,18 +364,26 @@ impl RunEvent {
             Some("tool_started") => RunEvent::ToolStarted {
                 agent,
                 tool: tool(),
+                qualified_name: summary["qualified_name"].as_str().map(str::to_owned),
+                model_alias: summary["model_alias"].as_str().map(str::to_owned),
+                arguments: summary.get("arguments").cloned(),
+                session_id,
                 call_id: call_id(),
                 turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("tool_finished") => RunEvent::ToolFinished {
                 agent,
                 tool: tool(),
+                qualified_name: summary["qualified_name"].as_str().map(str::to_owned),
+                model_alias: summary["model_alias"].as_str().map(str::to_owned),
+                session_id,
                 call_id: call_id(),
                 turn_id: item["event"]["turn_id"].as_str().map(str::to_owned),
             },
             Some("auto_approved") => RunEvent::AutoApproved {
                 agent,
                 tool: tool(),
+                decision: serde_json::from_value(item["approval_decision"].clone()).ok(),
             },
             Some("plan_updated") => RunEvent::PlanUpdated {
                 agent,
@@ -460,6 +519,13 @@ impl Session {
                 "Update the host to configure per-call output limits".into(),
             ));
         }
+        if (options.auto_approver_context.is_some() || options.compaction.is_some())
+            && self.client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
         if (options.instruction_addendum.is_some() || options.output.is_some())
             && self.client.info()["capabilities"]["turn_context"] != true
         {
@@ -476,6 +542,12 @@ impl Session {
             ));
         }
         let mut parameters = json!({"session_id":self.id(),"submission_id":id,"input":{"text":text},"limits":options.limits,"safety":options.safety});
+        if let Some(context) = options.auto_approver_context {
+            parameters["auto_approver_context"] = json!(context);
+        }
+        if let Some(compaction) = options.compaction {
+            parameters["compaction"] = json!(compaction);
+        }
         if let Some(addendum) = options.instruction_addendum {
             parameters["instruction_addendum"] = json!(addendum);
         }
@@ -585,6 +657,13 @@ impl Session {
         Self::create_options(client, options).await
     }
     pub(crate) async fn create_options(client: HarnessClient, options: Value) -> Result<Self> {
+        if (options.get("auto_approver_context").is_some() || options.get("compaction").is_some())
+            && client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
         if options.get("initial_history").is_some()
             && client.info()["capabilities"]["initial_history"] != true
         {
@@ -691,6 +770,66 @@ impl Session {
         let cursors = started["cursors"].as_object().cloned().unwrap_or_default();
         Ok(self.spawn(Some(submission), cursors))
     }
+    /// Submit an ordered user message, staging immutable attachments first.
+    pub async fn send_input(
+        &self,
+        input: crate::UserInput,
+        options: crate::TurnOptions,
+    ) -> Result<Run> {
+        if (options.auto_approver_context.is_some() || options.compaction.is_some())
+            && self.client.info()["capabilities"]["application_guidance"] != true
+        {
+            return Err(Error::Setup(
+                "Update the host to configure application guidance".into(),
+            ));
+        }
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = options
+            .submission_id
+            .unwrap_or_else(|| openworker_runtime::id("sub"));
+        let value=self.client.request("session/send",json!({"session_id":self.id(),"submission_id":id,"input":{"content":parts},"limits":options.limits,"safety":options.safety,"instruction_addendum":options.instruction_addendum,"auto_approver_context":options.auto_approver_context,"compaction":options.compaction,"output":options.output})).await?;
+        Ok(Run {
+            session: self.clone(),
+            submission: id,
+            cursors: value["cursors"].as_object().cloned().unwrap_or_default(),
+        })
+    }
+    pub async fn run_input(&self, input: crate::UserInput) -> Result<RunResult> {
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = openworker_runtime::id("sub");
+        self.client
+            .request(
+                "run/start",
+                json!({"session_id":self.id(),"submission_id":id,"content":parts}),
+            )
+            .await?;
+        self.wait(Some(&id)).await
+    }
+    pub async fn run_with_attachments(
+        &self,
+        text: &str,
+        attachments: Vec<crate::Attachment>,
+    ) -> Result<RunResult> {
+        let mut content = vec![crate::InputContent::text(text)];
+        content.extend(attachments.into_iter().map(crate::InputContent::from));
+        self.run_input(crate::UserInput::new(content)).await
+    }
+    pub async fn run_input_streamed(&self, input: crate::UserInput) -> Result<RunStream> {
+        let parts = input.upload(&self.client, self.id()).await?;
+        let id = openworker_runtime::id("sub");
+        let started = self
+            .client
+            .request(
+                "run/start",
+                json!({"session_id":self.id(),"submission_id":id,"content":parts}),
+            )
+            .await?;
+        Ok(self.spawn(
+            Some(id),
+            started["cursors"].as_object().cloned().unwrap_or_default(),
+        ))
+    }
+
     /// Keep waiting after responding to interruptions (or after reattaching).
     pub async fn resume(&self) -> Result<RunResult> {
         self.wait(None).await
@@ -906,6 +1045,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn tool_metadata_preserves_missing_and_withheld_arguments() {
+        for arguments in [None, Some(Value::Null), Some(json!({"path":"safe.txt"}))] {
+            let mut item = json!({"agent":"builder", "summary":{"type":"tool_started","tool":"files__move_file","qualified_name":"files.move_file","model_alias":"files__move_file","call_id":"call-1"}, "event":{"session_id":"session-1","turn_id":"turn-1","data":{"arguments":{"private":"not released"}}}});
+            if let Some(value) = &arguments {
+                item["summary"]["arguments"] = value.clone();
+            }
+            match RunEvent::from_wire(&item).unwrap() {
+                RunEvent::ToolStarted {
+                    qualified_name,
+                    model_alias,
+                    arguments: actual,
+                    session_id,
+                    ..
+                } => {
+                    assert_eq!(qualified_name.as_deref(), Some("files.move_file"));
+                    assert_eq!(model_alias.as_deref(), Some("files__move_file"));
+                    assert_eq!(actual, arguments);
+                    assert_eq!(session_id, "session-1");
+                }
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn approval_projection_preserves_legacy_auto_approved_events() {
+        let decision = json!({"interaction_id":"i","call_id":"c","tool":"app__preview","origin":"reviewer","verdict":"unsure","reason":"Ask a human"});
+        let mut item = json!({"agent":"a","event":{"session_id":"s","turn_id":"t"},"approval_decision":decision,"summary":null});
+        assert!(
+            matches!(RunEvent::from_wire(&item), Some(RunEvent::ApprovalDecision {session_id, decision, ..}) if session_id=="s" && decision.verdict==openworker_runtime::permissions::VerdictKind::Unsure)
+        );
+        item["summary"] = json!({"type":"auto_approved","tool":"app__preview"});
+        assert!(matches!(
+            RunEvent::from_wire(&item),
+            Some(RunEvent::AutoApproved {
+                decision: Some(_),
+                ..
+            })
+        ));
+        item["approval_decision"] = Value::Null;
+        assert!(matches!(
+            RunEvent::from_wire(&item),
+            Some(RunEvent::AutoApproved { decision: None, .. })
+        ));
     }
 
     #[test]

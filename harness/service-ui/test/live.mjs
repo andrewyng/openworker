@@ -203,13 +203,28 @@ try {
     const { chromium, expect } = createRequire(import.meta.url)(
       process.env.OW_PLAYWRIGHT_MODULE,
     );
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, executablePath: process.env.OW_BROWSER_EXECUTABLE });
     const page = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
     });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
+    // A delayed startup 401 must not clear a token being entered or undo login.
+    let releaseStartup, startupRequested;
+    const startupGate = new Promise(resolve => { releaseStartup = resolve; });
+    const requested = new Promise(resolve => { startupRequested = resolve; });
+    await page.route("**/session", async route => {
+      startupRequested();
+      await startupGate;
+      await route.fulfill({status:401,contentType:"application/json",body:'{"error":"login_required"}'});
+    });
     await page.goto(app.url);
+    await requested;
+    await expect(page.getByLabel("Service token", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
+    releaseStartup();
+    await expect(page.getByLabel("Service token", { exact: true })).toBeEnabled();
+    await page.unroute("**/session");
     await page
       .getByLabel("Service token", { exact: true })
       .fill(process.env.OW_UI_USER);

@@ -78,6 +78,7 @@ fn content(value: &Value) -> Result<Vec<Value>, Error> {
             Some("text" | "input_text" | "output_text") => {
                 Ok(json!({"type":"text","text":v["text"].as_str().ok_or_else(config)?}))
             }
+            Some("input_file") => {let url=v["file_data"].as_str().ok_or_else(config)?;let data=url.strip_prefix("data:application/pdf;base64,").ok_or_else(config)?;Ok(json!({"type":"document","title":v["filename"],"source":{"type":"base64","media_type":"application/pdf","data":data}}))}
             Some("input_image") => {
                 let url = v["image_url"].as_str().ok_or_else(config)?;
                 let (header, data) = url.split_once(",").ok_or_else(config)?;

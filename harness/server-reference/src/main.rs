@@ -29,6 +29,8 @@ enum Command {
         drain_timeout_seconds: u64,
     },
     Migrate,
+    /// Initialize only the optional recording schema, including on feature enable.
+    RecordingMigrate,
     /// Trusted installer aggregate check; no public/session API equivalent.
     ServiceInstallStatus,
     /// Trusted-host operational catalog, not a session-authorized API.
@@ -116,7 +118,8 @@ async fn main() -> Result<()> {
         _ => "admin",
     };
     let recording_config = config.clone();
-    let record = !matches!(args.command, Command::Migrate) && !config.recovery_read_only;
+    let record = !matches!(args.command, Command::Migrate | Command::RecordingMigrate)
+        && !config.recovery_read_only;
     let started = tokio::task::spawn_blocking(move || {
         openworker_server_reference::recording::start(&recording_config, role, record)
     })
@@ -160,6 +163,19 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             | Command::EnvironmentReconcile { .. }
     ) {
         config.require_execution()?;
+    }
+    if matches!(args.command, Command::RecordingMigrate) {
+        let options = config
+            .observability
+            .as_ref()
+            .context("Recording is disabled")?;
+        let database = options.database(&config)?;
+        tokio::task::spawn_blocking(move || {
+            openworker_observability::postgres::Postgres::migrate(&database)
+        })
+        .await??;
+        println!("Recording schema ready");
+        return Ok(());
     }
     let mut db = config.database()?;
     db.telemetry = telemetry;
@@ -594,7 +610,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         | Command::EnvironmentReconcile { .. } => {
             bail!("This server reference requires the qualified Kubernetes provider")
         }
-        Command::Migrate => unreachable!(),
+        Command::Migrate | Command::RecordingMigrate => unreachable!(),
     }
     Ok(())
 }

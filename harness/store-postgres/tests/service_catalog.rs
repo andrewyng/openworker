@@ -131,7 +131,7 @@ fn immutable_catalog_admission_ownership_and_one_dispatch() {
     assert!(store.service_claim().unwrap().is_none());
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     pg.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();
@@ -206,7 +206,7 @@ fn admission_failure_rolls_back_environment_and_receipt() {
     let (r, p) = catalog(&a);
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     pg.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();
@@ -316,7 +316,7 @@ fn combined_submission_commits_once_and_rolls_back_as_one_unit() {
         .unwrap();
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     pg.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();
@@ -563,7 +563,7 @@ fn credential_expiring_during_provisioning_cannot_commit_a_session() {
         .unwrap();
     let mut pg = postgres::Client::connect(&c.connection, postgres::NoTls).unwrap();
     pg.batch_execute(&format!(
-        "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+        "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
         c.schema
     ))
     .unwrap();

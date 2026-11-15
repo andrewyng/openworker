@@ -232,3 +232,19 @@ fn shared_registry_bounds_names_and_content_and_reserves_typed_fields() {
         .iter()
         .all(|(k, v)| export_attribute(k, v) && v.len() <= 67));
 }
+
+#[test]
+fn flush_is_a_bounded_barrier_without_stopping_instrumentation() {
+    let rows = Arc::new(Mutex::new(vec![]));
+    let (t, c) = Telemetry::start(Capture(rows.clone()), 32).unwrap();
+    t.event(Operation::Command, Outcome::Ok, None, None);
+    assert!(t.flush(Duration::from_secs(2)));
+    assert_eq!(rows.lock().unwrap().len(), 1);
+    t.event(Operation::Command, Outcome::Ok, None, None);
+    assert!(t.flush(Duration::from_secs(2)));
+    assert_eq!(rows.lock().unwrap().len(), 2);
+    assert_eq!(t.snapshot().accepted, 2);
+    assert!(c.shutdown(Duration::from_secs(2)));
+    assert!(!t.flush(Duration::from_millis(10)));
+    assert!(Telemetry::default().flush(Duration::ZERO));
+}

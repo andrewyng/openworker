@@ -98,7 +98,7 @@ test(
       // Supply immutable pre-publication tarballs without substituting the helper.
       // The only Dockerfile adaptation is copying this offline dependency vendor dir.
       const recipe = await readFile(
-        join(here, "openworker-apps/assets/railway/Dockerfile"),
+        join(here, "openworker-harness-builder/assets/railway/Dockerfile"),
         "utf8",
       );
       await writeFile(
@@ -109,7 +109,7 @@ test(
         ),
       );
       await copyFile(
-        join(here, "openworker-apps/assets/railway/.dockerignore"),
+        join(here, "openworker-harness-builder/assets/railway/.dockerignore"),
         join(app, ".dockerignore"),
       );
       docker("build", "--pull=false", "-t", image, app);

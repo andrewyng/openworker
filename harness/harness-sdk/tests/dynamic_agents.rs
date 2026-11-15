@@ -11,7 +11,7 @@ async fn connect(config: &HostConfig, process: bool) -> Harness {
     let client = if process {
         HarnessClient::managed_host(
             HostProcessConfig {
-                program: config.runner.clone(),
+                program: config.runner.clone().expect("fixture runner"),
                 host: config.clone(),
                 restart: RestartPolicy::default(),
             },
@@ -45,12 +45,13 @@ async fn exercise(postgres: bool, process: bool) {
     let config = HostConfig {
         desktop: Default::default(),
         state_dir: root.join("state"),
-        runner: PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host")),
+        runner: Some(PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"))),
         storage,
         coworkers: vec![],
         sandbox: Sandbox::Off,
         scripted: true,
         telemetry: None,
+        recording: None,
         agents: vec![],
     };
     let h = connect(&config, process).await;
@@ -237,13 +238,14 @@ async fn live_configuration_requires_explicit_model_without_calling_provider() {
     let config = HostConfig {
         desktop: Default::default(),
         state_dir: root.join("state"),
-        runner: PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host")),
+        runner: Some(PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"))),
         storage: Storage::Sqlite,
         coworkers: vec![],
         agents: vec![],
         sandbox: Sandbox::Off,
         scripted: false,
         telemetry: None,
+        recording: None,
     };
     let h = connect(&config, false).await;
     let agent = h
@@ -278,13 +280,14 @@ async fn registering_startup_definition_makes_it_durable_without_replacement() {
     let mut config = HostConfig {
         desktop: Default::default(),
         state_dir: root.join("state"),
-        runner: PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host")),
+        runner: Some(PathBuf::from(env!("CARGO_BIN_EXE_sdk-test-host"))),
         storage: Storage::Sqlite,
         coworkers: vec![],
         agents: vec![agent.clone()],
         sandbox: Sandbox::Off,
         scripted: true,
         telemetry: None,
+        recording: None,
     };
     let h = connect(&config, false).await;
     h.create_agent(agent.clone()).await.unwrap();

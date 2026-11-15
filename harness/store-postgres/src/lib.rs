@@ -9,6 +9,7 @@ mod controls;
 mod db;
 mod environments;
 mod ingress;
+mod input_attachments;
 mod input_safety;
 mod observers;
 mod operations;
@@ -535,6 +536,21 @@ fn sanitize(e: anyhow::Error) -> anyhow::Error {
 }
 
 impl StateStore for PostgresStore {
+    fn supports_input_attachments(&self) -> bool {
+        cfg!(feature = "attachments")
+    }
+
+    fn input_attachment(
+        &mut self,
+        sid: &str,
+        id: &str,
+        request: openworker_runtime::attachments::Upload,
+    ) -> Result<openworker_runtime::attachments::Blob> {
+        let sid = sid.to_owned();
+        let id = id.to_owned();
+        self.call(move |db| db.input_blob(&sid, &id, request))
+    }
+
     fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
         let sid = sid.to_owned();
         self.call(move |db| db.pending_observers(&sid))
@@ -582,6 +598,16 @@ impl StateStore for PostgresStore {
         q: openworker_runtime::compliance::Query,
     ) -> Result<Value> {
         PostgresStore::compliance_page(self, sid, q)
+    }
+    fn observation_children(
+        &self,
+        sid: &str,
+        tid: &str,
+    ) -> Result<Vec<openworker_runtime::observation_links::ChildLink>> {
+        PostgresStore::observation_children(self, sid, tid)
+    }
+    fn has_turn(&self, sid: &str, tid: &str) -> Result<bool> {
+        self.observation_run(sid, tid).map(|_| true)
     }
     fn supports_agent_teams(&self) -> bool {
         true

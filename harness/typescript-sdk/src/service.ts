@@ -1,3 +1,6 @@
+import {stageInput,type UserInput} from "./attachments.js";
+import {HarnessError} from "./types.js";
+import { ServiceObservability } from "./observability.js";
 /** Authenticated remote service handles. The service owns all execution and policy. */
 import { randomUUID } from "node:crypto";
 import {sandboxWire, serviceDelegationWire, type ServiceTeamDelegation} from "./team-placement.js";
@@ -48,6 +51,7 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
 export interface AgentRelease {
+  subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   limits?: TurnLimits;
   id: string;
   instructions: string;
@@ -221,6 +225,7 @@ export async function* serviceFrames(
   }
 }
 export class Service {
+  get observability():ServiceObservability {return new ServiceObservability(path=>this.json("GET",path));}
   private closed = false;
   private requests = new Set<AbortController>();
   private endpoint = 0;
@@ -709,14 +714,19 @@ export class ServiceSession {
     return this.service.json("GET", `/v1/sessions/${segment(this.id)}`);
   }
   async send(
-    text: string,
+    text: string | UserInput,
     options: { idempotencyKey?: string; limits?: TurnLimits } = {},
   ): Promise<ServiceRun> {
     const key = options.idempotencyKey ?? randomUUID();
+    let content:Record<string,unknown>[]|undefined;
+    if(typeof text!=="string"){
+      if(this.service.capabilities.features?.attachments!==true)throw new HarnessError("Setup","Service does not support attachments");
+      content=await stageInput(text,this.id,(_method,args)=>this.service.json("POST",`/v1/sessions/${segment(this.id)}/attachments/${segment(String(args.id))}`,args.upload));
+    }
     const r = await this.service.json(
       "POST",
       `/v1/sessions/${segment(this.id)}/turns`,
-      { text, limits: options.limits },
+      { text:typeof text==="string"?text:undefined, content, limits: options.limits },
       key,
     );
     return new ServiceRun(this.service, this.ref, r.submissionId, r.runId);

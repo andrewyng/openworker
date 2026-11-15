@@ -41,5 +41,5 @@ test('public quickstart is self-contained and states host execution boundaries',
   assert.ok(existsSync(join(root,'docs/harness/guides/server.md')));
   assert.equal(existsSync(join(root,'docs/harness/evidence')),false);
   const top=readdirSync(join(root,'docs/harness'));
-  assert.deepEqual(top,['guides']);
+  assert.deepEqual(top.sort(),['assets','guides']);
 });

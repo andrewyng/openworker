@@ -69,6 +69,11 @@ test("handshake, JSON framing, concurrent callers and safe environment", async (
 test("dynamic agent handles fail clearly against older hosts", async (t) => {
   const { h, root } = await setup(t);
   await assert.rejects(h.session("assistant", { autoSkipQuestions: true }), { code: "Setup" });
+  await assert.rejects(h.session("assistant", { autoApproverContext: "private" }), { code: "Setup" });
+  await assert.rejects(h.session("assistant", { compaction: { additionalInstructions: "keep decisions" } }), { code: "Setup" });
+  const legacy = await h.resume({ session_id: "s", agent: "assistant" });
+  await assert.rejects(legacy.send("Hello", { autoApproverContext: "private" }), { code: "Setup" });
+  await assert.rejects(legacy.run("Hello", { compaction: { additionalInstructions: "keep decisions" } }), { code: "Setup" });
   const agent = h.createAgent({
     name: "builder",
     instructions: "Build.",
@@ -225,4 +230,20 @@ test("read recovery cannot be used for mutations; a full queue never busy-spins"
   });
   await Promise.all(queued);
   assert.equal(h.state, "ready");
+});
+
+test("agent conflict errors expose only bounded structured identity and field names", async t => {
+  const {h}=await setup(t);
+  const diagnostic={agent_id:"builder-v1",conflicting_fields:["instructions","approvals"],secret:"sk-never-reflect"};
+  await assert.rejects(h.request("diagnostic_error",{diagnostic}),e=>{
+    assert.equal(e.code,"Remote");
+    assert.deepEqual(e.context,{reason:"agent_definition_conflict",agentId:"builder-v1",conflictingFields:["instructions","approvals"]});
+    assert.match(e.message,/use a new agent name/);
+    assert.ok(!JSON.stringify(e).includes("sk-"));
+    return true;
+  });
+  for(const bad of [null,{}, {...diagnostic,agent_id:"../outside"},{...diagnostic,conflicting_fields:["sk-secret"]},{...diagnostic,conflicting_fields:[]},{...diagnostic,conflicting_fields:Array(100).fill("instructions")}]) {
+    await assert.rejects(h.request("diagnostic_error",{diagnostic:bad}),e=>e.code==="Remote"&&e.context===undefined&&!e.message.includes("sk-"));
+  }
+  assert.deepEqual(await h.request("echo",{alive:true}),{alive:true});
 });

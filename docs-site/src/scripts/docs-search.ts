@@ -14,7 +14,7 @@ if(dialog){
  document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();if(!dialog.open)open();}});
  input.addEventListener('input',()=>{
   clearTimeout(timer);const current=++generation,query=input.value.trim();results.replaceChildren();
-  if(!query){status.textContent='Search guides, examples and deployment instructions.';return;}
+  if(!query){status.textContent=dialog!.dataset.searchIntro??'Search guides, examples and deployment instructions.';return;}
   status.textContent='Searching…';
   timer=setTimeout(async()=>{
    try{
@@ -23,12 +23,12 @@ if(dialog){
     const response=await(await index).search(query);
     const hits=await Promise.all(response.results.slice(0,12).map(result=>result.data()));
     if(current!==generation||!dialog.open)return;
-    status.textContent=hits.length?`${response.results.length} matching ${response.results.length===1?'page':'pages'}`:'No results. Try a model, capability or deployment name.';
+    status.textContent=hits.length?`${response.results.length} matching ${response.results.length===1?'page':'pages'}`:'No results. Try a model, task or capability name.';
     for(const hit of hits){
      const url=new URL(hit.url,location.origin);
      if(url.origin!==location.origin||!url.pathname.startsWith(base+'/'))continue;
      const link=document.createElement('a');link.href=url.href;
-     const title=document.createElement('strong');title.textContent=hit.meta.title??'SDK guide';
+     const title=document.createElement('strong');title.textContent=hit.meta.title??'Guide';
      const excerpt=document.createElement('span');excerpt.textContent=new DOMParser().parseFromString(hit.excerpt,'text/html').body.textContent;
      link.append(title,excerpt);results.append(link);
     }

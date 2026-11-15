@@ -62,8 +62,8 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
     // Current native bundles require at least one concrete tool. Reject this
     // adapter gap explicitly rather than silently giving the child extra tools.
     ensure!(
-        !tools.bindings.is_empty(),
-        "Tool-free scoped service types are not supported by this bundle format"
+        team.document.standalone.is_some() || !tools.bindings.is_empty(),
+        "Tool-free legacy scoped service types are not supported by this adapter"
     );
     let mut manifest = team.lead.package.clone();
     manifest.id = stored.runtime_id();
@@ -77,6 +77,13 @@ pub(crate) fn config(config: &Config, team: &Team, record: &Record) -> Result<Co
     manifest.memory_scope = None;
     manifest.scheduling = false;
     manifest.team_role = None;
+    manifest.standalone_subagents = None;
+    if team.document.standalone.is_some() {
+        manifest.builtin_tools = Some(openworker_runtime::package::BuiltinTools {
+            ask_user: Some(false),
+            read_history: Some(false),
+        });
+    }
     manifest.default_model = def.model.clone().or_else(|| {
         team.lead
             .model_selection
@@ -170,20 +177,46 @@ pub(crate) async fn refresh(
             let result = prepare(config, store, &team, record).await;
             match result {
                 Ok(session) => {
-                    if store
-                        .install_service_team_type(&team, record, session)
-                        .is_err()
-                    {
+                    if let Err(error) = store.install_service_team_type(&team, record, session) {
+                        if preparation_retryable(&error) {
+                            if error
+                                .downcast_ref::<openworker_store_postgres::StorageUnavailable>()
+                                .is_some()
+                            {
+                                return Err(error);
+                            }
+                            continue;
+                        }
                         // The source may have been revoked while compiling. A
                         // stale preparation is failure, never fresh authority.
                         store.reject_service_team_type(&team, record)?;
                     }
                 }
-                Err(_) => store.reject_service_team_type(&team, record)?,
+                Err(error) => {
+                    if preparation_retryable(&error) {
+                        if error
+                            .downcast_ref::<openworker_store_postgres::StorageUnavailable>()
+                            .is_some()
+                        {
+                            return Err(error);
+                        }
+                        continue;
+                    }
+                    store.reject_service_team_type(&team, record)?;
+                }
             }
         }
     }
     Ok(())
+}
+// A lost storage acknowledgement is not a rejected definition. The next
+// controller pass reads the original immutable receipt before doing more work;
+// it must not turn an unknown installation result into a permanent failure.
+fn preparation_retryable(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<openworker_store_postgres::StorageUnavailable>()
+        .is_some()
+        || error.downcast_ref::<std::io::Error>().is_some()
 }
 async fn prepare(
     config: &Config,
@@ -205,6 +238,11 @@ async fn prepare(
         store.clone(),
     )?;
     let mut args = json!({"coworker":record.runtime_id(),"name":record.binding.definition().name,"workspace":team.lead.workspace,"environment_id":team.lead.environment.as_ref().map(|e|&e.environment_id),"permissions":team.lead.permissions,"compaction":team.lead.compaction_config});
+    if let Some(standalone) = &team.document.standalone {
+        let policy = standalone.policy_for_type(&record.binding.definition().name)?;
+        args["safety"] = json!(policy.safety);
+        args["compliance"] = json!(policy.compliance);
+    }
     if let Some(m) = &team.lead.reviewer_selection {
         args["reviewer_model"] = json!(Choice::new(&m.connection, &m.model))
     }

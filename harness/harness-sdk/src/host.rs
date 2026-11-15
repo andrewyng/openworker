@@ -20,10 +20,18 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 #[path = "host_catalog.rs"]
 mod catalog;
+#[cfg(feature = "evaluations")]
+#[path = "host_evaluations.rs"]
+mod evaluations;
+#[cfg(feature = "recording")]
+#[path = "host_evidence.rs"]
+mod evidence;
 #[path = "host_named_lifecycle.rs"]
 mod named_lifecycle;
 #[path = "host_named_types.rs"]
 mod named_types;
+#[path = "host_observability.rs"]
+mod observability;
 #[path = "host_runs.rs"]
 mod runs;
 
@@ -106,10 +114,14 @@ pub struct CoworkerConfig {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording: Option<crate::RecordingConfig>,
     #[serde(default)]
     pub desktop: crate::DesktopOptions,
     pub state_dir: PathBuf,
-    pub runner: PathBuf,
+    /// None is restricted to embedded, sandbox-off profiles with no bound tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<PathBuf>,
     #[serde(default)]
     pub storage: Storage,
     pub coworkers: Vec<CoworkerConfig>,
@@ -119,7 +131,7 @@ pub struct HostConfig {
     /// Opt-in OTLP/HTTP export (content-free spans, metrics and logs). Point
     /// it at an OpenTelemetry Collector that forwards to your backend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry: Option<openworker_telemetry::otlp::Config>,
+    pub telemetry: Option<openworker_telemetry::config::Config>,
     /// Agent definitions compiled by the host into coworker bundles under
     /// `state_dir/agents` (see `agents::Agent` for the JSON shape). May be
     /// used instead of, or alongside, hand-written `coworkers`.
@@ -133,6 +145,12 @@ pub struct HostProcessConfig {
     pub restart: RestartPolicy,
 }
 pub(crate) struct Host {
+    #[cfg(feature = "evaluation-export")]
+    evaluation_exporter: Option<Arc<crate::evaluation_export::Controller>>,
+    #[cfg(feature = "recording")]
+    recording: Option<Arc<crate::instrumentation::Recording>>,
+    #[cfg(feature = "recording")]
+    recording_readers: Arc<tokio::sync::Semaphore>,
     pub events: broadcast::Sender<openworker_runtime::store::Event>,
     pub gaps: broadcast::Sender<()>,
     pub failed: CancellationToken,
@@ -164,6 +182,50 @@ impl HostConfig {
             !self.scripted || cfg!(feature = "test-support"),
             "Scripted models require a development SDK build with test-support"
         );
+        ensure!(
+            self.telemetry.is_none() || cfg!(feature = "otlp"),
+            "Telemetry exporter not included; enable the otlp feature"
+        );
+        if let Some(recording) = &self.recording {
+            ensure!(
+                cfg!(feature = "recording"),
+                "Recording not included; enable the recording feature"
+            );
+            recording.validate()?;
+            ensure!(
+                recording.evaluation_sinks.is_empty()
+                    || (recording.evaluations && cfg!(feature = "evaluation-export")),
+                "Evaluation export requires evaluations and the evaluation-export feature"
+            );
+            ensure!(
+                !recording.evaluations || cfg!(feature = "evaluations"),
+                "Evaluation support not included"
+            );
+            if let crate::RecordingDatabase::Postgres { schema, .. } = &recording.database {
+                ensure!(
+                    cfg!(feature = "recording-postgres"),
+                    "PostgreSQL recording not included"
+                );
+                if let Storage::Postgres {
+                    schema: execution, ..
+                } = &self.storage
+                {
+                    ensure!(
+                        schema != execution,
+                        "Recording schema must differ from execution schema"
+                    );
+                }
+            }
+            if let crate::RecordingDatabase::Sqlite { path } = &recording.database {
+                let execution = self
+                    .desktop
+                    .session_dir
+                    .as_ref()
+                    .unwrap_or(&self.state_dir)
+                    .join("runtime.sqlite3");
+                ensure!(path != &execution, "Recording must use a separate database");
+            }
+        }
         self.desktop.compaction.validate()?;
         self.desktop.safety.validate()?;
         ensure!(
@@ -212,7 +274,7 @@ impl HostConfig {
             "Non-persistent sessions cannot select PostgreSQL"
         );
         ensure!(
-            self.state_dir.is_absolute() && self.runner.is_absolute(),
+            self.state_dir.is_absolute() && self.runner.as_ref().is_none_or(|p| p.is_absolute()),
             "Host paths must be absolute"
         );
         let agents = crate::agents::compile::flatten(&self.agents)
@@ -410,22 +472,19 @@ impl Host {
         let store = Arc::new(Mutex::new(storage));
         // The exporter builds a blocking HTTP client, which must not happen on
         // a Tokio worker; a short-lived plain thread works on any runtime flavor.
-        let (telemetry, controller) = match config.telemetry.clone() {
-            Some(c) => {
-                let (t, ctl) = std::thread::spawn(move || c.start("sdk-host"))
-                    .join()
-                    .map_err(|_| anyhow::anyhow!("Telemetry startup panicked"))?
-                    .context("Telemetry configuration failed; check the explicit endpoint")?;
-                (t, Some(ctl))
-            }
-            None => (openworker_telemetry::Telemetry::default(), None),
-        };
+        let instrumentation_config = config.clone();
+        let started =
+            std::thread::spawn(move || crate::instrumentation::start(&instrumentation_config))
+                .join()
+                .map_err(|_| anyhow::anyhow!("Instrumentation startup panicked"))??;
+        let telemetry = started.telemetry;
+        let controller = started.controller;
         let mut profiles = BTreeMap::new();
         for (c, registry, bundle) in prepared {
-            let mut rt = Runtime::open_instrumented(
+            let mut rt = Runtime::open_instrumented_optional_runner(
                 &config.state_dir.join("profiles").join(&bundle.id),
                 &c.bundle,
-                &config.runner,
+                config.runner.as_deref(),
                 Model::new(c.model.clone(), config.scripted).with_provider(c.provider),
                 config.sandbox,
                 c.tool_policy.as_deref(),
@@ -461,6 +520,12 @@ impl Host {
         let (events, _) = broadcast::channel(256);
         let (gaps, _) = broadcast::channel(16);
         let host = Arc::new(Self {
+            #[cfg(feature = "evaluation-export")]
+            evaluation_exporter: started.evaluation_exporter,
+            #[cfg(feature = "recording")]
+            recording: started.recording,
+            #[cfg(feature = "recording")]
+            recording_readers: Arc::new(tokio::sync::Semaphore::new(2)),
             events,
             gaps,
             failed: CancellationToken::new(),
@@ -569,10 +634,9 @@ impl Host {
         {
             let registry = self.registry.read().unwrap();
             if let Some(existing) = registry.definitions.get(&agent.id) {
-                ensure!(
-                    serde_json::to_value(existing)? == serde_json::to_value(&agent)?,
-                    "Agent identity already has a different definition; use a new name"
-                );
+                if let Some(conflict) = crate::AgentDefinitionConflict::between(existing, &agent)? {
+                    return Err(conflict.into());
+                }
                 // Also persist a definition originally supplied in HostConfig when
                 // the application explicitly registers it through this API.
                 self.catalog.insert(&agent)?;
@@ -605,10 +669,10 @@ impl Host {
                 }
                 let bundle =
                     openworker_runtime::bundle::Bundle::load_with_registry(&c.bundle, &registry)?;
-                let mut runtime = Runtime::open_instrumented(
+                let mut runtime = Runtime::open_instrumented_optional_runner(
                     &config.state_dir.join("profiles").join(&bundle.id),
                     &c.bundle,
-                    &config.runner,
+                    config.runner.as_deref(),
                     Model::new(c.model, config.scripted).with_provider(c.provider),
                     config.sandbox,
                     c.tool_policy.as_deref(),
@@ -680,6 +744,14 @@ impl Host {
                 continue;
             }
             let rt = self.runtime(&s.coworker)?;
+            if let Some(parent_id) = &s.sandbox_parent {
+                let parent = self.store.lock().unwrap().metadata(parent_id)?;
+                if !parent.closed && parent.sandbox.is_none() {
+                    self.runtime(&parent.coworker)?
+                        .prepare_shared_subagent_sandbox(parent_id)
+                        .await?;
+                }
+            }
             if let Some(db) = &self.postgres {
                 if let Some(c) = db.next_control(&s.id)? {
                     rt.apply_control(&s.id, &c.command.request_id).await?;
@@ -792,6 +864,14 @@ impl Host {
                             .cloned()
                             .context("Registered team type missing")?;
                         parameters["permissions"] = json!({"mode":definition.approvals.mode(),"auto_skip_questions":definition.auto_skip_questions});
+                        if let Some(standalone) = &doc.standalone {
+                            let policy = standalone
+                                .policies
+                                .get(&instance.agent_id)
+                                .context("Missing pinned child policy")?;
+                            parameters["safety"] = json!(policy.safety);
+                            parameters["compliance"] = json!(policy.compliance);
+                        }
                         let override_model = doc
                             .roster
                             .request(&instance.agent_id)
@@ -812,6 +892,16 @@ impl Host {
                                 continue;
                             }
                         };
+                        if doc.standalone.is_some()
+                            && s.environment.is_none()
+                            && s.execution_backend
+                                == openworker_runtime::execution::Backend::Openshell
+                        {
+                            self.runtime(&s.coworker)?
+                                .prepare_shared_subagent_sandbox(&s.id)
+                                .await?;
+                            child.sandbox_parent = Some(s.id.clone());
+                        }
                         child.id = instance.session_id.clone();
                         // Read back the immutable acknowledgement saved by the
                         // workspace adapter; model input never supplies this receipt.
@@ -1002,6 +1092,9 @@ impl Host {
             }
             return Ok(json!({"registered":true}));
         }
+        if method.starts_with("observability/") {
+            return self.observation_dispatch(method, p).await;
+        }
         if method == "agent/register" {
             return self.register_agent(p).await;
         }
@@ -1026,8 +1119,27 @@ impl Host {
                     json!(cfg!(feature = "security-adapters")),
                 );
                 c.insert("compliance".into(), json!(cfg!(feature = "compliance")));
+                c.insert(
+                    "evaluation_export".into(),
+                    json!(cfg!(feature = "evaluation-export")),
+                );
+                c.insert("evaluations".into(), json!(cfg!(feature = "evaluations")));
+                c.insert("recording".into(), json!(cfg!(feature = "recording")));
+                c.insert(
+                    "recording_postgres".into(),
+                    json!(cfg!(feature = "recording-postgres")),
+                );
+                c.insert("telemetry_export".into(), json!(cfg!(feature = "otlp")));
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("turn_context".into(), json!(true));
+                c.insert("application_guidance".into(), json!(true));
+                c.insert(
+                    "attachments".into(),
+                    json!(
+                        cfg!(feature = "attachments")
+                            && self.store.lock().unwrap().supports_input_attachments()
+                    ),
+                );
                 c.insert("initial_history".into(), json!(true));
                 c.insert("builtin_tools".into(), json!(true));
                 c.insert("per_call_output_limit".into(), json!(true));
@@ -1036,6 +1148,7 @@ impl Host {
                     "agent_teams".into(),
                     json!(self.store.lock().unwrap().supports_agent_teams()),
                 );
+                c.insert("standalone_subagents".into(), json!(true));
                 c.insert("dynamic_agents".into(), json!(true));
                 c.insert("session_model_override".into(), json!(true));
                 c.insert("sdk_question_policy".into(), json!(true));
@@ -1275,6 +1388,19 @@ impl Host {
                     );
                 }
             }
+            if let Some(crate::RecordingConfig {
+                database: crate::RecordingDatabase::Sqlite { path },
+                ..
+            }) = &self.config.recording
+            {
+                let recording = path
+                    .canonicalize()
+                    .context("Recording database unavailable")?;
+                ensure!(
+                    !recording.starts_with(&workspace),
+                    "Workspace must not contain the private recording database"
+                );
+            }
             if let Some(required) = &self.config.desktop.compliance {
                 // Application requirements cannot be disabled or weakened by
                 // a session option. Retain the application retention policy.
@@ -1326,12 +1452,26 @@ impl Host {
                 db.release(&s.id)?;
             }
         }
+        #[cfg(feature = "evaluation-export")]
+        if let Some(exporter) = self.evaluation_exporter.clone() {
+            let _ = tokio::task::spawn_blocking(move || exporter.shutdown()).await;
+        }
         // Bounded flush (at most 5 s); export problems never fail shutdown.
         let controller = self.telemetry.lock().unwrap().take();
         if let Some(controller) = controller {
             let _ =
                 tokio::task::spawn_blocking(move || controller.shutdown(Duration::from_secs(5)))
                     .await;
+        }
+        #[cfg(feature = "recording")]
+        if let Some(recording) = &self.recording {
+            let controller = recording.controller.lock().unwrap().take();
+            if let Some(controller) = controller {
+                let _ = tokio::task::spawn_blocking(move || {
+                    controller.shutdown(Duration::from_secs(5))
+                })
+                .await;
+            }
         }
         Ok(())
     }

@@ -451,3 +451,140 @@ fn failed_original_release_receipt_is_cleanup_only_and_rejects_drift() {
     assert_eq!(f.installs(), 1);
     assert_eq!(parsed(&f.destroy())["phase"], "destroyed");
 }
+
+fn feature(
+    f: &Fixture,
+    name: &str,
+    action: &str,
+    options: &[&str],
+    env: &[(&str, &str)],
+) -> Output {
+    let mut args = vec![name, action, "--state", f.state.to_str().unwrap()];
+    args.extend_from_slice(options);
+    Fixture::call(f.dir.path(), &args, env)
+}
+fn upgrades(f: &Fixture) -> usize {
+    fs::read_to_string(f.dir.path().join("calls"))
+        .unwrap()
+        .lines()
+        .filter(|l| {
+            let v: Value = serde_json::from_str(l).unwrap();
+            v[0] == "helm" && v[1][0] == "upgrade"
+        })
+        .count()
+}
+#[test]
+fn feature_controls_preserve_values_disable_without_data_deletion_and_cleanup_latest_revision() {
+    let f = Fixture::new();
+    parsed(&f.apply(&[], false));
+    let image = format!("ui@sha256:{}", "b".repeat(64));
+    let enabled = parsed(&feature(
+        &f,
+        "management-ui",
+        "enable",
+        &["--image", &image],
+        &[],
+    ));
+    assert_eq!(enabled["managementUI"]["enabled"], true);
+    assert_eq!(
+        enabled["managementUI"]["privatePreview"]["url"],
+        "https://localhost:8444"
+    );
+    assert_eq!(enabled["observability"]["enabled"], false);
+    let obs = parsed(&feature(
+        &f,
+        "observability",
+        "enable",
+        &["--retention-days", "14"],
+        &[],
+    ));
+    assert_eq!(obs["observability"]["configuration"]["retention_days"], 14);
+    assert_eq!(obs["managementUI"]["enabled"], true);
+    let count = upgrades(&f);
+    parsed(&feature(
+        &f,
+        "observability",
+        "enable",
+        &["--retention-days", "14"],
+        &[],
+    ));
+    parsed(&feature(&f, "management-ui", "status", &[], &[]));
+    assert_eq!(upgrades(&f), count);
+    parsed(&feature(&f, "management-ui", "disable", &[], &[]));
+    let disabled = parsed(&feature(&f, "observability", "disable", &[], &[]));
+    assert_eq!(disabled["observability"]["enabled"], false);
+    assert_eq!(disabled["managementUI"]["enabled"], false);
+    let v = &f.remote()["releases"]["ow-service-m4-installer"]["ows"]["values"];
+    assert_eq!(v["bootstrapEnabled"], false);
+    assert_eq!(v["image"], format!("image@sha256:{}", "a".repeat(64)));
+    assert!(v["config"].get("observability").is_none());
+    assert_eq!(f.installs(), 1);
+    // A normal installer resume and teardown still recognize the updated release.
+    parsed(&f.apply(&[], false));
+    parsed(&f.destroy());
+}
+#[test]
+fn feature_upgrade_lost_response_is_observed_without_a_second_upgrade() {
+    let f = Fixture::new();
+    parsed(&f.apply(&[], false));
+    let out = feature(
+        &f,
+        "observability",
+        "enable",
+        &[],
+        &[("FAIL_UPGRADE_AFTER", "yes")],
+    );
+    assert_eq!(parsed(&out)["observability"]["enabled"], true);
+    parsed(&feature(&f, "observability", "status", &[], &[]));
+    assert_eq!(upgrades(&f), 1);
+}
+#[test]
+fn unknown_feature_outcome_is_not_replayed_and_blocks_cleanup() {
+    let f = Fixture::new();
+    parsed(&f.apply(&[], false));
+    assert!(!feature(
+        &f,
+        "observability",
+        "enable",
+        &[],
+        &[("FAIL_UPGRADE_BEFORE", "yes")]
+    )
+    .status
+    .success());
+    for action in ["enable", "status", "disable"] {
+        assert!(!feature(&f, "observability", action, &[], &[])
+            .status
+            .success());
+    }
+    assert!(!f.destroy().status.success());
+    assert_eq!(upgrades(&f), 1);
+}
+#[test]
+fn feature_controls_reject_replaced_release_or_namespace_and_mutable_images() {
+    let f = Fixture::new();
+    parsed(&f.apply(&[], false));
+    assert!(!feature(
+        &f,
+        "management-ui",
+        "enable",
+        &["--image", "ui:latest"],
+        &[]
+    )
+    .status
+    .success());
+    assert_eq!(upgrades(&f), 0);
+    let original = f.remote();
+    let mut changed = original.clone();
+    changed["releases"]["ow-service-m4-installer"]["ows"]["version"] = json!(8);
+    f.set_remote(&changed);
+    assert!(!feature(&f, "observability", "enable", &[], &[])
+        .status
+        .success());
+    let mut changed = original;
+    changed["namespaces"]["ow-service-m4-installer"]["metadata"]["uid"] = json!("replacement");
+    f.set_remote(&changed);
+    assert!(!feature(&f, "observability", "enable", &[], &[])
+        .status
+        .success());
+    assert_eq!(upgrades(&f), 0);
+}

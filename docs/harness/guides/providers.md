@@ -18,6 +18,20 @@ environment-variable reference for server deployments; for desktop UI input,
 pass `credentials: { apiKey, storage: "memory" }` and use your application's secret
 store for persistence. Only choose SDK secure persistence on a supported platform.
 
+## Where credentials are read
+
+| Interface | What resolves an environment-key reference? |
+| --- | --- |
+| TypeScript `setModelProvider` / `modelProviders` | The Node process reads `apiKeyEnv` and sends the value over private stdio to the Rust child. |
+| Embedded Rust `Credentials::from_env` | The Rust application process reads its environment. |
+
+`inheritEnv` is unnecessary for the TypeScript provider convenience API. Use it
+only for variables that Rust or another child must resolve itself; avoid passing
+the whole environment. Neither SDK automatically loads env files. Memory-only
+credentials must be supplied when the application starts. Secure provider storage
+uses macOS Keychain or Windows DPAPI; on Linux choose memory-only credentials or
+server provisioning. Callback functions also need registration on app startup.
+
 A custom proxy can supply short-lived bearer tokens through the provider-auth
 callback interface and proactively rotate them. Authentication refresh does not
 create another session or silently change the selected model.
@@ -29,6 +43,30 @@ qualify the specific model/configuration used by your application.
 
 See [Streaming and retries](streaming.md) for provider reasoning display, explicit
 Anthropic thinking settings and structured failure diagnostics.
+
+## Register a cloud or local connection
+
+Choose one connection below, then use its name in the agent's `defaultModel`.
+The model ID must be available at that endpoint.
+
+```typescript
+// Anthropic: keep the key in your trusted process environment.
+await harness.setModelProvider({
+  name: 'Anthropic', api: 'anthropic',
+  credentials: { apiKeyEnv: 'ANTHROPIC_API_KEY', storage: 'memory' },
+});
+
+// Ollama: choose a model already installed on this machine.
+await harness.setModelProvider({
+  name: 'Ollama', api: 'chat-completions',
+  baseUrl: 'http://127.0.0.1:11434/v1',
+});
+```
+
+Use the [Desktop example](desktop.md#connect-a-model) for OpenAI Responses.
+For an authenticated OpenAI-compatible proxy, use `api: 'chat-completions'`, its
+`baseUrl` and application-owned credentials. A provider registration does not make
+a text-only model understand images or PDFs; see [attachments](attachments.md).
 
 ## Streaming token usage
 

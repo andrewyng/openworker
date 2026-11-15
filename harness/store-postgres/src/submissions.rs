@@ -196,7 +196,19 @@ impl Database {
         request: TurnSubmission,
         single: bool,
     ) -> Result<SubmissionReceipt> {
+        self.submit_turn_with_input(request, single, None)
+    }
+    pub(crate) fn submit_turn_with_input(
+        &mut self,
+        request: TurnSubmission,
+        single: bool,
+        content: Option<Vec<openworker_runtime::attachments::Part>>,
+    ) -> Result<SubmissionReceipt> {
         request.validate()?;
+        if let Some(parts) = &content {
+            openworker_runtime::attachments::validate_parts(parts)?;
+        }
+        let content_value = content.as_ref().map(serde_json::to_value).transpose()?;
         let mut tx = self.client.transaction()?;
         let p = crate::auth::guard(
             &mut tx,
@@ -206,6 +218,9 @@ impl Database {
             None,
         )?;
         let session = locked(&mut tx, &request.session_id, None)?;
+        if let Some(parts) = &content {
+            crate::input_attachments::validate_references(&mut tx, &request.session_id, parts)?;
+        }
         verify(&mut tx, &request.session_id)?;
         // Deduplicate before lifecycle/capacity checks: lost receipts remain
         // reconcilable when the queue fills or the session later closes.
@@ -213,7 +228,8 @@ impl Database {
             "SELECT * FROM submissions WHERE session_id=$1 AND id=$2",
             &[&request.session_id, &request.submission_id],
         )? {
-            if row.get::<_, String>("text") != request.text
+            if row.get::<_, Option<Value>>("input_content") != content_value
+                || row.get::<_, String>("text") != request.text
                 || row.get::<_, Option<Value>>("limits")
                     != request
                         .limits
@@ -274,6 +290,15 @@ impl Database {
             SubmissionError::QueueFull
         );
         let result = insert(&mut tx, &request, "queued", None)?;
+        if let Some(parts) = &content {
+            crate::input_attachments::retain(&mut tx, &request.session_id, parts)?;
+        }
+        if content_value.is_some() {
+            tx.execute(
+                "UPDATE submissions SET input_content=$3 WHERE session_id=$1 AND id=$2",
+                &[&request.session_id, &request.submission_id, &content_value],
+            )?;
+        }
         journal_acceptance(&mut tx, &result, p.as_ref().map(|p| p.principal.as_str()))?;
         crate::auth::audit(
             &mut tx,

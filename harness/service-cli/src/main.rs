@@ -1,4 +1,4 @@
-//! Thin service client: no agent loop, provider credentials or local tool runner.
+// Thin service client: no agent loop, provider credentials or local tool runner.
 mod deployment;
 mod settings;
 use anyhow::{ensure, Context, Result};
@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 #[derive(Parser)]
 #[command(
-    name = "ows",
+    name = "owcluster",
+    bin_name = "owcluster",
     version,
     about = "Manage and submit agents to OpenWorker Service"
 )]
@@ -37,6 +38,16 @@ enum Command {
     Deploy {
         #[command(subcommand)]
         command: deployment::Command,
+    },
+    /// Configure the optional browser UI on an installed cluster.
+    ManagementUi {
+        #[command(subcommand)]
+        command: deployment::local::features::UICommand,
+    },
+    /// Configure optional trace storage; disabling never deletes stored traces.
+    Observability {
+        #[command(subcommand)]
+        command: deployment::local::features::ObservationCommand,
     },
     Context {
         #[command(subcommand)]
@@ -369,6 +380,13 @@ async fn run(args: Args) -> Result<()> {
     if let Command::Deploy { command } = &args.command {
         return deployment::dispatch(command).await;
     }
+    match &args.command {
+        Command::ManagementUi { command } => return deployment::local::features::ui(command).await,
+        Command::Observability { command } => {
+            return deployment::local::features::observability(command).await
+        }
+        _ => {}
+    }
     let mut settings = settings::Settings::load(args.config.as_ref())?;
     if let Command::Context { command } = &args.command {
         return match command {
@@ -649,7 +667,7 @@ async fn run(args: Args) -> Result<()> {
                 .control_receipt(&receipt)
                 .await?,
         )?,
-        Command::Context { .. } | Command::Login | Command::Deploy { .. } => unreachable!(),
+        Command::Context { .. } | Command::Login | Command::Deploy { .. } | Command::ManagementUi { .. } | Command::Observability { .. } => unreachable!(),
     }
     service.disconnect();
     Ok(())

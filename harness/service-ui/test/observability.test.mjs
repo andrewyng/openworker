@@ -111,3 +111,44 @@ test("timeline retains parallel intervals and unknown duration markers", () => {
     }).some((s) => s.includes("4,096")),
   );
 });
+
+test("session tracing transport preserves authorized cursors and exact scope", async () => {
+  const { serviceTracingAdapter } = await import("../public/tracing.js");
+  const paths = [];
+  const controller = new AbortController();
+  const adapter = serviceTracingAdapter(async (path, signal) => {
+    paths.push(path);
+    assert.equal(signal, controller.signal);
+    return {
+      runs: [
+        { session_id: "s_one", turn_id: "t1" },
+        { session_id: "s_one_more", turn_id: "t2" },
+      ],
+      next_cursor: "bound_cursor",
+    };
+  });
+  const page = await adapter.turns(
+    { sessionId: "s_one", after: "prior" },
+    controller.signal,
+  );
+  assert.deepEqual(page.turns, [{ session_id: "s_one", turn_id: "t1" }]);
+  assert.equal(page.next_cursor, "bound_cursor");
+  const q = new URL(paths[0], "https://fixture").searchParams;
+  assert.equal(q.get("q"), "s_one");
+  assert.equal(q.get("after"), "prior");
+  await adapter.timeline(
+    { sessionId: "s_one", turnId: "t1", after: 100, through: 450 },
+    controller.signal,
+  );
+  const timeline = new URL(paths[1], "https://fixture");
+  assert.equal(
+    timeline.pathname,
+    "/v1/sessions/s_one/observability/t1/timeline",
+  );
+  assert.equal(timeline.searchParams.get("through"), "450");
+  await adapter.children(
+    { sessionId: "s_one", turnId: "t1" },
+    controller.signal,
+  );
+  assert.equal(paths[2], "/v1/sessions/s_one/observability/t1/children");
+});

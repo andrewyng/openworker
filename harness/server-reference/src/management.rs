@@ -85,6 +85,11 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
         r.runtime_profiles.contains(&p.id),
         "Release/profile incompatible"
     );
+    ensure!(
+        !r.subagents.as_ref().is_some_and(|c| c.enabled)
+            || p.sharing == openworker_runtime::environment::Sharing::Shared,
+        "Standalone sub-agents require a shared RuntimeProfile"
+    );
     let base = config.load_bundle()?;
     let mut manifest = base.manifest.clone();
     manifest.id = format!("svc-{}", &release.digest[..24]);
@@ -92,6 +97,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     manifest.version = release.digest.clone();
     manifest.default_model = r.default_model;
     manifest.limits = r.limits;
+    manifest.standalone_subagents = r.subagents;
     manifest.memory_scope = None;
     let tools = base.tools.select(&r.tools)?;
     let manifest_text = format!(

@@ -54,7 +54,7 @@ jobs:
         run: cargo test --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --features test-support --test desktop_api --test tool_free -- --test-threads=1
       # Build after qualification so test-support cannot affect the shipped host.
       - name: Build native host
-        run: cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
+        run: cargo build --manifest-path harness/Cargo.toml --locked --release -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export,recording-postgres,evaluation-export
       - name: Prepare immutable candidate artifacts
         run: node harness/release/prepare.mjs "$GITHUB_WORKSPACE/harness/target/release/${{ matrix.exe }}" '${{ matrix.target }}' .sdk-release
       - name: Install tarballs and run the exact TypeScript guide

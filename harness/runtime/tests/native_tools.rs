@@ -224,6 +224,41 @@ mod execution {
         .await
     }
     #[tokio::test]
+    async fn cancelling_approval_is_not_exposed_as_an_actionable_interaction() {
+        let f = Setup::new();
+        let rt = f.open("1");
+        let sid = f.start(&rt, "ask", json!({"behavior":"ok"})).await;
+        wait(&rt, &sid, |s| {
+            !s["interactions"].as_array().unwrap().is_empty()
+        })
+        .await;
+        rt.shutdown().await.unwrap();
+
+        // Hold the persisted cancellation transition before asynchronous cleanup
+        // finishes. A caller must wait for completion, not receive a stale card.
+        {
+            let mut db = rt.store.lock().unwrap();
+            let mut session = db.get(&sid).unwrap();
+            session.turn.as_mut().unwrap().status = "cancelling".into();
+            db.save(&session, "turn_cancelling", json!({})).unwrap();
+        }
+        let cancelling = rt.snapshot(&sid).unwrap();
+        assert_eq!(cancelling["turn"]["status"], "cancelling");
+        assert!(cancelling["interactions"].as_array().unwrap().is_empty());
+        assert_eq!(
+            rt.store
+                .lock()
+                .unwrap()
+                .get(&sid)
+                .unwrap()
+                .interactions
+                .len(),
+            1
+        );
+        assert_eq!(f.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn approval_restart_execution_progress_and_result_share_the_journal() {
         let f = Setup::new();
         let rt = f.open("1");

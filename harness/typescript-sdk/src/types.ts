@@ -67,6 +67,10 @@ export interface ToolContext {
   turnId: string;
   /** Scope with sessionId and turnId; callbacks may arrive before event consumption. */
   callId: string;
+  /** Exact registered application tool name. */
+  qualifiedName: string;
+  /** Model-facing alias when supplied by the host. */
+  modelAlias?: string;
   workspace: string;
   signal: AbortSignal;
   progress(message: string, data?: Json): Promise<void>;
@@ -109,7 +113,16 @@ export interface TurnLimits {
   /** Reserved inside maxOutputTokens for one additional tool-free summary. Default 512. */
   summaryTokens?: number;
 }
-export interface Agent {
+/** Application guidance. Omission inherits; an empty string clears inherited guidance. */
+export interface CompactionOptions {
+  additionalInstructions?: string;
+}
+export interface ApplicationGuidance {
+  /** Facts/guidance for the action reviewer; does not grant tool permissions. */
+  autoApproverContext?: string;
+  compaction?: CompactionOptions;
+}
+export interface Agent extends ApplicationGuidance {
   builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
   id: string;
@@ -128,7 +141,8 @@ export interface Agent {
   approvals?: Approvals;
   /** Skip structured ask_user calls without changing tool approvals. */
   autoSkipQuestions?: boolean;
-  subagents?: Agent[];
+  /** Existing arrays configure board workers; an object enables standalone children. */
+  subagents?: Agent[] | { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   servers?: string;
   toolPolicy?: string;
   runtimePolicy?: string;
@@ -144,7 +158,7 @@ export interface Model {
 }
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
-export interface SessionOptions extends SafetyOptions {
+export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
   /** Completed portable transcript only. Imported calls never execute. */
   initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
@@ -166,6 +180,8 @@ export type Storage =
       loopbackPlaintext?: boolean;
     };
 export interface Telemetry {
+  /** Receiver protocol; direct Langfuse v4 requires its explicit receipt dialect. */
+  acknowledgement?: "otlp" | "langfuse_v4";
   endpoint: string;
   deployment?: string;
   headers?: (
@@ -196,7 +212,7 @@ export interface HarnessOptions extends SafetyOptions {
   appId?: string;
   sessions?: { persist?: boolean; directory?: string };
   scratch?: { directory: string };
-  compaction?: { triggerAtContextFraction?: number; contextWindow?: number };
+  compaction?: CompactionOptions & { triggerAtContextFraction?: number; contextWindow?: number };
   modelProviders?: ModelProvider[];
   runner?: string;
   agents?: Agent[];
@@ -204,6 +220,7 @@ export interface HarnessOptions extends SafetyOptions {
   sandbox?: "openshell" | "off" | { provider: "openshell" };
   mcpServers?: McpServer[];
   telemetry?: Telemetry;
+  recording?: RecordingOptions;
   restart?: { maxRestarts?: number; delayMs?: number };
   requestTimeoutMs?: number;
   shutdownTimeoutMs?: number;
@@ -230,7 +247,7 @@ export type Interruption = {
   session_id: string;
   agent: string;
 } & (
-  | { kind: "approval"; tool: string; arguments: Json; category?: string }
+  | { kind: "approval"; tool: string; qualified_name?: string; model_alias?: string; arguments: Json; category?: string }
   | { kind: "question"; question: string; options: string[] }
   | { kind: "safety"; code: string }
 );
@@ -250,7 +267,7 @@ export interface RunResult {
   board: Json | null;
 }
 export type Cursors = Record<string, number>;
-export interface RunOptions extends SafetyOptions {
+export interface RunOptions extends SafetyOptions, ApplicationGuidance {
   /** Trusted application instructions for this turn only, separate from user text. */
   instructionAddendum?: string;
   output?: OutputOptions;
@@ -260,7 +277,7 @@ export interface RunOptions extends SafetyOptions {
   /** Stops waiting only. Call session.cancel() to cancel agent execution. */
   signal?: AbortSignal;
 }
-export type MessageInput = string | { type?: "message"; text: string };
+export type MessageInput = string | { type?: "message"; text: string } | import("./attachments.js").UserInput;
 export interface OutputOptions {
   reasoning?: boolean;
   bufferAttempts?: boolean;
@@ -304,9 +321,23 @@ export interface JournalEvent {
   type: string;
   data: Json;
 }
+/** A persisted approval decision, not permission to execute a new action. */
+export interface ApprovalDecision {
+  interactionId: string;
+  callId: string;
+  tool: string;
+  origin: "reviewer" | "human" | "app_policy" | "session_grant" | "hard_policy" | "bypass";
+  verdict: "allow" | "deny" | "unsure";
+  /** Bounded released display context; may be unavailable or withheld. */
+  reason?: string;
+}
+
 export interface RunEvent {
+  approvalDecision?: ApprovalDecision;
   agentId?: string;
   teamId?: string;
+  /** Original parent session for standalone child events. */
+  parentSessionId?: string;
   agent: string;
   sessionId: string;
   event: JournalEvent;
@@ -320,8 +351,20 @@ export interface RunEvent {
         | { type: "model_activity"; attemptId: string; elapsedMs: number }
         | { type: "provider_error"; attemptId: string; diagnostic: ProviderDiagnostic }
         | {
-            type: "tool_started" | "tool_finished";
+            type: "tool_started";
             tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
+            /** Released start-event content; absent on older hosts, null if withheld. */
+            arguments?: Json;
+            /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
+            callId: string;
+          }
+        | {
+            type: "tool_finished";
+            tool: string;
+            qualifiedName?: string;
+            modelAlias?: string;
             /** Same as ToolContext.callId; scope with sessionId and event.turn_id. */
             callId: string;
           }
@@ -388,11 +431,23 @@ export class HarnessError extends Error {
       submissionId?: string;
       requestId?: string;
       providerError?: ProviderDiagnostic;
+      reason?: "agent_definition_conflict";
+      agentId?: string;
+      conflictingFields?: string[];
     },
   ) {
     super(message);
     this.name = "HarnessError";
   }
+}
+
+/** Accept only identity/field metadata, never arbitrary remote error messages or values. */
+export function agentDefinitionConflict(value: unknown): {reason: "agent_definition_conflict"; agentId: string; conflictingFields: string[]} | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const fields = ["name","description","instructions","limits","builtin_tools","tools","model","provider","fallback_model","planning","memory","memory_scope","scheduling","approvals","auto_skip_questions","auto_approver_context","compaction","subagents","standalone_subagents","servers","tool_policy","runtime_policy"];
+  if (typeof v.agent_id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(v.agent_id) || !Array.isArray(v.conflicting_fields) || v.conflicting_fields.length === 0 || v.conflicting_fields.length > fields.length || v.conflicting_fields.some(f => typeof f !== "string" || !fields.includes(f))) return undefined;
+  return {reason: "agent_definition_conflict", agentId: v.agent_id, conflictingFields: [...v.conflicting_fields] as string[]};
 }
 
 export type ProviderFailure = "rate_limit" | "transient" | "transport" | "incomplete_stream" | "invalid_response" | "context_overflow" | "truncated" | "authentication" | "configuration" | "safety_blocked";
@@ -449,3 +504,17 @@ export interface ComplianceActivity {
 }
 export interface CompliancePage { activities:ComplianceActivity[]; nextAfter:number; hasMore:boolean }
 export interface ComplianceDeliveryHealth { sinks:{sink:string;cursor:number;pending:number;failures:number;nextAtMs:number;lastSuccessMs:number|null}[] }
+
+/** Optional diagnostics storage, independent from execution storage. */
+export interface RecordingOptions {
+  maxPendingEvaluations?:number;
+  evaluationRetentionDays?:number;
+  evaluationSinks?: {name:string;url:string;authorizationEnv:string;includeExplanation?:boolean}[];
+  evidence?: {userInput?:boolean;assistantOutput?:boolean;toolArguments?:boolean;toolResults?:boolean;maxBytes:number};
+  /** Enable acknowledged evaluation-result storage (requires runtime capability). */
+  evaluations?: boolean;
+  database: { type: "sqlite"; path: string } | { type: "postgres"; connectionEnv: string; schema: string; caFile?: string; loopbackPlaintext?: boolean };
+  deployment?: string;
+  retentionDays?: number;
+  queueCapacity?: number;
+}

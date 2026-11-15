@@ -282,7 +282,7 @@ async fn production_worker_loses_database_and_replacement_recovers_unknown_once(
     tokio::task::block_in_place(|| {
         let mut db = postgres::Client::connect(&config.connection, postgres::NoTls).unwrap();
         db.batch_execute(&format!(
-            "SET ow.runtime_schema='6'; SET search_path={},pg_catalog",
+            "SET ow.runtime_schema='7'; SET search_path={},pg_catalog",
             config.schema
         ))
         .unwrap();

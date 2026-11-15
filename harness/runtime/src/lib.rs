@@ -69,3 +69,9 @@ pub mod agent_team;
 pub use openworker_compliance as compliance;
 
 pub mod compliance_export;
+
+pub mod subagents;
+
+pub mod observation_links;
+
+pub mod attachments;

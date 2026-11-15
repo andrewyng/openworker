@@ -679,7 +679,7 @@ impl crate::PostgresStore {
         if cancelled_queued {
             return Ok(true);
         }
-        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel')) AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
+        let target=self.call(|db|Ok(db.client.query_opt("SELECT s.id,s.data->'turn'->>'id',coalesce(o.principal,'harness-team-controller'),t.id FROM sessions s JOIN agent_teams t ON t.id=s.data->'agent_team'->>'team_id' LEFT JOIN api_session_owners o ON o.session_id=s.id WHERE ((t.data->>'stopped')::boolean OR (t.data->'roster'->'instances'->(s.data->'agent_team'->>'agent_id')->>'phase'='retiring' AND t.data->'retirements'->(s.data->'agent_team'->>'agent_id')->>'mode'='cancel') OR t.data->'standalone'->'cancellations'->>(s.data->'agent_team'->>'agent_id')=s.data->'turn'->>'id') AND s.data->'turn'->>'status' NOT IN ('completed','failed','cancelled','interrupted','truncated','blocked') AND NOT EXISTS(SELECT 1 FROM controls c WHERE c.session_id=s.id AND c.turn_id=s.data->'turn'->>'id' AND c.status='pending' AND c.command->'action'->>'kind'='cancel') ORDER BY s.id LIMIT 1",&[])?.map(|r|(r.get::<_,String>(0),r.get::<_,String>(1),r.get::<_,String>(2),r.get::<_,String>(3)))))?;
         let Some((sid, tid, actor, team)) = target else {
             return Ok(false);
         };
@@ -711,6 +711,14 @@ impl crate::PostgresStore {
             if s.closed || s.provider_blocked || s.turn.as_ref().is_some_and(|t|!openworker_runtime::store::terminal(&t.status)) {tx.commit()?;return Ok(());}
             let queued:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued')",&[&sid])?.get(0);
             if queued {tx.commit()?;return Ok(());}
+            let mut coordination = Tx(&mut tx).load(&member.team_id)?;
+            if coordination.standalone.is_some() {
+                openworker_runtime::subagents::reconcile(&mut Tx(&mut tx), &mut coordination)?;
+                if s.turn.as_ref().is_some_and(|t| t.status != "completed")
+                    || (member.agent_id != coordination.lead && !coordination.standalone.as_ref().unwrap().active.contains(&member.agent_id)) {
+                    tx.commit()?; return Ok(());
+                }
+            }
             let pending:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM agent_team_messages WHERE team=$1 AND seq>$2 AND data->'recipients' ? $3)",&[&member.team_id,&(member.inbox_cursor as i64),&member.agent_id])?.get(0);
             if !pending && member.notices.is_empty(){tx.commit()?;return Ok(());}
             if let Err(error)=ensure_admission(&mut tx,&s) {

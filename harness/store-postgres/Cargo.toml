@@ -10,6 +10,7 @@ license.workspace = true
 publish = ["crates-io"]
 
 [features]
+attachments = ["openworker-runtime/attachments"]
 compliance = ["openworker-runtime/compliance"]
 guardrails = ["openworker-runtime/guardrails"]
 test-support = ["dep:openworker-tools", "openworker-runtime/test-fixtures"]

@@ -386,3 +386,5 @@ impl Config {
         Ok(())
     }
 }
+
+mod input_attachments;

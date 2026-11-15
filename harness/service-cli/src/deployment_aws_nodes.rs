@@ -9,7 +9,7 @@ pub(super) fn permissions(p: &Plan) -> Value {
     let via_template = json!({"ArnLike":{"ec2:LaunchTemplate":template},"StringEquals":{"aws:RequestedRegion":region}});
     let id = &p.deployment_id;
     json!({"Version":"2012-10-17","Statement":[
-        {"Sid":"TaggedWorkerInstances","Effect":"Allow","Action":"ec2:RunInstances","Resource":ec2("instance"),"Condition":{"StringEquals":{"aws:RequestedRegion":region,"aws:RequestTag/ows:deployment-id":id,"ec2:InstanceType":"t4g.large"},"ArnLike":{"ec2:LaunchTemplate":template}}},
+        {"Sid":"TaggedWorkerInstances","Effect":"Allow","Action":"ec2:RunInstances","Resource":ec2("instance"),"Condition":{"StringEquals":{"aws:RequestedRegion":region,"aws:RequestTag/ows:deployment-id":id,"ec2:InstanceType":p.infrastructure.as_ref().unwrap().node_instance_type},"ArnLike":{"ec2:LaunchTemplate":template}}},
         {"Sid":"TaggedWorkerDisks","Effect":"Allow","Action":"ec2:RunInstances","Resource":ec2("volume"),"Condition":{"StringEquals":{"aws:RequestedRegion":region,"aws:RequestTag/ows:deployment-id":id},"ArnLike":{"ec2:LaunchTemplate":template}}},
         {"Sid":"OwnedWorkerTemplate","Effect":"Allow","Action":"ec2:RunInstances","Resource":template,"Condition":{"StringEquals":{"ec2:ResourceTag/ows:deployment-id":id}}},
         {"Sid":"OwnedWorkerSubnets","Effect":"Allow","Action":"ec2:RunInstances","Resource":ec2("subnet"),"Condition":{"StringEquals":{"ec2:ResourceTag/ows:deployment-id":id},"ArnLike":{"ec2:LaunchTemplate":template}}},

@@ -1,7 +1,8 @@
 ---
 import DesktopPreview from '../../../layouts/DesktopPreview.astro';
+import {docsProduct} from '../../../../product.mjs';
 export function getStaticPaths() {
- return ['apple','notion'].map(design=>({params:{design}}));
+ return docsProduct().id==='desktop'?[]:['apple','notion'].map(design=>({params:{design}}));
 }
 const {design}=Astro.params;
 ---

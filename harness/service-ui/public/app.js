@@ -1,4 +1,5 @@
 import {renderCompliance} from "./compliance.js";
+import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
 let disposeObservability = null;
 let safetyActivity = null;
@@ -559,11 +560,30 @@ async function render() {
   main.innerHTML = empty("Loading…");
   try {
     if (page === "observability") {
-      disposeObservability = mountObservability(main, {
-        request: (path, signal) =>
-          api(path, "GET", undefined, undefined, signal),
-        isAdmin: can.admin(),
-      });
+      const request = (path, signal) =>
+        api(path, "GET", undefined, undefined, signal);
+      const tracing = () => {
+        disposeObservability?.();
+        const view = mountSessionTracing(main, {
+          adapter: serviceTracingAdapter(request),
+          onOverview: overview,
+        });
+        disposeObservability = () => view.dispose();
+      };
+      const overview = () => {
+        disposeObservability?.();
+        disposeObservability = mountObservability(main, {
+          request,
+          isAdmin: can.admin(),
+          children: true,
+        });
+        const back = document.createElement("button");
+        back.className = "button";
+        back.textContent = "← Session tracing";
+        back.addEventListener("click", tracing);
+        main.prepend(back);
+      };
+      tracing();
       return;
     }
     let html;
@@ -1059,14 +1079,21 @@ document.addEventListener("keydown", (e) => {
 });
 window.addEventListener("hashchange", render);
 wireForm();
-fetch("/session")
+// Finish restoring the existing session before accepting a new token. Otherwise
+// a delayed initial 401 can clear a token or undo a successful fresh sign-in.
+fetch("/session", { signal: AbortSignal.timeout(10000) })
   .then(async (r) => {
     if (r.ok) {
       auth = await r.json();
       showApp();
     } else loggedOut();
   })
-  .catch(() => loggedOut("Service unavailable."));
+  .catch(() => loggedOut("Service unavailable."))
+  .finally(() => {
+    $("#token").disabled = false;
+    $("#login-form button").disabled = false;
+    $("#login-form").removeAttribute("aria-busy");
+  });
 
 window.addEventListener("beforeunload", (event) => {
   if (pending) {

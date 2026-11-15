@@ -34,11 +34,11 @@ export function sharedCodingTeam(prefix:string,workspace:{repository:string;base
 export function codingRelease(agent:AgentDefinition,version:string,profile:RuntimeProfile):AgentRelease {
   const mode=agent.approvals?.mode??"always";
   const expected=mode==="never"?"bypass":mode==="auto"||mode==="reviewer"?"auto-approve":"ask";
-  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || agent.subagents?.length || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
+  if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
   if(!/^[a-zA-Z0-9_.-]{1,64}$/.test(version))throw Error("Invalid release version");
   return {id:`${agent.name}@${version}`,instructions:agent.instructions,tools:[...agent.tools],runtimeProfiles:[profile.id],defaultRuntimeProfile:profile.id,allowedPrincipals:profile.allowedPrincipals,
     defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name}:undefined,
-    reviewerModel:agent.approvals?.mode==="auto"?{connection:agent.approvals.reviewerModel.provider,model:agent.approvals.reviewerModel.name}:undefined,limits:agent.limits};
+    reviewerModel:agent.approvals?.mode==="auto"?{connection:agent.approvals.reviewerModel.provider,model:agent.approvals.reviewerModel.name}:undefined,limits:agent.limits,subagents:agent.subagents && !Array.isArray(agent.subagents)?agent.subagents:undefined};
 }
 export function codingServiceTeam(preset:SharedCodingPreset,version:string):ServiceAgentTeamOptions {
   return {...structuredClone(preset.team),agentTypes:{[preset.builder.name]:`${preset.builder.name}@${version}`,[preset.verifier.name]:`${preset.verifier.name}@${version}`}};

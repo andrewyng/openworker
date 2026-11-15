@@ -1,18 +1,23 @@
 [package]
 name = "openworker-observability"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
+publish = ["crates-io"]
+readme = "README.md"
+repository = "https://github.com/andrewyng/openworker"
+description = "Optional bounded recording, trace queries and evaluation storage for OpenWorker"
 
 [features]
 default = []
+evaluations = ["dep:openworker-compliance"]
 postgres = ["dep:postgres", "dep:postgres-native-tls", "dep:native-tls", "dep:rustls-pemfile", "dep:zeroize"]
 otlp = ["openworker-telemetry/otlp"]
 
 [dependencies]
-openworker-telemetry = { path = "../telemetry" }
+openworker-compliance = { path = "../compliance", version = "=0.1.0-beta.2", optional = true }
+openworker-telemetry = { path = "../telemetry", version = "=0.1.0-beta.2" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

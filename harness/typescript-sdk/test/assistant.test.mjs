@@ -46,7 +46,8 @@ test("memory scopes, approval denial and scheduled work survive managed restart"
   assert.equal(result.status, "interrupted");
   assert.equal(result.interruptions[0].kind, "approval");
   await g.send({type: "approval", interactionId: result.interruptions[0].id, decision: "deny"});
-  assert.equal((await run.result()).status, "completed");
+  const denied = await run.result();
+  assert.equal(denied.status, "completed", denied.status === "completed" ? undefined : JSON.stringify({terminal: denied, events: await h.request("event/read", {session_id: g.id, after: Math.max(0, denied.cursor - 30)})}));
   assert.deepEqual((await invoke(h, e, "memory_search", {query: "Forbidden"})).memories, []);
   t.diagnostic("denial checked");
   const at = Math.floor(Date.now() / 1000) + 15;

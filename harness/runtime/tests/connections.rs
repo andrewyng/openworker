@@ -465,3 +465,29 @@ fn macos_keychain_roundtrip_and_removal() {
         .any(|w| w == b"keychain-synthetic-test-key"));
     assert!(m.key(&selected).is_err());
 }
+
+#[test]
+fn concurrent_controller_connection_cache_initialization() {
+    // Two service controllers can prepare the same immutable child definition.
+    // Their local connection-cache schema must be initialized atomically.
+    for _ in 0..12 {
+        let root = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        std::thread::scope(|scope| {
+            let tasks = (0..4)
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let path = root.path();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        openworker_runtime::connections::Manager::open(path)
+                            .map(|m| m.list().unwrap())
+                    })
+                })
+                .collect::<Vec<_>>();
+            for task in tasks {
+                task.join().unwrap().unwrap();
+            }
+        });
+    }
+}

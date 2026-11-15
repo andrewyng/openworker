@@ -10,7 +10,7 @@ See [versions and compatibility](../../docs/harness/guides/releases.md).
 npm --prefix harness/typescript-sdk ci
 npm --prefix harness/typescript-sdk run build
 cargo build --manifest-path harness/Cargo.toml --locked --release \
-  -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export
+  -p openworker-sdk --bin openworker-harness --features security-adapters,compliance-export,recording-postgres,evaluation-export
 node harness/release/prepare.mjs \
   /absolute/target/release/openworker-harness aarch64-apple-darwin /absolute/new-candidate
 ```
@@ -42,14 +42,14 @@ hook or fetches an executable during startup.
 
 ## Rust archives
 
-Package the nine crates listed in `manifest.json` together, in dependency order.
+Package the crates listed in `manifest.json` together, in dependency order.
 Cargo rewrites path+version dependencies into registry dependencies. For example:
 
 ```sh
 cargo package --manifest-path harness/Cargo.toml --no-verify \
   -p openworker-artifacts -p openworker-compliance -p openworker-guardrails \
   -p openworker-telemetry -p openworker-tools -p openworker-runtime \
-  -p openworker-security-adapters -p openworker-store-postgres -p openworker-sdk
+  -p openworker-security-adapters -p openworker-store-postgres -p openworker-observability -p openworker-sdk
 node harness/release/check-examples.mjs /absolute/new-examples
 python3 harness/release/verify-crates.py \
   --packages /absolute/target/package --out /absolute/new-consumer \

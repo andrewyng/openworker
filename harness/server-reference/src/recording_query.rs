@@ -48,7 +48,7 @@ pub(crate) fn authority(method: &str, path: &str) -> bool {
                 _,
                 "observability",
                 _,
-                "timeline" | "summary"
+                "timeline" | "summary" | "children" | "subtree-summary"
             ]
     )
 }
@@ -69,6 +69,14 @@ pub(crate) fn router(prefix: &str) -> Router<App> {
         .route(
             &format!("{prefix}/sessions/:sid/observability/:turn/timeline"),
             get(timeline),
+        )
+        .route(
+            &format!("{prefix}/sessions/:sid/observability/:turn/children"),
+            get(children),
+        )
+        .route(
+            &format!("{prefix}/sessions/:sid/observability/:turn/subtree-summary"),
+            get(subtree_summary),
         )
         .route(
             &format!("{prefix}/sessions/:sid/observability/:turn/summary"),
@@ -267,6 +275,45 @@ async fn summary(
     let summary = summary::build(&page, canonical(&run));
     Ok(Json(json!({"run":run,"summary":summary})))
 }
+async fn subtree_summary(
+    Extension(app): Extension<App>,
+    Path((sid, turn)): Path<(String, String)>,
+    Query(q): Query<Summary>,
+) -> Result<Json<Value>, ApiError> {
+    use openworker_runtime::observation_links::{subtree, Run as LinkRun};
+    app.store.observation_run(&sid, &turn)?;
+    let selection = subtree(
+        LinkRun {
+            session_id: sid,
+            turn_id: turn,
+        },
+        |r| app.store.observation_children(&r.session_id, &r.turn_id),
+    )?;
+    for run in &selection.runs {
+        app.store.observation_run(&run.session_id, &run.turn_id)?;
+    }
+    let page = read(
+        &app,
+        Read {
+            deployment: app.config.schema.clone(),
+            scopes: selection
+                .runs
+                .iter()
+                .map(|r| scope(&r.session_id, &r.turn_id))
+                .collect(),
+            after: 0,
+            through: q.through,
+            limit: openworker_observability::query::MAX_SUMMARY_STEPS,
+        },
+    )
+    .await?;
+    for run in &selection.runs {
+        app.store.observation_run(&run.session_id, &run.turn_id)?;
+    }
+    Ok(Json(
+        json!({"selection":selection,"summary":summary::build(&page,Canonical::default())}),
+    ))
+}
 async fn grouped(
     Extension(app): Extension<App>,
     Query(q): Query<Search>,
@@ -329,6 +376,18 @@ async fn grouped(
     ))
 }
 
+async fn children(
+    Extension(app): Extension<App>,
+    Path((sid, turn)): Path<(String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    app.store.observation_run(&sid, &turn)?;
+    let children = app.store.observation_children(&sid, &turn)?;
+    app.store.observation_run(&sid, &turn)?;
+    Ok(Json(
+        json!({"children":children,"coverage":"authorized_captured_spawn_origins_only"}),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +400,8 @@ mod tests {
                 "/observability/health",
                 "/sessions/s/observability/t/timeline",
                 "/sessions/s/observability/t/summary",
+                "/sessions/s/observability/t/children",
+                "/sessions/s/observability/t/subtree-summary",
             ] {
                 let path = format!("{prefix}{path}");
                 assert!(authority("GET", &path));

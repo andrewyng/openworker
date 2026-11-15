@@ -156,7 +156,7 @@ pub fn policy_and_mounts(
 #[derive(Clone)]
 pub struct Sandbox {
     pub root: PathBuf,
-    pub runner: PathBuf,
+    pub runner: Option<PathBuf>,
 }
 impl Sandbox {
     pub async fn create(&self, name: &str, workspace: &str, bundle: &Bundle) -> Result<String> {
@@ -241,7 +241,10 @@ impl Sandbox {
         let files = self.root.join("sandbox-files").join(name);
         std::fs::create_dir_all(&files)?;
         let bin = files.join("openworker");
-        std::fs::copy(&self.runner, &bin)?;
+        std::fs::copy(
+            self.runner.as_ref().context("Native runner required")?,
+            &bin,
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -351,7 +354,7 @@ impl Sandbox {
     }
 }
 
-// Minimal messages matching NVIDIA OpenShell 0.0.116 proto/openshell.proto.
+// Minimal messages matching reviewed NVIDIA OpenShell v0.1.3/v0.1.7 Exec wire fields.
 // prost skips future unknown fields; the gateway version is pinned by preflight.
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct ExecStart {
@@ -827,7 +830,7 @@ pub async fn verify(
     std::fs::write(&outside, "diagnostic marker, not a real secret")?;
     let sandbox = Sandbox {
         root: run.clone(),
-        runner: runner.canonicalize()?,
+        runner: Some(runner.canonicalize()?),
     };
     let bundle = Bundle::load(bundle_path)?;
     let name = format!("owr-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);

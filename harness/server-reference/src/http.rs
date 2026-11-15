@@ -272,6 +272,16 @@ impl From<anyhow::Error> for ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if self
+            .0
+            .is::<openworker_runtime::attachments::InspectionUnsupported>()
+        {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error":"attachment_inspection_unsupported"})),
+            )
+                .into_response();
+        }
         if let Some(error) = self.0.downcast_ref::<crate::service_safety::InputError>() {
             return match error {
                 crate::service_safety::InputError::Blocked => (

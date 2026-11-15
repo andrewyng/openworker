@@ -80,6 +80,9 @@ impl Fixture {
         f
     }
     fn preflight(&self, scenario: &str, out: &str) -> Output {
+        self.preflight_plan("bootstrap", scenario, out)
+    }
+    fn preflight_plan(&self, plan: &str, scenario: &str, out: &str) -> Output {
         self.command()
             .env("OW_AZ_TEST_SCENARIO", scenario)
             .args([
@@ -87,11 +90,13 @@ impl Fixture {
                 "azure",
                 "preflight",
                 "--plan",
-                self.path("bootstrap").to_str().unwrap(),
+                self.path(plan).to_str().unwrap(),
                 "--out",
                 self.path(out).to_str().unwrap(),
                 "--timeout-seconds",
-                "1",
+                // Keep the deliberate timeout case short; ordinary fake CLI
+                // startups need headroom when the full suite runs in parallel.
+                if scenario == "timeout" { "1" } else { "5" },
                 "--overall-timeout-seconds",
                 "20",
             ])
@@ -222,9 +227,54 @@ fn read_only_preflight_verifies_exact_grant_without_claiming_deployment_readines
     assert_eq!(f.log().len(), 13);
 }
 #[test]
+fn cloud_read_omits_subscription_but_all_resource_reads_pin_the_target() {
+    let f = Fixture::ready();
+    let r = f.preflight("ready", "argument-contract");
+    assert!(
+        r.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&r.stderr),
+        String::from_utf8_lossy(&r.stdout)
+    );
+    let calls = f.log();
+    assert_eq!(calls.len(), 13);
+    assert_eq!(&calls[0][..2], ["cloud", "show"]);
+    assert!(!calls[0].iter().any(|a| a == "--subscription"));
+    for call in &calls[1..] {
+        assert_eq!(call.iter().filter(|a| *a == "--subscription").count(), 1);
+        assert!(call
+            .windows(2)
+            .any(|w| w == ["--subscription", "66666666-7777-4888-8999-aaaaaaaaaaaa"]));
+        assert!(call[0] != "rest" || call.windows(2).any(|w| w == ["--method", "get"]));
+    }
+    assert_eq!(f.report("argument-contract")["mutations"], 0);
+}
+#[test]
+fn missing_resource_group_is_reported_without_querying_or_changing_grants() {
+    let f = Fixture::ready();
+    let r = f.preflight("missing-group", "missing-group-report");
+    assert!(!r.status.success());
+    let report = f.report("missing-group-report");
+    assert_eq!(report["checks"][0]["status"], "ok");
+    assert_eq!(report["checks"][1]["status"], "ok");
+    assert_eq!(report["checks"][2]["code"], "not_found");
+    assert_eq!(report["mutations"], 0);
+    assert_eq!(f.log().len(), 3);
+    assert!(!report.to_string().contains("sensitive-error-canary"));
+}
+#[test]
+fn public_auth_endpoint_with_trailing_slash_remains_supported() {
+    let f = Fixture::ready();
+    let r = f.preflight("auth-trailing-slash", "trailing-slash");
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(f.report("trailing-slash")["checks"][0]["status"], "ok");
+}
+#[test]
 fn wrong_cloud_scope_principal_or_role_fails_closed_and_errors_are_redacted() {
     for scenario in [
         "custom-endpoint",
+        "custom-auth-endpoint",
+        "auth-endpoint-path",
         "wrong-tenant",
         "wrong-group",
         "broad-role",
@@ -312,6 +362,16 @@ fn exported_script_requires_explicit_confirmation_and_refuses_existing_or_wrong_
         assert!(f.log().iter().all(|a| !a.contains(&"put".to_string())));
         assert!(!f.path("journal").exists());
     }
+}
+#[test]
+fn failed_assignment_read_stops_before_grants_and_is_not_reported_as_a_collision() {
+    let f = Fixture::ready();
+    let r = f.script("assignment-read-fails", "read-failed-journal");
+    assert!(!r.status.success());
+    assert!(String::from_utf8_lossy(&r.stderr).contains("AuthorizationFailed"));
+    assert!(!String::from_utf8_lossy(&r.stderr).contains("already exists"));
+    assert!(!f.path("read-failed-journal").exists());
+    assert!(f.log().iter().all(|a| a[0] != "rest"));
 }
 #[test]
 fn exported_script_writes_fixed_scope_receipts_and_never_retries_unknown_mutations() {
@@ -632,4 +692,136 @@ fn azure_followup_outputs_cannot_mutate_immutable_inputs_and_bad_install_config_
         .success());
     assert!(!f.path("install").exists());
     assert!(f.log().is_empty());
+}
+
+#[test]
+fn alternative_amd64_sku_exports_and_passes_selected_compute_preflight() {
+    let f = Fixture::ready();
+    let mut config = infrastructure_config();
+    config["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    assert!(infrastructure(&f, &config, "alternative").status.success());
+    let arm: Value =
+        serde_json::from_slice(&fs::read(f.path("alternative/azure-cluster.arm.json")).unwrap())
+            .unwrap();
+    let pool = &arm["resources"][0]["properties"]["agentPoolProfiles"][0];
+    assert_eq!(pool["vmSize"], "Standard_D4as_v7");
+    assert_eq!(pool["count"], 2);
+    assert_eq!(pool["enableAutoScaling"], false);
+    assert_eq!(
+        arm["resources"][0]["properties"]["autoUpgradeProfile"],
+        serde_json::json!({"upgradeChannel":"none","nodeOSUpgradeChannel":"None"})
+    );
+    let result = f.preflight_plan("alternative", "ready", "alternative-report");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report = f.report("alternative-report");
+    assert_eq!(report["preflightReady"], true);
+    assert_eq!(report["applyReady"], false);
+    assert_eq!(report["cliCalls"], 15);
+    assert_eq!(report["qualification"]["selectedSkuVerified"], true);
+    assert_eq!(report["qualification"]["initialNodeQuotaVerified"], true);
+    assert!(f
+        .log()
+        .iter()
+        .all(|a| a[0] != "rest" || a.windows(2).any(|w| w == ["--method", "get"])));
+}
+#[test]
+fn selected_compute_restrictions_architecture_and_consumed_quota_block_preflight() {
+    let f = Fixture::ready();
+    let mut config = infrastructure_config();
+    config["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    assert!(infrastructure(&f, &config, "alternative").status.success());
+    for (scenario, code) in [
+        ("restricted-sku", "sku_location_restricted"),
+        ("arm-sku", "sku_capability_mismatch"),
+        ("sku-pagination", "sku_catalog_truncated"),
+        ("quota-zero", "insufficient_compute_quota"),
+        ("quota-used", "insufficient_compute_quota"),
+    ] {
+        let result = f.preflight_plan("alternative", scenario, scenario);
+        assert!(!result.status.success(), "{scenario}");
+        let report = f.report(scenario);
+        assert_eq!(report["bootstrapReady"], true);
+        assert_eq!(report["preflightReady"], false);
+        assert_eq!(report["mutations"], 0);
+        assert!(
+            report["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["code"] == code),
+            "{report}"
+        );
+    }
+}
+
+#[test]
+fn private_control_registry_and_management_access_are_bounded_and_cleanup_owned() {
+    let f = Fixture::ready();
+    let mut c = infrastructure_config();
+    c["nodeVmSize"] = serde_json::json!("Standard_D4as_v7");
+    c["guardImage"] = serde_json::json!(format!(
+        "trialcontrol.azurecr.io/cleanup@sha256:{}",
+        "a".repeat(64)
+    ));
+    c["guardRegistryResourceId"] = serde_json::json!("/subscriptions/66666666-7777-4888-8999-aaaaaaaaaaaa/resourceGroups/customer-ow-control/providers/Microsoft.ContainerRegistry/registries/trialcontrol");
+    c["managementAccess"] =
+        serde_json::json!({"operatorIpv4":"203.0.113.42","ubuntuImageVersion":"24.04.202610010"});
+    assert!(infrastructure(&f, &c, "managed").status.success());
+    let get = |name: &str| -> Value {
+        serde_json::from_slice(&fs::read(f.path("managed").join(name)).unwrap()).unwrap()
+    };
+    let inv = get("azure-inventory.json");
+    assert_eq!(inv["resources"].as_array().unwrap().len(), 15);
+    assert!(inv["resources"][0]["id"]
+        .as_str()
+        .unwrap()
+        .contains("Microsoft.Compute/virtualMachines"));
+    let arm = get("azure-foundation.arm.json");
+    let resources = arm["resources"].as_array().unwrap();
+    let vm = resources
+        .iter()
+        .find(|r| r["type"] == "Microsoft.Compute/virtualMachines")
+        .unwrap();
+    assert_eq!(
+        vm["properties"]["hardwareProfile"]["vmSize"],
+        "Standard_D2as_v7"
+    );
+    assert_eq!(
+        vm["properties"]["storageProfile"]["osDisk"]["deleteOption"],
+        "Delete"
+    );
+    assert_eq!(
+        vm["properties"]["osProfile"]["linuxConfiguration"]["disablePasswordAuthentication"],
+        true
+    );
+    let nsg = resources
+        .iter()
+        .find(|r| r["type"] == "Microsoft.Network/networkSecurityGroups")
+        .unwrap();
+    assert_eq!(
+        nsg["properties"]["securityRules"][0]["properties"]["sourceAddressPrefix"],
+        "203.0.113.42/32"
+    );
+    let result = f.preflight_plan("managed", "ready", "managed-report");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report = f.report("managed-report");
+    let quota = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "selected_node_quota")
+        .unwrap();
+    assert_eq!(quota["detail"]["requiredVcpus"], 10);
+    for (key,bad) in [("guardRegistryResourceId",serde_json::json!("/subscriptions/other/resourceGroups/other/providers/Microsoft.ContainerRegistry/registries/trialcontrol")),("managementAccess",serde_json::json!({"operatorIpv4":"0.0.0.0/0","ubuntuImageVersion":"latest"}))] {
+        let mut invalid=c.clone();invalid[key]=bad;
+        assert!(!infrastructure(&f,&invalid,"invalid-managed").status.success());
+    }
 }

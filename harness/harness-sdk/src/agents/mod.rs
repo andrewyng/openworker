@@ -41,6 +41,11 @@
 //! # Ok(())
 //! # }
 //! ```
+/// Observed decisions; distinct from ApprovalDecision responses sent by an app.
+pub use openworker_runtime::permissions::{
+    ApprovalDecision as ApprovalVerdict, VerdictKind as ApprovalVerdictKind,
+};
+
 mod agent_team;
 mod bundle;
 pub mod coding;
@@ -51,8 +56,8 @@ mod team;
 
 pub use crate::{
     AccessToken, ApprovalDecision, Capture, ContentPolicy, Credentials, Model, ModelChoice,
-    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryConfig, TelemetryHeader,
-    TelemetrySignal, TokenRefreshReason, ToolRegistry,
+    ModelProvider, ProviderKind, Sandbox, Storage, TelemetryAcknowledgement, TelemetryConfig,
+    TelemetryHeader, TelemetrySignal, TokenRefreshReason, ToolRegistry,
 };
 pub use agent_team::{
     AgentTeam, AgentTeamRef, ChildContext, ChildOptions, ChildWorkspace, Communication,
@@ -107,7 +112,9 @@ impl Approvals {
     pub(crate) fn auto_approves(&self, alias: &str) -> bool {
         // A reusable custom type needs its own exact-definition decision. An
         // interrupt_on exclusion must not silently approve arbitrary new roles.
-        if alias == openworker_runtime::team_type_catalog::TOOL {
+        if alias == openworker_runtime::team_type_catalog::TOOL
+            || alias == openworker_runtime::subagents::CREATE
+        {
             return false;
         }
         match self {
@@ -156,8 +163,14 @@ pub struct Agent {
     pub(crate) approvals: Approvals,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) auto_skip_questions: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) auto_approver_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<crate::CompactionOptions>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) subagents: Vec<Agent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) standalone_subagents: Option<openworker_runtime::subagents::Config>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) servers: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,7 +203,10 @@ impl Agent {
             scheduling: false,
             approvals: Approvals::default(),
             auto_skip_questions: false,
+            auto_approver_context: None,
+            compaction: None,
             subagents: vec![],
+            standalone_subagents: None,
             servers: None,
             tool_policy: None,
             runtime_policy: None,
@@ -273,6 +289,14 @@ impl Agent {
         self.approvals = Approvals::Only(tools.into_iter().map(Into::into).collect());
         self
     }
+    pub fn auto_approver_context(mut self, text: impl Into<String>) -> Self {
+        self.auto_approver_context = Some(text.into());
+        self
+    }
+    pub fn compaction(mut self, options: crate::CompactionOptions) -> Self {
+        self.compaction = Some(options);
+        self
+    }
     pub fn approvals(mut self, approvals: Approvals) -> Self {
         self.approvals = approvals;
         self
@@ -296,6 +320,18 @@ impl Agent {
     /// ask_user. This does not approve tools or invent an answer.
     pub fn auto_skip_questions(mut self, enabled: bool) -> Self {
         self.auto_skip_questions = enabled;
+        self
+    }
+    /// Allow model-created children with fresh context and delegated tools.
+    pub fn allow_subagents(mut self, enabled: bool) -> Self {
+        self.standalone_subagents = Some(openworker_runtime::subagents::Config {
+            enabled,
+            ..Default::default()
+        });
+        self
+    }
+    pub fn subagent_options(mut self, options: openworker_runtime::subagents::Config) -> Self {
+        self.standalone_subagents = Some(options);
         self
     }
     /// Add a subagent. A session of this agent becomes a team lead with one
@@ -338,6 +374,16 @@ impl Agent {
         if self.tools.len() > 64 {
             return bad(format!("Agent {} supports at most 64 tools", self.id));
         }
+        openworker_runtime::turn_options::validate_guidance(
+            "autoApproverContext",
+            self.auto_approver_context.as_deref(),
+        )
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if let Some(options) = &self.compaction {
+            options
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        }
         let mut seen = BTreeSet::new();
         for tool in &self.tools {
             openworker_tools::qualified_parts(tool)
@@ -364,6 +410,16 @@ impl Agent {
         {
             if !path.is_absolute() {
                 return bad(format!("Agent {}: policy paths must be absolute", self.id));
+            }
+        }
+        if let Some(config) = &self.standalone_subagents {
+            config
+                .validate()
+                .map_err(|e| Error::InvalidInput(e.to_string()))?;
+            if config.enabled && (nested || !self.subagents.is_empty()) {
+                return bad(
+                    "Standalone delegation cannot be combined with legacy board subagents".into(),
+                );
             }
         }
         if nested && !self.subagents.is_empty() {
@@ -398,6 +454,9 @@ impl Agent {
         Ok(())
     }
 }
+
+/// Configuration for model-created standalone children.
+pub use openworker_runtime::subagents::Config as SubagentOptions;
 
 #[cfg(test)]
 mod tool_free_tests {

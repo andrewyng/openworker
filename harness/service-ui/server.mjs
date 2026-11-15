@@ -104,8 +104,10 @@ function allowedRecording(path) {
     `^/v1/sessions/${id}/observability/${id}/timeline$`,
   ).test(u.pathname);
   const summary = new RegExp(
-    `^/v1/sessions/${id}/observability/${id}/summary$`,
+    `^/v1/sessions/${id}/observability/${id}/(?:summary|subtree-summary)$`,
   ).test(u.pathname);
+  const children = new RegExp(`^/v1/sessions/${id}/observability/${id}/children$`).test(u.pathname);
+  if(children) return !u.search;
   const health = u.pathname === "/v1/observability/health";
   if (!listing && !timeline && !summary && !health) return false;
   try {
@@ -484,6 +486,8 @@ export async function start(config) {
         "/index.html": ["index.html", "text/html"],
         "/app.js": ["app.js", "text/javascript"],
         "/compliance.js": ["compliance.js", "text/javascript"],
+        "/tracing.js": ["tracing.js", "text/javascript"],
+        "/tracing.css": ["tracing.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],
