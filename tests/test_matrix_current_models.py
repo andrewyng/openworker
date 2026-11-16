@@ -56,6 +56,9 @@ REPO = Path(__file__).resolve().parents[1]
         ("openrouter:nvidia/nemotron-3.5-lightning", 262_144),
         # openrouter.ai endpoints API, read 2026-10-01 (OPE-215): the Z.AI host's window.
         ("openrouter:z-ai/glm-5.3", 1_048_576),
+        # router.requesty.ai/v1/models `context_window`, read 2026-09-28.
+        ("requesty:zai/glm-5.2", 1_000_000),
+        ("requesty:anthropic/claude-sonnet-5", 1_000_000),
     ],
 )
 def test_current_models_have_verified_windows(model, window):

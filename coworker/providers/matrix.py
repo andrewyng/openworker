@@ -18,7 +18,8 @@ the id refresh.
 
 Resellers: Together + Fireworks + OpenRouter + Nebius + OrcaRouter + NVIDIA NIM
 + Groq (landed 2026-10-25, after the deferral of 2026-07-04) + Cerebras, Hugging Face
-Inference Providers and SiliconFlow (2026-10-26).
+Inference Providers and SiliconFlow (2026-10-26)
++ Requesty.
 """
 
 from __future__ import annotations
@@ -393,6 +394,19 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b": ModelEntry(
         "Nemotron 3.5 Lightning · via NVIDIA", _AGENTIC, 1_000_000
+    ),
+    # Requesty slugs are `<vendor>/<model>` (router.requesty.ai/v1/models, read
+    # 2026-09-28, re-read 2026-10-25: both report a 1,000,000 context_window and
+    # tool calling; Sonnet 5 declares vision).
+    "requesty:zai/glm-5.2": ModelEntry(
+        "GLM-5.2 · via Requesty", _AGENTIC, 1_000_000
+    ),
+    "requesty:anthropic/claude-sonnet-5": ModelEntry(
+        "Claude Sonnet 5 · via Requesty",
+        ModelCapabilities(
+            tools=True, vision=True, parallel_tool_calls=True, streaming=True
+        ),
+        1_000_000,
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
