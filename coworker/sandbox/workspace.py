@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from .runner.executor import Executor
+from .stages import StageLog
 
 PROVIDER_ENV = "OPENWORKER_SANDBOX_PROVIDER"
 DIRECT = "direct"
@@ -106,46 +107,89 @@ class RunnerWorkspace(Workspace):
         # Refusals up to here have been told to the agent. One that reaches us after its
         # command's result (OpenShell's log lags) is told with the next result, not lost.
         self._blocked_told = time.time()
+        # What the recording hears of this sandbox (observability OB-13): `observer(event,
+        # data)` with `setup_started`, `setup_ended` and `restarted`. Set by the engine; it
+        # is called from whatever thread starts or restarts the sandbox.
+        self.observer: Optional[Callable[[str, dict[str, Any]], None]] = None
+        self.last_start: Optional[StageLog] = None
+        self._restarts_seen = 0  # the client's restart count already told
         if start:
             self.ensure_started()
         else:
             self.client.starter = self.ensure_started
 
-    def ensure_started(self) -> None:
+    def ensure_started(self, trigger: str = "first_tool") -> None:
         """Make the sandbox, connect to its runner and prove the wall. Once; a failure
-        leaves nothing behind and the next call tries again."""
+        leaves nothing behind and the next call tries again. `trigger` is for the recording:
+        `turn_start` when a turn starts it, `first_tool` when the first runner call does."""
         with self._start_lock:
             if self.started:
                 return
-            registry = self.registry
-            if registry is not None:
-                registry.reap()  # sandboxes left behind by a server that is gone
-                registry.check_room()
-                # Reserve the name before the sandbox exists: engine builds run concurrently
-                # (OPE-206), and another build's reap() would otherwise delete this one while
-                # it is still provisioning, because it is not yet in the registry.
-                self._record(state="creating")
+            log = StageLog()
+            self.last_start = log
+            self._tell("setup_started", {"trigger": trigger, "log": log})
             try:
-                self.provider.create()
-            except Exception:
-                self.provider.destroy()  # a half-made sandbox may already hold copied credentials
-                if registry is not None and self._registered:
-                    registry.close(self._registered)
-                    self._registered = None
+                self._start(log)
+            except BaseException as exc:
+                log.end(exc)
+                self._tell("setup_ended", {"trigger": trigger, "log": log, "error": exc})
                 raise
-            try:
-                self.hello = self.client.connect()
-                self._after_connect()
-            except Exception:
-                self.client.detach()
-                self.provider.destroy()
-                if registry is not None and self._registered:
-                    registry.close(self._registered)
-                    self._registered = None
-                raise
-            self._record()
-            self.started = True
-            self.client.starter = None
+            finally:
+                if getattr(self.provider, "stage_log", None) is log:
+                    self.provider.stage_log = None  # a later restart's create is not this start
+            log.end()
+            self._restarts_seen = self.client.restarts
+            self._tell("setup_ended", {"trigger": trigger, "log": log, "error": None})
+
+    def _start(self, log: StageLog) -> None:
+        # Providers that know their own inner stages report them through `stage_log`; for
+        # the others the whole `create` is one stage.
+        try:
+            self.provider.stage_log = log
+        except AttributeError:
+            pass
+        log.begin("preparing")
+        registry = self.registry
+        if registry is not None:
+            registry.reap()  # sandboxes left behind by a server that is gone
+            registry.check_room()
+            # Reserve the name before the sandbox exists: engine builds run concurrently
+            # (OPE-206), and another build's reap() would otherwise delete this one while
+            # it is still provisioning, because it is not yet in the registry.
+            self._record(state="creating")
+        if not getattr(self.provider, "reports_stages", False):
+            log.begin("create")
+        try:
+            self.provider.create()
+        except Exception:
+            self.provider.destroy()  # a half-made sandbox may already hold copied credentials
+            if registry is not None and self._registered:
+                registry.close(self._registered)
+                self._registered = None
+            raise
+        try:
+            log.begin("connect")
+            self.hello = self.client.connect()
+            self._after_connect(log)
+        except Exception:
+            self.client.detach()
+            self.provider.destroy()
+            if registry is not None and self._registered:
+                registry.close(self._registered)
+                self._registered = None
+            raise
+        self._record()
+        self.started = True
+        self.client.starter = None
+
+    def _tell(self, event: str, data: dict[str, Any]) -> None:
+        observer = self.observer
+        if observer is None:
+            return
+        try:
+            observer(event, data)
+        except Exception:  # noqa: BLE001 - the recording never stops a sandbox
+            pass
 
     def _record(self, state: str = "ready") -> None:
         """Enter this sandbox in the registry; after a restart that replaced it, under its
@@ -173,6 +217,10 @@ class RunnerWorkspace(Workspace):
         started with (design ruling 15). Returns what to tell the agent, or None. Runs
         before every command, so it is also where a sandbox not yet started starts."""
         self.ensure_started()
+        if self.client.restarts > self._restarts_seen:
+            # The runner came back as a new instance on its own (a crash and reconnect).
+            self._restarts_seen = self.client.restarts
+            self._tell("restarted", {"reason": "runner_restarted", "how": "restart"})
         regrant = getattr(self.provider, "regrant", None)
         if regrant is None or self._live_roots is None:
             return None
@@ -187,23 +235,30 @@ class RunnerWorkspace(Workspace):
             regrant(wanted, before_create=lambda: self._record(state="creating"))
             self.client.connect()  # a new runner: the client notes the restart
             self._after_connect()
+            self._restarts_seen = self.client.restarts
         else:
             regrant(wanted)  # the same sandbox, re-granted in place (Windows: entries on folders)
             verify = getattr(self.provider, "verify", None)
             if verify is not None:
                 verify(self.client)
         self._record()
+        how = "restart" if restarts else "regrant"
+        self._tell("restarted", {"reason": "folders_changed", "how": how})
         return RESTART_NOTICE if restarts else REGRANT_NOTICE
 
-    def _after_connect(self) -> None:
+    def _after_connect(self, log: Optional[StageLog] = None) -> None:
         """What a provider does once it can talk to its runner: prove the wall is up, then
         put in what it could not put in before the runner existed (copies that must be
         owned by the sandbox's own account)."""
         verify = getattr(self.provider, "verify", None)
         if verify is not None:
+            if log is not None:
+                log.begin("verify")
             verify(self.client)  # e.g. every folder is really reachable inside
         provision = getattr(self.provider, "provision", None)
         if provision is not None:
+            if log is not None:
+                log.begin("copy_logins")
             provision(self.client)
 
     @property
@@ -281,7 +336,18 @@ class RunnerWorkspace(Workspace):
         for _, entry in new:
             counts[entry] = counts.get(entry, 0) + 1
         late = any(when < started - 0.5 for when, _ in new)
-        return {"blocked_sites": list(counts), "network_note": network_note_text(counts, can_ask=self._asking(), late=late)}
+        first: dict[str, float] = {}
+        for when, entry in new:
+            first[entry] = min(first.get(entry, when), when)
+        # `_blocked` is for the recording's tool step (observability E13, V-04); the engine
+        # takes it out of the result before the model sees it.
+        blocked = [
+            {**_host_port(entry), "count": n, "first_at": int(first[entry] * 1000),
+             "late": first[entry] < started - 0.5, "uncertain": True}
+            for entry, n in counts.items()
+        ]
+        return {"blocked_sites": list(counts), "network_note": network_note_text(counts, can_ask=self._asking(), late=late),
+                "_blocked": blocked}
 
     def _blocked_untold(self) -> list[tuple[float, str]]:
         return [item for item in self.blocked_since(self._blocked_told) if item[0] > self._blocked_told]
@@ -326,6 +392,14 @@ _NOTE_SITES = 10  # more than this many blocked sites in one command are counted
 def _site_name(entry: str) -> str:
     """"github.com:443" reads as "github.com": the port only matters when it is not the web's."""
     return entry[:-4] if entry.endswith(":443") else entry
+
+
+def _host_port(entry: str) -> dict[str, Any]:
+    """A blocked-site entry ("host:port", or a bare host) as the recording's {host, port}."""
+    host, sep, port = str(entry).rpartition(":")
+    if sep and port.isdigit() and host:
+        return {"host": host.strip("[]"), "port": int(port)}
+    return {"host": str(entry), "port": 443}
 
 
 def network_note_text(counts: dict[str, int], *, can_ask: bool, late: bool = False) -> str:
@@ -389,7 +463,9 @@ def open_workspace(
     if name == RUNNER_LOCAL:
         from .providers.runner_local import RunnerLocalProvider
 
-        return RunnerWorkspace(RunnerLocalProvider(cwd=cwd), cwd=cwd)
+        # Like the real providers, it starts when the first turn needs it (`start`), so its
+        # start is a turn's setup step too (observability OB-13).
+        return RunnerWorkspace(RunnerLocalProvider(cwd=cwd), cwd=cwd, start=start)
     listed = [{"path": str(r.path), "writable": bool(r.writable)} for r in (roots or [])]
     listed = listed or [{"path": str(cwd), "writable": True}]
     from .credentials import granted

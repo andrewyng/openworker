@@ -189,11 +189,12 @@ test("approval creates the team; members live in the drawer, RECENT keeps one en
   await page.getByTestId("teamreq-approve").click();
   await expect(page.getByText(/Team created/)).toBeVisible();
 
-  // The drawer grows a collapsed Team section with a member-count chip.
+  // The drawer grows a collapsed Team section whose header summary (2026-11-06 rail
+  // redesign) leads with attention: one of the three members is waiting.
   // (Sessions poll every 5s, so allow one full cycle.)
   const teamToggle = page.getByTestId("rail-toggle-team");
   await expect(teamToggle).toBeVisible({ timeout: 12_000 });
-  await expect(teamToggle).toContainText("3");
+  await expect(teamToggle).toContainText("1 waiting");
   await expect(page.getByTestId("team-panel")).toHaveCount(0); // collapsed by default
 
   // The lead is the SESSION — Progress yields its slot (the board is the lead's

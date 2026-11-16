@@ -1,0 +1,23 @@
+{
+  "database_env": "OW_SERVER_DATABASE_URL",
+  "schema": "ow_reference",
+  "database_loopback_plaintext": false,
+  "database_ca": "/absolute/path/postgres-ca.pem",
+  "state_root": "/absolute/path/controller-state",
+  "bundle": "/absolute/path/openworker/harness/examples/assistant",
+  "runner": "/absolute/path/linux-openworker-ELF",
+  "model": "fixture",
+  "model_provider": "openai",
+  "model_connections": [],
+  "scripted": true,
+  "api_token_file": "/absolute/path/private-api-token",
+  "actor": "reference-user",
+  "openshell": {
+    "identity": "my-kubernetes-gateway",
+    "endpoint": "https://127.0.0.1:8080",
+    "certificates": "/absolute/path/mtls",
+    "tls_server_name": "localhost",
+    "workspace": "default",
+    "image": "registry.example/openworker-runner@sha256:REPLACE_WITH_VERIFIED_IMAGE_DIGEST"
+  }
+}

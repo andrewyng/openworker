@@ -11,6 +11,18 @@ export function isProjectScoped(p?: { requires_folder?: boolean }): boolean {
 // Ops); the persona detail page uses the FULL family name. Backend names are left untouched (the
 // API + tests keep "OpenWorker" / "Ops Coworker"); this is purely the display layer.
 
+/** The default coworker's id. Its backend name is "OpenWorker"; on screen it is "Coworker". */
+export const DEFAULT_PERSONA_ID = "cowork";
+
+/** A coworker's name where coworkers are listed side by side (Settings ▸ Coworkers, Usage's
+ * tables, its picker, Ratings): the default one is "Coworker (default)", as "Coworker" alone
+ * reads like the column's heading there; every other coworker keeps its own name (T3-15 e). */
+export function listPersonaName(name: string | null | undefined, id: string | null | undefined,
+                                t: (k: string) => string): string {
+  if (id === DEFAULT_PERSONA_ID) return t("personas.default_in_list");
+  return (name || id || "").trim();
+}
+
 // Short label for the sidebar + top bar: "Coworker" / "Code" / "Ops" / "Chat".
 export function shortPersonaName(name?: string, id?: string): string {
   if (id === "cowork") return "Coworker";

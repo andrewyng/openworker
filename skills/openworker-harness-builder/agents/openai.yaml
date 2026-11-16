@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenWorker Harness Builder"
+  short_description: "Build desktop and web apps with the OpenWorker SDK"
+  default_prompt: "Use $openworker-harness-builder to build an app with OpenWorker and explain the SDK integration."

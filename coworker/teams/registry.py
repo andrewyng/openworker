@@ -139,3 +139,15 @@ class TeamRegistry:
             team.wakes_this_hour += 1
             self._save()
             return True
+
+    def refund_wake(self, team_id: str) -> None:
+        """Give back a wake counted by `count_wake` whose delivery did not happen (the session
+        was busy, stopped or the race was lost): a wake counts only once it is delivered
+        (observability Phase 3, TD3-22). The hour stays the calendar UTC hour."""
+        hour = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H")
+        with self._lock:
+            team = self._teams.get(team_id)
+            if team is None or team.wake_hour != hour or team.wakes_this_hour <= 0:
+                return
+            team.wakes_this_hour -= 1
+            self._save()

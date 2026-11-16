@@ -1,0 +1,275 @@
+{
+  "version": "1",
+  "semconv_version": "1.41.0",
+  "sources": [
+    "https://github.com/open-telemetry/semantic-conventions/blob/v1.41.0/docs/gen-ai/gen-ai-spans.md",
+    "https://langfuse.com/integrations/native/opentelemetry"
+  ],
+  "notes": [
+    "OpenWorker operation names remain stable; only the listed GenAI attribute subset is pinned, not full GenAI instrumentation conformance.",
+    "Model/tool names require metadata capture; legacy prompt/completion keys require full capture.",
+    "Metric dimensions are only the explicitly marked finite enums; identity/name/content keys never become metric dimensions.",
+    "Typed and identity attributes are derived from validated records, never arbitrary metadata overrides."
+  ],
+  "attributes": [
+    {
+      "constant": "SERVICE_NAME",
+      "key": "service.name",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SERVICE_VERSION",
+      "key": "service.version",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SERVICE_INSTANCE",
+      "key": "service.instance.id",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "ROLE",
+      "key": "openworker.role",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "DEPLOYMENT",
+      "key": "openworker.deployment",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SCHEMA_VERSION",
+      "key": "openworker.schema.version",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SEMCONV_VERSION",
+      "key": "openworker.semconv.version",
+      "type": "string",
+      "capture": "resource",
+      "metric_dimension": false
+    },
+    {
+      "constant": "OPERATION",
+      "key": "openworker.operation",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": true
+    },
+    {
+      "constant": "OUTCOME",
+      "key": "openworker.outcome",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": true
+    },
+    {
+      "constant": "PURPOSE",
+      "key": "openworker.model.purpose",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": true
+    },
+    {
+      "constant": "DIRECTION",
+      "key": "direction",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": true
+    },
+    {
+      "constant": "SESSION_HASH",
+      "key": "openworker.session.hash",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "ACTION_HASH",
+      "key": "openworker.action.hash",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "TURN_HASH",
+      "key": "openworker.turn.hash",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "CONVERSATION_ID",
+      "key": "gen_ai.conversation.id",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SESSION_ID",
+      "key": "session.id",
+      "type": "string",
+      "capture": "identity",
+      "metric_dimension": false
+    },
+    {
+      "constant": "ATTEMPT",
+      "key": "openworker.attempt",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "TIMING_KNOWN",
+      "key": "openworker.timing.known",
+      "type": "bool",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "INPUT_TOKENS",
+      "key": "gen_ai.usage.input_tokens",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "OUTPUT_TOKENS",
+      "key": "gen_ai.usage.output_tokens",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "CACHE_READ_TOKENS",
+      "key": "gen_ai.usage.cache_read.input_tokens",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "CACHE_WRITE_TOKENS",
+      "key": "gen_ai.usage.cache_creation.input_tokens",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "REASONING_TOKENS",
+      "key": "gen_ai.usage.reasoning.output_tokens",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "RETURNED_BYTES",
+      "key": "openworker.tool.returned_bytes",
+      "type": "int",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "FIRST_OUTPUT",
+      "key": "openworker.model.first_output.duration",
+      "type": "double",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "GEN_AI_OPERATION",
+      "key": "gen_ai.operation.name",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "OBSERVATION_TYPE",
+      "key": "langfuse.observation.type",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": false
+    },
+    {
+      "constant": "MODEL_NAME",
+      "key": "gen_ai.request.model",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "TOOL_NAME",
+      "key": "gen_ai.tool.name",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SANDBOX_PROVIDER",
+      "key": "openworker.sandbox.provider",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "SANDBOX_ENFORCEMENT",
+      "key": "openworker.sandbox.enforcement",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "POLICY_DIGEST",
+      "key": "openworker.policy.digest",
+      "type": "string",
+      "capture": "metadata",
+      "metric_dimension": false
+    },
+    {
+      "constant": "PROMPT",
+      "key": "gen_ai.prompt",
+      "type": "string",
+      "capture": "full",
+      "metric_dimension": false
+    },
+    {
+      "constant": "COMPLETION",
+      "key": "gen_ai.completion",
+      "type": "string",
+      "capture": "full",
+      "metric_dimension": false
+    },
+    {
+      "constant": "TOOL_ARGUMENTS",
+      "key": "gen_ai.tool.call.arguments",
+      "type": "string",
+      "capture": "full",
+      "metric_dimension": false
+    },
+    {
+      "constant": "TOOL_RESULT",
+      "key": "gen_ai.tool.call.result",
+      "type": "string",
+      "capture": "full",
+      "metric_dimension": false
+    },
+    {
+      "constant": "ERROR_TYPE",
+      "key": "error.type",
+      "type": "string",
+      "capture": "typed",
+      "metric_dimension": false
+    }
+  ]
+}

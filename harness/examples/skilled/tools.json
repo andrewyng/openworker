@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "servers": [{"id":"report-tools","program":"$OPENWORKER","args":["mcp-example","--workspace","$WORKSPACE"]}],
+  "bindings": {
+    "write_file":{"server":"report-tools","tool":"write_file"},
+    "run_shell":{"server":"report-tools","tool":"run_shell"}
+  }
+}

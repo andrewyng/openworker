@@ -18,11 +18,13 @@ from coworker.readonly import is_readonly_command, read_targets
 
 @pytest.fixture()
 def session(tmp_path):
-    """A session whose granted root is `repo/`, with the grant already clicked."""
+    """A session whose granted root is `repo/`, with the grant already clicked. The commands
+    below are bash commands, so the shell is bash on every platform (OPE-232: PowerShell
+    has its own list)."""
     root = tmp_path / "repo"
     (root / "src").mkdir(parents=True)
     (root / "build.log").write_text("boom", encoding="utf-8")
-    engine = PermissionEngine(workspace_root=root, mode=Mode.INTERACTIVE)
+    engine = PermissionEngine(workspace_root=root, mode=Mode.INTERACTIVE, shell_kind="bash")
     engine.allow_readonly_for_session()
     return engine
 
@@ -78,8 +80,11 @@ def test_reads_outside_every_root_now_ask(session, command):
 def test_find_with_a_global_option_inside_the_root_still_runs(session):
     # The scoping must not undo the convenience: the prefixed form over an in-scope path
     # keeps auto-running, exactly like the unprefixed one.
-    assert runs(session, "find -L . -name '*.py'")
-    assert runs(session, "find -D search src"), command
+    assert runs(session, "find -H . -name '*.py'")
+    assert runs(session, "find -D search src")
+    # OPE-232: -L follows symbolic links met during the walk, which the folder check
+    # cannot see, so it asks.
+    assert not runs(session, "find -L . -name '*.py'")
 
 
 def test_openworkers_own_secrets_are_no_longer_readable(session):
@@ -123,6 +128,7 @@ def test_a_second_granted_root_is_in_scope(tmp_path):
         workspace_root=repo,
         mode=Mode.INTERACTIVE,
         roots=[RootDir(path=repo, writable=True), RootDir(path=notes, writable=False)],
+        shell_kind="bash",
     )
     engine.allow_readonly_for_session()
     # Reading needs read access, not write access.

@@ -42,12 +42,15 @@ def _usage_from(meta: Any) -> Optional[TokenUsage]:
     if meta is None:
         return None
     prompt = int(getattr(meta, "prompt_token_count", 0) or 0)
-    cached = int(getattr(meta, "cached_content_token_count", 0) or 0)
+    cached = getattr(meta, "cached_content_token_count", None)
+    thoughts = getattr(meta, "thoughts_token_count", None)
     return TokenUsage(
-        input=max(prompt - cached, 0),
-        output=int(getattr(meta, "candidates_token_count", 0) or 0)
-        + int(getattr(meta, "thoughts_token_count", 0) or 0),
-        cache_read=cached,
+        input=max(prompt - int(cached or 0), 0),
+        output=int(getattr(meta, "candidates_token_count", 0) or 0) + int(thoughts or 0),
+        cache_read=int(cached or 0),
+        reasoning=None if thoughts is None else int(thoughts),
+        cache_read_reported=cached is not None,
+        cache_write_reported=False,
     )
 
 # Gemini finishReason → the engine's OpenAI-shaped finish_reason vocabulary. STOP maps to

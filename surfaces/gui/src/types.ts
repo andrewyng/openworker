@@ -1,5 +1,7 @@
 export type EventType =
   | "ready"
+  // Observability: batched recording events for the Steps panel ({events: [...]}).
+  | "step"
   | "inbound"
   | "turn_start"
   | "assistant_delta"
@@ -17,13 +19,17 @@ export type EventType =
   | "tool_started"
   | "tool_finished"
   | "iteration_end"
+  | "turn_summary"
   | "turn_end"
   | "error"
   | "input_rejected"
   | "interrupted"
   | "model_changed"
   | "mode_notice"
+  | "export_notice"
   | "memory_saved"
+  | "agent_task"
+  | "workspace_changed"
   | "compacting"
   | "compacted"
   | "continuation"
@@ -33,6 +39,14 @@ export type EventType =
   // falling back to its startup screen while the backend was busy.
   | "sandbox_preparing"
   | "sandbox_ready";
+
+export interface PlanStepView {
+  kind: string;
+  target: string;
+  destination?: string;
+  note?: string;
+  risky: boolean;
+}
 
 export interface WsEvent {
   type: EventType;
@@ -85,6 +99,18 @@ export interface SessionUsage {
   context: number;
 }
 
+// Window occupancy for the rail's Context section (FB-015), from the `ready` event and
+// each `assistant_message`. The category split is a server-side chars/4 estimate, so it
+// is rendered as proportion of `used`, never as a ledger. `window` is null when the
+// model isn't in the matrix ("window unknown", same contract as the composer ring).
+export interface ContextInfo {
+  window: number | null;
+  used: number;
+  estimated: boolean;
+  breakdown: { system: number; tools: number; messages: number };
+  compaction?: { created_at?: number; messages?: number; trimmed?: boolean };
+}
+
 export interface SessionInfo {
   session_id: string;
   title?: string;
@@ -100,6 +126,8 @@ export interface SessionInfo {
   attention?: number;
   // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
   liveness?: "working" | "sleeping" | "idle";
+  // OB-3: warnings in turns whose Issues you have not opened (an amber ring in the sidebar).
+  issues_unseen?: number;
   // When sleeping: the next timer fire (ISO) — drives the "sleeping until…" strip.
   sleeping_until?: string | null;
   // Channels this session listens to (inbound subscriptions).
@@ -148,13 +176,16 @@ export interface Attachment {
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.
 export type Item =
-  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number }
+  // `mid` is the server's message id (a replayed session has it; a live send gets it from
+  // turn_start) — the trace index joins a message to its turn by it (UX-060).
+  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number; mid?: string }
   // A connector-delivered inbound message (Slack/Salesforce/…), rendered as a structured card
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.
   | { kind: "connector"; source: MessageSource }
   | { kind: "teamcreated"; teamId: string; workers: { actor: string; persona: string }[]; ts?: number }
-  | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
+  // `mid`: the message id (observability links a turn footer to its answer by it, OB-5).
+  | { kind: "assistant"; text: string; ts?: number; reasoning?: string; mid?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).
   // `standingRule` = the task-scoped rule that auto-allowed this call ("tool → target").
@@ -164,7 +195,12 @@ export type Item =
   // `approvalOrigin` = why the call ran without a card: "reviewer" (auto-approved by the
   // Auto-Approve reviewer; `approvalNote` carries its one-line reason) or "bypass"
   // (bypass-approvals mode). Rendered as a quiet debugging chip, deliberately subtle.
-  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string }
+  // `callId` = the tool call's id (OPE-238: links the item to its audit rows, and pairs the
+  // proposed event with its own finished event). `effect` ("change" | "read") and `tier` come
+  // with a cardless origin and decide whether the auto-approved summary counts the call.
+  // `exitCode` / `timedOut` / `background` are a shell command's outcome, read from the
+  // result itself rather than the truncated preview.
+  | { kind: "tool"; id: string; name: string; args: any; status: string; preview?: string; hidden?: number; standingRule?: string; reviewerReason?: string; allowAnyway?: boolean; approvalOrigin?: string; approvalNote?: string; approvalGrant?: string; callId?: string; effect?: string; tier?: string; exitCode?: number | null; timedOut?: boolean; background?: boolean }
   | {
       kind: "approval";
       toolCallId?: string;
@@ -230,6 +266,10 @@ export type Item =
   | {
       kind: "planreq";
       plan: string;
+      // OPE-237: a plan proposed in auto-approve lists its steps; the card shows them,
+      // marks the risky ones, and offers approve-all or send-back (no mode choice).
+      steps?: PlanStepView[];
+      autoApprove?: boolean;
       resolved?: "approved" | "rejected";
     }
   | {

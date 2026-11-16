@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "servers": [
+    {"id":"desktop","program":"$OPENWORKER","args":["mcp-example","--workspace","$WORKSPACE","--label","desktop"]},
+    {"id":"reports","program":"$OPENWORKER","args":["mcp-example","--workspace","$WORKSPACE","--label","reports"]}
+  ],
+  "bindings": {
+    "desktop_status":{"server":"desktop","tool":"example_echo"},
+    "host_probe":{"server":"desktop","tool":"run_shell"},
+    "sandbox_exec":{"server":"reports","tool":"run_shell"}
+  }
+}

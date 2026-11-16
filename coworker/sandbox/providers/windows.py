@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from .. import credentials as creds
-from .. import netproxy, network_profiles
+from .. import netproxy, network_profiles, stages
 from ..bundle import build_runner_zipapp
 from ..launch import runner_command, serve_arguments, spawn_kwargs, wait_for_runner
 from ..runner import winpipe
@@ -76,6 +76,7 @@ def preflight() -> None:
 
 class WindowsProvider:
     name = "windows"
+    reports_stages = True  # its start's inner stages go to the recording (stages.stage)
 
     def __init__(
         self,
@@ -154,6 +155,8 @@ class WindowsProvider:
     def _create(self) -> None:
         preflight()
         from .. import winsec
+
+        stages.stage(self, "create")
 
         hosts = sorted({*self.extra_hosts, *(h for g in self.grants for h in g.hosts)})
         if self.network and not self.open_network:

@@ -161,3 +161,57 @@ describe("itemsFromMessages mcp failure", () => {
     });
   });
 });
+
+// OPE-238: a replayed tool item carries its tool call's id, so the "changes made without
+// asking" summary can link it to its audit rows after a reload too.
+describe("itemsFromMessages call ids", () => {
+  it("puts the tool call id on the tool item", () => {
+    const items = itemsFromMessages([
+      { role: "user", content: "run the tests" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "call_9", function: { name: "run_shell", arguments: '{"command": "pytest"}' } }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_9",
+        content: '{"exit_code": 0}',
+        _display: { approval_origin: "reviewer" },
+      },
+    ] as any);
+    const tool = items.find((i: any) => i.kind === "tool") as any;
+    expect(tool.callId).toBe("call_9");
+    expect(tool.approvalOrigin).toBe("reviewer");
+  });
+});
+
+
+// OPE-238: a call's outcome is persisted with its result, so a reload shows what the live
+// view showed: a failed write is not a green "Wrote x", a command keeps its exit status.
+describe("itemsFromMessages outcomes", () => {
+  const replay = (display: any, content = '{"ok": true}') =>
+    itemsFromMessages([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", function: { name: "run_shell", arguments: '{"command": "x"}' } }] },
+      { role: "tool", tool_call_id: "call_1", content, _display: display },
+    ] as any).find((i: any) => i.kind === "tool") as any;
+
+  it("a failed call replays with its status", () => {
+    const tool = replay({ approval_origin: "reviewer", status: "error" }, '{"error": "boom"}');
+    expect(tool.status).toBe("error");
+    expect(tool.approvalOrigin).toBe("reviewer");
+  });
+
+  it("a shell command replays with its exit code, time-out or background start", () => {
+    expect(replay({ exit_code: 1 }).exitCode).toBe(1);
+    expect(replay({ exit_code: null, timed_out: true })).toMatchObject({ exitCode: null, timedOut: true });
+    expect(replay({ background: true }).background).toBe(true);
+    expect("exitCode" in replay({ approval_origin: "reviewer" })).toBe(false);
+  });
+
+  it("effect and tier ride along with the origin", () => {
+    const tool = replay({ approval_origin: "gate_tier", approval_effect: "read", approval_tier: "readonly_command" });
+    expect(tool).toMatchObject({ approvalOrigin: "gate_tier", effect: "read", tier: "readonly_command" });
+  });
+});

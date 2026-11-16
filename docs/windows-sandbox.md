@@ -132,7 +132,11 @@ One elevated PowerShell script, one prompt. It:
 ```
 
 - **Allow everything** (`open`) — any host. Nothing to configure. The files are still the
-  wall. This is the default on Windows, and the page shows it in amber.
+  wall. This is the default on Windows, and the page shows it in amber. With it, the only
+  checks on where a command sends data are the approval flow's: the reviewer, and the
+  floor that sends anything carrying a secret-looking file or value to a person (a
+  backstop: a shell command can't always be read reliably). If the agent works with
+  credentials, prefer **Only the sites you allow**.
 - **Only the sites you allow** (`allowlist`) — the sites you tick under **Choose sites…**
   (code hosting, package registries, search APIs, or any site you add), through the proxy;
   nothing until you tick some. A program that ignores the proxy variables has no network

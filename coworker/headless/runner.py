@@ -178,6 +178,23 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="reasoning-effort level sent to the provider (Anthropic output_config.effort, "
         "Together/Moonshot reasoning_effort). Default: nothing sent; the provider default is recorded",
     )
+    p.add_argument(
+        "--mcp",
+        action="store_true",
+        help="attach MCP servers as tools for this run (off by default). Reads this "
+        "computer's mcp.json unless --mcp-config points elsewhere; for an --isolated run "
+        "that is <out>/state/mcp.json. A server's tools reach the model as "
+        "mcp__<server>__<tool>; a server that fails to connect is skipped and the run "
+        "goes on. The headless runner attaches only the global (or --mcp-config) file — a "
+        "workspace .coworker/mcp.json needs trust it does not establish.",
+    )
+    p.add_argument(
+        "--mcp-config",
+        default=None,
+        metavar="FILE",
+        help="load MCP servers from this mcpServers JSON file only, with no global or "
+        "workspace merge (implies --mcp). For a run that brings its own server config.",
+    )
     p.add_argument("--scripted", default=None, help=argparse.SUPPRESS)  # tests: a fake model
     args = p.parse_args(argv)
     # The engine's name for the mode, which is also what the record states.
@@ -703,6 +720,64 @@ def _extra_dirs(args: argparse.Namespace, workspace: Path) -> list:
     return found
 
 
+def _mcp_server_defs(
+    args: argparse.Namespace, workspace: Path, secrets: Any
+) -> list:
+    """The MCP servers to attach for this run, or [] when MCP is off. `--mcp-config`
+    names one explicit file (the only source); otherwise this computer's layered config.
+    A workspace `.coworker/mcp.json` is executable provenance that needs trust the
+    headless runner does not establish, so only the global (or explicit) file is read."""
+    if not (args.mcp or args.mcp_config):
+        return []
+    from ..mcp import load_mcp_file, load_mcp_servers
+
+    if args.mcp_config:
+        return load_mcp_file(args.mcp_config, secrets=secrets)
+    return load_mcp_servers(workspace, secrets=secrets, workspace_trusted=False)
+
+
+async def _attach_mcp(engine: Any, servers: list, secrets: Any, *, on_note: Any) -> Any:
+    """Connect each enabled MCP server and register its tools on the LIVE engine.
+
+    Runs on the engine's own event loop (the `asyncio.run` loop that drives the turn),
+    so the sync→async tool bridge in `build_callables` targets the loop the tool thread
+    bridges back to. The engine reads `registry.schemas()` per turn, so tools registered
+    here are visible from the first model call. A server that fails to connect is noted
+    and skipped — the run continues without its tools. Returns the MCPManager to close
+    when the run ends, or None when nothing attached (so there is nothing to close)."""
+    from ..mcp import MCPManager, build_callables
+
+    manager = MCPManager(secrets=secrets)
+    loop = asyncio.get_running_loop()
+    attached = 0
+    for server in servers:
+        if not server.enabled:
+            continue
+        try:
+            conn = await manager.ensure(server)
+        except Exception as exc:  # noqa: BLE001 - a bad server must never kill the run
+            tail = manager.last_stderr(server.name)
+            msg = f"{exc}" + (f" — {tail}" if tail else "")
+            on_note("mcp_server_failed", {"server": server.name, "error": msg[:600]})
+            continue
+        callables = build_callables(
+            server,
+            conn.tools,
+            lambda tool, a, name=server.name: manager.call(name, tool, a),
+            loop,
+        )
+        engine.registry.register_all(callables)
+        attached += len(callables)
+        on_note(
+            "mcp_server_attached",
+            {"server": server.name, "tools": [c.__name__ for c in callables]},
+        )
+    if attached == 0:
+        await manager.aclose()
+        return None
+    return manager
+
+
 class UsageError(Exception):
     """The command line cannot be run as given: said on standard error, exit code 2."""
 
@@ -848,6 +923,17 @@ def _run(args: argparse.Namespace) -> int:
         )
 
     secrets = SecretStore(state_dir() / "secrets.json")
+    # MCP servers to attach (if any), resolved with this run's SecretStore for ${VAR}
+    # refs. Connected later, on the engine's own event loop (see guarded()).
+    mcp_servers = _mcp_server_defs(args, workspace, secrets)
+    if (args.mcp or args.mcp_config) and not mcp_servers:
+        print(
+            "openworker run: --mcp was given but no MCP servers were found in "
+            + (args.mcp_config or "this computer's mcp.json")
+            + "; the run continues with no MCP tools.",
+            file=sys.stderr,
+            flush=True,
+        )
     if args.scripted:
         provider = scripted_provider(Path(args.scripted))
     else:
@@ -949,6 +1035,27 @@ def _run(args: argparse.Namespace) -> int:
     # event is appended to events.jsonl as it happens, and after every iteration a
     # provisional summary, messages, and trajectory are rewritten. SIGTERM also flushes.
     events_fh = (out / "events.jsonl").open("w", encoding="utf-8")
+
+    def _mcp_note(kind: str, data: dict[str, Any]) -> None:
+        """Record one MCP attach/fail line to the event stream and stderr."""
+        rec = {"ts": time.time(), "type": kind, "data": data}
+        events.append(rec)
+        events_fh.write(json.dumps(rec, default=str) + "\n")
+        events_fh.flush()
+        if kind == "mcp_server_failed":
+            print(
+                f"openworker run: MCP server {data.get('server')!r} failed to connect: "
+                f"{data.get('error')}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                f"openworker run: MCP {data.get('server')}: "
+                f"{len(data.get('tools') or [])} tools attached",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def flush_provisional(status: str) -> None:
         try:
@@ -1102,12 +1209,25 @@ def _run(args: argparse.Namespace) -> int:
             break
 
     async def guarded() -> None:
-        # timeout_seconds <= 0 disables the run's own limit (an outer runner may enforce
-        # its own; a second, shorter limit here would cut long tasks early).
-        if args.timeout_seconds and args.timeout_seconds > 0:
-            await asyncio.wait_for(consume(), timeout=args.timeout_seconds)
-        else:
-            await consume()
+        # MCP servers attach on THIS loop so their sync→async tool bridge targets the loop
+        # the engine runs on, and close here too (same task — the SDK's transports require
+        # enter and exit on one task). Attachment is outside the run's timeout: it is a
+        # one-time local connect, and a slow server should not eat the task's clock.
+        mcp_manager = (
+            await _attach_mcp(engine, mcp_servers, secrets, on_note=_mcp_note)
+            if mcp_servers
+            else None
+        )
+        try:
+            # timeout_seconds <= 0 disables the run's own limit (an outer runner may enforce
+            # its own; a second, shorter limit here would cut long tasks early).
+            if args.timeout_seconds and args.timeout_seconds > 0:
+                await asyncio.wait_for(consume(), timeout=args.timeout_seconds)
+            else:
+                await consume()
+        finally:
+            if mcp_manager is not None:
+                await mcp_manager.aclose()
 
     try:
         asyncio.run(guarded())
@@ -1405,8 +1525,16 @@ def _write_records(
             "timeout_seconds": args.timeout_seconds,
             "workspace": str(Path(args.workspace).resolve()),
             "extra_dirs": [str(Path(r).expanduser().resolve()) for r in (args.add_dir or [])],
+            "mcp": bool(args.mcp or args.mcp_config),
+            "mcp_config": args.mcp_config,
             "scripted": bool(args.scripted),
         },
+        # MCP servers attached this run and the tools each exposed, from the attach events.
+        "mcp_servers": [
+            {"server": e["data"].get("server"), "tools": e["data"].get("tools")}
+            for e in events
+            if e["type"] == "mcp_server_attached"
+        ],
         "isolation": isolation,
         # The window and trigger the engine actually used: an unlisted model shows
         # window null and the fallback trigger.

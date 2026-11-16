@@ -61,8 +61,8 @@ class PersonaEntry:
         True  # whether it shows in the picker before any user choice
     )
     # Whether it ships enabled before any user choice. Builtins default on (UX-029: the
-    # composer picker is their front door) — except Code (owner call 2026-08-21: ships
-    # disabled). Installed third-party personas always start disabled pending consent.
+    # composer picker is their front door). Installed third-party personas always start
+    # disabled pending consent.
     default_enabled: bool = True
     # Distribution flag (owner, 2026-08-21): ships:false = absent from release builds.
     ships: bool = True
@@ -145,9 +145,9 @@ class PersonaRegistry:
         # Core surfaces keep their exact prompts via the existing builders. Cowork (the
         # default) leads. Chat is GONE (owner call 2026-08-21; retired-but-listed since
         # 2026-08-11) — stray `persona=chat` session ids resolve to the default via
-        # agent()'s unknown-id fallback. Code ships disabled + unsurfaced (same owner
-        # call): OpenWorker is the launch generalist, but Code stays one checkbox away
-        # as the only plain work-in-my-repo persona.
+        # agent()'s unknown-id fallback. Code is the dedicated coding agent beside the
+        # everyday Coworker (owner call 2026-11-07, superseding the 2026-08-21 lineup for
+        # Code only): it ships surfaced and enabled.
         self._register_builder(
             "cowork",
             "OpenWorker",
@@ -160,14 +160,12 @@ class PersonaRegistry:
             "code",
             "Code",
             "code",
-            "Work in a codebase — files, git, shell",
+            "Build features in a repo — a worktree per task, tests, small commits",
             code_agent,
             CODE_CAPABILITIES,
             requires_folder=True,
             subagents=True,
             scheduling=False,
-            default_surfaced=False,
-            default_enabled=False,
         )
         # Markdown-backed built-ins (Ops, …) — dogfood the manifest path.
         d = Path(builtin_dir) if builtin_dir else Path(__file__).parent / "builtin"

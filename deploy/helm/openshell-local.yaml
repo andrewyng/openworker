@@ -1,0 +1,13 @@
+# Separate upstream release; private service and authenticated client certificate.
+fullnameOverride: ow-helm-gateway
+global:
+  image:
+    tag: "0.1.3"
+server:
+  telemetryEnabled: false
+  auth:
+    allowUnauthenticatedUsers: false
+  workspaceDefaultStorageSize: 1Gi
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}

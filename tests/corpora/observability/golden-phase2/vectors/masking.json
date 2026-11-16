@@ -1,0 +1,47 @@
+{
+ "rule": "Rule R4: mask (stored secret values, longest first, then the patterns in attributes.yaml export.content_switches.masking), then cut at 8192 bytes of UTF-8 on a character boundary, then the marker.",
+ "mask": [
+  {
+   "text": "use sk-abcdefghijklmnopqrstu now",
+   "secrets": [],
+   "expected": "use [secret masked] now"
+  },
+  {
+   "text": "aws AKIAABCDEFGHIJKLMNOP done",
+   "secrets": [],
+   "expected": "aws [secret masked] done"
+  },
+  {
+   "text": "token ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx and xoxb-1234567890-abc",
+   "secrets": [],
+   "expected": "token [secret masked] and [secret masked]"
+  },
+  {
+   "text": "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY----- kept",
+   "secrets": [],
+   "expected": "[secret masked] kept"
+  },
+  {
+   "text": "my key is hunter2-correct-horse here",
+   "secrets": [
+    "hunter2-correct-horse"
+   ],
+   "expected": "my key is [secret masked] here"
+  },
+  {
+   "text": "short pw abc is kept",
+   "secrets": [
+    "abc"
+   ],
+   "expected": "short pw abc is kept"
+  }
+ ],
+ "cut": [
+  {
+   "text_bytes": 8203,
+   "text": "'a' * 8191 + 'é' + 'b' * 10",
+   "expected_kept_bytes": 8191,
+   "expected_tail": "aaaa[cut: 12 more bytes]"
+  }
+ ]
+}

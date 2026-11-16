@@ -1,0 +1,28 @@
+{
+  "id": "moonlight-rally",
+  "version": "1.3.0",
+  "assets": ["retro-coupe"],
+  "title": "Moonlight Rally",
+  "description": "Two coastlines. Three laps to find your rhythm. Chase neon through the harbor, then race above the sunset sea.",
+  "engine": "three",
+  "entrypoint": "index.html",
+  "cover": "assets/neon-cover.png",
+  "hero": "assets/sunset-cover.png",
+  "license": "MIT",
+  "tags": ["Driving", "Two courses"],
+  "files": [
+    "index.html",
+    "styles.css",
+    "game.js",
+    "vehicle.js",
+    "art.js",
+    "physics.js",
+    "progress.js",
+    "courses/neon.json",
+    "courses/sunset.json",
+    "assets/neon-cover.png",
+    "assets/sunset-cover.png",
+    "LICENSE.txt",
+    "credits.json"
+  ]
+}

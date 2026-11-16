@@ -493,7 +493,7 @@ async def test_cancelled_scheduled_run_is_not_left_running(tmp_path, monkeypatch
     class BlockingEngine:
         messages = []
 
-        async def run(self, _opening):
+        async def run(self, _opening, **_kw):
             started.set()
             await asyncio.Event().wait()
             yield
@@ -573,7 +573,7 @@ async def test_cancelled_completion_notification_preserves_success(
     class CompletingEngine:
         messages = [{"role": "assistant", "content": "done"}]
 
-        async def run(self, _opening):
+        async def run(self, _opening, **_kw):
             if False:
                 yield
 

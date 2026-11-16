@@ -1,0 +1,14 @@
+{
+ "scanner_failed": [
+  {
+   "scanner": "gitleaks",
+   "exit_code": 126,
+   "step": "st11"
+  }
+ ],
+ "scan_missing": [
+  {
+   "area": "secrets"
+  }
+ ]
+}

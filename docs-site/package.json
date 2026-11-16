@@ -1,0 +1,33 @@
+{
+  "name": "openworker-docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare-content": "node scripts/prepare.mjs",
+    "dev": "npm run prepare-content && astro dev",
+    "build": "npm run prepare-content && astro build && pagefind --site dist --root-selector \"[data-pagefind-body]\"",
+    "preview": "astro preview",
+    "desktop:build": "OW_DOCS_PRODUCT=desktop npm run prepare-content && OW_DOCS_PRODUCT=desktop astro build && pagefind --site dist-desktop --root-selector \"[data-pagefind-body]\"",
+    "desktop:preview": "OW_DOCS_PRODUCT=desktop astro preview",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "6.3.11",
+    "@astrojs/sitemap": "3.7.3",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/legacy-modes": "^6.5.5",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@lezer/highlight": "^1.2.5",
+    "astro": "^5.6.0",
+    "pagefind": "1.5.2",
+    "yaml": "^2.4.0"
+  }
+}

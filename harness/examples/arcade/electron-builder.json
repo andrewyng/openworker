@@ -1,0 +1,19 @@
+{
+  "appId": "com.openworker.arcade.studio",
+  "productName": "Arcade Studio",
+  "directories": { "output": "release" },
+  "files": [
+    "build/**",
+    "dist/**",
+    "starter-games/**",
+    "asset-library/**",
+    "skills/**",
+    "electron/preload.cjs",
+    "package.json"
+  ],
+  "extraResources": [
+    { "from": "bin", "to": ".", "filter": ["openworker-harness*"] }
+  ],
+  "mac": { "target": ["dmg"], "category": "public.app-category.games" },
+  "win": { "target": ["nsis"] }
+}

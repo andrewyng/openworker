@@ -1,0 +1,35 @@
+image: ""
+proxyImage: nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+config: {}
+secrets:
+  database: ow-service-database
+  openshell: ow-service-openshell
+  apiTLS: ow-service-tls
+  bootstrap: ow-service-bootstrap
+  probe: ow-service-probe
+  model: ""
+  observability: "" # optional separate recording database: database-url + ca.crt
+  telemetry: "" # optional OTLP secret containing authorization (complete header value)
+apiReplicas: 1
+worker:
+  replicas: 1
+  ownership: manual
+  maxReplicas: 4
+  slots: 2
+  drainSeconds: 60
+terminationGracePeriodSeconds: 120
+bootstrapEnabled: true
+platformControllerEnabled: true
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "2", memory: 1536Mi}
+# Optional browser boundary; no database, gateway, or Kubernetes credentials.
+managementUI:
+  enabled: false
+  image: ""
+  publicOrigin: ""
+  # Must match the API TLS certificate (may use the cluster Service DNS name).
+  serviceUrl: ""
+  caSecret: "" # optional Secret containing ca.crt
+  caKey: ca.crt
+  tlsSecret: "" # optional private HTTPS preview using an existing API certificate

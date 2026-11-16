@@ -1,0 +1,74 @@
+{
+ "turns": {
+  "T00002272": {
+   "total": 0,
+   "at_least": false,
+   "unreported": 0,
+   "failed": 0,
+   "over_limit": 0,
+   "waiting_ms": 40000,
+   "active_ms": 20000,
+   "approvals": 2,
+   "approval_calls": [
+    "call_e15a",
+    "call_e15b"
+   ],
+   "warn": 0,
+   "live_checks": 0
+  }
+ },
+ "pills": {
+  "edge-15": 0
+ },
+ "rollups": {
+  "all": {},
+  "day": {},
+  "session": {},
+  "persona_fp": {},
+  "persona_id": {},
+  "machine": {},
+  "trigger": {},
+  "purpose": {},
+  "model": {},
+  "day+purpose": {},
+  "persona_fp+model": {}
+ },
+ "turn_counts": {
+  "all": {
+   "all": {
+    "turns": 1,
+    "checked": 1,
+    "with_warn": 0
+   }
+  },
+  "day": {
+   "2026-10-29": {
+    "turns": 1,
+    "checked": 1,
+    "with_warn": 0
+   }
+  },
+  "persona_id": {
+   "general": {
+    "turns": 1,
+    "checked": 1,
+    "with_warn": 0
+   }
+  },
+  "persona_fp": {
+   "a1b2c3": {
+    "turns": 1,
+    "checked": 1,
+    "with_warn": 0
+   }
+  }
+ },
+ "no_turn": {
+  "calls": 0,
+  "total": 0
+ },
+ "approver": {
+  "by_result": {},
+  "tokens": 0
+ }
+}

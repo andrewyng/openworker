@@ -10,6 +10,7 @@ version: "1"
 team: worker
 tools: [code_files, git, search, shell, todo]
 skills: [secret-scan]
+coverage: [secrets]
 models: [anthropic:claude-opus-4-8, openai:gpt-5.6-sol]
 default_permission_mode: interactive
 description: A secret-hunting coworker that works team-style — it takes assigned items from a security lead, sweeps working trees and full git history for leaked credentials (gitleaks + manual history reads), verifies what's live, and hands off through review with evidence.

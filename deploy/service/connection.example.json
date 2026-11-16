@@ -1,0 +1,11 @@
+{
+  "scripted": true,
+  "runner": "/absolute/path/to/matching/linux/openworker",
+  "openshell": {
+    "endpoint": "https://host.docker.internal:49404",
+    "tls_server_name": "your-verified-gateway-certificate-name",
+    "certificates": "/private/gateway-client-certificates",
+    "workspace": "default",
+    "image": "registry.example/runner@sha256:REPLACE_WITH_VERIFIED_IMAGE_DIGEST"
+  }
+}

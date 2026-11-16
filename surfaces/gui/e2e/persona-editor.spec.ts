@@ -9,7 +9,7 @@ test("copy a built-in, configure, save, enable and try a coworker", async ({
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Coworkers", exact: true }).click();
   await page
-    .getByRole("button", { name: "Create a copy of OpenWorker", exact: true })
+    .getByRole("button", { name: "Create a copy of Coworker (default)", exact: true })
     .click();
   const editor = page.getByTestId("persona-editor");
   await expect(editor.getByLabel("Name *", { exact: true })).toHaveValue(

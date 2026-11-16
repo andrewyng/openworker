@@ -67,8 +67,9 @@ test("sidebar lists a cloud machine's sessions; Machine grouping shows its group
 
   await page.getByRole("button", { name: "Group and filter conversations" }).click();
   await page.getByRole("menu").getByText("Machine", { exact: true }).click();
-  // UX-048: group headers are the machine name, sentence case, no glyph.
-  await expect(page.locator("div").filter({ hasText: /^cloud-vm$/ })).toBeVisible();
+  // UX-048: group headers are the machine name, sentence case, no glyph. `.first()`
+  // because the rail's Environment block (2026-11-06) also names the machine.
+  await expect(page.locator("div").filter({ hasText: /^cloud-vm$/ }).first()).toBeVisible();
 });
 
 test("Inbox aggregates a cloud box's parked approval; resolve routes via the proxy", async ({

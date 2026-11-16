@@ -1,0 +1,97 @@
+{
+ "rule": "signals.yaml scanners.not_found (0.7): the `scanner` the engine records for a run_shell step after it ran. null when the command named a scanner that was not installed.",
+ "cases": [
+  {
+   "shows": "Windows PowerShell",
+   "command": "semgrep scan --config auto --json",
+   "exit_code": 1,
+   "output": "semgrep : The term 'semgrep' is not recognized as the name of a cmdlet, function, script file, or operable\nprogram. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.\n    + CategoryInfo          : ObjectNotFound: (semgrep:String) [], CommandNotFoundException\n",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "cmd.exe",
+   "command": "gitleaks detect --source .",
+   "exit_code": 1,
+   "output": "'gitleaks' is not recognized as an internal or external command,",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "sh",
+   "command": "gitleaks detect --source .",
+   "exit_code": 127,
+   "output": "bash: gitleaks: command not found",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "the sh code alone",
+   "command": "gitleaks detect --source .",
+   "exit_code": 127,
+   "output": "",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "the cmd.exe code alone",
+   "command": "trivy fs .",
+   "exit_code": 9009,
+   "output": "",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "python -m prints the word with _",
+   "command": "python3 -m pip-audit -f json",
+   "exit_code": 1,
+   "output": "/usr/bin/python3: No module named pip_audit",
+   "not_installed": true,
+   "scanner": null
+  },
+  {
+   "shows": "found something",
+   "command": "semgrep scan --config auto",
+   "exit_code": 1,
+   "output": "Ran 312 rules on 40 files: 25 findings.",
+   "not_installed": false,
+   "scanner": {
+    "name": "semgrep",
+    "action": "scan"
+   }
+  },
+  {
+   "shows": "found something",
+   "command": "gitleaks detect --source .",
+   "exit_code": 1,
+   "output": "leaks found: 2",
+   "not_installed": false,
+   "scanner": {
+    "name": "gitleaks",
+    "action": "scan"
+   }
+  },
+  {
+   "shows": "a real failure",
+   "command": "semgrep scan --config bad.yml",
+   "exit_code": 2,
+   "output": "semgrep: error: invalid configuration",
+   "not_installed": false,
+   "scanner": {
+    "name": "semgrep",
+    "action": "scan"
+   }
+  },
+  {
+   "shows": "a not-found line that names no scanner",
+   "command": "semgrep scan --config auto",
+   "exit_code": 1,
+   "output": "warning: rule 'x' not found in registry",
+   "not_installed": false,
+   "scanner": {
+    "name": "semgrep",
+    "action": "scan"
+   }
+  }
+ ]
+}

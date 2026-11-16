@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+# Qualification image only; not added to the shipped service image or chart.
+FROM rust:1.96-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS build
+ENV RUSTUP_TOOLCHAIN=1.96.1 CARGO_BUILD_JOBS=2
+WORKDIR /src/harness
+COPY harness/ ./
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/harness/target \
+    cargo build --locked --release -p openworker-artifacts --features s3 --example pod_identity_access && \
+    mkdir /out && cp target/release/examples/pod_identity_access /out/probe
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/probe /probe
+USER 1000:1000
+ENTRYPOINT ["/probe"]

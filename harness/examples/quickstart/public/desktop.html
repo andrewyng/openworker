@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Code Atlas</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="desktop.js" defer></script>
+  </head>
+  <body>
+    <header><b>✦ Code Atlas</b><span>Built with OpenWorker</span></header>
+    <main>
+      <h1>Get to know a codebase.</h1>
+      <p>
+        Choose a directory. Get a guide to its purpose, structure and key entry
+        points.
+      </p>
+      <div class="layout">
+        <aside class="panel">
+          <h2>Your source</h2>
+          <button id="choose">Choose directory</button
+          ><small id="directory">No directory selected.</small>
+          <ul id="files"></ul>
+          <small id="scope"></small
+          ><small
+            >Selected file content is sent to your configured model. Review the
+            selection before continuing.</small
+          >
+        </aside>
+        <section class="panel">
+          <h2>Codebase summary</h2>
+          <div class="actions">
+            <button class="primary" id="summarize" disabled>
+              Summarize code</button
+            ><button id="cancel" disabled>Cancel</button>
+          </div>
+          <p id="status" role="status">Ready when you are.</p>
+          <div id="answer" class="output empty">
+            Your codebase guide will appear here.
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

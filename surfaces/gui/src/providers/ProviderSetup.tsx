@@ -102,6 +102,9 @@ export function relTime(epoch?: number | null, t?: TFunction): string | null {
 
 export interface ProviderSetupState {
   providers: ProviderInfo[];
+  /** T3-2: the first /v1/providers answer has not come yet, or it failed. A later refresh
+   * that fails keeps the list it had. */
+  providersState?: "loading" | "ready" | "failed";
   ordered: ProviderInfo[];
   refreshProviders: () => Promise<void>;
   sel: string | null;
@@ -132,6 +135,7 @@ export interface ProviderSetupState {
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [providersState, setProvidersState] = useState<"loading" | "ready" | "failed">("loading");
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -150,8 +154,11 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const refreshProviders = () =>
     getProviders()
-      .then(setProviders)
-      .catch(() => {});
+      .then((p) => {
+        setProviders(p);
+        setProvidersState("ready");
+      })
+      .catch(() => setProvidersState((s) => (s === "ready" ? s : "failed")));
   useEffect(() => {
     refreshProviders();
     return () => {
@@ -285,6 +292,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   return {
     providers,
+    providersState,
     // Alphabetical by display title (owner ruling 2026-08-21: a curated order reads
     // as vendor bias). The old providerRank curation stays only as the tiebreaker
     // for identical titles.

@@ -1,0 +1,10 @@
+{
+ "base": "S3-01",
+ "delete_session": "s-3-0",
+ "expected": {
+  "total_before": 22332140,
+  "total_after_steps": 22188918,
+  "removed": 143222,
+  "total_from_ledger": 22332140
+ }
+}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Pip’s Adventure</title>
+    <link rel="stylesheet" href="./styles/adventure.css" />
+  </head>
+  <body>
+    <canvas
+      id="game"
+      aria-label="Pip's Adventure 3D world"
+      tabindex="0"
+    ></canvas>
+    <header>
+      <div class="brand">pip’s adventure<span id="area">Home Garden</span></div>
+      <div class="tools">
+        <button id="sound">Sound off</button
+        ><button id="pause" disabled>Pause</button>
+      </div>
+    </header>
+    <aside id="objective">
+      <small>YOUR JOURNEY</small>
+      <h2 id="objective-title">Mend the old bridge</h2>
+      <p id="objective-copy">Find three copper parts around Home Garden.</p>
+    </aside>
+    <section id="panel" aria-label="Adventure menu">
+      <small class="chapter">HOME GARDEN · WOODLAND TRAIL</small>
+      <h1 id="panel-title">Pip’s Adventure</h1>
+      <p id="panel-copy">Preparing a little world…</p>
+      <div class="menu-actions">
+        <button id="start" class="primary" disabled>Loading…</button
+        ><button id="new" hidden>New adventure</button
+        ><button id="checkpoint" hidden>Back to checkpoint</button
+        ><button id="cancel" hidden>Keep my journey</button>
+      </div>
+      <div class="options">
+        <label
+          >Graphics
+          <select id="quality">
+            <option value="balanced">Balanced</option>
+            <option value="low">Low</option>
+            <option value="high">High</option>
+          </select></label
+        ><span id="save" role="status">Loading</span>
+      </div>
+      <p class="controls">
+        WASD / arrows to move · Space to jump · E to interact<br />Esc to pause.
+        Your progress saves on this device.
+      </p>
+    </section>
+    <aside id="map-panel" aria-label="Journey map">
+      <span id="lights">0 / 6 lights</span
+      ><canvas
+        id="map"
+        width="144"
+        height="250"
+        aria-label="Journey map, north at the top"
+      ></canvas
+      ><ul class="legend">
+        <li><i class="dot part"></i>Parts</li>
+        <li><i class="dot lantern"></i>Lanterns</li>
+      </ul>
+    </aside>
+    <div id="interaction" hidden>
+      <span id="interaction-label"></span><small id="clue"></small
+      ><button data-k="interact" aria-label="Interact">
+        <kbd>E</kbd> Interact
+      </button>
+    </div>
+    <div id="toast" role="status" hidden></div>
+    <div class="touch">
+      <div class="pad">
+        <button data-k="up" aria-label="Move forward">↑</button
+        ><button data-k="left" aria-label="Move left">←</button
+        ><button data-k="down" aria-label="Move back">↓</button
+        ><button data-k="right" aria-label="Move right">→</button>
+      </div>
+      <button data-k="jump" aria-label="Jump">Jump</button>
+    </div>
+    <script type="module" src="src/adventure.js"></script>
+  </body>
+</html>

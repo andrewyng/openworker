@@ -476,6 +476,8 @@ async def test_background_approver_tells_the_lead_a_worker_is_waiting(manager):
 def test_worker_model_prefers_the_human_then_the_recommendation_then_the_lead(manager, monkeypatch):
     opus, sol, sonnet = "anthropic:claude-opus-4-8", "openai:gpt-5.6-sol", "anthropic:claude-sonnet-4-6"
     assert manager.persona_models("swe-worker") == [opus, sol]
+    # A worker's model is recorded the way the machine's list names it: no `openai:`.
+    sol = "gpt-5.6-sol"
     runnable = {opus, sol, sonnet}
     monkeypatch.setattr(manager, "model_selectable", lambda m: m in runnable)
     # The human's choice on the card wins, even outside the recommended list.
@@ -580,3 +582,15 @@ def test_the_leads_approval_card_carries_the_workers_call(manager):
     # An unknown id (already cleaned up, or invented by the model) attaches nothing.
     Request.arguments = {**Request.arguments, "call_id": "nope"}
     assert "worker_call" not in manager.approval_prompt_data("lead-sid", Request())
+
+
+def test_worker_model_matches_the_bare_and_prefixed_spellings(manager, monkeypatch):
+    """The lead may write `openai:…` or the bare id; either is the recommended model, and
+    the worker records the bare id (one name per model in Usage)."""
+    opus = "anthropic:claude-opus-4-8"
+    monkeypatch.setattr(manager, "persona_models", lambda pid: [opus, "openai:gpt-test-1"])
+    monkeypatch.setattr(manager, "model_selectable", lambda m: m == "gpt-test-1")
+    for pick in ("gpt-test-1", "openai:gpt-test-1"):
+        assert manager.resolve_worker_model("swe-worker", lead_pick=pick) == ("gpt-test-1", "")
+    assert manager.resolve_worker_model("swe-worker") == ("gpt-test-1", "")
+    assert manager.resolve_worker_model("swe-worker", human_pick="openai:gpt-test-1") == ("gpt-test-1", "")

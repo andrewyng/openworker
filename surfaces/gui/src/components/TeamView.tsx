@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { CoverageBlock, EvidenceBlock, TeamEvents, WakeSplit } from "./TeamPhase3";
 import {
   getSessionMessages,
   getInbox,
@@ -467,7 +468,11 @@ function WorkerRows({
   );
 }
 
-function Stats({ summary: s }: { summary: TeamSummary }) {
+function Stats({ summary: s, onOpenSteps, onOpenBoard }: {
+  summary: TeamSummary;
+  onOpenSteps?: (sessionId: string, turnId: string) => void;
+  onOpenBoard?: () => void;
+}) {
   const { t } = useTranslation();
   const [by, setBy] = useState<"worker" | "role">("worker"),
     [chart, setChart] = useState(false);
@@ -637,6 +642,9 @@ function Stats({ summary: s }: { summary: TeamSummary }) {
             <p>{t("teamview.no_usage")}</p>
           ))}
       </section>
+      {/* Phase 3 OB-17: why each team turn started, and the events that used to be silent */}
+      <WakeSplit wakes={s.wakes || []} explained={s.wake_explained} t={t} />
+      <TeamEvents events={s.events || []} t={t} onOpenSteps={onOpenSteps} onOpenBoard={onOpenBoard} />
       <section className="team-stats-section">
         <h3>{t("teamview.needed_you")}</h3>
         <table className="team-asks">
@@ -714,7 +722,10 @@ export function TeamView({
   machineName,
   onClose,
   onRefresh,
+  onOpenSteps,
 }: {
+  // Phase 3: open a member session's Steps at one turn (team events, evidence).
+  onOpenSteps?: (sessionId: string, turnId: string) => void;
   summary: TeamSummary | null;
   openKey?: number;
   board?: Board | null;
@@ -857,6 +868,7 @@ export function TeamView({
           workers={workers}
           onWorker={openWorker}
           onRefresh={onRefresh}
+          onOpenSteps={onOpenSteps}
         />
       ) : worker ? (
         <WorkerConversation
@@ -950,7 +962,7 @@ export function TeamView({
               />
             </>
           ) : (
-            <Stats summary={summary} />
+            <Stats summary={summary} onOpenSteps={onOpenSteps} onOpenBoard={() => setTab("work")} />
           )}
         </div>
       )}
@@ -992,12 +1004,14 @@ function TaskDetailPane({
   workers,
   onWorker,
   onRefresh,
+  onOpenSteps,
 }: {
   task?: TeamTask;
   leadSession: string;
   workers: TeamWorker[];
   onWorker: (worker: TeamWorker) => void;
   onRefresh: () => void;
+  onOpenSteps?: (sessionId: string, turnId: string) => void;
 }) {
   const { t } = useTranslation();
   const [detail, setDetail] = useState<BoardItemDetail | null>(null);
@@ -1045,6 +1059,14 @@ function TaskDetailPane({
       data-testid="team-task-detail"
     >
       <h2>{task?.title || t("teamview.task_unavailable")}</h2>
+      {/* Phase 3 OB-16: what the security coworker scanned, and the evidence behind findings */}
+      {task?.coverage && (
+        <CoverageBlock coverage={task.coverage} t={t}
+          onOpenStep={onOpenSteps ? (sc) => sc.session_id && sc.turn_id && onOpenSteps(sc.session_id, sc.turn_id) : undefined} />
+      )}
+      {(task?.findings || []).map((f) => (
+        <EvidenceBlock key={String(f.id)} finding={f} t={t} onOpenStep={onOpenSteps} />
+      ))}
       {task && task.elapsed_s > 0 && (
         <>
           <MetricBar

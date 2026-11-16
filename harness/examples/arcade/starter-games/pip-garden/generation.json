@@ -1,0 +1,23 @@
+{
+  "generator": "Arcade AgentService through OpenWorker Harness SDK",
+  "model": "claude-opus-5-5",
+  "agent": "arcade-studio-builder-v5",
+  "asset": "pip-robot",
+  "assetSource": "Quaternius RobotExpressive (CC0)",
+  "generation": "One build followed by one continuation after output-token truncation. Continuation requested smaller ES modules; no game code supplied in the prompts.",
+  "expansion": "Version 2.0 is a subsequent development-authored adventure with new world, progression, UI and save logic. The hashes below describe only the original version-1 live-agent proof of concept, not the expanded files.",
+  "hudRefinement": {"version":"2.1.0","agent":"arcade-studio-builder-v6","model":"claude-opus-5-5","files":["index.html","styles/adventure.css"],"draftDigest":"539ce3fd7ed79c3d04c83fb255e3082af9330545af4eac22dfaa5f8fa15444b6","method":"Real agent-led remix: inspected screenshots, edited source, played movement/pause at 1280x800 and 960x600, requested publication. Approved in an isolated acceptance library, then these two files were adopted unchanged. Gameplay JavaScript and save formats unchanged."},
+  "originalPilotFileHashes": {
+    "index.html": "e7374316c7820bc6810e640aecb3235ba1fa3ab45100f9a785f1f9fac3f933c9",
+    "LICENSE.txt": "3512ae31573128a7ea6ab9dd2ffb2fbb23740f92be095e720faa3896cf05b522",
+    "src/actor.js": "09176bef7035b71810b103c356a1ae4fd298ff45160003a8f117da555f2895ac",
+    "src/fireflies.js": "38e0507909d4d15af2396854fe0690dbb1c89e13ed0ee2bbb32c301585a1aa05",
+    "src/game.js": "cd580376b837dd0a8f6351523e3009133386458f342892901b25d8fd2ed2dca5",
+    "src/input.js": "094a82a1c03441188f68269458f3a0f0ef6b3f2dd0bd9eb3a02c8e8d2cd41c18",
+    "src/player.js": "bc7628429ab0019671cadc66bc781103e404d35e4626495153e174e3c0f5ab31",
+    "src/sound.js": "0ca18d60bb9a61c113a3cc269708d575ecf2b6205495b2e6ca7b903557125ba2",
+    "src/world.js": "c56defd5ea283a88e50c631bd92fae4d710f4cfe548596ae2388965f2ee76d62",
+    "styles/game.css": "6c0a24586cc3f2dae11346ae9139f9ac194884b40925e43079f22da42a2184c5"
+  },
+  "qualification": "Real Electron keyboard playthrough, Idle/Running/Jump/Dance, five collectibles, pause/restart and offline loading. See implementation ledger for later app-side refinements."
+}

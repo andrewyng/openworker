@@ -1,0 +1,101 @@
+{
+ "rule": "args_hash = first 6 hex of SHA-256 over the RFC 8785 (JCS) canonical JSON, UTF-8. plan item h = first 6 hex of SHA-256 over the item's text, UTF-8.",
+ "args": [
+  {
+   "name": "plain",
+   "value": {
+    "path": "notes.txt"
+   },
+   "canonical": "{\"path\":\"notes.txt\"}",
+   "args_hash": "327e09"
+  },
+  {
+   "name": "key order",
+   "value": {
+    "b": 1,
+    "a": 2
+   },
+   "canonical": "{\"a\":2,\"b\":1}",
+   "args_hash": "d3626a"
+  },
+  {
+   "name": "same, other order",
+   "value": {
+    "a": 2,
+    "b": 1
+   },
+   "canonical": "{\"a\":2,\"b\":1}",
+   "args_hash": "d3626a"
+  },
+  {
+   "name": "nested",
+   "value": {
+    "cmd": {
+     "args": [
+      "-x",
+      "tests"
+     ],
+     "env": {
+      "Z": "1",
+      "A": "2"
+     }
+    }
+   },
+   "canonical": "{\"cmd\":{\"args\":[\"-x\",\"tests\"],\"env\":{\"A\":\"2\",\"Z\":\"1\"}}}",
+   "args_hash": "0c3387"
+  },
+  {
+   "name": "non-ASCII",
+   "value": {
+    "query": "café 日本 Ω"
+   },
+   "canonical": "{\"query\":\"café 日本 Ω\"}",
+   "args_hash": "e7452a"
+  },
+  {
+   "name": "numbers",
+   "value": {
+    "n": [
+     0,
+     -0.0,
+     1,
+     100.0,
+     1.5,
+     1e-07,
+     1e+21,
+     123456789012
+    ]
+   },
+   "canonical": "{\"n\":[0,0,1,100,1.5,1e-7,1e+21,123456789012]}",
+   "args_hash": "4840a3"
+  },
+  {
+   "name": "empty",
+   "value": {},
+   "canonical": "{}",
+   "args_hash": "44136f"
+  },
+  {
+   "name": "escapes",
+   "value": {
+    "text": "line\nnext \"quoted\" \\ tab\t"
+   },
+   "canonical": "{\"text\":\"line\\nnext \\\"quoted\\\" \\\\ tab\\t\"}",
+   "args_hash": "0094d3"
+  }
+ ],
+ "plan_items": [
+  {
+   "text": "read notes.txt",
+   "h": "47c423"
+  },
+  {
+   "text": "Answer who owns the docs",
+   "h": "606752"
+  },
+  {
+   "text": "修正テスト",
+   "h": "323a85"
+  }
+ ]
+}

@@ -402,21 +402,28 @@ def apply_policy(
     app, policy: dict[str, Any], *, state: Optional[Path] = None, exporter=None
 ) -> tuple[bool, int]:
     """Persist + apply an org policy DOCUMENT on this box (spec §Versioned org
-    policy). Today one field acts: `audit_export` (remote/audit_export.py).
+    policy). Two fields act: `audit_export` (remote/audit_export.py) and
+    `observability_export` (observability/export.py).
     Unknown keys are kept verbatim so the machine can display them; nothing
     turns on by accident. A document OLDER than the one held is ignored — a
     stale controller never rolls a machine back. Returns (applied, version
     now held)."""
+    from ..observability.export import take_policy_secrets
     from .audit_export import ExportPolicy, save_policy
 
     incoming, current = policy_version(policy), policy_version(held_policy(app))
     if incoming and current and incoming < current:
         return False, current
+    manager = getattr(app.state, "manager", None)
+    # OB-6: the observability export's keys go to the secret store, never policy.json.
+    policy = take_policy_secrets(policy, getattr(manager, "secrets", None))
     if state is not None:
         save_policy(state, policy)
-    manager = getattr(app.state, "manager", None)
     if manager is not None:
         manager.org_policy = dict(policy)
+        apply = getattr(manager, "apply_org_policy", None)
+        if apply is not None:
+            apply(policy)
     if exporter is not None:
         exporter.set_policy(ExportPolicy.from_policy(policy))
     return True, incoming
@@ -443,6 +450,9 @@ def _build_exporter(state: Path, app, welcome: dict[str, Any]):
     stored = load_policy(state)
     if stored and not getattr(manager, "org_policy", None):
         manager.org_policy = stored
+        apply = getattr(manager, "apply_org_policy", None)
+        if apply is not None:
+            apply(stored)
     return exporter
 
 
@@ -464,6 +474,8 @@ async def run_joined(
     with capped exponential backoff — the systemd story is just `up`.
     """
     import websockets
+
+    from ..observability import gaps
 
     identity = load_or_create(state)
     if app is None:
@@ -488,6 +500,8 @@ async def run_joined(
                         welcome = await _handshake(ws, identity, name, token)
                         token = None  # single-use by design; reconnects sign the challenge
                         backoff = _BACKOFF_START
+                        # The link is back: running turns get the offline stretch (OB-14).
+                        gaps.link_back(state)
                         log(
                             f"[openworker] joined {controller} as "
                             f"'{welcome.get('name')}' (machine {welcome.get('machine_id')})"
@@ -495,6 +509,13 @@ async def run_joined(
                         if on_welcome is not None:
                             on_welcome(welcome)
                             on_welcome = None
+                        # Turns are stamped with the id the controller knows this machine by.
+                        try:
+                            from ..observability.stamps import note_joined
+
+                            note_joined(controller, str(welcome.get("machine_id") or ""), welcome.get("name"))
+                        except Exception:  # noqa: BLE001 - a stamp never breaks the link
+                            pass
                         if exporter is None:
                             exporter = _build_exporter(state, app, welcome)
                         # The welcome may carry the org policy (hosted controllers);
@@ -505,12 +526,15 @@ async def run_joined(
                             ws, dispatcher, app, identity, exporter=exporter, state=state
                         )
                         log("[openworker] controller closed the connection")
+                        gaps.link_lost(state, "closed")
                 except JoinRejected as exc:
                     if exc.reason in _FATAL_REJECTS:
                         raise
                     log(f"[openworker] rejected ({exc.reason}); retrying")
+                    gaps.link_lost(state, "failed")
                 except (OSError, websockets.WebSocketException) as exc:
                     log(f"[openworker] connection failed: {exc}")
+                    gaps.link_lost(state, gaps.link_reason(exc))
                 if once:
                     return
                 log(f"[openworker] reconnecting in {backoff:.0f}s")
@@ -536,6 +560,8 @@ def _build_local_app(state: Path):
     os.environ.pop("COWORKER_API_TOKEN", None)
     cfg = load_config()
     manager = SessionManager(data_dir=state, model=cfg.model, mode=Mode(cfg.mode))
+    manager.recordings_store.close_open_turns()  # the engine lock is held (observability TD-12)
+    manager.start_background_checks()  # stale manual runs, Issues re-check (P3-3, P3-4)
     return create_app(manager)
 
 
