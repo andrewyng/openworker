@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, lstat, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, resolve, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
-import { install } from './install.mjs';
-import { fileTools } from './openworker-harness-builder/assets/local-script/file-tools.mjs';
+const skillRoot = process.env.OW_SKILL_PACKAGE_DIR ?? dirname(fileURLToPath(import.meta.url));
+const { install } = await import(pathToFileURL(join(skillRoot, 'install.mjs')));
+const { fileTools } = await import(pathToFileURL(join(skillRoot, 'openworker-harness-builder/assets/local-script/file-tools.mjs')));
 
 test('bundled file handlers confine paths, honor cancellation and preserve existing files', async t => {
   const root = await mkdtemp(join(tmpdir(), 'ow-skill-tools-'));

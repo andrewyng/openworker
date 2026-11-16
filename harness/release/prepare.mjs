@@ -9,6 +9,8 @@ import {runtimeArch} from '../desktop-starters/templates/shared/scripts/runtime-
 import {prepare as prepareSkills} from '../../skills/prepare.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),root=resolve(here,'..');
 const manifest=JSON.parse(await readFile(join(here,'manifest.json'),'utf8'));
+const skillPackage=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8'));
+if(skillPackage.openworkerSdkVersion!==manifest.version)throw Error('Full releases require the builder skill to target the candidate SDK version');
 const [binary,targetName,output]=process.argv.slice(2);
 const target=manifest.targets.find(t=>t.rust===targetName);
 if(!binary||!target||!output)throw Error('Usage: node harness/release/prepare.mjs ABS_BINARY RUST_TARGET NEW_OUTPUT_DIRECTORY');
@@ -42,9 +44,9 @@ for(const [directory,files] of [['typescript-sdk',['dist','examples','README.md'
 const archives=join(out,'archives');await mkdir(archives);
 const npm=process.platform==='win32'?'npm.cmd':'npm';
 for(const directory of ['native','typescript-sdk','desktop-starters'])execFileSync(npm,['pack','--ignore-scripts','--json','--pack-destination',archives],{cwd:join(out,directory),stdio:'inherit',shell:process.platform==='win32'});
-const skillVersion=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8')).version;
 const skillArchives=await prepareSkills(join(out,'skills'));
-await cp(join(skillArchives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`),join(archives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`));
+const skillArchive=`${skillPackage.name.replace(/^@/,'').replace('/','-')}-${skillPackage.version}.tgz`;
+await cp(join(skillArchives,skillArchive),join(archives,skillArchive));
 // Portable GitHub archive, with the same executable and metadata as npm.
 const archive=`openworker-harness-${manifest.version}-${target.rust}.tar.gz`;
 // A Windows drive letter is parsed as a remote host by GNU tar. Keep both

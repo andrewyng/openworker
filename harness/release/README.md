@@ -23,7 +23,7 @@ Native compilation and clean-machine testing are required on every claimed targe
 
 The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes
-`@openworkerai/build-with-sdk-skills`, which installs the shared Desktop/Web
+`@openworkerai/openworker-harness-builder`, which installs the shared Desktop/Web
 skill into a Codex or Claude Code project, or user-wide with `--global`. The skill package has no runtime or
 SDK dependency. Its package version can advance independently;
 `openworkerSdkVersion` declares the compatible SDK release. To prepare just that archive without compiling Rust:
@@ -33,6 +33,9 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 ```
 
 Run this command from the repository root. See [skill installation](../../skills/README.md).
+For a full SDK release, set the skill's compatibility pin to the candidate SDK
+version. The native package smoke tests the exact builder archive in fresh project
+and global installations for Codex and Claude, including replacement backups.
 
 Source npm manifests remain `private` so a plain `npm publish` in the checkout
 cannot accidentally publish an incomplete client. Staging removes that marker and
