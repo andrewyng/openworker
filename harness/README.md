@@ -146,6 +146,7 @@ When adding tools, choose their execution boundary: application callbacks retain
 | **Local utility** | [File organizer](../skills/openworker-harness-builder/references/local-script.md) · [Source](../skills/openworker-harness-builder/assets/local-script/) | Custom tools, directory restrictions, streaming and per-operation approvals. |
 | **Desktop app** | [Code Atlas walkthrough](../docs/harness/guides/desktop.md) · [Source](examples/quickstart/desktop/main.mjs) · [Setup](examples/quickstart/README.md) | Select a code directory and stream an explanation in an Electron UI. |
 | **Web app** | [PDF Notes walkthrough](../docs/harness/guides/server.md) · [Source](examples/quickstart/web/server.mjs) · [Setup](examples/quickstart/README.md#web-deployment) | Attach a PDF and ask follow-up questions in its own session. |
+| **Edge inspection app** | [InspectionBuddy](examples/expertbuddy/README.md) · [Source](examples/expertbuddy/) | Assess part photos, record inspector decisions and connect a workstation to an edge agent service. Includes a cluster-free local mode. |
 | **Game builder** | [Arcade Studio](examples/arcade/README.md) · [Source](examples/arcade/) | Build and preview games, approve versions and return to a saved library. |
 
 Code Atlas and PDF Notes share `examples/quickstart/`; they are two complete TypeScript apps. The file organizer is bundled with the skill. The quickstart examples install the published npm SDK and its native runtime. Follow each example README for configuration.

@@ -234,3 +234,9 @@ see [deployment options](deployment.md) and the
 Try an answer outline, clickable page references or a local model. Before sharing
 one deployment among multiple users, add login, document ownership checks and
 retention controls; the reference app deliberately starts with one user per instance.
+
+## Connect to a site-local service
+
+For a separate edge-server deployment, see [InspectionBuddy](edge-inspection.md).
+It uses `Harness.connect()` for photo assessments, durable follow-ups and token
+usage, with a cluster-free local development mode using `Harness.start()`.
