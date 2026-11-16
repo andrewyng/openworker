@@ -1,0 +1,79 @@
+# Supply the real image digest and namespace for your own deployment.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: inspectionbuddy-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inspectionbuddy-app
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: inspectionbuddy-app }
+  template:
+    metadata:
+      labels: { app: inspectionbuddy-app }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000 }
+      containers:
+        - name: application
+          image: YOUR_REGISTRY/inspectionbuddy@sha256:REPLACE_WITH_ACTUAL_DIGEST
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: INSPECTIONBUDDY_MODE, value: edge }
+            - { name: HOST, value: 0.0.0.0 }
+            - { name: PORT, value: "8080" }
+            - { name: DATA_DIR, value: /data }
+            - { name: EDGE_APP_TOKEN_FILE, value: /run/inspectionbuddy/app-token }
+            - {
+                name: OW_SERVICE_TOKEN_FILE,
+                value: /run/inspectionbuddy/service-token,
+              }
+            - { name: NODE_EXTRA_CA_CERTS, value: /run/inspectionbuddy/api-ca.crt }
+            - {
+                name: OW_SERVICE_URL,
+                value: https://inspectionbuddy-api.YOUR_NAMESPACE.svc,
+              }
+            - { name: OW_SERVICE_NAMESPACE, value: local }
+            - { name: OW_AGENT, value: inspectionbuddy@1 }
+            - { name: OW_MODEL, value: gpt-6-luna }
+          securityContext:
+            {
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: true,
+              capabilities: { drop: [ALL] },
+              seccompProfile: { type: RuntimeDefault },
+            }
+          resources:
+            {
+              requests: { cpu: 50m, memory: 96Mi },
+              limits: { cpu: "1", memory: 512Mi },
+            }
+          readinessProbe: { httpGet: { path: /healthz, port: http } }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: credentials, mountPath: /run/inspectionbuddy, readOnly: true }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: inspectionbuddy-data }
+        - name: credentials
+          secret: { secretName: inspectionbuddy-application, defaultMode: 0440 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inspectionbuddy-app
+spec:
+  selector: { app: inspectionbuddy-app }
+  ports: [{ name: http, port: 8080, targetPort: http }]

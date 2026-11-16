@@ -5,6 +5,11 @@ through HTTPS and submits agents to an existing NVIDIA OpenShell gateway.
 This reference is for local integration testing. It does not install Kubernetes
 or OpenShell, and it is not a production HA deployment.
 
+For a sample you can test with **no Kubernetes or OpenShell gateway**, see
+[InspectionBuddy local development](../../harness/examples/expertbuddy/README.md#try-it-locally--no-cluster).
+It runs the app with a managed harness process; it does not install this service
+stack or exercise its distributed execution boundaries.
+
 For the native `owcluster deploy local` Kubernetes installer, including pinned OpenShell
 installation or reuse of an existing gateway, see the
 [Deployment options](../../docs/harness/guides/deployment.md).

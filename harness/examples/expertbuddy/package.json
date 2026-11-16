@@ -1,0 +1,20 @@
+{
+  "name": "inspectionbuddy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An edge-connected visual inspection workspace built with OpenWorker Harness SDK",
+  "engines": {
+    "node": ">=20.19.5"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "dev": "node --env-file-if-exists=.env server/index.mjs",
+    "register-agent": "node --env-file-if-exists=.env scripts/register-agent.mjs",
+    "test:live": "node --env-file-if-exists=.env scripts/qualify-live.mjs"
+  },
+  "dependencies": {
+    "@openworkerai/harness-sdk": "0.1.0-beta.5"
+  }
+}

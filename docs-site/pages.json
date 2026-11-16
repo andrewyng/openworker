@@ -98,5 +98,9 @@
   {
     "source": "docs/harness/guides/upgrades.md",
     "slug": "upgrades"
+  },
+  {
+    "source": "docs/harness/guides/edge-inspection.md",
+    "slug": "edge-inspection"
   }
 ]
