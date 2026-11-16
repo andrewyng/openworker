@@ -20,6 +20,9 @@ not exist. The preparer checks architecture and (on the matching native host)
 version, creates the platform npm package, client/starter tarballs, a standalone
 runtime archive, SHA256SUMS and `release.json`. It refuses to overwrite a candidate.
 Native compilation and clean-machine testing are required on every claimed target.
+Windows release jobs use an explicit Cargo target and static CRT linkage. The
+preparer inspects PE imports and rejects a host that requires separately installed
+Visual C++ runtime DLLs.
 
 The npm client is `@openworkerai/harness-sdk`; matching runtime packages are
 `@openworkerai/harness-runtime-<platform>-<arch>`. The same candidate includes

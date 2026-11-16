@@ -7,6 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {runtimeArch} from '../desktop-starters/templates/shared/scripts/runtime-identity.mjs';
 import {prepare as prepareSkills} from '../../skills/prepare.mjs';
+import {validateWindowsRuntime} from './windows-imports.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),root=resolve(here,'..');
 const manifest=JSON.parse(await readFile(join(here,'manifest.json'),'utf8'));
 const skillPackage=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8'));
@@ -17,6 +18,7 @@ if(!binary||!target||!output)throw Error('Usage: node harness/release/prepare.mj
 const out=resolve(output);await mkdir(out); // Refuse to overwrite a prepared release.
 const bytes=await readFile(resolve(binary));
 if(runtimeArch(bytes,target.platform)!==target.arch)throw Error('Binary architecture does not match release target');
+if(target.platform==='win32')validateWindowsRuntime(bytes);
 if(target.platform===process.platform&&target.arch===process.arch) {
  const version=execFileSync(resolve(binary),['--version'],{encoding:'utf8'}).trim();
  if(!version.endsWith(' '+manifest.version))throw Error('Binary release version mismatch');
