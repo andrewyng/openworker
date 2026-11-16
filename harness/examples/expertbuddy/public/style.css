@@ -484,6 +484,9 @@ textarea {
   min-height: 69px;
 }
 .assistant-card {
+  display: flex;
+  flex-direction: column;
+  height: clamp(420px, calc(100dvh - 265px), 820px);
   background: #fff;
   border: 1px solid #e1e5eb;
   border-radius: 13px;
@@ -491,11 +494,30 @@ textarea {
   overflow: hidden;
 }
 .assistant-top {
+  flex-shrink: 0;
   padding: 19px 21px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid #edf0f4;
+}
+.assistant-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #cdd3dc transparent;
+}
+.assistant-content:focus-visible {
+  outline: 2px solid #96a7bb;
+  outline-offset: -2px;
+}
+.chat-composer {
+  flex-shrink: 0;
+  padding: 15px 23px;
+  border-top: 1px solid #edf0f4;
+  background: #fff;
 }
 .assistant-title {
   display: flex;

@@ -139,7 +139,7 @@ function activity() {
 }
 function assistant() {
   const r = state.current;
-  let body;
+  let body, composer = "";
   if (r?.status === "analyzing") {
     const latest = r.activity.at(-1)?.label ?? "Preparing inspection";
     body = `<div class="assistant-body"><div class="progress-orb">${icon("spark")}</div><span class="eyebrow">ASSESSING YOUR PHOTO</span><h2>A closer look.<br>A clearer next step.</h2><div class="progress-label" aria-live="polite">${esc(latest)}</div><div class="progress-bar"></div><p class="progress-note">Your inspection is saved on ${locationLabel()}. You can leave this page and return to it.</p>${activity()}</div>`;
@@ -148,19 +148,19 @@ function assistant() {
     body = `<div class="assistant-body"><div class="row"><span class="severity ${a.severity}"><span class="dot"></span>${{ low: "Low concern", moderate: "Moderate concern", high: "High concern", uncertain: "More evidence needed" }[a.severity]}</span><span class="review-required">AI assessment</span></div><h2 class="report-title">${esc(a.title)}</h2><p class="report-summary">${esc(a.summary)}</p><div class="finding-list">${a.findings.map((f) => `<button class="finding" data-action="finding" data-id="${esc(f.id)}"><span class="number">${esc(f.id)}</span><span><strong>${esc(f.label)}</strong><p>${esc(f.evidence)}</p></span></button>`).join("")}</div><h3 class="report-subheading">What to check next</h3><ul class="check-list">${a.nextChecks.map((c) => `<li>${icon("check")}<span>${esc(c)}</span></li>`).join("")}</ul><details class="report-details"><summary>Evidence & limitations</summary><ul>${a.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul><div class="references">${a.references.map((id) => `<a class="reference" href="#guides">${esc(id)} · ${esc(state.guides.find((g) => g.id === id)?.title ?? "Guide")}</a>`).join("")}</div></details>${r.decision ? `<div class="decision-saved"><strong>${icon("check")} ${esc(labels[r.decision.disposition])}</strong>${esc(r.decision.inspector)} · ${date(r.decision.at)} ${clock(r.decision.at)}${r.decision.note ? "<br>" + esc(r.decision.note) : ""}</div><button class="text-button" data-action="review">Update inspector decision ${icon("chevron")}</button>` : `<div class="review-actions"><button class="button primary full-width" data-action="review">Record your decision ${icon("arrow")}</button><div class="under-button">Final disposition stays with the inspector.</div></div>`}${activity()}</div><div class="followup">${
       r.conversation?.length
         ? `<div class="conversation">${r.conversation
-            .slice(-6)
             .map((m) => `<div class="bubble ${m.role}">${esc(m.text)}</div>`)
             .join(
               "",
             )}${r.followupBusy ? '<div class="bubble">Reviewing your question…</div>' : ""}</div>`
         : ""
-    }${r.followupError ? `<p class="muted">${esc(r.followupError)}</p>` : ""}<form class="followup-form" id="followup-form"><input name="question" placeholder="Ask about this part…" aria-label="Ask a follow-up question" maxlength="2000" required ${r.followupBusy ? "disabled" : ""}><button type="submit" aria-label="Send question" ${r.followupBusy ? "disabled" : ""}>${icon("arrow")}</button></form></div>`;
+    }${r.followupError ? `<p class="muted">${esc(r.followupError)}</p>` : ""}</div>`;
+    composer = `<div class="chat-composer"><form class="followup-form" id="followup-form"><input name="question" placeholder="Ask about this part…" aria-label="Ask a follow-up question" maxlength="2000" required ${r.followupBusy ? "disabled" : ""}><button type="submit" aria-label="Send question" ${r.followupBusy ? "disabled" : ""}>${icon("arrow")}</button></form></div>`;
   } else if (r?.status === "error") {
     body = `<div class="assistant-body"><span class="eyebrow">PHOTO SAVED</span><h2>Let’s take another look.</h2><div class="error-box">${esc(r.error)}</div><p class="muted">The inspection record and its photo are preserved. No request was resubmitted automatically.</p><button class="button secondary full-width" data-action="new">Start a new inspection ${icon("plus")}</button>${activity()}</div>`;
   } else {
     body = `<div class="assistant-body"><div class="assistant-intro">${icon("spark")} YOUR INSPECTION ASSISTANT</div><h2>See the issue.<br>Know what to check.</h2><p>A little extra context for the decisions<br>you make on the assembly line.</p><div class="benefits"><div class="benefit">${icon("scan")}<div><strong>Understand what’s visible</strong>Findings grounded in the actual photo.</div></div><div class="benefit">${icon("book")}<div><strong>Get a practical next step</strong>Suggested checks, with clear limitations.</div></div><div class="benefit">${icon("history")}<div><strong>Keep the whole story</strong>Photo, assessment and your final decision.</div></div></div><button class="button primary full-width" data-action="analyze" ${state.submitting ? "disabled" : ""}>${state.submitting ? "Connecting…" : "Assess this photo"} ${icon("arrow")}</button><div class="under-button">${icon("server")} ${localMode() ? "Agent on this computer" : "Agent on edge"} · Vision with OpenAI.</div>${!state.health?.agent?.connected ? `<div class="offline-hint">${localMode() ? 'Configure OPENAI_API_KEY and restart the app' : 'Connect the edge server'} to run a real assessment.<br>You can explore the sample photos now.</div>` : ""}</div>`;
   }
-  return `<aside class="assistant-card" aria-label="Inspection assessment"><div class="assistant-top"><div class="assistant-title">${icon("spark")} InspectionBuddy</div><span class="live-tag"><span class="dot ${state.health?.agent?.connected ? "live" : ""}"></span>${state.current?.status === "analyzing" ? "WORKING" : "INSPECTION ASSISTANT"}</span></div>${body}</aside>`;
+  return `<aside class="assistant-card" aria-label="Inspection assessment"><div class="assistant-top"><div class="assistant-title">${icon("spark")} InspectionBuddy</div><span class="live-tag"><span class="dot ${state.health?.agent?.connected ? "live" : ""}"></span>${state.current?.status === "analyzing" ? "WORKING" : "INSPECTION ASSISTANT"}</span></div><div class="assistant-content" role="region" aria-label="Inspection chat" tabindex="0">${body}</div>${composer}</aside>`;
 }
 function renderInspection() {
   const r = state.current;
@@ -209,10 +209,28 @@ function watch(record) {
     const update = JSON.parse(e.data);
     if (state.current?.id !== update.id) return;
     const hadReport = !!state.current.report;
+    const previousMessages = state.current.conversation?.length ?? 0;
+    const addedMessage = (update.conversation?.length ?? 0) > previousMessages;
+    const userMessage = addedMessage && update.conversation.at(-1)?.role === "user";
     state.current = update;
     if (state.page === "inspect") {
       const old = $(".assistant-card");
-      if (old) old.outerHTML = assistant();
+      if (old) {
+        const scroll = old.querySelector(".assistant-content");
+        const top = scroll?.scrollTop ?? 0;
+        const atBottom = !scroll || scroll.scrollHeight - scroll.clientHeight - top < 48;
+        const input = old.querySelector(".followup-form input");
+        const draft = input?.value ?? "";
+        const focused = document.activeElement === input;
+        old.outerHTML = assistant();
+        const next = $(".assistant-content");
+        if (next) next.scrollTop = userMessage || (addedMessage && atBottom) ? next.scrollHeight : top;
+        const nextInput = $(".followup-form input");
+        if (nextInput && !nextInput.disabled) {
+          nextInput.value = draft;
+          if (focused) nextInput.focus({ preventScroll: true });
+        }
+      }
       if (hadReport !== !!update.report) {
         const card = $(".photo-card");
         if (card) card.outerHTML = photoCard();
