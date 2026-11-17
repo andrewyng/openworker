@@ -28,6 +28,19 @@ It runs on your machine. Bring your own model key or run locally with Ollama, an
 [⬇ Windows 10/11 (x64)](https://download.openworker.com/windows)
 <sub>builds are not yet code-signed, so SmartScreen will warn; signing is in progress</sub>
 
+**⬇ Linux (x86_64 · aarch64)** — from the [latest release](https://github.com/andrewyng/openworker/releases/latest):
+[AppImage](https://github.com/andrewyng/openworker/releases/latest/download/OpenWorker-linux-x86_64.AppImage) (any distribution, auto-updates) ·
+[.deb](https://github.com/andrewyng/openworker/releases/latest/download/OpenWorker-linux-x86_64.deb) (Debian / Ubuntu)
+<sub>glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer) · ARM: swap `x86_64` for `aarch64` in the link</sub>
+
+```shell
+# AppImage
+chmod +x OpenWorker-linux-x86_64.AppImage && ./OpenWorker-linux-x86_64.AppImage
+# .deb
+sudo apt install ./OpenWorker-linux-x86_64.deb
+```
+<sub>The AppImage needs FUSE 2 (`sudo apt install libfuse2` on Ubuntu 22.04+). The tray icon needs an AppIndicator-capable desktop (on GNOME, the AppIndicator extension). Voice input is not available on Linux yet.</sub>
+
 Open the app, add a model key (or point it at Ollama), and ask for something real.
 
 The OpenWorker Desktop App is in open beta and supports automatic updates. [Issues](https://github.com/andrewyng/openworker/issues) welcome as we polish rough edges.
@@ -180,7 +193,7 @@ desktop app uses an in-memory launch token instead and never writes it to disk.
 
 To run the full desktop app instead of the browser UI, replace step 3 with `npm run tauri dev` (from `surfaces/gui/`) - the Tauri shell launches the window and supervises the server itself.
 
-Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1`.
+Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gui` (GUI unit + hermetic end-to-end). Desktop bundles are built with `packaging/build_dmg.sh` / `packaging/build_windows.ps1` / `packaging/build_linux_app.sh` (AppImage + .deb; its header lists the apt packages Tauri needs on Linux).
 
 </details>
 
@@ -192,7 +205,7 @@ Tests: `.venv/bin/pytest` (server), `npm test` and `npm run e2e` in `surfaces/gu
 | `harness/` | Rust agent runtime, Rust/TypeScript SDKs, service and SDK examples |
 | `surfaces/gui/` | Desktop app - React UI + Tauri shell that supervises the server |
 | `stt/` | Speech-to-text sidecar (Rust) for voice input |
-| `packaging/` | Installer builds (macOS DMG, Windows), auto-update manifest, dev bootstrap |
+| `packaging/` | Installer builds (macOS DMG, Windows, Linux AppImage/.deb), auto-update manifest, dev bootstrap |
 | `docs/` | Design specs and decision logs |
 | `tests/` | Backend test suite |
 

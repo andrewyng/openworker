@@ -12,6 +12,14 @@ uploads):
     OpenWorker-macos-arm64.app.tar.gz(.sig)   -> platforms["darwin-aarch64"]
     OpenWorker-macos-x64.app.tar.gz(.sig)     -> platforms["darwin-x86_64"]
     OpenWorker-windows-setup.exe(.sig)        -> platforms["windows-x86_64"]
+    OpenWorker-linux-<arch>.AppImage(.sig)    -> platforms["linux-<arch>-appimage"] and
+                                                 platforms["linux-<arch>"] (the fallback)
+    OpenWorker-linux-<arch>.deb(.sig)         -> platforms["linux-<arch>-deb"]
+
+On Linux the updater looks up "<os>-<arch>-<bundle type>" first and then "<os>-<arch>", and
+installs by the type it is running as: an AppImage swaps in a new AppImage, a .deb install
+runs dpkg on a new .deb. The plain "linux-<arch>" key therefore points at the AppImage, and a
+.deb never appears under it.
 
 URLs point at the TAG-pinned GitHub download path (releases/download/<tag>/<asset>),
 never at `latest/` — a manifest must reference exactly the artifacts it shipped with,
@@ -32,11 +40,15 @@ import json
 import pathlib
 import sys
 
-# stable asset name -> Tauri platform key
-ARTIFACTS = {
-    "OpenWorker-macos-arm64.app.tar.gz": "darwin-aarch64",
-    "OpenWorker-macos-x64.app.tar.gz": "darwin-x86_64",
-    "OpenWorker-windows-setup.exe": "windows-x86_64",
+# stable asset name -> Tauri platform key(s)
+ARTIFACTS: dict[str, tuple[str, ...]] = {
+    "OpenWorker-macos-arm64.app.tar.gz": ("darwin-aarch64",),
+    "OpenWorker-macos-x64.app.tar.gz": ("darwin-x86_64",),
+    "OpenWorker-windows-setup.exe": ("windows-x86_64",),
+    "OpenWorker-linux-x86_64.AppImage": ("linux-x86_64-appimage", "linux-x86_64"),
+    "OpenWorker-linux-x86_64.deb": ("linux-x86_64-deb",),
+    "OpenWorker-linux-aarch64.AppImage": ("linux-aarch64-appimage", "linux-aarch64"),
+    "OpenWorker-linux-aarch64.deb": ("linux-aarch64-deb",),
 }
 
 
@@ -57,7 +69,8 @@ def main() -> int:
     args = ap.parse_args()
 
     platforms: dict[str, dict[str, str]] = {}
-    for asset, platform in ARTIFACTS.items():
+    for asset, keys in ARTIFACTS.items():
+        platform = "/".join(keys)
         artifact = args.dist / asset
         sig = args.dist / (asset + ".sig")
         if not artifact.exists():
@@ -72,10 +85,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             continue
-        platforms[platform] = {
-            "signature": sig.read_text().strip(),
-            "url": f"https://github.com/{args.repo}/releases/download/{args.tag}/{asset}",
-        }
+        for key in keys:
+            platforms[key] = {
+                "signature": sig.read_text().strip(),
+                "url": f"https://github.com/{args.repo}/releases/download/{args.tag}/{asset}",
+            }
 
     if not platforms:
         print(
