@@ -94,7 +94,7 @@ def memory_tools(
         """
         found, missing = [], []
         for mid in memory_ids:
-            item = store.get(int(mid))
+            item = store.get_visible(int(mid), workspace=workspace)
             if item is None:
                 missing.append(int(mid))
             else:
@@ -117,9 +117,14 @@ def memory_tools(
         if _saving_off():
             return {"updated": False, "error": _OFF_ERROR}
         # Captured BEFORE the write so the user's Undo can restore the old wording.
-        existing = store.get(memory_id)
+        existing = store.get_visible(memory_id, workspace=workspace)
         previous = existing.content if existing is not None else None
-        item = store.update(memory_id, content, summary=summary.strip() or None)
+        item = store.update_visible(
+            memory_id,
+            content,
+            workspace=workspace,
+            summary=summary.strip() or None,
+        )
         if item is None:
             return {"updated": False, "error": f"no memory with id {memory_id}"}
         _announce(item, previous)
@@ -133,7 +138,7 @@ def memory_tools(
         """
         if _saving_off():
             return {"deleted": False, "error": _OFF_ERROR}
-        if store.delete(memory_id):
+        if store.delete_visible(memory_id, workspace=workspace):
             return {"deleted": True, "id": memory_id}
         return {"deleted": False, "error": f"no memory with id {memory_id}"}
 
