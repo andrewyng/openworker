@@ -14,6 +14,7 @@ footprint to a few lines and makes every policy testable without a provider.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -783,3 +784,35 @@ def is_context_overflow(exc: BaseException) -> bool:
     estimate path) — routed into the compaction policy instead of surfacing."""
     text = str(exc).lower()
     return any(marker in text for marker in _OVERFLOW_MARKERS)
+
+
+# The limit a provider states in its overflow error, when it states one. Each pattern's
+# single group is the window in tokens; thousands separators are tolerated.
+_LIMIT_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"maximum context length is (\d[\d,]*) tokens",  # OpenAI and compatible
+        r"\d[\d,]* tokens > (\d[\d,]*) maximum",  # Anthropic: "213456 tokens > 200000 maximum"
+        r"context length of (?:only )?(\d[\d,]*)",  # vLLM / llama.cpp
+        r"maximum (?:context|input)(?: length| size| tokens)? (?:of|is) (\d[\d,]*)",
+        r"exceeds the (?:model's )?maximum (?:context length|input length|number of tokens)(?: of)? (\d[\d,]*)",
+        r"limit(?: of|:)? (\d[\d,]*) tokens",
+    )
+)
+
+
+def overflow_limit(exc: BaseException) -> Optional[int]:
+    """The context window the provider named in its overflow error, or None. Used to
+    correct the window of a model nobody has a verified figure for (OPE-252): the
+    provider's own refusal is the one source that is never wrong about its own limit."""
+    text = str(exc)
+    for pattern in _LIMIT_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            try:
+                value = int(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if value >= 1000:
+                return value
+    return None

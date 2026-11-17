@@ -1,0 +1,39 @@
+{
+ "data": [
+  {
+   "context_length": 131072,
+   "id": "GLM-5.3",
+   "max_completion_tokens": 131072,
+   "object": "model",
+   "owned_by": "no-reply@sambanova.ai"
+  },
+  {
+   "context_length": 131072,
+   "id": "Meta-Llama-3.3-70B-Instruct",
+   "max_completion_tokens": 3072,
+   "object": "model",
+   "owned_by": "no-reply@sambanova.ai"
+  },
+  {
+   "context_length": 1048576,
+   "id": "MiniMax-M3.1-Flash",
+   "max_completion_tokens": 1048576,
+   "object": "model",
+   "owned_by": "no-reply@sambanova.ai"
+  },
+  {
+   "context_length": 262144,
+   "id": "gemma-4-31B-it",
+   "max_completion_tokens": 262144,
+   "object": "model",
+   "owned_by": "no-reply@sambanova.ai"
+  },
+  {
+   "context_length": 131072,
+   "id": "gpt-oss-120b",
+   "max_completion_tokens": 131072,
+   "object": "model",
+   "owned_by": "no-reply@sambanova.ai"
+  }
+ ]
+}

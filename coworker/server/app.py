@@ -2582,6 +2582,12 @@ def create_app(manager: SessionManager) -> FastAPI:
     def providers_local_models(name: str) -> dict[str, Any]:
         return manager.local_model_facts(name)
 
+    @app.get("/v1/providers/{name}/catalog")
+    async def providers_catalog(name: str, refresh: bool = False) -> dict[str, Any]:
+        # OPE-252: the provider's own model list for the user's key (a network call off
+        # the loop), merged with the curated rows.
+        return await asyncio.to_thread(manager.provider_catalog, name, refresh=refresh)
+
     @app.get("/v1/system")
     def system_get() -> dict[str, Any]:
         return manager.system_facts()
@@ -2681,7 +2687,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/settings/models/add")
     def settings_models_add(body: dict) -> dict[str, Any]:
-        return manager.add_model((body or {}).get("model", ""))
+        return manager.add_model((body or {}).get("model", ""), anyway=bool((body or {}).get("anyway")))
 
     @app.post("/v1/settings/models/remove")
     def settings_models_remove(body: dict) -> dict[str, Any]:

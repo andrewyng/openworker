@@ -1,0 +1,116 @@
+{
+ "data": [
+  {
+   "id": "gpt-5.5-pro",
+   "object": "model",
+   "created": 1776894349,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "gpt-5-2025-08-07",
+   "object": "model",
+   "created": 1754075360,
+   "owned_by": "system",
+   "shutdown_date": "2026-12-11"
+  },
+  {
+   "id": "gpt-5.3-codex",
+   "object": "model",
+   "created": 1770537915,
+   "owned_by": "system",
+   "shutdown_date": "2027-04-01"
+  },
+  {
+   "id": "gpt-5-search-api",
+   "object": "model",
+   "created": 1759514629,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "gpt-5",
+   "object": "model",
+   "created": 1754425777,
+   "owned_by": "system",
+   "shutdown_date": "2026-12-11"
+  },
+  {
+   "id": "gpt-6-astra",
+   "object": "model",
+   "created": 1787853604,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "text-embedding-3-large",
+   "object": "model",
+   "created": 1705953180,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "tts-1-hd",
+   "object": "model",
+   "created": 1699046015,
+   "owned_by": "system",
+   "shutdown_date": "2027-01-06"
+  },
+  {
+   "id": "whisper-1",
+   "object": "model",
+   "created": 1677532384,
+   "owned_by": "openai-internal",
+   "shutdown_date": "2027-02-26"
+  },
+  {
+   "id": "gpt-image-1.5",
+   "object": "model",
+   "created": 1764030620,
+   "owned_by": "system",
+   "shutdown_date": "2026-12-01"
+  },
+  {
+   "id": "gpt-audio-2025-08-28",
+   "object": "model",
+   "created": 1756256146,
+   "owned_by": "system",
+   "shutdown_date": "2027-01-20"
+  },
+  {
+   "id": "gpt-realtime-2.1-mini",
+   "object": "model",
+   "created": 1782254706,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "omni-moderation-2024-09-26",
+   "object": "model",
+   "created": 1732734466,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "gpt-4o-mini-transcribe-2025-03-20",
+   "object": "model",
+   "created": 1765610545,
+   "owned_by": "system",
+   "shutdown_date": "2027-01-20"
+  },
+  {
+   "id": "gpt-live-transcribe",
+   "object": "model",
+   "created": 1785168034,
+   "owned_by": "system",
+   "shutdown_date": null
+  },
+  {
+   "id": "gpt-5-nano",
+   "object": "model",
+   "created": 1754426384,
+   "owned_by": "system",
+   "shutdown_date": "2026-12-11"
+  }
+ ]
+}

@@ -1,0 +1,34 @@
+{
+ "data": [
+  {
+   "id": "nvidia/nemotron-3-super-120b-a12b",
+   "object": "model",
+   "created": 735790403,
+   "owned_by": "nvidia"
+  },
+  {
+   "id": "nvidia/embed-qa-4",
+   "object": "model",
+   "created": 735790403,
+   "owned_by": "nvidia"
+  },
+  {
+   "id": "nvidia/riva-translate-4b-instruct",
+   "object": "model",
+   "created": 735790403,
+   "owned_by": "nvidia"
+  },
+  {
+   "id": "nvidia/ai-synthetic-video-detector",
+   "object": "model",
+   "created": 735790403,
+   "owned_by": "nvidia"
+  },
+  {
+   "id": "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+   "object": "model",
+   "created": 735790403,
+   "owned_by": "nvidia"
+  }
+ ]
+}

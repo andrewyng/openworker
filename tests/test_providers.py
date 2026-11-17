@@ -472,9 +472,9 @@ def test_compat_models_route_and_get_tool_capabilities():
     )  # only using _provider_name (stateless)
     for model in (
         "zai:glm-5.2",
-        "deepseek:deepseek-v4-flash",
+        "deepseek:deepseek-flash",
         "kimi:kimi-k2.6",
-        "minimax:MiniMax-M2.5",
+        "minimax:MiniMax-M3.1-Flash",
         "qwen:qwen3-max",
         "xai:grok-4.3",
         "mistral:mistral-large-latest",
@@ -513,7 +513,7 @@ def test_matrix_answers_capabilities_for_reseller_ids():
     for mid in (
         "together:zai-org/GLM-5.2",
         "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-        "fireworks:accounts/fireworks/models/kimi-k2p6",
+        "fireworks:accounts/fireworks/models/kimi-k3",
         "openrouter:z-ai/glm-5.2",
         "openrouter:meta-llama/llama-4-maverick",
         "nebius:zai-org/GLM-5.2",
