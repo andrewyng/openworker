@@ -4782,6 +4782,7 @@ class SessionManager:
         ],
         "atlascloud": ["zai-org/glm-5.2"],
         "upstage": ["solar-pro4", "solar-mini4"],
+        "sarvam": ["sarvam-105b"],
         # Verified 2026-10-26 (sources in providers/matrix.py).
         "cerebras": ["gpt-oss-120b"],
         "huggingface": ["zai-org/GLM-5.2"],

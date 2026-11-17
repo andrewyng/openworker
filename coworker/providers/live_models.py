@@ -948,6 +948,36 @@ def _read_nebius(items: list[dict[str, Any]], extra: list[dict[str, Any]]) -> li
     return rows
 
 
+_SARVAM_TYPES: dict[str, tuple[str, Optional[str]]] = {
+    "embedding": ("embedding", None),
+    "decision": ("specialised", "decision making"),  # Prism, Clef: the Decisions API, not chat
+}
+
+
+def _read_sarvam(items: list[dict[str, Any]], extra: list[dict[str, Any]]) -> list[LiveModel]:
+    """Sarvam's /v2/models says per row what it is (`type`: chat, decision, embedding), its
+    window, tools, image input and reasoning, and whether this key may call it
+    (`whitelisted`). A row the key is not enabled for (Provisioned Throughput, `access:
+    provisioned`) is skipped like a hidden Codex row; it stays in all_ids."""
+    rows = []
+    for it in items:
+        mid = _ident(it, "id")
+        if not mid:
+            continue
+        if it.get("whitelisted") is False:
+            continue
+        vtype = _str(it.get("type"))
+        kind, detail = (CHAT, None) if vtype in (None, CHAT) else _SARVAM_TYPES.get(vtype, ("specialised", vtype))
+        rows.append(_row(
+            mid, _label(it, mid, "display_name"), kind, "provider" if vtype else "none", detail,
+            context=_first_int(it, "context_length"),
+            input_image=_bool(it.get("supports_image_input")),
+            tools=_bool(it.get("supports_tools")),
+            reasoning=isinstance(it.get("reasoning"), dict) if "reasoning" in it else None,
+        ))
+    return rows
+
+
 _READERS: dict[str, Callable[[list[dict[str, Any]], list[dict[str, Any]]], list[LiveModel]]] = {
     "openrouter": _read_openrouter,
     "openrouter-account": _read_openrouter,
@@ -973,6 +1003,7 @@ _READERS: dict[str, Callable[[list[dict[str, Any]], list[dict[str, Any]]], list[
     "meta": _bare_reader(_META_RULES),
     "minimax": _bare_reader(_MINIMAX_RULES),
     "nebius": _read_nebius,
+    "sarvam": _read_sarvam,
 }
 _BARE = _bare_reader([])  # Z.AI, Cerebras, SambaNova, Upstage, Qwen compat, SiliconFlow (?sub_type=chat), custom servers
 

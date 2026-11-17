@@ -439,6 +439,19 @@
         }
       }
     },
+    "sarvam": {
+      "note": "docs.sarvam.ai/api/token-factory/models/sarvam-105b, read 2026-11-17: 128K context, tool calling, text input. Tools, streaming usage and reasoning_effort none verified live on /v2 the same day. sarvam-m and sarvam-30b are deprecated.",
+      "models": {
+        "sarvam-105b": {
+          "label": "Sarvam-105B · Sarvam AI",
+          "tools": true,
+          "vision": false,
+          "pdf": false,
+          "parallel_tool_calls": true,
+          "context": 128000
+        }
+      }
+    },
     "cerebras": {
       "note": "inference-docs.cerebras.ai/models/openai-oss: tool calling listed; 65k tokens on the free tier, 131k paid. The paid window is stored.",
       "models": {

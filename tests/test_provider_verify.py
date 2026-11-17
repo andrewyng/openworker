@@ -118,6 +118,23 @@ def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     assert cap["headers"]["Authorization"] == "Bearer sk-nov"
 
 
+def test_verify_sarvam_lists_models_on_v2(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("sarvam", api_key="sk-sarvam") == {"ok": True}
+    assert cap["url"] == "https://api.sarvam.ai/v2/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-sarvam"
+
+
+def test_verify_sarvam_bad_key_is_a_403(monkeypatch):
+    # Sarvam answers a bad key with 403 invalid_api_key_error, not 401 (live, 2026-11-17).
+    _patch_get(monkeypatch, status=403)
+    assert verify_provider_key("sarvam", api_key="sk-wrong") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
 def test_verify_bad_key_is_invalid(monkeypatch):
     _patch_get(monkeypatch, status=401)
     assert verify_provider_key("openai", api_key="sk-bad") == {

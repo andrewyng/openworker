@@ -163,6 +163,8 @@ def test_anthropic_unknown_model_sends_level_unverified():
         ("moonshotai/Kimi-K3", "max", "max", False),
         ("moonshotai/Kimi-K3", "xhigh", "max", True),
         ("moonshotai/Kimi-K3", "medium", "high", True),
+        ("sarvam-105b", "medium", "medium", False),
+        ("sarvam-105b", "max", "high", True),  # "none" in the row is never a nearest pick
         ("deepseek-ai/DeepSeek-V4-Pro", "max", "high", True),  # unverified → OpenAI vocabulary
         ("gpt-5.6-sol", "medium", "medium", True),  # unverified table → note, value as-is
     ],
@@ -196,6 +198,19 @@ def test_openai_compat_none_maps_to_the_lowest_level_on_a_verified_row_without_i
     assert plan.effective == "low"
     assert plan.params == {"reasoning_effort": "low"}
     assert "sent its lowest level low" in plan.note
+
+
+def test_openai_compat_none_is_sent_on_a_verified_row_that_lists_it():
+    """Sarvam-105B documents "none", so the title request turns thinking fully off
+    instead of falling back to "low" (OPE-308)."""
+    plan = openai_compat_effort("sarvam-105b", "none")
+    assert plan.effective == "none"
+    assert plan.params == {"reasoning_effort": "none"}
+
+
+def test_nearest_supported_skips_non_ranking_entries():
+    assert nearest_supported("xhigh", ("none", "low")) == "low"
+    assert nearest_supported("low", ("none",)) is None
 
 
 def test_openai_compat_other_unknown_level_sends_no_parameter():
