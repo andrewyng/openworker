@@ -135,6 +135,19 @@ def test_store_runs_history(tmp_path):
     assert len(runs) == 2 and runs[0].status in ("ok", "error")
 
 
+def test_store_runs_ties_started_at_newest_written_first(tmp_path):
+    """Two runs of one task can share started_at (the Windows clock is coarse).
+    The newest written must still come first, so unseen_failed keys off the run
+    that actually failed and history is not listed backwards."""
+    store = TaskStore(tmp_path / "auto.db")
+    t = _task()
+    store.save(t)
+    same = 1_700_000_000.0
+    store.add_run(TaskRun(task_id=t.id, status="ok", result_text="first", started_at=same))
+    store.add_run(TaskRun(task_id=t.id, status="error", result_text="second", started_at=same))
+    assert [r.result_text for r in store.runs(t.id)] == ["second", "first"]
+
+
 # -- scheduler loop ------------------------------------------------------------
 async def test_scheduler_runs_due_task_and_advances(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
