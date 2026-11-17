@@ -27,6 +27,7 @@ def test_the_table_parses_and_every_default_is_one_of_its_levels():
         ("openai-codex", "gpt-5.6-terra", ["low", "medium", "high"], "medium"),
         ("openrouter", "moonshotai/kimi-k3", ["low", "high", "max"], "max"),
         ("together", "moonshotai/Kimi-K3", ["low", "high", "max"], "max"),
+        ("sarvam", "sarvam-105b", ["low", "medium", "high"], "low"),
         ("ollama", "gpt-oss:20b", ["low", "medium", "high"], "medium"),
     ],
 )

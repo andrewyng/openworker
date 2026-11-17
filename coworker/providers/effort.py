@@ -83,8 +83,13 @@ def nearest_supported(level: str, supported: Sequence[str]) -> Optional[str]:
         return level
     if level not in _RANK:
         return None
+    # A row may also list "none" (Sarvam documents it); it is not a ranking level, so it
+    # never stands in for a user-selected one.
+    ranked = [s for s in supported if s in _RANK]
+    if not ranked:
+        return None
     target = _RANK[level]
-    return min(supported, key=lambda s: (abs(_RANK[s] - target), -_RANK[s]))
+    return min(ranked, key=lambda s: (abs(_RANK[s] - target), -_RANK[s]))
 
 
 # -- Anthropic -----------------------------------------------------------------------
@@ -164,6 +169,10 @@ _OPENAI_COMPAT: dict[str, tuple[str, ...]] = {
     "moonshotai/Kimi-K3": ("low", "high", "max"),
     "moonshotai/kimi-k3": ("low", "high", "max"),  # OpenRouter's lowercase slug
     "kimi-k3": ("low", "high", "max"),
+    # Sarvam-105B: Sarvam's own /v2/models row (read 2026-11-17) lists efforts low / medium /
+    # high, can_disable true; "none" accepted on /v2, verified live the same day. Listing it
+    # keeps the no-thinking title request at "none" instead of falling back to "low".
+    "sarvam-105b": ("none", "low", "medium", "high"),
 }
 _OPENAI_DEFAULT = ("low", "medium", "high")
 
