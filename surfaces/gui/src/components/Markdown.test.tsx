@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Markdown, OPEN_ARTIFACT_EVENT, OPEN_BOARD_EVENT } from "./Markdown";
+import { openExternal } from "../tauri";
+
+vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
 
 afterEach(cleanup);
+afterEach(() => vi.mocked(openExternal).mockReset());
 
 // §34 (UX-016): [Title](artifact:path) renders as a chip that opens the artifact viewer via
 // a window event; ordinary links keep the open-externally treatment.
@@ -28,6 +32,24 @@ describe("Markdown artifact links", () => {
     const a = container.querySelector("a")!;
     expect(a.getAttribute("target")).toBe("_blank");
     expect(a.getAttribute("href")).toBe("https://example.com");
+  });
+
+  // #607: the desktop webview intercepts target=_blank and silently no-ops, so a link
+  // click must go through the opener (openExternal) — the webview's own navigation
+  // never runs. In a browser build openExternal IS window.open, so dev keeps its tab.
+  it("an ordinary link click rides the opener, never the webview's own navigation", () => {
+    const { container } = render(<Markdown text="see [the docs](https://example.com)" />);
+    const a = container.querySelector("a")!;
+    // fireEvent returns !defaultPrevented: false = the anchor's own navigation never ran
+    expect(fireEvent.click(a)).toBe(false);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com");
+  });
+
+  it("chip clicks never touch the opener", () => {
+    render(<Markdown text="[Board · 5 items](board:)" />);
+    fireEvent.click(screen.getByTestId("board-chip"));
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("chip title falls back to the filename when the link text is empty", () => {
