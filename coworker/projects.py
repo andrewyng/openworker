@@ -66,12 +66,12 @@ def project_label(key: str, *, home: Optional[str] = None) -> dict[str, Any]:
     p = Path(key)
     is_git = (p / ".git").exists()
     full = key
-    h = home or str(Path.home())
+    h = Path(home) if home else Path.home()
     shown = key
-    if shown == h:
+    if p == h:
         shown = "~"
-    elif shown.startswith(h + "/"):
-        shown = "~" + shown[len(h):]
+    elif p.is_relative_to(h):
+        shown = "~/" + p.relative_to(h).as_posix()
     return {
         "kind": "git" if is_git else "folder",
         "label": p.name if is_git else shown,

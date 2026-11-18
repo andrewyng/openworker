@@ -1,5 +1,6 @@
 """Project identity (twentieth pass): key derivation, naming, one-time migration."""
 
+import os
 import sqlite3
 import subprocess
 import threading
@@ -70,9 +71,27 @@ class TestProjectKey:
         lab2 = project_label(str(plain.resolve()))
         assert lab2["kind"] == "folder"
 
-    def test_label_home_collapse(self, tmp_path):
-        lab = project_label(str(tmp_path / "x" / "y"), home=str(tmp_path))
+    @pytest.mark.parametrize("forward_slashes", [False, True])
+    def test_label_home_collapse(self, tmp_path, forward_slashes):
+        key = str(tmp_path / "x" / "y")
+        if forward_slashes:
+            key = (tmp_path / "x" / "y").as_posix()
+        lab = project_label(key, home=str(tmp_path))
         assert lab["label"] == "~/x/y"
+        assert lab["full"] == key
+
+    def test_label_home_itself(self, tmp_path):
+        assert project_label(str(tmp_path), home=str(tmp_path))["label"] == "~"
+
+    def test_label_home_prefix_is_not_a_child(self, tmp_path):
+        home = tmp_path / "user"
+        outside = str(tmp_path / "user-other" / "project")
+        assert project_label(outside, home=str(home))["label"] == outside
+
+    @pytest.mark.skipif(os.name == "nt", reason="backslashes are path separators on Windows")
+    def test_label_preserves_posix_backslashes(self, tmp_path):
+        key = str(tmp_path / "project\\notes")
+        assert project_label(key, home=str(tmp_path))["label"] == "~/project\\notes"
 
 
 class TestProjectNames:
