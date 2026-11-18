@@ -349,17 +349,17 @@ def test_retry_after_mid_stream_death_does_not_replay_the_partial(tmp_path):
         permissions=PermissionEngine(workspace_root=tmp_path),
         model="gpt-5.5",
     )
-    _collect(engine, "arrange my visa documents")
+    # The engine's Stop event belongs to the loop running the turn and its retries.
+    async def _turn_then_retry():
+        [ev async for ev in engine.run("arrange my visa documents")]
 
-    # kept in history (display), followed by the error notice
-    assert engine.messages[-2]["role"] == "assistant"
-    assert engine.messages[-2]["content"] == "I will request permission to "
-    assert engine.messages[-1]["role"] == "notice"
+        # kept in history (display), followed by the error notice
+        assert engine.messages[-2]["role"] == "assistant"
+        assert engine.messages[-2]["content"] == "I will request permission to "
+        assert engine.messages[-1]["role"] == "notice"
+        [ev async for ev in engine.retry()]
 
-    async def _retry():
-        return [ev async for ev in engine.retry()]
-
-    asyncio.run(_retry())
+    asyncio.run(_turn_then_retry())
 
     sent = provider.payloads[-1]
     assert sent, "retry never reached the provider"
@@ -389,13 +389,12 @@ def test_consecutive_deaths_do_not_stack_partials_in_the_payload(tmp_path):
         permissions=PermissionEngine(workspace_root=tmp_path),
         model="gpt-5.5",
     )
-    _collect(engine, "go")
+    async def _turn_then_retry_twice():
+        [ev async for ev in engine.run("go")]
+        for _ in range(2):
+            [ev async for ev in engine.retry()]
 
-    async def _retry():
-        return [ev async for ev in engine.retry()]
-
-    asyncio.run(_retry())
-    asyncio.run(_retry())
+    asyncio.run(_turn_then_retry_twice())
 
     assert sum(1 for m in engine.messages if m.get("role") == "assistant") == 3
     assert provider.payloads[-1][-1]["role"] != "assistant"
