@@ -906,6 +906,8 @@ export function ConnectSetup({
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false); // managed flow: browser is open
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
@@ -918,12 +920,21 @@ export function ConnectSetup({
   };
 
   const oneClick = async () => {
+    if (starting) return;
+    setStarting(true);
     setError(null);
-    const res = await connectManaged(c.name);
-    // Completion arrives via the tab's poll: the broker form-POSTs the profile
-    // to the sidecar, the connector flips to connected, this card closes itself.
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("manage.could_not_start_managed"));
+    try {
+      const res = await connectManaged(c.name);
+      // Inline access panels need the same sign-in recovery as the add modal.
+      // Older sidecars may return only the error, without signed_in metadata.
+      if (res.ok) setWaiting(true);
+      else if (res.signed_in === false || res.error === "not signed in") setSessionExpired(true);
+      else setError(res.error || t("manage.could_not_start_managed"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("manage.could_not_start_managed"));
+    } finally {
+      setStarting(false);
+    }
   };
 
   const mcpOneClick = async () => {
@@ -964,20 +975,21 @@ export function ConnectSetup({
                 {t("manage.one_click_coming")}
               </div>
             </>
-          ) : cloud?.signed_in ? (
-            <button className={BTN_ACCENT} onClick={oneClick} disabled={waiting}>
+          ) : waiting || (!sessionExpired && cloud?.signed_in) ? (
+            <button className={BTN_ACCENT} onClick={oneClick} disabled={waiting || starting}>
               {waiting ? t("manage.check_browser") : t("manage.connect_one_click", { title: c.title })}
             </button>
-          ) : cloud ? (
+          ) : sessionExpired || cloud ? (
             <CloudSignInInline
               blurb={t("manage.signin_unlocks", { title: c.title })}
+              onSignedIn={oneClick}
             />
           ) : (
             // Status unknown (fetch pending/failed): never show the sign-in ask to a
             // possibly-signed-in user (FB-013); the host keeps polling.
             <CloudStatusPending />
           )}
-          {!c.managed_paused && cloud?.signed_in && (
+          {!c.managed_paused && !sessionExpired && cloud?.signed_in && (
             <div className="text-meta text-faint">{t("manage.or_connect_manually")}</div>
           )}
         </div>
