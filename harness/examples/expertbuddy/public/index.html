@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f8f9fa" />
+    <title>InspectionBuddy — A second set of eyes</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="connection-dialog">
+      <div class="dialog-top">
+        <h2>Your inspection workspace</h2>
+        <button
+          class="icon-button"
+          data-action="close-dialog"
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+      <div id="connection-content"></div>
+    </dialog>
+    <dialog id="review-dialog">
+      <form id="review-form">
+        <div class="dialog-top">
+          <div>
+            <span class="eyebrow">INSPECTOR DECISION</span>
+            <h2>Record your decision.</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            data-action="close-dialog"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <p class="muted">
+          The AI assessment stays on record alongside your decision.
+        </p>
+        <label
+          >Disposition<select name="disposition" required>
+            <option value="inspect">Further inspection</option>
+            <option value="rework">Send for rework</option>
+            <option value="hold">Hold assembly</option>
+            <option value="pass">Pass visual inspection</option>
+          </select></label
+        ><label
+          >Inspector<input
+            name="inspector"
+            placeholder="Your name"
+            maxlength="100"
+            required
+            autocomplete="name" /></label
+        ><label
+          >Note <span class="muted">optional</span
+          ><textarea
+            name="note"
+            placeholder="Add a measurement, observation or next step…"
+            maxlength="1600"
+            rows="3"
+          ></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button
+            type="button"
+            class="button secondary"
+            data-action="close-dialog"
+          >
+            Cancel</button
+          ><button class="button primary" type="submit">
+            Save decision <span>↗</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <input
+      id="photo-input"
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      hidden
+    />
+  </body>
+</html>

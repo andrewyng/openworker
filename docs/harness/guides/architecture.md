@@ -62,6 +62,14 @@ An **environment** is a provisioned instance. Authorized sessions can share one
 instance, or use independent environments. Shared agents must coordinate paths,
 Git worktrees and server ports. See [deployment options](deployment.md).
 
+## An edge application in practice
+
+[InspectionBuddy](edge-inspection.md) places a lightweight inspection UI on a
+workstation and connects it to a site-local OpenWorker service. The sample keeps
+photos and decisions in the application store, while the service keeps durable
+agent sessions and optional traces. It also runs locally without a cluster,
+using a managed harness process.
+
 ## Know where a tool executes
 
 Built-in tools routed through OpenShell execute inside its sandbox. Your Node or

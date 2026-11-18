@@ -5,7 +5,7 @@ applications with the OpenWorker Harness SDK. It includes version-matched SDK
 snippets, a scoped file-organizer example, a complete streaming approval loop and separate track references. No OpenWorker checkout is required
 for the packaged skill, and installing it does not install the SDK or a runtime.
 
-This skill release targets SDK `0.1.0-beta.3`, including provider caching,
+This skill release targets SDK `0.1.0-beta.5`, including provider caching,
 attempt-aware streaming, per-turn session options, and auto-approver/compaction guidance.
 
 ## Install the skill
@@ -28,7 +28,7 @@ on Windows and macOS and leaves global settings alone. If a skill already exists
 an interactive terminal asks before replacing it and saves the old copy as a backup.
 `references/installation.json` records the matching SDK version, without local
 checkout paths or credentials. Use `sdkVersion` from that file for the SDK. Skill and SDK package versions may
-differ; this skill release targets SDK `0.1.0-beta.3`.
+differ; this skill release targets SDK `0.1.0-beta.5`.
 
 ### Across your projects
 
@@ -134,7 +134,7 @@ node skills/prepare.mjs /absolute/new-skills-candidate
 Install the resulting archive into a temporary project or use it through npm exec:
 
 ```sh
-npm exec --package /absolute/new-skills-candidate/archives/openworkerai-openworker-harness-builder-0.1.0-beta.6.tgz -- openworker-harness-builder --agent codex --project /path/to/your-app
+npm exec --package /absolute/new-skills-candidate/archives/openworkerai-openworker-harness-builder-0.1.0-beta.8.tgz -- openworker-harness-builder --agent codex --project /path/to/your-app
 ```
 
 The preparer never publishes. Source package manifests remain private; staged

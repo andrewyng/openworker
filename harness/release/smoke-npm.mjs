@@ -6,13 +6,19 @@ import {dirname,resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
+import {checkBuilder} from './check-builder.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const version=JSON.parse(await readFile(join(root,'release/manifest.json'),'utf8')).version;
 const archives=resolve(process.argv[2]);const dir=await mkdtemp(join(tmpdir(),'ow-packed-consumer-'));
 const npm=process.platform==='win32'?'npm.cmd':'npm';
+const builder=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8'));
+const builderArchive=`${builder.name.replace(/^@/,'').replace('/','-')}-${builder.version}.tgz`;
+assert.equal(builder.openworkerSdkVersion,version);
+const env={...process.env};delete env.OPENWORKER_EXECUTABLE;
 try {
  await writeFile(join(dir,'package.json'),JSON.stringify({name:'packed-sdk-consumer',private:true,type:'module'}));
- execFileSync(npm,['install','--cache',join(dir,'cache'),'--offline','--ignore-scripts','--no-audit','--no-fund',join(archives,`openworkerai-harness-sdk-${version}.tgz`),join(archives,`openworkerai-harness-runtime-${process.platform}-${process.arch}-${version}.tgz`),join(archives,`create-openworker-${version}.tgz`)],{cwd:dir,stdio:'inherit',shell:process.platform==='win32'});
+ execFileSync(npm,['install','--cache',join(dir,'cache'),'--offline','--ignore-scripts','--no-audit','--no-fund',join(archives,`openworkerai-harness-sdk-${version}.tgz`),join(archives,`openworkerai-harness-runtime-${process.platform}-${process.arch}-${version}.tgz`),join(archives,`create-openworker-${version}.tgz`),join(archives,builderArchive)],{cwd:dir,env,stdio:'inherit',shell:process.platform==='win32'});
+ await checkBuilder(dir,builder);
  execFileSync(process.execPath,[join(root,'release/check-examples.mjs'),dir],{stdio:'inherit'});
  execFileSync(process.execPath,[join(root,'typescript-sdk/node_modules/typescript/bin/tsc'),join(dir,'desktop.ts'),'--module','nodenext','--target','es2022','--strict','--skipLibCheck','--typeRoots',join(root,'typescript-sdk/node_modules/@types')],{cwd:dir,stdio:'inherit'});
  execFileSync(process.execPath,[join(dir,'node_modules/create-openworker/create.mjs'),join(dir,'new-app')],{cwd:dir,stdio:'inherit'});
@@ -28,6 +34,7 @@ try {
  try {assert.equal((await h.observability.health()).recording_enabled,true);assert.equal((await h.observability.flush()).recording_drained,true);assert.equal(langfuseTelemetry('http://127.0.0.1:1','AUTH').acknowledgement,'langfuse_v4');assert(evidenceJsonl({selection:{sessionId:'s',turnId:'t'},watermark:0,timeline:{},summary:{}}).includes('selected_pages_only'));}
  finally {await h.shutdown();}
  `);
- execFileSync(process.execPath,[join(dir,'observability.mjs')],{cwd:dir,stdio:'inherit'});
- console.log('Packed npm client, native runtime, starter and exact TypeScript guide verified');
+ execFileSync(process.execPath,[join(dir,'observability.mjs')],{cwd:dir,env,stdio:'inherit'});
+ execFileSync(process.execPath,['--test',join(root,'../skills/local-script.test.mjs')],{cwd:dir,env:{...env,OW_SKILL_PACKAGE_DIR:join(dir,'node_modules/@openworkerai/openworker-harness-builder'),OW_SKILL_SDK_NODE_MODULES:join(dir,'node_modules')},stdio:'inherit'});
+ console.log('Packed SDK/runtime, builder project/global installs and backups, approval demo, starter and TypeScript guide verified');
 } finally {await rm(dir,{recursive:true,force:true});}

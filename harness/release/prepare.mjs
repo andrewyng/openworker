@@ -7,14 +7,18 @@ import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {runtimeArch} from '../desktop-starters/templates/shared/scripts/runtime-identity.mjs';
 import {prepare as prepareSkills} from '../../skills/prepare.mjs';
+import {validateWindowsRuntime} from './windows-imports.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),root=resolve(here,'..');
 const manifest=JSON.parse(await readFile(join(here,'manifest.json'),'utf8'));
+const skillPackage=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8'));
+if(skillPackage.openworkerSdkVersion!==manifest.version)throw Error('Full releases require the builder skill to target the candidate SDK version');
 const [binary,targetName,output]=process.argv.slice(2);
 const target=manifest.targets.find(t=>t.rust===targetName);
 if(!binary||!target||!output)throw Error('Usage: node harness/release/prepare.mjs ABS_BINARY RUST_TARGET NEW_OUTPUT_DIRECTORY');
 const out=resolve(output);await mkdir(out); // Refuse to overwrite a prepared release.
 const bytes=await readFile(resolve(binary));
 if(runtimeArch(bytes,target.platform)!==target.arch)throw Error('Binary architecture does not match release target');
+if(target.platform==='win32')validateWindowsRuntime(bytes);
 if(target.platform===process.platform&&target.arch===process.arch) {
  const version=execFileSync(resolve(binary),['--version'],{encoding:'utf8'}).trim();
  if(!version.endsWith(' '+manifest.version))throw Error('Binary release version mismatch');
@@ -42,9 +46,9 @@ for(const [directory,files] of [['typescript-sdk',['dist','examples','README.md'
 const archives=join(out,'archives');await mkdir(archives);
 const npm=process.platform==='win32'?'npm.cmd':'npm';
 for(const directory of ['native','typescript-sdk','desktop-starters'])execFileSync(npm,['pack','--ignore-scripts','--json','--pack-destination',archives],{cwd:join(out,directory),stdio:'inherit',shell:process.platform==='win32'});
-const skillVersion=JSON.parse(await readFile(join(root,'../skills/package.json'),'utf8')).version;
 const skillArchives=await prepareSkills(join(out,'skills'));
-await cp(join(skillArchives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`),join(archives,`openworkerai-build-with-sdk-skills-${skillVersion}.tgz`));
+const skillArchive=`${skillPackage.name.replace(/^@/,'').replace('/','-')}-${skillPackage.version}.tgz`;
+await cp(join(skillArchives,skillArchive),join(archives,skillArchive));
 // Portable GitHub archive, with the same executable and metadata as npm.
 const archive=`openworker-harness-${manifest.version}-${target.rust}.tar.gz`;
 // A Windows drive letter is parsed as a remote host by GNU tar. Keep both

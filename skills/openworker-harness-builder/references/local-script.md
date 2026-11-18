@@ -10,7 +10,7 @@ Read `installation.json` beside this file and install its `sdkVersion`:
 
 ```sh
 npm init -y
-npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.3
+npm install --save-exact @openworkerai/harness-sdk@0.1.0-beta.5
 ```
 
 Copy both bundled files into your app, next to each other:
