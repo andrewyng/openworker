@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -288,6 +289,14 @@ def test_rest_crud(tmp_path, monkeypatch):
 # -- failure surfacing (drill 2026-08-20: silent startup crashes) ----------------
 
 
+def _crashing_stdio(message: str, exit_code: int) -> dict:
+    """A real child process that writes stderr and exits before MCP initialize."""
+    return {
+        "command": sys.executable,
+        "args": ["-c", f"import sys; print({message!r}, file=sys.stderr); sys.exit({exit_code})"],
+    }
+
+
 @pytest.mark.asyncio
 async def test_stdio_startup_crash_captures_stderr_tail(tmp_path, monkeypatch):
     """A stdio server that dies before initialize leaves its stderr tail behind."""
@@ -297,8 +306,7 @@ async def test_stdio_startup_crash_captures_stderr_tail(tmp_path, monkeypatch):
     server = MCPServerDef(
         name="doomed",
         transport="stdio",
-        command="/bin/sh",
-        args=["-c", "echo 'usage: doomed --flag' >&2; exit 7"],
+        **_crashing_stdio("usage: doomed --flag", 7),
     )
     with pytest.raises(Exception):
         await mgr.ensure(server)
@@ -318,8 +326,7 @@ async def test_prepare_records_failure_status_and_session_notice(
         {
             "mcpServers": {
                 "sales-db": {
-                    "command": "/bin/sh",
-                    "args": ["-c", "echo 'boom: bad args' >&2; exit 2"],
+                    **_crashing_stdio("boom: bad args", 2),
                     "enabled": True,
                 }
             }
@@ -356,8 +363,7 @@ async def test_connect_mcp_failure_includes_stderr_tail(tmp_path, monkeypatch):
         {
             "mcpServers": {
                 "doomed": {
-                    "command": "/bin/sh",
-                    "args": ["-c", "echo 'usage: doomed --flag' >&2; exit 7"],
+                    **_crashing_stdio("usage: doomed --flag", 7),
                     "enabled": True,
                 }
             }
