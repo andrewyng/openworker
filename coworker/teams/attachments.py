@@ -65,10 +65,7 @@ class AttachmentStore:
         stored = f"{hashlib.sha256(data).hexdigest()}.{ext}"
         self.root.mkdir(parents=True, exist_ok=True)
         target = self.root / stored
-        if target.exists():
-            if target.is_symlink() or target.stat().st_size != len(data) or target.read_bytes() != data:
-                raise BoardError("stored attachment failed integrity verification")
-        else:
+        if not target.exists():
             # Unique staging files: concurrent identical captures must not share
             # a .tmp name. Only complete, flushed bytes become visible to readers.
             tmp = None
@@ -78,12 +75,21 @@ class AttachmentStore:
                     file.write(data)
                     file.flush()
                     os.fsync(file.fileno())
-                tmp.replace(target)
-                if target.read_bytes() != data:
-                    raise BoardError("stored attachment failed integrity verification")
+                if os.name == "nt":
+                    # Windows cannot replace an attachment held open by a reader.
+                    # Unlike POSIX rename, Windows rename refuses an existing target,
+                    # so a concurrent publisher wins without disturbing its readers.
+                    try:
+                        tmp.rename(target)
+                    except FileExistsError:
+                        pass  # Verify the winning publisher's bytes below.
+                else:
+                    tmp.replace(target)
             finally:
                 if tmp is not None:
                     tmp.unlink(missing_ok=True)
+        if target.is_symlink() or target.stat().st_size != len(data) or target.read_bytes() != data:
+            raise BoardError("stored attachment failed integrity verification")
         safe_name = Path(filename).name.replace("#", "_")
         return f"{ATTACHMENT_SCHEME}{stored}#{safe_name}"
 
