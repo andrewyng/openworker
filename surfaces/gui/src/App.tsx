@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import { autoSwitchTarget } from "./modelSwitch";
 import { traceRows, type TraceRow } from "./obs3";
 import { useTranslation } from "react-i18next";
 import {
@@ -392,6 +393,13 @@ export function App() {
   // composer's "No model connected" chip. Default true so we don't flash the chip before settings
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
+  // Whether ANY model can run here (the backend's `any_model_ready`): decides between the
+  // composer's picker and its "connect a model" chip when the default cannot run (OPE-260).
+  const [anyModelReady, setAnyModelReady] = useState(true);
+  // The machine default's id, so a session on ANOTHER model is judged on its own: before
+  // OPE-260 the composer was handed the default's readiness and showed "No model" for a
+  // runnable Ollama session whenever the default's key was gone.
+  const [defaultModelId, setDefaultModelId] = useState("");
   // OPE-238: Activity opened on one tool call's audit rows (unset = all activity).
   const [auditCallId, setAuditCallId] = useState<string | undefined>(undefined);
   const [surface, setSurface] = useState<
@@ -842,6 +850,9 @@ export function App() {
         setContextBar(s.context_bar === true);
         setHideReasoningRunning(s.hide_reasoning_running === true);
         setModelReady(s.model_ready);
+        setDefaultModelId(s.model || "");
+        // An older backend without the field: fall back to the list the composer sees.
+        setAnyModelReady(s.any_model_ready ?? true);
         if (s.surfaces) setSurfaces(s.surfaces);
       })
       .catch(() => {});
@@ -896,9 +907,56 @@ export function App() {
   const selectableModels = machine ? machineSettings?.models || [] : models;
   const {
     picker: pickerModels,
-    unavailable: unavailableModels,
+    unavailable: coworkerUnavailable,
     bind: personaBind,
   } = coworkerModels(personaModels, selectableModels, model);
+  // ...and the session's own model when the machine no longer lists it (its provider's key
+  // was removed after the session started): the picker shows it as unavailable instead of as
+  // an ordinary choice (OPE-260). An empty list means the settings have not arrived yet, not
+  // that the model is gone. Compared in canonical form, like the coworker list above.
+  const currentListed =
+    selectableModels.length === 0 || selectableModels.map(canonicalModel).includes(canonicalModel(model));
+  const unavailableModels = [...coworkerUnavailable, ...(model && !currentListed ? [canonicalModel(model)] : [])];
+  // Can THIS session's model run here? The backend's `model_ready` speaks for the machine
+  // default only (and the list always carries the default, runnable or not), so: listed,
+  // and not the default while the default cannot run. An empty list means the settings
+  // have not arrived — stay true, the same no-flash default as the boot path.
+  const machineDefaultReady = machine ? (machineSettings ? machineSettings.model_ready : true) : modelReady;
+  const machineDefaultId = machine ? machineSettings?.model || "" : defaultModelId;
+  const currentModelReady =
+    selectableModels.length === 0 ||
+    (selectableModels.includes(model) && !(model === machineDefaultId && machineDefaultReady === false));
+  // A session left on a model this machine can no longer run moves to the machine default
+  // by itself, and the transcript says why (OPE-260, owner's call 2026-11-07). The rule is
+  // `autoSwitchTarget`; the ref keeps the server's generic "Model switched" line from
+  // repeating the explanation when its `model_changed` arrives for this very switch.
+  const autoSwitchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (running) return;
+    const to = autoSwitchTarget({
+      model,
+      selectable: selectableModels,
+      defaultId: machineDefaultId,
+      defaultReady: machineDefaultReady === true,
+      personaBound: personaModels.length > 0,
+    });
+    if (!to) return;
+    const labels = machine ? machineSettings?.model_labels || {} : modelLabels;
+    // The curated label, else the id without its provider prefix — what the pill shows.
+    const name = (m: string) => labels[m] || (m.includes(":") ? m.split(":").slice(1).join(":") : m);
+    autoSwitchedRef.current = to;
+    // The explanation goes where there is a conversation to explain it to. An empty
+    // session switches quietly: before the settings arrive its `model` is only the
+    // boot-time placeholder, and a notice there would announce a switch nobody saw.
+    if (items.length > 0) {
+      setItems((p) => [
+        ...p,
+        { kind: "notice", tone: "warn", text: t("app.notice.model_auto_switched", { from: name(model), to: name(to) }) },
+      ]);
+    }
+    changeModel(to);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, selectableModels.join("|"), machineDefaultId, machineDefaultReady, running, personaModels.length, items.length]);
   const selectableKey = selectableModels.join("|");
   useEffect(() => {
     if (items.length > 0 || running) return;
@@ -1168,6 +1226,11 @@ export function App() {
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
           if (d.model) setModel(d.model);
+          if (d.model && autoSwitchedRef.current === d.model) {
+            // Our own automatic switch: the transcript already says what happened and why.
+            autoSwitchedRef.current = null;
+            break;
+          }
           setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || t("app.notice.model_switched") }]);
           break;
         case "memory_saved":
@@ -2630,11 +2693,12 @@ export function App() {
               // While machine settings load, stay true — same no-flash default
               // as the desktop boot.
               modelReady={
-                (machine ? (machineSettings ? machineSettings.model_ready : true) : modelReady) &&
+                currentModelReady &&
                 // A coworker bound to a model this machine cannot run shows the honest
                 // "No model" state, whatever the machine default says.
                 !(personaModels.length > 0 && unavailableModels.includes(canonicalModel(model)))
               }
+              anyModelReady={machine ? (machineSettings?.any_model_ready ?? true) : anyModelReady}
               onConnectModel={openModelSetup}
               onOpenMemory={() => openSettings("memory")}
               onConfigureVoiceInput={() => openSettings("voice")}
