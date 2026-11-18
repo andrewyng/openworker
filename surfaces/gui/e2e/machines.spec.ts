@@ -30,7 +30,17 @@ async function openMachines(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Machines", exact: true }).click();
 }
 
+// The local-home row names the host the engine runs on. The desktop shell
+// injects __OCW_PLATFORM__ before the SPA loads; pin it here so the row reads
+// the same on every machine the suite runs on (CI is Linux).
+async function pinPlatform(page: import("@playwright/test").Page, os: string) {
+  await page.addInitScript((value: string) => {
+    (window as any).__OCW_PLATFORM__ = value;
+  }, os);
+}
+
 test("machine rows: This Mac + presence, offline machines keep their row", async ({ page }) => {
+  await pinPlatform(page, "macos");
   await seedMachines(page, [HETZNER, MACPRO]);
   await openMachines(page);
 
@@ -41,6 +51,15 @@ test("machine rows: This Mac + presence, offline machines keep their row", async
   const macpro = page.getByTestId("machine-old-macpro");
   await expect(macpro.getByText(/last seen/)).toBeVisible();
   await expect(macpro.getByText(/v0\.1\.9/)).toBeVisible();
+});
+
+test("the local home row names the host OS, not This Mac everywhere (#904)", async ({ page }) => {
+  await pinPlatform(page, "windows");
+  await seedMachines(page, [HETZNER]);
+  await openMachines(page);
+
+  await expect(page.getByText("This PC", { exact: true })).toBeVisible();
+  await expect(page.getByText("This Mac", { exact: true })).toHaveCount(0);
 });
 
 test("rename round-trips; removing a connected machine is refused", async ({ page }) => {

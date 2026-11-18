@@ -2210,6 +2210,8 @@
     "title": "机器",
     "sub": "已加入此应用的无界面 OpenWorker。机器只会主动连接到你 —— 从不接受外部连接。即使关闭此应用，机器上的会话也会继续运行。",
     "this_mac": "这台 Mac",
+    "this_pc": "这台 PC",
+    "this_machine": "本机",
     "always_available": "始终可用",
     "never_seen": "从未上线",
     "min_ago": "{{n}} 分钟前",

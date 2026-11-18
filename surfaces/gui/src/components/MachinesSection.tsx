@@ -33,6 +33,7 @@ import {
   type CloudMachinesInfo,
 } from "../api";
 import { profileHash, sealProfiles } from "../seal";
+import { platformOS } from "../tauri";
 import { consumeApprovalCode, peekApprovalCode } from "../routes";
 import { keyPushAllowed } from "../cloudAuth";
 import { Icon } from "./Icon";
@@ -65,6 +66,19 @@ function joinedLabel(epochSeconds: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+// The row for the engine this browser is talking to. Its name follows the host
+// that engine runs on (platformOS — the shell's injected OS, UA in browser dev),
+// NOT the Mac the page was designed on: a Windows install read "This Mac" until
+// this asked (#904). Unknown/other hosts get the neutral wording rather than a
+// platform guess. The same label belongs wherever the local home is named — the
+// sidebar's grouping and the connector pages still say "This Mac" everywhere.
+function thisHostLabel(t: TFunction): string {
+  const os = platformOS();
+  if (os === "windows") return t("machines.this_pc");
+  if (os === "macos") return t("machines.this_mac");
+  return t("machines.this_machine");
 }
 
 export function MachinesSection() {
@@ -352,7 +366,7 @@ export function MachinesSection() {
             💻
           </div>
           <div>
-            <div className="text-ui font-medium text-ink">{t("machines.this_mac")}</div>
+            <div className="text-ui font-medium text-ink">{thisHostLabel(t)}</div>
             <div className={META}>{t("machines.always_available")}</div>
           </div>
         </div>

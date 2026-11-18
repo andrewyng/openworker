@@ -2261,6 +2261,8 @@
     "title": "Machines",
     "sub": "Headless OpenWorkers that joined this app. Machines dial out to you — they never accept connections. Sessions on a machine keep running while this app is closed.",
     "this_mac": "This Mac",
+    "this_pc": "This PC",
+    "this_machine": "This machine",
     "always_available": "always available",
     "never_seen": "never seen",
     "min_ago": "{{n}} min ago",

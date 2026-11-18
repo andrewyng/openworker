@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MachinesSection } from "./MachinesSection";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // The local row's label comes from the shell-injected OS; don't leak a
+  // simulated platform into the next test.
+  delete (globalThis as any).__OCW_PLATFORM__;
+});
 
 const baseMachines = () => [
     {
@@ -61,7 +66,27 @@ beforeEach(() => {
 });
 
 describe("MachinesSection", () => {
-  it("renders This Mac plus machine rows with presence", async () => {
+  // The row for the engine this app is talking to. platformOS() reads the
+  // shell-injected OS (with a userAgent fallback for browser dev), so pinning
+  // the global is how each host is simulated — the same trick as
+  // e2e/composer-platform.spec.ts.
+  describe("the local home row follows the host OS (#904)", () => {
+    const cases: [string, string][] = [
+      ["macos", "This Mac"],
+      ["windows", "This PC"],
+      ["linux", "This machine"],
+    ];
+    for (const [os, label] of cases) {
+      it(`names the local home "${label}" on ${os}`, () => {
+        (globalThis as any).__OCW_PLATFORM__ = os;
+        render(<MachinesSection />);
+        expect(screen.getByText(label)).toBeTruthy();
+      });
+    }
+  });
+
+  it("renders the local home plus machine rows with presence", async () => {
+    (globalThis as any).__OCW_PLATFORM__ = "macos";
     render(<MachinesSection />);
     expect(screen.getByText("This Mac")).toBeTruthy();
     await waitFor(() => expect(screen.getByText("hetzner-box")).toBeTruthy());
