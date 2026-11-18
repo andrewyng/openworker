@@ -197,15 +197,21 @@ def deliver_callback(code: str, state: Optional[str]) -> bool:
 
     A callback whose `state` doesn't match the pending flow's is ignored (returns False)
     WITHOUT consuming the pending future, so a stray/forged local hit can't abort a live
-    sign-in — only the browser redirect carrying the SDK's own state resolves it.
+    sign-in — only the browser redirect carrying the SDK's own state resolves it. A flow
+    that captured no state at all is refused the same way: there is nothing to match, so
+    nothing distinguishes the genuine redirect from a local process's chosen code.
     """
     global _pending
     if _pending is None or _pending.done():
         return False
-    # Only enforce when we actually captured a state for this flow; a flow with no state
-    # in its authorize URL falls back to the prior accept-any behavior.
-    if _expected_state is not None and (
-        state is None or not secrets.compare_digest(state, _expected_state)
+    # Fail closed on a flow that captured no `state` (an authorize URL without one):
+    # the callback route is tokenless by design, so "any code resolves the flow" hands
+    # a local process an injection slot for a code of its choosing — the victim's
+    # client then exchanges the attacker's code. Refuse, exactly like a mismatch.
+    if (
+        _expected_state is None
+        or state is None
+        or not secrets.compare_digest(state, _expected_state)
     ):
         return False
     pending, _pending = _pending, None
