@@ -99,6 +99,31 @@ def test_unresolvable_host_is_refused_not_fetched(monkeypatch):
     assert "could not resolve" in guard.check_url("http://nope.invalid/")
 
 
+def test_empty_answer_is_refused_not_fetched_unpinned(monkeypatch):
+    """getaddrinfo may succeed with no record at all; that must not allow an
+    unpinned fetch, where the client resolves the name itself, unchecked."""
+    monkeypatch.setattr(guard.socket, "getaddrinfo", lambda *a, **k: [])
+    reason = guard.check_url("http://empty.example.com/")
+    assert "could not resolve" in reason
+    client = _Client([_Resp(200)])
+    with pytest.raises(PermissionError, match="could not resolve"):
+        guard.get_checked(client, "https://empty.example.com/")
+    assert client.requested == [], "nothing may be fetched when no address was vetted"
+
+
+def test_garbage_answers_are_refused_not_fetched_unpinned(monkeypatch):
+    """A record that is not an address is not a public one. Every answer failing
+    to parse must read as unresolved, not as allowed-and-unpinned."""
+    monkeypatch.setattr(
+        guard.socket, "getaddrinfo",
+        lambda *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-address", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("also-not-one", 80)),
+        ],
+    )
+    assert "could not resolve" in guard.check_url("http://garbage.example.com/")
+
+
 # -- redirects ----------------------------------------------------------------
 
 class _Resp:
