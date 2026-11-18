@@ -97,3 +97,33 @@ test("the name field prefills from the URL's distinctive host label", async ({ p
   await modal.getByTestId("mcp-add-url").fill("https://mcp.linear.app/mcp");
   await expect(modal.getByTestId("mcp-add-name")).toHaveValue("warehouse");
 });
+
+test("edit custom configuration saves and reloads without removing the server", async ({ page }) => {
+  let server = {
+    name: "editable", enabled: true, transport: "http", requires_approval: true,
+    status: "connected", tool_count: 1,
+    config: { url: "https://old.example/mcp", headers: { Authorization: "***" } },
+  };
+  let saved: unknown;
+  await page.route("**/v1/mcp", (route) => route.fulfill({ json: { servers: [server] } }));
+  await page.route("**/v1/mcp/editable", async (route) => {
+    expect(route.request().method()).toBe("PUT");
+    saved = route.request().postDataJSON();
+    server = { ...server, config: saved as typeof server.config, tool_count: 2 };
+    await route.fulfill({ json: { ok: true, status: "connected", tool_count: 2 } });
+  });
+  await openConnectors(page);
+  await page.getByTestId("mcp-row-editable").click();
+  await page.getByRole("button", { name: "Edit editable", exact: true }).click();
+  const editor = page.getByLabel("Configuration JSON");
+  await expect(editor).toBeFocused();
+  expect(JSON.parse(await editor.inputValue())).toEqual(server.config);
+  const updated = { ...server.config, url: "https://new.example/mcp" };
+  await editor.fill(JSON.stringify(updated));
+  await expect(page.getByTestId("mcp-remove-editable")).toBeDisabled();
+  await page.getByRole("button", { name: "Save & reload", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Saved and reloaded. 2 tools available.");
+  await expect(editor).toHaveCount(0);
+  expect(saved).toEqual(updated);
+  await expect(page.getByTestId("mcp-detail-editable")).toContainText("2 tools");
+});

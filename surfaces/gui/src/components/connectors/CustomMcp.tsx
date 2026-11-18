@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { getI18n, useTranslation } from "react-i18next";
 import {
   addMcpServer,
@@ -8,6 +8,7 @@ import {
   getMcpTools,
   getMcpTrust,
   patchMcpServer,
+  replaceMcpServer,
   revealMcpConfig,
   revokeMcpTrust,
   signoutMcp,
@@ -58,6 +59,8 @@ export function mcpChip(s: McpServer) {
   const t = getI18n().t;
   const isOauth = s.auth === "oauth";
   if (!s.enabled) return <span className={CHIP_OFF}>● {t("mcp.status_off")}</span>;
+  if (s.status === "reloading")
+    return <span className={CHIP_WARN}>● {t("mcp.edit_reloading")}</span>;
   if (s.status === "authorizing")
     return <span className={CHIP_WARN}>● {isOauth ? t("mcp.status_signing_in") : t("mcp.status_testing")}</span>;
   // One healthy word (owner call 2026-08-30): connected and merely-tested both
@@ -115,7 +118,7 @@ export function CustomMcpGroup({
   // but this page has no standing MCP poll — the chip froze on Testing forever
   // (owner-hit 2026-08-21, add-by-URL against a guarded server). While any row is
   // authorizing, poll the parent's refresh until every row settles.
-  const anyAuthorizing = servers.some((s) => s.status === "authorizing");
+  const anyAuthorizing = servers.some((s) => s.status === "authorizing" || s.status === "reloading");
   useEffect(() => {
     if (!anyAuthorizing) return;
     const t = setInterval(onChanged, 1000);
@@ -755,6 +758,64 @@ export function McpServerDetail({
 }) {
   const { t } = useTranslation();
 
+  const [toolRevision, setToolRevision] = useState(0);
+  const [toolErr, setToolErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const editorId = useId();
+  const reloading = saving || server.status === "reloading";
+
+  const startEditing = () => {
+    setDraft(JSON.stringify(server.config, null, 2));
+    setEditError(null);
+    setNotice(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    setEditError(null);
+    let config: Record<string, any>;
+    try {
+      config = JSON.parse(draft);
+      if (!config || typeof config !== "object" || Array.isArray(config)) {
+        throw new Error(t("mcp.edit_object"));
+      }
+      if (!config.command && !config.url) {
+        throw new Error(t("mcp.edit_shape"));
+      }
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : t("mcp.edit_invalid"));
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    setToolErr(null);
+    try {
+      const result = await replaceMcpServer(server.name, config);
+      if (!result.ok) throw new Error(result.error || t("mcp.edit_failed"));
+      setToolRevision((value) => value + 1);
+      setEditing(false);
+      setDraft("");
+      if (result.status === "error") {
+        setToolErr(t("mcp.edit_reconnect_failed", { error: result.error || t("mcp.edit_check_server") }));
+      } else {
+        setNotice(result.status === "needs_auth"
+          ? t("mcp.edit_needs_auth")
+          : result.status === "disabled"
+            ? t("mcp.edit_disabled")
+            : t("mcp.edit_reloaded", { count: result.tool_count ?? 0 }));
+      }
+      await onChanged();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : t("mcp.edit_failed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const isOauth = server.auth === "oauth";
   // LOCAL testing state (owner catch 2026-08-30): the server reports "connected"
   // ahead of "authorizing", so re-testing a HEALTHY server never flips the status
@@ -807,109 +868,150 @@ export function McpServerDetail({
         {mcpChip(server)}
       </div>
 
-      <div className={GRP}>
-        <div className={ROW}>
-          <span className="text-ui flex-1">{t("persona.enabled")}</span>
-          <Toggle
-            checked={server.enabled}
-            onChange={async () => {
-              await patchMcpServer(server.name, { enabled: !server.enabled });
-              onChanged();
-            }}
-            title={t("mcp.enable_title")}
+      <button
+        className={PILL_QUIET}
+        disabled={editing || reloading || testing}
+        aria-label={t("mcp.edit_label", { name: server.name })}
+        onClick={startEditing}
+      >
+        {t("mcp.edit_button")}
+      </button>
+      {editing && (
+        <form
+          className="mt-4 space-y-3 border-t border-line pt-4"
+          onSubmit={(event) => { event.preventDefault(); if (!saving) void save(); }}
+          aria-label={t("mcp.edit_title", { name: server.name })}
+        >
+          <label htmlFor={editorId} className="block text-[13px] font-medium">
+            {t("mcp.edit_json")}
+          </label>
+          <p id={`${editorId}-hint`} className="text-[12.5px] text-muted leading-relaxed">
+            {t("mcp.edit_hint")}
+          </p>
+          <textarea
+            id={editorId}
+            autoFocus
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={saving}
+            spellCheck={false}
+            rows={12}
+            aria-describedby={`${editorId}-hint${editError ? ` ${editorId}-error` : ""}`}
+            aria-invalid={!!editError}
+            className="block w-full min-w-0 rounded-lg border border-line bg-paper px-3 py-2.5 font-mono text-[16px] sm:text-[13px] text-ink resize-y outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-60"
           />
-        </div>
-        <div className={ROW}>
-          <span className="text-ui flex-1">
-            {t("mcp.test_connection")}
-            <span className="block text-meta text-faint">{t("mcp.test_desc")}</span>
-          </span>
-          {server.auth_hint && !isOauth ? (
-            <span
-              className={PILL_ACCENT + " cursor-pointer"}
-              role="button"
-              onClick={signInWithOauth}
-              data-testid={`mcp-authfix-${server.name}`}
-            >
-              {t("gallery.sign_in")}
+          {editError && <p id={`${editorId}-error`} role="alert" className="text-[13px] text-danger break-words">{editError}</p>}
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="submit" className={PILL_ACCENT} disabled={saving}>
+              {saving ? t("mcp.edit_saving") : t("mcp.edit_save")}
+            </button>
+            <button type="button" className={PILL_QUIET} disabled={saving} onClick={() => { setEditing(false); setDraft(""); setEditError(null); }}>
+              {t("manage.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
+      {notice && <p role="status" className="mt-2 text-[12.5px] text-muted">{notice}</p>}
+      {toolErr && <p role="alert" className="text-ui text-danger break-words">{toolErr}</p>}
+      <fieldset disabled={editing || reloading} className="space-y-4 disabled:opacity-60">
+        <div className={GRP}>
+          <div className={ROW}>
+            <span className="text-ui flex-1">{t("persona.enabled")}</span>
+            <Toggle
+              checked={server.enabled}
+              onChange={async () => {
+                await patchMcpServer(server.name, { enabled: !server.enabled });
+                onChanged();
+              }}
+              title={t("mcp.enable_title")}
+            />
+          </div>
+          <div className={ROW}>
+            <span className="text-ui flex-1">
+              {t("mcp.test_connection")}
+              <span className="block text-meta text-faint">{t("mcp.test_desc")}</span>
             </span>
-          ) : isOauth && server.status === "needs_auth" ? (
-            <span
-              className={PILL_ACCENT + " cursor-pointer"}
-              role="button"
-              onClick={runTest}
-              data-testid={`mcp-signin-${server.name}`}
+            {server.auth_hint && !isOauth ? (
+              <button
+                className={PILL_ACCENT + " cursor-pointer"}
+                disabled={authorizing}
+                onClick={signInWithOauth}
+                data-testid={`mcp-authfix-${server.name}`}
+              >
+                {t("gallery.sign_in")}
+              </button>
+            ) : isOauth && server.status === "needs_auth" ? (
+              <button
+                className={PILL_ACCENT + " cursor-pointer"}
+                disabled={authorizing}
+                onClick={runTest}
+                data-testid={`mcp-signin-${server.name}`}
+              >
+                {t("gallery.sign_in")}
+              </button>
+            ) : (
+              <button
+                className={PILL_QUIET + " cursor-pointer" + (authorizing ? " opacity-50" : "")}
+                disabled={authorizing}
+                onClick={authorizing ? undefined : runTest}
+                data-testid={`mcp-test-${server.name}`}
+              >
+                {authorizing ? t("mcp.status_testing") : t("provider.test_btn")}
+              </button>
+            )}
+          </div>
+          {/* The Test RESULT lands where the click happened (owner catch 2026-08-30:
+              "tested just now" only updated the header subtitle — same font, same
+              color, nowhere near the button). TRANSIENT (second owner catch): shown
+              for a few seconds after the test that just ran, then gone — a stale
+              "server responded · 42m ago" read as if it were still announcing. The
+              durable receipt stays in the header. Failures stay persistent in red. */}
+          {freshResult && server.status === "connected" && server.last_test_at ? (
+            <div
+              className="px-4 py-2 text-meta text-ok"
+              data-testid={`mcp-test-ok-${server.name}`}
             >
-              {t("gallery.sign_in")}
-            </span>
-          ) : (
-            <span
-              className={PILL_QUIET + " cursor-pointer" + (authorizing ? " opacity-50" : "")}
-              role="button"
-              onClick={authorizing ? undefined : runTest}
-              data-testid={`mcp-test-${server.name}`}
-            >
-              {authorizing ? t("mcp.status_testing") : t("provider.test_btn")}
-            </span>
+              ✓ {t("mcp.test_ok", { count: server.tool_count ?? 0, rel: relTime(server.last_test_at, t) })}
+            </div>
+          ) : null}
+          {server.last_error && server.status !== "connected" && (
+            <div className="px-4 py-2.5 text-ui text-danger break-words">
+              {server.last_error}
+            </div>
           )}
         </div>
-        {/* The Test RESULT lands where the click happened (owner catch 2026-08-30:
-            "tested just now" only updated the header subtitle — same font, same
-            color, nowhere near the button). TRANSIENT (second owner catch): shown
-            for a few seconds after the test that just ran, then gone — a stale
-            "server responded · 42m ago" read as if it were still announcing. The
-            durable receipt stays in the header. Failures stay persistent in red. */}
-        {freshResult && server.status === "connected" && server.last_test_at ? (
-          <div
-            className="px-4 py-2 text-meta text-ok"
-            data-testid={`mcp-test-ok-${server.name}`}
-          >
-            ✓ {t("mcp.test_ok", { count: server.tool_count ?? 0, rel: relTime(server.last_test_at, t) })}
-          </div>
-        ) : null}
-        {server.last_error && server.status !== "connected" && (
-          <div className="px-4 py-2.5 text-ui text-danger break-words">
-            {server.last_error}
-          </div>
-        )}
-      </div>
 
-      {/* OPE-136 §3: the tool review — which of this server's tools exist in sessions. */}
-      <McpToolReview server={server} onChanged={onChanged} />
+        {/* OPE-136 §3: the tool review — which of this server's tools exist in sessions. */}
+        {!editing && !reloading && <McpToolReview key={toolRevision} server={server} onChanged={onChanged} />}
 
-      {/* No Configuration mirror here anymore (owner call 2026-08-30): one file
-          serves every server, so the ground truth is revealed from ONE common
-          place — the "Show file" affordance under the Custom · MCP group. The
-          file itself carries what this page doesn't row-ify (headers, stdio
-          command/env, hand-edit parse checks). */}
-
-      <div className="flex items-center gap-4">
-        {isOauth && server.status === "connected" && (
+        <div className="flex items-center gap-4">
+          {isOauth && server.status === "connected" && (
+            <button
+              className="text-ui text-muted hover:text-ink"
+              onClick={async () => {
+                await signoutMcp(server.name);
+                onChanged();
+              }}
+              data-testid={`mcp-signout-${server.name}`}
+              title={t("mcp.signout_tip")}
+            >
+              {t("sidebar.sign_out")}
+            </button>
+          )}
           <button
-            className="text-ui text-muted hover:text-ink"
+            className="text-ui text-danger/80 hover:text-danger"
             onClick={async () => {
-              await signoutMcp(server.name);
+              await deleteMcpServer(server.name);
               onChanged();
+              onGone();
             }}
-            data-testid={`mcp-signout-${server.name}`}
-            title={t("mcp.signout_tip")}
+            data-testid={`mcp-remove-${server.name}`}
+            title={t("mcp.remove_tip")}
           >
-            {t("sidebar.sign_out")}
+            {t("mcp.remove_server")}
           </button>
-        )}
-        <button
-          className="text-ui text-danger/80 hover:text-danger"
-          onClick={async () => {
-            await deleteMcpServer(server.name);
-            onChanged();
-            onGone();
-          }}
-          data-testid={`mcp-remove-${server.name}`}
-          title={t("mcp.remove_tip")}
-        >
-          {t("mcp.remove_server")}
-        </button>
-      </div>
+        </div>
+      </fieldset>
     </div>
   );
 }

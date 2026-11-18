@@ -69,9 +69,9 @@ export function ConnectorsSection({
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => setConnectors([]));
-    getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
     getCloudStatus().then(setCloud).catch(() => setCloud(null));
     getSlackStatus().then(setSlack).catch(() => setSlack(null));
+    return getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
   };
   useEffect(() => {
     refresh();
@@ -83,7 +83,7 @@ export function ConnectorsSection({
 
   // While an MCP test/sign-in is in flight, poll fast so the chip flips to its
   // result (Live / Error / Needs sign-in) without the user touching anything.
-  const mcpBusy = mcpServers.some((s) => s.status === "authorizing");
+  const mcpBusy = mcpServers.some((s) => (s.status === "authorizing" || s.status === "reloading"));
   useEffect(() => {
     if (!mcpBusy) return;
     const t = setInterval(refresh, 2000);
