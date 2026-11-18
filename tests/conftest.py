@@ -29,7 +29,7 @@ def assert_user_only(path: Path) -> None:
     """
     if sys.platform == "win32":
         acl = subprocess.run(
-            ["icacls", str(path)], capture_output=True, text=True
+            ["icacls", str(path)], capture_output=True, encoding="oem", check=True
         ).stdout
         # `/inheritance:r` strips inherited ACEs; their absence is what proves the file
         # was restricted rather than left to inherit SYSTEM/Administrators from its parent.
