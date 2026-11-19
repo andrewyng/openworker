@@ -273,7 +273,7 @@ pruning. Canonical conversation retention remains a separate application decisio
 
 ## Runtime integrations
 
-A host can include trusted Rust crates that observe agent events or check an operation before it proceeds. The standard host starts with an empty integration catalog. A custom host calls each crate's registration function at startup. An embedded Rust app supplies that registry to `HarnessBuilder::integration_registry`. A managed host passes it to `openworker_sdk::cli::main_with_integrations`.
+A host can include trusted Rust crates that observe agent events or check an operation before it proceeds. The catalog lists the integrations compiled into that host. A custom host calls each crate's registration function at startup. An embedded Rust app supplies that registry to `HarnessBuilder::integration_registry`. A managed host passes it to `openworker_sdk::cli::main_with_integrations`.
 
 For a host that registers an integration called `tool-check`, an app can configure it once and request it on a session.
 
@@ -297,3 +297,31 @@ owcluster integrations policy set tool-check --mode required
 ```
 
 With `off-by-default` or `on-by-default`, the session preference overrides the agent preference, which overrides the cluster default. Default changes apply to new sessions. A `required` or `forbidden` policy overrides both application preferences at the next affected operation, including after recovery. Lifting the override restores the original session choice. Session snapshots expose the last applied decisions, their sources and policy revisions.
+
+### Palo Alto Networks Prisma AIRS
+
+Hosts built with the `security-adapters` feature register **Prisma AIRS** as `prisma-airs`. Configure the synchronous scan endpoint and the name of your AIRS security profile. Select which operations send content for inspection.
+
+```typescript
+const harness = await Harness.start({
+  executable: hostPath,
+  stateDir,
+  inheritEnv: ["PANW_AI_SEC_API_KEY"],
+  integrations: {
+    "prisma-airs": {
+      scanner: {
+        endpoint: process.env.PRISMA_AIRS_SCAN_URL!,
+        protocol: { kind: "prismaAirs", profile: "agent-protection" },
+        credentialEnv: "PANW_AI_SEC_API_KEY",
+      },
+      boundaries: ["beforeInput", "beforeOutput"],
+    },
+  },
+});
+const agent = harness.createAgent(agentDefinition);
+const session = await agent.newSession({ integrations: { "prisma-airs": true } });
+```
+
+`beforeInput` and `beforeOutput` inspect user and assistant text. `beforeTool` inspects the proposed arguments. `afterTool` inspects the result before it returns to the agent. A failed or inconclusive scan stops the protected operation. A tool whose result is blocked may already have executed.
+
+For cluster deployments, supply matching host settings and credentials on the API and workers, then run `owcluster integrations policy set prisma-airs --mode required` to enforce scanning across sessions.

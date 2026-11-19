@@ -1968,6 +1968,7 @@ version = "0.1.0-beta.5"
 dependencies = [
  "anyhow",
  "openworker-guardrails",
+ "openworker-runtime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

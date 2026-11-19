@@ -126,6 +126,8 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --features openworker-sdk/test-support,openworker-server-reference/team-test -- -D warnings
+      - name: Test Prisma AIRS registration and scanning
+        run: cargo test --locked -p openworker-sdk --features test-support,security-adapters --test security_scanner
 
   sdk-storage:
     strategy:
