@@ -422,6 +422,7 @@ export class Harness {
       name: provider.name,
       api: provider.api,
       base_url: provider.baseUrl,
+      inference_options: provider.inferenceOptions,
       stream_usage: provider.streamUsage,
       prompt_caching: provider.promptCaching,
       thinking: provider.thinking,

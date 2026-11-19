@@ -17,6 +17,7 @@ pub mod environment_openshell;
 pub mod execution;
 pub mod history_import;
 pub mod http_mcp;
+pub mod inference_options;
 #[cfg(not(windows))]
 pub mod io;
 #[cfg(windows)]

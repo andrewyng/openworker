@@ -51,6 +51,7 @@ pub struct ModelProvider {
     stream_usage: Option<bool>,
     prompt_caching: Option<bool>,
     thinking: Option<openworker_runtime::anthropic::Thinking>,
+    inference_options: Option<openworker_runtime::inference_options::InferenceOptions>,
     credentials: Option<Credentials>,
     pub(crate) access_auth: bool,
     pub(crate) refresh: Option<openworker_runtime::provider_auth::Refresh>,
@@ -73,10 +74,18 @@ impl ModelProvider {
             stream_usage: None,
             prompt_caching: None,
             thinking: None,
+            inference_options: None,
             credentials: None,
             access_auth: false,
             refresh: None,
         }
+    }
+    pub fn inference_options(
+        mut self,
+        options: openworker_runtime::inference_options::InferenceOptions,
+    ) -> Self {
+        self.inference_options = Some(options);
+        self
     }
     pub fn base_url(mut self, value: impl Into<String>) -> Self {
         self.base_url = Some(value.into());
@@ -156,6 +165,12 @@ impl ModelProvider {
             ));
         }
         let mut wire = json!({"name":self.name,"api":self.api,"base_url":self.base_url,"credentials":self.credentials.map(Credentials::wire).transpose()?});
+        if let Some(options) = self.inference_options {
+            options
+                .validate()
+                .map_err(|_| Error::InvalidInput("Invalid inference options".into()))?;
+            wire["inference_options"] = json!(options);
+        }
         if let Some(enabled) = self.stream_usage {
             wire["stream_usage"] = json!(enabled);
         }

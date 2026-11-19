@@ -364,7 +364,13 @@ impl Model {
                 (api, format!("{}/{}", api.default_url(), api.path()))
             }
         };
+        let options = match &self.connection {
+            Some((manager, selection)) => manager.inference_options(selection)?,
+            None => Default::default(),
+        };
+        let request_url = options.url(&endpoint)?;
         let client = reqwest::Client::builder()
+            .default_headers(options.headers()?)
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))
@@ -399,9 +405,10 @@ impl Model {
                     body.as_object_mut().unwrap().remove("stream_options");
                 }
             }
+            options.extend(&mut body)?;
             crate::provider::request_decoded(
                 &client,
-                &endpoint,
+                &request_url,
                 key,
                 body,
                 tx,
@@ -443,7 +450,8 @@ impl Model {
                     }
                 }
             }
-            crate::anthropic::request(&client, &endpoint, key, body, tx)
+            options.extend(&mut body)?;
+            crate::anthropic::request(&client, &request_url, key, body, tx)
                 .await
                 .map_err(|e| e.with_api(api))?;
             return Ok(());
@@ -469,7 +477,8 @@ impl Model {
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx)
+        options.extend(&mut body)?;
+        crate::provider::request(&client, &request_url, key, body, tx)
             .await
             .map_err(|e| e.with_api(api))?;
         Ok(())

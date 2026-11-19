@@ -39,7 +39,13 @@ export interface ProviderAuth {
     signal: AbortSignal;
   }) => Promise<AccessToken>;
 }
+export interface InferenceOptions {
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+  body?: Record<string, Json>;
+}
 export interface ModelProvider {
+  inferenceOptions?: InferenceOptions;
   name: string;
   api: "responses" | "chat-completions" | "anthropic";
   baseUrl?: string;
