@@ -15,6 +15,10 @@
     "./evaluation-export": {
       "types": "./dist/evaluation-export.d.ts",
       "import": "./dist/evaluation-export.js"
+    },
+    "./adapters/intel-ima": {
+      "types": "./dist/adapters/intel-ima.d.ts",
+      "import": "./dist/adapters/intel-ima.js"
     }
   },
   "files": [

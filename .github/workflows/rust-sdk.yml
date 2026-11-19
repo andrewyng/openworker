@@ -228,6 +228,7 @@ jobs:
           npm --prefix typescript-sdk ci
           npm --prefix typescript-sdk test
           node --test typescript-sdk/test/observability-live.test.mjs typescript-sdk/test/evaluation-delivery-live.test.mjs
+          node --test typescript-sdk/test/provider-lifecycle-live.test.mjs
           node ../harness/trace-viewer/sync.mjs --check
           npm --prefix typescript-sdk run test:integration
           npm --prefix typescript-sdk run test:dynamic-agents

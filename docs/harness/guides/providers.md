@@ -195,3 +195,54 @@ as well as indexed argument fragments. It never guesses how to combine partial
 unindexed calls, and incomplete streams cannot authorize tool execution.
 See [Google's compatibility guide](https://ai.google.dev/gemini-api/docs/openai)
 and [thought signature requirements](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+
+## Inference request options
+
+A provider registration can supply nonsecret headers, URL query parameters and
+extra JSON body fields. In TypeScript use `inferenceOptions`. Rust accepts
+`ModelProvider::inference_options(InferenceOptions { .. })`. The runtime stores
+these settings with the provider and applies them to that endpoint's inference
+requests. Configure credentials separately. Omitting options during credential
+rotation preserves them. Supply an empty options object to clear them.
+
+```typescript
+await harness.setModelProvider({
+  name: "local-router", api: "chat-completions", baseUrl,
+  credentials: { apiKeyEnv: "ROUTER_KEY", storage: "memory" },
+  inferenceOptions: {
+    headers: { "x-routing-group": "desktop" },
+    query: { "api-version": "2" },
+    body: { sampling_hint: "interactive" },
+  },
+});
+```
+
+## Subscribe to session state
+
+Register a listener on a managed harness and opt the agent's provider binding in.
+The runtime delivers metadata in the background. The session ID and journal
+sequence identify a notification across delivery retries. Use that pair to
+deduplicate external effects. Applications recovering a harness must re-register
+their listener. A remote client cannot upload a callback into a cluster worker.
+
+```typescript
+await harness.registerProviderObserver("local-router", async event => {
+  console.log(event.sessionId, event.sequence, event.state, event.interactionId);
+});
+const agent = harness.createAgent({
+  name: "assistant", instructions: "Help the user.", tools: [],
+  defaultModel: { provider: "local-router", name: "local-model", notifyOnSessionState: true },
+});
+```
+
+For an opted-in main inference attempt, the endpoint receives
+`x-openworker-session-id` and `x-openworker-event-sequence`. Bind listeners
+only to endpoints intended to receive those identifiers. Approvals emit
+`waiting_user_approval` and `user_approval_done` with the decision. Questions
+emit `waiting_user_response` and `user_response_done`. Each answered pair
+carries the same interaction ID. A cancelled wait is not a user decision.
+`tool_queued` marks the request, and `waiting_tool_completion` marks actual tool
+execution. A completed turn can be followed by another. Call `session.close()`
+to announce `session_closed`.
+
+For a complete adapter example see the [Intel IMA integration](../../../harness/typescript-sdk/src/adapters/README.md).
