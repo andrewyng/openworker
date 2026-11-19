@@ -37,14 +37,22 @@ fi
 
 echo "Using $PYTHON ($version)"
 "$PYTHON" -m venv "$VENV"
+# A venv's executables live in bin/ on POSIX but in Scripts/ on Windows (a
+# Git-Bash or WSL run of this script gets the Windows layout). Detect once,
+# reference everywhere below.
+if [ -d "$VENV/bin" ]; then
+  VENV_BIN="$VENV/bin"
+else
+  VENV_BIN="$VENV/Scripts"
+fi
 # The coworker package (server, engine, connectors) + inbound-messaging extras.
 # aisuite comes in as a regular dependency (git-pinned in pyproject.toml until
 # the next PyPI release).
-"$VENV/bin/pip" install --quiet --upgrade pip
+"$VENV_BIN/pip" install --quiet --upgrade pip
 # Keep the extras in step with CI (.github/workflows/ci.yml) — the bedrock test
 # suite imports boto3 directly, so skipping that extra leaves a fresh env red.
-"$VENV/bin/pip" install --quiet -e "$ROOT[messaging,dev,bedrock]"
+"$VENV_BIN/pip" install --quiet -e "$ROOT[messaging,dev,bedrock]"
 
-"$VENV/bin/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
+"$VENV_BIN/python" -c 'import aisuite, coworker' # fail loudly if the wiring broke
 echo "Ready: $VENV"
-echo "  server: $VENV/bin/openworker-server --cwd /path/to/your/project --port 8765"
+echo "  server: $VENV_BIN/openworker-server --cwd /path/to/your/project --port 8765"
