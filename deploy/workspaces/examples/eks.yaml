@@ -1,0 +1,10 @@
+# Standard EKS with EC2 workers and the EBS and EFS CSI drivers.
+workloadNamespace: websites-pods
+metadata:
+  storageClass: workspace-gp3
+  size: 1Gi
+data:
+  storageClass: workspace-efs
+  accessMode: ReadWriteMany
+placement:
+  spreadSharedData: true

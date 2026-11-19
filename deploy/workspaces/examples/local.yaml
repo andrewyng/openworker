@@ -1,0 +1,10 @@
+workloadNamespace: websites-pods
+metadata:
+  storageClass: standard
+  size: 128Mi
+data:
+  storageClass: standard
+  size: 128Mi
+  accessMode: ReadWriteOnce
+placement:
+  pinNode: kind-worker # Replace with a node's kubernetes.io/hostname value.

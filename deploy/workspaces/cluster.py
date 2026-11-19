@@ -21,6 +21,7 @@ class Cluster:
         self.image = os.environ["RUNNER_IMAGE"]
         self.mode = os.getenv("DATA_MODE", "ReadWriteMany")
         self.node = os.getenv("PIN_NODE")
+        self.spread = os.getenv("SPREAD_SHARED_DATA", "false") == "true"
         self.storage_class = os.environ["STORAGE_CLASS"]
         if self.mode not in ("ReadWriteMany", "ReadWriteOnce", "ReadWriteOncePod"):
             raise ValueError("Unsupported DATA_MODE")
@@ -92,7 +93,14 @@ class Cluster:
             spec["nodeSelector"] = {"kubernetes.io/hostname": self.node}
         # Only the provider creates objects with these names. Adopt a creation
         # after a lost response, checking both ownership and the requested binding.
-        obj = self.ensure("pod", {"metadata": self.metadata(workspace), "spec": spec})
+        metadata = self.metadata(workspace)
+        metadata["labels"]["ow-workspace-data"] = data
+        if self.spread:
+            spec["affinity"] = {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+                "labelSelector": {"matchLabels": {"ow-workspace-data": data}},
+                "topologyKey": "kubernetes.io/hostname",
+            }]}}
+        obj = self.ensure("pod", {"metadata": metadata, "spec": spec})
         mounts = [v.persistent_volume_claim.claim_name for v in obj.spec.volumes if v.persistent_volume_claim]
         if mounts != [data] or obj.spec.containers[0].image != self.image:
             raise Failure("workspace_identity_changed", 409)

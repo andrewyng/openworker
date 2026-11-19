@@ -2,7 +2,7 @@
 
 A named provider creates a compute pod for each active workspace and a PVC for each data ID. Multiple sessions attached to one workspace use the same pod. A second workspace opened with the same data ID gets its own pod mounting the same claim. Session close releases a session’s access. Stopping a workspace releases its pod and preserves the project data for a later visit.
 
-## Install a registration
+## Install a registration with Helm
 
 Build both targets from this directory. Supply versions from a registry reachable by your cluster, or load the images into the local nodes. Use immutable images for a persistent installation.
 
@@ -11,24 +11,41 @@ docker build --target runner -t "$RUNNER_IMAGE" .
 docker build --target service -t "$SERVICE_IMAGE" .
 ```
 
-Choose a dedicated registration name such as `website-workspaces`. The renderer creates a control namespace for its single controller and metadata PVC, and a workload namespace for its project pods and data PVCs. The controller’s Kubernetes service account can manage pods and claims and execute the bundled file helper only within its workload namespace. Keep that namespace exclusive to this provider. File helpers run as a non-root user with a read-only image and no service account token.
+Use one pair of dedicated namespaces for each registration. The controller runs in the control namespace. Its service account manages workspace pods and claims and executes the bundled file helper in the workload namespace. Workspace pods run as a non-root user without a service account token. Enable Kubernetes NetworkPolicy enforcement in the cluster to enforce workload network isolation.
 
-Create the control namespace, then supply a strong bearer token and a TLS certificate whose SAN covers the service endpoint. Files below are operator-provided. The token file should contain at least 32 printable characters with no trailing newline.
+Create both namespaces and two secrets before installing. The certificate SAN must cover the actual endpoint used by the OpenWorker runtime. The bearer token file must contain at least 32 printable characters with no trailing newline. Keep both secrets outside Helm values and release history.
 
 ```sh
-name=website-workspaces
-kubectl create namespace "$name-control"
-kubectl -n "$name-control" create secret generic workspace-auth --from-file=token="$TOKEN_FILE"
-kubectl -n "$name-control" create secret tls workspace-tls --cert="$TLS_CERT" --key="$TLS_KEY"
-
-python3 render.py --name "$name" \
-  --service-image "$SERVICE_IMAGE" --runner-image "$RUNNER_IMAGE" \
-  --metadata-class "$METADATA_CLASS" --data-class "$SHARED_STORAGE_CLASS" \
-  --mode ReadWriteMany | kubectl apply -f -
-kubectl -n "$name-control" rollout status deployment/controller
+kubectl create namespace websites-control
+kubectl create namespace websites-pods
+kubectl -n websites-control create secret generic workspace-auth --from-file=token="$TOKEN_FILE"
+kubectl -n websites-control create secret tls workspace-tls --cert="$TLS_CERT" --key="$TLS_KEY"
 ```
 
-Use a storage driver that implements the selected mode. `ReadWriteMany` supports independently scheduled pods with a suitable shared filesystem. For node-local development, select `--mode ReadWriteOnce --pin-node <kubernetes-hostname-label>`. That permits separate workspace pods to mount the same volume on one node. `--mode ReadWriteOncePod` or `--single-mount` rejects a second active workspace on the same data with `workspace_shared_mount_unsupported`. Multiple sessions can still attach to the first workspace.
+For local Kubernetes, select a node from `kubectl get nodes -L kubernetes.io/hostname` and use the local storage class provided by your installation:
+
+```sh
+helm upgrade --install websites ./chart -n websites-control -f examples/local.yaml \
+  --set-string placement.pinNode="$NODE_HOSTNAME" \
+  --set-string images.controller="$SERVICE_IMAGE" --set-string images.runner="$RUNNER_IMAGE" --wait
+```
+
+For standard **EKS with EC2 workers**, use the same chart with [EKS values](examples/eks.yaml). Provide an EBS CSI storage class for the single controller's SQLite PVC and an EFS CSI class with dynamic access point provisioning for project PVCs. The [sample storage classes](examples/eks-storage.yaml) are operator-managed. Set the real EFS filesystem ID in a copy before applying it. The EFS filesystem needs reachable mount targets, NFS access from the workers and the CSI driver's IAM permissions. Provide at least two schedulable nodes with different hostname labels. The controller and runner images must be pullable by those nodes. [EBS CSI setup](https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html) · [EFS CSI setup](https://docs.aws.amazon.com/eks/latest/userguide/efs-csi.html)
+
+```sh
+helm upgrade --install websites ./chart -n websites-control -f examples/eks.yaml \
+  --set-string images.controller="$SERVICE_IMAGE" --set-string images.runner="$RUNNER_IMAGE" --wait
+```
+
+The EKS example sets `placement.spreadSharedData` so Kubernetes schedules newly created workspaces sharing a data ID on different nodes. Sessions sharing a workspace still use one pod. Each additional active workspace on the same data needs another eligible node. Use `false` when cross-node placement is optional. The project PVC size on EFS is a Kubernetes request, not a per-project storage quota.
+
+The supplied service is a private ClusterIP. When OpenWorker runs outside the cluster, provide an authenticated HTTPS endpoint reachable over your private network, or use a port forward for a trial. Only the workspace service and its workspace pods run in the target cluster.
+
+Uninstalling the chart retains its controller-state PVC, the pre-created namespaces and the workspace PVCs. For a reinstall against retained state, set `metadata.existingClaim=controller-state` and use the original workload namespace. For permanent removal, stop active workspaces and delete their data through the provider before removing the dedicated namespaces. For EFS, verify access point and backing directory cleanup according to the driver's configuration.
+
+The earlier `render.py` installer remains available.
+
+Use a storage driver that implements the selected mode. `ReadWriteMany` supports independently scheduled pods with a suitable shared filesystem. For node-local development, select `data.accessMode=ReadWriteOnce` and set `placement.pinNode`. That permits separate workspace pods to mount the same volume on one node. `data.accessMode=ReadWriteOncePod` or `data.singleMount=true` rejects a second active workspace on the same data with `workspace_shared_mount_unsupported`. Multiple sessions can still attach to the first workspace.
 
 Run the installer with separate names and credentials for independent registrations. A second registration called `research-workspaces` has its own namespaces and metadata store. Protect and back up the controller-state PVC along with project data.
 
@@ -80,7 +97,7 @@ Existing workspace sessions support the scoped list, read, write and edit tools.
 
 Project keys, data IDs, compute IDs, attachments, pending deletes and Kubernetes UID pins live in SQLite on the controller-state PVC. The controller records creation intent before calling Kubernetes. Repeating an interrupted open uses the same resource names. If a workspace pod disappears, opening or recovering it starts a replacement on the recorded PVC. The logical workspace ID survives replacement. A missing or replaced previously bound PVC requires operator attention.
 
-After the last session detaches, explicitly call `stopWorkspace(workspaceId)` or allow the idle timeout to release compute. Set `--idle-seconds` to configure it (default 600, zero disables automatic reclamation). Call `deleteData(dataId)` to delete the PVC after all its workspaces stop. The StorageClass reclaim policy controls physical PV disposal. The controller resumes pending deletes after restart and uses UID preconditions. Removing the provider’s namespaces is a destructive uninstall.
+After the last session detaches, explicitly call `stopWorkspace(workspaceId)` or allow the idle timeout to release compute. Set the chart value `idleSeconds` to configure it (default 600, zero disables automatic reclamation). Call `deleteData(dataId)` to delete the PVC after all its workspaces stop. The StorageClass reclaim policy controls physical PV disposal. The controller resumes pending deletes after restart and uses UID preconditions. Removing the provider’s namespaces is a destructive uninstall.
 
 ## Run the Kubernetes integration tests
 
@@ -111,3 +128,5 @@ cargo test --locked -p openworker-server-reference --features workspace-referenc
 To test interrupted provisioning, interrupted deletion and idle reclamation separately, run `python3 deploy/workspaces/verify_intents.py` from the repository root after the SDK scenario finishes. Set `M4_REGISTRATION=ow-m4-websites`, `M4_KUBECTL`, `M4_KUBECONFIG`, `M4_ENDPOINT`, `M4_TOKEN_FILE` and `M4_CA` for that disposable registration. This check temporarily changes pod quota and idle timeout and holds a test PVC during deletion. It expects the backing StorageClass to reclaim deleted volumes.
 
 The [website builder example](../../harness/typescript-sdk/examples/website-builder/README.md) exercises both reviewer modes, app restart after idle reclamation and separate user projects.
+
+For the EKS website-builder test, set the trial release's `idleSeconds=35` and add `--eks-controller-namespace websites-control` to the physical verifier command in the example. It checks the bound controller PV's EBS driver, each project PV's EFS driver, and two different node names for Alice's separate workspaces. A same-node result fails qualification.

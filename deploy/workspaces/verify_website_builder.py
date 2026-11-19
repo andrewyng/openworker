@@ -20,6 +20,7 @@ def main():
     p.add_argument("--kubectl", default="kubectl")
     p.add_argument("--kubeconfig", required=True)
     p.add_argument("--namespace", required=True)
+    p.add_argument("--eks-controller-namespace", help="Require distinct worker nodes, EBS controller state and EFS project data")
     p.add_argument("--barrier", type=pathlib.Path, required=True)
     p.add_argument("--evidence", type=pathlib.Path, required=True)
     args = p.parse_args()
@@ -43,6 +44,10 @@ def main():
     def expect_file(pod, heading):
         page = subprocess.check_output(kube + ["exec", pod, "--", "cat", "/data/index.html"], text=True)
         assert "<h1>" + heading + "</h1>" in page
+
+    def bound_driver(pv):
+        raw = subprocess.check_output(kube + ["get", "pv", pv, "-o", "json"])
+        return json.loads(raw)["spec"]["csi"]["driver"]
 
     receipts = {}
     for step in ("built", "shared", "separate", "bob", "app-stopped", "edited"):
@@ -70,6 +75,17 @@ def main():
             assert volumes == saved and {p["claim"] for p in current.values()} == {alice, bob}
             assert not original.keys() & current.keys()
             assert not {p["pod"] for p in original.values()} & {p["pod"] for p in current.values()}
+        if args.eks_controller_namespace:
+            if step == "separate":
+                assert len({p["node"] for p in current.values()}) == 2, "Expected different Kubernetes nodes"
+            if step == "built":
+                raw = subprocess.check_output([args.kubectl, "--kubeconfig", args.kubeconfig,
+                    "-n", args.eks_controller_namespace, "get", "pvc", "controller-state", "-o", "json"])
+                metadata_pv = json.loads(raw)["spec"]["volumeName"]
+                assert bound_driver(metadata_pv) == "ebs.csi.aws.com"
+                receipts["metadata"] = {"pv": metadata_pv, "driver": "ebs.csi.aws.com"}
+            for _, pv in volumes.values():
+                assert bound_driver(pv) == "efs.csi.aws.com"
         for entry in current.values():
             heading = "Bob’s studio" if entry["claim"] != alice else (
                 "Alice’s autumn garden" if step == "edited" else "Alice’s garden")
