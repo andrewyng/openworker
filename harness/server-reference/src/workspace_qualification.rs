@@ -53,16 +53,36 @@ impl WorkspaceProvider for ProbeProvider {
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[ignore = "requires disposable OW_PG_TEST_URL, Node and built TypeScript SDK"]
 async fn builder_and_reviewer_sessions() -> Result<()> {
-    qualify(None).await
+    qualify(None, Scenario::Recovery).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[ignore = "requires two deployed Kubernetes workspace services and Spark qualification environment"]
 async fn kubernetes_workspace_recovery() -> Result<()> {
-    qualify(Some(std::env::var("OW_K8S_WORKSPACES")?)).await
+    qualify(
+        Some(std::env::var("OW_K8S_WORKSPACES")?),
+        Scenario::Recovery,
+    )
+    .await
 }
 
-async fn qualify(k8s: Option<String>) -> Result<()> {
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore = "requires a disposable Kubernetes websites registration, PostgreSQL, and physical verifier"]
+async fn website_builder_app() -> Result<()> {
+    qualify(
+        Some(std::env::var("OW_K8S_WORKSPACES")?),
+        Scenario::WebsiteBuilder,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum Scenario {
+    Recovery,
+    WebsiteBuilder,
+}
+
+async fn qualify(k8s: Option<String>, scenario: Scenario) -> Result<()> {
     let root = tempfile::tempdir()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     let token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
@@ -131,7 +151,11 @@ async fn qualify(k8s: Option<String>) -> Result<()> {
     let mut worker_configs = Vec::new();
     for agent in ["builder", "reviewer"] {
         let rid = format!("{agent}@1");
-        signed.catalog_put(&format!("put-{agent}"),"release",json!({"id":rid,"instructions":"Use project tools.","tools":names,"runtimeProfiles":["profile@1"],"defaultRuntimeProfile":"profile@1"}),&installed)?;
+        let tools: &[&str] = match (scenario, agent) {
+            (Scenario::WebsiteBuilder, "reviewer") => &["list_files", "read_file"],
+            _ => &names,
+        };
+        signed.catalog_put(&format!("put-{agent}"),"release",json!({"id":rid,"instructions":"Use project tools.","tools":tools,"runtimeProfiles":["profile@1"],"defaultRuntimeProfile":"profile@1"}),&installed)?;
         signed.catalog_activate(
             &format!("activate-{agent}"),
             "release",
@@ -204,13 +228,16 @@ async fn qualify(k8s: Option<String>) -> Result<()> {
     });
     let mut exec =
         tokio::process::Command::new(std::env::var("OW_NODE").unwrap_or_else(|_| "node".into()));
-    exec.arg("../typescript-sdk/test/workspaces-live.mjs")
-        .env("OW_SERVICE_URL", url)
-        .env("OW_WS_RESTART_DIR", root.path())
-        .env("OW_SERVICE_TOKEN", token)
-        .env("OW_WS_RESTRICTED_TOKEN", restricted)
-        .env("OW_WS_TEST_SECRET", TEST_SECRET)
-        .kill_on_drop(true);
+    exec.arg(match scenario {
+        Scenario::Recovery => "../typescript-sdk/test/workspaces-live.mjs",
+        Scenario::WebsiteBuilder => "../typescript-sdk/test/website-builder-live.mjs",
+    })
+    .env("OW_SERVICE_URL", url)
+    .env("OW_WS_RESTART_DIR", root.path())
+    .env("OW_SERVICE_TOKEN", token)
+    .env("OW_WS_RESTRICTED_TOKEN", restricted)
+    .env("OW_WS_TEST_SECRET", TEST_SECRET)
+    .kill_on_drop(true);
     let mut controller = controller;
     let status = tokio::select! {
         result=tokio::time::timeout(std::time::Duration::from_secs(if k8s.is_some() {420} else {160}),exec.status())=>result??,

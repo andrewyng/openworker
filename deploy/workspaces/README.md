@@ -109,3 +109,5 @@ cargo test --locked -p openworker-server-reference --features workspace-referenc
 ```
 
 To test interrupted provisioning, interrupted deletion and idle reclamation separately, run `python3 deploy/workspaces/verify_intents.py` from the repository root after the SDK scenario finishes. Set `M4_REGISTRATION=ow-m4-websites`, `M4_KUBECTL`, `M4_KUBECONFIG`, `M4_ENDPOINT`, `M4_TOKEN_FILE` and `M4_CA` for that disposable registration. This check temporarily changes pod quota and idle timeout and holds a test PVC during deletion. It expects the backing StorageClass to reclaim deleted volumes.
+
+The [website builder example](../../harness/typescript-sdk/examples/website-builder/README.md) exercises both reviewer modes, app restart after idle reclamation and separate user projects.
