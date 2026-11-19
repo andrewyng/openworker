@@ -235,6 +235,7 @@ async fn acceptance(live: bool) {
         let selected = runtime
             .connections
             .resolve(&openworker_runtime::connections::Choice {
+                notify_on_session_state: None,
                 connection: profile.provider.name().into(),
                 model: profile.model.clone(),
             })

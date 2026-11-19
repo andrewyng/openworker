@@ -195,3 +195,24 @@ as well as indexed argument fragments. It never guesses how to combine partial
 unindexed calls, and incomplete streams cannot authorize tool execution.
 See [Google's compatibility guide](https://ai.google.dev/gemini-api/docs/openai)
 and [thought signature requirements](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures).
+
+## Inference request options
+
+A provider registration can supply nonsecret headers, URL query parameters and
+extra JSON body fields. In TypeScript use `inferenceOptions`. Rust accepts
+`ModelProvider::inference_options(InferenceOptions { .. })`. The runtime stores
+these settings with the provider and applies them to that endpoint's inference
+requests. Configure credentials separately. Omitting options during credential
+rotation preserves them. Supply an empty options object to clear them.
+
+```typescript
+await harness.setModelProvider({
+  name: "local-router", api: "chat-completions", baseUrl,
+  credentials: { apiKeyEnv: "ROUTER_KEY", storage: "memory" },
+  inferenceOptions: {
+    headers: { "x-routing-group": "desktop" },
+    query: { "api-version": "2" },
+    body: { sampling_hint: "interactive" },
+  },
+});
+```

@@ -7,7 +7,6 @@ use postgres::Transaction;
 use serde_json::{json, Value};
 
 pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
-    #[cfg(feature = "guardrails")]
     tx.batch_execute(include_str!("observers.sql"))?;
     #[cfg(feature = "compliance")]
     tx.batch_execute(include_str!("compliance.sql"))?;

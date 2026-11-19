@@ -60,7 +60,6 @@ fn read_history_result(result: Result<Value>) -> Result<Value> {
 }
 
 pub struct Runtime {
-    #[cfg(feature = "guardrails")]
     observers_started: AtomicBool,
     observers_stop: CancellationToken,
     compliance_defaults: Option<crate::compliance::Config>,
@@ -332,7 +331,6 @@ impl Runtime {
         let (events, _) = broadcast::channel(512);
         let connections = Arc::new(crate::connections::Manager::open(&root)?);
         Ok(Arc::new(Self {
-            #[cfg(feature = "guardrails")]
             observers_started: AtomicBool::new(false),
             observers_stop: CancellationToken::new(),
             compliance_defaults: None,
@@ -626,6 +624,13 @@ impl Runtime {
                 purpose: crate::telemetry::ModelPurpose::Main,
                 attempt: number,
             });
+            if let Some((manager, selected)) = &mut model.connection {
+                if let Some((id, _)) = manager.integrations.provider(&selected.connection) {
+                    let decisions = manager.integrations.resolve(&s.integrations)?;
+                    selected.notify_on_session_state =
+                        decisions.get(&id).is_some_and(|d| d.enabled);
+                }
+            }
             let safety = self.effective_safety(sid)?;
             // A cluster can require a configured output scanner while the provider is streaming.
             let guarded_output = (self.integrations.cluster_policy
@@ -816,6 +821,15 @@ impl Runtime {
             }
 
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
+            if !summary
+                && s.agent_team.is_none()
+                && model
+                    .connection
+                    .as_ref()
+                    .is_some_and(|(_, s)| s.notify_on_session_state)
+            {
+                model.session_sequence = Some(event.event_id);
+            }
             self.publish(event);
             let request = async {
                 let history = {
@@ -1448,6 +1462,7 @@ impl Runtime {
             .map(|v| serde_json::from_value::<crate::connections::Choice>(v.clone()))
             .transpose()?;
         let choice = override_model
+            .clone()
             .or_else(|| self.bundle.manifest.default_model.clone())
             .or(defaults.agent);
         let model_selection = choice
@@ -1463,15 +1478,30 @@ impl Runtime {
             .as_ref()
             .map(|c| self.connections.resolve(c))
             .transpose()?;
-        let session_preferences = p
+        let mut agent_preferences = self.bundle.manifest.integrations.clone();
+        if let Some(entries) = p.get("integrations") {
+            crate::integrations::validate_entries(entries)?;
+        }
+        let mut session_preferences = p
             .get("integrations")
             .cloned()
-            .map(serde_json::from_value)
+            .map(serde_json::from_value::<crate::integrations::Preferences>)
             .transpose()?
             .unwrap_or_default();
-        let integrations = self
-            .integrations
-            .admit(&self.bundle.manifest.integrations, &session_preferences)?;
+        let default_model = self.bundle.manifest.default_model.as_ref().filter(|m| {
+            choice
+                .as_ref()
+                .is_some_and(|choice| choice.connection == m.connection)
+        });
+        self.integrations
+            .model_preference(&mut agent_preferences, default_model)?;
+        self.integrations
+            .model_preference(&mut session_preferences, override_model.as_ref())?;
+        let integrations = self.integrations.admit_for_model(
+            &agent_preferences,
+            &session_preferences,
+            model_selection.as_ref(),
+        )?;
         let mut s = Session {
             integrations,
             safety_models: Default::default(),
@@ -2076,12 +2106,54 @@ impl Runtime {
                         .registry
                         .turn_finished(&sid, t.status == "completed");
                 }
-                rt.jobs.lock().unwrap().remove(&sid);
+                let _ = rt.finish_job(&sid, &token).await;
             })
             .await;
         });
         Ok(())
     }
+    // A cancellation can arrive after drive has returned a waiting outcome,
+    // while this job still owns cleanup. Finish that cancellation before release.
+    async fn finish_job(&self, sid: &str, token: &CancellationToken) -> Result<()> {
+        {
+            let mut jobs = self.jobs.lock().unwrap();
+            if !token.is_cancelled() {
+                jobs.remove(sid);
+                return Ok(());
+            }
+        }
+        let result: Result<()> = async {
+            let unfinished = self
+                .store
+                .lock()
+                .unwrap()
+                .metadata(sid)?
+                .turn
+                .as_ref()
+                .is_some_and(|turn| !terminal(&turn.status));
+            if unfinished {
+                self.cancel_finish(sid).await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = &result {
+            let _ = self.update(
+                sid,
+                "turn_completed",
+                json!({"status":"interrupted","error":error.to_string()}),
+                |session| {
+                    if let Some(turn) = &mut session.turn {
+                        turn.status = "interrupted".into();
+                    }
+                    Ok(())
+                },
+            );
+        }
+        self.jobs.lock().unwrap().remove(sid);
+        result
+    }
+
     fn check_backend(&self, sid: &str) -> Result<()> {
         self.bundle.verify()?;
         self.tool_policy.verify()?;
@@ -3833,10 +3905,17 @@ impl Runtime {
                 Ok(())
             },
         )?;
-        let job = self.jobs.lock().unwrap().get(sid).cloned();
-        if let Some(token) = job {
-            token.cancel();
-        } else {
+        let active = {
+            let jobs = self.jobs.lock().unwrap();
+            if let Some(token) = jobs.get(sid) {
+                // Publish cancellation before the worker can remove its job entry.
+                token.cancel();
+                true
+            } else {
+                false
+            }
+        };
+        if !active {
             self.cancel_finish(sid).await?;
         }
         Ok(json!({"turn":self.store.lock().unwrap().get(sid)?.turn}))

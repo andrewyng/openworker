@@ -17,6 +17,7 @@ pub mod environment_openshell;
 pub mod execution;
 pub mod history_import;
 pub mod http_mcp;
+pub mod inference_options;
 pub mod integrations;
 #[cfg(not(windows))]
 pub mod io;
@@ -31,6 +32,7 @@ pub mod planning;
 pub mod platform;
 pub mod protocol;
 pub mod provider;
+pub mod provider_adapters;
 pub mod provider_auth;
 pub mod resource_policy;
 pub mod runner;

@@ -20,12 +20,12 @@ test("observer failure allows execution and a required scanner blocks a resumed 
     harness = await Harness.start({
       executable: process.env.OW_TS_TEST_HOST, stateDir: join(root,"state"),
       scripted: true, sandbox: "off", compliance: {retentionDays: 1},
-      integrations: {"mock-observer": {log}, "mock-scanner": {}},
+      integrations: {"mock-observer": {log}, "mock-scanner": {enabled:false}},
       integrationPolicies: {"mock-scanner": mode},
     });
     return harness.createAgent({
       name: "worker", instructions: "Use the probe.", tools: ["sdk.probe"],
-      approvals: {mode:"always"}, integrations: {"mock-observer":true},
+      approvals: {mode:"always"}, integrations: {"mock-observer":{}},
     });
   }
   const agent = await start("off-by-default");
@@ -57,7 +57,7 @@ test("observer failure allows execution and a required scanner blocks a resumed 
     ["waiting_user_approval","user_approval_done","waiting_tool_completion","tool_finished"]);
   assert.ok(events.some(e=>e.state==="tool_finished"));
 
-  const second=await agent.newSession({workspace, integrations:{"mock-observer":false,"mock-scanner":false}});
+  const second=await agent.newSession({workspace, integrations:{"mock-observer":{enabled:false},"mock-scanner":{enabled:false}}});
   const paused=await second.run(request);
   assert.equal(paused.status,"interrupted");
   const reference=second.reference();

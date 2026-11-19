@@ -1,3 +1,4 @@
+import { validateIntegrationOptions } from "./integration-options.js";
 import {Attachment,attachmentArgument,stageInput,userInput,type UserInput} from "./attachments.js";
 export { Attachment } from "./attachments.js";
 export type { UserInput, InputContent, AttachmentSource } from "./attachments.js";
@@ -328,6 +329,7 @@ export class Harness {
     }
   }
   static async start(options: HarnessOptions = {}): Promise<Harness> {
+    validateIntegrationOptions(options.integrations);
     const pending:{ref:{name:string;version:string};callback:SafetyHandler}[]=[];
     const safety=await normalizeSafety(options,async(ref,callback)=>{pending.push({ref,callback});});
     const {guardrails:_guards,hooks:_hooks,blockedOutputOptions:_blocked,...launchOptions}=options;
@@ -392,6 +394,7 @@ export class Harness {
     });
   }
   async setModelProvider(provider: ModelProvider): Promise<void> {
+    validateIntegrationOptions(provider.integrations);
     const credentials = provider.credentials;
     if (provider.auth && credentials)
       throw new HarnessError(
@@ -420,6 +423,8 @@ export class Harness {
       throw new HarnessError("InvalidInput", "Provider key is unavailable");
     await this.request("provider/set", {
       name: provider.name,
+      inference_options: provider.inferenceOptions,
+      integrations: provider.integrations,
       api: provider.api,
       base_url: provider.baseUrl,
       stream_usage: provider.streamUsage,
@@ -535,6 +540,7 @@ export class Harness {
   }
   /** Creates a reusable handle. Await ready() or newSession() to confirm registration. */
   createAgent(definition: AgentDefinition): AgentHandle {
+    validateIntegrationOptions(definition.integrations);
     return new AgentHandle(this, structuredClone(definition));
   }
   async listAgents(): Promise<string[]> {
@@ -585,6 +591,7 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    validateIntegrationOptions(options.integrations);
     if (options.integrations !== undefined && !this.capabilities.integrations)
       throw new HarnessError("Setup", "Update the host to configure session integrations");
     if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
@@ -621,6 +628,7 @@ export class Harness {
           ? {
               model: {
                 connection: options.model.provider,
+                notify_on_session_state: options.model.notifyOnSessionState,
                 model: options.model.name,
               },
             }
@@ -705,6 +713,7 @@ export class AgentHandle {
           ? {
               model: {
                 connection: defaultModel.provider,
+                notify_on_session_state: defaultModel.notifyOnSessionState,
                 model: defaultModel.name,
               },
             }

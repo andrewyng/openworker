@@ -91,6 +91,7 @@ async fn queued_model_readiness_requires_the_pinned_credential_without_calling_p
     s.model_selection = Some(
         rt.connections
             .resolve(&crate::connections::Choice {
+                notify_on_session_state: None,
                 connection: "test".into(),
                 model: "fixture".into(),
             })
@@ -248,6 +249,7 @@ async fn managed_agent_without_reviewer_does_not_reuse_agent_model() {
     .await;
     rt.update(&sid, "configured_test", json!({}), |s| {
         s.model_selection = Some(crate::connections::Selection {
+            notify_on_session_state: false,
             provider: crate::provider::Kind::Openai,
             connection: "test".into(),
             model: "agent-only".into(),
@@ -823,4 +825,66 @@ async fn protected_reviewer_reason_is_not_released_or_saved_as_denial_context() 
     assert!(!serde_json::to_string(&events)
         .unwrap()
         .contains("PRIVATE_REASON"));
+}
+
+#[tokio::test]
+async fn cancellation_during_or_after_parked_job_cleanup_always_settles() {
+    for cleanup_first in [false, true] {
+        let (tmp, rt, sid, call) = fixture(
+            Mode::Ask,
+            false,
+            Model::new("fixture".into(), true),
+            "write_file",
+            json!({"path":"proof.txt","content":"must not execute"}),
+        )
+        .await;
+        let interaction = rt.authorize_call(&sid, &call).await.unwrap();
+        assert!(interaction.response.is_none());
+        rt.update(&sid, "parked", json!({}), |s| {
+            s.turn.as_mut().unwrap().status = "waiting".into();
+            Ok(())
+        })
+        .unwrap();
+        let turn_id = rt
+            .store
+            .lock()
+            .unwrap()
+            .metadata(&sid)
+            .unwrap()
+            .turn
+            .unwrap()
+            .id;
+        // The driver already returned its waiting outcome; its cleanup job is still registered.
+        let token = CancellationToken::new();
+        rt.jobs.lock().unwrap().insert(sid.clone(), token.clone());
+        if cleanup_first {
+            rt.finish_job(&sid, &token).await.unwrap();
+        }
+        rt.cancel_turn(&sid, &turn_id, None).await.unwrap();
+        if !cleanup_first {
+            assert_eq!(
+                rt.store
+                    .lock()
+                    .unwrap()
+                    .metadata(&sid)
+                    .unwrap()
+                    .turn
+                    .unwrap()
+                    .status,
+                "cancelling"
+            );
+            rt.finish_job(&sid, &token).await.unwrap();
+        }
+        assert!(!rt.jobs.lock().unwrap().contains_key(&sid));
+        let saved = rt.store.lock().unwrap().get(&sid).unwrap();
+        assert_eq!(saved.turn.unwrap().status, "cancelled");
+        let saved_interaction = saved
+            .interactions
+            .iter()
+            .find(|i| i.id == interaction.id)
+            .unwrap();
+        assert!(saved_interaction.response.is_none());
+        assert!(saved_interaction.resolved_at_ms.is_some());
+        assert!(!tmp.path().join("workspace/proof.txt").exists());
+    }
 }

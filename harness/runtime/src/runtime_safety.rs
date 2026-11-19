@@ -285,7 +285,7 @@ impl Runtime {
     }
     pub fn integration_checks(&self, admission: &crate::integrations::Admission) -> Result<Config> {
         let configured = &self.integrations;
-        configured.checks(&configured.resolve(admission)?)
+        configured.checks_for(admission)
     }
     fn session_integration_checks(&self, metadata: &Session) -> Result<Config> {
         let integrations = &self.integrations;
@@ -302,7 +302,7 @@ impl Runtime {
             drop(store);
             self.publish(event);
         }
-        integrations.checks(&decisions)
+        integrations.checks_for(&metadata.integrations)
     }
     pub(super) fn effective_safety(&self, sid: &str) -> Result<Config> {
         let s = self.store.lock().unwrap().metadata(sid)?;

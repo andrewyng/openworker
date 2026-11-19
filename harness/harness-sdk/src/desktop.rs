@@ -26,8 +26,12 @@ pub struct SessionOptions {
     auto_skip_questions: Option<bool>,
 }
 impl SessionOptions {
-    pub fn integration(mut self, id: impl Into<String>, enabled: bool) -> Self {
-        self.integrations.insert(id.into(), enabled);
+    pub fn integration(
+        mut self,
+        id: impl Into<String>,
+        options: impl Into<crate::integrations::Preference>,
+    ) -> Self {
+        self.integrations.insert(id.into(), options.into());
         self
     }
     /// Durable default for action review; does not grant tool permissions.

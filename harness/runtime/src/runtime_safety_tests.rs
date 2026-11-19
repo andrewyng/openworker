@@ -856,7 +856,7 @@ async fn tool_rules_resolve_registered_qualified_names_without_cross_namespace_m
 }
 
 #[tokio::test]
-async fn live_policy_controls_next_input_and_survives_a_runtime_restart() {
+async fn explicit_harness_default_and_live_policy_survive_a_runtime_restart() {
     use crate::integrations::{Capability, Instance, Mode, PolicyRevision, Registration, Registry};
     use crate::safety::{HandlerRef, Hook, HookPhase};
     let tmp = tempfile::tempdir().unwrap();
@@ -897,7 +897,7 @@ async fn live_policy_controls_next_input_and_survives_a_runtime_restart() {
         let source = live.clone();
         let checks = catalog
             .configure(
-                &BTreeMap::from([("deny-input".into(), json!({}))]),
+                &BTreeMap::from([("deny-input".into(), json!({"enabled": false}))]),
                 Arc::new(move || {
                     let (revision, mode) = *source.read().unwrap();
                     Ok(PolicyRevision {
@@ -930,7 +930,8 @@ async fn live_policy_controls_next_input_and_survives_a_runtime_restart() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(rt.check_user_input(&fresh, "three").await.is_err());
+    // An explicit harness choice takes precedence over an ordinary admin default.
+    assert!(rt.check_user_input(&fresh, "three").await.is_ok());
     *live.write().unwrap() = (3, Mode::Required);
     assert!(rt.check_user_input(&sid, "four").await.is_err());
     rt.shutdown().await.unwrap();
@@ -944,6 +945,7 @@ async fn live_policy_controls_next_input_and_survives_a_runtime_restart() {
         4
     );
     *live.write().unwrap() = (5, Mode::OffByDefault);
-    assert!(rt.check_user_input(&fresh, "seven").await.is_err());
+    // Lifting a forced override restores each session’s original off choice.
+    assert!(rt.check_user_input(&fresh, "seven").await.is_ok());
     assert!(rt.check_user_input(&sid, "eight").await.is_ok());
 }

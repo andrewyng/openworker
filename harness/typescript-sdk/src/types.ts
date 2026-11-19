@@ -1,3 +1,7 @@
+export interface IntegrationOptions {
+  enabled?: boolean;
+  [option: string]: Json | undefined;
+}
 import type { SafetyOptions } from "./safety.js";
 export type Json =
   null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -39,7 +43,15 @@ export interface ProviderAuth {
     signal: AbortSignal;
   }) => Promise<AccessToken>;
 }
+export interface InferenceOptions {
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+  body?: Record<string, Json>;
+}
 export interface ModelProvider {
+  integrations?: Record<string, IntegrationOptions>;
+  inferenceOptions?: InferenceOptions;
+
   name: string;
   api: "responses" | "chat-completions" | "anthropic";
   baseUrl?: string;
@@ -125,13 +137,13 @@ export interface ApplicationGuidance {
 export interface Agent extends ApplicationGuidance {
   builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
-  integrations?: Record<string, boolean>;
+  integrations?: Record<string, IntegrationOptions>;
   id: string;
   name?: string;
   description?: string;
   instructions: string;
   tools: string[];
-  model?: { connection: string; model: string };
+  model?: { connection: string; model: string; notify_on_session_state?: boolean };
   provider?: Provider;
   fallbackModel?: string;
   planning?: boolean;
@@ -154,13 +166,14 @@ export interface AgentDefinition extends Omit<Agent, "id" | "name" | "model"> {
   defaultModel?: Model;
 }
 export interface Model {
+  notifyOnSessionState?: boolean;
   provider: string;
   name: string;
 }
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
 export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
-  integrations?: Record<string, boolean>;
+  integrations?: Record<string, IntegrationOptions>;
   /** Completed portable transcript only. Imported calls never execute. */
   initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
@@ -199,7 +212,7 @@ export interface Telemetry {
 export interface ComplianceSink { name:string; endpoint:string; credentialEnv:string; allowLoopbackHttp?:boolean }
 export type IntegrationPolicy = "on-by-default" | "off-by-default" | "required" | "forbidden";
 export interface HarnessOptions extends SafetyOptions {
-  integrations?: Record<string, Json>;
+  integrations?: Record<string, IntegrationOptions>;
   integrationPolicies?: Record<string, IntegrationPolicy>;
   complianceSinks?:ComplianceSink[];
   compliance?: ComplianceOptions;

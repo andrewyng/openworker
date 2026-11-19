@@ -39,7 +39,7 @@ export function codingRelease(agent:AgentDefinition,version:string,profile:Runti
   if(!/^[a-zA-Z0-9_.-]{1,64}$/.test(version))throw Error("Invalid release version");
   return {id:`${agent.name}@${version}`,instructions:agent.instructions,tools:[...agent.tools],runtimeProfiles:[profile.id],defaultRuntimeProfile:profile.id,allowedPrincipals:profile.allowedPrincipals,
     integrations:agent.integrations,
-    defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name}:undefined,
+    defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name,...(agent.defaultModel.notifyOnSessionState===undefined ? {} : {notify_on_session_state:agent.defaultModel.notifyOnSessionState})}:undefined,
     reviewerModel:agent.approvals?.mode==="auto"?{connection:agent.approvals.reviewerModel.provider,model:agent.approvals.reviewerModel.name}:undefined,limits:agent.limits,subagents:agent.subagents && !Array.isArray(agent.subagents)?agent.subagents:undefined};
 }
 export function codingServiceTeam(preset:SharedCodingPreset,version:string):ServiceAgentTeamOptions {

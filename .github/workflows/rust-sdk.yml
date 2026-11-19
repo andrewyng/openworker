@@ -126,6 +126,8 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --features openworker-sdk/test-support,openworker-server-reference/team-test -- -D warnings
+      - name: Test lifecycle delivery without security features
+        run: cargo test --locked -p openworker-sdk --no-default-features --features test-support --test runtime_observer
       - name: Test Prisma AIRS registration and scanning
         run: cargo test --locked -p openworker-sdk --features test-support,security-adapters --test security_scanner
 
@@ -291,6 +293,8 @@ jobs:
         run: |
           cargo test --locked -p openworker-runtime -- --test-threads=1
           cargo test --locked -p openworker-runtime --no-default-features --test attachment_features
+          cargo test --locked -p openworker-runtime --no-default-features --lib integrations::tests
+          cargo test --locked -p openworker-store-postgres --no-default-features --test service_catalog integration_policy_on_an_existing_session_and_recovered_worker -- --ignored --exact
           cargo test --locked -p openworker-server-reference --test input_attachments -- --ignored --test-threads=1
           cargo test --locked -p openworker-telemetry --features otlp
           OW_OBSERVABILITY_TEST_URL="$OW_PG_TEST_URL" cargo test --locked -p openworker-observability --features postgres,evaluations -- --include-ignored --test-threads=1

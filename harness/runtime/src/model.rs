@@ -7,6 +7,7 @@ pub struct Model {
     pub provider: crate::provider::Kind,
     pub name: String,
     pub scripted: bool,
+    pub session_sequence: Option<i64>,
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
@@ -100,6 +101,7 @@ impl Model {
             provider: crate::provider::Kind::Openai,
             name,
             scripted,
+            session_sequence: None,
             observation: None,
             content_withheld: false,
             stream_reasoning: false,
@@ -364,12 +366,64 @@ impl Model {
                 (api, format!("{}/{}", api.default_url(), api.path()))
             }
         };
+        let options = match &self.connection {
+            Some((manager, selection)) => manager.inference_options(selection)?,
+            None => Default::default(),
+        };
+        let transport = self
+            .connection
+            .as_ref()
+            .and_then(|(m, s)| m.integrations.provider(&s.connection).map(|(_, t)| t));
+        let request_url = options.url(&endpoint)?;
+        let headers = options.headers()?;
         let client = reqwest::Client::builder()
+            .default_headers(headers)
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(180))
             .build()?;
+        let provider_error = |e: crate::provider::Error| {
+            if transport.is_some()
+                && matches!(
+                    e.kind,
+                    crate::provider::Failure::Transport
+                        | crate::provider::Failure::IncompleteStream
+                )
+            {
+                return crate::provider::Error::new(crate::provider::Failure::InvalidResponse)
+                    .with_code("adapter_outcome_unknown")
+                    .with_api(api);
+            }
+            e.with_api(api)
+        };
+        let prepare =
+            |body: &mut Value| -> Result<Option<Box<dyn crate::provider_adapters::Attempt>>> {
+                let binding = self.connection.as_ref().and_then(|(_, selected)| {
+                    if !selected.notify_on_session_state {
+                        return None;
+                    }
+                    Some(crate::provider_adapters::Binding {
+                        sid: self.observation.as_ref()?.session.clone(),
+                        seq: self.session_sequence?,
+                    })
+                });
+                transport
+                    .as_ref()
+                    .map(|a| {
+                        a.prepare(
+                            body,
+                            crate::provider_adapters::Endpoint {
+                                api,
+                                url: &request_url,
+                                key,
+                                client: &client,
+                            },
+                            binding,
+                        )
+                    })
+                    .transpose()
+            };
         if api == crate::model_api::Api::ChatCompletions {
             let binding = crate::chat_completions::replay_binding(
                 &endpoint,
@@ -399,16 +453,19 @@ impl Model {
                     body.as_object_mut().unwrap().remove("stream_options");
                 }
             }
+            options.extend(&mut body)?;
+            let adapter = prepare(&mut body)?;
             crate::provider::request_decoded(
                 &client,
-                &endpoint,
+                &request_url,
                 key,
                 body,
                 tx,
                 crate::chat_completions::Decoder::with_binding(binding, google_compat),
+                adapter,
             )
             .await
-            .map_err(|e| e.with_api(api))?;
+            .map_err(provider_error)?;
             return Ok(());
         }
         if api == crate::model_api::Api::Anthropic {
@@ -443,9 +500,11 @@ impl Model {
                     }
                 }
             }
-            crate::anthropic::request(&client, &endpoint, key, body, tx)
+            options.extend(&mut body)?;
+            let adapter = prepare(&mut body)?;
+            crate::anthropic::request_with_adapter(&client, &request_url, key, body, tx, adapter)
                 .await
-                .map_err(|e| e.with_api(api))?;
+                .map_err(provider_error)?;
             return Ok(());
         }
         if history.iter().any(|v| v.get("provider").is_some()) {
@@ -469,7 +528,8 @@ impl Model {
         if let Some(format) = format {
             body["text"] = json!({"format":format});
         }
-        crate::provider::request(&client, &endpoint, key, body, tx)
+        options.extend(&mut body)?;
+        crate::provider::request(&client, &request_url, key, body, tx)
             .await
             .map_err(|e| e.with_api(api))?;
         Ok(())
