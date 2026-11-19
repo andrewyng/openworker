@@ -273,9 +273,11 @@ impl Config {
                 policies: current.configuration.integration_policies,
             })
         });
-        let mut configured = self
-            .integration_registry
-            .configure(&self.integrations, policy)?;
+        let integration_registry = &self.integration_registry;
+        #[cfg(feature = "security-adapters")]
+        let integration_registry =
+            openworker_security_adapters::with_prisma_airs(integration_registry.clone())?;
+        let mut configured = integration_registry.configure(&self.integrations, policy)?;
         configured.cluster_policy = service_mode;
         let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
         runtime.integrations = Arc::new(configured);

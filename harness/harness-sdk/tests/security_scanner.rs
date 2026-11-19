@@ -2,12 +2,12 @@
 use openworker_sdk::{agents::*, *};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-async fn exercise(managed: bool) {
+async fn exercise(managed: bool, integration: bool) {
     let root = tempfile::tempdir().unwrap();
     let key = format!(
         "OW_PRISMA_FIXTURE_{}_{}",
         std::process::id(),
-        usize::from(managed)
+        2 * usize::from(managed) + usize::from(integration)
     );
     std::env::set_var(&key, "MOCK_PRISMA_KEY");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -56,6 +56,17 @@ async fn exercise(managed: bool) {
         .sandbox(Sandbox::Off)
         .scripted(true)
         .compliance(Default::default());
+    let b = if integration {
+        let settings = json!({
+            "scanner": {"endpoint":endpoint,"protocol":{"kind":"prismaAirs","profile":"fixture"},
+                        "credentialEnv":key,"timeoutMs":1000,"allowLoopbackHttp":true},
+            "boundaries": ["beforeInput"]
+        });
+        b.integration("prisma-airs", settings)
+            .integration_policy("prisma-airs", integrations::Mode::Required)
+    } else {
+        b
+    };
     let h = if managed {
         b.managed(exe, RestartPolicy::default()).await
     } else {
@@ -66,20 +77,22 @@ async fn exercise(managed: bool) {
         name: "airs".into(),
         version: "1".into(),
     };
-    h.register_security_adapter(
-        reference.clone(),
-        security_adapters::Config {
-            endpoint,
-            protocol: security_adapters::Protocol::PrismaAirs {
-                profile: "fixture".into(),
+    if !integration {
+        h.register_security_adapter(
+            reference.clone(),
+            security_adapters::Config {
+                endpoint,
+                protocol: security_adapters::Protocol::PrismaAirs {
+                    profile: "fixture".into(),
+                },
+                credential_env: key.clone(),
+                timeout_ms: 1000,
+                allow_loopback_http: true,
             },
-            credential_env: key.clone(),
-            timeout_ms: 1000,
-            allow_loopback_http: true,
-        },
-    )
-    .await
-    .unwrap();
+        )
+        .await
+        .unwrap();
+    }
     let a = h
         .create_agent(
             Agent::new("guide")
@@ -91,8 +104,10 @@ async fn exercise(managed: bool) {
         )
         .await
         .unwrap();
-    let s = a
-        .new_session_with(SessionOptions::default().safety(guardrails::Config {
+    let options = if integration {
+        SessionOptions::default().integration("prisma-airs", false)
+    } else {
+        SessionOptions::default().safety(guardrails::Config {
             hooks: vec![guardrails::Hook {
                 name: "airs".into(),
                 version: "1".into(),
@@ -102,9 +117,9 @@ async fn exercise(managed: bool) {
                 timeout_ms: 2000,
             }],
             ..Default::default()
-        }))
-        .await
-        .unwrap();
+        })
+    };
+    let s = a.new_session_with(options).await.unwrap();
     assert!(s.send("BLOCKED_SENTINEL").await.is_err());
     let snapshot = h.client().snapshot(s.id()).await.unwrap();
     assert!(snapshot["turn"].is_null());
@@ -122,13 +137,20 @@ async fn exercise(managed: bool) {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_mock_prisma_blocks_before_admission() {
-    tokio::time::timeout(std::time::Duration::from_secs(60), exercise(false))
+    tokio::time::timeout(std::time::Duration::from_secs(60), exercise(false, false))
         .await
         .unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn managed_mock_prisma_uses_declared_host_credential() {
-    tokio::time::timeout(std::time::Duration::from_secs(60), exercise(true))
+    tokio::time::timeout(std::time::Duration::from_secs(60), exercise(true, false))
         .await
         .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn required_native_scanner_blocks_despite_session_opt_out() {
+    tokio::time::timeout(std::time::Duration::from_secs(60), exercise(true, true))
+        .await
+        .unwrap()
 }

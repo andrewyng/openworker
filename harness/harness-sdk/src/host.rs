@@ -379,12 +379,12 @@ impl Host {
                 policies: policies.clone(),
             })
         });
-        let integrations = Arc::new(
-            config
-                .desktop
-                .integration_registry
-                .configure(&config.desktop.integrations, policy)?,
-        );
+        let integration_registry = &config.desktop.integration_registry;
+        #[cfg(feature = "security-adapters")]
+        let integration_registry =
+            openworker_security_adapters::with_prisma_airs(integration_registry.clone())?;
+        let integrations =
+            Arc::new(integration_registry.configure(&config.desktop.integrations, policy)?);
         let connections = Arc::new(openworker_runtime::connections::Manager::open(
             &config.state_dir,
         )?);
