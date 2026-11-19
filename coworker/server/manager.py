@@ -1439,8 +1439,10 @@ class SessionManager:
                     {"session_id": member.session_id, "tool": "decide_worker_call", "stage": "decided",
                      "status": resolution, "reason": note[:500], "actor": by, "call_id": call_id}
                 )
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001 - the decision stands even if its audit row is lost
+                logger.warning(
+                    "could not audit the decide_worker_call decision", exc_info=True
+                )
         return {"ok": bool(ok), "worker": member.actor, "call_id": call_id, "decision": resolution}
 
     def grant_worker_connector(
@@ -7873,7 +7875,7 @@ class SessionManager:
                 }
             )
         except Exception:
-            pass
+            logger.warning("could not audit the minted standing rule", exc_info=True)
         return True
 
     def approval_outcome(self, resolution: str, request, session_id: str):
@@ -7979,7 +7981,7 @@ class SessionManager:
                 }
             )
         except Exception:
-            pass
+            logger.warning("could not audit the %s change", kind, exc_info=True)
 
     def set_session_model_settings(self, session_id: str, values: dict[str, Any]) -> dict[str, Any]:
         """This session's thinking switch or reasoning effort (UX-056: the brain and the
@@ -8112,7 +8114,9 @@ class SessionManager:
                 }
             )
         except Exception:
-            pass
+            logger.warning(
+                "could not audit the refused grant resolution", exc_info=True
+            )
 
     def _scheduled_approver(self, task, session_id: str):
         from ..engine import ApprovalOutcome
@@ -8234,7 +8238,11 @@ class SessionManager:
                     f"{body}\n{_reply_hint(item, buttons)}\n[ow:{item.id}]".strip(),
                 )
         except Exception:
-            pass
+            # the item is still in the Inbox; only the channel copy is lost — but a
+            # user watching just the channel would otherwise never know
+            logger.warning(
+                "could not mirror inbox item %s to %s", item.id, target, exc_info=True
+            )
 
     # -- interactive prompt buttons (Slack/Telegram) ----------------------------
     async def _on_interaction(self, event) -> None:
@@ -8614,7 +8622,14 @@ class SessionManager:
                             sub.session_id, msg, source=ms.to_dict()
                         )
                     except Exception:
-                        pass
+                        # one bad session must not stop the fan-out, but the dropped
+                        # message has to be visible
+                        logger.warning(
+                            "could not deliver an inbound %s message to session %s",
+                            src.platform,
+                            sub.session_id,
+                            exc_info=True,
+                        )
                 return
             return  # channel with no subscribers — nobody is listening
         # DM (or any non-channel): route to the designated session, else park it for visibility.
@@ -8759,7 +8774,12 @@ class SessionManager:
                         sub.session_id, msg, source=ms.to_dict()
                     )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "could not deliver a %s mention to session %s",
+                        src.platform,
+                        sub.session_id,
+                        exc_info=True,
+                    )
             return
         sid = self.mention_sessions.get(thread_target)
         if sid and self.session_store.load(sid) is not None:
@@ -9091,7 +9111,13 @@ class SessionManager:
                     self.save(run.session_id, engine)
                     self._engines[run.session_id] = engine
                 except Exception:
-                    pass
+                    # the run still records, but without the save it is not
+                    # continuable — that loss must be visible
+                    logger.warning(
+                        "could not persist automation run %s as a session",
+                        run.run_id,
+                        exc_info=True,
+                    )
             self.task_store.add_run(run)
         if task.notify_on_completion and run.status == "ok":
             try:
@@ -9134,7 +9160,13 @@ class SessionManager:
                         thread,
                     )
             except Exception:
-                pass
+                # the task finished; only the heads-up is lost — say so, don't hide it
+                logger.warning(
+                    "could not notify %s that task %s finished",
+                    task.notify_target,
+                    task.id,
+                    exc_info=True,
+                )
 
     # -- automation REST --------------------------------------------------------
     def list_automations(self) -> dict[str, Any]:
@@ -9858,7 +9890,9 @@ class SessionManager:
             # Allowing a site widens what the session reaches ("raised"); taking it back narrows it.
             self.audit_autonomy_change(session_id, "session_site", *(("", entry) if what == "allowed" else (entry, "")))
         except Exception:  # noqa: BLE001 - the audit line must not fail the change
-            pass
+            logger.warning(
+                "could not audit the session-site %s (%s)", what, entry, exc_info=True
+            )
 
     def add_root(
         self, session_id: str, path: str, writable: bool = False
@@ -10048,7 +10082,13 @@ class SessionManager:
                 # was silently swallowed, so deleting a running session never stopped it.)
                 engine.request_interrupt()
             except Exception:
-                pass
+                # the delete still proceeds, but a session that keeps running after
+                # its own delete is exactly the kind of bug the comment above hid
+                logger.warning(
+                    "could not interrupt the engine while deleting session %s",
+                    session_id,
+                    exc_info=True,
+                )
         record = self.session_store.load(session_id)
         self._remove_spawn_worktree(session_id, record)
         self._remove_feature_worktree(session_id, record)
@@ -10619,9 +10659,11 @@ def _parse_inbox_json(s: str) -> dict[str, Any]:
 
     try:
         v = _json.loads(s) if s else {}
-        return v if isinstance(v, dict) else {}
-    except Exception:
+    except (ValueError, TypeError):
+        # a resolution may legitimately be plain text ("allow") — a miss, not a
+        # failure. Anything else is a bug and should surface, not be swallowed.
         return {}
+    return v if isinstance(v, dict) else {}
 
 
 def _epoch() -> float:
