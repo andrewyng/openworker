@@ -1,6 +1,8 @@
 import {Attachment,attachmentArgument,stageInput,userInput,type UserInput} from "./attachments.js";
 export { Attachment } from "./attachments.js";
 export type { UserInput, InputContent, AttachmentSource } from "./attachments.js";
+import { providerObserver } from "./provider-events.js";
+export * from "./provider-events.js";
 import { Observability } from "./observability.js";
 export * from "./observability.js";
 import { normalizeSafety, type SafetyOptions, type SafetyHandler, type SafetyContext, type SafetyDecision } from "./safety.js";
@@ -121,6 +123,19 @@ function interruptionOf(value: unknown): Interruption {
 
 /** Node.js host owner. Agent logic, storage and permission enforcement remain in Rust. */
 export class Harness {
+  private readonly providerObservers = new Map<string, import("./safety.js").SafetyHook>();
+  private readonly agentProviders = new Map<string, import("./types.js").Model>();
+  async registerProviderObserver(provider: string, listener: import("./provider-events.js").ProviderListener): Promise<void> {
+    if (this.capabilities.provider_session_events !== true) throw new HarnessError("Setup", "Host does not support provider session events");
+    const observer = providerObserver(provider, listener);
+    await this.safetyOptions({hooks:[observer]});
+    this.providerObservers.set(provider, observer);
+  }
+  /** @internal Remember the application-owned binding after successful registration. */
+  bindAgentProvider(agent: string, model?: import("./types.js").Model): void {
+    if (model) this.agentProviders.set(agent, {...model});
+    else this.agentProviders.delete(agent);
+  }
   get observability(): Observability { return new Observability((method,args)=>this.request(method,args as Json)); }
   static connect(options: ServiceOptions): Promise<Service> {
     return Service.connect(options);
@@ -586,6 +601,12 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    const model = options.model ?? this.agentProviders.get(agent);
+    if (model?.notifyOnSessionState) {
+      const observer = this.providerObservers.get(model.provider);
+      if (!observer) throw new HarnessError("Setup", "Register a listener for the selected provider before opening this session");
+      options = {...options, hooks:[...(options.hooks ?? []), observer]};
+    }
     if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
       throw new HarnessError("Setup", "Update the host to configure application guidance");
     if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
@@ -709,6 +730,7 @@ export class AgentHandle {
           : {}),
       }),
     });
+    this.harness.bindAgentProvider(name, defaultModel);
   }
   ready(): Promise<void> {
     return this.registration;

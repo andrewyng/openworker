@@ -20,7 +20,11 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
         Ok(json!(config
             .hooks
             .into_iter()
-            .filter(|h| h.when == crate::safety::HookPhase::OnEvent)
+            .filter(|h| h.when == crate::safety::HookPhase::OnEvent
+                && h.provider.as_ref().is_none_or(|provider| s
+                    .model_selection
+                    .as_ref()
+                    .is_some_and(|m| &m.connection == provider)))
             .collect::<Vec<_>>())
         .to_string())
     })?;
@@ -61,7 +65,7 @@ impl Store {
         #[cfg(feature = "guardrails")]
         {
             self.metadata(sid)?;
-            let mut q=self.db.prepare("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers WHERE session_id=?1 ORDER BY next_ms,cursor,hook_name LIMIT 64")?;
+            let mut q=self.db.prepare("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers o WHERE session_id=?1 AND (json_extract(o.hook,'$.provider') IS NULL OR NOT EXISTS (SELECT 1 FROM safety_observers x WHERE x.session_id=o.session_id AND x.hook_name=o.hook_name AND x.hook_version=o.hook_version AND x.cursor<o.cursor AND x.attempts>0)) ORDER BY next_ms,cursor,hook_name LIMIT 64")?;
             let rows = q.query_map(params![sid], |r| {
                 Ok((
                     r.get::<_, i64>(0)?,

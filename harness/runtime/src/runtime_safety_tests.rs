@@ -336,6 +336,7 @@ async fn application_instruction_addendum_is_checked_before_the_model() {
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "inspect-context".into(),
             version: "1".into(),
             when: HookPhase::BeforeModel,
@@ -423,6 +424,7 @@ async fn hook_blocks_tool_in_bypass_and_returns_safe_unexecuted_result_to_model(
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "deny".into(),
             version: "1".into(),
             when: HookPhase::BeforeTool,
@@ -467,6 +469,7 @@ async fn blocked_result_reports_completed_effect_without_exposing_result() {
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "deny".into(),
             version: "1".into(),
             when: HookPhase::AfterTool,
@@ -503,6 +506,7 @@ async fn transactional_memory_result_is_held_until_inspection_and_recovery_never
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "deny".into(),
             version: "1".into(),
             when: HookPhase::AfterTool,
@@ -656,6 +660,7 @@ async fn before_model_rejection_has_no_attempt_or_working_model_charge() {
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "deny".into(),
             version: "1".into(),
             when: HookPhase::BeforeModel,
@@ -707,6 +712,7 @@ async fn observer_outbox_is_metadata_only_and_does_not_hold_the_agent_turn() {
     };
     let config = Config {
         hooks: vec![Hook {
+            provider: None,
             name: "activity".into(),
             version: "1".into(),
             when: HookPhase::OnEvent,

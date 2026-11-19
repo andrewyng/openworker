@@ -113,6 +113,7 @@ async fn remote_read_redaction_and_before_tool_denial_in_bypass() -> Result<()> 
             ..Default::default()
         },
         hooks: vec![Hook {
+            provider: None,
             name: "read-only".into(),
             version: "1".into(),
             when: HookPhase::BeforeTool,

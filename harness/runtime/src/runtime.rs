@@ -811,6 +811,16 @@ impl Runtime {
             }
 
             let event = self.store.lock().unwrap().start_attempt(sid, &id, number)?;
+            if !summary
+                && model.connection.as_ref().is_some_and(|(_, selected)| {
+                    s.safety.hooks.iter().any(|h| {
+                        h.when == crate::safety::HookPhase::OnEvent
+                            && h.provider.as_deref() == Some(selected.connection.as_str())
+                    })
+                })
+            {
+                model.session_sequence = Some(event.event_id);
+            }
             self.publish(event);
             let request = async {
                 let history = {
@@ -2879,6 +2889,13 @@ impl Runtime {
         self.check_backend(sid)?; // policy may have changed during AI review
         let mut data = serde_json::to_value(&i)?;
         data["interaction_id"] = json!(i.id);
+        if waiting {
+            data["state_change"] = json!(if i.kind == "question" {
+                "waiting_user_response"
+            } else {
+                "waiting_user_approval"
+            });
+        }
         data["category"] = if alias == "ask_user" {
             Value::Null
         } else {
@@ -3536,6 +3553,10 @@ impl Runtime {
                 .filter(|v| v["type"] == "message")
                 .cloned()
                 .collect::<Vec<_>>();
+            let queued: Vec<_> = queue
+                .iter()
+                .map(|call| json!({"name":call["name"],"call_id":call["call_id"]}))
+                .collect();
             let finished = queue.is_empty() && !had_calls;
             self.update(
                 sid,
@@ -3559,6 +3580,9 @@ impl Runtime {
                     Ok(())
                 },
             )?;
+            for call in queued {
+                self.progress(sid, "tool_queued", call)?;
+            }
             if finished {
                 if self.bounded_lifecycle(sid) {
                     self.cleanup_execution(sid, true).await?;
@@ -3659,6 +3683,7 @@ impl Runtime {
             pending.grant_id = None;
             let mut event_data = serde_json::to_value(&pending)?;
             event_data["interaction_id"] = json!(pending.id);
+            event_data["state_change"] = json!("waiting_user_approval");
             event_data["reason"] = json!("Session grant revoked or invalidated before execution");
             session.interactions.push(pending);
             session.turn.as_mut().unwrap().status = "waiting".into();
@@ -3988,7 +4013,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;

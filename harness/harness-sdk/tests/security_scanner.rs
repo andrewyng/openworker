@@ -94,6 +94,7 @@ async fn exercise(managed: bool) {
     let s = a
         .new_session_with(SessionOptions::default().safety(guardrails::Config {
             hooks: vec![guardrails::Hook {
+                provider: None,
                 name: "airs".into(),
                 version: "1".into(),
                 when: guardrails::HookPhase::BeforeInput,

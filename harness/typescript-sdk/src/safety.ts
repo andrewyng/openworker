@@ -31,6 +31,7 @@ export interface Guardrail {
   callback?: SafetyHandler;
 }
 export interface SafetyHook {
+  provider?: string;
   name:string; version:string; when:"beforeInput"|"beforeModel"|"beforeTool"|"afterTool"|"beforeOutput"|"onEvent";
   tools:string[]; handler:HandlerRef; timeoutMs:number;
   callback?:SafetyHandler;

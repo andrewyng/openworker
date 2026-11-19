@@ -266,6 +266,7 @@ async fn hooks_see_sanitized_content_cannot_rewrite_and_observers_cannot_block()
             ..Default::default()
         },
         hooks: vec![Hook {
+            provider: None,
             name: "output".into(),
             version: "1".into(),
             when: HookPhase::BeforeOutput,

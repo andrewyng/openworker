@@ -235,6 +235,9 @@ impl HookPhase {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Hook {
+    /// Send request correlation to this provider only while this observer is attached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     pub name: String,
     #[serde(default = "version")]
     pub version: String,
@@ -247,6 +250,12 @@ pub struct Hook {
 }
 impl Hook {
     pub fn validate(&self) -> Result<()> {
+        if let Some(provider) = &self.provider {
+            ensure!(
+                self.when == HookPhase::OnEvent && identifier(provider),
+                "Invalid provider observer"
+            );
+        }
         ensure!(
             available(),
             "Hooks capability is not included in this build"
@@ -617,6 +626,7 @@ mod minimal_tests {
         Config::default().validate().unwrap();
         assert!(Rule::secrets(Action::Block).validate().is_err());
         let h = Hook {
+            provider: None,
             name: "test".into(),
             version: "1".into(),
             when: HookPhase::BeforeTool,
@@ -660,6 +670,7 @@ where
 impl Hook {
     pub fn new(name: impl Into<String>, when: HookPhase, handler: HandlerRef) -> Self {
         Self {
+            provider: None,
             name: name.into(),
             version: version(),
             when,

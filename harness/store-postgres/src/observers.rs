@@ -15,7 +15,7 @@ impl db::Database {
             let epoch = self.epoch(sid)?;
             let mut tx = self.client.transaction()?;
             db::locked(&mut tx, sid, Some((&self.owner, epoch)))?;
-            let result=tx.query("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers WHERE session_id=$1 ORDER BY next_ms,cursor,hook_name LIMIT 64",&[&sid])?.into_iter().map(|r|json!({"cursor":r.get::<_,i64>(0),"name":r.get::<_,String>(1),"version":r.get::<_,String>(2),"hook":r.get::<_,Value>(3),"record":r.get::<_,Value>(4),"turnId":r.get::<_,Option<String>>(5),"attempts":r.get::<_,i32>(6),"nextMs":r.get::<_,i64>(7)})).collect();
+            let result=tx.query("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers o WHERE session_id=$1 AND (o.hook->>'provider' IS NULL OR NOT EXISTS (SELECT 1 FROM safety_observers x WHERE x.session_id=o.session_id AND x.hook_name=o.hook_name AND x.hook_version=o.hook_version AND x.cursor<o.cursor AND x.attempts>0)) ORDER BY next_ms,cursor,hook_name LIMIT 64",&[&sid])?.into_iter().map(|r|json!({"cursor":r.get::<_,i64>(0),"name":r.get::<_,String>(1),"version":r.get::<_,String>(2),"hook":r.get::<_,Value>(3),"record":r.get::<_,Value>(4),"turnId":r.get::<_,Option<String>>(5),"attempts":r.get::<_,i32>(6),"nextMs":r.get::<_,i64>(7)})).collect();
             tx.commit()?;
             Ok(result)
         }

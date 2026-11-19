@@ -7,6 +7,7 @@ pub struct Model {
     pub provider: crate::provider::Kind,
     pub name: String,
     pub scripted: bool,
+    pub session_sequence: Option<i64>,
     pub observation: Option<CallContext>,
     /// Withhold candidate bodies from exporters until runtime safety checks finish.
     pub content_withheld: bool,
@@ -100,6 +101,7 @@ impl Model {
             provider: crate::provider::Kind::Openai,
             name,
             scripted,
+            session_sequence: None,
             observation: None,
             content_withheld: false,
             stream_reasoning: false,
@@ -369,8 +371,13 @@ impl Model {
             None => Default::default(),
         };
         let request_url = options.url(&endpoint)?;
+        let mut headers = options.headers()?;
+        if let (Some(sequence), Some(context)) = (self.session_sequence, &self.observation) {
+            headers.insert("x-openworker-session-id", context.session.parse()?);
+            headers.insert("x-openworker-event-sequence", sequence.to_string().parse()?);
+        }
         let client = reqwest::Client::builder()
-            .default_headers(options.headers()?)
+            .default_headers(headers)
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))

@@ -48,21 +48,38 @@ impl Runtime {
                 let mut batch=tokio::task::JoinSet::new();
                 for s in sessions {
                     let pending=store.lock().unwrap().pending_observers(&s.id).unwrap_or_default();
+                    // Independent observers can run concurrently. Keep a provider's
+                    // transitions in journal order within each session and batch.
+                    let mut deliveries: Vec<Vec<Value>> = Vec::new();
+                    let mut providers: std::collections::BTreeMap<(String,String),Vec<Value>> = Default::default();
                     for receipt in pending {
-                        if receipt["nextMs"].as_u64().unwrap_or(0)>crate::store::now_ms(){continue;}
+                        if receipt["hook"]["provider"].is_string() {
+                            let key=(receipt["name"].to_string(),receipt["version"].to_string());
+                            providers.entry(key).or_default().push(receipt);
+                        } else if receipt["nextMs"].as_u64().unwrap_or(0)<=crate::store::now_ms() {
+                            deliveries.push(vec![receipt]);
+                        }
+                    }
+                    for group in providers.values_mut() {group.sort_by_key(|r|r["cursor"].as_i64());}
+                    deliveries.extend(providers.into_values());
+                    for group in deliveries {
                         if batch.len()>=8 {tokio::select!{_=stop.cancelled()=>{batch.abort_all();return},_=batch.join_next()=>{}}}
-                        let Ok(hook)=serde_json::from_value::<crate::safety::Hook>(receipt["hook"].clone()) else {continue};
                         let sid=s.id.clone();let registry=handlers.clone();let store=store.clone();let cancel=stop.child_token();let events=events.clone();let tool_names=tool_names.clone();
                         batch.spawn(async move {
+                            for receipt in group {
+                            if receipt["nextMs"].as_u64().unwrap_or(0)>crate::store::now_ms() {break;}
+                            let Ok(hook)=serde_json::from_value::<crate::safety::Hook>(receipt["hook"].clone()) else {break};
                             let id=format!("{}:{}",sid,receipt["cursor"]);
                             let mut context=crate::safety::Context{call_id:None,evaluation_id:id.clone(),session_id:sid.clone(),turn_id:receipt["turnId"].as_str().map(String::from),phase:crate::safety::Phase::Event,text:String::new(),tool:receipt["record"]["facts"]["tool"].as_str().or_else(|| receipt["record"]["facts"]["name"].as_str()).map(String::from),arguments:None,matches:vec![],context:json!({"eventId":id,"event":receipt["record"]})};
                             if let Some(tool) = &mut context.tool { if let Some(qualified)=tool_names.get(tool) { *tool=qualified.clone(); } }
                             let selected=hook.tools.is_empty()||context.tool.as_ref().is_some_and(|t|hook.tools.iter().any(|selector| tool_names.get(selector).unwrap_or(selector)==t));
-                            let ok=!selected||crate::safety::observe(&hook,&registry,context,cancel).await;
+                            let ok=!selected||crate::safety::observe(&hook,&registry,context,cancel.clone()).await;
                             let result=store.lock().unwrap().settle_observer(&sid,&receipt,ok);
                             if (!ok||result.is_err())&&receipt["attempts"].as_u64()==Some(0) {
                                 // Bounded diagnostic only. Do not re-enqueue itself.
                                 if let Ok(event)=store.lock().unwrap().append_event(&sid,"observer_delivery",json!({"hook":hook.name,"code":"OBSERVER_UNAVAILABLE","eventId":id})) {let _=events.send(event);}
+                            }
+                            if !ok || result.is_err() {break;}
                             }
                         });
                     }

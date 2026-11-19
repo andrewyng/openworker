@@ -1134,6 +1134,10 @@ impl Host {
                 c.insert("turn_context".into(), json!(true));
                 c.insert("application_guidance".into(), json!(true));
                 c.insert(
+                    "provider_session_events".into(),
+                    json!(cfg!(feature = "guardrails")),
+                );
+                c.insert(
                     "attachments".into(),
                     json!(
                         cfg!(feature = "attachments")

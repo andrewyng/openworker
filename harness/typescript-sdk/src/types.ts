@@ -159,6 +159,7 @@ export interface AgentDefinition extends Omit<Agent, "id" | "name" | "model"> {
   defaultModel?: Model;
 }
 export interface Model {
+  notifyOnSessionState?: boolean;
   provider: string;
   name: string;
 }
