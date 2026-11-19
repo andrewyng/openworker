@@ -133,6 +133,8 @@ impl Approvals {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) integrations: crate::integrations::Preferences,
     pub(crate) id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
@@ -183,10 +185,15 @@ fn default_fallback_model() -> String {
 }
 
 impl Agent {
+    pub fn integration(mut self, id: impl Into<String>, enabled: bool) -> Self {
+        self.integrations.insert(id.into(), enabled);
+        self
+    }
     /// `id` is the stable identifier sessions are pinned to: ASCII letters,
     /// digits, `-` or `_`, at most 64 characters.
     pub fn new(id: impl Into<String>) -> Self {
         Self {
+            integrations: Default::default(),
             id: id.into(),
             name: None,
             description: String::new(),

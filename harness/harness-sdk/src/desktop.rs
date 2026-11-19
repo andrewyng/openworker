@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 #[derive(Default, Clone, Serialize)]
 pub struct SessionOptions {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    integrations: crate::integrations::Preferences,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_history: Option<Vec<crate::HistoryItem>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -24,6 +26,10 @@ pub struct SessionOptions {
     auto_skip_questions: Option<bool>,
 }
 impl SessionOptions {
+    pub fn integration(mut self, id: impl Into<String>, enabled: bool) -> Self {
+        self.integrations.insert(id.into(), enabled);
+        self
+    }
     /// Durable default for action review; does not grant tool permissions.
     pub fn auto_approver_context(mut self, text: impl Into<String>) -> Self {
         self.auto_approver_context = Some(text.into());
@@ -68,6 +74,10 @@ impl SessionOptions {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DesktopOptions {
+    pub integrations: crate::integrations::Settings,
+    pub integration_policies: crate::integrations::Policies,
+    #[serde(skip)]
+    pub integration_registry: crate::integrations::Registry,
     pub inherit_env: Vec<String>,
     pub safety: crate::guardrails::Config,
     pub compliance: Option<openworker_runtime::compliance::Config>,
@@ -81,6 +91,9 @@ pub struct DesktopOptions {
 impl Default for DesktopOptions {
     fn default() -> Self {
         Self {
+            integrations: Default::default(),
+            integration_policies: Default::default(),
+            integration_registry: Default::default(),
             inherit_env: vec![],
             safety: Default::default(),
             compliance: None,

@@ -164,6 +164,7 @@ impl Host {
                 let store = self.store.clone();
                 let tools = self.tools.read().unwrap().clone();
                 let telemetry = self.instrumentation.clone();
+                let integrations = self.integrations.clone();
                 let connections = self.connections.clone();
                 let safety_handlers = self.safety_callbacks.registry.clone();
                 let prepared = agent.clone();
@@ -201,9 +202,10 @@ impl Host {
                         config.desktop.safety.clone(),
                         safety_handlers,
                     )?;
-                    Arc::get_mut(&mut runtime)
-                        .context("Scoped runtime already published")?
-                        .connections = connections;
+                    let bindings =
+                        Arc::get_mut(&mut runtime).context("Runtime shared during setup")?;
+                    bindings.integrations = integrations;
+                    bindings.connections = connections;
                     Ok((
                         runtime,
                         profiles

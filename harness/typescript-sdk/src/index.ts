@@ -585,6 +585,8 @@ export class Harness {
     return team;
   }
   async session(agent: string, options: SessionOptions = {}): Promise<Session> {
+    if (options.integrations !== undefined && !this.capabilities.integrations)
+      throw new HarnessError("Setup", "Update the host to configure session integrations");
     if ((options.autoApproverContext !== undefined || options.compaction !== undefined) && this.capabilities.application_guidance !== true)
       throw new HarnessError("Setup", "Update the host to configure application guidance");
     if (options.initialHistory !== undefined && this.capabilities.initial_history !== true)
@@ -612,6 +614,7 @@ export class Harness {
         auto_skip_questions: options.autoSkipQuestions,
         auto_approver_context: options.autoApproverContext,
         compaction: options.compaction === undefined ? undefined : { additional_instructions: options.compaction.additionalInstructions },
+        integrations: options.integrations,
         initial_history: options.initialHistory,
         name: options.name,
         ...(options.model

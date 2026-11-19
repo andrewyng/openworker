@@ -34,8 +34,12 @@ async fn inspect_parts(
     request: &str,
     parts: &[Part],
 ) -> anyhow::Result<Vec<Part>> {
-    let (session, _) = app.store.input_safety_policy(sid)?;
-    let policy = app.config.safety.merge(&session)?;
+    let (session, _, admission) = app.store.input_safety_policy(sid)?;
+    let policy = app
+        .config
+        .safety
+        .merge(&session)?
+        .merge(&app.runtime.integration_checks(&admission)?)?;
     openworker_runtime::attachments::validate_parts(parts)?;
     let mut checked = Vec::new();
     let mut total = 0usize;

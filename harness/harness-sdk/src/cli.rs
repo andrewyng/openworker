@@ -31,6 +31,10 @@ impl openworker_runtime::protocol::Endpoint for Endpoint {
     }
 }
 pub fn main_with_registry(registry: ToolRegistry) {
+    main_with_integrations(registry, Default::default())
+}
+/// Entry point for a managed harness executable with additional trusted crates.
+pub fn main_with_integrations(registry: ToolRegistry, integrations: crate::integrations::Registry) {
     let args = std::env::args().collect::<Vec<_>>();
     if args.get(1).map(String::as_str) != Some("harness-stdio") {
         return openworker_runtime::cli::main_with_registry(registry);
@@ -47,8 +51,9 @@ pub fn main_with_registry(registry: ToolRegistry) {
             )?)?,
             None => args[2].clone(),
         };
-        let config: HostConfig = serde_json::from_str(&raw)
+        let mut config: HostConfig = serde_json::from_str(&raw)
             .map_err(|_| anyhow::anyhow!("Invalid host launch configuration"))?;
+        config.desktop.integration_registry = integrations;
         config.validate()?;
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()

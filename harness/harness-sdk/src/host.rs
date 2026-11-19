@@ -162,6 +162,7 @@ pub(crate) struct Host {
     pub provider_callbacks: Arc<crate::provider_callbacks::Bridge>,
     pub safety_callbacks: Arc<crate::safety_callbacks::Bridge>,
     catalog: catalog::Catalog,
+    integrations: Arc<crate::integrations::Configured>,
     connections: Arc<openworker_runtime::connections::Manager>,
     instrumentation: openworker_telemetry::Telemetry,
     postgres: Option<PostgresStore>,
@@ -341,6 +342,9 @@ impl Host {
         } else {
             None
         };
+        if let Some(store) = &sqlite {
+            store.configure_observer_capture(config.desktop.integration_policies.clone())?;
+        }
         let catalog = catalog::Catalog::open(&config.state_dir)?;
         let callbacks = crate::callbacks::Bridge::new();
         let provider_callbacks = crate::provider_callbacks::Bridge::new(callbacks.events.clone());
@@ -368,6 +372,19 @@ impl Host {
         for descriptor in catalog.tools()? {
             registry.register(callbacks.proxy(descriptor))?;
         }
+        let policies = config.desktop.integration_policies.clone();
+        let policy = Arc::new(move || {
+            Ok(crate::integrations::PolicyRevision {
+                revision: 0,
+                policies: policies.clone(),
+            })
+        });
+        let integrations = Arc::new(
+            config
+                .desktop
+                .integration_registry
+                .configure(&config.desktop.integrations, policy)?,
+        );
         let connections = Arc::new(openworker_runtime::connections::Manager::open(
             &config.state_dir,
         )?);
@@ -411,7 +428,9 @@ impl Host {
         // This SDK host owns its schema's execution. Distributed server worker
         // scheduling remains a separate host mode, not a property of SQL syntax.
         let mut restored = if let Some(db) = &pg {
-            db.claim_sdk_host(ids.iter().cloned().collect())?
+            let restored = db.claim_sdk_host(ids.iter().cloned().collect())?;
+            db.configure_sdk_observer_capture(&config.desktop.integration_policies)?;
+            restored
         } else {
             vec![]
         };
@@ -501,9 +520,9 @@ impl Host {
                 config.desktop.safety.clone(),
                 safety_callbacks.registry.clone(),
             )?;
-            Arc::get_mut(&mut rt)
-                .context("Runtime published before provider binding")?
-                .connections = connections.clone();
+            let bindings = Arc::get_mut(&mut rt).context("Runtime shared during setup")?;
+            bindings.integrations = integrations.clone();
+            bindings.connections = connections.clone();
             profiles.insert(bundle.id, rt);
             if let Some(db) = &pg {
                 for s in store.lock().unwrap().list_metadata()? {
@@ -542,6 +561,7 @@ impl Host {
             provider_callbacks,
             safety_callbacks,
             catalog,
+            integrations,
             connections,
             instrumentation: telemetry,
             postgres: pg,
@@ -655,6 +675,7 @@ impl Host {
         let tools = self.tools.read().unwrap().clone();
         let store = self.store.clone();
         let telemetry = self.instrumentation.clone();
+        let integrations = self.integrations.clone();
         let connections = self.connections.clone();
         let safety_handlers = self.safety_callbacks.registry.clone();
         let definition = agent.clone();
@@ -689,9 +710,9 @@ impl Host {
                     config.desktop.safety.clone(),
                     safety_handlers.clone(),
                 )?;
-                Arc::get_mut(&mut runtime)
-                    .context("Runtime published before provider binding")?
-                    .connections = connections.clone();
+                let bindings = Arc::get_mut(&mut runtime).context("Runtime shared during setup")?;
+                bindings.integrations = integrations.clone();
+                bindings.connections = connections.clone();
                 profiles.insert(bundle.id, runtime);
             }
             Ok((profiles, agents))
@@ -1133,6 +1154,10 @@ impl Host {
                 c.insert("turn_limits".into(), json!(true));
                 c.insert("turn_context".into(), json!(true));
                 c.insert("application_guidance".into(), json!(true));
+                c.insert(
+                    "integrations".into(),
+                    json!(self.integrations.catalog.catalog()),
+                );
                 c.insert(
                     "attachments".into(),
                     json!(

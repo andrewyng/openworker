@@ -3,13 +3,13 @@ CREATE TABLE IF NOT EXISTS safety_observers (
  hook JSONB NOT NULL,record JSONB NOT NULL,turn_id TEXT,next_ms BIGINT NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(session_id,cursor,hook_name,hook_version));
 CREATE OR REPLACE FUNCTION ow_observer_capture() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE session_data JSONB; facts JSONB; h JSONB;
+DECLARE session_data JSONB; facts JSONB; h JSONB; integration_id TEXT; modes JSONB;
 BEGIN
  IF NEW.kind IN ('assistant_delta','tool_progress','agent_run_state','observer_delivery') THEN RETURN NEW; END IF;
  SELECT data INTO session_data FROM sessions WHERE id=NEW.session_id;
   SELECT coalesce(jsonb_object_agg(key,value),'{}'::jsonb) INTO facts
   FROM jsonb_each(NEW.data) WHERE
-    (key IN ('call_id','callId','tool','interaction_id','attempt_id','submission_id','evaluationId','check','version','phase','purpose','outcome','code','status','name','origin','approval_origin','grant_id','policy_digest','resource_policy_digest','bundle_digest')
+    (key IN ('call_id','callId','tool','interaction_id','state_change','decision','attempt_id','submission_id','evaluationId','check','version','phase','purpose','outcome','code','status','name','origin','approval_origin','grant_id','policy_digest','resource_policy_digest','bundle_digest')
       AND jsonb_typeof(value)='string' AND (value#>>'{}') ~ '^[A-Za-z0-9._:/-]{1,160}$')
     OR (key IN ('executed','outputBlocked','result_held','guarded','automatic_replay') AND jsonb_typeof(value)='boolean')
     OR (key IN ('durationMs','matchCount','retry','max_retries','attempt','output_tokens','reserved_output_tokens','reported_output_tokens')
@@ -19,6 +19,20 @@ BEGIN
  INSERT INTO safety_observers(session_id,cursor,hook_name,hook_version,hook,record,turn_id)
  VALUES(NEW.session_id,NEW.cursor,h->>'name',h->>'version',h,jsonb_build_object('schemaVersion',1,'kind',NEW.kind,'agent',session_data->'coworker','facts',facts),NEW.turn_id) ON CONFLICT DO NOTHING;
  END LOOP;
+ IF NEW.kind IN ('session_created','turn_started','tool_queued','tool_started','tool_finished','model_attempt_started','model_attempt_finished','turn_completed','session_closed','interaction_required','interaction_resolved') AND jsonb_typeof(session_data->'integrations'->'observers') = 'array' THEN
+   modes := nullif(current_setting('openworker.integration_policies',true),'')::jsonb;
+   IF session_data->'integrations'->>'cluster_policy' = 'true' THEN
+     SELECT data->'integrationPolicies' INTO modes FROM service_configuration WHERE singleton;
+   END IF;
+   FOR integration_id IN SELECT jsonb_array_elements_text(session_data->'integrations'->'observers') LOOP
+     IF (CASE modes->>integration_id WHEN 'required' THEN true WHEN 'forbidden' THEN false
+        ELSE coalesce((session_data->'integrations'->'choices'->integration_id->>'enabled')::boolean,false) END) THEN
+       h := jsonb_build_object('name','integration/'||integration_id,'version','1','integration',integration_id);
+       INSERT INTO safety_observers(session_id,cursor,hook_name,hook_version,hook,record,turn_id)
+       VALUES(NEW.session_id,NEW.cursor,h->>'name','1',h,jsonb_build_object('kind',NEW.kind,'facts',facts),NEW.turn_id) ON CONFLICT DO NOTHING;
+     END IF;
+   END LOOP;
+ END IF;
  RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS safety_observer_capture ON events;

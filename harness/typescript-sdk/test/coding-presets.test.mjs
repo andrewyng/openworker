@@ -18,8 +18,9 @@ test("shared preset pins base and default builder worktree without implicit chil
 });
 test("service releases preserve models and require explicit profile compatibility",()=>{
   const profile={id:"shared@1",provider:"openshell",cpu:1,memoryMB:512,sharing:"shared"};
-  const a=codingAgent("solo",{defaultModel:{provider:"Local",name:"chosen"}});
+  const a=codingAgent("solo",{integrations:{"mock-observer":false},defaultModel:{provider:"Local",name:"chosen"}});
   const r=codingRelease(a,"1",profile);assert.deepEqual(r.defaultModel,{connection:"Local",model:"chosen"});
+  assert.deepEqual(r.integrations,{"mock-observer":false});
   assert.throws(()=>codingRelease({...a,approvals:{mode:"never"}},"1",profile));
   assert.throws(()=>codingRelease({...a,memory:true},"1",profile));
   const p=sharedCodingTeam("game",{repository:"source",base:"a".repeat(40)});const team=codingServiceTeam(p,"1");

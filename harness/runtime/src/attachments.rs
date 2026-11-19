@@ -344,6 +344,7 @@ impl crate::runtime::Runtime {
         let policy = self
             .safety_defaults
             .merge(&session.safety)?
+            .merge(&self.integration_checks(&session.integrations)?)?
             .merge(&safety.cloned().unwrap_or_default())?;
         let mut checked = vec![];
         let mut total = 0usize;

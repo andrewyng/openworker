@@ -148,6 +148,8 @@ pub use openworker_store_postgres::service_catalog::{
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionOptions {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

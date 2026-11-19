@@ -217,7 +217,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -269,7 +269,7 @@ async fn create(
     let request = SessionCreation {
         request_id: key(&app, &headers, "session")?,
         actor: app.actor.clone(),
-        parameters: json!({"coworker":app.runtime.coworker(),"workspace":"/sandbox","environment_id":body.environment_id,"name":body.name.unwrap_or_else(||"Service session".into())}),
+        parameters: json!({"coworker":app.runtime.coworker(),"workspace":"/sandbox","environment_id":body.environment_id,"integrations":body.integrations,"name":body.name.unwrap_or_else(||"Service session".into())}),
     };
     let receipt = if let Some(r) = app.store.creation(request.clone())? {
         r

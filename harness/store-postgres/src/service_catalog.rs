@@ -85,6 +85,8 @@ impl Profile {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Release {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     pub id: String,
     pub instructions: String,
     pub tools: Vec<String>,
@@ -185,6 +187,8 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Admission {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: openworker_runtime::integrations::Preferences,
     pub agent: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,

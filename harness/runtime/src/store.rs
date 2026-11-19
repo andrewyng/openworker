@@ -103,6 +103,11 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::integrations::Admission::is_empty"
+    )]
+    pub integrations: crate::integrations::Admission,
     #[serde(default)]
     pub safety_models: std::collections::BTreeMap<String, crate::connections::Selection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -517,6 +522,12 @@ impl Store {
     /// The identical transactional adapter, with no session data written to disk.
     pub fn memory() -> Result<Self> {
         Self::initialize(Connection::open_in_memory()?, None)
+    }
+    pub fn configure_observer_capture(
+        &self,
+        policies: crate::integrations::Policies,
+    ) -> Result<()> {
+        sqlite_observers::install_hook_selector(&self.db, policies)
     }
     fn initialize(db: Connection, lock: Option<std::fs::File>) -> Result<Self> {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;

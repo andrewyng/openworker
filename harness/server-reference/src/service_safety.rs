@@ -24,7 +24,7 @@ pub(crate) async fn inspect(
 ) -> Result<String, ApiError> {
     inspect_with(app, sid, request, text, None).await
 }
-async fn inspect_with(
+pub(crate) async fn inspect_with(
     app: &App,
     sid: Option<&str>,
     request: &str,
@@ -61,8 +61,14 @@ async fn inspect_policy(
     extra: Option<&Config>,
 ) -> Result<String, ApiError> {
     let (config, pins) = if let Some(sid) = sid {
-        let (session, pins) = app.store.input_safety_policy(sid)?;
-        (app.config.safety.merge(&session)?, pins)
+        let (session, pins, admission) = app.store.input_safety_policy(sid)?;
+        (
+            app.config
+                .safety
+                .merge(&session)?
+                .merge(&app.runtime.integration_checks(&admission)?)?,
+            pins,
+        )
     } else {
         let config: Config = app.config.safety.clone();
         let pins = app.runtime.pin_safety_models(&config)?;

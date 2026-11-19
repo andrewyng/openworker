@@ -16,7 +16,8 @@ pub fn hold_internal_result(s: &mut crate::store::Session, call: &serde_json::Va
     let Some(turn) = s.turn.as_mut() else {
         return false;
     };
-    if !s.safety.protects(Phase::ToolResult, Some(name))
+    if !s.integrations.may_check_results
+        && !s.safety.protects(Phase::ToolResult, Some(name))
         && !turn.safety.protects(Phase::ToolResult, Some(name))
     {
         return false;

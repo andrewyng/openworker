@@ -16,6 +16,8 @@ pub struct BuiltinTools {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integrations: crate::integrations::Preferences,
     #[serde(default = "one")]
     pub schema_version: u32,
     pub id: String,

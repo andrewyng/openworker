@@ -73,6 +73,11 @@ enum Command {
         after: i64,
     },
     Capabilities,
+    /// Inspect the installed catalog and manage session activation policy.
+    Integrations {
+        #[command(subcommand)]
+        command: IntegrationsCommand,
+    },
     Profile {
         #[command(subcommand)]
         command: CatalogCommand,
@@ -172,6 +177,22 @@ enum Command {
         session: String,
         #[arg(long)]
         receipt: String,
+    },
+}
+#[derive(Subcommand)]
+enum IntegrationsCommand {
+    List,
+    Policy {
+        #[command(subcommand)]
+        command: IntegrationPolicyCommand,
+    },
+}
+#[derive(Subcommand)]
+enum IntegrationPolicyCommand {
+    Set {
+        id: String,
+        #[arg(long,value_parser=["on-by-default","off-by-default","required","forbidden"])]
+        mode: String,
     },
 }
 #[derive(Subcommand)]
@@ -412,6 +433,7 @@ async fn run(args: Args) -> Result<()> {
     }
     match args.command {
         Command::Whoami => output(service.identity())?,
+        Command::Integrations { command } => integrations(&service,command).await?,
         Command::Capabilities => output(service.capabilities())?,
         Command::Profile { command } => catalog(&service, "profile", command).await?,
         Command::Agent { command } => catalog(&service, "agent", command).await?,
@@ -731,6 +753,40 @@ async fn catalog(service: &Service, kind: &str, command: CatalogCommand) -> Resu
         }
     }
     Ok(())
+}
+
+async fn integrations(service: &Service, command: IntegrationsCommand) -> Result<()> {
+    let catalog = service
+        .capabilities()
+        .get("integrations")
+        .context("Cluster does not support runtime integrations")?;
+    let current = service.json("GET", "/v1/configuration", None, None).await?;
+    match command {
+        IntegrationsCommand::List => output(json!({
+            "registered":catalog,
+            "configured":service.capabilities()["configuredIntegrations"],
+            "policies":current["configuration"].get("integrationPolicies").cloned().unwrap_or_else(||json!({})),
+            "revision":current["revision"]
+        })),
+        IntegrationsCommand::Policy {
+            command: IntegrationPolicyCommand::Set { id, mode },
+        } => {
+            ensure!(catalog.get(&id).is_some(), "Unknown integration {id}");
+            let mut updated = current["configuration"].clone();
+            updated["integrationPolicies"][&id] = json!(mode);
+            let body = json!({"expectedRevision":current["revision"],"configuration":updated});
+            output(
+                service
+                    .json(
+                        "PUT",
+                        "/v1/configuration",
+                        Some(body),
+                        Some(&openworker_sdk::service::new_idempotency_key()),
+                    )
+                    .await?,
+            )
+        }
+    }
 }
 
 #[cfg(test)]

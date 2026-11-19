@@ -657,6 +657,13 @@ impl Session {
         Self::create_options(client, options).await
     }
     pub(crate) async fn create_options(client: HarnessClient, options: Value) -> Result<Self> {
+        if options.get("integrations").is_some()
+            && !client.info()["capabilities"]["integrations"].is_object()
+        {
+            return Err(Error::Setup(
+                "Update the host to configure session integrations".into(),
+            ));
+        }
         if (options.get("auto_approver_context").is_some() || options.get("compaction").is_some())
             && client.info()["capabilities"]["application_guidance"] != true
         {
