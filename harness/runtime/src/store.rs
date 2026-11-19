@@ -103,6 +103,8 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "crate::integrations::Admission::is_empty"

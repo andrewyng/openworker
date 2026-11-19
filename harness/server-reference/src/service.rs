@@ -49,6 +49,10 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
+        ("POST", ["", "v1", "workspace-providers"])
+        | ("POST", ["", "v1", "workspace-providers", _, "workspaces" | "stop" | "delete-data"]) => {
+            Some(Action::Submit)
+        }
         ("GET", ["", "v1", "compliance", "sessions", _, "activities" | "delivery"]) => {
             Some(Action::ComplianceRead)
         }
@@ -109,6 +113,19 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route("/v1/workspace-providers", post(crate::workspace_api::start))
+        .route(
+            "/v1/workspace-providers/:id/workspaces",
+            post(crate::workspace_api::open),
+        )
+        .route(
+            "/v1/workspace-providers/:id/stop",
+            post(crate::workspace_api::stop),
+        )
+        .route(
+            "/v1/workspace-providers/:id/delete-data",
+            post(crate::workspace_api::delete_data),
+        )
         .route(
             "/v1/profiles",
             post(crate::management::put_profile).get(profiles),
@@ -217,7 +234,7 @@ fn cfg(app: &App) -> &ServiceConfig {
 }
 async fn capabilities(Extension(app): Extension<App>) -> Json<Value> {
     Json(
-        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
+        json!({"configuredIntegrations":app.runtime.integrations.configured_ids().collect::<Vec<_>>(),"integrations":app.runtime.integrations.catalog.catalog(),"apiVersion":"1","serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"agent":cfg(&app).agent,"features":{"workspaceProviders":app.runtime.workspaces.available(),"attachments":cfg!(feature="attachments"),"compliance":cfg!(feature="compliance"),"turnLimits":true,"toolArgumentRecovery":true,"environmentProcesses":cfg!(target_os="linux"),"sessions":true,"events":"sse","controls":true,"artifacts":app.artifacts.is_some(),"combinedSubmission":true,"runtimeProfiles":true,"agentDeployment":true,"credentialExpiry":true,"configuration":true,"workerPools":true,"humanLogin":"token-file","approvedReleasesOnly":!cfg(&app).legacy_compatibility,"teams":true,"standaloneSubagents":true,"singleNamespace":true},"limits":{"jsonBytes":160000,"textBytes":32000,"idempotencyKeyBytes":100,"catalogEntries":64,"pendingOperations":128,"environments":64,"environmentsPerPrincipal":16}}),
     )
 }
 async fn agent(
@@ -266,11 +283,17 @@ async fn create(
         body.runtime_profile.is_none() && body.environment_id.is_some(),
         SubmissionError::InvalidRequest,
     )?;
-    let request = SessionCreation {
+    if let Some(reference) = &body.workspace_id {
+        crate::workspace_api::validate(&app, reference).await?;
+    }
+    let mut request = SessionCreation {
         request_id: key(&app, &headers, "session")?,
         actor: app.actor.clone(),
         parameters: json!({"coworker":app.runtime.coworker(),"workspace":"/sandbox","environment_id":body.environment_id,"integrations":body.integrations,"name":body.name.unwrap_or_else(||"Service session".into())}),
     };
+    if let Some(reference) = &body.workspace_id {
+        request.parameters["workspace_id"] = json!(reference);
+    }
     let receipt = if let Some(r) = app.store.creation(request.clone())? {
         r
     } else {
@@ -280,15 +303,23 @@ async fn create(
             .map_err(|_| ApiError(SubmissionError::InvalidRequest.into()))?;
         app.store.create_session(request, candidate)?
     };
+    if let Some(reference) = &body.workspace_id {
+        app.runtime
+            .workspaces
+            .attach(reference, &receipt.session_id)
+            .await?;
+    }
+    let mut response = json!({"serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"sessionId":receipt.session_id,"agent":cfg(&app).agent,"environmentId":body.environment_id});
+    if let Some(reference) = body.workspace_id {
+        response["workspaceId"] = json!(reference);
+    }
     Ok((
         if receipt.duplicate {
             StatusCode::OK
         } else {
             StatusCode::CREATED
         },
-        Json(
-            json!({"serviceId":cfg(&app).id,"namespace":cfg(&app).namespace,"sessionId":receipt.session_id,"agent":cfg(&app).agent,"environmentId":body.environment_id}),
-        ),
+        Json(response),
     ))
 }
 async fn snapshot(
@@ -421,7 +452,11 @@ async fn close(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     key(&app, &headers, &format!("close:{sid}"))?;
-    Ok(Json(app.store.service_close(&sid)?))
+    let receipt = app.store.service_close(&sid)?;
+    if let Some(reference) = receipt["workspaceId"].as_str() {
+        app.runtime.workspaces.detach(reference, &sid).await?;
+    }
+    Ok(Json(receipt))
 }
 async fn environment_list(Extension(app): Extension<App>) -> Result<Json<Value>, ApiError> {
     Ok(Json(app.store.service_environment_list()?))

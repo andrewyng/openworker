@@ -272,6 +272,9 @@ pub(crate) async fn admit_kind(
     mut input: Admission,
     kind: &str,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    if let Some(reference) = &input.workspace_id {
+        crate::workspace_api::validate(&app, reference).await?;
+    }
     let release = app.store.catalog_get("release", &input.agent)?;
     let r: Release =
         serde_json::from_value(release.definition.clone()).map_err(anyhow::Error::from)?;
@@ -308,6 +311,12 @@ pub(crate) async fn admit_kind(
     };
     let p: Profile =
         serde_json::from_value(profile.definition.clone()).map_err(anyhow::Error::from)?;
+    if input.workspace_id.is_some() {
+        let bundle = app.config.load_bundle()?;
+        let selected = bundle.tools.select(&r.tools)?;
+        openworker_runtime::workspaces::validate_tools(&bundle, selected.bindings.keys())
+            .map_err(|_| ApiError(SubmissionError::InvalidRequest.into()))?;
+    }
     let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
     if let Some(text) = &input.initial_message {
@@ -354,28 +363,45 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
     let Some((op, create)) = store.service_claim_for(Some(installed))? else {
         return Ok(false);
     };
-    let work:Result<()>=async {
-        let rel=store.catalog_get("release",&op.release_id)?;let profile=store.catalog_get("profile",&op.profile_id)?;
-        let provider=provider(config,&profile)?;let mut env=store.clone().environment(&op.environment_id)?;
-        if op.status!="ready"{
-            let result=if create {provider.create(env.clone()).await}else{
-                let raw=env.id.strip_prefix("env_").context("Bad environment ID")?;
-                provider.bind_existing(&env,&format!("owr-{}",&raw[..15])).await
+    let work: Result<()> = async {
+        let rel = store.catalog_get("release", &op.release_id)?;
+        let profile = store.catalog_get("profile", &op.profile_id)?;
+        let provider = provider(config, &profile)?;
+        let mut env = store.clone().environment(&op.environment_id)?;
+        if op.status != "ready" {
+            let result = if create {
+                provider.create(env.clone()).await
+            } else {
+                let raw = env.id.strip_prefix("env_").context("Bad environment ID")?;
+                provider
+                    .bind_existing(&env, &format!("owr-{}", &raw[..15]))
+                    .await
             };
-            match result {Ok(binding)=>{env=store.complete_environment(&env.id,env.revision,Some(binding))?;store.service_update_operation(&op.id,"ready",None)?;},Err(_)=>{store.complete_environment(&env.id,env.revision,None)?;store.service_update_operation(&op.id,"unknown",Some("Provisioning outcome unknown; inspecting original environment only".into()))?;return Ok(());}}
+            match result {
+                Ok(binding) => {
+                    env = store.complete_environment(&env.id, env.revision, Some(binding))?;
+                    store.service_update_operation(&op.id, "ready", None)?;
+                }
+                Err(_) => {
+                    store.complete_environment(&env.id, env.revision, None)?;
+                    store.service_update_operation(
+                        &op.id,
+                        "unknown",
+                        Some(
+                            "Provisioning outcome unknown; inspecting original environment only"
+                                .into(),
+                        ),
+                    )?;
+                    return Ok(());
+                }
+            }
         }
-        provider.inspect(env.binding.clone().context("Environment not ready")?).await?;
-        let c=release_config(config,&rel,&profile)?;let rt=c.api_runtime(&format!("admit-{}",&op.id[3..19]),store.clone())?;
-        let input=store.service_input(&op.id)?;let r:Release=serde_json::from_value(rel.definition.clone())?;let p:Profile=serde_json::from_value(profile.definition.clone())?;
-        let mut parameters=json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":env.id,"name":input.name.unwrap_or(op.release_id),"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
-        parameters["integrations"]=json!(input.integrations);
-        if let Some(model)=input.model{parameters["model"]=json!(model);}
-        if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
-        let configured=store.service_operation_configuration(&op.id)?;parameters["compaction"]=json!(configured.configuration.compaction);
-        let session=rt.prepare_session(parameters)?;
-        let service=config.service.as_ref().context("Service config required")?;
-        let result=store.service_finish(&op.id,session,&service.id,&service.namespace);rt.shutdown().await?;result?;Ok(())
-    }.await;
+        provider
+            .inspect(env.binding.clone().context("Environment not ready")?)
+            .await?;
+        finish_ready_admission(config, store, &op, &rel, &profile).await
+    }
+    .await;
     if let Err(error) = work {
         if error
             .downcast_ref::<openworker_store_postgres::auth::Error>()
@@ -392,6 +418,68 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
     }
     Ok(true)
 }
+async fn finish_ready_admission(
+    config: &Config,
+    store: &PostgresStore,
+    op: &openworker_store_postgres::service_catalog::Operation,
+    release: &Entry,
+    profile: &Entry,
+) -> Result<()> {
+    let config = release_config(config, release, profile)?;
+    let runtime = config.api_runtime(&format!("admit-{}", &op.id[3..19]), store.clone())?;
+    let input = store.service_input(&op.id)?;
+    let release: Release = serde_json::from_value(release.definition.clone())?;
+    let profile: Profile = serde_json::from_value(profile.definition.clone())?;
+    let configured = store.service_operation_configuration(&op.id)?;
+    let mut parameters = json!({
+        "coworker":runtime.coworker(), "workspace":"/sandbox", "environment_id":op.environment_id,
+        "name":input.name.as_ref().unwrap_or(&op.release_id),
+        "permissions":{"mode":profile.approval_mode,"auto_skip_questions":profile.auto_skip_questions},
+        "integrations":input.integrations, "compaction":configured.configuration.compaction
+    });
+    if let Some(reference) = &input.workspace_id {
+        parameters["workspace_id"] = json!(reference);
+    }
+    if let Some(model) = input.model {
+        parameters["model"] = json!(model);
+    }
+    if let Some(model) = release.reviewer_model {
+        parameters["reviewer_model"] = json!(model);
+    }
+    let session = runtime.prepare_session(parameters)?;
+    let service = config.service.as_ref().context("Service config required")?;
+    if let Some(reference) = &input.workspace_id {
+        // The operation already reserved the final session ID. A controller retry
+        // attaches that same session, including after ambiguous provider delivery.
+        if let Err(error) = runtime.workspaces.attach(reference, &op.session_id).await {
+            use openworker_runtime::workspaces::WorkspaceError;
+            let (status, reason) = match error.downcast_ref::<WorkspaceError>() {
+                Some(WorkspaceError::Missing | WorkspaceError::Invalid) => {
+                    ("failed", "Workspace unavailable for admission")
+                }
+                _ => ("ready", "Workspace attachment pending reconciliation"),
+            };
+            store.service_update_operation(&op.id, status, Some(reason.into()))?;
+            runtime.shutdown().await?;
+            return Ok(());
+        }
+    }
+    let result = store.service_finish(&op.id, session, &service.id, &service.namespace);
+    if result
+        .as_ref()
+        .is_err_and(|e| e.is::<openworker_store_postgres::auth::Error>())
+    {
+        if let Some(reference) = &input.workspace_id {
+            runtime.workspaces.detach(reference, &op.session_id).await?;
+        }
+    }
+    runtime.shutdown().await?;
+    result
+}
+#[cfg(all(test, feature = "workspace-reference", not(windows)))]
+#[path = "workspace_qualification.rs"]
+mod workspace_qualification;
+
 pub async fn controller(
     config: Config,
     store: PostgresStore,

@@ -404,6 +404,13 @@ pub fn review_context(s: &Session, bundle: &Bundle, call: &Value) -> Result<Stri
     let mut input = json!({"user_inputs":user_inputs,"collaborator_inputs":collaborator_inputs,
         "runtime_facts":{"workspace":s.workspace,"sandbox":backend,"enforcement":backend.enforcement(),"network":if backend==crate::execution::Backend::Off {"host-access-unrestricted-by-harness"}else if s.resource_policy.network.is_empty(){"deny-all"}else{"explicit-destinations"},"resources":s.resource_policy.context(),"category":classification.map_or_else(||classify(bundle,alias),|c|c.category),"classification":classification,"tool_policy_digest":s.tool_policy.digest,"question_dispositions":question_dispositions},
         "proposed_action":{"call_id":call["call_id"],"alias":alias,"server":remote.map(|b| &b.server),"remote_tool":remote.map(|b| &b.tool),"arguments":arguments}});
+    if let (Some(id), Some(_)) = (&s.workspace_id, remote) {
+        let facts = &mut input["runtime_facts"];
+        facts["workspace"] = json!(id);
+        facts["sandbox"] = json!("workspace-provider");
+        facts["enforcement"] = json!("workspace-attachment");
+        facts["network"] = json!("provider-managed");
+    }
     if let Some(context) = s
         .turn
         .as_ref()

@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct App {
+    pub(crate) workspace_handles: Arc<crate::workspace_api::Handles>,
     pub(crate) recording_readers: Arc<Semaphore>,
     pub(crate) safety_readers: Arc<Semaphore>,
     recovery_read_only: bool,
@@ -54,6 +55,7 @@ impl App {
             }
         }
         Ok(Self {
+            workspace_handles: Default::default(),
             recording_readers: Arc::new(Semaphore::new(4)),
             safety_readers: Arc::new(Semaphore::new(8)),
             config: Arc::new(config.clone()),
@@ -329,6 +331,23 @@ impl IntoResponse for ApiError {
             };
             return (status, Json(json!({"error":error.to_string()}))).into_response();
         }
+        if let Some(error) = self
+            .0
+            .downcast_ref::<openworker_runtime::workspaces::WorkspaceError>()
+        {
+            use openworker_runtime::workspaces::WorkspaceError::*;
+            let status = match error {
+                Invalid => StatusCode::BAD_REQUEST,
+                Missing | HandleExpired => StatusCode::NOT_FOUND,
+                DataMismatch | ProfileMismatch | Busy => StatusCode::CONFLICT,
+            };
+            return (
+                status,
+                [("x-openworker-workspace-error", error.code())],
+                Json(json!({"error":error.code()})),
+            )
+                .into_response();
+        }
         if let Some(error) = self.0.downcast_ref::<AuthError>() {
             let status = match error {
                 AuthError::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -381,6 +400,10 @@ async fn create(
     Extension(app): Extension<App>,
     Json(body): Json<Create>,
 ) -> Result<Response, ApiError> {
+    if body.parameters.get("workspace_id").is_some() {
+        // Workspace grants and attachment lifecycle are handled by v1 admission.
+        return Err(ApiError(SubmissionError::InvalidRequest.into()));
+    }
     let request = SessionCreation {
         request_id: body.request_id,
         actor: app.actor,

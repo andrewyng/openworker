@@ -178,6 +178,13 @@ jobs:
         run: echo "OW_PG_TEST_URL=postgresql://postgres:sdk-test-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sdk_tests" >> "$GITHUB_ENV"
       - name: SDK SQLite/PostgreSQL and embedded/stdio matrix
         run: node tests/sdk-storage-shard.mjs "${{ matrix.shard }}"
+      - name: Workspace provider contract and builder/reviewer sessions
+        if: matrix.shard == 'workspaces'
+        run: |
+          npm --prefix typescript-sdk ci
+          npm --prefix typescript-sdk run build
+          cargo test --locked -p openworker-runtime --features workspace-reference --test workspace_provider
+          cargo test --locked -p openworker-server-reference --features workspace-reference --lib builder_and_reviewer_sessions -- --ignored
 
   typescript-storage-and-packaging:
     runs-on: ubuntu-24.04

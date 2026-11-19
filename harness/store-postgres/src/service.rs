@@ -104,14 +104,17 @@ impl PostgresStore {
         let sid = sid.to_owned();
         self.call(move|db|{
         let mut tx=db.client.transaction()?;let p=auth::guard(&mut tx,db.auth.as_ref(),auth::Action::Control,Some(&sid),None)?;
-        let mut s=locked(&mut tx,&sid,None)?;if s.closed{return Ok(json!({"sessionId":sid,"closed":true}))}
+        let mut s=locked(&mut tx,&sid,None)?;
+        let mut receipt=json!({"sessionId":sid,"closed":true});
+        if let Some(reference)=&s.workspace_id {receipt["workspaceId"]=json!(reference);}
+        if s.closed{return Ok(receipt)}
         ensure!(s.turn.as_ref().is_none_or(|t|openworker_runtime::store::terminal(&t.status)),SubmissionError::Busy);
         ensure!(!crate::controls::pending(&mut tx,&sid)?,SubmissionError::Busy);
         let active:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued') OR EXISTS(SELECT 1 FROM attachments WHERE session_id=$1 AND state<>'released')",&[&sid])?.get(0);ensure!(!active,SubmissionError::Busy);
         let epoch:i64=tx.query_opt("UPDATE sessions SET owner=$2,epoch=epoch+1,expires=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND expires<=clock_timestamp() RETURNING epoch",&[&sid,&db.owner])?.ok_or(SubmissionError::Busy)?.get(0);
         s.closed=true;crate::db::write_metadata(&mut tx,&s)?;
         crate::db::event(&mut tx,&s,&db.owner,epoch,"session_closed",json!({"actor":p.as_ref().map(|p|&p.principal)}))?;
-        tx.execute("UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",&[&sid])?;tx.commit()?;Ok(json!({"sessionId":sid,"closed":true}))
+        tx.execute("UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",&[&sid])?;tx.commit()?;Ok(receipt)
     })
     }
     pub fn service_environment_list(&self) -> Result<Value> {
