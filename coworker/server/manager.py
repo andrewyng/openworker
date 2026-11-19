@@ -7582,10 +7582,13 @@ class SessionManager:
 
     def _drop_engine(self, session_id: str) -> Optional[TurnEngine]:
         """Forget a session's engine AND close its sandbox, so a rebuilt engine gets a fresh
-        one and a deleted session leaves no container behind."""
+        one and a deleted session leaves no container behind. Also drops the store's
+        saved-prefix record — a pure append-detection cache whose entries, like the
+        engine, must not outlive the engine (#766)."""
         engine = self._engines.pop(session_id, None)
         if engine is not None:
             self._close_sandbox(engine)
+        self.session_store.forget_cached(session_id)
         return engine
 
     @staticmethod
@@ -8415,6 +8418,12 @@ class SessionManager:
             # rebuilds with the new primary (relative anchoring, env snapshot, git).
             self._promotion_rebuild.discard(session_id)
             self._drop_engine(session_id)
+        # A finished automation run releases its engine — messages, provider view and
+        # sandbox — the same way a restart would; the transcript is persisted and the
+        # next follow-up rebuilds from it. Keeping every run's engine alive until the
+        # session was deleted made sustained automation grow without bound (#766).
+        if session_id.startswith("__run__"):
+            self._drop_engine(session_id)
 
     def is_running(self, session_id: str) -> bool:
         return session_id in self._running_sessions
@@ -9084,14 +9093,21 @@ class SessionManager:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
-            # Persist the run as a continuable session + keep the live engine for an immediate
-            # follow-up; record the run (now carrying its session_id).
+            # Persist the run as a continuable session; record the run (now carrying its
+            # session_id), then release the engine. Holding every run's engine — full
+            # message history plus its sandbox — until the session was deleted made
+            # sustained automation grow without bound (#766); the transcript is on disk
+            # and a follow-up rebuilds from it, as after a restart. Only a failed save
+            # keeps the engine: there the messages exist nowhere else.
             if engine is not None:
+                saved = False
                 try:
                     self.save(run.session_id, engine)
-                    self._engines[run.session_id] = engine
+                    saved = True
                 except Exception:
                     pass
+                if saved:
+                    self._drop_engine(run.session_id)
             self.task_store.add_run(run)
         if task.notify_on_completion and run.status == "ok":
             try:

@@ -619,6 +619,13 @@ class ConversationStore:
             path.unlink()
         return cur.rowcount > 0
 
+    def forget_cached(self, session_id: str) -> None:
+        """Drop the in-memory saved-prefix record for a session (#766). It is an
+        append-detection optimization only: without it the next save compares against
+        the file, which is what a first save in a fresh process already does."""
+        with self._lock:
+            self._persisted.pop(session_id, None)
+
     def rename(self, session_id: str, title: str) -> bool:
         clean = " ".join((title or "").split())[:120]
         if not clean:
