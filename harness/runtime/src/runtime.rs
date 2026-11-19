@@ -2106,12 +2106,54 @@ impl Runtime {
                         .registry
                         .turn_finished(&sid, t.status == "completed");
                 }
-                rt.jobs.lock().unwrap().remove(&sid);
+                let _ = rt.finish_job(&sid, &token).await;
             })
             .await;
         });
         Ok(())
     }
+    // A cancellation can arrive after drive has returned a waiting outcome,
+    // while this job still owns cleanup. Finish that cancellation before release.
+    async fn finish_job(&self, sid: &str, token: &CancellationToken) -> Result<()> {
+        {
+            let mut jobs = self.jobs.lock().unwrap();
+            if !token.is_cancelled() {
+                jobs.remove(sid);
+                return Ok(());
+            }
+        }
+        let result: Result<()> = async {
+            let unfinished = self
+                .store
+                .lock()
+                .unwrap()
+                .metadata(sid)?
+                .turn
+                .as_ref()
+                .is_some_and(|turn| !terminal(&turn.status));
+            if unfinished {
+                self.cancel_finish(sid).await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = &result {
+            let _ = self.update(
+                sid,
+                "turn_completed",
+                json!({"status":"interrupted","error":error.to_string()}),
+                |session| {
+                    if let Some(turn) = &mut session.turn {
+                        turn.status = "interrupted".into();
+                    }
+                    Ok(())
+                },
+            );
+        }
+        self.jobs.lock().unwrap().remove(sid);
+        result
+    }
+
     fn check_backend(&self, sid: &str) -> Result<()> {
         self.bundle.verify()?;
         self.tool_policy.verify()?;
@@ -3863,10 +3905,17 @@ impl Runtime {
                 Ok(())
             },
         )?;
-        let job = self.jobs.lock().unwrap().get(sid).cloned();
-        if let Some(token) = job {
-            token.cancel();
-        } else {
+        let active = {
+            let jobs = self.jobs.lock().unwrap();
+            if let Some(token) = jobs.get(sid) {
+                // Publish cancellation before the worker can remove its job entry.
+                token.cancel();
+                true
+            } else {
+                false
+            }
+        };
+        if !active {
             self.cancel_finish(sid).await?;
         }
         Ok(json!({"turn":self.store.lock().unwrap().get(sid)?.turn}))

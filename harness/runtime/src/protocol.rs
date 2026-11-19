@@ -1,5 +1,5 @@
 use crate::runtime::Runtime;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
@@ -129,9 +129,7 @@ pub async fn serve_endpoint(rt: impl Endpoint + 'static) -> Result<()> {
                         let result=async {
                             if v["jsonrpc"]!="2.0"||!(id.is_string()||id.is_i64()||id.is_u64())||method.is_empty()||!p.is_object(){bail!("Invalid JSON-RPC request");}
                             if method=="initialize"{if initialized{bail!("Already initialized");}}else if !initialized{bail!("Initialize first");}
-                            // Keep the routing future off the small native Windows
-                            // main-thread stack (especially in debug desktop builds).
-                            let result=dispatch_with_callbacks(rt.as_ref(),method,p.clone(),&mut application,&mut stdout).await?;
+                            let result=dispatch_with_callbacks(rt.clone(),method,p.clone(),&mut application,&mut stdout).await?;
                             if method=="initialize"{initialized=true;ready.store(true,std::sync::atomic::Ordering::Release);}
                             if method=="session/attach"{subscribed.insert(p["session_id"].as_str().unwrap().to_owned());}
                             Ok::<_,anyhow::Error>(result)
@@ -170,16 +168,22 @@ async fn write(out: &mut crate::io::Fd, v: Value) -> Result<()> {
 }
 
 async fn dispatch_with_callbacks(
-    rt: &impl Endpoint,
+    rt: Arc<impl Endpoint + 'static>,
     method: &str,
     params: Value,
     application: &mut Option<tokio::sync::broadcast::Receiver<Value>>,
     output: &mut crate::io::Fd,
 ) -> Result<Value> {
-    let mut request = Box::pin(rt.dispatch(method, params));
+    // Poll application requests on a runtime worker instead of the small native
+    // process-main stack. JoinSet aborts the request if this pipe handler exits.
+    let method = method.to_owned();
+    let mut request = tokio::task::JoinSet::new();
+    request.spawn(async move { Box::pin(rt.dispatch(&method, params)).await });
     loop {
         tokio::select! {
-            result=&mut request=>return result,
+            // Endpoint panics terminate serving so clients reconcile uncertain effects.
+            result=request.join_next()=>return result.context("Request task missing")?
+                .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic())),
             event=async{match application.as_mut(){Some(rx)=>rx.recv().await,None=>std::future::pending().await}}=>{
                 let event=event.map_err(|_|anyhow::anyhow!("Application callback delivery was lost"))?;
                 tokio::time::timeout(std::time::Duration::from_secs(10),write(output,json!({"jsonrpc":"2.0","method":"application/event","params":event}))).await.map_err(|_|anyhow::anyhow!("Application callback pipe blocked"))??;
