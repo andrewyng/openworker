@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
+pub mod kubernetes;
 #[cfg(any(test, feature = "workspace-reference"))]
 pub mod reference;
 
@@ -16,6 +17,7 @@ pub enum WorkspaceError {
     HandleExpired,
     DataMismatch,
     ProfileMismatch,
+    UnsupportedSharing,
     Busy,
 }
 impl WorkspaceError {
@@ -26,6 +28,7 @@ impl WorkspaceError {
             Self::HandleExpired => "workspace_handle_expired",
             Self::DataMismatch => "workspace_data_mismatch",
             Self::ProfileMismatch => "workspace_profile_mismatch",
+            Self::UnsupportedSharing => "workspace_shared_mount_unsupported",
             Self::Busy => "workspace_in_use",
         }
     }
@@ -99,7 +102,7 @@ pub trait WorkspaceClient: Send + Sync {
     ) -> ProviderFuture<'_, Value>;
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(
     tag = "name",
     content = "arguments",

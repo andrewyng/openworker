@@ -35,7 +35,8 @@ async function close(session) {
 }
 
 try {
-  const sites = await svc.workspaces.startProvider({name:"websites",options:{podProfile:"small",accessToken:process.env.OW_WS_TEST_SECRET}});
+  const barrier=process.env.OW_K8S_BARRIER;
+  const sites = await svc.workspaces.startProvider({name:"websites",options:{podProfile:"small",...(barrier ? {} : {accessToken:process.env.OW_WS_TEST_SECRET})}});
   const isolated = await svc.workspaces.startProvider({name:"research"});
   const [a,retry] = await Promise.all([sites.getOrCreate({key:"portfolio/builder"}), sites.getOrCreate({key:"portfolio/builder"})]);
   assert.deepEqual(a,retry);
@@ -60,6 +61,15 @@ try {
   const peer = await reviewer.newSession({workspaceId:a.workspaceId});
   const separate = await reviewer.newSession({workspaceId:b.workspaceId});
   await tools(main,[{name:"write_file",arguments:{path:"index.html",content:"Hello Alice"}}]);
+  if (barrier) {
+    await assert.rejects(isolated.getOrCreate({key:"extra",dataId:other.dataId}),{code:"workspace_shared_mount_unsupported"});
+    await writeFile(join(barrier,"identities.json"), JSON.stringify({builder:a,reviewer:b,independent:other}));
+    for (let i=0; ; i++) {
+      try { await access(join(barrier,"continue")); break; }
+      catch (e) { if (e.code !== "ENOENT" || i >= 1800) throw e; }
+      await delay(100);
+    }
+  }
   // Resume the same session after replacing both worker instances.
   const dir=process.env.OW_WS_RESTART_DIR;
   await writeFile(join(dir,"restart"), "");
@@ -69,9 +79,17 @@ try {
     await delay(100);
   }
   assert.equal((await tools(peer,[read]))[0].text,"Hello Alice");
+  if (barrier) {
+    await writeFile(join(barrier,"read-back"), "Hello Alice");
+    for (let i=0; ; i++) {
+      try { await access(join(barrier,"verified")); break; }
+      catch (e) { if (e.code !== "ENOENT" || i >= 900) throw e; }
+      await delay(100);
+    }
+  }
   // OpenWorker has closed the session, but the first provider acknowledgement
   // was lost. Replay the request and check that the sibling keeps its access.
-  await assert.rejects(close(peer), {status:503});
+  if (!barrier) await assert.rejects(close(peer), {status:503});
   await close(peer);
   await tools(main,[{name:"edit_file",arguments:{path:"index.html",old_text:"Hello",new_text:"Welcome"}}]);
   const resumed = await svc.resume(separate.reference());
@@ -92,5 +110,9 @@ try {
   await sites.stopWorkspace(reopened.workspaceId);
   await sites.deleteData(a.dataId);
   await assert.rejects(sites.getOrCreate({key:"stale",dataId:a.dataId}), {code:"workspace_not_found"});
+  await isolated.stopWorkspace(other.workspaceId);
+  await isolated.deleteData(other.dataId);
+  await sites.stopWorkspace(unrelated.workspaceId);
+  await sites.deleteData(unrelated.dataId);
   console.log("PASS: actual SDK sessions, PostgreSQL admissions, worker file tools, both sharing arrangements and close/resume");
 } finally { svc.disconnect(); }

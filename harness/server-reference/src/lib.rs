@@ -33,6 +33,11 @@ mod workspace_api;
 pub struct Config {
     #[serde(skip)]
     pub workspace_registry: openworker_runtime::workspaces::Registry,
+    #[serde(default)]
+    pub kubernetes_workspaces: std::collections::BTreeMap<
+        String,
+        openworker_runtime::workspaces::kubernetes::K8sWorkspaceConfig,
+    >,
     /// Principals permitted to use each deployment-owned workspace service.
     #[serde(default)]
     pub workspace_grants: std::collections::BTreeMap<String, Vec<String>>,
@@ -292,6 +297,14 @@ impl Config {
         configured.cluster_policy = service_mode;
         let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
         runtime.workspaces = self.workspace_registry.clone();
+        for (name, config) in &self.kubernetes_workspaces {
+            runtime.workspaces.register(
+                name,
+                Arc::new(
+                    openworker_runtime::workspaces::kubernetes::K8sWorkspaceProvider::new(config)?,
+                ),
+            )?;
+        }
         #[cfg(feature = "workspace-reference")]
         for (name, db) in &self.reference_workspaces {
             runtime.workspaces.register(

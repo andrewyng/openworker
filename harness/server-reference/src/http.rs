@@ -339,7 +339,7 @@ impl IntoResponse for ApiError {
             let status = match error {
                 Invalid => StatusCode::BAD_REQUEST,
                 Missing | HandleExpired => StatusCode::NOT_FOUND,
-                DataMismatch | ProfileMismatch | Busy => StatusCode::CONFLICT,
+                DataMismatch | ProfileMismatch | UnsupportedSharing | Busy => StatusCode::CONFLICT,
             };
             return (
                 status,

@@ -181,6 +181,7 @@ jobs:
       - name: Workspace provider contract and builder/reviewer sessions
         if: matrix.shard == 'workspaces'
         run: |
+          python3 -m unittest discover -s ../deploy/workspaces
           npm --prefix typescript-sdk ci
           npm --prefix typescript-sdk run build
           cargo test --locked -p openworker-runtime --features workspace-reference --test workspace_provider

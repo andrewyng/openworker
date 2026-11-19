@@ -53,6 +53,16 @@ impl WorkspaceProvider for ProbeProvider {
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 #[ignore = "requires disposable OW_PG_TEST_URL, Node and built TypeScript SDK"]
 async fn builder_and_reviewer_sessions() -> Result<()> {
+    qualify(None).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore = "requires two deployed Kubernetes workspace services and Spark qualification environment"]
+async fn kubernetes_workspace_recovery() -> Result<()> {
+    qualify(Some(std::env::var("OW_K8S_WORKSPACES")?)).await
+}
+
+async fn qualify(k8s: Option<String>) -> Result<()> {
     let root = tempfile::tempdir()?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     let token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
@@ -77,13 +87,18 @@ async fn builder_and_reviewer_sessions() -> Result<()> {
         "service":{"id":"workspace-test","namespace":"test","agent":"base"},
         "reference_workspaces":{"research":root.path().join("research.db")}
     }))?;
-    cfg.workspace_registry.register(
-        "websites",
-        Arc::new(ProbeProvider {
-            inner: ReferenceProvider::open(&root.path().join("websites.db"))?,
-            lose_detach_ack: AtomicBool::new(true),
-        }),
-    )?;
+    if let Some(path) = &k8s {
+        cfg.reference_workspaces.clear();
+        cfg.kubernetes_workspaces = serde_json::from_slice(&std::fs::read(path)?)?;
+    } else {
+        cfg.workspace_registry.register(
+            "websites",
+            Arc::new(ProbeProvider {
+                inner: ReferenceProvider::open(&root.path().join("websites.db"))?,
+                lose_detach_ack: AtomicBool::new(true),
+            }),
+        )?;
+    }
     let db = cfg.database()?;
     PostgresStore::migrate(&db)?;
     let store = PostgresStore::open(db.clone())?;
@@ -198,7 +213,7 @@ async fn builder_and_reviewer_sessions() -> Result<()> {
         .kill_on_drop(true);
     let mut controller = controller;
     let status = tokio::select! {
-        result=tokio::time::timeout(std::time::Duration::from_secs(160),exec.status())=>result??,
+        result=tokio::time::timeout(std::time::Duration::from_secs(if k8s.is_some() {420} else {160}),exec.status())=>result??,
         result=&mut controller=>{result??; anyhow::bail!("Controller ended early")}
     };
     stop.cancel();
@@ -216,13 +231,15 @@ async fn builder_and_reviewer_sessions() -> Result<()> {
         pg.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))?;
         Ok(())
     }).await??;
-    let stored = std::fs::read(root.path().join("websites.db"))?;
-    ensure!(
-        !stored
-            .windows(TEST_SECRET.len())
-            .any(|w| w == TEST_SECRET.as_bytes()),
-        "Secret found in provider database"
-    );
+    if k8s.is_none() {
+        let stored = std::fs::read(root.path().join("websites.db"))?;
+        ensure!(
+            !stored
+                .windows(TEST_SECRET.len())
+                .any(|w| w == TEST_SECRET.as_bytes()),
+            "Secret found in provider database"
+        );
+    }
     ensure!(status.success(), "SDK workspace qualification failed");
     Ok(())
 }

@@ -231,7 +231,7 @@ export async function* serviceFrames(
 }
 const workspaceErrors = new Set([
   "invalid_workspace_request", "workspace_not_found", "workspace_handle_expired",
-  "workspace_data_mismatch", "workspace_profile_mismatch", "workspace_in_use",
+  "workspace_data_mismatch", "workspace_profile_mismatch", "workspace_in_use", "workspace_shared_mount_unsupported",
 ]);
 export interface WorkspaceRef { workspaceId: string; dataId: string }
 export interface WorkspaceRequest { key: string; dataId?: string; options?: Record<string, Json> }
