@@ -270,3 +270,30 @@ Compliance metadata can be pruned by trusted maintenance using
 scope). Schedule it through the application's maintenance job. Query expiry does
 not itself delete bytes, and this release does not automatically schedule physical
 pruning. Canonical conversation retention remains a separate application decision.
+
+## Runtime integrations
+
+A host can include trusted Rust crates that observe agent events or check an operation before it proceeds. The standard host starts with an empty integration catalog. A custom host calls each crate's registration function at startup. An embedded Rust app supplies that registry to `HarnessBuilder::integration_registry`. A managed host passes it to `openworker_sdk::cli::main_with_integrations`.
+
+For a host that registers an integration called `tool-check`, an app can configure it once and request it on a session.
+
+```typescript
+const harness = await Harness.start({
+  executable: hostPath,
+  stateDir,
+  integrations: { "tool-check": {} },
+});
+const agent = harness.createAgent(agentDefinition);
+const session = await agent.newSession({ integrations: { "tool-check": true } });
+```
+
+The integration defines its own settings. An observer receives lifecycle metadata such as the session ID, sequence number and tool-call ID. An observer delivery failure leaves the agent free to continue. A blocking check receives the content for its configured boundary. A denial or an unavailable check stops the protected operation.
+
+On a cluster, the operator configures the integrations included in its API and worker binaries. Use the CLI to see the registered IDs, configured IDs and current policies.
+
+```sh
+owcluster integrations list
+owcluster integrations policy set tool-check --mode required
+```
+
+With `off-by-default` or `on-by-default`, the session preference overrides the agent preference, which overrides the cluster default. Default changes apply to new sessions. A `required` or `forbidden` policy overrides both application preferences at the next affected operation, including after recovery. Lifting the override restores the original session choice. Session snapshots expose the last applied decisions, their sources and policy revisions.

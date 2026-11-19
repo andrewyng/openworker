@@ -51,6 +51,7 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
 export interface AgentRelease {
+  integrations?: Record<string,boolean>;
   subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   limits?: TurnLimits;
   id: string;
@@ -86,6 +87,7 @@ export interface ServiceOperation {
   error: string | null;
 }
 export interface ServiceSessionOptions {
+  integrations?: Record<string,boolean>;
   limits?: TurnLimits;
   environmentId?: string;
   runtimeProfile?: string;
@@ -625,6 +627,7 @@ export class ServiceAgent {
           ![
             "environmentId",
             "runtimeProfile",
+            "integrations",
             "name",
             "project",
             "model",

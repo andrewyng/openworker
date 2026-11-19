@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Configuration {
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub integration_policies: openworker_runtime::integrations::Policies,
     pub admissions_paused: bool,
     pub max_pending_operations: i64,
     pub max_environments: i64,
@@ -20,6 +22,7 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
+            integration_policies: Default::default(),
             admissions_paused: false,
             max_pending_operations: 128,
             max_environments: 64,
@@ -38,6 +41,14 @@ impl Configuration {
                 && (1..=100).contains(&self.max_queued_turns),
             SubmissionError::InvalidRequest
         );
+        ensure!(
+            self.integration_policies.len() <= 64,
+            SubmissionError::InvalidRequest
+        );
+        for id in self.integration_policies.keys() {
+            openworker_runtime::integrations::validate_id(id)
+                .map_err(|_| SubmissionError::InvalidRequest)?;
+        }
         self.compaction.validate()?;
         Ok(())
     }

@@ -110,6 +110,16 @@ pub async fn apply(
     config: &Config,
     registry: &Registry,
     models: Option<&dyn ModelDetector>,
+    context: Context,
+    cancel: CancellationToken,
+) -> Result<Evaluation> {
+    apply_scoped(config, registry, None, models, context, cancel).await
+}
+pub async fn apply_scoped(
+    config: &Config,
+    registry: &Registry,
+    private: Option<&Registry>,
+    models: Option<&dyn ModelDetector>,
     mut context: Context,
     cancel: CancellationToken,
 ) -> Result<Evaluation> {
@@ -279,7 +289,15 @@ pub async fn apply(
             && (h.tools.is_empty() || context.tool.as_ref().is_some_and(|t| h.tools.contains(t)))
     }) {
         let started = Instant::now();
-        let result = match registry.handler(&hook.handler) {
+        let executor = if config.native_hook_names.contains(&hook.name) {
+            private
+        } else {
+            Some(registry)
+        };
+        let result = match executor
+            .ok_or_else(|| anyhow::anyhow!("Integration handler registry unavailable"))
+            .and_then(|r| r.handler(&hook.handler))
+        {
             Ok(h) => {
                 bounded(hook.timeout_ms, &cancel, async {
                     h.call(context.clone(), cancel.clone()).await

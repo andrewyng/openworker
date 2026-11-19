@@ -72,6 +72,7 @@ pub struct Runtime {
     coding_git: Option<(String, crate::coding::openshell_git::Settings)>,
     pub bundle: Bundle,
     pub model: Model,
+    pub integrations: Arc<crate::integrations::Configured>,
     pub connections: Arc<crate::connections::Manager>,
     execution_digest: String,
     runner_digest: String,
@@ -335,6 +336,7 @@ impl Runtime {
             observers_started: AtomicBool::new(false),
             observers_stop: CancellationToken::new(),
             compliance_defaults: None,
+            integrations: Default::default(),
             safety_defaults: Default::default(),
             safety_handlers: Arc::new(Default::default()),
             telemetry,
@@ -625,7 +627,10 @@ impl Runtime {
                 attempt: number,
             });
             let safety = self.effective_safety(sid)?;
-            let guarded_output = safety.protects(crate::safety::Phase::ModelOutput, None)
+            // A cluster can require a configured output scanner while the provider is streaming.
+            let guarded_output = (self.integrations.cluster_policy
+                && self.integrations.may_inspect_output())
+                || safety.protects(crate::safety::Phase::ModelOutput, None)
                 || !safety.guardrails.tool_calls.is_empty()
                 || safety
                     .hooks
@@ -1322,6 +1327,9 @@ impl Runtime {
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;
         let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"auto_approver_context":s.auto_approver_context,"compaction_config":s.compaction_config,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
+        if !s.integrations.applied.is_empty() {
+            snapshot["session"]["integrations"] = json!(s.integrations.applied);
+        }
         snapshot["schedules"] = json!(s.schedules);
         if let Some(environment) = &s.environment {
             snapshot["session"]["environment"] = json!(environment);
@@ -1360,6 +1368,7 @@ impl Runtime {
                 "safety",
                 "compliance",
                 "initial_history",
+                "integrations",
             ]
             .contains(&k.as_str())
         }) {
@@ -1454,7 +1463,17 @@ impl Runtime {
             .as_ref()
             .map(|c| self.connections.resolve(c))
             .transpose()?;
+        let session_preferences = p
+            .get("integrations")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?
+            .unwrap_or_default();
+        let integrations = self
+            .integrations
+            .admit(&self.bundle.manifest.integrations, &session_preferences)?;
         let mut s = Session {
+            integrations,
             safety_models: Default::default(),
             compliance: self.compliance_defaults.clone().or(p
                 .get("compliance")
@@ -2067,6 +2086,7 @@ impl Runtime {
         self.bundle.verify()?;
         self.tool_policy.verify()?;
         let s = self.store.lock().unwrap().metadata(sid)?;
+        self.integrations.resolve(&s.integrations)?;
         s.safety.validate()?;
         if let Some(c) = &s.compliance {
             ensure!(
@@ -2879,6 +2899,13 @@ impl Runtime {
         self.check_backend(sid)?; // policy may have changed during AI review
         let mut data = serde_json::to_value(&i)?;
         data["interaction_id"] = json!(i.id);
+        if waiting {
+            data["state_change"] = json!(if i.kind == "question" {
+                "waiting_user_response"
+            } else {
+                "waiting_user_approval"
+            });
+        }
         data["category"] = if alias == "ask_user" {
             Value::Null
         } else {
@@ -3537,7 +3564,7 @@ impl Runtime {
                 .cloned()
                 .collect::<Vec<_>>();
             let finished = queue.is_empty() && !had_calls;
-            self.update(
+            let saved = self.update(
                 sid,
                 "assistant_message",
                 json!({"messages":messages}),
@@ -3559,6 +3586,15 @@ impl Runtime {
                     Ok(())
                 },
             )?;
+            if !saved.integrations.observers.is_empty() {
+                for call in &saved.turn.as_ref().context("Missing active turn")?.queue {
+                    self.progress(
+                        sid,
+                        "tool_queued",
+                        json!({"name":call["name"],"call_id":call["call_id"]}),
+                    )?;
+                }
+            }
             if finished {
                 if self.bounded_lifecycle(sid) {
                     self.cleanup_execution(sid, true).await?;
@@ -3659,6 +3695,7 @@ impl Runtime {
             pending.grant_id = None;
             let mut event_data = serde_json::to_value(&pending)?;
             event_data["interaction_id"] = json!(pending.id);
+            event_data["state_change"] = json!("waiting_user_approval");
             event_data["reason"] = json!("Session grant revoked or invalidated before execution");
             session.interactions.push(pending);
             session.turn.as_mut().unwrap().status = "waiting".into();
@@ -3988,7 +4025,7 @@ impl Runtime {
             &s,
             "interaction_resolved",
             control_event(
-                json!({"interaction_id":iid,"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
+                json!({"interaction_id":iid,"state_change": match resolved_interaction.kind.as_str() {"approval"=>Some("user_approval_done"),"question"=>Some("user_response_done"),_=>None},"decision":if approval {Some(if denied {"denied"} else {"approved"})}else{None},"origin":origin,"tool":tool,"kind":resolved_interaction.kind,"response":if approval {json!(resolved_interaction.response)} else {Value::Null},"call_id":resolved_interaction.call["call_id"],"session_grant":new_grant,"requested_at_ms":resolved_interaction.requested_at_ms,"resolved_at_ms":resolved_interaction.resolved_at_ms}),
                 control,
             ),
         )?;

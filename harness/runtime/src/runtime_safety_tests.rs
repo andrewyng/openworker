@@ -854,3 +854,96 @@ async fn tool_rules_resolve_registered_qualified_names_without_cross_namespace_m
         .unwrap()
         .protects(crate::safety::Phase::ToolResult, Some("other.read_file")));
 }
+
+#[tokio::test]
+async fn live_policy_controls_next_input_and_survives_a_runtime_restart() {
+    use crate::integrations::{Capability, Instance, Mode, PolicyRevision, Registration, Registry};
+    use crate::safety::{HandlerRef, Hook, HookPhase};
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    let runner = tmp.path().join("runner");
+    std::fs::write(&runner, b"\x7fELF-fixture").unwrap();
+    let live = Arc::new(std::sync::RwLock::new((1, Mode::OffByDefault)));
+    let open = || {
+        let mut catalog = Registry::default();
+        catalog
+            .register(
+                "deny-input",
+                Registration {
+                    version: "1",
+                    capability: Capability::BlockingChecks,
+                    configure: |_, handlers| {
+                        let handler = HandlerRef {
+                            name: "deny".into(),
+                            version: "1".into(),
+                        };
+                        handlers.register(handler.clone(), Arc::new(Deny))?;
+                        Ok(Instance::Checks(Config {
+                            hooks: vec![Hook {
+                                name: "check-input".into(),
+                                version: "1".into(),
+                                when: HookPhase::BeforeInput,
+                                handler,
+                                tools: vec![],
+                                timeout_ms: 1000,
+                            }],
+                            ..Default::default()
+                        }))
+                    },
+                },
+            )
+            .unwrap();
+        let source = live.clone();
+        let checks = catalog
+            .configure(
+                &BTreeMap::from([("deny-input".into(), json!({}))]),
+                Arc::new(move || {
+                    let (revision, mode) = *source.read().unwrap();
+                    Ok(PolicyRevision {
+                        revision,
+                        policies: BTreeMap::from([("deny-input".into(), mode)]),
+                    })
+                }),
+            )
+            .unwrap();
+        let mut rt = Runtime::open(
+            &tmp.path().join("state"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/assistant"),
+            &runner,
+            Model::new("fixture".into(), true),
+        )
+        .unwrap();
+        Arc::get_mut(&mut rt).unwrap().integrations = Arc::new(checks);
+        rt
+    };
+    let args = json!({"name":"Policies","coworker":"assistant-example","workspace":work});
+    let rt = open();
+    let sid = rt.dispatch("session/create", args.clone()).await.unwrap()["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(rt.check_user_input(&sid, "one").await.is_ok());
+    *live.write().unwrap() = (2, Mode::OnByDefault);
+    assert!(rt.check_user_input(&sid, "two").await.is_ok());
+    let fresh = rt.dispatch("session/create", args).await.unwrap()["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(rt.check_user_input(&fresh, "three").await.is_err());
+    *live.write().unwrap() = (3, Mode::Required);
+    assert!(rt.check_user_input(&sid, "four").await.is_err());
+    rt.shutdown().await.unwrap();
+    drop(rt);
+    let rt = open();
+    assert!(rt.check_user_input(&sid, "five").await.is_err());
+    *live.write().unwrap() = (4, Mode::Forbidden);
+    assert!(rt.check_user_input(&fresh, "six").await.is_ok());
+    assert_eq!(
+        rt.snapshot(&fresh).unwrap()["session"]["integrations"]["deny-input"]["revision"],
+        4
+    );
+    *live.write().unwrap() = (5, Mode::OffByDefault);
+    assert!(rt.check_user_input(&fresh, "seven").await.is_err());
+    assert!(rt.check_user_input(&sid, "eight").await.is_ok());
+}

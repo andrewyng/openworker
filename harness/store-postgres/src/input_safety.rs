@@ -6,11 +6,13 @@ use openworker_runtime::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
+pub type InputPolicy = (
+    Config,
+    BTreeMap<String, Selection>,
+    openworker_runtime::integrations::Admission,
+);
 impl db::Database {
-    pub(crate) fn input_safety_policy(
-        &mut self,
-        sid: &str,
-    ) -> Result<(Config, BTreeMap<String, Selection>)> {
+    pub(crate) fn input_safety_policy(&mut self, sid: &str) -> Result<InputPolicy> {
         let mut tx = self.client.transaction()?;
         auth::guard(
             &mut tx,
@@ -22,7 +24,7 @@ impl db::Database {
         let s = db::locked(&mut tx, sid, None)?;
         ensure!(!s.closed, "Session closed");
         tx.commit()?;
-        Ok((s.safety, s.safety_models))
+        Ok((s.safety, s.safety_models, s.integrations))
     }
     pub(crate) fn record_input_safety(
         &mut self,
@@ -70,7 +72,7 @@ impl db::Database {
     }
 }
 impl PostgresStore {
-    pub fn input_safety_policy(&self, sid: &str) -> Result<(Config, BTreeMap<String, Selection>)> {
+    pub fn input_safety_policy(&self, sid: &str) -> Result<InputPolicy> {
         let sid = sid.to_owned();
         self.call(move |db| db.input_safety_policy(&sid))
     }

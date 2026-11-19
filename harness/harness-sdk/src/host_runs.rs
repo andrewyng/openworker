@@ -632,6 +632,9 @@ impl Host {
             }
             // A lead's override does not silently replace each worker's default.
             if id == agent {
+                if let Some(prefs) = p.get("integrations") {
+                    options["integrations"] = prefs.clone();
+                }
                 if let Some(history) = p.get("initial_history") {
                     options["initial_history"] = history.clone();
                 }

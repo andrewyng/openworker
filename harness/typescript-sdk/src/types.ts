@@ -125,6 +125,7 @@ export interface ApplicationGuidance {
 export interface Agent extends ApplicationGuidance {
   builtinTools?: { askUser?: boolean; readHistory?: boolean };
   limits?: TurnLimits;
+  integrations?: Record<string, boolean>;
   id: string;
   name?: string;
   description?: string;
@@ -159,6 +160,7 @@ export interface Model {
 export interface ComplianceOptions { retentionDays?: number; maxPendingEvents?:number }
 export interface ComplianceQuery { after?: number; limit?: number; kind?: string; outcome?: string }
 export interface SessionOptions extends SafetyOptions, ApplicationGuidance {
+  integrations?: Record<string, boolean>;
   /** Completed portable transcript only. Imported calls never execute. */
   initialHistory?: HistoryItem[];
   compliance?: ComplianceOptions;
@@ -195,7 +197,10 @@ export interface Telemetry {
   };
 }
 export interface ComplianceSink { name:string; endpoint:string; credentialEnv:string; allowLoopbackHttp?:boolean }
+export type IntegrationPolicy = "on-by-default" | "off-by-default" | "required" | "forbidden";
 export interface HarnessOptions extends SafetyOptions {
+  integrations?: Record<string, Json>;
+  integrationPolicies?: Record<string, IntegrationPolicy>;
   complianceSinks?:ComplianceSink[];
   compliance?: ComplianceOptions;
   /** App-owned immutable coworker bundles; same host policy as dynamically defined agents. */

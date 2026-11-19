@@ -101,6 +101,8 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   return {
     state_dir: options.stateDir,
     desktop: {
+      integrations: options.integrations,
+      integration_policies: options.integrationPolicies,
       compliance: options.compliance ?? (options.complianceSinks?.length ? {} : undefined),
       compliance_sinks: options.complianceSinks ?? [],
       inherit_env: options.inheritEnv ?? [],
@@ -167,6 +169,7 @@ export function agentWire(a: Agent, depth = 0): object {
     name: a.name,
     description: a.description,
     instructions: a.instructions,
+    integrations: a.integrations,
     limits: a.limits,
     builtin_tools: a.builtinTools,
     tools: a.tools,

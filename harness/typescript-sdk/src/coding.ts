@@ -4,6 +4,7 @@ import type {AgentRelease,RuntimeProfile,ServiceAgentTeamOptions} from "./servic
 import {codingPresets} from "./coding-presets.js";
 export const CODING_PRESET_VERSION=codingPresets.version;
 export interface CodingOptions {
+  integrations?: AgentDefinition["integrations"];
   instructions?:string;
   tools?:string[];
   defaultModel?:Model;
@@ -37,6 +38,7 @@ export function codingRelease(agent:AgentDefinition,version:string,profile:Runti
   if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");
   if(!/^[a-zA-Z0-9_.-]{1,64}$/.test(version))throw Error("Invalid release version");
   return {id:`${agent.name}@${version}`,instructions:agent.instructions,tools:[...agent.tools],runtimeProfiles:[profile.id],defaultRuntimeProfile:profile.id,allowedPrincipals:profile.allowedPrincipals,
+    integrations:agent.integrations,
     defaultModel:agent.defaultModel?{connection:agent.defaultModel.provider,model:agent.defaultModel.name}:undefined,
     reviewerModel:agent.approvals?.mode==="auto"?{connection:agent.approvals.reviewerModel.provider,model:agent.approvals.reviewerModel.name}:undefined,limits:agent.limits,subagents:agent.subagents && !Array.isArray(agent.subagents)?agent.subagents:undefined};
 }

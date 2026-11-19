@@ -31,6 +31,10 @@ mod service_team_workspaces;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub integrations: openworker_runtime::integrations::Settings,
+    #[serde(skip)]
+    pub integration_registry: openworker_runtime::integrations::Registry,
+    #[serde(default)]
     pub security_scanners: Vec<serde_json::Value>,
     #[serde(skip)]
     scanner_bindings: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>,
@@ -254,10 +258,27 @@ impl Config {
             None,
             None,
             self.tool_registry(Some(&store))?,
-            Some(Box::new(store)),
+            Some(Box::new(store.clone())),
             telemetry,
         )?;
         self.install_security_scanners()?;
+        let service_mode = self.service.is_some();
+        let policy = Arc::new(move || {
+            if !service_mode {
+                return Ok(Default::default());
+            }
+            let current = store.service_configuration()?;
+            Ok(openworker_runtime::integrations::PolicyRevision {
+                revision: current.revision,
+                policies: current.configuration.integration_policies,
+            })
+        });
+        let mut configured = self
+            .integration_registry
+            .configure(&self.integrations, policy)?;
+        configured.cluster_policy = service_mode;
+        let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
+        runtime.integrations = Arc::new(configured);
         Runtime::configure_safety(&mut rt, self.safety.clone(), self.safety_handlers.clone())?;
         Runtime::configure_compliance(&mut rt, self.compliance.clone())?;
         if !self.recovery_read_only {

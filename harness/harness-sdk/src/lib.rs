@@ -11,6 +11,7 @@ mod callbacks;
 mod provider_callbacks;
 mod safety_callbacks;
 pub use application_tools::{Tool, ToolContext};
+pub use openworker_runtime::integrations;
 pub use openworker_runtime::safety as guardrails;
 pub mod cli;
 mod desktop;

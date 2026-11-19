@@ -95,6 +95,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     manifest.id = format!("svc-{}", &release.digest[..24]);
     manifest.name = r.id.clone();
     manifest.version = release.digest.clone();
+    manifest.integrations = r.integrations;
     manifest.default_model = r.default_model;
     manifest.limits = r.limits;
     manifest.standalone_subagents = r.subagents;
@@ -310,8 +311,14 @@ pub(crate) async fn admit_kind(
     let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
     if let Some(text) = &input.initial_message {
-        input.initial_message =
-            Some(crate::service_safety::inspect(&app, None, &request, text).await?);
+        let pref = app
+            .runtime
+            .integrations
+            .admit(&r.integrations, &input.integrations)?;
+        let checks = app.runtime.integration_checks(&pref)?;
+        input.initial_message = Some(
+            crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,
+        );
     }
     let op = app
         .store
@@ -348,6 +355,7 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         let c=release_config(config,&rel,&profile)?;let rt=c.api_runtime(&format!("admit-{}",&op.id[3..19]),store.clone())?;
         let input=store.service_input(&op.id)?;let r:Release=serde_json::from_value(rel.definition.clone())?;let p:Profile=serde_json::from_value(profile.definition.clone())?;
         let mut parameters=json!({"coworker":rt.coworker(),"workspace":"/sandbox","environment_id":env.id,"name":input.name.unwrap_or(op.release_id),"permissions":{"mode":p.approval_mode,"auto_skip_questions":p.auto_skip_questions}});
+        parameters["integrations"]=json!(input.integrations);
         if let Some(model)=input.model{parameters["model"]=json!(model);}
         if let Some(model)=r.reviewer_model{parameters["reviewer_model"]=json!(model);}
         let configured=store.service_operation_configuration(&op.id)?;parameters["compaction"]=json!(configured.configuration.compaction);

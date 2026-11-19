@@ -125,6 +125,7 @@ impl Runtime {
             let mut completion = self
                 .sample_unchecked(sid, history, tools, summary, feedback.as_deref())
                 .await?;
+            let config = self.effective_safety(sid)?;
             let protects_output = config.protects(Phase::ModelOutput, None);
             if protects_output {
                 for item in &completion.output {
@@ -282,14 +283,39 @@ impl Runtime {
         rt.safety_handlers = handlers;
         Ok(())
     }
+    pub fn integration_checks(&self, admission: &crate::integrations::Admission) -> Result<Config> {
+        let configured = &self.integrations;
+        configured.checks(&configured.resolve(admission)?)
+    }
+    fn session_integration_checks(&self, metadata: &Session) -> Result<Config> {
+        let integrations = &self.integrations;
+        let decisions = integrations.resolve(&metadata.integrations)?;
+        if metadata.integrations.applied != decisions {
+            let mut store = self.store.lock().unwrap();
+            let mut session = store.get(&metadata.id)?;
+            session.integrations.applied = decisions.clone();
+            let event = store.save(
+                &session,
+                "integration_policy_applied",
+                json!({"integrations":decisions}),
+            )?;
+            drop(store);
+            self.publish(event);
+        }
+        integrations.checks(&decisions)
+    }
     pub(super) fn effective_safety(&self, sid: &str) -> Result<Config> {
         let s = self.store.lock().unwrap().metadata(sid)?;
-        let mut config = self.safety_defaults.merge(&s.safety)?.merge(
-            &s.turn
-                .as_ref()
-                .map(|t| t.safety.clone())
-                .unwrap_or_default(),
-        )?;
+        let mut config = self
+            .safety_defaults
+            .merge(&s.safety)?
+            .merge(&self.session_integration_checks(&s)?)?
+            .merge(
+                &s.turn
+                    .as_ref()
+                    .map(|t| t.safety.clone())
+                    .unwrap_or_default(),
+            )?;
         // Select through the trusted registry, never by stripping namespaces.
         // MCP remote names can collide across servers. Native tools already
         // carry their full registry name; internal tools retain their own names.
@@ -395,9 +421,10 @@ impl Runtime {
         if let Some(turn) = &context.turn_id {
             observation.turn(turn);
         }
-        let result = crate::safety::apply(
+        let result = crate::safety::apply_scoped(
             config,
             &self.safety_handlers,
+            Some(&self.integrations.handlers),
             Some(&ModelChecks(self)),
             context,
             cancel,
@@ -462,6 +489,7 @@ impl Runtime {
         let config = self
             .safety_defaults
             .merge(&s.safety)?
+            .merge(&self.session_integration_checks(&s)?)?
             .merge(&additional.cloned().unwrap_or_default())?;
         let (text, blocked) = self
             .check_content(sid, &config, Phase::UserInput, text.into(), None, None)
@@ -596,9 +624,10 @@ impl Runtime {
             let span = self
                 .telemetry
                 .span(Op::SafetyCheck, Some(id), Some(&context.evaluation_id));
-            let result = crate::safety::apply(
+            let result = crate::safety::apply_scoped(
                 config,
                 &self.safety_handlers,
+                Some(&self.integrations.handlers),
                 Some(&IngressModels {
                     runtime: self,
                     pins,

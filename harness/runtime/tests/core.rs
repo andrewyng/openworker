@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 fn session() -> Session {
     Session {
+        integrations: Default::default(),
         safety_models: Default::default(),
         compliance: None,
         safety: Default::default(),

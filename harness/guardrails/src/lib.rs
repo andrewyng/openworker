@@ -10,7 +10,7 @@ use anyhow::{ensure, Result};
 #[cfg(feature = "engine")]
 pub use detectors::fragments;
 #[cfg(feature = "engine")]
-pub use engine::{apply, observe};
+pub use engine::{apply, apply_scoped, observe};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -301,6 +301,9 @@ impl Default for BlockedOutputOptions {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
+    /// Runtime-issued hook names. Wire callers cannot select the private handler registry.
+    #[serde(skip)]
+    pub native_hook_names: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub guardrails: Guardrails,
     #[serde(default)]
@@ -368,6 +371,8 @@ impl Config {
         self.validate()?;
         additional.validate()?;
         let mut out = self.clone();
+        out.native_hook_names
+            .extend(additional.native_hook_names.iter().cloned());
         extend(
             &mut out.guardrails.user_input,
             &additional.guardrails.user_input,
