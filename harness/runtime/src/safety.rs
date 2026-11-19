@@ -59,6 +59,7 @@ impl From<crate::connections::Choice> for ModelRef {
 impl From<ModelRef> for crate::connections::Choice {
     fn from(value: ModelRef) -> Self {
         Self {
+            notify_on_session_state: None,
             connection: value.connection,
             model: value.model,
         }

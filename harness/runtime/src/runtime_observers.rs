@@ -3,7 +3,6 @@
 //! same event ID. Observer effects must be idempotent; they never authorize work.
 use super::*;
 impl Runtime {
-    #[cfg(feature = "guardrails")]
     pub(super) fn start_observers(&self) {
         if self.observers_started.load(Ordering::SeqCst) {
             return;
@@ -30,6 +29,7 @@ impl Runtime {
             self.observers_started.store(false, Ordering::SeqCst);
             return;
         };
+        let connections = self.connections.clone();
         let integrations = self.integrations.clone();
         let store = self.store.clone();
         let handlers = self.safety_handlers.clone();
@@ -70,6 +70,8 @@ impl Runtime {
                                 _ = batch.join_next() => {}
                             }
                         }
+                        let manager=connections.clone();
+                        let model=s.model_selection.clone();
                         let integrations=integrations.clone();
                         let admission=s.integrations.clone();
                         let sid=s.id.clone();
@@ -83,7 +85,7 @@ impl Runtime {
                                 if receipt["hook"]["integration"].is_string() {
                                     let result = tokio::time::timeout(
                                         std::time::Duration::from_secs(3),
-                                        integrations.deliver(&admission,&sid,&receipt),
+                                        integrations.deliver_with_model(&admission,&sid,&receipt,model.as_ref().map(|s|(manager.as_ref(),s))),
                                     ).await;
                                     let mut db = store.lock().unwrap();
                                     if !result.is_ok_and(|delivery|delivery.is_ok()) {
@@ -102,7 +104,10 @@ impl Runtime {
                             let mut context=crate::safety::Context{call_id:None,evaluation_id:id.clone(),session_id:sid.clone(),turn_id:receipt["turnId"].as_str().map(String::from),phase:crate::safety::Phase::Event,text:String::new(),tool:receipt["record"]["facts"]["tool"].as_str().or_else(|| receipt["record"]["facts"]["name"].as_str()).map(String::from),arguments:None,matches:vec![],context:json!({"eventId":id,"event":receipt["record"]})};
                             if let Some(tool) = &mut context.tool { if let Some(qualified)=tool_names.get(tool) { *tool=qualified.clone(); } }
                             let selected=hook.tools.is_empty()||context.tool.as_ref().is_some_and(|t|hook.tools.iter().any(|selector| tool_names.get(selector).unwrap_or(selector)==t));
+                            #[cfg(feature = "guardrails")]
                             let ok=!selected||crate::safety::observe(&hook,&registry,context,cancel.clone()).await;
+                            #[cfg(not(feature = "guardrails"))]
+                            let ok = { let _ = (&registry, context, &cancel); !selected };
                             let result=store.lock().unwrap().settle_observer(&sid,&receipt,ok);
                             if (!ok||result.is_err())&&receipt["attempts"].as_u64()==Some(0) {
                                 // Bounded diagnostic only. Do not re-enqueue itself.
@@ -118,6 +123,4 @@ impl Runtime {
             }
         });
     }
-    #[cfg(not(feature = "guardrails"))]
-    pub(super) fn start_observers(&self) {}
 }

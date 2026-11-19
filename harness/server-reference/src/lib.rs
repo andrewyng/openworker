@@ -96,6 +96,8 @@ pub struct Config {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelConnection {
+    #[serde(default)]
+    pub endpoint: Option<openworker_runtime::connections::HostEndpoint>,
     pub id: String,
     pub provider: openworker_runtime::provider::Kind,
     /// Stable deployment-owned non-secret identity, identical on API and workers.
@@ -281,6 +283,9 @@ impl Config {
         configured.cluster_policy = service_mode;
         let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
         runtime.integrations = Arc::new(configured);
+        Arc::get_mut(&mut runtime.connections)
+            .context("Connections shared during setup")?
+            .set_integrations(runtime.integrations.clone())?;
         Runtime::configure_safety(&mut rt, self.safety.clone(), self.safety_handlers.clone())?;
         Runtime::configure_compliance(&mut rt, self.compliance.clone())?;
         if !self.recovery_read_only {
@@ -301,22 +306,22 @@ impl Config {
                     "Invalid or duplicate model connection"
                 );
                 let guard_connection=self.safety.guardrails.user_input.iter().any(|r|matches!(&r.detector,openworker_runtime::safety::Detector::Model{model,..} if model.connection==connection.id));
-                if load_credentials || guard_connection {
-                    let key = std::env::var(&connection.key_env)
-                        .context("Configured model credential environment variable missing")?;
-                    rt.connections.register_host(
-                        &connection.id,
-                        connection.provider,
-                        &connection.identity,
-                        key.into(),
-                    )?;
+                let key = if load_credentials || guard_connection {
+                    Some(
+                        std::env::var(&connection.key_env)
+                            .context("Configured model credential environment variable missing")?
+                            .into(),
+                    )
                 } else {
-                    rt.connections.register_host_reference(
-                        &connection.id,
-                        connection.provider,
-                        &connection.identity,
-                    )?;
-                }
+                    None
+                };
+                rt.connections.register_host_endpoint(
+                    &connection.id,
+                    connection.provider,
+                    &connection.identity,
+                    key,
+                    connection.endpoint.clone(),
+                )?;
             }
             let mut registry = openworker_runtime::environment::Registry::default();
             let provider = self.provider()?;

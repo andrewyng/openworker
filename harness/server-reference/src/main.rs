@@ -416,6 +416,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                     .map(|c| {
                         let selected = template.connections.resolve(
                             &openworker_runtime::connections::Choice {
+                                notify_on_session_state: None,
                                 connection: c.id.clone(),
                                 model: "validation".into(),
                             },

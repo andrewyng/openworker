@@ -185,8 +185,12 @@ fn default_fallback_model() -> String {
 }
 
 impl Agent {
-    pub fn integration(mut self, id: impl Into<String>, enabled: bool) -> Self {
-        self.integrations.insert(id.into(), enabled);
+    pub fn integration(
+        mut self,
+        id: impl Into<String>,
+        options: impl Into<crate::integrations::Preference>,
+    ) -> Self {
+        self.integrations.insert(id.into(), options.into());
         self
     }
     /// `id` is the stable identifier sessions are pinned to: ASCII letters,
@@ -264,6 +268,7 @@ impl Agent {
     /// Default model through a named model connection (see `connection/set`).
     pub fn model(mut self, connection: impl Into<String>, model: impl Into<String>) -> Self {
         self.model = Some(ModelChoice {
+            notify_on_session_state: None,
             connection: connection.into(),
             model: model.into(),
         });

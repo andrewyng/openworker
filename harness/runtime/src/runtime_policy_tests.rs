@@ -91,6 +91,7 @@ async fn queued_model_readiness_requires_the_pinned_credential_without_calling_p
     s.model_selection = Some(
         rt.connections
             .resolve(&crate::connections::Choice {
+                notify_on_session_state: None,
                 connection: "test".into(),
                 model: "fixture".into(),
             })
@@ -248,6 +249,7 @@ async fn managed_agent_without_reviewer_does_not_reuse_agent_model() {
     .await;
     rt.update(&sid, "configured_test", json!({}), |s| {
         s.model_selection = Some(crate::connections::Selection {
+            notify_on_session_state: false,
             provider: crate::provider::Kind::Openai,
             connection: "test".into(),
             model: "agent-only".into(),

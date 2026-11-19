@@ -63,7 +63,6 @@ fn install_trigger(db: &Connection) -> Result<()> {
             Ok(crate::compliance::project(&parse(&s)?, &k, &parse(&d)?).to_string())
         },
     )?;
-    #[cfg(feature="guardrails")]
     db.execute_batch("CREATE TABLE IF NOT EXISTS safety_observers(session_id TEXT NOT NULL,cursor INTEGER NOT NULL,hook_name TEXT NOT NULL,hook_version TEXT NOT NULL,hook TEXT NOT NULL,record TEXT NOT NULL,turn_id TEXT,next_ms INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(session_id,cursor,hook_name,hook_version));
     DROP TRIGGER IF EXISTS safety_observer_capture;
     CREATE TRIGGER safety_observer_capture AFTER INSERT ON events
@@ -77,12 +76,6 @@ fn install_trigger(db: &Connection) -> Result<()> {
 }
 impl Store {
     pub fn pending_observers(&self, sid: &str) -> Result<Vec<Value>> {
-        #[cfg(not(feature = "guardrails"))]
-        {
-            let _ = sid;
-            Ok(vec![])
-        }
-        #[cfg(feature = "guardrails")]
         {
             self.metadata(sid)?;
             let mut q=self.db.prepare("SELECT cursor,hook_name,hook_version,hook,record,turn_id,attempts,next_ms FROM safety_observers o WHERE session_id=?1 ORDER BY next_ms,cursor,hook_name LIMIT 64")?;

@@ -311,10 +311,23 @@ pub(crate) async fn admit_kind(
     let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
     if let Some(text) = &input.initial_message {
-        let pref = app
-            .runtime
-            .integrations
-            .admit(&r.integrations, &input.integrations)?;
+        let model = input
+            .model
+            .as_ref()
+            .or(r.default_model.as_ref())
+            .map(|c| app.runtime.connections.resolve(c))
+            .transpose()?;
+        let configured = &app.runtime.integrations;
+        let mut agent_prefs = r.integrations.clone();
+        let mut session_prefs = input.integrations.clone();
+        configured.model_preference(
+            &mut agent_prefs,
+            r.default_model
+                .as_ref()
+                .filter(|m| model.as_ref().is_some_and(|s| s.connection == m.connection)),
+        )?;
+        configured.model_preference(&mut session_prefs, input.model.as_ref())?;
+        let pref = configured.admit_for_model(&agent_prefs, &session_prefs, model.as_ref())?;
         let checks = app.runtime.integration_checks(&pref)?;
         input.initial_message = Some(
             crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,

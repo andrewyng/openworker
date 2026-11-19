@@ -58,8 +58,8 @@ async fn exercise(managed: bool, integration: bool) {
         .compliance(Default::default());
     let b = if integration {
         let settings = json!({
-            "scanner": {"endpoint":endpoint,"protocol":{"kind":"prismaAirs","profile":"fixture"},
-                        "credentialEnv":key,"timeoutMs":1000,"allowLoopbackHttp":true},
+            "endpoint":endpoint,"profileName":"fixture",
+            "credentialEnv":key,"timeoutMs":1000,"allowLoopbackHttp":true,
             "boundaries": ["beforeInput"]
         });
         b.integration("prisma-airs", settings)

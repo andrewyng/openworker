@@ -626,7 +626,6 @@ fn visible_catalog_matches_individual_read_authority() {
 }
 
 #[test]
-#[cfg(feature = "guardrails")]
 #[ignore = "requires disposable OW_PG_TEST_URL"]
 fn integration_policy_on_an_existing_session_and_recovered_worker() {
     use openworker_runtime::integrations::{Decision, Mode, Source};

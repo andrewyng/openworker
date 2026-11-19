@@ -145,6 +145,7 @@ async fn exercise(postgres: bool, process: bool) {
         .new_session_with_model(
             &work,
             ModelChoice {
+                notify_on_session_state: None,
                 connection: "primary".into(),
                 model: "chosen-fixture".into(),
             },

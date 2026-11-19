@@ -215,7 +215,13 @@ pub fn with_prisma_airs(
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct Settings {
-        scanner: Config,
+        endpoint: String,
+        credential_env: String,
+        profile_name: String,
+        #[serde(default)]
+        allow_loopback_http: bool,
+        #[serde(default = "timeout")]
+        timeout_ms: u64,
         boundaries: Vec<HookPhase>,
     }
     registry.register(
@@ -225,17 +231,22 @@ pub fn with_prisma_airs(
             capability: Capability::BlockingChecks,
             configure: |raw, handlers| {
                 let settings: Settings = serde_json::from_value(raw.clone())?;
-                ensure!(
-                    matches!(settings.scanner.protocol, Protocol::PrismaAirs { .. }),
-                    "Expected a Prisma AIRS profile"
-                );
+
                 let version = openworker_runtime::bundle::digest(&serde_json::to_vec(raw)?);
                 let reference = HandlerRef {
                     name: "integration.prisma-airs".into(),
                     version: version[..32].into(),
                 };
-                let timeout_ms = settings.scanner.timeout_ms;
-                let scanner = Scanner::from_environment(settings.scanner)?;
+                let timeout_ms = settings.timeout_ms;
+                let scanner = Scanner::from_environment(Config {
+                    endpoint: settings.endpoint,
+                    credential_env: settings.credential_env,
+                    protocol: Protocol::PrismaAirs {
+                        profile: settings.profile_name,
+                    },
+                    allow_loopback_http: settings.allow_loopback_http,
+                    timeout_ms,
+                })?;
                 handlers.register(reference.clone(), Arc::new(scanner))?;
                 let mut checks = Checks::default();
                 for when in settings.boundaries {

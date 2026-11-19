@@ -385,9 +385,9 @@ impl Host {
             openworker_security_adapters::with_prisma_airs(integration_registry.clone())?;
         let integrations =
             Arc::new(integration_registry.configure(&config.desktop.integrations, policy)?);
-        let connections = Arc::new(openworker_runtime::connections::Manager::open(
-            &config.state_dir,
-        )?);
+        let mut connections = openworker_runtime::connections::Manager::open(&config.state_dir)?;
+        connections.set_integrations(integrations.clone())?;
+        let connections = Arc::new(connections);
         let mut definitions = catalog::merge(&config.agents, catalog.load()?)?;
         let flat = crate::agents::compile::flatten(&definitions)?;
         ensure!(
@@ -645,6 +645,9 @@ impl Host {
             p.is_object() && p.as_object().unwrap().len() == 1 && p.get("agent").is_some(),
             "Expected an agent definition"
         );
+        if let Some(entries) = p["agent"].get("integrations") {
+            crate::integrations::validate_entries(entries)?;
+        }
         let agent: crate::agents::Agent = serde_json::from_value(p["agent"].clone())?;
         let flat = crate::agents::compile::flatten(std::slice::from_ref(&agent))?;
         ensure!(

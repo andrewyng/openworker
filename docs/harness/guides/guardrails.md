@@ -284,7 +284,7 @@ const harness = await Harness.start({
   integrations: { "tool-check": {} },
 });
 const agent = harness.createAgent(agentDefinition);
-const session = await agent.newSession({ integrations: { "tool-check": true } });
+const session = await agent.newSession({ integrations: { "tool-check": {} } });
 ```
 
 The integration defines its own settings. An observer receives lifecycle metadata such as the session ID, sequence number and tool-call ID. An observer delivery failure leaves the agent free to continue. A blocking check receives the content for its configured boundary. A denial or an unavailable check stops the protected operation.
@@ -296,7 +296,7 @@ owcluster integrations list
 owcluster integrations policy set tool-check --mode required
 ```
 
-With `off-by-default` or `on-by-default`, the session preference overrides the agent preference, which overrides the cluster default. Default changes apply to new sessions. A `required` or `forbidden` policy overrides both application preferences at the next affected operation, including after recovery. Lifting the override restores the original session choice. Session snapshots expose the last applied decisions, their sources and policy revisions.
+An integration entry is an object. `{}` enables it and inherits its settings. `{ enabled: false }` disables it. Resolve each integration through session, agent, selected provider, harness and cluster default, in that order. Default changes apply to new sessions. A `required` or `forbidden` policy overrides both application preferences at the next affected operation, including after recovery. Lifting the override restores the original session choice. Session snapshots expose the last applied decisions, their sources and policy revisions.
 
 ### Palo Alto Networks Prisma AIRS
 
@@ -309,17 +309,15 @@ const harness = await Harness.start({
   inheritEnv: ["PANW_AI_SEC_API_KEY"],
   integrations: {
     "prisma-airs": {
-      scanner: {
-        endpoint: process.env.PRISMA_AIRS_SCAN_URL!,
-        protocol: { kind: "prismaAirs", profile: "agent-protection" },
-        credentialEnv: "PANW_AI_SEC_API_KEY",
-      },
+      endpoint: process.env.PRISMA_AIRS_SCAN_URL!,
+      profileName: "agent-protection",
+      credentialEnv: "PANW_AI_SEC_API_KEY",
       boundaries: ["beforeInput", "beforeOutput"],
     },
   },
 });
 const agent = harness.createAgent(agentDefinition);
-const session = await agent.newSession({ integrations: { "prisma-airs": true } });
+const session = await agent.newSession({ integrations: { "prisma-airs": {} } });
 ```
 
 `beforeInput` and `beforeOutput` inspect user and assistant text. `beforeTool` inspects the proposed arguments. `afterTool` inspects the result before it returns to the agent. A failed or inconclusive scan stops the protected operation. A tool whose result is blocked may already have executed.

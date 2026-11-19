@@ -1,5 +1,5 @@
 //! Trusted host registration, configuration and per-session activation.
-use crate::safety;
+use crate::{connections::Selection, provider_adapters::Transport, safety};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,7 +21,69 @@ pub(crate) fn lifecycle_kind(kind: &str) -> bool {
             | "interaction_resolved"
     )
 }
-pub type Preferences = BTreeMap<String, bool>;
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Preference {
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub options: serde_json::Map<String, Value>,
+}
+impl<'de> Deserialize<'de> for Preference {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Saved {
+            Object {
+                #[serde(default = "enabled_by_default")]
+                enabled: bool,
+                #[serde(flatten)]
+                options: serde_json::Map<String, Value>,
+            },
+            Legacy(bool),
+        }
+        Ok(match Saved::deserialize(deserializer)? {
+            Saved::Object { enabled, options } => Self { enabled, options },
+            Saved::Legacy(enabled) => enabled.into(),
+        })
+    }
+}
+/// Validate new requests strictly while allowing the decoder to recover older saved definitions.
+pub fn validate_entries(value: &Value) -> Result<()> {
+    let entries = value
+        .as_object()
+        .context("Integrations must be an object")?;
+    ensure!(
+        entries.len() <= 64 && serde_json::to_vec(value)?.len() <= 16384,
+        "Too many integration options"
+    );
+    for (id, options) in entries {
+        validate_id(id)?;
+        let options = options
+            .as_object()
+            .context("Integration entries must be objects; use enabled: false to disable")?;
+        if let Some(enabled) = options.get("enabled") {
+            ensure!(
+                enabled.is_boolean(),
+                "Integration enabled must be a boolean"
+            );
+        }
+    }
+    Ok(())
+}
+fn enabled_by_default() -> bool {
+    true
+}
+impl From<bool> for Preference {
+    fn from(enabled: bool) -> Self {
+        Self {
+            enabled,
+            options: Default::default(),
+        }
+    }
+}
+pub type Preferences = BTreeMap<String, Preference>;
 pub type Settings = BTreeMap<String, Value>;
 pub type Policies = BTreeMap<String, Mode>;
 
@@ -44,6 +106,8 @@ pub type ReadPolicy = Arc<dyn Fn() -> Result<PolicyRevision> + Send + Sync>;
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     Default,
+    Harness,
+    Provider,
     Agent,
     Session,
     Required,
@@ -58,6 +122,10 @@ pub struct Decision {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Admission {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_connection: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: Settings,
     #[serde(default)]
     pub cluster_policy: bool,
     #[serde(default)]
@@ -94,6 +162,12 @@ pub trait Observer: Send + Sync {
 }
 pub enum Instance {
     Observer(Arc<dyn Observer>),
+    /// A provider's inference protocol is configured for this named connection.
+    /// Activation independently controls lifecycle notifications.
+    Provider {
+        connection: String,
+        transport: Arc<dyn Transport>,
+    },
     /// Blocking hooks through the existing safety engine and its handler registry.
     Checks(safety::Config),
 }
@@ -101,6 +175,7 @@ pub enum Instance {
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
     Lifecycle,
+    ProviderLifecycle,
     BlockingChecks,
 }
 pub type Factory = fn(&Value, &safety::Registry) -> Result<Instance>;
@@ -139,26 +214,76 @@ impl Registry {
         &self.0
     }
     pub fn configure(&self, settings: &Settings, policy: ReadPolicy) -> Result<Configured> {
-        ensure!(settings.len() <= 64, "Too many integrations");
-        let handlers = safety::Registry::default();
+        self.configure_scoped(settings, policy, None)
+    }
+    fn configure_for_provider(
+        &self,
+        settings: &Settings,
+        policy: ReadPolicy,
+        connection: &str,
+    ) -> Result<Configured> {
+        self.configure_scoped(settings, policy, Some(connection))
+    }
+    fn configure_scoped(
+        &self,
+        settings: &Settings,
+        policy: ReadPolicy,
+        connection: Option<&str>,
+    ) -> Result<Configured> {
+        validate_entries(&serde_json::to_value(settings)?)?;
+        let handlers = Arc::new(safety::Registry::default());
+        let mut providers = BTreeMap::new();
         let mut instances = BTreeMap::new();
         let mut bindings = BTreeMap::new();
-        for (id, config) in settings {
+        let mut defaults = Preferences::new();
+        for (id, raw) in settings {
+            let mut config = raw
+                .as_object()
+                .context("Integration options must be an object")?
+                .clone();
+            let enabled = config
+                .remove("enabled")
+                .map(|v| v.as_bool().context("Integration enabled must be a boolean"))
+                .transpose()?
+                .unwrap_or(true);
+            defaults.insert(id.clone(), enabled.into());
+            let config = Value::Object(config);
             let registration = self
                 .0
                 .get(id)
                 .with_context(|| format!("Integration {id} is not registered in this runtime"))?;
-            let instance = (registration.configure)(config, &handlers)
+            if registration.capability == Capability::ProviderLifecycle && connection.is_none() {
+                continue;
+            }
+            let mut instance = (registration.configure)(&config, &handlers)
                 .with_context(|| format!("Invalid configuration for integration {id}"))?;
+            if let Instance::Provider {
+                connection: bound, ..
+            } = &mut instance
+            {
+                *bound = connection
+                    .context("Provider integration requires a model connection")?
+                    .to_owned();
+            }
             match &instance {
                 Instance::Observer(_) => ensure!(
-                    registration.capability == Capability::Lifecycle
-                        && cfg!(feature = "guardrails"),
+                    registration.capability == Capability::Lifecycle,
                     "Lifecycle observer unavailable"
                 ),
+                Instance::Provider { connection, .. } => {
+                    ensure!(
+                        registration.capability == Capability::ProviderLifecycle,
+                        "Unexpected provider capability"
+                    );
+                    ensure!(
+                        providers.insert(connection.clone(), id.clone()).is_none(),
+                        "Multiple integrations for provider {connection}"
+                    );
+                }
                 Instance::Checks(checks) => {
                     ensure!(
-                        registration.capability == Capability::BlockingChecks,
+                        registration.capability == Capability::BlockingChecks
+                            && cfg!(feature = "guardrails"),
                         "Unexpected check capability"
                     );
                     checks.validate()?;
@@ -182,6 +307,12 @@ impl Registry {
             instances.insert(id.clone(), instance);
         }
         Ok(Configured {
+            defaults,
+            provider_defaults: Default::default(),
+            settings: settings.clone(),
+            provider_configs: Default::default(),
+            scopes: Default::default(),
+            providers,
             cluster_policy: false,
             handlers,
             instances,
@@ -192,8 +323,14 @@ impl Registry {
     }
 }
 pub struct Configured {
+    defaults: Preferences,
+    provider_defaults: std::collections::BTreeSet<String>,
+    settings: Settings,
+    provider_configs: std::sync::RwLock<BTreeMap<String, Arc<Configured>>>,
+    scopes: std::sync::Mutex<BTreeMap<String, Arc<Configured>>>,
+    providers: BTreeMap<String, String>,
     #[cfg_attr(not(feature = "guardrails"), allow(dead_code))]
-    pub(crate) handlers: safety::Registry,
+    pub(crate) handlers: Arc<safety::Registry>,
     instances: BTreeMap<String, Instance>,
     bindings: BTreeMap<String, String>,
     policy: ReadPolicy,
@@ -204,7 +341,13 @@ impl Default for Configured {
     fn default() -> Self {
         Self {
             cluster_policy: false,
+            providers: Default::default(),
             handlers: Default::default(),
+            defaults: Default::default(),
+            provider_defaults: Default::default(),
+            settings: Default::default(),
+            provider_configs: Default::default(),
+            scopes: Default::default(),
             instances: Default::default(),
             bindings: Default::default(),
             policy: Arc::new(|| Ok(Default::default())),
@@ -213,21 +356,246 @@ impl Default for Configured {
     }
 }
 impl Configured {
-    pub fn configured_ids(&self) -> impl Iterator<Item = &str> {
-        self.instances.keys().map(String::as_str)
+    fn scope(&self, overrides: &Settings, connection: Option<&str>) -> Result<Arc<Configured>> {
+        let mut merged = self.settings.clone();
+        for (id, value) in overrides {
+            ensure!(self.catalog.0.contains_key(id), "Unknown integration {id}");
+            let mut options = merged
+                .get(id)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            options.extend(
+                value
+                    .as_object()
+                    .context("Integration options must be an object")?
+                    .clone(),
+            );
+            merged.insert(id.clone(), Value::Object(options));
+        }
+        let key = crate::bundle::digest(&serde_json::to_vec(&(connection, &merged))?);
+        let mut scopes = self.scopes.lock().unwrap();
+        if let Some(scope) = scopes.get(&key) {
+            return Ok(scope.clone());
+        }
+        ensure!(
+            scopes.len() < 256,
+            "Integration configuration capacity reached"
+        );
+        let mut scope = self
+            .catalog
+            .configure_scoped(&merged, self.policy.clone(), connection)?;
+        scope.cluster_policy = self.cluster_policy;
+        scope.provider_defaults = self.provider_defaults.clone();
+        for instance in scope.instances.values() {
+            if let Instance::Checks(checks) = instance {
+                for hook in &checks.hooks {
+                    if self.handlers.handler(&hook.handler).is_err() {
+                        self.handlers.register(
+                            hook.handler.clone(),
+                            scope.handlers.handler(&hook.handler)?,
+                        )?;
+                    }
+                }
+            }
+        }
+        scope.handlers = self.handlers.clone();
+        let scope = Arc::new(scope);
+        scopes.insert(key, scope.clone());
+        Ok(scope)
+    }
+    pub fn checks_for(&self, admission: &Admission) -> Result<safety::Config> {
+        if let Some(scoped) = admission
+            .model_connection
+            .as_ref()
+            .and_then(|c| self.provider_configs.read().unwrap().get(c).cloned())
+        {
+            return scoped.checks_for(admission);
+        }
+        if !admission.overrides.is_empty() {
+            let scoped = self.scope(&admission.overrides, admission.model_connection.as_deref())?;
+            let mut inner = admission.clone();
+            inner.overrides.clear();
+            return scoped.checks(&scoped.resolve(&inner)?);
+        }
+        self.checks(&self.resolve(admission)?)
+    }
+    pub fn configured_ids(&self) -> impl Iterator<Item = String> {
+        let mut ids: std::collections::BTreeSet<_> = self.instances.keys().cloned().collect();
+        for provider in self.provider_configs.read().unwrap().values() {
+            ids.extend(provider.instances.keys().cloned());
+        }
+        ids.into_iter()
     }
     pub(crate) fn may_inspect_output(&self) -> bool {
         self.instances.values().any(|i|matches!(i,Instance::Checks(checks) if checks.hooks.iter().any(|h|matches!(h.when,safety::HookPhase::BeforeOutput|safety::HookPhase::BeforeTool))))
+            || self.provider_configs.read().unwrap().values().any(|p| p.may_inspect_output())
+    }
+    pub fn provider(&self, connection: &str) -> Option<(String, Arc<dyn Transport>)> {
+        if let Some(scoped) = self.provider_configs.read().unwrap().get(connection) {
+            return scoped.provider(connection);
+        }
+        let id = self.providers.get(connection)?;
+        match self.instances.get(id)? {
+            Instance::Provider { transport, .. } => Some((id.clone(), transport.clone())),
+            _ => None,
+        }
+    }
+    pub fn remove_provider(&self, connection: &str) {
+        self.provider_configs.write().unwrap().remove(connection);
+    }
+    fn merged_provider_settings(&self, settings: &Settings) -> Result<Settings> {
+        validate_entries(&serde_json::to_value(settings)?)?;
+        let mut merged = self.settings.clone();
+        merged.retain(|id, _| {
+            self.catalog
+                .0
+                .get(id)
+                .is_none_or(|r| r.capability != Capability::ProviderLifecycle)
+                || settings.contains_key(id)
+        });
+        for (id, value) in settings {
+            let options = value
+                .as_object()
+                .context("Integration options must be an object")?;
+            let mut inherited = merged
+                .get(id)
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            // Presence without enabled explicitly selects on at this scope.
+            inherited.insert("enabled".into(), Value::Bool(true));
+            inherited.extend(options.clone());
+            merged.insert(id.clone(), Value::Object(inherited));
+        }
+        Ok(merged)
+    }
+    pub fn validate_provider(&self, connection: &str, settings: &Settings) -> Result<()> {
+        self.catalog.configure_for_provider(
+            &self.merged_provider_settings(settings)?,
+            self.policy.clone(),
+            connection,
+        )?;
+        Ok(())
+    }
+    pub fn configure_provider(&self, connection: &str, settings: &Settings) -> Result<()> {
+        let merged = self.merged_provider_settings(settings)?;
+        let mut cache = self.provider_configs.write().unwrap();
+        if let Some(existing) = cache.get(connection) {
+            ensure!(
+                existing.settings == merged,
+                "Provider integration configuration changed"
+            );
+            return Ok(());
+        }
+        let mut scoped =
+            self.catalog
+                .configure_for_provider(&merged, self.policy.clone(), connection)?;
+        scoped.cluster_policy = self.cluster_policy;
+        // Reuse handler instances in the host registry for ingress and tool checks.
+        for instance in scoped.instances.values() {
+            if let Instance::Checks(checks) = instance {
+                for hook in &checks.hooks {
+                    if self.handlers.handler(&hook.handler).is_err() {
+                        self.handlers.register(
+                            hook.handler.clone(),
+                            scoped.handlers.handler(&hook.handler)?,
+                        )?;
+                    }
+                }
+            }
+        }
+        scoped.handlers = self.handlers.clone();
+        scoped.provider_defaults = settings.keys().cloned().collect();
+        cache.insert(connection.into(), Arc::new(scoped));
+        Ok(())
+    }
+    pub fn model_preference(
+        &self,
+        preferences: &mut Preferences,
+        choice: Option<&crate::connections::Choice>,
+    ) -> Result<()> {
+        if let Some((choice, enabled)) =
+            choice.and_then(|c| c.notify_on_session_state.map(|enabled| (c, enabled)))
+        {
+            if let Some((id, _)) = self.provider(&choice.connection) {
+                if let Some(previous) = preferences.get(&id) {
+                    ensure!(
+                        previous.enabled == enabled,
+                        "Conflicting activation preferences for {id}"
+                    );
+                } else {
+                    preferences.insert(id, enabled.into());
+                }
+            }
+        }
+        Ok(())
     }
     pub fn admit(&self, agent: &Preferences, session: &Preferences) -> Result<Admission> {
+        self.admit_for_model(agent, session, None)
+    }
+    pub fn admit_for_model(
+        &self,
+        agent: &Preferences,
+        session: &Preferences,
+        selection: Option<&Selection>,
+    ) -> Result<Admission> {
+        if let Some(scoped) = selection.and_then(|s| {
+            self.provider_configs
+                .read()
+                .unwrap()
+                .get(&s.connection)
+                .cloned()
+        }) {
+            return scoped.admit_for_model(agent, session, selection);
+        }
+        let mut overrides = Settings::new();
+        for preferences in [agent, session] {
+            for (id, pref) in preferences {
+                if pref.options.is_empty() {
+                    continue;
+                }
+                ensure!(
+                    !self.cluster_policy,
+                    "Cluster integration options are operator-owned"
+                );
+                let value = overrides
+                    .entry(id.clone())
+                    .or_insert_with(|| serde_json::json!({}));
+                value.as_object_mut().unwrap().extend(pref.options.clone());
+            }
+        }
+        ensure!(
+            serde_json::to_vec(&overrides)?.len() <= 16384,
+            "Integration options exceed 16 KiB"
+        );
+        if !overrides.is_empty() {
+            let scoped = self.scope(&overrides, selection.map(|s| s.connection.as_str()))?;
+            let clear = |prefs: &Preferences| {
+                prefs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.enabled.into()))
+                    .collect()
+            };
+            let mut admission =
+                scoped.admit_for_model(&clear(agent), &clear(session), selection)?;
+            admission.overrides = overrides;
+            return Ok(admission);
+        }
         let policy = (self.policy)()?;
         let mut admitted = Admission {
+            model_connection: selection.map(|s| s.connection.clone()),
             cluster_policy: self.cluster_policy,
             bindings: self.bindings.clone(),
             ..Default::default()
         };
         for (id, instance) in &self.instances {
             match instance {
+                Instance::Provider { connection, .. } => {
+                    if selection.is_some_and(|s| &s.connection == connection) {
+                        admitted.observers.insert(id.clone());
+                    }
+                }
                 Instance::Observer(_) => {
                     admitted.observers.insert(id.clone());
                 }
@@ -248,9 +616,18 @@ impl Configured {
         {
             validate_id(id)?;
             let (enabled, source) = if let Some(on) = session.get(id) {
-                (*on, Source::Session)
+                (on.enabled, Source::Session)
             } else if let Some(on) = agent.get(id) {
-                (*on, Source::Agent)
+                (on.enabled, Source::Agent)
+            } else if let Some(on) = self.defaults.get(id) {
+                (
+                    on.enabled,
+                    if self.provider_defaults.contains(id) {
+                        Source::Provider
+                    } else {
+                        Source::Harness
+                    },
+                )
             } else {
                 (
                     policy.policies.get(id) == Some(&Mode::OnByDefault),
@@ -277,6 +654,19 @@ impl Configured {
         admission: &Admission,
         current: &PolicyRevision,
     ) -> Result<BTreeMap<String, Decision>> {
+        if let Some(scoped) = admission
+            .model_connection
+            .as_ref()
+            .and_then(|c| self.provider_configs.read().unwrap().get(c).cloned())
+        {
+            return scoped.resolve_with(admission, current);
+        }
+        if !admission.overrides.is_empty() {
+            let scoped = self.scope(&admission.overrides, admission.model_connection.as_deref())?;
+            let mut inner = admission.clone();
+            inner.overrides.clear();
+            return scoped.resolve_with(&inner, current);
+        }
         let mut decisions = admission.choices.clone();
         for (id, mode) in &current.policies {
             let (enabled, source) = match mode {
@@ -293,14 +683,38 @@ impl Configured {
                 },
             );
         }
-        for (id, decision) in &decisions {
+        for (id, decision) in &mut decisions {
             if !decision.enabled {
+                continue;
+            }
+            if self
+                .catalog
+                .0
+                .get(id)
+                .is_some_and(|r| r.capability == Capability::ProviderLifecycle)
+                && !self.instances.contains_key(id)
+            {
+                ensure!(
+                    !matches!(decision.source, Source::Session | Source::Agent),
+                    "Integration {id} is unavailable for the selected provider"
+                );
+                decision.enabled = false;
                 continue;
             }
             ensure!(
                 self.instances.contains_key(id),
                 "Enabled integration {id} is unavailable"
             );
+            if let Some(Instance::Provider { connection, .. }) = self.instances.get(id) {
+                if admission.model_connection.as_ref() != Some(connection) {
+                    ensure!(
+                        !matches!(decision.source, Source::Session | Source::Agent),
+                        "Integration {id} belongs to a different model provider"
+                    );
+                    decision.enabled = false;
+                    continue;
+                }
+            }
             let pin=admission.bindings.get(id).with_context(||format!("Session has no trusted configuration for integration {id}; reopen it with a configured host"))?;
             ensure!(
                 self.bindings.get(id) == Some(pin),
@@ -310,6 +724,40 @@ impl Configured {
         Ok(decisions)
     }
     pub async fn deliver(&self, admission: &Admission, sid: &str, receipt: &Value) -> Result<()> {
+        self.deliver_with_model(admission, sid, receipt, None).await
+    }
+    pub(crate) async fn deliver_with_model(
+        &self,
+        admission: &Admission,
+        sid: &str,
+        receipt: &Value,
+        binding: Option<(&crate::connections::Manager, &Selection)>,
+    ) -> Result<()> {
+        let scoped = admission
+            .model_connection
+            .as_ref()
+            .and_then(|c| self.provider_configs.read().unwrap().get(c).cloned());
+        let scope = scoped.as_deref().unwrap_or(self);
+        let options_scope = if admission.overrides.is_empty() {
+            None
+        } else {
+            Some(scope.scope(&admission.overrides, admission.model_connection.as_deref())?)
+        };
+        let effective = options_scope.as_deref().unwrap_or(scope);
+        let mut inner = admission.clone();
+        inner.overrides.clear();
+        effective
+            .deliver_scoped(&inner, sid, receipt, binding)
+            .await
+    }
+
+    async fn deliver_scoped(
+        &self,
+        admission: &Admission,
+        sid: &str,
+        receipt: &Value,
+        binding: Option<(&crate::connections::Manager, &Selection)>,
+    ) -> Result<()> {
         let id = receipt["hook"]["integration"]
             .as_str()
             .context("Missing integration ID")?;
@@ -359,6 +807,17 @@ impl Configured {
         };
         match self.instances.get(id) {
             Some(Instance::Observer(observer)) => observer.notify(event).await,
+            Some(Instance::Provider {
+                connection,
+                transport,
+            }) => {
+                let (manager, selected) = binding.context("Missing model connection")?;
+                ensure!(
+                    &selected.connection == connection,
+                    "Provider binding changed"
+                );
+                transport.notify(manager, selected, event).await
+            }
             _ => anyhow::bail!("Missing configured lifecycle integration {id}"),
         }
     }
@@ -378,7 +837,7 @@ impl Configured {
     }
 }
 
-#[cfg(all(test, feature = "guardrails"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::RwLock;
@@ -403,8 +862,8 @@ mod tests {
         assert_eq!(registry.catalog().len(), 2);
         let state = Arc::new(RwLock::new(PolicyRevision::default()));
         let read = state.clone();
-        let settings = BTreeMap::from([("first".into(), Value::Null)]);
-        let configured = registry
+        let settings = BTreeMap::from([("first".into(), serde_json::json!({}))]);
+        let mut configured = registry
             .configure(
                 &settings,
                 Arc::new(move || {
@@ -416,6 +875,7 @@ mod tests {
                 }),
             )
             .unwrap();
+        configured.defaults.clear();
         (configured, state)
     }
     #[test]
@@ -431,7 +891,7 @@ mod tests {
             state.write().unwrap().policies.insert("first".into(), mode);
             for (pref, expected) in [None, Some(true), Some(false)].into_iter().zip(expected) {
                 let request = pref
-                    .map(|b| BTreeMap::from([("first".into(), b)]))
+                    .map(|b| BTreeMap::from([("first".into(), b.into())]))
                     .unwrap_or_default();
                 let s = host.admit(&Preferences::new(), &request).unwrap();
                 assert_eq!(
@@ -442,8 +902,8 @@ mod tests {
             }
         }
         state.write().unwrap().policies.clear();
-        let agent = BTreeMap::from([("first".into(), true)]);
-        let session = BTreeMap::from([("first".into(), false)]);
+        let agent = BTreeMap::from([("first".into(), true.into())]);
+        let session = BTreeMap::from([("first".into(), false.into())]);
         let inherited = host.admit(&agent, &Preferences::new()).unwrap();
         let explicit = host.admit(&agent, &session).unwrap();
         assert!(host.resolve(&inherited).unwrap()["first"].enabled);
@@ -500,5 +960,87 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("second"));
+    }
+    #[test]
+    fn object_contract_rejects_literals_but_recovers_saved_preferences() {
+        for value in [
+            serde_json::json!({"first": true}),
+            serde_json::json!({"first": false}),
+            serde_json::json!({"first": {"enabled":"yes"}}),
+        ] {
+            assert!(validate_entries(&value).is_err());
+        }
+        for value in [
+            serde_json::json!({"first": {}}),
+            serde_json::json!({"first": {"enabled":true}}),
+            serde_json::json!({"first": {"enabled":false}}),
+        ] {
+            validate_entries(&value).unwrap();
+        }
+        let saved: Preferences =
+            serde_json::from_value(serde_json::json!({"first": false})).unwrap();
+        assert_eq!(
+            serde_json::to_value(saved).unwrap(),
+            serde_json::json!({"first":{"enabled":false}})
+        );
+    }
+
+    #[test]
+    fn provider_agent_and_session_override_harness_defaults_independently() {
+        let (mut host, policy) = fixture();
+        host.defaults.insert("first".into(), false.into());
+        host.settings
+            .insert("first".into(), serde_json::json!({"enabled":false}));
+        let selected: Selection = serde_json::from_value(serde_json::json!({
+            "provider":"openai", "connection":"local", "model":"demo", "identity":"fixture"
+        }))
+        .unwrap();
+        host.configure_provider(
+            "local",
+            &BTreeMap::from([("first".into(), serde_json::json!({}))]),
+        )
+        .unwrap();
+        let inherited = host
+            .admit_for_model(&Preferences::new(), &Preferences::new(), Some(&selected))
+            .unwrap();
+        assert!(inherited.choices["first"].enabled);
+        assert_eq!(inherited.choices["first"].source, Source::Provider);
+        let off = BTreeMap::from([("first".into(), false.into())]);
+        let on = BTreeMap::from([("first".into(), true.into())]);
+        let agent = host
+            .admit_for_model(&off, &Preferences::new(), Some(&selected))
+            .unwrap();
+        assert!(!agent.choices["first"].enabled);
+        let session = host.admit_for_model(&off, &on, Some(&selected)).unwrap();
+        assert!(session.choices["first"].enabled);
+        assert_eq!(session.choices["first"].source, Source::Session);
+        policy
+            .write()
+            .unwrap()
+            .policies
+            .insert("first".into(), Mode::Forbidden);
+        assert!(!host.resolve(&session).unwrap()["first"].enabled);
+        policy
+            .write()
+            .unwrap()
+            .policies
+            .insert("first".into(), Mode::Required);
+        assert!(host.resolve(&agent).unwrap()["first"].enabled);
+    }
+
+    #[test]
+    fn options_merge_and_cluster_clients_cannot_replace_trusted_configuration() {
+        let (mut host, _) = fixture();
+        let agent: Preferences =
+            serde_json::from_value(serde_json::json!({"first":{"setting":"agent"}})).unwrap();
+        let session: Preferences =
+            serde_json::from_value(serde_json::json!({"first":{"setting":"session"}})).unwrap();
+        let admission = host.admit(&agent, &session).unwrap();
+        assert_eq!(admission.overrides["first"]["setting"], "session");
+        let saved = serde_json::to_vec(&admission).unwrap();
+        let recovered: Admission = serde_json::from_slice(&saved).unwrap();
+        assert!(host.resolve(&recovered).unwrap()["first"].enabled);
+        host.cluster_policy = true;
+        assert!(host.admit(&agent, &session).is_err());
     }
 }

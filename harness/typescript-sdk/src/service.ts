@@ -1,3 +1,4 @@
+import { validateIntegrationOptions } from "./integration-options.js";
 import {stageInput,type UserInput} from "./attachments.js";
 import {HarnessError} from "./types.js";
 import { ServiceObservability } from "./observability.js";
@@ -51,7 +52,7 @@ export function runtimeProfileGrants(profile: RuntimeProfile): {
   return {files: [], network: [...named], credentials: [...named], cpu: profile.cpu, memoryMB: profile.memoryMB};
 }
 export interface AgentRelease {
-  integrations?: Record<string,boolean>;
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
   subagents?: { enabled: boolean; maxConcurrent?: number; maxChildren?: number; limits?: TurnLimits };
   limits?: TurnLimits;
   id: string;
@@ -60,9 +61,9 @@ export interface AgentRelease {
   runtimeProfiles: string[];
   defaultRuntimeProfile?: string;
   allowedPrincipals?: string[];
-  defaultModel?: { connection: string; model: string };
-  reviewerModel?: { connection: string; model: string };
-  modelOverrides?: { connection: string; model: string }[];
+  defaultModel?: { connection: string; model: string; notify_on_session_state?: boolean };
+  reviewerModel?: { connection: string; model: string; notify_on_session_state?: boolean };
+  modelOverrides?: { connection: string; model: string; notify_on_session_state?: boolean }[];
 }
 export interface ServiceCatalogEntry {
   id: string;
@@ -87,12 +88,12 @@ export interface ServiceOperation {
   error: string | null;
 }
 export interface ServiceSessionOptions {
-  integrations?: Record<string,boolean>;
+  integrations?: Record<string, import("./types.js").IntegrationOptions>;
   limits?: TurnLimits;
   environmentId?: string;
   runtimeProfile?: string;
   project?: string;
-  model?: { connection: string; model: string };
+  model?: { connection: string; model: string; notify_on_session_state?: boolean };
   name?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
@@ -621,6 +622,7 @@ export class ServiceAgent {
   async newSession(
     options: Omit<ServiceSessionOptions, "limits"> = {},
   ): Promise<ServiceSession> {
+    validateIntegrationOptions(options.integrations);
     if (
       Object.keys(options).some(
         (k) =>
