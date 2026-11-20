@@ -113,6 +113,7 @@ impl PostgresStore {
         let active:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM submissions WHERE session_id=$1 AND status='queued') OR EXISTS(SELECT 1 FROM attachments WHERE session_id=$1 AND state<>'released')",&[&sid])?.get(0);ensure!(!active,SubmissionError::Busy);
         let epoch:i64=tx.query_opt("UPDATE sessions SET owner=$2,epoch=epoch+1,expires=clock_timestamp()+interval '30 seconds' WHERE id=$1 AND expires<=clock_timestamp() RETURNING epoch",&[&sid,&db.owner])?.ok_or(SubmissionError::Busy)?.get(0);
         s.closed=true;crate::db::write_metadata(&mut tx,&s)?;
+        crate::environments::retire_loop(&mut tx,&s,p.as_ref().map_or("service",|u|u.principal.as_str()))?;
         crate::db::event(&mut tx,&s,&db.owner,epoch,"session_closed",json!({"actor":p.as_ref().map(|p|&p.principal)}))?;
         tx.execute("UPDATE sessions SET expires=clock_timestamp() WHERE id=$1",&[&sid])?;tx.commit()?;Ok(receipt)
     })

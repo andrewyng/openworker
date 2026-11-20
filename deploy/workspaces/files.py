@@ -116,6 +116,13 @@ def run(request, root):
     args = op["arguments"]
     if op["name"] == "list_files":
         return list_files(root)
+    if op["name"] == "read_file_under":
+        allowed = parts(args["directory"])
+        target = parts(args["path"])
+        if len(target) <= len(allowed) or target[:len(allowed)] != allowed:
+            raise ValueError()
+        with parent(root, args["path"]) as (directory, name):
+            return {"text": read(directory, name), "path": args["path"]}
     with parent(root, args["path"], create=op["name"] == "write_file") as (directory, name):
         if op["name"] == "read_file":
             return {"text": read(directory, name), "path": args["path"]}

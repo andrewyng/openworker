@@ -690,3 +690,56 @@ fn integration_policy_on_an_existing_session_and_recovered_worker() {
     }
     owner.release(sid).unwrap();
 }
+
+#[test]
+#[ignore = "requires disposable OW_PG_TEST_URL"]
+fn loop_companion_is_reserved_once_and_cannot_fall_back_to_service() {
+    let (_cfg, store, admin, user) = setup();
+    let mut profile_def = profile();
+    profile_def["loopPlacement"] = json!("sandbox");
+    let p = admin
+        .catalog_put("loop-p", "profile", profile_def, "install")
+        .unwrap();
+    admin
+        .catalog_activate("loop-pa", "profile", &p.id, Some("sandboxedloop".into()))
+        .unwrap();
+    let r = admin
+        .catalog_put("loop-r", "release", release(), "install")
+        .unwrap();
+    admin
+        .catalog_activate("loop-ra", "release", &r.id, None)
+        .unwrap();
+    assert!(user
+        .service_admit("missing-loop", admission(), r.clone(), p.clone(), spec())
+        .is_err());
+    let mut companion = spec();
+    companion.provider = "openshell-loop".into();
+    companion.sharing = Sharing::Exclusive;
+    let create = || {
+        user.service_admit_with_loop(
+            "pair",
+            admission(),
+            r.clone(),
+            p.clone(),
+            spec(),
+            Some(companion.clone()),
+        )
+        .unwrap()
+    };
+    let original = create();
+    let retry = create();
+    assert_eq!(original.id, retry.id);
+    assert_eq!(original.environment_id, retry.environment_id);
+    assert_eq!(original.loop_environment_id, retry.loop_environment_id);
+    assert_ne!(
+        original.loop_environment_id.as_ref(),
+        Some(&original.environment_id)
+    );
+    assert_eq!(
+        store.service_install_status().unwrap()["liveEnvironments"],
+        2
+    );
+    // Only a private controller that has completed tool provisioning may launch the loop.
+    assert!(user.claim_loop_launch(&original.id).is_err());
+    assert!(!store.claim_loop_launch(&original.id).unwrap());
+}

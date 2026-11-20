@@ -188,8 +188,11 @@ fn files(root: &Path, args: &Value) -> Result<(Vec<PathBuf>, bool)> {
 pub fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
     match name {
         "read_file" => {
-            let p = crate::runner::path(root, args["path"].as_str().context("Path required")?)?;
-            let content = text(&p)?;
+            let content = String::from_utf8(crate::runner::read_workspace_file(
+                root,
+                args["path"].as_str().context("Path required")?,
+                MAX_FILE as usize,
+            )?)?;
             let offset = args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
             let limit = args["limit"].as_u64().unwrap_or(200) as usize;
             let all: Vec<_> = content.lines().collect();

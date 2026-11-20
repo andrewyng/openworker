@@ -281,6 +281,17 @@ impl WorkspaceClient for Client {
                     ensure!(files.len() <= 1000, "File list exceeds limit");
                     Ok(json!({"files":files}))
                 }
+                FileOperation::ReadFileUnder { directory, path } => {
+                    validate_path(&directory)?;
+                    validate_path(&path)?;
+                    ensure!(
+                        Path::new(&path)
+                            .parent()
+                            .is_some_and(|p| p.starts_with(&directory)),
+                        "Read outside granted directory"
+                    );
+                    Ok(json!({"path":path,"text":read(&path)?}))
+                }
                 FileOperation::ReadFile { path } => {
                     validate_path(&path)?;
                     Ok(json!({"path":path,"text":read(&path)?}))

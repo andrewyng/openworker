@@ -57,13 +57,8 @@ pub async fn call(root: &Path, name: &str, args: &Value) -> Result<Value> {
             Ok(json!({"partner":"ExampleApp","text":bounded_text(args,"text",16000)?}))
         }
         "read_file" => {
-            let p = path(root, bounded_text(args, "path", 512)?)?;
-            if p.metadata()?.len() > 128000 {
-                bail!("File exceeds 128 KB");
-            }
-            Ok(
-                json!({"path":args["path"],"text":String::from_utf8(crate::bundle::read_limited(&p,128000)?)?}),
-            )
+            let bytes = read_workspace_file(root, bounded_text(args, "path", 512)?, 128000)?;
+            Ok(json!({"path":args["path"],"text":String::from_utf8(bytes)?}))
         }
         "write_file" => {
             let p = path(root, bounded_text(args, "path", 512)?)?;
@@ -242,4 +237,53 @@ pub async fn serve_labeled(root: &Path, label: &str) -> Result<()> {
         output.flush().await?;
     }
     Ok(())
+}
+
+/// Anchor each directory lookup at an already-open descriptor. Reject symlinks
+/// at every component, including substitutions after a directory grant was issued.
+pub(crate) fn read_workspace_file(root: &Path, relative: &str, limit: usize) -> Result<Vec<u8>> {
+    let path = relative_path(relative)?;
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(root)?;
+        let mut parts = path.components().peekable();
+        while let Some(part) = parts.next() {
+            let name = std::ffi::CString::new(part.as_os_str().as_bytes())?;
+            let mut flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
+            if parts.peek().is_some() {
+                flags |= libc::O_DIRECTORY;
+            }
+            // SAFETY: both arguments live through openat. Transfer the newly owned descriptor once.
+            let fd = unsafe { libc::openat(file.as_raw_fd(), name.as_ptr(), flags) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            file = unsafe { std::fs::File::from_raw_fd(fd) };
+        }
+        let meta = file.metadata()?;
+        anyhow::ensure!(
+            meta.is_file() && meta.nlink() == 1 && meta.len() <= limit as u64,
+            "Expected a bounded regular file"
+        );
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(bytes.len() <= limit, "File exceeds limit");
+        Ok(bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        crate::bundle::read_limited(
+            &self::path(root, path.to_str().context("UTF-8 path required")?)?,
+            limit,
+        )
+    }
 }

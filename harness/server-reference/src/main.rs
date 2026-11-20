@@ -15,6 +15,11 @@ struct Args {
 enum Command {
     /// Reconcile durable release/profile provisioning operations. No public port.
     ServiceController,
+    /// Print the non-secret identity pin for an installed OpenShell inference provider.
+    #[cfg(not(windows))]
+    PinLoopProvider {
+        name: String,
+    },
     /// Private worker-pool reconciler, separate from OpenShell provisioning.
     ServicePlatformController,
     /// Schedule all admitted release/profile cohorts within one slot budget.
@@ -153,6 +158,14 @@ async fn main() -> Result<()> {
     result
 }
 async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Telemetry) -> Result<()> {
+    #[cfg(not(windows))]
+    if let Command::PinLoopProvider { name } = &args.command {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&config.provider()?.pin_credential_provider(name).await?)?
+        );
+        return Ok(());
+    }
     if matches!(
         args.command,
         Command::Worker { .. }
@@ -611,6 +624,8 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
         | Command::EnvironmentReconcile { .. } => {
             bail!("This server reference requires the qualified Kubernetes provider")
         }
+        #[cfg(not(windows))]
+        Command::PinLoopProvider { .. } => unreachable!(),
         Command::Migrate | Command::RecordingMigrate => unreachable!(),
     }
     Ok(())

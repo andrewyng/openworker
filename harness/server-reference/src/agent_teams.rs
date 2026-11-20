@@ -54,6 +54,7 @@ async fn create_inner(app: App, sid: String, body: Create) -> Result<Value> {
         .context("Missing profile")?;
     let profile = app.store.catalog_get("profile", profile_id)?;
     let p: Profile = serde_json::from_value(profile.definition.clone())?;
+    ensure!(p.loop_placement.is_service(), "Team members require individually provisioned loop environments; use a service-loop profile for teams");
     ensure!(
         profile.activated && p.sharing == openworker_runtime::environment::Sharing::Shared,
         "Teams require an activated shared RuntimeProfile"

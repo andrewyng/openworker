@@ -44,3 +44,13 @@ test("isolated service preset requires named New profile and exact submission fo
   assert.throws(()=>isolatedCodingServiceTeam("game",source,{mode:"team"},delegation,"1"));
   assert.throws(()=>isolatedCodingServiceTeam("game",source,{...sandbox,profile:"unregistered"},delegation,"1"));
 });
+
+test("service directory grants must match the selected profile", () => {
+  const agent = codingAgent("reader", {
+    approvals: { mode: "always", allowWorkspaceReads: ["src", "docs"] },
+  });
+  const profile = { id: "sandboxedloop@1", provider: "openshell", sharing: "exclusive",
+    cpu: 1, memoryMB: 512, loopPlacement: "sandbox", allowWorkspaceReads: ["docs", "src"] };
+  assert.equal(codingRelease(agent, "1", profile).defaultRuntimeProfile, profile.id);
+  assert.throws(() => codingRelease(agent, "1", { ...profile, allowWorkspaceReads: ["src"] }));
+});

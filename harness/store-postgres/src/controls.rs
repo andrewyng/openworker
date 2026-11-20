@@ -95,10 +95,19 @@ pub(crate) fn before_event(
                 .iter()
                 .find(|i| i.id == *interaction_id)
                 .context("Missing interaction")?;
+            let expected_status = if s.loop_environment.is_some()
+                && s.interactions
+                    .iter()
+                    .any(|other| other.turn_id == t.id && other.response.is_none())
+            {
+                "waiting"
+            } else {
+                "accepted"
+            };
             if kind != "interaction_resolved"
                 || i.turn_id != t.id
                 || i.response.as_ref() != Some(response)
-                || t.status != "accepted"
+                || t.status != expected_status
                 || i.bundle_digest != binding.bundle_digest
                 || i.schema_digest != binding.schema_digest
                 || i.policy_digest != binding.policy_digest

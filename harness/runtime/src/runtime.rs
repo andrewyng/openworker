@@ -60,6 +60,8 @@ fn read_history_result(result: Result<Value>) -> Result<Value> {
 }
 
 pub struct Runtime {
+    #[cfg(not(windows))]
+    pub sandbox_loop: Option<crate::loop_channel::Driver>,
     pub workspaces: crate::workspaces::Registry,
     observers_started: AtomicBool,
     observers_stop: CancellationToken,
@@ -341,6 +343,8 @@ impl Runtime {
             safety_handlers: Arc::new(Default::default()),
             telemetry,
             store: Arc::new(Mutex::new(store)),
+            #[cfg(not(windows))]
+            sandbox_loop: None,
             environments: None,
             coding_git: None,
             bundle,
@@ -848,7 +852,40 @@ impl Runtime {
                 };
                 tokio::time::timeout(
                     std::time::Duration::from_secs(240).saturating_sub(started.elapsed()),
-                    model.next_limited(&instructions, &history, tools, output_limit, tx),
+                    async {
+                        if let Some(binding) = &s.loop_environment {
+                            #[cfg(not(windows))]
+                            {
+                                let driver = self
+                                    .sandbox_loop
+                                    .as_ref()
+                                    .context("Sandbox loop unavailable")?;
+                                let turn = &s.turn.as_ref().context("Missing turn")?.id;
+                                return model
+                                    .observed(&instructions, &history, tx, |out| {
+                                        driver.step(
+                                            &self.store,
+                                            binding,
+                                            sid,
+                                            turn,
+                                            &id,
+                                            &model,
+                                            &instructions,
+                                            &history,
+                                            tools,
+                                            output_limit,
+                                            out,
+                                        )
+                                    })
+                                    .await;
+                            }
+                            #[cfg(windows)]
+                            bail!("OpenShell service worker required");
+                        }
+                        model
+                            .next_limited(&instructions, &history, tools, output_limit, tx)
+                            .await
+                    },
                 )
                 .await
                 .unwrap_or_else(|_| {
@@ -1317,13 +1354,26 @@ impl Runtime {
     where
         F: FnOnce(&mut Session) -> Result<()>,
     {
+        Ok(self.update_with_cursor(sid, kind, data, f)?.0)
+    }
+    fn update_with_cursor<F>(
+        &self,
+        sid: &str,
+        kind: &str,
+        data: Value,
+        f: F,
+    ) -> Result<(Session, i64)>
+    where
+        F: FnOnce(&mut Session) -> Result<()>,
+    {
         let mut db = self.store.lock().unwrap();
         let mut s = db.get(sid)?;
         f(&mut s)?;
         let e = db.save(&s, kind, data)?;
         drop(db);
+        let cursor = e.event_id;
         self.publish(e);
-        Ok(s)
+        Ok((s, cursor))
     }
     pub fn snapshot(&self, sid: &str) -> Result<Value> {
         let db = self.store.lock().unwrap();
@@ -1343,6 +1393,11 @@ impl Runtime {
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;
         let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"auto_approver_context":s.auto_approver_context,"compaction_config":s.compaction_config,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
+        snapshot["session"]["loopPlacement"] = json!(if s.loop_environment.is_some() {
+            "sandbox"
+        } else {
+            "service"
+        });
         if let Some(id) = &s.workspace_id {
             snapshot["session"]["workspaceId"] = json!(id);
         }
@@ -1532,6 +1587,8 @@ impl Runtime {
             )?,
             agent_team: None,
             environment,
+            loop_environment: None,
+            allow_workspace_reads: vec![],
             managed_workspace: None,
             storage_revision: 0,
             approval_grants: vec![],
@@ -2132,6 +2189,12 @@ impl Runtime {
     // A cancellation can arrive after drive has returned a waiting outcome,
     // while this job still owns cleanup. Finish that cancellation before release.
     async fn finish_job(&self, sid: &str, token: &CancellationToken) -> Result<()> {
+        // A waiting turn is durably parked. Release the live stream; responses use
+        // the external journal even if Spark or the original worker disappears.
+        #[cfg(not(windows))]
+        if let Some(driver) = &self.sandbox_loop {
+            let _ = driver.release(&self.store, sid).await;
+        }
         {
             let mut jobs = self.jobs.lock().unwrap();
             if !token.is_cancelled() {
@@ -2175,6 +2238,11 @@ impl Runtime {
         self.bundle.verify()?;
         self.tool_policy.verify()?;
         let s = self.store.lock().unwrap().metadata(sid)?;
+        #[cfg(not(windows))]
+        ensure!(
+            s.loop_environment.is_some() == self.sandbox_loop.is_some(),
+            "Pinned loop placement does not match worker"
+        );
         self.integrations.resolve(&s.integrations)?;
         s.safety.validate()?;
         if let Some(c) = &s.compliance {
@@ -2843,7 +2911,7 @@ impl Runtime {
             .span(Op::Policy, Some(sid), call["call_id"].as_str());
         let result = crate::telemetry::scope(
             span.context(),
-            Box::pin(self.authorize_call_inner(sid, call)),
+            Box::pin(self.authorize_call_inner(sid, call, false)),
         )
         .await;
         let outcome = match &result {
@@ -2855,7 +2923,12 @@ impl Runtime {
         span.finish(outcome);
         result
     }
-    async fn authorize_call_inner(&self, sid: &str, call: &Value) -> Result<Interaction> {
+    async fn authorize_call_inner(
+        &self,
+        sid: &str,
+        call: &Value,
+        batch: bool,
+    ) -> Result<Interaction> {
         self.check_backend(sid)?;
         let s = self.store.lock().unwrap().get(sid)?;
         let t = s.turn.as_ref().context("Missing turn")?;
@@ -2897,6 +2970,14 @@ impl Runtime {
             hard_denial = Some(e.to_string());
             i.response = Some("deny".into());
             i.origin = Some("hard_policy".into());
+        } else if s.environment.is_some()
+            && permissions::native_tool(&self.bundle, alias) == Some("read_file")
+            && args["path"]
+                .as_str()
+                .is_some_and(|p| permissions::granted_read_path(&s.allow_workspace_reads, p))
+        {
+            i.response = Some("once".into());
+            i.origin = Some("workspace_read_grant".into());
         } else if let Some(grant) = s.approval_grants.iter().find(|g| {
             alias != crate::team_type_catalog::TOOL
                 && alias != crate::subagents::CREATE
@@ -3042,7 +3123,19 @@ impl Runtime {
             data,
             |current| {
                 let turn = current.turn.as_mut().context("No turn")?;
-                if turn.id != t.id || turn.status != "running" || turn.queue.first() != Some(call) {
+                let queued = if batch {
+                    turn.queue.contains(call)
+                } else {
+                    turn.queue.first() == Some(call)
+                };
+                if turn.id != t.id
+                    || turn.status != "running"
+                    || !queued
+                    || batch
+                        && current.interactions.iter().any(|old| {
+                            old.turn_id == t.id && old.call["call_id"] == call["call_id"]
+                        })
+                {
                     bail!("Authorization became stale or cancelled");
                 }
                 if let Some(v) = &review {
@@ -3052,7 +3145,7 @@ impl Runtime {
                         VerdictKind::Unsure => {}
                     }
                 }
-                if waiting {
+                if waiting && !batch {
                     turn.status = "waiting".into();
                 }
                 current.interactions.push(i.clone());
@@ -3060,6 +3153,64 @@ impl Runtime {
             },
         )?;
         Ok(i)
+    }
+    /// Expose independent decisions before parking a model response. Execution stays
+    /// ordered by the durable queue and repeats the normal policy checks.
+    async fn prepare_batch(&self, sid: &str, s: &Session, tools: &[Value]) -> Result<bool> {
+        let turn = s.turn.as_ref().context("Missing turn")?;
+        let mut waiting = false;
+        for call in &turn.queue {
+            let name = call["name"].as_str().context("Missing tool name")?;
+            if let Some(i) = s
+                .interactions
+                .iter()
+                .find(|i| i.turn_id == turn.id && i.call["call_id"] == call["call_id"])
+            {
+                waiting |= i.response.is_none();
+                continue;
+            }
+            // Dynamic internal tools and scanner-mediated arguments must first
+            // undergo their own preparation in drive, in submission order.
+            if !self.bundle.tools.bindings.contains_key(name)
+                || self.effective_safety(sid)?.protects(
+                    crate::safety::Phase::ToolCall,
+                    Some(&self.safety_tool_name(name)),
+                )
+            {
+                break;
+            }
+            let Some(schema) = tools.iter().find(|t| t["name"] == name) else {
+                break;
+            };
+            let Some(args) = call["arguments"]
+                .as_str()
+                .and_then(|a| serde_json::from_str::<Value>(a).ok())
+            else {
+                break;
+            };
+            if validate_arguments(&schema["parameters"], &args).is_err() {
+                break;
+            }
+            let i = Box::pin(self.authorize_call_inner(sid, call, true)).await?;
+            waiting |= i.response.is_none();
+        }
+        if waiting {
+            self.update(
+                sid,
+                "approval_batch_waiting",
+                json!({"turn_id":turn.id}),
+                |latest| {
+                    let t = latest.turn.as_mut().context("Missing turn")?;
+                    ensure!(
+                        t.id == turn.id && t.status == "running",
+                        "Approval batch was cancelled"
+                    );
+                    t.status = "waiting".into();
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(waiting)
     }
     async fn drive(&self, sid: &str, clients: Clients, tools: Vec<Value>) -> Result<()> {
         self.update(sid, "turn_started", json!({}), |s| {
@@ -3080,6 +3231,15 @@ impl Runtime {
                 .or_else(|| t.budget.reason().map(str::to_owned))
             {
                 return self.finish_budget(sid, &reason, &tools).await;
+            }
+            if s.loop_environment.is_some() && t.queue.len() > 1 {
+                if self.prepare_batch(sid, &s, &tools).await? {
+                    return Ok(());
+                }
+                if self.store.lock().unwrap().metadata(sid)?.storage_revision != s.storage_revision
+                {
+                    continue;
+                }
             }
             if let Some(call) = t.queue.first() {
                 let alias = call["name"].as_str().context("Missing tool name")?;
@@ -3508,6 +3668,12 @@ impl Runtime {
                                 self.call_native(sid, call, &binding.tool, args.clone())
                                     .await?
                             } else {
+                                let request=if workspace_tool && interaction.origin.as_deref()==Some("workspace_read_grant") {
+                                    let path=args["path"].as_str().context("Workspace read path missing")?;
+                                    let directory=s.allow_workspace_reads.iter().find(|root|permissions::granted_read_path(std::slice::from_ref(root),path)).context("Workspace read grant expired")?;
+                                    ensure!(binding.tool=="read_file","Scoped grant tool changed");
+                                    json!({"name":"read_file_under","arguments":{"path":path,"directory":directory}})
+                                }else{json!({"name":binding.tool,"arguments":args})};
                                 clients
                                     .get(&binding.server)
                                     .context("Bound server unavailable")?
@@ -3515,7 +3681,7 @@ impl Runtime {
                                     .await
                                     .request(
                                         "tools/call",
-                                        json!({"name":binding.tool,"arguments":args}),
+                                        request,
                                     )
                                     .await?
                             }
@@ -3677,11 +3843,16 @@ impl Runtime {
                 .cloned()
                 .collect::<Vec<_>>();
             let finished = queue.is_empty() && !had_calls;
-            let saved = self.update(
-                sid,
-                "assistant_message",
-                json!({"messages":messages}),
-                |s| {
+            let mut event_data = json!({"messages":messages});
+            #[cfg(not(windows))]
+            if let Some(driver) = &self.sandbox_loop {
+                event_data["loopProposal"] = driver
+                    .receipt()
+                    .await
+                    .context("Missing sandbox proposal identity")?;
+            }
+            let (saved, _cursor) =
+                self.update_with_cursor(sid, "assistant_message", event_data, |s| {
                     s.last_usage = completion.usage;
                     if let Some(member) = &mut s.agent_team {
                         member.last_output = messages
@@ -3697,8 +3868,11 @@ impl Runtime {
                     t.iterations += 1;
                     t.continuations = 0;
                     Ok(())
-                },
-            )?;
+                })?;
+            #[cfg(not(windows))]
+            if let Some(driver) = &self.sandbox_loop {
+                driver.committed(_cursor, finished).await;
+            }
             if !saved.integrations.observers.is_empty() {
                 for call in &saved.turn.as_ref().context("Missing active turn")?.queue {
                     self.progress(
@@ -4140,7 +4314,16 @@ impl Runtime {
             s.approval_grants.retain(|g| g.tool != grant.tool);
             s.approval_grants.push(grant.clone());
         }
-        s.turn.as_mut().unwrap().status = "accepted".into();
+        let others_pending = s.loop_environment.is_some()
+            && s.interactions.iter().any(|other| {
+                other.turn_id == resolved_interaction.turn_id && other.response.is_none()
+            });
+        s.turn.as_mut().unwrap().status = if others_pending {
+            "waiting"
+        } else {
+            "accepted"
+        }
+        .into();
         let event = db.save(
             &s,
             "interaction_resolved",
@@ -4167,7 +4350,9 @@ impl Runtime {
         );
         resolution.turn(&resolved_interaction.turn_id);
         resolution.finish(if denied { Outcome::Denied } else { Outcome::Ok });
-        self.spawn(sid)?;
+        if !others_pending {
+            self.spawn(sid)?;
+        }
         Ok(json!({"interaction_id":iid,"duplicate":false}))
     }
     async fn remove_sandbox(&self, sid: &str) -> Result<()> {

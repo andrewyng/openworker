@@ -190,9 +190,23 @@ impl ArtifactConfig {
         }
     }
 }
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopInference {
+    pub api: openworker_runtime::model_api::Api,
+    pub base_url: String,
+    /// Immutable operator binding for the sandbox-side native model endpoint.
+    pub provider: Option<openworker_runtime::coding::openshell_git::ProviderPin>,
+    pub connection: String,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenShellConfig {
+    #[serde(default)]
+    pub loop_inference: Option<LoopInference>,
+    #[serde(skip)]
+    pub selected_loop: bool,
     /// Operator-owned pins/scopes. Definitions can select names only.
     #[serde(default)]
     pub git_grants: std::collections::BTreeMap<String, git_access::Grant>,
@@ -225,10 +239,22 @@ impl Config {
     }
     #[cfg(not(windows))]
     pub fn provider(&self) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
+        self.openshell_provider(false)
+    }
+    #[cfg(not(windows))]
+    pub fn openshell_provider(
+        &self,
+        for_loop: bool,
+    ) -> Result<Arc<openworker_runtime::environment_openshell::OpenShell>> {
         self.require_execution()?;
         let c = &self.openshell;
         let mut provider = openworker_runtime::environment_openshell::OpenShell::new(
-            "openshell-k8s".into(),
+            if for_loop {
+                "openshell-loop"
+            } else {
+                "openshell-k8s"
+            }
+            .into(),
             c.identity.clone(),
             openworker_runtime::sandbox::ExecConnectionConfig {
                 endpoint: c.endpoint.clone(),
@@ -239,7 +265,25 @@ impl Config {
             c.image.clone(),
         )?
         .with_resources(c.cpu.unwrap_or(1), c.memory_mb.unwrap_or(512))?;
-        if let Some(grant) = self.git_grant()? {
+        if for_loop {
+            let route = c
+                .loop_inference
+                .as_ref()
+                .context("Sandbox loop execution is not installed")?;
+            openworker_runtime::loop_channel::inference_base(&route.base_url)?;
+            anyhow::ensure!(
+                openworker_runtime::bundle::safe_name(&route.connection),
+                "Invalid sandbox inference connection"
+            );
+            if let Some(pin) = &route.provider {
+                provider = provider.with_credential_provider(pin.clone())?;
+            } else {
+                anyhow::ensure!(
+                    self.scripted,
+                    "A pinned sandbox inference provider is required"
+                );
+            }
+        } else if let Some(grant) = self.git_grant()? {
             provider = provider
                 .with_credential_provider(grant.provider.clone())?
                 .with_git_scope(grant.scope.clone())?;
@@ -296,6 +340,19 @@ impl Config {
         let mut configured = integration_registry.configure(&self.integrations, policy)?;
         configured.cluster_policy = service_mode;
         let runtime = Arc::get_mut(&mut rt).context("Runtime shared during startup")?;
+        if self.openshell.selected_loop {
+            let route = self
+                .openshell
+                .loop_inference
+                .as_ref()
+                .context("Sandbox inference route missing")?;
+            runtime.sandbox_loop = Some(openworker_runtime::loop_channel::Driver::new(
+                self.openshell_provider(true)?,
+                route.api,
+                route.base_url.clone(),
+                route.connection.clone(),
+            ));
+        }
         runtime.workspaces = self.workspace_registry.clone();
         for (name, config) in &self.kubernetes_workspaces {
             runtime.workspaces.register(

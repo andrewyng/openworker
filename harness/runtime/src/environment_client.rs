@@ -8,14 +8,22 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-struct Reservation {
+pub(crate) struct Reservation {
     store: SharedStore,
     sid: String,
     id: String,
     settled: bool,
 }
 impl Reservation {
-    fn release(&mut self, unknown: bool) -> Result<()> {
+    pub(crate) fn new(store: SharedStore, sid: &str, id: String) -> Self {
+        Self {
+            store,
+            sid: sid.to_owned(),
+            id,
+            settled: false,
+        }
+    }
+    pub(crate) fn release(&mut self, unknown: bool) -> Result<()> {
         self.settled = true; // No retry after an uncertain database commit.
         self.store
             .lock()
@@ -83,12 +91,7 @@ impl RemoteClient {
             bail!("Existing attachment must be reconciled before another launch");
         }
         self.live = Some(Live {
-            reservation: Reservation {
-                store: self.store.clone(),
-                sid: self.sid.clone(),
-                id: reservation.id.clone(),
-                settled: false,
-            },
+            reservation: Reservation::new(self.store.clone(), &self.sid, reservation.id.clone()),
             connection: None,
         });
         let connection = self

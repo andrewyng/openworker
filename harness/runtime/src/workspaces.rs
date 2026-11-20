@@ -148,6 +148,11 @@ pub enum FileOperation {
     ReadFile {
         path: String,
     },
+    /// Only the trusted dispatcher can generate this provider operation.
+    ReadFileUnder {
+        directory: String,
+        path: String,
+    },
     WriteFile {
         path: String,
         content: String,

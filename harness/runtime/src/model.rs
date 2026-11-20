@@ -244,7 +244,7 @@ impl Model {
         self.observation = Some(context);
         self
     }
-    async fn observed<F, Fut>(
+    pub(crate) async fn observed<F, Fut>(
         &self,
         instructions: &str,
         history: &[Value],
@@ -370,15 +370,99 @@ impl Model {
             Some((manager, selection)) => manager.inference_options(selection)?,
             None => Default::default(),
         };
+        self.request_endpoint(
+            api,
+            &endpoint,
+            &options,
+            instructions,
+            history,
+            tools,
+            max_tokens,
+            format,
+            tx,
+            key,
+            false,
+        )
+        .await
+    }
+
+    /// Runs only inside the sandbox. The credential variable contains the
+    /// OpenShell endpoint-bound placeholder; no gateway or service credential crosses stdio.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn sandbox_inference(
+        &self,
+        api: crate::model_api::Api,
+        base: &str,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        limit: u32,
+        tx: mpsc::Sender<Progress>,
+    ) -> Result<()> {
+        let endpoint = format!(
+            "{}/{}",
+            crate::loop_channel::inference_base(base)?,
+            api.path()
+        );
+        let key = zeroize::Zeroizing::new(
+            std::env::var(api.kind().key_env())
+                .context("Sandbox inference provider is not attached")?,
+        );
+        self.request_endpoint(
+            api,
+            &endpoint,
+            &Default::default(),
+            instructions,
+            history,
+            tools,
+            limit as usize,
+            None,
+            tx,
+            &key,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn request_endpoint(
+        &self,
+        api: crate::model_api::Api,
+        endpoint: &str,
+        options: &crate::inference_options::InferenceOptions,
+        instructions: &str,
+        history: &[Value],
+        tools: &[Value],
+        max_tokens: usize,
+        format: Option<Value>,
+        tx: mpsc::Sender<Progress>,
+        key: &str,
+        sandbox_route: bool,
+    ) -> Result<()> {
         let transport = self
             .connection
             .as_ref()
             .and_then(|(m, s)| m.integrations.provider(&s.connection).map(|(_, t)| t));
-        let request_url = options.url(&endpoint)?;
+        let request_url = options.url(endpoint)?;
         let headers = options.headers()?;
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .no_proxy()
+        let mut builder = reqwest::Client::builder().default_headers(headers);
+        if sandbox_route {
+            // OpenShell supplies the sandbox egress proxy and its trust bundle.
+            if let Ok(proxy) =
+                std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy"))
+            {
+                builder = builder.proxy(reqwest::Proxy::all(proxy)?);
+            }
+            if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+                let pem = std::fs::read(path)?;
+                for cert in reqwest::Certificate::from_pem_bundle(&pem)? {
+                    builder = builder.add_root_certificate(cert);
+                }
+            }
+        } else {
+            builder = builder.no_proxy();
+        }
+        let client = builder
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))
             .timeout(std::time::Duration::from_secs(180))
@@ -426,13 +510,13 @@ impl Model {
             };
         if api == crate::model_api::Api::ChatCompletions {
             let binding = crate::chat_completions::replay_binding(
-                &endpoint,
+                endpoint,
                 &self.name,
                 self.connection
                     .as_ref()
                     .map(|(_, selection)| selection.identity.as_str()),
             );
-            let google_compat = reqwest::Url::parse(&endpoint).is_ok_and(|url| {
+            let google_compat = reqwest::Url::parse(endpoint).is_ok_and(|url| {
                 url.host_str() == Some("generativelanguage.googleapis.com")
                     && url.path().ends_with("/openai/chat/completions")
             });
@@ -909,10 +993,17 @@ impl Model {
             .and_then(|s| s.strip_prefix("TEST_RESOURCE_GRANTS ").map(str::to_owned))
         {
             let steps: Vec<Value> = serde_json::from_str(&plan)?;
-            let output = if let Some(step) = steps.get(calls.len()) {
-                vec![
-                    json!({"type":"function_call","call_id":crate::id("call"),"name":step["name"],"arguments":step["arguments"].to_string()}),
-                ]
+            // A nested group is one provider response with multiple calls.
+            let mut prior = 0;
+            let next = steps.iter().find(|step| {
+                let start = prior;
+                prior += step.as_array().map_or(1, |a| a.len());
+                start == calls.len()
+            });
+            let output = if let Some(step) = next {
+                step.as_array().map(Vec::as_slice).unwrap_or(std::slice::from_ref(step)).iter().map(|s|
+                    json!({"type":"function_call","call_id":crate::id("call"),"name":s["name"],"arguments":s["arguments"].to_string()})
+                ).collect()
             } else {
                 vec![
                     json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Resource fixture finished; inspect actual tool results."}]}),

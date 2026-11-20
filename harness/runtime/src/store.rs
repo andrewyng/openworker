@@ -103,6 +103,11 @@ pub fn now_ms() -> u64 {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
+    /// Private execution binding selected only by service admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_environment: Option<crate::environment::Binding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_workspace_reads: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
     #[serde(

@@ -111,10 +111,10 @@ export interface ApplicationTools {
   tools: Record<string, ApplicationTool>;
 }
 export type ConnectionState = "ready" | "recovering" | "closed" | "unavailable";
-export type Approvals =
+export type Approvals = { allowWorkspaceReads?: string[] } & (
   | { mode: "auto"; reviewerModel: Model }
   | { mode: "always" | "reviewer" | "never" }
-  | { mode: "only"; tools: string[] };
+  | { mode: "only"; tools: string[] });
 
 /** Definitions are fixed at host startup. Tools are qualified registered names. */
 export interface TurnLimits {
