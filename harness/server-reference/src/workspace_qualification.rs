@@ -80,10 +80,21 @@ async fn website_builder_app() -> Result<()> {
     .await
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+#[ignore = "requires the disposable Kubernetes Node.js image and preview gateway"]
+async fn workspace_preview_ports() -> Result<()> {
+    qualify(
+        Some(std::env::var("OW_WORKSPACE_SERVICES")?),
+        Scenario::Preview,
+    )
+    .await
+}
+
 #[derive(Clone, Copy)]
 enum Scenario {
     Recovery,
     WebsiteBuilder,
+    Preview,
 }
 
 async fn qualify(k8s: Option<String>, scenario: Scenario) -> Result<()> {
@@ -93,7 +104,15 @@ async fn qualify(k8s: Option<String>, scenario: Scenario) -> Result<()> {
     let bundle = root.path().join("bundle");
     std::fs::create_dir_all(bundle.join("coworker"))?;
     std::fs::write(bundle.join("coworker/manifest.md"),"---\nid: workspace-example\nname: Workspace test\nversion: '1'\nrequires_folder: true\n---\nUse the selected file tools.")?;
-    let names = ["list_files", "read_file", "write_file", "edit_file"];
+    let mut names = vec!["list_files", "read_file", "write_file", "edit_file"];
+    if matches!(scenario, Scenario::Preview) {
+        names.extend([
+            "process_start",
+            "process_status",
+            "process_logs",
+            "process_stop",
+        ]);
+    }
     let bindings: serde_json::Map<_, _> = names
         .iter()
         .map(|n| (n.to_string(), json!({"server":"coding","tool":n})))
@@ -237,6 +256,7 @@ async fn qualify(k8s: Option<String>, scenario: Scenario) -> Result<()> {
         tokio::process::Command::new(std::env::var("OW_NODE").unwrap_or_else(|_| "node".into()));
     exec.arg(match scenario {
         Scenario::Recovery => "../typescript-sdk/test/workspaces-live.mjs",
+        Scenario::Preview => "../typescript-sdk/test/workspace-previews-live.mjs",
         Scenario::WebsiteBuilder => "../typescript-sdk/test/website-builder-live.mjs",
     })
     .env("OW_SERVICE_URL", url)

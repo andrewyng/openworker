@@ -1,0 +1,69 @@
+{{- if .Values.preview.domain }}
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: workspace-preview, namespace: {{ .Release.Namespace }}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: workspace-preview}}
+  template:
+    metadata: {labels: {app: workspace-preview}}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: gateway
+          image: {{ required "set preview.gatewayImage" .Values.preview.gatewayImage | quote }}
+          ports: [{containerPort: 8443}]
+          readinessProbe: {tcpSocket: {port: 8443}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 500m, memory: 128Mi}}
+          env:
+            - {name: WORKSPACE_SERVICE_URL, value: "https://workspaces.{{ .Release.Namespace }}.svc"}
+            - {name: WORKSPACE_CA_FILE, value: /ca/ca.crt}
+          volumeMounts:
+            - {name: ca, mountPath: /ca, readOnly: true}
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: ca
+          secret: {secretName: {{ .Values.preview.serviceCASecret | quote }}}
+        - name: tls
+          secret: {secretName: {{ .Values.preview.tlsSecret | quote }}, defaultMode: 288}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: workspace-preview, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {app: workspace-preview}
+  ports: [{port: 443, targetPort: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: preview-ingress, namespace: {{ .Values.workloadNamespace }}}
+spec:
+  podSelector: {matchLabels: {ow-workspace-preview: enabled}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace }}}}
+          podSelector: {matchLabels: {app: workspace-preview}}
+      ports: [{protocol: TCP, port: 5100, endPort: 5114}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: preview-egress, namespace: {{ .Release.Namespace }}}
+spec:
+  podSelector: {matchLabels: {app: workspace-preview}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.workloadNamespace }}}}
+          podSelector: {matchLabels: {ow-workspace-preview: enabled}}
+      ports: [{protocol: TCP, port: 5100, endPort: 5114}]
+    - to: [{podSelector: {matchLabels: {app: ow-workspaces}}}]
+      ports: [{protocol: TCP, port: 8443}, {protocol: TCP, port: 443}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+{{- end }}

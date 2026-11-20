@@ -58,6 +58,8 @@ spec:
             capabilities: {drop: [ALL]}
           env:
             - {name: WORKLOAD_NAMESPACE, value: {{ .Values.workloadNamespace | quote }}}
+            - {name: WORKSPACE_IMAGE_PROFILES, value: {{ .Values.imageProfiles | toJson | quote }}}
+            - {name: PREVIEW_DOMAIN, value: {{ .Values.preview.domain | quote }}}
             - {name: RUNNER_IMAGE, value: {{ required "set images.runner" .Values.images.runner | quote }}}
             - {name: STORAGE_CLASS, value: {{ required "set data.storageClass" .Values.data.storageClass | quote }}}
             - {name: DATA_MODE, value: {{ .Values.data.accessMode | quote }}}

@@ -27,6 +27,8 @@
       "type": "object", "additionalProperties": false,
       "properties": {"pinNode": {"type": "string"}, "spreadSharedData": {"type": "boolean"}}
     },
+    "imageProfiles": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,40}$"}, "additionalProperties": {"type": "string", "pattern": "^[^@\\s]+@sha256:[a-f0-9]{64}$"}},
+    "preview": {"type": "object", "additionalProperties": false, "properties": {"domain": {"type": "string"}, "gatewayImage": {"type": "string"}, "serviceCASecret": {"type": "string"}, "tlsSecret": {"type": "string"}}},
     "idleSeconds": {"type": "integer", "minimum": 0}
   }
 }

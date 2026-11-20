@@ -164,6 +164,7 @@ impl WorkspaceClient for Client {
                         id
                     };
                     Ok(WorkspaceRef {
+                        previews: Vec::new(),
                         workspace_id,
                         data_id: data,
                     })

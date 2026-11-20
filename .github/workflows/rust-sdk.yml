@@ -181,6 +181,7 @@ jobs:
       - name: Workspace provider contract and builder/reviewer sessions
         if: matrix.shard == 'workspaces'
         run: |
+          (cd ../deploy/workspaces/gateway && go test ./...)
           python3 -m unittest discover -s ../deploy/workspaces
           python3 -m venv "$RUNNER_TEMP/modal-tests"
           "$RUNNER_TEMP/modal-tests/bin/pip" install -r ../deploy/workspaces/modal_provider/requirements.txt

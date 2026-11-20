@@ -91,7 +91,7 @@ const review = await workspaces.getOrCreate({
 const separate = await reviewer.newSession({ workspaceId: review.workspaceId });
 ```
 
-Existing workspace sessions support the scoped list, read, write and edit tools. The app coordinates concurrent edits. File operations run through Kubernetes exec using a fixed helper command and a JSON request over stdin. A lost reply leaves the result uncertain. Inspect the files before issuing another edit.
+The default workspace supports scoped list, read, write and edit tools. For managed dev servers and per-port private URLs, see the [Node.js ToolRunner and preview guide](nodejs/README.md). The app coordinates concurrent edits. File operations run through Kubernetes exec using a fixed helper command and a JSON request over stdin. A lost reply leaves the result uncertain. Inspect the files before issuing another edit.
 
 ## Recovery and cleanup
 

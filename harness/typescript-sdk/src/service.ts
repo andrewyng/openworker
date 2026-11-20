@@ -233,7 +233,8 @@ const workspaceErrors = new Set([
   "invalid_workspace_request", "workspace_not_found", "workspace_handle_expired",
   "workspace_data_mismatch", "workspace_profile_mismatch", "workspace_in_use", "workspace_shared_mount_unsupported",
 ]);
-export interface WorkspaceRef { workspaceId: string; dataId: string }
+export interface WorkspacePreview { port: number; url: string; accessToken: string }
+export interface WorkspaceRef { workspaceId: string; dataId: string; previews?: WorkspacePreview[] }
 export interface WorkspaceRequest { key: string; dataId?: string; options?: Record<string, Json> }
 export interface WorkspaceProviderOptions { name: string; options?: Record<string, Json> }
 
@@ -277,7 +278,13 @@ export class ServiceWorkspaceProvider {
     if (typeof ref?.workspaceId !== "string" || typeof ref?.dataId !== "string" ||
         (request.dataId !== undefined && ref.dataId !== request.dataId))
       throw new ServiceError("invalid_workspace_reference", 0);
-    return { workspaceId: ref.workspaceId, dataId: ref.dataId };
+    if (ref.previews !== undefined && (!Array.isArray(ref.previews) || ref.previews.length > 15 ||
+        ref.previews.some((slot: WorkspacePreview, i: number) => !slot || slot.port !== 5100 + i ||
+          typeof slot.url !== "string" || !slot.url.startsWith("https://") ||
+          typeof slot.accessToken !== "string" || !slot.accessToken))) {
+      throw new ServiceError("invalid_workspace_reference", 0);
+    }
+    return { workspaceId: ref.workspaceId, dataId: ref.dataId, ...(ref.previews && { previews: ref.previews }) };
   }
 }
 export class Service {
