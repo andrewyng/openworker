@@ -21,3 +21,11 @@ placement:
   # Require one node per independent workspace sharing the same data ID.
   spreadSharedData: false
 idleSeconds: 600
+
+# Optional ToolRunner workspace image names mapped to immutable image references.
+imageProfiles: {}
+preview:
+  domain: ""
+  gatewayImage: ""
+  serviceCASecret: workspace-service-ca
+  tlsSecret: workspace-preview-tls

@@ -100,6 +100,8 @@ impl WorkspaceServiceProvider {
             .to_owned();
         Ok(Arc::new(Client {
             provider: self.clone(),
+            defaults: result["defaults"].as_object().cloned().unwrap_or_default(),
+            processes: result["processTools"].as_bool().unwrap_or(false),
             profile,
         }))
     }
@@ -125,12 +127,14 @@ impl WorkspaceProvider for WorkspaceServiceProvider {
 struct Client {
     provider: WorkspaceServiceProvider,
     profile: String,
+    defaults: serde_json::Map<String, Value>,
+    processes: bool,
 }
 impl WorkspaceClient for Client {
     fn get_or_create(&self, req: GetOrCreateWorkspace) -> ProviderFuture<'_, WorkspaceRef> {
         Box::pin(async move {
             Ok(serde_json::from_value(self.provider.rpc("open",json!({
-                "key":req.key,"dataId":req.data_id,"options":req.options,"defaultProfile":self.profile
+                "key":req.key,"dataId":req.data_id,"options":req.options,"defaultProfile":self.profile,"defaults":self.defaults
             })).await?)?)
         })
     }
@@ -165,6 +169,14 @@ impl WorkspaceClient for Client {
         Box::pin(async move {
             self.provider.rpc("delete", json!({"dataId":id})).await?;
             Ok(())
+        })
+    }
+    fn supports_processes(&self) -> bool {
+        self.processes
+    }
+    fn process(&self, a: WorkspaceAttachment, operation: Value) -> ProviderFuture<'_, Value> {
+        Box::pin(async move {
+            self.provider.rpc("process", json!({"workspaceId":a.workspace_id,"sessionId":a.session_id,"operation":operation})).await
         })
     }
     fn file(&self, a: WorkspaceAttachment, op: FileOperation) -> ProviderFuture<'_, Value> {

@@ -1,6 +1,7 @@
 """Kubernetes operations in one dedicated workload namespace."""
 import json
 import os
+import re
 import time
 
 from kubernetes import client, config, stream
@@ -18,6 +19,12 @@ class Cluster:
         self.namespace = os.environ["WORKLOAD_NAMESPACE"]
         self.owner = owner
         self.image = os.environ["RUNNER_IMAGE"]
+        self.images = json.loads(os.getenv("WORKSPACE_IMAGE_PROFILES", "{}"))
+        if not isinstance(self.images, dict) or any(
+                not re.fullmatch(r"[a-z][a-z0-9-]{0,40}", k)
+                or not isinstance(v, str) or not re.fullmatch(r"[^@\s]+@sha256:[a-f0-9]{64}", v)
+                for k, v in self.images.items()):
+            raise ValueError("Expected named, digest-pinned workspace images")
         self.mode = os.getenv("DATA_MODE", "ReadWriteMany")
         self.single_mount = self.mode == "ReadWriteOncePod" or os.getenv("ALLOW_SHARED_COMPUTE") == "false"
         self.node = os.getenv("PIN_NODE")
@@ -34,8 +41,8 @@ class Cluster:
     def has_compute(self, name, uid):
         return self.resource("pod", name, uid) is not None
 
-    def compute(self, workspace, data, profile, previous_uid, data_uid):
-        return self.pod(workspace, data, profile, previous_uid).metadata.uid
+    def compute(self, workspace, data, profile, previous_uid, data_uid, settings=None):
+        return self.pod(workspace, data, profile, previous_uid, settings).metadata.uid
 
     def ready(self, workspace, uid):
         pod = self.resource("pod", workspace, uid)
@@ -81,7 +88,9 @@ class Cluster:
             raise Failure("workspace_identity_changed", 409)
         return obj.metadata.uid
 
-    def pod(self, workspace, data, profile, previous_uid):
+    def pod(self, workspace, data, profile, previous_uid, settings=None):
+        settings = settings or {}
+        image = settings.get("image", self.image)
         resources = {"small": {"memory": "64Mi", "cpu": "150m"},
                      "medium": {"memory": "128Mi", "cpu": "300m"}}[profile]
         spec = {
@@ -90,7 +99,7 @@ class Cluster:
             "securityContext": {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
                                 "fsGroup": 65532, "seccompProfile": {"type": "RuntimeDefault"}},
             "containers": [{
-                "name": "workspace", "image": self.image, "imagePullPolicy": "IfNotPresent",
+                "name": "workspace", "image": image, "imagePullPolicy": "IfNotPresent",
                 "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
                                     "capabilities": {"drop": ["ALL"]}},
                 "resources": {"requests": {"cpu": "10m", "memory": "24Mi"}, "limits": resources},
@@ -99,12 +108,19 @@ class Cluster:
             }],
             "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": data}}],
         }
+        if "imageProfile" in settings:
+            spec["volumes"].append({"name": "tmp", "emptyDir": {}})
+            container = spec["containers"][0]
+            container["volumeMounts"].append({"name": "tmp", "mountPath": "/tmp"})
+            container["env"].append({"name": "OPENWORKER_PROCESS_STATE_ROOT", "value": "/tmp"})
         if self.node:
             spec["nodeSelector"] = {"kubernetes.io/hostname": self.node}
         # Only the provider creates objects with these names. Adopt a creation
         # after a lost response, checking both ownership and the requested binding.
         metadata = self.metadata(workspace)
         metadata["labels"]["ow-workspace-data"] = data
+        if settings.get("preview"):
+            metadata["labels"]["ow-workspace-preview"] = "enabled"
         if self.spread:
             spec["affinity"] = {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
                 "labelSelector": {"matchLabels": {"ow-workspace-data": data}},
@@ -112,7 +128,7 @@ class Cluster:
             }]}}
         obj = self.ensure("pod", {"metadata": metadata, "spec": spec})
         mounts = [v.persistent_volume_claim.claim_name for v in obj.spec.volumes if v.persistent_volume_claim]
-        if mounts != [data] or obj.spec.containers[0].image != self.image:
+        if mounts != [data] or obj.spec.containers[0].image != image:
             raise Failure("workspace_identity_changed", 409)
         if previous_uid and obj.metadata.uid != previous_uid:
             raise Failure("workspace_identity_changed", 409)
@@ -133,17 +149,27 @@ class Cluster:
                     raise
         return False
 
+    def process(self, workspace, physical_id, operation):
+        if operation.get("name") not in {"process_start", "process_stop", "process_status", "process_logs"}:
+            raise Failure("invalid_workspace_request", 400)
+        return self.exec_tool(workspace, physical_id, operation, "/app/runner_call.py")
+
     def file(self, workspace, physical_id, operation):
+        return self.exec_tool(workspace, physical_id, operation, "/app/files.py")
+
+    def exec_tool(self, workspace, physical_id, operation, helper):
+        if self.resource("pod", workspace, physical_id) is None:
+            raise Failure("workspace_not_found", 404)
         # Use a separate API client for exec. The streaming transport temporarily
         # replaces the REST transport on the Kubernetes Python client instance.
         with client.ApiClient() as exec_client:
             api = client.CoreV1Api(exec_client)
             ws = stream.stream(api.connect_get_namespaced_pod_exec,
-                workspace, self.namespace, container="workspace", command=["python", "/app/files.py"],
+                workspace, self.namespace, container="workspace", command=["python3", helper],
                 stdin=True, stdout=True, stderr=True, tty=False, _preload_content=False,
                 _request_timeout=8)
             output = ""
-            deadline = time.monotonic() + 12
+            deadline = time.monotonic() + 24
             try:
                 ws.write_stdin(json.dumps({"workspace": workspace, "operation": operation}) + "\n")
                 while ws.is_open() and time.monotonic() < deadline:

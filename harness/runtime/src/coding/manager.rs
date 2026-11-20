@@ -21,7 +21,12 @@ use tokio::{
 };
 
 fn directory(root: &Path) -> Result<PathBuf> {
-    let dir = root.join(".openworker-processes");
+    let dir = match std::env::var_os("OPENWORKER_PROCESS_STATE_ROOT") {
+        Some(base) => {
+            PathBuf::from(base).join(crate::bundle::digest(root.as_os_str().as_encoded_bytes()))
+        }
+        None => root.join(".openworker-processes"),
+    };
     match std::fs::symlink_metadata(&dir) {
         Ok(m) => ensure!(
             m.is_dir() && !m.file_type().is_symlink(),
@@ -151,6 +156,7 @@ pub(crate) async fn call_with_git(
                 "PATH",
                 "HOME",
                 "TMPDIR",
+                "OPENWORKER_PROCESS_STATE_ROOT",
                 "HTTP_PROXY",
                 "HTTPS_PROXY",
                 "ALL_PROXY",

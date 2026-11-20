@@ -1,7 +1,7 @@
 use crate::http::{ApiError, App};
 use axum::{extract::Path, Extension, Json};
 use openworker_runtime::workspaces::{
-    GetOrCreateWorkspace, ProviderOptions, Registry, WorkspaceClient, WorkspaceRef,
+    GetOrCreateWorkspace, ProviderOptions, Registry, WorkspaceClient,
 };
 use openworker_store_postgres::{
     auth::{Action, Error as AuthError, Role, Scope},
@@ -88,10 +88,13 @@ pub(crate) async fn open(
     Extension(app): Extension<App>,
     Path(id): Path<String>,
     Json(request): Json<GetOrCreateWorkspace>,
-) -> Result<Json<WorkspaceRef>, ApiError> {
+) -> Result<impl axum::response::IntoResponse, ApiError> {
     let handle = lookup(&app, &id)?;
     let result = Registry::open(&handle.name, handle.client.as_ref(), request).await?;
-    Ok(Json(result))
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(result),
+    ))
 }
 
 fn lookup(app: &App, id: &str) -> Result<Handle, ApiError> {

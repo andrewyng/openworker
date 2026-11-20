@@ -1511,8 +1511,8 @@ impl Runtime {
         let workspace_id: Option<String> = serde_json::from_value(p["workspace_id"].clone())?;
         if let Some(reference) = &workspace_id {
             self.workspaces.validate_reference(reference)?;
-            // This binding currently offers only scoped file operations. Never
-            // discover or start a filesystem/shell process on an unrelated backend.
+            // Workspace tools always execute on their attachment. Discovery
+            // intersects this release with the selected provider capabilities.
             crate::workspaces::validate_tools(&self.bundle, self.bundle.tools.bindings.keys())?;
         }
         let mut s = Session {
@@ -2667,14 +2667,12 @@ impl Runtime {
             for server in self.bundle.tools.servers.values() {
                 if let Some(reference) = &s.workspace_id {
                     let channel = self.workspaces.attach(reference, sid).await?;
+                    let tools = channel.schemas();
                     clients.insert(
                         server.id.clone(),
                         Arc::new(AsyncMutex::new(Client::Workspace(channel))),
                     );
-                    catalogs.insert(
-                        server.id.clone(),
-                        json!({"tools":crate::workspaces::schemas()}),
-                    );
+                    catalogs.insert(server.id.clone(), json!({"tools":tools}));
                     continue;
                 }
                 if server.program == "$NATIVE" {

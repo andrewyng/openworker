@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 import ssl
+import secrets
 import threading
 import time
 import uuid
@@ -55,6 +56,14 @@ class Controller:
         with self.db:
             if not self.row("SELECT id FROM installation"):
                 self.db.execute("INSERT INTO installation VALUES(?)", (uuid.uuid4().hex,))
+        # Additive migrations preserve registrations created by the file-only service.
+        for table, name, declaration in [
+            ("compute", "runtime", "TEXT NOT NULL DEFAULT '{}'"),
+            ("compute", "instance", "TEXT"),
+            ("keys", "preview_count", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if name not in {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
         if backend_factory is None:
             from cluster import Cluster
             backend_factory = Cluster
@@ -71,13 +80,22 @@ class Controller:
                 self.db.execute("INSERT INTO backend_identity VALUES(?)", (identity,))
             elif stored["value"] != identity:
                 raise ValueError("Workspace backend identity differs from the stored registration")
+        self.preview_domain = os.getenv("PREVIEW_DOMAIN") if hasattr(self.backend, "images") else None
+        if self.preview_domain:
+            if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]+", self.preview_domain):
+                raise ValueError("Invalid preview domain")
+            with self.db:
+                self.db.execute("CREATE TABLE IF NOT EXISTS preview_secret(id INTEGER PRIMARY KEY, key BLOB NOT NULL)")
+                self.db.execute("INSERT OR IGNORE INTO preview_secret VALUES(1,?)", (secrets.token_bytes(32),))
+                self.preview_key = self.row("SELECT key FROM preview_secret WHERE id=1")["key"]
+                self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ws_instance ON compute(instance)")
         self.idle = int(os.getenv("IDLE_SECONDS", "600"))
 
     def row(self, sql, *parameters):
         return self.db.execute(sql, parameters).fetchone()
 
     def compute(self, workspace):
-        return required(self.row("""SELECT c.*,k.data FROM compute c JOIN keys k ON k.key=c.key
+        return required(self.row("""SELECT c.*,k.data,k.preview_count FROM compute c JOIN keys k ON k.key=c.key
              WHERE c.id=?""", workspace))
 
     def provision(self, row):
@@ -96,20 +114,42 @@ class Controller:
             with self.db:
                 self.db.execute("UPDATE compute SET uid=NULL WHERE id=?", (row["id"],))
             previous = None
-        physical = self.backend.compute(row["id"], data["id"], row["profile"], previous, uid)
+        settings = json.loads(row["runtime"])
+        extra = {"settings": settings} if settings else {}
+        physical = self.backend.compute(row["id"], data["id"], row["profile"], previous, uid, **extra)
         if physical != previous:
             with self.db:
-                self.db.execute("UPDATE compute SET uid=? WHERE id=?", (physical, row["id"]))
+                self.db.execute("UPDATE compute SET uid=?, instance=? WHERE id=?", (physical, uuid.uuid4().hex, row["id"]))
         return physical
+
+    def options(self, options):
+        if not isinstance(options, dict) or options.keys() - {"podProfile", "imageProfile", "previewPortCount"}:
+            raise Failure("invalid_workspace_request", 400)
+        if "podProfile" in options:
+            profile({"podProfile": options["podProfile"]})
+        if "imageProfile" in options:
+            image = options["imageProfile"]
+            if not isinstance(image, str) or image not in getattr(self.backend, "images", {}):
+                raise Failure("invalid_workspace_request", 400)
+        if "previewPortCount" in options:
+            count = options["previewPortCount"]
+            if type(count) is not int or not 0 <= count <= 15 or (count and not self.preview_domain):
+                raise Failure("invalid_workspace_request", 400)
+        return options
 
     def open(self, req):
         key = req.get("key")
         if not isinstance(key, str) or not 0 < len(key.encode()) <= 512 or any(ord(c) < 32 for c in key):
             raise Failure("invalid_workspace_request", 400)
-        selected = profile(req.get("options", {}), profile({"podProfile": req["defaultProfile"]}))
+        options = {**self.options(req.get("defaults", {})), **self.options(req.get("options", {}))}
+        selected = profile({"podProfile": options.get("podProfile", req["defaultProfile"])})
+        image = options.get("imageProfile")
         requested = req.get("dataId")
         with self.db:
-            bound = self.row("SELECT data FROM keys WHERE key=?", key)
+            bound = self.row("SELECT data, preview_count FROM keys WHERE key=?", key)
+            count = options.get("previewPortCount", bound["preview_count"] if bound else 0)
+            if count and not self.preview_domain:
+                raise Failure("invalid_workspace_request", 400)
             if bound:
                 data_id = bound["data"]
                 if requested is not None and requested != data_id:
@@ -118,11 +158,13 @@ class Controller:
                 data_id = requested if requested is not None else identity("data")
                 if requested is None:
                     self.db.execute("INSERT INTO data(id) VALUES(?)", (data_id,))
-                self.db.execute("INSERT INTO keys VALUES(?,?)", (key, self.live_data(data_id)))
+                self.db.execute("INSERT INTO keys(key,data,preview_count) VALUES(?,?,?)", (key, self.live_data(data_id), count))
             self.live_data(data_id)
             current = self.row("SELECT * FROM compute WHERE key=?", key)
             if current:
-                if current["profile"] != selected:
+                pinned = json.loads(current["runtime"])
+                if (current["profile"] != selected or (image is not None and pinned.get("imageProfile") != image)
+                        or bound["preview_count"] != count):
                     raise Failure("workspace_profile_mismatch", 409)
                 workspace = current["id"]
             else:
@@ -130,12 +172,54 @@ class Controller:
                     "SELECT 1 FROM compute c JOIN keys k ON k.key=c.key WHERE k.data=?", data_id):
                     raise Failure("workspace_shared_mount_unsupported", 409)
                 workspace = identity("ws")
-                self.db.execute("INSERT INTO compute(id,key,profile,idle) VALUES(?,?,?,?)",
-                                (workspace, key, selected, time.time()))
+                settings = {"imageProfile": image, "image": self.backend.images[image]} if image else {}
+                if count:
+                    settings["preview"] = True
+                self.db.execute("UPDATE keys SET preview_count=? WHERE key=?", (count, key))
+                self.db.execute("INSERT INTO compute(id,key,profile,idle,runtime) VALUES(?,?,?,?,?)",
+                                (workspace, key, selected, time.time(), json.dumps(settings)))
         self.provision(self.compute(workspace))
         with self.db:
             self.db.execute("UPDATE compute SET idle=? WHERE id=?", (time.time(), workspace))
-        return {"workspaceId": workspace, "dataId": data_id}
+        result = {"workspaceId": workspace, "dataId": data_id}
+        if count:
+            instance = self.compute(workspace)["instance"]
+            result["previews"] = [self.slot(instance, i) for i in range(count)]
+        return result
+
+    def slot(self, instance, index):
+        host = f"{instance}-{index:02d}.{self.preview_domain}"
+        return {"port": 5100 + index, "url": "https://" + host,
+                "accessToken": hmac.digest(self.preview_key, host.encode("ascii"), "sha256").hex()}
+
+    def resolve(self, host, token):
+        # No key lookup or compute provisioning as a consequence of browser traffic.
+        if not self.preview_domain or not isinstance(host, str) or not isinstance(token, str):
+            raise Failure("forbidden", 403)
+        match = re.fullmatch(r"([a-f0-9]{32})-(0[0-9]|1[0-4])\." + re.escape(self.preview_domain), host)
+        if not match:
+            raise Failure("forbidden", 403)
+        instance, index = match[1], int(match[2])
+        slot = self.slot(instance, index)
+        if not re.fullmatch("[0-9a-f]{64}", token) or not hmac.compare_digest(slot["accessToken"], token):
+            raise Failure("forbidden", 403)
+        with self.lock:
+            row = self.row("""SELECT c.id,c.uid,k.preview_count FROM compute c JOIN keys k ON c.key=k.key
+                              WHERE instance=? AND stopping=0""", instance)
+            if row is None or index >= row["preview_count"]:
+                raise Failure("preview_expired", 410)
+            try:
+                pod = self.backend.resource("pod", row["id"], row["uid"])
+            except Failure as exc:
+                if exc.code == "workspace_identity_changed":
+                    raise Failure("preview_expired", 410) from None
+                raise
+            if (not pod or pod.metadata.deletion_timestamp or pod.metadata.uid != row["uid"]
+                    or pod.spec.host_network or (pod.metadata.labels or {}).get("ow-workspace-preview") != "enabled"):
+                raise Failure("preview_expired", 410)
+            if not pod.status.pod_ip:
+                raise Failure("preview_waiting", 503)
+            return {"ip": pod.status.pod_ip, "uid": row["uid"], "port": slot["port"]}
 
     def live_data(self, data):
         row = required(self.row("SELECT deleting FROM data WHERE id=?", data))
@@ -195,7 +279,8 @@ class Controller:
     def call(self, action, req):
         with self.lock:
             if action == "start":
-                return {"profile": profile(req.get("options", {}))}
+                options = self.options(req.get("options", {}))
+                return {"profile": options.get("podProfile", "small"), "defaults": options}
             if action == "open":
                 return self.open(req)
             if action == "delete":
@@ -220,7 +305,7 @@ class Controller:
                 raise Failure("workspace_in_use", 409)
             if action == "recover":
                 self.provision(row)
-                return {"profile": row["profile"]}
+                return {"profile": row["profile"], "processTools": "imageProfile" in json.loads(row["runtime"])}
             session = req["sessionId"]
             if not isinstance(session, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", session):
                 raise Failure("invalid_workspace_request", 400)
@@ -233,7 +318,9 @@ class Controller:
                 raise Failure("workspace_not_found", 404)
             if action == "attach":
                 return {}
-            if action != "file":
+            if action == "process" and "imageProfile" not in json.loads(row["runtime"]):
+                raise Failure("invalid_workspace_request", 400)
+            if action not in {"file", "process"}:
                 raise Failure("invalid_workspace_request", 400)
             physical = self.provision(row)
             deadline = time.monotonic() + 15
@@ -247,6 +334,8 @@ class Controller:
         # Admission is fenced by the session attachment; independent operations
         # may now run concurrently. The application coordinates shared edits.
         try:
+            if action == "process":
+                return self.backend.process(workspace, physical, req["operation"])
             return self.backend.file(workspace, physical, req["operation"])
         finally:
             with self.lock:
@@ -295,10 +384,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path == "/v1/preview/resolve":
+                auth = self.headers.get("Authorization", "")
+                if not auth.startswith("Bearer "):
+                    raise Failure("forbidden", 403)
+                result = self.server.controller.resolve(self.headers.get("X-Preview-Host"), auth[7:])
+                self.send_json(200, result)
+                return
             if not hmac.compare_digest(self.headers.get("Authorization", ""), self.server.auth):
                 raise Failure("forbidden", 403)
             action = self.path.removeprefix("/v1/")
-            if self.path != "/v1/" + action or action not in {"start","open","recover","attach","detach","file","stop","delete"}:
+            if self.path != "/v1/" + action or action not in {"start","open","recover","attach","detach","file","process","stop","delete"}:
                 raise Failure("invalid_workspace_request", 404)
             length = int(self.headers.get("content-length", 0))
             if not 0 < length <= 1_048_576:

@@ -72,6 +72,24 @@ pub struct GetOrCreateWorkspace {
 pub struct WorkspaceRef {
     pub workspace_id: String,
     pub data_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub previews: Vec<PreviewSlot>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreviewSlot {
+    pub port: u16,
+    pub url: String,
+    pub access_token: String,
+}
+
+impl std::fmt::Debug for PreviewSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreviewSlot")
+            .field("port", &self.port)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Stable identity for a session's individual grant, recoverable after worker loss.
@@ -101,6 +119,16 @@ pub trait WorkspaceClient: Send + Sync {
     fn detach_session(&self, attachment: WorkspaceAttachment) -> ProviderFuture<'_, ()>;
     fn stop_workspace(&self, workspace: String) -> ProviderFuture<'_, ()>;
     fn delete_data(&self, data: String) -> ProviderFuture<'_, ()>;
+    fn supports_processes(&self) -> bool {
+        false
+    }
+    fn process(
+        &self,
+        _attachment: WorkspaceAttachment,
+        _operation: Value,
+    ) -> ProviderFuture<'_, Value> {
+        Box::pin(async { Err(WorkspaceError::Invalid.into()) })
+    }
     fn file(
         &self,
         attachment: WorkspaceAttachment,
@@ -230,6 +258,7 @@ impl Registry {
         Ok(WorkspaceRef {
             workspace_id: format!("{name}.{}", result.workspace_id),
             data_id: format!("{name}.{}", result.data_id),
+            previews: result.previews,
         })
     }
 }
@@ -240,11 +269,20 @@ pub fn validate_tools<'a>(
 ) -> Result<()> {
     for alias in aliases {
         ensure!(
-            crate::permissions::native_tool(bundle, alias).is_some_and(file_tool),
-            "Workspace-bound release must select workspace file tools only"
+            crate::permissions::native_tool(bundle, alias).is_some_and(|name| file_tool(name)
+                || (process_tool(name)
+                    && bundle.tools.servers[&bundle.tools.bindings[alias].server].args
+                        == ["mcp-coding", "--workspace", "$WORKSPACE"])),
+            "Unsupported tool for workspace-bound release"
         );
     }
     Ok(())
+}
+fn process_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "process_start" | "process_status" | "process_logs" | "process_stop"
+    )
 }
 fn file_tool(name: &str) -> bool {
     matches!(
@@ -288,8 +326,30 @@ pub struct Channel {
     attachment: WorkspaceAttachment,
 }
 impl Channel {
+    pub fn schemas(&self) -> Vec<Value> {
+        let mut tools = schemas();
+        if self.client.supports_processes() {
+            tools.extend(
+                crate::coding::schemas()
+                    .into_iter()
+                    .filter(|v| v["name"].as_str().is_some_and(process_tool)),
+            );
+        }
+        tools
+    }
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         ensure!(method == "tools/call", "Unsupported workspace operation");
+        if params["name"].as_str().is_some_and(process_tool) {
+            ensure!(
+                self.client.supports_processes(),
+                "Workspace profile does not support processes"
+            );
+            return self
+                .client
+                .process(self.attachment.clone(), params)
+                .await
+                .map_err(public_error);
+        }
         let op = serde_json::from_value(params).context("Invalid workspace file operation")?;
         let value = self
             .client
