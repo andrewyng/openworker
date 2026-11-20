@@ -227,16 +227,18 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         return data
 
-    def drain(self, kind, name, uid):
+    def drain(self, kind, name, uid, *, once=False):
         # Persist intent before dispatch; return busy on timeout so retry operates
         # on the original UID. Background reconciliation resumes interrupted deletes.
         deadline = time.monotonic() + 6
         while not self.backend.remove(kind, name, uid):
-            if time.monotonic() >= deadline:
+            # Single-shot callers (reconcile) leave the retry to the next cycle
+            # instead of sleeping here while the controller lock is held (#928).
+            if once or time.monotonic() >= deadline:
                 raise Failure("workspace_in_use", 409)
             time.sleep(.2)
 
-    def stop(self, workspace):
+    def stop(self, workspace, *, once=False):
         row = self.row("SELECT * FROM compute WHERE id=?", workspace)
         if row is None:
             return
@@ -244,11 +246,11 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE compute SET stopping=1 WHERE id=?", (workspace,))
-        self.drain("compute", workspace, row["uid"])
+        self.drain("compute", workspace, row["uid"], once=once)
         with self.db:
             self.db.execute("DELETE FROM compute WHERE id=?", (workspace,))
 
-    def delete(self, data):
+    def delete(self, data, *, once=False):
         row = self.row("SELECT * FROM data WHERE id=?", data)
         if row is None:
             return
@@ -256,25 +258,31 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE data SET deleting=1 WHERE id=?", (data,))
-        self.drain("data", data, row["uid"])
+        self.drain("data", data, row["uid"], once=once)
         with self.db:
             self.db.execute("DELETE FROM data WHERE id=?", (data,))
 
     def reconcile(self):
         while True:
             time.sleep(3)
-            with self.lock:
-                pending = list(self.db.execute("""SELECT id FROM compute c WHERE stopping=1 OR
-                    (? > 0 AND idle < ? AND NOT EXISTS(
-                        SELECT 1 FROM attachments a WHERE a.workspace=c.id AND a.active=1))""",
-                    (self.idle,time.time()-self.idle)))
-                deleting = list(self.db.execute("SELECT id FROM data WHERE deleting=1"))
-                for fn, rows in [(self.stop, pending), (self.delete, deleting)]:
-                    for row in rows:
-                        try:
-                            fn(row["id"])
-                        except Exception as exc:
-                            print("cleanup retry", row["id"], type(exc).__name__, flush=True)
+            self.reconcile_once()
+
+    def reconcile_once(self):
+        # A row whose removal stays stuck is retried as a single-shot attempt per
+        # cycle (below): polling to completion here would hold the lock — and with
+        # it every API call — for up to 6s per stuck row, every 3s (#928).
+        with self.lock:
+            pending = list(self.db.execute("""SELECT id FROM compute c WHERE stopping=1 OR
+                (? > 0 AND idle < ? AND NOT EXISTS(
+                    SELECT 1 FROM attachments a WHERE a.workspace=c.id AND a.active=1))""",
+                (self.idle,time.time()-self.idle)))
+            deleting = list(self.db.execute("SELECT id FROM data WHERE deleting=1"))
+            for fn, rows in [(self.stop, pending), (self.delete, deleting)]:
+                for row in rows:
+                    try:
+                        fn(row["id"], once=True)
+                    except Exception as exc:
+                        print("cleanup retry", row["id"], type(exc).__name__, flush=True)
 
     def call(self, action, req):
         with self.lock:
