@@ -25,6 +25,7 @@ const KINDS: Kind[] = ["local", "subscription", "api_key"];
 const CONTEXT_STEPS = [16384, 32768, 65536, 131072, 262144, 1048576];
 const REPLY_STEPS = [4096, 8192, 16384, 32768, 65536];
 const COMPACT_STEPS = [0.6, 0.7, 0.8, 0.9];
+const COMPACT_CAP_STEPS = [131072, 262144, 524288, 1048576];
 
 export function fullModelId(provider: ProviderInfo, bare: string): string {
   return provider.name === "openai" ? bare : `${provider.name}:${bare}`;
@@ -38,6 +39,7 @@ type Draft = {
   temperature?: number;
   top_p?: number;
   compaction_threshold_pct?: number | null; // null = the machine setting
+  compaction_cap_tokens?: number | null; // null = the machine setting
   default?: boolean;
   custom_sampling?: boolean;
 };
@@ -119,6 +121,7 @@ export function PickModelDialog({
           temperature: num(v.temperature),
           top_p: num(v.top_p),
           compaction_threshold_pct: v.compaction_threshold_pct ? num(v.compaction_threshold_pct) : null,
+          compaction_cap_tokens: v.compaction_cap_tokens ? num(v.compaction_cap_tokens) : null,
           default: !!v.default?.value || settings.model === model,
           custom_sampling: v.temperature?.from === "user" || v.top_p?.from === "user",
         });
@@ -131,6 +134,17 @@ export function PickModelDialog({
   const contextMax = row?.context_max || rec?.context_max || null;
   const machineContext = row?.context_from === "machine" ? row.context : null;
   const thinkingAvailable = row?.thinking || rec?.thinking.available || false;
+  // Where compaction starts for this model, as engine._compaction_config works it out:
+  // the smaller of the Auto-compact share of its window and the Compact-by cap.
+  const contextWindow =
+    (model && settings.model_context_windows?.[model]) || (isLocal ? draft.context_size || machineContext || row?.context : null) || null;
+  const machineCap = settings.compaction_cap_tokens || 250_000;
+  const compactAt = contextWindow
+    ? Math.min(
+        Math.floor((draft.compaction_threshold_pct ?? settings.compaction_threshold_pct ?? 0.8) * contextWindow),
+        draft.compaction_cap_tokens ?? machineCap,
+      )
+    : null;
 
   const save = async () => {
     if (!model) return;
@@ -143,6 +157,7 @@ export function PickModelDialog({
       temperature: draft.custom_sampling ? (draft.temperature ?? null) : null,
       top_p: draft.custom_sampling ? (draft.top_p ?? null) : null,
       compaction_threshold_pct: draft.compaction_threshold_pct ?? null,
+      compaction_cap_tokens: draft.compaction_cap_tokens ?? null,
       default: !!draft.default,
     };
     if (isLocal && !fixedContext) values.context_size = draft.context_size ?? null;
@@ -176,6 +191,7 @@ export function PickModelDialog({
       reasoning_effort: undefined,
       custom_sampling: false,
       compaction_threshold_pct: null,
+      compaction_cap_tokens: null,
     }));
   };
 
@@ -359,6 +375,11 @@ export function PickModelDialog({
                     {setting("compact", t("pick.auto_compact"),
                       select("compact", draft.compaction_threshold_pct == null ? "" : String(draft.compaction_threshold_pct), [{ v: "", label: t("pick.machine_setting") }, ...COMPACT_STEPS.map((c) => ({ v: String(c), label: `${Math.round(c * 100)}%` }))], (v) => setDraft((d) => ({ ...d, compaction_threshold_pct: v ? Number(v) : null }))),
                       t("pick.compact_note", { pct: Math.round((settings.compaction_threshold_pct || 0.8) * 100) }))}
+                    {setting("compact-cap", t("pick.compact_cap"),
+                      select("compact-cap", draft.compaction_cap_tokens == null ? "" : String(draft.compaction_cap_tokens), [{ v: "", label: t("pick.machine_setting") }, ...COMPACT_CAP_STEPS.map((c) => ({ v: String(c), label: `${fmtContext(c)} ${t("pick.tokens")}` }))], (v) => setDraft((d) => ({ ...d, compaction_cap_tokens: v ? Number(v) : null }))),
+                      compactAt
+                        ? t("pick.compact_cap_note_at", { at: compactAt.toLocaleString(), cap: machineCap.toLocaleString() })
+                        : t("pick.compact_cap_note", { cap: machineCap.toLocaleString() }))}
                     <label className="flex items-center gap-2 text-ui mt-2.5">
                       <input type="checkbox" checked={!!draft.default} disabled={settings.model === model} onChange={(e) => setDraft((d) => ({ ...d, default: e.target.checked }))} data-testid="pick-default" />
                       {t("pick.make_default")}
