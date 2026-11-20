@@ -2792,6 +2792,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             fallback=b.get("pdf_fallback"),
             max_pages=b.get("pdf_max_pages"),
             max_mb=b.get("pdf_max_mb"),
+            ocr=b.get("pdf_ocr"),
         )
 
     @app.get("/v1/settings/sandbox")
