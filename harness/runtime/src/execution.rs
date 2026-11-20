@@ -34,6 +34,7 @@ impl Backend {
 }
 
 pub enum Client {
+    Workspace(crate::workspaces::Channel),
     Remote(Box<crate::environment_client::RemoteClient>),
     Openshell(Box<crate::sandbox::Mcp>),
     Direct(Box<crate::direct::Mcp>),
@@ -42,6 +43,7 @@ pub enum Client {
 impl Client {
     pub async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
         match self {
+            Self::Workspace(c) => c.request(method, params).await,
             Self::Remote(c) => c.request(method, params).await,
             Self::Openshell(c) => c.request(method, params).await,
             Self::Direct(c) => c.request(method, params).await,
@@ -50,6 +52,7 @@ impl Client {
     }
     pub async fn close(&mut self) -> Result<()> {
         match self {
+            Self::Workspace(_) => Ok(()),
             Self::Remote(c) => c.close().await,
             Self::Openshell(_) => Ok(()),
             Self::Direct(c) => c.close().await,

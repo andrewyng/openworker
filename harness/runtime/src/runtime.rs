@@ -60,6 +60,7 @@ fn read_history_result(result: Result<Value>) -> Result<Value> {
 }
 
 pub struct Runtime {
+    pub workspaces: crate::workspaces::Registry,
     observers_started: AtomicBool,
     observers_stop: CancellationToken,
     compliance_defaults: Option<crate::compliance::Config>,
@@ -331,6 +332,7 @@ impl Runtime {
         let (events, _) = broadcast::channel(512);
         let connections = Arc::new(crate::connections::Manager::open(&root)?);
         Ok(Arc::new(Self {
+            workspaces: Default::default(),
             observers_started: AtomicBool::new(false),
             observers_stop: CancellationToken::new(),
             compliance_defaults: None,
@@ -1341,6 +1343,9 @@ impl Runtime {
             .collect::<Vec<_>>();
         let (messages, truncated) = db.recent_messages(sid)?;
         let mut snapshot = json!({"session":{"id":s.id,"name":s.name,"compliance":s.compliance,"coworker":s.coworker,"model":s.model,"model_provider":s.model_provider,"model_selection":s.model_selection,"reviewer_selection":s.reviewer_selection,"auto_approver_context":s.auto_approver_context,"compaction_config":s.compaction_config,"workspace":s.workspace,"closed":s.closed,"provider_blocked":s.provider_blocked,"permissions":s.permissions,"tool_policy":s.tool_policy,"resource_policy":s.resource_policy,"package":s.package,"skills":s.skills,"loaded_skills":s.loaded_skills,"sandbox":s.execution_backend,"enforcement":s.enforcement()},"turn":s.turn,"compaction":s.compaction.as_ref().map(|c|json!({"boundary":c.boundary,"trimmed":c.trimmed,"model":c.model})),"attempts":db.attempts(sid)?,"history_truncated":truncated,"messages":messages,"interactions":pending,"cursor":db.cursor(sid)?,"mode":if self.model.scripted{"scripted-test"}else{"live"}});
+        if let Some(id) = &s.workspace_id {
+            snapshot["session"]["workspaceId"] = json!(id);
+        }
         if !s.integrations.applied.is_empty() {
             snapshot["session"]["integrations"] = json!(s.integrations.applied);
         }
@@ -1379,6 +1384,7 @@ impl Runtime {
                 "policy",
                 "expected_policy_digest",
                 "environment_id",
+                "workspace_id",
                 "safety",
                 "compliance",
                 "initial_history",
@@ -1502,7 +1508,15 @@ impl Runtime {
             &session_preferences,
             model_selection.as_ref(),
         )?;
+        let workspace_id: Option<String> = serde_json::from_value(p["workspace_id"].clone())?;
+        if let Some(reference) = &workspace_id {
+            self.workspaces.validate_reference(reference)?;
+            // This binding currently offers only scoped file operations. Never
+            // discover or start a filesystem/shell process on an unrelated backend.
+            crate::workspaces::validate_tools(&self.bundle, self.bundle.tools.bindings.keys())?;
+        }
         let mut s = Session {
+            workspace_id,
             integrations,
             safety_models: Default::default(),
             compliance: self.compliance_defaults.clone().or(p
@@ -1993,6 +2007,9 @@ impl Runtime {
                     }
                     Ok(())
                 })?;
+                if let Some(reference) = &s.workspace_id {
+                    self.workspaces.detach(reference, &sid).await?;
+                }
                 Ok(json!({"closed":true}))
             }
             _ => bail!("Method not found"),
@@ -2630,7 +2647,10 @@ impl Runtime {
         if !s.direct_processes.is_empty() && !self.clients.lock().await.contains_key(sid) {
             self.remove_sandbox(sid).await?;
         }
-        let sandbox_id = if s.environment.is_none() && s.resource_policy.needs_sandbox() {
+        let sandbox_id = if s.workspace_id.is_none()
+            && s.environment.is_none()
+            && s.resource_policy.needs_sandbox()
+        {
             Some(self.sandbox_id(sid).await?)
         } else {
             None
@@ -2645,6 +2665,18 @@ impl Runtime {
                 .unwrap_or_default();
             let mut catalogs = BTreeMap::new();
             for server in self.bundle.tools.servers.values() {
+                if let Some(reference) = &s.workspace_id {
+                    let channel = self.workspaces.attach(reference, sid).await?;
+                    clients.insert(
+                        server.id.clone(),
+                        Arc::new(AsyncMutex::new(Client::Workspace(channel))),
+                    );
+                    catalogs.insert(
+                        server.id.clone(),
+                        json!({"tools":crate::workspaces::schemas()}),
+                    );
+                    continue;
+                }
                 if server.program == "$NATIVE" {
                     let tools: Vec<_> = self.bundle.registry.native_catalog(&server.id).iter().map(|d|
                         json!({"name":d.qualified_name,"description":d.description,"inputSchema":d.input_schema,"implementation_version":d.version})
@@ -3384,7 +3416,18 @@ impl Runtime {
                         bail!("Approval binding mismatch");
                     }
                     let backend = s.tool_backend(interaction.server.as_deref());
-                    if !self.start_tool(sid,interaction,json!({"interaction_id":interaction.id,"call_id":call["call_id"],"execution_kind":if interaction.server.as_ref().is_some_and(|id|self.bundle.tools.servers.get(id).is_some_and(|s|s.program=="$NATIVE")){"native"}else if interaction.server.is_some(){"mcp"}else{"internal"},"name":alias,"server":interaction.server,"remote_tool":interaction.remote_tool,"policy_digest":interaction.policy_digest,"resource_policy_digest":s.resource_policy.digest,"arguments":args,"approval_origin":interaction.origin,"grant_id":interaction.grant_id,"enforcement":if alias=="read_history"{"session-read-only"}else if crate::skills::internal(alias){"bundle-read-only"}else{backend.enforcement()},"sandbox":if alias=="read_history"||crate::skills::internal(alias){"not-applicable"}else{backend.name()}}))? { return Ok(()); }
+                    let workspace_tool = s.workspace_id.is_some() && interaction.server.is_some();
+                    let tool_backend = if workspace_tool {
+                        "workspace-provider"
+                    } else {
+                        backend.name()
+                    };
+                    let enforcement = if workspace_tool {
+                        "workspace-attachment"
+                    } else {
+                        backend.enforcement()
+                    };
+                    if !self.start_tool(sid,interaction,json!({"interaction_id":interaction.id,"call_id":call["call_id"],"execution_kind":if workspace_tool{"workspace"}else if interaction.server.as_ref().is_some_and(|id|self.bundle.tools.servers.get(id).is_some_and(|s|s.program=="$NATIVE")){"native"}else if interaction.server.is_some(){"mcp"}else{"internal"},"name":alias,"server":interaction.server,"remote_tool":interaction.remote_tool,"policy_digest":interaction.policy_digest,"resource_policy_digest":s.resource_policy.digest,"arguments":args,"approval_origin":interaction.origin,"grant_id":interaction.grant_id,"enforcement":if alias=="read_history"{"session-read-only"}else if crate::skills::internal(alias){"bundle-read-only"}else{enforcement},"sandbox":if alias=="read_history"||crate::skills::internal(alias){"not-applicable"}else{tool_backend}}))? { return Ok(()); }
                     // A crash after this checkpoint is uncertain: never automatically replay.
                     if crate::assistant_tools::internal(alias) {
                         let mut span =
@@ -3427,7 +3470,7 @@ impl Runtime {
                         if alias == "read_history" || crate::skills::internal(alias) {
                             "not-applicable"
                         } else {
-                            backend.name()
+                            tool_backend
                         },
                     );
                     observation.metadata(
@@ -3437,7 +3480,7 @@ impl Runtime {
                         } else if crate::skills::internal(alias) {
                             "bundle-read-only"
                         } else {
-                            backend.enforcement()
+                            enforcement
                         },
                     );
                     observation.metadata("openworker.policy.digest", &interaction.policy_digest);

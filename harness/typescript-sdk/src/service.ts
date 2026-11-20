@@ -88,6 +88,7 @@ export interface ServiceOperation {
   error: string | null;
 }
 export interface ServiceSessionOptions {
+  workspaceId?: string;
   integrations?: Record<string, import("./types.js").IntegrationOptions>;
   limits?: TurnLimits;
   environmentId?: string;
@@ -100,6 +101,7 @@ export interface ServiceSessionOptions {
   waitTimeoutMs?: number;
 }
 export interface ServiceSessionRef {
+  workspaceId?: string;
   serviceId: string;
   namespace: string;
   sessionId: string;
@@ -227,7 +229,61 @@ export async function* serviceFrames(
     reader.releaseLock();
   }
 }
+const workspaceErrors = new Set([
+  "invalid_workspace_request", "workspace_not_found", "workspace_handle_expired",
+  "workspace_data_mismatch", "workspace_profile_mismatch", "workspace_in_use", "workspace_shared_mount_unsupported",
+]);
+export interface WorkspaceRef { workspaceId: string; dataId: string }
+export interface WorkspaceRequest { key: string; dataId?: string; options?: Record<string, Json> }
+export interface WorkspaceProviderOptions { name: string; options?: Record<string, Json> }
+
+export class ServiceWorkspaceProvider {
+  private constructor(private readonly service: Service, private handle: string,
+                      private readonly restart: () => Promise<string>) {}
+  get id(): string { return this.handle; }
+
+  static async start(service: Service, input: WorkspaceProviderOptions): Promise<ServiceWorkspaceProvider> {
+    if (service.capabilities.features?.workspaceProviders !== true)
+      throw new ServiceError("unsupported_workspace_providers", 0);
+    // Startup options can contain credentials. Keep the private copy in memory.
+    const settings = structuredClone(input);
+    const start = async () => {
+      const result = await service.json("POST", "/v1/workspace-providers", settings);
+      if (typeof result?.id !== "string") throw new ServiceError("invalid_workspace_provider", 0);
+      return result.id as string;
+    };
+    return new ServiceWorkspaceProvider(service, await start(), start);
+  }
+
+  private async call(operation: string, body: unknown): Promise<any> {
+    const invoke = () => this.service.json("POST", "/v1/workspace-providers/" + segment(this.handle) + "/" + operation, body);
+    try { return await invoke(); }
+    catch (error) {
+      // Only retry when the server confirms the handle was absent before
+      // dispatch. Connection loss alone gives no such assurance.
+      if (!(error instanceof ServiceError) || error.code !== "workspace_handle_expired") throw error;
+      this.handle = await this.restart();
+      return invoke();
+    }
+  }
+  async stopWorkspace(workspaceId: string): Promise<void> {
+    await this.call("stop", { workspaceId });
+  }
+  async deleteData(dataId: string): Promise<void> {
+    await this.call("delete-data", { dataId });
+  }
+  async getOrCreate(request: WorkspaceRequest): Promise<WorkspaceRef> {
+    const ref = await this.call("workspaces", request);
+    if (typeof ref?.workspaceId !== "string" || typeof ref?.dataId !== "string" ||
+        (request.dataId !== undefined && ref.dataId !== request.dataId))
+      throw new ServiceError("invalid_workspace_reference", 0);
+    return { workspaceId: ref.workspaceId, dataId: ref.dataId };
+  }
+}
 export class Service {
+  readonly workspaces = {
+    startProvider: (input: WorkspaceProviderOptions) => ServiceWorkspaceProvider.start(this, input),
+  };
   get observability():ServiceObservability {return new ServiceObservability(path=>this.json("GET",path));}
   private closed = false;
   private requests = new Set<AbortController>();
@@ -337,6 +393,11 @@ export class Service {
         }
         if (!response.ok) {
           await response.body?.cancel();
+          const workspaceError = response.headers.get("x-openworker-workspace-error");
+          if (path.startsWith("/v1/workspace-providers") &&
+              response.headers.get("x-openworker-service-id") === this.capabilities.serviceId &&
+              workspaceError && workspaceErrors.has(workspaceError))
+            throw new ServiceError(workspaceError, response.status, key);
           throw new ServiceError(
             response.status === 401
               ? "unauthorized"
@@ -447,6 +508,8 @@ export class Service {
       snapshot.service?.runtimeProfile !== ref.runtimeProfile
     )
       throw new ServiceError("profile_identity_mismatch", 0);
+    if ((snapshot.session?.workspaceId ?? undefined) !== (ref.workspaceId ?? undefined))
+      throw new ServiceError("workspace_identity_mismatch", 0);
     if (snapshot.session?.environment?.environment_id !== ref.environmentId)
       throw new ServiceError("environment_identity_mismatch", 0);
     return session;
@@ -627,6 +690,7 @@ export class ServiceAgent {
       Object.keys(options).some(
         (k) =>
           ![
+            "workspaceId",
             "environmentId",
             "runtimeProfile",
             "integrations",
@@ -668,6 +732,7 @@ export class ServiceAgent {
       r?.namespace !== this.service.capabilities.namespace ||
       r?.agent !== this.id ||
       typeof r?.environmentId !== "string" ||
+      (options.workspaceId && r.workspaceId !== options.workspaceId) ||
       (options.environmentId && r.environmentId !== options.environmentId) ||
       typeof r?.sessionId !== "string"
     )
@@ -685,6 +750,9 @@ export class ServiceSession {
   }
   get environmentId() {
     return this.ref.environmentId;
+  }
+  async close(options: { idempotencyKey?: string } = {}): Promise<void> {
+    await this.service.json("POST", `/v1/sessions/${segment(this.id)}/close`, {}, options.idempotencyKey ?? randomUUID());
   }
   async createTeam(
     options: ServiceAgentTeamOptions,

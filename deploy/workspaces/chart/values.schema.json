@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "workloadNamespace": {"type": "string"},
+    "images": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"controller": {"type": "string"}, "runner": {"type": "string"}}
+    },
+    "secrets": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"auth": {"type": "string", "minLength": 1}, "tls": {"type": "string", "minLength": 1}}
+    },
+    "metadata": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"storageClass": {"type": "string"}, "size": {"type": "string", "minLength": 1}, "existingClaim": {"type": "string"}}
+    },
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "storageClass": {"type": "string"}, "size": {"type": "string", "minLength": 1},
+        "accessMode": {"enum": ["ReadWriteMany", "ReadWriteOnce", "ReadWriteOncePod"]},
+        "singleMount": {"type": "boolean"}
+      }
+    },
+    "placement": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"pinNode": {"type": "string"}, "spreadSharedData": {"type": "boolean"}}
+    },
+    "idleSeconds": {"type": "integer", "minimum": 0}
+  }
+}

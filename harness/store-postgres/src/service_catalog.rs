@@ -187,6 +187,8 @@ pub struct Entry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Admission {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub integrations: openworker_runtime::integrations::Preferences,
     pub agent: String,
@@ -962,9 +964,12 @@ impl crate::db::Database {
                 Some(&request.submission_id),
             )?;
         }
-        let receipt = json!({
+        let mut receipt = json!({
             "serviceId":service_id,"namespace":namespace,"sessionId":o.session_id,"agent":o.release_id,"releaseId":o.release_id,"runtimeProfile":o.profile_id,"environmentId":o.environment_id,"operationId":o.id,"runId":o.run_id,"submissionId":o.submission_id}
         );
+        if let Some(reference) = &input.workspace_id {
+            receipt["workspaceId"] = json!(reference);
+        }
         tx.execute(
             "UPDATE service_operations SET status='complete',receipt=$2,error=NULL WHERE id=$1",
             &[&id, &receipt],

@@ -78,3 +78,4 @@ pub mod subagents;
 pub mod observation_links;
 
 pub mod attachments;
+pub mod workspaces;
