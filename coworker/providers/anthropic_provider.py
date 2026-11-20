@@ -123,12 +123,20 @@ def _uses_budget_thinking(model: str) -> bool:
     return model.startswith(_BUDGET_THINKING_PREFIXES)
 
 
-# Fable/Mythos 5 run safety classifiers that can decline benign-adjacent requests
-# (HTTP 200, stop_reason "refusal", empty or partial content). Recommended posture is
-# the server-side fallback: the API re-serves the declined request on Opus 4.8 within
-# the same call. Beta header + param, beta messages endpoint.
-_FALLBACK_BETA = "server-side-fallback-2026-06-01"
-_FALLBACK_MODEL = "claude-opus-4-8"
+# Fable/Mythos 5, Opus 5/5.5 and Sonnet 5.5 run safety classifiers that can decline
+# benign-adjacent requests (HTTP 200, stop_reason "refusal", empty or partial content).
+# Recommended posture is the server-side fallback: the API re-serves the declined request
+# within the same call. "default" lets the API pick the recommended fallback per model and
+# refusal category (permitted targets differ by model), and needs the 2026-07-01 header.
+# Haiku 5.5 is excluded on purpose: it has no server-side fallback.
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_FALLBACKS = "default"
+_REFUSAL_FALLBACK_PREFIXES = (
+    "claude-fable",
+    "claude-mythos",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+)
 
 
 # DIAGNOSTIC INSTRUMENT, off unless COWORKER_CACHE_DIAGNOSTICS=1 in the environment.
@@ -163,7 +171,7 @@ def _cache_diagnostics_on() -> bool:
 
 
 def _needs_refusal_fallback(model: str) -> bool:
-    return model.startswith(("claude-fable", "claude-mythos"))
+    return model.startswith(_REFUSAL_FALLBACK_PREFIXES)
 
 
 def _raise_on_refusal(stop_reason: Any, raw: Any) -> None:
@@ -609,7 +617,7 @@ class AnthropicProvider(ProviderClient):
                 with client.beta.messages.stream(
                     **kw,
                     betas=[_FALLBACK_BETA],
-                    fallbacks=[{"model": _FALLBACK_MODEL}],
+                    fallbacks=_FALLBACKS,
                 ) as stream:
                     return stream.get_final_message()
             with client.messages.stream(**kw) as stream:
@@ -727,7 +735,7 @@ class AnthropicProvider(ProviderClient):
                 return client.beta.messages.create(
                     **kw,
                     betas=betas,
-                    fallbacks=[{"model": _FALLBACK_MODEL}],
+                    fallbacks=_FALLBACKS,
                     **extra,
                 )
             if diagnosing:

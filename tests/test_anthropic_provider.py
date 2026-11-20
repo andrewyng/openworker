@@ -664,22 +664,37 @@ def test_thinking_defaults_on_with_hidden_profile_override():
     assert build_provider_client("anthropic", {"thinking_budget": "0"}, None).thinking_budget == 0
 
 
-def test_fable_requests_carry_server_side_fallback():
-    """Fable/Mythos classifiers can decline benign-adjacent requests — every call opts
-    into the server-side fallback so Opus 4.8 re-serves declines in the same call."""
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-fable-5",
+        "claude-mythos-5-1",
+        "claude-opus-5",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+    ],
+)
+def test_classifier_models_carry_server_side_fallback(model):
+    """Models with safety classifiers can decline benign-adjacent requests — every call
+    opts into the server-side fallback, and "default" lets the API pick the recommended
+    fallback model for each refusal category."""
     client = _FakeClient(response=_text_response())
     AnthropicProvider(client=client, thinking_budget=8192).complete(
-        model="claude-fable-5", messages=[{"role": "user", "content": "x"}]
+        model=model, messages=[{"role": "user", "content": "x"}]
     )
-    assert client.kwargs["betas"] == ["server-side-fallback-2026-06-01"]
-    assert client.kwargs["fallbacks"] == [{"model": "claude-opus-4-8"}]
+    assert client.kwargs["betas"] == ["server-side-fallback-2026-07-01"]
+    assert client.kwargs["fallbacks"] == "default"
 
-    # Other models stay on the plain endpoint with no fallback params.
-    client2 = _FakeClient(response=_text_response())
-    AnthropicProvider(client=client2).complete(
-        model="claude-opus-4-8", messages=[{"role": "user", "content": "x"}]
+
+@pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-5-5"])
+def test_other_models_skip_server_side_fallback(model):
+    """Models without classifiers stay on the plain endpoint. Haiku 5.5 has classifiers
+    but no server-side fallback (a fallbacks list is a 400), so it must stay off too."""
+    client = _FakeClient(response=_text_response())
+    AnthropicProvider(client=client).complete(
+        model=model, messages=[{"role": "user", "content": "x"}]
     )
-    assert "betas" not in client2.kwargs and "fallbacks" not in client2.kwargs
+    assert "betas" not in client.kwargs and "fallbacks" not in client.kwargs
 
 
 def test_whole_chain_refusal_raises_friendly_error():
