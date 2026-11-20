@@ -174,7 +174,7 @@ def make_web_search_tool(
             p = provider or resolve_provider(secrets)
         except ValueError as exc:
             return {"error": str(exc)}
-        n = max_results if isinstance(max_results, int) else 5
+        n = max_results if isinstance(max_results, int) and not isinstance(max_results, bool) else 5
         try:
             results = p.search(query, max_results=max(1, min(n, 10)))
         except Exception as exc:  # network / library / quota

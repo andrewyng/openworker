@@ -194,6 +194,29 @@ def test_web_fetch_without_the_switch_is_unchanged(tmp_path, monkeypatch):
     assert out == {"url": "https://example.com/", "content_type": "text/plain", "truncated": False, "text": "plain"}
 
 
+def test_web_fetch_bool_max_chars_falls_back_to_the_default(tmp_path, monkeypatch):
+    # bool subclasses int: True must not become cap=True and slice the page to
+    # a single character — it falls back to the default 20k like any non-int.
+    import coworker.web.fetch as fetch_mod
+
+    s = _secrets(tmp_path, monkeypatch, provider="exa", keys={"exa": "k"})
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no provider call")))
+
+    def local(client, url):
+        resp = httpx.Response(
+            200, request=httpx.Request("GET", url), text="page" * 10,
+            headers={"content-type": "text/plain"},
+        )
+        resp.extensions["logical_url"] = url
+        return resp
+
+    monkeypatch.setattr(fetch_mod, "get_checked", local)
+    for flag in (True, False):
+        out = make_web_fetch_tool(s)("https://example.com/", max_chars=flag)
+        assert out["text"] == "page" * 10, flag
+        assert out["truncated"] is False, flag
+
+
 def test_web_fetch_approval_card_names_the_fetching_service(tmp_path, monkeypatch):
     from coworker.agent import build_engine
     from coworker.agents import chat_agent
