@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactContent, ArtifactInfo } from "../api";
-import { getArtifacts, readArtifact } from "../api";
+import { getArtifacts, getRoots, readArtifact } from "../api";
 import { RightRail } from "./RightRail";
 
 vi.mock("../api", () => ({
@@ -133,5 +133,57 @@ describe("RightRail artifact request ownership", () => {
     await act(async () => firstRead.resolve(content("first.md", "Stale content")));
     expect(screen.getByText("Current content")).toBeTruthy();
     expect(screen.queryByText("Stale content")).toBeNull();
+  });
+});
+
+// -- roots freshness (#490): a folder added mid-session must reach the rail --
+
+const root = (path: string, label: string, primary = false) => ({
+  path,
+  writable: true,
+  label,
+  primary,
+  exists: true,
+});
+
+describe("RightRail roots freshness", () => {
+  it("refetches roots when the session's roots change, so a newly added folder appears", async () => {
+    vi.mocked(getRoots)
+      .mockResolvedValueOnce([root("/tmp/scratch", "scratch", true)])
+      .mockResolvedValueOnce([
+        root("/tmp/scratch", "scratch", true),
+        root("/Users/me/Reports", "Reports"),
+      ]);
+
+    render(<RightRail {...baseProps} />);
+    const filesToggle = await screen.findByTestId("rail-toggle-files");
+    expect(filesToggle.textContent).toContain("1");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("coworker:roots-changed", { detail: "session-a" }),
+      );
+    });
+
+    // The collapsed header's count bumps without a session switch, and the
+    // added folder is browsable once expanded.
+    expect(screen.getByTestId("rail-toggle-files").textContent).toContain("2");
+    fireEvent.click(screen.getByTestId("rail-toggle-files"));
+    expect(await screen.findByText("Reports")).toBeTruthy();
+  });
+
+  it("ignores a roots-changed event for a different session", async () => {
+    vi.mocked(getRoots).mockResolvedValueOnce([root("/tmp/scratch", "scratch", true)]);
+
+    render(<RightRail {...baseProps} />);
+    expect(await screen.findByTestId("rail-toggle-files")).toBeTruthy();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent("coworker:roots-changed", { detail: "session-b" }),
+      );
+    });
+
+    expect(vi.mocked(getRoots)).toHaveBeenCalledTimes(1);
   });
 });
