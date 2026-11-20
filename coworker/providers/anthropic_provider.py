@@ -129,8 +129,10 @@ def _uses_budget_thinking(model: str) -> bool:
 # within the same call. "default" lets the API pick the recommended fallback per model and
 # refusal category (permitted targets differ by model), and needs the 2026-07-01 header.
 # Haiku 5.5 is excluded on purpose: it has no server-side fallback.
+# A fallback model can't read Opus 5.5's thinking blocks: the API drops them without an
+# error, so turns after a fallback run without that reasoning (expected, not a bug).
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
-_FALLBACKS = "default"
+_FALLBACK_MODE = "default"
 _REFUSAL_FALLBACK_PREFIXES = (
     "claude-fable",
     "claude-mythos",
@@ -617,7 +619,7 @@ class AnthropicProvider(ProviderClient):
                 with client.beta.messages.stream(
                     **kw,
                     betas=[_FALLBACK_BETA],
-                    fallbacks=_FALLBACKS,
+                    fallbacks=_FALLBACK_MODE,
                 ) as stream:
                     return stream.get_final_message()
             with client.messages.stream(**kw) as stream:
@@ -735,7 +737,7 @@ class AnthropicProvider(ProviderClient):
                 return client.beta.messages.create(
                     **kw,
                     betas=betas,
-                    fallbacks=_FALLBACKS,
+                    fallbacks=_FALLBACK_MODE,
                     **extra,
                 )
             if diagnosing:

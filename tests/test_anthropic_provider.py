@@ -40,7 +40,8 @@ class _FakeClient:
             yield SimpleNamespace(get_final_message=lambda: response)
 
         self.messages = SimpleNamespace(create=create, stream=stream)
-        # Fable/Mythos route through the beta endpoint (server-side refusal fallback).
+        # Classifier models (Fable/Mythos, Opus 5/5.5, Sonnet 5.5) route through the
+        # beta endpoint (server-side refusal fallback).
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=create, stream=stream))
 
 
@@ -684,6 +685,29 @@ def test_classifier_models_carry_server_side_fallback(model):
     )
     assert client.kwargs["betas"] == ["server-side-fallback-2026-07-01"]
     assert client.kwargs["fallbacks"] == "default"
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+def test_streaming_classifier_models_carry_server_side_fallback(model):
+    """The streaming path opts into the same server-side fallback as complete()."""
+    fake = _FakeClient(events=[])
+    list(
+        AnthropicProvider(client=fake).stream(
+            model=model, messages=[{"role": "user", "content": "x"}]
+        )
+    )
+    assert fake.kwargs["betas"] == ["server-side-fallback-2026-07-01"]
+    assert fake.kwargs["fallbacks"] == "default"
+
+
+def test_streaming_haiku_5_5_skips_server_side_fallback():
+    fake = _FakeClient(events=[])
+    list(
+        AnthropicProvider(client=fake).stream(
+            model="claude-haiku-5-5", messages=[{"role": "user", "content": "x"}]
+        )
+    )
+    assert "betas" not in fake.kwargs and "fallbacks" not in fake.kwargs
 
 
 @pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-5-5"])
