@@ -19,6 +19,7 @@ from coworker.providers import detect_provider, verify_provider_key
         ("sk-or-v1-abc", "openrouter"),
         ("AIzaSyAbc123", "gemini"),
         ("nvapi-abc123", "nvidia"),
+        ("sk-tr-v1-abc", "trustedrouter"),
         ("sk-proj-abc", "openai"),
         ("sk_live_abc", "openai"),
         ("", None),
@@ -116,6 +117,14 @@ def test_verify_novita_uses_openai_compatible_endpoint(monkeypatch):
     assert verify_provider_key("novita", api_key="sk-nov") == {"ok": True}
     assert cap["url"] == "https://api.novita.ai/openai/v1/models"
     assert cap["headers"]["Authorization"] == "Bearer sk-nov"
+
+
+def test_verify_trustedrouter_uses_attested_api(monkeypatch):
+    cap: dict = {}
+    _patch_get(monkeypatch, status=200, capture=cap)
+    assert verify_provider_key("trustedrouter", api_key="sk-tr-v1-test") == {"ok": True}
+    assert cap["url"] == "https://api.trustedrouter.com/v1/models"
+    assert cap["headers"]["Authorization"] == "Bearer sk-tr-v1-test"
 
 
 def test_verify_bad_key_is_invalid(monkeypatch):
