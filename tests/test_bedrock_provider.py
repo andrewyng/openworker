@@ -289,6 +289,91 @@ def test_family_dispatch():
     ]
 
 
+_ON_DEMAND = (
+    "Invocation of model ID {} with on-demand throughput isn’t supported. Retry your "
+    "request with the ID or ARN of an inference profile that contains this model."
+)
+
+
+class _ProfileOnly(_Recorder):
+    """Bedrock as AWS serves Claude 5: only the ids in `served` answer."""
+
+    def __init__(self, served):
+        super().__init__()
+        self.served = set(served)
+
+    def _check(self, model):
+        self.seen.append(model)
+        if model in self.served:
+            return
+        if "." in model.split("anthropic.")[0]:
+            raise RuntimeError("The provided model identifier is invalid.")
+        raise RuntimeError(_ON_DEMAND.format(model))
+
+    def complete(self, *, model, messages, tools=None, **settings):
+        self._check(model)
+        return AssistantTurn(text=model)
+
+    def stream(self, *, model, messages, tools=None, **settings):
+        self._check(model)
+        yield StreamChunk(text_delta="hi")
+        yield StreamChunk(turn=AssistantTurn(text=model))
+
+
+_MSG = [{"role": "user", "content": "x"}]
+
+
+def test_bare_id_falls_back_to_the_regions_inference_profile():
+    claude = _ProfileOnly({"us.anthropic.claude-sonnet-5"})
+    p = BedrockProvider(region="us-west-2", claude_client=claude)
+    turn = p.complete(model="claude/anthropic.claude-sonnet-5", messages=_MSG)
+    assert turn.text == "us.anthropic.claude-sonnet-5"
+    assert claude.seen == ["anthropic.claude-sonnet-5", "us.anthropic.claude-sonnet-5"]
+    # The resolved profile is remembered: the next turn goes straight to it.
+    p.complete(model="claude/anthropic.claude-sonnet-5", messages=_MSG)
+    assert claude.seen[-1] == "us.anthropic.claude-sonnet-5"
+    assert len(claude.seen) == 3
+
+
+def test_missing_geo_profile_moves_on_to_global():
+    claude = _ProfileOnly({"global.anthropic.claude-opus-5"})
+    p = BedrockProvider(region="eu-central-1", claude_client=claude)
+    p.complete(model="claude/anthropic.claude-opus-5", messages=_MSG)
+    assert claude.seen == [
+        "anthropic.claude-opus-5",
+        "eu.anthropic.claude-opus-5",
+        "global.anthropic.claude-opus-5",
+    ]
+
+
+def test_stream_falls_back_before_any_output():
+    claude = _ProfileOnly({"apac.anthropic.claude-sonnet-5"})
+    p = BedrockProvider(region="ap-southeast-2", claude_client=claude)
+    chunks = list(p.stream(model="claude/anthropic.claude-sonnet-5", messages=_MSG))
+    assert [c.text_delta for c in chunks if c.text_delta] == ["hi"]
+    assert chunks[-1].turn.text == "apac.anthropic.claude-sonnet-5"
+
+
+def test_profile_fallback_leaves_other_errors_and_prefixed_ids_alone():
+    claude = _ProfileOnly(set())
+    p = BedrockProvider(region="us-east-1", claude_client=claude)
+    # An already-prefixed id is sent as given — no guessing at other geographies.
+    with pytest.raises(RuntimeError, match="identifier is invalid"):
+        p.complete(model="claude/us.anthropic.claude-sonnet-5", messages=_MSG)
+    assert claude.seen == ["us.anthropic.claude-sonnet-5"]
+
+    class _Denied(_Recorder):
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.seen.append(model)
+            raise RuntimeError("not authorized to perform: bedrock:InvokeModel")
+
+    denied = _Denied()
+    p = BedrockProvider(region="us-east-1", claude_client=denied)
+    with pytest.raises(RuntimeError, match="not authorized"):
+        p.complete(model="claude/anthropic.claude-fable-5", messages=_MSG)
+    assert denied.seen == ["anthropic.claude-fable-5"]
+
+
 def test_claude_family_builds_native_anthropic_over_bedrock(monkeypatch):
     from anthropic import AnthropicBedrock
 
@@ -365,7 +450,7 @@ def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
 
 
 def test_bedrock_capabilities_from_matrix_and_fallback():
-    curated = capabilities_for("bedrock:claude/anthropic.claude-sonnet-4-6-v1:0")
+    curated = capabilities_for("bedrock:claude/anthropic.claude-sonnet-4-6")
     assert curated.vision and curated.pdf and curated.parallel_tool_calls
     assert capabilities_for("bedrock:other/amazon.nova-2-pro-v1:0").tools
     # Custom ids fall back on the family segment: Claude keeps native caps,

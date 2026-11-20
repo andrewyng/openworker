@@ -396,8 +396,9 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
     # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
-    # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
-    # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
+    # Converse) plus AWS's own `-v<n>:<m>` version suffix where it has one. Models with no
+    # on-demand throughput are retried behind the region's inference-profile prefix
+    # (`us.`/`eu.`/`apac.`, then `global.`) by BedrockProvider; prefixed ids work as-is.
     # Claude 5 generation: ids from the AWS model cards (docs.aws.amazon.com/bedrock/
     # latest/userguide/model-card-anthropic-claude-{fable-5,opus-5,sonnet-5}.html, read
     # 2026-10-25). AWS publishes these without a `-v<n>:<m>` suffix; 1M context, image
@@ -411,10 +412,10 @@ MATRIX: dict[str, ModelEntry] = {
     "bedrock:claude/anthropic.claude-sonnet-5": ModelEntry(
         "Claude Sonnet 5 · AWS Bedrock", _AGENTIC_VISION, 1_000_000
     ),
-    "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
+    "bedrock:claude/anthropic.claude-sonnet-4-6": ModelEntry(
         "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
-    "bedrock:claude/anthropic.claude-haiku-4-5-v1:0": ModelEntry(
+    "bedrock:claude/anthropic.claude-haiku-4-5-20251001-v1:0": ModelEntry(
         "Claude Haiku 4.5 · AWS Bedrock", _AGENTIC_VISION, 200_000
     ),
     "bedrock:other/amazon.nova-2-pro-v1:0": ModelEntry(

@@ -90,6 +90,31 @@ _PDF_DATA_URL_RE = re.compile(
 # Bedrock document names: alphanumeric, whitespace, hyphens, parens, brackets only.
 _DOC_NAME_RE = re.compile(r"[^A-Za-z0-9\s\-\(\)\[\]]+")
 
+# Newer models (Claude 4.5+, Claude 5, Llama 4, …) have no on-demand throughput: AWS
+# serves them only through a cross-region inference profile — the model id behind a
+# geography prefix (`us.`, `eu.`, `apac.`) or `global.`. The bare id is a 400.
+_INFERENCE_PROFILE_PREFIXES = (
+    "us.", "us-gov.", "eu.", "apac.", "jp.", "au.", "ca.", "global.", "arn:",
+)
+_PROFILE_RETRY_ERRORS = ("on-demand throughput", "model identifier is invalid")
+
+
+def _geo_prefix(region: Optional[str]) -> Optional[str]:
+    region = (region or "").lower()
+    for start, prefix in (
+        ("us-gov-", "us-gov."), ("us-", "us."), ("eu-", "eu."), ("ap-", "apac."),
+    ):
+        if region.startswith(start):
+            return prefix
+    return None
+
+
+def _profile_candidates(model: str, region: Optional[str]) -> list[str]:
+    """Inference-profile ids to try for a bare model id, nearest geography first."""
+    if model.startswith(_INFERENCE_PROFILE_PREFIXES):
+        return []
+    return [p + model for p in (_geo_prefix(region), "global.") if p]
+
 
 def _session_kwargs(
     profile_name: Optional[str],
@@ -503,6 +528,9 @@ class BedrockProvider(ProviderClient):
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
         self._session_token = session_token
+        # bare model id → the inference-profile id that served it, so the on-demand 400
+        # is paid once per model per process, not once per turn.
+        self._resolved_ids: dict[str, str] = {}
         # Test seams: pre-built sub-providers skip the SDK construction below.
         self._clients: dict[str, ProviderClient] = {}
         if claude_client is not None:
@@ -554,6 +582,23 @@ class BedrockProvider(ProviderClient):
             self._clients[family] = client
         return client
 
+    def _model_ids(self, model: str) -> list[str]:
+        """The id to send first (a previously resolved profile, else the id as given),
+        then the inference-profile ids to fall back on."""
+        first = self._resolved_ids.get(model, model)
+        rest = [c for c in _profile_candidates(model, self._region) if c != first]
+        return [first, *rest]
+
+    @staticmethod
+    def _should_try_next(exc: Exception, attempt: int, ids: list[str]) -> bool:
+        if attempt + 1 >= len(ids):
+            return False
+        text = str(exc)
+        # The given id must have failed for lacking a profile; after that, a profile
+        # that doesn't exist in this geography just moves on to the next one.
+        needles = _PROFILE_RETRY_ERRORS if attempt else _PROFILE_RETRY_ERRORS[:1]
+        return any(needle in text for needle in needles)
+
     def complete(
         self,
         *,
@@ -563,9 +608,20 @@ class BedrockProvider(ProviderClient):
         **settings: Any,
     ) -> AssistantTurn:
         family, rest = self._split(model)
-        return self._family_client(family).complete(
-            model=rest, messages=messages, tools=tools, **settings
-        )
+        client = self._family_client(family)
+        ids = self._model_ids(rest)
+        for attempt, model_id in enumerate(ids):
+            try:
+                turn = client.complete(
+                    model=model_id, messages=messages, tools=tools, **settings
+                )
+            except Exception as exc:
+                if self._should_try_next(exc, attempt, ids):
+                    continue
+                raise
+            self._resolved_ids[rest] = model_id
+            return turn
+        raise AssertionError("unreachable")
 
     def stream(
         self,
@@ -576,9 +632,24 @@ class BedrockProvider(ProviderClient):
         **settings: Any,
     ):
         family, rest = self._split(model)
-        return self._family_client(family).stream(
-            model=rest, messages=messages, tools=tools, **settings
-        )
+        client = self._family_client(family)
+        ids = self._model_ids(rest)
+        for attempt, model_id in enumerate(ids):
+            started = False
+            try:
+                for chunk in client.stream(
+                    model=model_id, messages=messages, tools=tools, **settings
+                ):
+                    if not started:
+                        started = True
+                        self._resolved_ids[rest] = model_id
+                    yield chunk
+            except Exception as exc:
+                # Once output has reached the caller a retry would duplicate it.
+                if not started and self._should_try_next(exc, attempt, ids):
+                    continue
+                raise
+            return
 
     def capabilities(self, model: str) -> ModelCapabilities:
         qualified = model if model.startswith("bedrock:") else f"bedrock:{model}"
