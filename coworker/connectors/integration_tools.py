@@ -1978,9 +1978,13 @@ def make_integration_tools(
             return err
         return _request(
             "GET",
-            f"{_atlassian_base(profile)}/rest/api/3/search",
+            f"{_atlassian_base(profile)}/rest/api/3/search/jql",
             auth=_basic_auth(profile["email"], profile["api_token"]),
-            params={"jql": jql, "maxResults": max(1, min(int(max_results or 10), 20))},
+            params={
+                "jql": jql,
+                "maxResults": max(1, min(int(max_results or 10), 20)),
+                "fields": "*navigable",
+            },
         )
 
     jira_search_issues.__name__ = "jira_search_issues"
