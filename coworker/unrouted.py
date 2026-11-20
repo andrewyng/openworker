@@ -12,11 +12,14 @@ visibility/debugging surface, not a queue — entries are read in the GUI, not r
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,8 +41,12 @@ class UnroutedStore:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self._items = [UnroutedItem(**raw) for raw in data.get("items", [])]
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self._items = [UnroutedItem(**raw) for raw in data.get("items", [])]
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup (#204).
+                logger.warning("unrouted file at %s is unreadable; starting empty", self.path)
 
     def _save(self) -> None:
         if not self.path:

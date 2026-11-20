@@ -12,11 +12,14 @@ module stays testable without touching Slack/Telegram.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_INBOX = "default"
 # Embeds the item id in a delivered message. Emitted as [ow:…] since the bot's rebrand
@@ -45,12 +48,21 @@ class InboxRouting:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            for raw in data.get("bindings", []):
-                b = InboxBinding(**raw)
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                bindings = [InboxBinding(**raw) for raw in data.get("bindings", [])]
+                persona_default = dict(data.get("persona_default", {}))
+                session_override = dict(data.get("session_override", {}))
+            except (OSError, ValueError, TypeError, AttributeError):
+                # A corrupt file must never block startup (#204).
+                logger.warning(
+                    "inbox routing file at %s is unreadable; using the defaults", self.path
+                )
+                return
+            for b in bindings:
                 self._bindings[b.name] = b
-            self._persona_default = dict(data.get("persona_default", {}))
-            self._session_override = dict(data.get("session_override", {}))
+            self._persona_default = persona_default
+            self._session_override = session_override
 
     def _save(self) -> None:
         if not self.path:
