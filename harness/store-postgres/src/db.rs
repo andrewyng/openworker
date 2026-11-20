@@ -499,7 +499,10 @@ impl Database {
             if old.storage_revision != s.storage_revision {
                 bail!("Stale session revision refused");
             }
-            if old.environment != s.environment {
+            if old.environment != s.environment
+                || old.loop_environment != s.loop_environment
+                || old.allow_workspace_reads != s.allow_workspace_reads
+            {
                 bail!("Environment binding is immutable; create a new session");
             }
             epoch

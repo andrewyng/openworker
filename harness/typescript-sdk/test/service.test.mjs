@@ -312,3 +312,26 @@ test("service attachments use bounded authenticated uploads before submitting re
     assert.equal(run.id,"run-one");assert.deepEqual(uploads.map(v=>v.operation),["begin","chunk","commit"]);assert.deepEqual(submitted.content.map(v=>v.type),["text","document","text"]);assert.ok(submitted.content[1].attachment_id.startsWith("att_"));assert.ok(!JSON.stringify(submitted).includes("aGVsbG8="));
   }finally{service.disconnect();}
 });
+
+
+test("session-scoped resume verifies the release and private loop using the session snapshot", async (t) => {
+  const url = await server(t, (req, res) => {
+    if (handshake(req, res)) return;
+    if (req.url !== "/v1/sessions/s_owned") {
+      res.writeHead(403).end();
+      return;
+    }
+    res.end(JSON.stringify({
+      service: { releaseId: "builder@1", runtimeProfile: "loop@1" },
+      session: { loopPlacement: "sandbox", loopEnvironmentId: "private", environment: { environment_id: "tools" } },
+    }));
+  });
+  const service = await Harness.connect(options(url));
+  t.after(() => service.disconnect());
+  const ref = { serviceId: "service-one", namespace: "test", sessionId: "s_owned",
+    agent: "builder@1", runtimeProfile: "loop@1", loopPlacement: "sandbox",
+    loopEnvironmentId: "private", environmentId: "tools" };
+  assert.equal((await service.resume(ref)).id, ref.sessionId);
+  await assert.rejects(service.resume({ ...ref, agent: "other" }), /release_identity_mismatch/);
+  await assert.rejects(service.resume({ ...ref, loopEnvironmentId: "other" }), /loop_identity_mismatch/);
+});

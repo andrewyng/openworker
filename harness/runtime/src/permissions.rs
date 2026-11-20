@@ -21,6 +21,31 @@ pub struct Config {
     pub auto_skip_questions: bool,
 }
 
+/// Roots are portable, explicit relative directories. Never match a string prefix.
+pub fn validate_read_roots(roots: &[String]) -> Result<()> {
+    anyhow::ensure!(roots.len() <= 32, "Too many workspace read grants");
+    for root in roots {
+        anyhow::ensure!(valid_read_path(root), "Invalid workspace read directory");
+    }
+    Ok(())
+}
+
+fn valid_read_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 4096
+        && !path.contains(['\\', ':'])
+        && !path.chars().any(char::is_control)
+        && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
+}
+
+pub fn granted_read_path(roots: &[String], path: &str) -> bool {
+    valid_read_path(path)
+        && roots.iter().any(|root| {
+            path.strip_prefix(root)
+                .is_some_and(|tail| tail.starts_with('/'))
+        })
+}
+
 /// Human-owned whole-tool grant. Arguments may vary; access floors do not.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionGrant {
@@ -235,6 +260,7 @@ pub fn approval_decision(event: &crate::store::Event) -> Option<ApprovalDecision
                 "human",
                 "app_policy",
                 "session_grant",
+                "workspace_read_grant",
                 "hard_policy",
                 "bypass",
             ]
@@ -506,6 +532,42 @@ mod approval_metadata_tests {
             "-----BEGIN PRIVATE KEY-----",
         ] {
             assert!(approval_reason(reason).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod directory_grants {
+    use super::*;
+    #[test]
+    fn grants_match_whole_directories_only() {
+        let grants = vec!["src".into(), "docs/api".into()];
+        assert!(validate_read_roots(&grants).is_ok());
+        for path in ["src/a", "docs/api/v1/spec"] {
+            assert!(granted_read_path(&grants, path));
+        }
+        for path in [
+            "src-old/a",
+            "/src/a",
+            "src/../key",
+            "src//a",
+            "docs/apis/file",
+            "src/a\\..\\key",
+        ] {
+            assert!(!granted_read_path(&grants, path));
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn executor_opens_only_regular_files_beneath_the_granted_path() {
+        use std::{fs, os::unix::fs::symlink};
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        fs::write(root.path().join("secret"), "private").unwrap();
+        symlink("../secret", root.path().join("src/link")).unwrap();
+        symlink("..", root.path().join("src/parent")).unwrap();
+        for path in ["src/link", "src/parent/secret"] {
+            assert!(crate::runner::read_workspace_file(root.path(), path, 24).is_err());
         }
     }
 }

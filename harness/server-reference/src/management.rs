@@ -29,6 +29,9 @@ pub fn installation(config: &Config) -> Result<String> {
     config.validate_git_grants()?;
     config.validate_repository_grants()?;
     let mut identity = json!({"bundle":base.digest,"runner":digest(&std::fs::read(&config.runner)?),"gateway":config.openshell.endpoint,"gatewayIdentity":config.openshell.identity,"workspace":config.openshell.workspace,"image":config.openshell.image});
+    if let Some(route) = &config.openshell.loop_inference {
+        identity["sandboxLoopV1"] = json!(route);
+    }
     if let Some(registry) = &base.registry_digest {
         identity["registry"] = json!(registry);
     }
@@ -94,7 +97,12 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     let mut manifest = base.manifest.clone();
     manifest.id = format!("svc-{}", &release.digest[..24]);
     manifest.name = r.id.clone();
-    manifest.version = release.digest.clone();
+    let cache_key = if p.loop_placement.is_service() {
+        release.digest.clone()
+    } else {
+        digest(format!("sandbox-loop-v1:{}:{}", release.digest, profile.digest).as_bytes())
+    };
+    manifest.version = cache_key.clone();
     manifest.integrations = r.integrations;
     manifest.default_model = r.default_model;
     manifest.limits = r.limits;
@@ -107,7 +115,7 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
         r.instructions
     );
     let tools_text = base.selection_text(&tools)?;
-    let dir = publish_bundle(config, &release.digest, &base, &manifest_text, &tools_text)?;
+    let dir = publish_bundle(config, &cache_key, &base, &manifest_text, &tools_text)?;
     config.repository_grant(&p)?;
     let mut c = config.profile_config(&p)?;
     c.bundle = dir;
@@ -272,6 +280,9 @@ pub(crate) async fn admit_kind(
     mut input: Admission,
     kind: &str,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    if input.runtime_profile.is_some() && input.environment_id.is_some() {
+        return Err(ApiError(SubmissionError::InvalidRequest.into()));
+    }
     if let Some(reference) = &input.workspace_id {
         crate::workspace_api::validate(&app, reference).await?;
     }
@@ -317,7 +328,7 @@ pub(crate) async fn admit_kind(
         openworker_runtime::workspaces::validate_tools(&bundle, selected.bindings.keys())
             .map_err(|_| ApiError(SubmissionError::InvalidRequest.into()))?;
     }
-    let spec = provider(&app.config, &profile)?.spec(p.sharing, Management::Harness);
+    let spec = provider(&app.config, &profile)?.spec(p.sharing.clone(), Management::Harness);
     let request = crate::service::key(&app, &headers, kind)?;
     if let Some(text) = &input.initial_message {
         let model = input
@@ -342,9 +353,32 @@ pub(crate) async fn admit_kind(
             crate::service_safety::inspect_with(&app, None, &request, text, Some(&checks)).await?,
         );
     }
+    let loop_spec = if p.loop_placement.is_service() {
+        None
+    } else {
+        let c = app.config.profile_config(&p)?;
+        let route = c
+            .openshell
+            .loop_inference
+            .as_ref()
+            .context("Sandbox inference route missing")?;
+        if !c.scripted
+            && input
+                .model
+                .as_ref()
+                .or(r.default_model.as_ref())
+                .is_none_or(|m| m.connection != route.connection)
+        {
+            return Err(ApiError(SubmissionError::InvalidRequest.into()));
+        }
+        Some(c.openshell_provider(true)?.spec(
+            openworker_runtime::environment::Sharing::Exclusive,
+            Management::Harness,
+        ))
+    };
     let op = app
         .store
-        .service_admit(&request, input, release, profile, spec)?;
+        .service_admit_with_loop(&request, input, release, profile, spec, loop_spec)?;
     Ok((
         if op.status == "complete" {
             StatusCode::OK
@@ -399,6 +433,36 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         provider
             .inspect(env.binding.clone().context("Environment not ready")?)
             .await?;
+        if let Some(id) = &op.loop_environment_id {
+            let settings: Profile = serde_json::from_value(profile.definition.clone())?;
+            let loop_provider = config.profile_config(&settings)?.openshell_provider(true)?;
+            let companion = store.clone().environment(id)?;
+            if companion.binding.is_none() {
+                let observed = if store.claim_loop_launch(&op.id)? {
+                    loop_provider.create(companion.clone()).await
+                } else {
+                    let raw = id
+                        .strip_prefix("env_")
+                        .context("Invalid loop environment identity")?;
+                    loop_provider
+                        .bind_existing(&companion, &format!("owr-{}", &raw[..15]))
+                        .await
+                };
+                match observed {
+                    Ok(binding) => {
+                        store.complete_environment(id, companion.revision, Some(binding))?;
+                    }
+                    Err(_) => {
+                        store.service_update_operation(
+                            &op.id,
+                            "ready",
+                            Some("Waiting for the originally requested loop sandbox".into()),
+                        )?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
         finish_ready_admission(config, store, &op, &rel, &profile).await
     }
     .await;
@@ -446,7 +510,21 @@ async fn finish_ready_admission(
     if let Some(model) = release.reviewer_model {
         parameters["reviewer_model"] = json!(model);
     }
-    let session = runtime.prepare_session(parameters)?;
+    let mut session = runtime.prepare_session(parameters)?;
+    session.allow_workspace_reads = profile.allow_workspace_reads.clone();
+    if let Some(id) = &op.loop_environment_id {
+        session.loop_environment = Some(
+            store
+                .clone()
+                .environment(id)?
+                .binding
+                .context("Loop sandbox is not ready")?,
+        );
+    }
+    anyhow::ensure!(
+        session.loop_environment.is_none() == profile.loop_placement.is_service(),
+        "Loop placement is inconsistent"
+    );
     let service = config.service.as_ref().context("Service config required")?;
     if let Some(reference) = &input.workspace_id {
         // The operation already reserved the final session ID. A controller retry
@@ -875,7 +953,14 @@ async fn delete_once(config: &Config, store: &PostgresStore, installed: &str) ->
     let Some((record, key, profile, fresh)) = store.service_claim_delete(installed)? else {
         return Ok(());
     };
-    let provider = provider(config, &store.catalog_get("profile", &profile)?)?;
+    let entry = store.catalog_get("profile", &profile)?;
+    let provider = if record.spec.provider == "openshell-loop" {
+        config
+            .profile_config(&serde_json::from_value(entry.definition)?)?
+            .openshell_provider(true)?
+    } else {
+        provider(config, &entry)?
+    };
     let binding = record.binding.context("Environment binding missing")?;
     // A lost connection is not retry permission. Only the first claim can delete;
     // after that, read the original object's state and never delete a replacement.

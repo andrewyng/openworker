@@ -24,6 +24,7 @@ pub mod io;
 #[cfg(windows)]
 #[path = "io_windows.rs"]
 pub mod io;
+pub mod loop_channel;
 pub mod model;
 pub mod model_api;
 pub mod package;

@@ -158,6 +158,7 @@ export function hostConfig(options: ResolvedHarnessOptions): object {
   };
 }
 export function agentWire(a: Agent, depth = 0): object {
+  if (a.approvals?.allowWorkspaceReads?.length) throw new Error("Directory approval grants require a cluster runtime profile");
   if (depth > 1)
     throw new HarnessError(
       "InvalidInput",

@@ -17,6 +17,8 @@ fn session() -> Session {
         safety: Default::default(),
         agent_team: None,
         environment: None,
+        loop_environment: None,
+        allow_workspace_reads: vec![],
         managed_workspace: None,
         storage_revision: 0,
         approval_grants: vec![],

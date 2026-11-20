@@ -33,6 +33,12 @@ export function sharedCodingTeam(prefix:string,workspace:{repository:string;base
 }
 /** Service policy belongs to the activated RuntimeProfile, not local SDK flags. */
 export function codingRelease(agent:AgentDefinition,version:string,profile:RuntimeProfile):AgentRelease {
+  if (agent.approvals?.allowWorkspaceReads !== undefined) {
+    const installed = new Set(profile.allowWorkspaceReads ?? []);
+    const requested = new Set(agent.approvals.allowWorkspaceReads);
+    if (requested.size !== installed.size || [...requested].some(root => !installed.has(root)))
+      throw Error("Directory approval grants must match the installed RuntimeProfile");
+  }
   const mode=agent.approvals?.mode??"always";
   const expected=mode==="never"?"bypass":mode==="auto"||mode==="reviewer"?"auto-approve":"ask";
   if(agent.servers || agent.toolPolicy || agent.runtimePolicy || agent.planning!==true || agent.memory || agent.memoryScope || agent.scheduling || (Array.isArray(agent.subagents) && agent.subagents.length) || mode==="only" || expected!==(profile.approvalMode??"ask") || (agent.autoSkipQuestions??false)!==(profile.autoSkipQuestions??false))throw Error("Service release must match the installed coding bundle and RuntimeProfile");

@@ -141,6 +141,7 @@ pub struct RunResult {
     pub failure: Option<String>,
     pub interruptions: Vec<Value>,
 }
+pub use openworker_runtime::environment::LoopPlacement;
 pub use openworker_store_postgres::service_catalog::{
     Entry as CatalogEntry, Operation as ServiceOperation, Profile as RuntimeProfile,
     Release as AgentRelease,

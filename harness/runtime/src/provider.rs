@@ -186,7 +186,7 @@ pub enum ReasoningKind {
 }
 
 /// Provider-designated display text only. Opaque signatures never enter this type.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReasoningDelta {
     pub kind: ReasoningKind,
     pub text: String,

@@ -428,60 +428,15 @@ pub mod event {
     }
 }
 
-pub struct Mcp {
+pub(crate) struct ExecStream {
     tx: Option<mpsc::Sender<ExecInput>>,
     stream: tonic::Streaming<ExecEvent>,
     buffer: Vec<u8>,
-    sequence: u64,
-    usable: bool,
 }
-impl Mcp {
-    pub async fn connect(sandbox_id: &str, command: Vec<String>) -> Result<Self> {
-        let home = config_home()?;
-        let active = std::fs::read_to_string(home.join("active_gateway"))?;
-        let active = active.trim();
-        if !crate::bundle::safe_name(active) {
-            bail!("Invalid gateway name");
-        }
-        let base = home.join("gateways").join(active);
-        let meta: Value = serde_json::from_slice(&std::fs::read(base.join("metadata.json"))?)?;
-        let endpoint = meta["gateway_endpoint"]
-            .as_str()
-            .context("Gateway endpoint missing")?;
-        Self::connect_request(
-            endpoint,
-            &base.join("mtls"),
-            None,
-            ExecStart {
-                sandbox_id: sandbox_id.into(),
-                command,
-                tty: false,
-                no_login_shell: false,
-                request_id: String::new(),
-                workspace_scope: None,
-            },
-        )
-        .await
-    }
-    /// OpenShell 0.1.3 exec uses the sandbox name and an explicit workspace.
-    /// Lifecycle/version qualification belongs to the provider. Never retries an
-    /// uncertain launch or resumes an old stream automatically.
-    pub async fn connect_v1(
-        config: &ExecConnectionConfig,
-        sandbox_name: &str,
-        command: Vec<String>,
-    ) -> Result<Self> {
-        Self::connect_attachment(
-            config,
-            sandbox_name,
-            command,
-            &uuid::Uuid::new_v4().to_string(),
-        )
-        .await
-    }
+impl ExecStream {
     /// Launch exactly this durable attachment ID. Repeating it does not reattach
     /// or replay a lost stream. Reconcile an unknown launch instead of retrying.
-    pub async fn connect_attachment(
+    pub(crate) async fn connect_attachment(
         config: &ExecConnectionConfig,
         sandbox_name: &str,
         command: Vec<String>,
@@ -560,24 +515,14 @@ impl Mcp {
                 codec,
             )
             .await?;
-        let mut m = Self {
+        Ok(Self {
             tx: Some(tx),
             stream: response.into_inner(),
             buffer: vec![],
-            sequence: 0,
-            usable: true,
-        };
-        let init=m.request("initialize",json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"openworker-native","version":"0.1.0"}})).await?;
-        if !["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
-            .contains(&init["protocolVersion"].as_str().unwrap_or(""))
-        {
-            bail!("Unsupported MCP protocol version");
-        }
-        m.send(json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}))
-            .await?;
-        Ok(m)
+        })
     }
-    async fn send(&mut self, v: Value) -> Result<()> {
+
+    pub(crate) async fn send(&mut self, v: Value) -> Result<()> {
         let data = format!("{v}\n").into_bytes();
         if data.len() > crate::MAX_FRAME {
             bail!("MCP request exceeds frame limit");
@@ -591,7 +536,7 @@ impl Mcp {
             .await?;
         Ok(())
     }
-    async fn line(&mut self) -> Result<Value> {
+    pub(crate) async fn line(&mut self) -> Result<Value> {
         loop {
             if let Some(n) = self.buffer.iter().position(|&c| c == b'\n') {
                 let raw = self.buffer.drain(..=n).collect::<Vec<_>>();
@@ -615,36 +560,9 @@ impl Mcp {
             }
         }
     }
-    pub async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
-        if !self.usable {
-            bail!("MCP stream unusable; request not dispatched");
-        }
-        // Cancellation of this future also leaves it poisoned: late results must
-        // never be correlated with a subsequent action on the same stream.
-        self.usable = false;
-        self.sequence += 1;
-        let id = self.sequence;
-        self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
-            .await?;
-        let result=tokio::time::timeout(Duration::from_secs(75),async {
-            loop {let v=self.line().await?;
-                if v.get("method").is_some() {if v.get("id").is_some(){self.send(json!({"jsonrpc":"2.0","id":v["id"],"error":{"code":-32601,"message":"Server-initiated requests are not permitted"}})).await?;}continue;}
-                if v["id"]!=id {bail!("MCP response correlation mismatch");}
-                if v.get("error").is_some(){bail!("MCP returned an error for {method}");}
-                let result=v.get("result").context("MCP result missing")?;
-                if serde_json::to_vec(result)?.len()>256000 {bail!("MCP result exceeds 256 KB; a called action may have executed. Do not automatically retry.");}
-                return Ok(result.clone());
-            }
-        }).await.context("MCP request timed out")?;
-        if result.is_ok() {
-            self.usable = true;
-        }
-        result
-    }
     /// Close only this exec stream's stdin; never stop/delete the sandbox.
     /// Missing exit evidence is an unknown outcome, not proof all effects stopped.
     pub async fn close(mut self) -> Result<()> {
-        self.usable = false;
         self.tx.take();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -659,6 +577,123 @@ impl Mcp {
         })
         .await
         .context("MCP close outcome unknown; remote work may continue")?
+    }
+}
+
+pub struct Mcp {
+    wire: ExecStream,
+    sequence: u64,
+    usable: bool,
+}
+impl Mcp {
+    pub async fn connect(sandbox_id: &str, command: Vec<String>) -> Result<Self> {
+        let home = config_home()?;
+        let active = std::fs::read_to_string(home.join("active_gateway"))?;
+        let active = active.trim();
+        if !crate::bundle::safe_name(active) {
+            bail!("Invalid gateway name");
+        }
+        let base = home.join("gateways").join(active);
+        let meta: Value = serde_json::from_slice(&std::fs::read(base.join("metadata.json"))?)?;
+        let endpoint = meta["gateway_endpoint"]
+            .as_str()
+            .context("Gateway endpoint missing")?;
+        Self::initialize(
+            ExecStream::connect_request(
+                endpoint,
+                &base.join("mtls"),
+                None,
+                ExecStart {
+                    sandbox_id: sandbox_id.into(),
+                    command,
+                    tty: false,
+                    no_login_shell: false,
+                    request_id: String::new(),
+                    workspace_scope: None,
+                },
+            )
+            .await?,
+        )
+        .await
+    }
+    /// OpenShell 0.1.3 exec uses the sandbox name and an explicit workspace.
+    /// Lifecycle/version qualification belongs to the provider. Never retries an
+    /// uncertain launch or resumes an old stream automatically.
+    pub async fn connect_v1(
+        config: &ExecConnectionConfig,
+        sandbox_name: &str,
+        command: Vec<String>,
+    ) -> Result<Self> {
+        Self::connect_attachment(
+            config,
+            sandbox_name,
+            command,
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await
+    }
+    pub async fn connect_attachment(
+        config: &ExecConnectionConfig,
+        sandbox_name: &str,
+        command: Vec<String>,
+        request_id: &str,
+    ) -> Result<Self> {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            Self::initialize(
+                ExecStream::connect_attachment(config, sandbox_name, command, request_id).await?,
+            )
+            .await
+        })
+        .await
+        .context("MCP attachment initialization timed out")?
+    }
+
+    async fn initialize(wire: ExecStream) -> Result<Self> {
+        let mut m = Self {
+            wire,
+            sequence: 0,
+            usable: true,
+        };
+        let init=m.request("initialize",json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"openworker-native","version":"0.1.0"}})).await?;
+        if !["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+            .contains(&init["protocolVersion"].as_str().unwrap_or(""))
+        {
+            bail!("Unsupported MCP protocol version");
+        }
+        m.wire
+            .send(json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}))
+            .await?;
+        Ok(m)
+    }
+    pub async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+        if !self.usable {
+            bail!("MCP stream unusable; request not dispatched");
+        }
+        // Cancellation of this future also leaves it poisoned: late results must
+        // never be correlated with a subsequent action on the same stream.
+        self.usable = false;
+        self.sequence += 1;
+        let id = self.sequence;
+        self.wire
+            .send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
+            .await?;
+        let result=tokio::time::timeout(Duration::from_secs(75),async {
+            loop {let v=self.wire.line().await?;
+                if v.get("method").is_some() {if v.get("id").is_some(){self.wire.send(json!({"jsonrpc":"2.0","id":v["id"],"error":{"code":-32601,"message":"Server-initiated requests are not permitted"}})).await?;}continue;}
+                if v["id"]!=id {bail!("MCP response correlation mismatch");}
+                if v.get("error").is_some(){bail!("MCP returned an error for {method}");}
+                let result=v.get("result").context("MCP result missing")?;
+                if serde_json::to_vec(result)?.len()>256000 {bail!("MCP result exceeds 256 KB; a called action may have executed. Do not automatically retry.");}
+                return Ok(result.clone());
+            }
+        }).await.context("MCP request timed out")?;
+        if result.is_ok() {
+            self.usable = true;
+        }
+        result
+    }
+    pub async fn close(self) -> Result<()> {
+        self.wire.close().await
     }
 }
 

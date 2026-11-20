@@ -31,6 +31,15 @@ class FileToolsTest(unittest.TestCase):
         self.assertEqual(self.op("list_files"), {"files":["src/home"]})
         self.assertEqual(self.op("read_file", path="src/home")["text"], "Welcome")
 
+    def test_scoped_read_opens_a_regular_file_under_the_exact_root(self):
+        self.op("write_file", path="src/nested/page", content="visible")
+        self.op("write_file", path="src-old/key", content="private")
+        self.assertEqual(self.op("read_file_under", directory="src", path="src/nested/page")["text"], "visible")
+        (self.project / "src/link").symlink_to("../src-old")
+        for path in ["src-old/key", "src/../src-old/key", "src/link/key"]:
+            with self.subTest(path=path), self.assertRaises((OSError, ValueError)):
+                self.op("read_file_under", directory="src", path=path)
+
     def test_link_and_path_confinement(self):
         outside = self.folder / "outside"
         outside.mkdir()

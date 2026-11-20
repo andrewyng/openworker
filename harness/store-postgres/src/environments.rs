@@ -67,6 +67,39 @@ pub(crate) fn complete(
     change(tx, &mut e, "environment_observed", json!({"known":known}))?;
     Ok(e)
 }
+/// Queue cleanup of the private loop companion in the same transaction as
+/// session close. The normal controller verifies the original remote identity.
+pub(crate) fn retire_loop(tx: &mut Transaction<'_>, session: &Session, actor: &str) -> Result<()> {
+    let Some(binding) = &session.loop_environment else {
+        return Ok(());
+    };
+    let mut env = lock(tx, &binding.environment_id)?;
+    ensure!(
+        env.phase == Phase::Ready
+            && env.binding.as_ref() == Some(binding)
+            && binding.spec.provider == "openshell-loop"
+            && binding.spec.sharing == Sharing::Exclusive,
+        "Loop cleanup binding changed"
+    );
+    let key = uuid::Uuid::new_v4().simple().to_string();
+    tx.execute(
+        "UPDATE environments SET delete_request_id=$2,delete_actor=$3 WHERE id=$1",
+        &[&env.id, &key, &actor],
+    )?;
+    env.phase = Phase::Deleting;
+    change(
+        tx,
+        &mut env,
+        "environment_delete_requested",
+        json!({"actor":actor,"request_id":key,"session_id":session.id}),
+    )?;
+    tx.execute(
+        "INSERT INTO service_deletions(environment_id,request_key) VALUES($1,$2)",
+        &[&env.id, &key],
+    )?;
+    Ok(())
+}
+
 fn attachment(row: &Row) -> Result<Attachment> {
     Ok(Attachment {
         id: row.get("id"),
@@ -85,6 +118,20 @@ pub(crate) fn validate_session(tx: &mut Transaction<'_>, s: &Session) -> Result<
     let Some(binding) = &s.environment else {
         return Ok(());
     };
+    if let Some(companion) = &s.loop_environment {
+        ensure!(
+            companion.environment_id != binding.environment_id
+                && companion.spec.sharing == Sharing::Exclusive
+                && companion.spec.provider == "openshell-loop",
+            "Invalid loop session boundary"
+        );
+        companion.validate()?;
+        let original = lock(tx, &companion.environment_id)?;
+        ensure!(
+            original.phase == Phase::Ready && original.binding.as_ref() == Some(companion),
+            "Loop sandbox binding changed"
+        );
+    }
     binding.validate()?;
     if let Some(receipt) = &s.managed_workspace {
         receipt.validate_scope(
@@ -266,7 +313,7 @@ impl Database {
         if e.phase != Phase::Ready {
             bail!("Reconcile environment before deletion");
         }
-        let attached:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND NOT (data->>'closed')::boolean) OR EXISTS(SELECT 1 FROM attachments WHERE environment_id=$1 AND state<>'released') OR EXISTS(SELECT 1 FROM agent_teams t CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase' IN ('reserved','ready','retiring') AND (t.data->'placement_bindings'->i.key->'environment'->>'environment_id'=$1 OR (t.data->'sandbox_choices'->i.key->>'mode'='member' AND t.data->'placement_bindings'->(t.data->'sandbox_choices'->i.key->>'agent_id')->'environment'->>'environment_id'=$1))) OR EXISTS(SELECT 1 FROM service_team_environments o JOIN agent_teams t ON t.id=o.team WHERE o.environment_id=$1 AND t.data->'roster'->'instances'->o.agent->>'phase' IN ('reserved','ready','retiring'))",&[&id])?.get(0);
+        let attached:bool=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_operations WHERE loop_environment_id=$1 AND status NOT IN ('failed','complete')) OR EXISTS(SELECT 1 FROM sessions WHERE (environment_id=$1 OR data->'loop_environment'->>'environment_id'=$1) AND NOT (data->>'closed')::boolean) OR EXISTS(SELECT 1 FROM attachments WHERE environment_id=$1 AND state<>'released') OR EXISTS(SELECT 1 FROM agent_teams t CROSS JOIN LATERAL jsonb_each(t.data->'roster'->'instances') i WHERE i.value->>'phase' IN ('reserved','ready','retiring') AND (t.data->'placement_bindings'->i.key->'environment'->>'environment_id'=$1 OR (t.data->'sandbox_choices'->i.key->>'mode'='member' AND t.data->'placement_bindings'->(t.data->'sandbox_choices'->i.key->>'agent_id')->'environment'->>'environment_id'=$1))) OR EXISTS(SELECT 1 FROM service_team_environments o JOIN agent_teams t ON t.id=o.team WHERE o.environment_id=$1 AND t.data->'roster'->'instances'->o.agent->>'phase' IN ('reserved','ready','retiring'))",&[&id])?.get(0);
         if attached {
             bail!("Environment still has sessions or reserved/active attachments");
         }
@@ -342,10 +389,12 @@ impl Database {
             bail!("Session closed");
         }
         validate_session(&mut tx, &s)?;
-        let b = s
-            .environment
-            .as_ref()
-            .context("Session has no remote environment")?;
+        let b = if server == "openworker-session-loop" {
+            s.loop_environment.as_ref()
+        } else {
+            s.environment.as_ref()
+        }
+        .context("Session has no matching remote environment")?;
         let mut e = lock(&mut tx, &b.environment_id)?;
         if let Some(row)=tx.query_opt("SELECT * FROM attachments WHERE session_id=$1 AND server=$2 AND owner_epoch=$3 AND state<>'released'",&[&sid,&server,&epoch])? {let a=attachment(&row)?;tx.commit()?;return Ok((a,false));}
         let id = uuid::Uuid::new_v4().to_string();

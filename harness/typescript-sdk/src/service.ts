@@ -33,6 +33,10 @@ export interface RuntimeProfile {
   memoryMB: number;
   sharing: "exclusive" | "shared";
   allowedPrincipals?: string[];
+  /** Cluster worker by default. Sandbox placement requires a compatible OpenShell installation. */
+  loopPlacement?: "service" | "sandbox";
+  /** Workspace-relative directories for trusted first-party file reads. */
+  allowWorkspaceReads?: string[];
   approvalMode?: "ask" | "auto-approve" | "bypass";
   autoSkipQuestions?: boolean;
   /** Versioned operator-installed OpenShell Git grant; never a token. */
@@ -101,6 +105,8 @@ export interface ServiceSessionOptions {
   waitTimeoutMs?: number;
 }
 export interface ServiceSessionRef {
+  loopPlacement?: "service" | "sandbox";
+  loopEnvironmentId?: string;
   workspaceId?: string;
   serviceId: string;
   namespace: string;
@@ -504,7 +510,8 @@ export class Service {
       ref.namespace !== this.options.namespace
     )
       throw new ServiceError("reference_identity_mismatch", 0);
-    if ((await this.agent(ref.agent)).id !== ref.agent)
+    // A session-scoped observer can read the pinned session identity without catalog access.
+    if (typeof ref.agent !== "string" || !ref.agent)
       throw new ServiceError("reference_identity_mismatch", 0);
     const session = new ServiceSession(this, structuredClone(ref));
     const snapshot = await session.snapshot();
@@ -515,6 +522,9 @@ export class Service {
       snapshot.service?.runtimeProfile !== ref.runtimeProfile
     )
       throw new ServiceError("profile_identity_mismatch", 0);
+    if ((ref.loopPlacement && snapshot.session?.loopPlacement !== ref.loopPlacement) ||
+        (ref.loopEnvironmentId && snapshot.session?.loopEnvironmentId !== ref.loopEnvironmentId))
+      throw new ServiceError("loop_identity_mismatch", 0);
     if ((snapshot.session?.workspaceId ?? undefined) !== (ref.workspaceId ?? undefined))
       throw new ServiceError("workspace_identity_mismatch", 0);
     if (snapshot.session?.environment?.environment_id !== ref.environmentId)
