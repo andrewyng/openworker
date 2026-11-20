@@ -165,7 +165,7 @@ def test_remove_server_revokes_its_trust_rules(tmp_path, monkeypatch):
         _prefs={},
         _save_prefs=lambda: None,
         _clear_mcp_notified=lambda _n: None,
-        mcp=SimpleNamespace(_conns={}),
+        mcp=SimpleNamespace(_conns={}, forget=lambda _n: None),
         _loop=None,
         secrets=None,
         _override_store=lambda: RiskOverrideStore(tmp_path / "ro.json"),
