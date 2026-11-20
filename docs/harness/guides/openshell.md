@@ -15,7 +15,7 @@ sandboxedloop
     └─ Tool OpenShell sandbox      ToolRunner → project files
 ```
 
-For `sandboxedloop`, the worker starts the Rust process over the gateway's authenticated exec stream. The process receives its turn context and sends back model output and proposed calls. The worker commits each proposal before acknowledging it. It can use the journal to resume a turn after a disconnect, including a turn waiting for a person to approve a tool call.
+For `sandboxedloop`, the worker starts the Rust process over the gateway's authenticated exec stream. The process receives a snapshot of the model context on startup. During the active turn it keeps that context in memory. After each committed response, the worker normally sends only the new tool results and any changed instructions or tool definitions. Each update has a sequence number, and each model call has its own attempt ID. A sequence gap or a rewrite such as compaction triggers a fresh snapshot. Parking for approval, finishing the turn or losing the process clears the cache. The worker commits each proposal before acknowledging it. It can use the journal to resume a turn after a disconnect, including a turn waiting for a person to approve a tool call.
 
 Application callbacks and explicitly host-placed integrations run in their configured hosts.
 

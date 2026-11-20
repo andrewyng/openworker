@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-pub const PROTOCOL: &str = "openworker.session-loop.v1";
+mod cache;
+use cache::{Receiver, Update};
+
+pub const PROTOCOL: &str = "openworker.session-loop.v2";
 
 /// A native OpenShell provider may front a private, operator-pinned inference
 /// endpoint. Public and ordinary SDK routes keep the existing HTTPS policy.
@@ -39,14 +42,10 @@ pub fn inference_base(base: &str) -> Result<String> {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ContextFrame {
-    pub session: String,
-    pub turn: String,
+struct ModelStart {
+    pub seq: u64,
     pub attempt: String,
     pub model: String,
-    pub instructions: String,
-    pub history: Vec<Value>,
-    pub tools: Vec<Value>,
     pub output_limit: u32,
     pub scripted: bool,
     pub reasoning: bool,
@@ -81,10 +80,7 @@ async fn frame(input: &mut (impl AsyncBufRead + Unpin)) -> Result<Option<Value>>
 const CONTEXT_LIMIT: usize = 2 * crate::attachments::MAX_SESSION;
 const CHUNK: usize = 192 * 1024;
 
-async fn read_context(
-    first: Value,
-    input: &mut (impl AsyncBufRead + Unpin),
-) -> Result<ContextFrame> {
+async fn read_context(first: Value, input: &mut (impl AsyncBufRead + Unpin)) -> Result<Update> {
     let Some(size) = first.get("contextBytes") else {
         return Ok(serde_json::from_value(first)?);
     };
@@ -113,7 +109,7 @@ async fn read_context(
 }
 
 #[cfg(not(windows))]
-async fn send_context(wire: &mut crate::sandbox::ExecStream, context: &ContextFrame) -> Result<()> {
+async fn send_context(wire: &mut crate::sandbox::ExecStream, context: &Update) -> Result<()> {
     let bytes = serde_json::to_vec(context)?;
     ensure!(
         bytes.len() <= CONTEXT_LIMIT,
@@ -139,6 +135,29 @@ async fn send(out: &mut (impl AsyncWrite + Unpin), value: Value) -> Result<()> {
     Ok(())
 }
 
+// Control messages and model starts share the ordered stream. A retried
+// cache update can arrive while the worker is committing the model output.
+async fn proposal_control(
+    input: &mut (impl AsyncBufRead + Unpin),
+    output: &mut (impl AsyncWrite + Unpin),
+    cache: &mut Receiver,
+    session: &str,
+    turn: &str,
+) -> Result<Option<Value>> {
+    while let Some(value) = frame(input).await? {
+        if value.get("session").is_none() && value.get("contextBytes").is_none() {
+            return Ok(Some(value));
+        }
+        let update = read_context(value, input).await?;
+        ensure!(
+            update.seq == cache.seq && cache.apply(update, session, turn)?,
+            "Context changed during a model attempt"
+        );
+        send(output, json!({"contextAck":cache.seq})).await?;
+    }
+    Ok(None)
+}
+
 pub async fn serve(
     mut input: impl AsyncBufRead + Unpin,
     mut output: impl AsyncWrite + Unpin,
@@ -157,12 +176,22 @@ pub async fn serve(
     );
     send(&mut output, json!({"request":"context"})).await?;
 
+    let mut cache = Receiver::default();
+    let mut attempts = std::collections::HashSet::new();
     while let Some(v) = frame(&mut input).await? {
-        let c = read_context(v, &mut input).await?;
-        ensure!(
-            c.session == session && c.turn == turn,
-            "Loop assignment changed"
-        );
+        if v.get("attempt").is_none() {
+            let update = read_context(v, &mut input).await?;
+            let reply = if cache.apply(update, session, turn)? {
+                json!({"contextAck":cache.seq})
+            } else {
+                json!({"needSnapshot":cache.seq})
+            };
+            send(&mut output, reply).await?;
+            continue;
+        }
+        let c: ModelStart = serde_json::from_value(v)?;
+        cache.start(c.seq)?;
+        ensure!(attempts.insert(c.attempt.clone()), "Repeated model attempt");
         ensure!(
             c.output_limit > 0 && !c.attempt.is_empty(),
             "Invalid model assignment"
@@ -174,16 +203,22 @@ pub async fn serve(
         let request = async {
             if c.scripted {
                 model
-                    .next_limited(&c.instructions, &c.history, &c.tools, c.output_limit, tx)
+                    .next_limited(
+                        &cache.instructions,
+                        &cache.history,
+                        &cache.tools,
+                        c.output_limit,
+                        tx,
+                    )
                     .await
             } else {
                 model
                     .sandbox_inference(
                         c.api,
                         &c.base_url,
-                        &c.instructions,
-                        &c.history,
-                        &c.tools,
+                        &cache.instructions,
+                        &cache.history,
+                        &cache.tools,
                         c.output_limit,
                         tx,
                     )
@@ -234,7 +269,9 @@ pub async fn serve(
             json!({"attempt":c.attempt,"next":next,"proposal":complete.output,"usage":complete.usage}),
         )
         .await?;
-        let Some(ack) = frame(&mut input).await? else {
+        let Some(ack) =
+            proposal_control(&mut input, &mut output, &mut cache, session, turn).await?
+        else {
             return Ok(());
         };
         if ack["discarded"] == c.attempt {
@@ -249,8 +286,11 @@ pub async fn serve(
             send(&mut output, json!({"finished":c.attempt})).await?;
             return Ok(());
         }
+        cache.committed(complete.output)?;
         send(&mut output, json!({"waitingForTools":c.attempt})).await?;
-        let Some(outcome) = frame(&mut input).await? else {
+        let Some(outcome) =
+            proposal_control(&mut input, &mut output, &mut cache, session, turn).await?
+        else {
             return Ok(());
         };
         if outcome["park"] == turn {
@@ -328,6 +368,8 @@ mod driver {
         attempt: String,
         digest: String,
         waiting_tools: bool,
+        cache: cache::Sender,
+        proposed: Vec<[u8; 32]>,
     }
     pub struct Driver {
         provider: Arc<OpenShell>,
@@ -378,7 +420,7 @@ mod driver {
             );
             let mut current = self.active.lock().await;
             let saved = current.take();
-            let (mut reservation, mut wire) = match saved {
+            let (mut reservation, mut wire, mut cache) = match saved {
                 Some(mut live) if live.turn == turn => {
                     let next = if live.waiting_tools {
                         json!({"toolsSettled":live.attempt})
@@ -390,7 +432,7 @@ mod driver {
                         live.wire.line().await? == json!({"request":"context"}),
                         "Loop did not request next context"
                     );
-                    (live.reservation, live.wire)
+                    (live.reservation, live.wire, live.cache)
                 }
                 other => {
                     if let Some(mut old) = other {
@@ -429,7 +471,7 @@ mod driver {
                                 false,
                                 false,
                             )?;
-                            (guard, wire)
+                            (guard, wire, cache::Sender::default())
                         }
                         Err(e) => {
                             guard.release(true)?;
@@ -440,25 +482,38 @@ mod driver {
             };
             // Take the stream out of active before I/O: cancellation cannot reuse a partial response.
             let exchange = async {
-                send_context(
-                    &mut wire,
-                    &ContextFrame {
-                        session: sid.into(),
-                        turn: turn.into(),
-                        attempt: attempt.into(),
-                        model: model.name.clone(),
-                        instructions: instructions.into(),
-                        history: history.to_vec(),
-                        tools: tools.to_vec(),
-                        output_limit,
-                        scripted: model.scripted,
-                        reasoning: model.stream_reasoning,
-                        summary: model.budget_summary,
-                        api: self.api,
-                        base_url: self.base_url.clone(),
-                    },
-                )
-                .await?;
+                let mut update = cache.update(sid, turn, instructions, tools, history)?;
+                send_context(&mut wire, &update).await?;
+                let mut ack = wire.line().await?;
+                if update.base.is_some()
+                    && ack
+                        .get("needSnapshot")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|seq| seq < update.seq)
+                {
+                    update.base = None;
+                    update.instructions = Some(instructions.to_owned());
+                    update.tools = Some(tools.to_vec());
+                    update.history = history.to_vec();
+                    send_context(&mut wire, &update).await?;
+                    ack = wire.line().await?;
+                }
+                ensure!(
+                    ack == json!({"contextAck":update.seq}),
+                    "Context synchronization failed"
+                );
+                let start = ModelStart {
+                    seq: update.seq,
+                    attempt: attempt.into(),
+                    model: model.name.clone(),
+                    output_limit,
+                    scripted: model.scripted,
+                    reasoning: model.stream_reasoning,
+                    summary: model.budget_summary,
+                    api: self.api,
+                    base_url: self.base_url.clone(),
+                };
+                wire.send(serde_json::to_value(start)?).await?;
                 let mut bytes = 0;
                 loop {
                     let v = wire.line().await?;
@@ -481,12 +536,14 @@ mod driver {
                         Progress::Reasoning(d)
                     } else {
                         let done = proposal(&v, history, tools)?;
+                        let proposed = cache::Sender::proposal(&done.output)?;
                         tx.send(Progress::Complete(done))
                             .await
                             .context("Turn stopped")?;
-                        return Ok::<_, anyhow::Error>(crate::bundle::digest(&serde_json::to_vec(
-                            &v,
-                        )?));
+                        return Ok::<_, anyhow::Error>((
+                            crate::bundle::digest(&serde_json::to_vec(&v)?),
+                            proposed,
+                        ));
                     };
                     ensure!(
                         bytes <= crate::MAX_FRAME,
@@ -497,7 +554,7 @@ mod driver {
             }
             .await;
             match exchange {
-                Ok(digest) => {
+                Ok((digest, proposed)) => {
                     *current = Some(Live {
                         turn: turn.to_owned(),
                         reservation,
@@ -505,6 +562,8 @@ mod driver {
                         attempt: attempt.to_owned(),
                         digest,
                         waiting_tools: false,
+                        cache,
+                        proposed,
                     });
                     Ok(())
                 }
@@ -558,6 +617,7 @@ mod driver {
                     let unknown = live.wire.close().await.is_err();
                     let _ = live.reservation.release(unknown);
                 } else {
+                    live.cache.committed(std::mem::take(&mut live.proposed));
                     live.waiting_tools = true;
                     *current = Some(live);
                 }
@@ -631,7 +691,7 @@ mod tests {
     }
     #[tokio::test]
     async fn chunked_context_is_bounded_and_correlated() {
-        let c = json!({"session":"s","turn":"t","attempt":"a","model":"fixture","instructions":"test","history":[{"role":"user","content":"x".repeat(crate::MAX_FRAME)}],"tools":[],"output_limit":256,"scripted":true,"reasoning":false,"summary":false,"api":"chat-completions","base_url":"https://unused.invalid/v1"});
+        let c = json!({"session":"s","turn":"t","seq":1,"base":null,"instructions":"test","history":[{"role":"user","content":"x".repeat(crate::MAX_FRAME)}],"tools":[]});
         let bytes = serde_json::to_vec(&c).unwrap();
         let mut stream = Vec::new();
         for (n, chunk) in bytes.chunks(CHUNK).enumerate() {

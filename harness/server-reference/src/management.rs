@@ -100,7 +100,15 @@ pub fn release_config(config: &Config, release: &Entry, profile: &Entry) -> Resu
     let cache_key = if p.loop_placement.is_service() {
         release.digest.clone()
     } else {
-        digest(format!("sandbox-loop-v1:{}:{}", release.digest, profile.digest).as_bytes())
+        digest(
+            format!(
+                "{}:{}:{}",
+                openworker_runtime::loop_channel::PROTOCOL,
+                release.digest,
+                profile.digest
+            )
+            .as_bytes(),
+        )
     };
     manifest.version = cache_key.clone();
     manifest.integrations = r.integrations;
