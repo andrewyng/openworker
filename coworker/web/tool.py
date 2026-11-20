@@ -65,6 +65,7 @@ PROVIDER_HOSTS: dict[str, str | list[str]] = {
     "serper": "google.serper.dev",
     "exa": "api.exa.ai",
     "firecrawl": "api.firecrawl.dev",
+    "outcrawl": "api.outcrawl.ai",
 }
 
 # Other environment names a provider's key may come under, beside `{NAME}_API_KEY`: You.com's

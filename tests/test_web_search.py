@@ -1,7 +1,7 @@
 """Tests for web search — provider abstraction, the tool, and config resolution.
 
 No network: a FakeProvider is injected; third-party key handling and the REST config path
-are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl.
+are exercised without hitting DuckDuckGo/Tavily/Brave/Serper/Exa/Firecrawl/Outcrawl.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from coworker.web.providers import (
     DuckDuckGoProvider,
     ExaProvider,
     FirecrawlProvider,
+    OutcrawlProvider,
     SerperProvider,
     TavilyProvider,
     WebSearchProvider,
@@ -96,6 +97,9 @@ def test_build_provider_third_party_requires_key():
     with pytest.raises(ValueError):
         build_provider("firecrawl")  # no key
     assert isinstance(build_provider("firecrawl", "fc-x"), FirecrawlProvider)
+    with pytest.raises(ValueError):
+        build_provider("outcrawl")  # no key
+    assert isinstance(build_provider("outcrawl", "oc-x"), OutcrawlProvider)
 
 
 def test_serper_sends_correct_request_and_maps_organic_results(monkeypatch):
@@ -215,6 +219,37 @@ def test_firecrawl_maps_v2_search_response(monkeypatch):
     ]
 
 
+def test_outcrawl_maps_v1_search_response(monkeypatch):
+    import httpx
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured.update(url=url, headers=headers, json=json)
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "hits": [
+                    {"title": "t0", "url": "https://x/0", "snippet": "s0"},
+                    {"title": None, "url": "https://x/1"},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    results = OutcrawlProvider("oc-key").search("claude api", max_results=2)
+
+    assert captured["url"] == "https://api.outcrawl.ai/v1/search"
+    assert captured["headers"]["Authorization"] == "Bearer oc-key"
+    assert captured["json"] == {"query": "claude api", "limit": 2}
+    assert [(r.title, r.url, r.snippet) for r in results] == [
+        ("t0", "https://x/0", "s0"),
+        ("", "https://x/1", ""),
+    ]
+
+
+
 def test_keyed_providers_raise_on_http_errors(monkeypatch):
     """A 401/429/5xx surfaces as an error instead of an empty result list."""
     import httpx
@@ -230,6 +265,7 @@ def test_keyed_providers_raise_on_http_errors(monkeypatch):
         SerperProvider("k"),
         ExaProvider("k"),
         FirecrawlProvider("k"),
+        OutcrawlProvider("k"),
         YouProvider(),
         YouProvider("k"),
     ):
@@ -423,7 +459,9 @@ def test_web_search_rest_lists_providers_in_registry_order(tmp_path, monkeypatch
         "has_key": False, "key_source": None, "key_env": "", "supports_fetch": False,
     }
     assert by["tavily"]["key_mode"] == "required" and by["tavily"]["supports_fetch"] is True
-    assert {n for n, p in by.items() if p["supports_fetch"]} == {"exa", "firecrawl", "tavily"}
+    assert {n for n, p in by.items() if p["supports_fetch"]} == {
+        "exa", "firecrawl", "outcrawl", "tavily",
+    }
     assert by["you"]["key_mode"] == "optional" and by["you"]["key_url"]
 
 
