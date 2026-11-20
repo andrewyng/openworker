@@ -7,6 +7,7 @@ tools return a clear setup error instead of breaking engine construction.
 from __future__ import annotations
 
 import re
+import os
 import tempfile
 import threading
 import time
@@ -182,10 +183,19 @@ class _BrowserController:
                 from playwright.sync_api import sync_playwright
 
                 self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(headless=False)
-                self._context = self._browser.new_context(
-                    viewport={"width": 1280, "height": 900}
-                )
+                if os.environ.get("COWORKER_DEDICATED_BOT_RUNTIME") == "1":
+                    from ..secrets import state_dir
+
+                    profile = state_dir() / "browser-profile"
+                    profile.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    self._context = self._playwright.chromium.launch_persistent_context(
+                        str(profile), headless=True, viewport={"width": 1280, "height": 900},
+                    )
+                else:
+                    self._browser = self._playwright.chromium.launch(headless=False)
+                    self._context = self._browser.new_context(
+                        viewport={"width": 1280, "height": 900}
+                    )
                 # Vet every navigation (redirect / JS / meta-refresh), not just the URL the
                 # model passed to browser_open_url, before its request goes out.
                 self._context.route("**/*", _guard_route)

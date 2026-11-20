@@ -160,6 +160,8 @@ interface Props {
   // setup-row picker (UX-029).
   onOpenPersona: (id: string) => void;
   onOpenScheduled: () => void;
+  onOpenBots?: () => void;
+  botsActive?: boolean;
   // Scheduled-band row click: open the Automations surface ON that automation (UX-023).
   onOpenAutomation: (id: string) => void;
   onOpenIntegrations: () => void;
@@ -1119,6 +1121,13 @@ export function Sidebar(props: Props) {
         </button>
       </div>
 
+      {props.onOpenBots && <div className="px-2.5 mt-0.5">
+        <button data-testid="nav-bots" onClick={props.onOpenBots}
+          className={"w-full flex items-center gap-2.5 px-2 py-1.5 rounded-[7px] text-ui text-left hover:bg-chromeHover " +
+            (props.botsActive ? "text-ink bg-chromeHover" : "text-muted")}>
+          <Icon name="sparkle" size={15} className="shrink-0" />{t("bots.title")}
+        </button>
+      </div>}
       {/* Automations: a first-class nav row (UX-023) — the account menu keeps its entry.
           The badge is the cross-automation unseen-run total. */}
       <div className="px-2.5 mt-0.5">

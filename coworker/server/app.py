@@ -2910,6 +2910,49 @@ def create_app(manager: SessionManager) -> FastAPI:
             await manager._dispatch_inbound(event)
             return {"ok": True}
 
+    # -- persistent personal bots ----------------------------------------------
+    @app.get("/v1/bots")
+    def bots_list() -> dict[str, Any]:
+        return {"bots": manager.bots.store.list()}
+
+    @app.get("/v1/bots/runtime")
+    def bots_runtime() -> dict[str, Any]:
+        return manager.bots.runtime()
+
+    @app.post("/v1/bots")
+    def bots_create(body: dict) -> dict[str, Any]:
+        try:
+            return {"ok": True, "bot": manager.bots.create(body)}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/v1/bots/{bot_id}")
+    def bots_get(bot_id: str) -> dict[str, Any]:
+        bot = manager.bots.store.get(bot_id)
+        if bot is None:
+            raise HTTPException(404, "Bot not found")
+        return {"bot": bot, "jobs": manager.bots.store.jobs(bot_id),
+                "running": manager.is_running(bot["session_id"])}
+
+    @app.patch("/v1/bots/{bot_id}")
+    def bots_update(bot_id: str, body: dict) -> dict[str, Any]:
+        if set(body) != {"enabled"} or type(body["enabled"]) is not bool:
+            raise HTTPException(400, "Provide an enabled boolean")
+        try:
+            return {"ok": True, "bot": manager.bots.set_enabled(bot_id, body["enabled"])}
+        except KeyError as exc:
+            raise HTTPException(404, "Bot not found") from exc
+
+    @app.post("/v1/bots/{bot_id}/tasks", status_code=202)
+    def bots_delegate(bot_id: str, body: dict) -> dict[str, Any]:
+        bot = manager.bots.store.get(bot_id)
+        if bot is None:
+            raise HTTPException(404, "Bot not found")
+        prompt = body.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20000:
+            raise HTTPException(400, "Prompt must contain 1–20000 characters")
+        return {"ok": True, "job_id": manager.bots.store.enqueue(bot_id, prompt.strip())}
+
     # -- automations (scheduled tasks) ------------------------------------------
     @app.get("/v1/automations")
     def automations_list() -> dict[str, Any]:

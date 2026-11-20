@@ -124,6 +124,7 @@ The OpenWorker Desktop App is local-first. Everything lives on your machine: the
 | [Desktop App model setup](docs/desktop-models.md) | Cloud providers, OpenRouter accounts and custom endpoints. |
 | [Local models](docs/local-servers.md) | Connect models running on your own hardware. |
 | [Approvals and safety](#governed-by-design) | How the Desktop App handles permissions and records actions. |
+| [Persistent personal bots](docs/desktop/guides/bots.md) | Named assistants with a durable conversation, delegated tasks and proactive check-ins. |
 | [NVIDIA OpenShell](docs/openshell.md) | Set up sandboxed command and file execution for the Desktop App. |
 | [Harness SDK](harness/README.md) | SDK installation, architecture and examples. |
 | [Build a desktop app](docs/harness/guides/desktop.md) · [Build a web app](docs/harness/guides/server.md) | Learn the SDK through working applications. |
