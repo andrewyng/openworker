@@ -1195,6 +1195,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       { name: "serper", display_name: "Serper", key_mode: "required", key_url: "https://serper.dev", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: false },
       { name: "exa", display_name: "Exa", key_mode: "required", key_url: "https://exa.ai", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: true },
       { name: "firecrawl", display_name: "Firecrawl", key_mode: "required", key_url: "https://firecrawl.dev", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: true },
+      { name: "specstream", display_name: "SpecStream", key_mode: "required", key_url: "https://specstream.ai/signup", key_source: null as "store" | "env" | null, key_env: "", supports_fetch: true },
     ],
   };
 

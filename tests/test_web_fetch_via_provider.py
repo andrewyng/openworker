@@ -1,9 +1,9 @@
 """`web_fetch` through the search service (Settings ▸ Customization).
 
-No network: httpx is stubbed. Covers the three providers' request/response shapes
-(Exa /contents, Firecrawl /v2/scrape, Tavily /extract), when `fetch_provider` picks one,
-the address guard running before the provider is asked, the fallback to a local fetch
-with a notice, and the approval card's `fetch_provider` extra.
+No network: httpx is stubbed. Covers the providers' request/response shapes
+(Exa /contents, Firecrawl /v2/scrape, Tavily /extract, SpecStream /v1/extract), when
+`fetch_provider` picks one, the address guard running before the provider is asked, the
+fallback to a local fetch with a notice, and the approval card's `fetch_provider` extra.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from coworker.web.providers import (
     BraveProvider,
     ExaProvider,
     FirecrawlProvider,
+    SpecStreamProvider,
     TavilyProvider,
 )
 
@@ -31,10 +32,39 @@ def _post_stub(monkeypatch, status, payload, captured):
     monkeypatch.setattr(httpx, "post", fake_post)
 
 
-def test_only_exa_firecrawl_and_tavily_fetch_pages():
-    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {"exa", "firecrawl", "tavily"}
+def test_only_the_fetch_capable_providers_fetch_pages():
+    assert {n for n, c in _PROVIDERS.items() if c.supports_fetch} == {
+        "exa",
+        "firecrawl",
+        "specstream",
+        "tavily",
+    }
     with pytest.raises(NotImplementedError):
         BraveProvider("k").fetch_page("https://example.com")
+
+
+def test_specstream_fetch_page_request_and_response(monkeypatch):
+    got = {}
+    _post_stub(monkeypatch, 200, {
+        "data": {
+            "status": "ok",
+            "results": [{"url": "https://example.com", "text": "page text"}],
+        },
+    }, got)
+    assert SpecStreamProvider("ss-k").fetch_page("https://example.com") == "page text"
+    assert got["url"] == "https://api.specstream.ai/v1/extract"
+    assert got["headers"]["Authorization"] == "Bearer ss-k"
+    assert got["json"] == {"urls": ["https://example.com"], "format": "markdown"}
+
+    # Anything but "ok" means there is no text to hand back.
+    for status in ("blocked", "not_found", "empty", "failed"):
+        _post_stub(monkeypatch, 200, {"data": {"status": status, "results": []}}, {})
+        with pytest.raises(RuntimeError, match=status):
+            SpecStreamProvider("ss-k").fetch_page("https://example.com")
+
+    _post_stub(monkeypatch, 401, {}, {})
+    with pytest.raises(httpx.HTTPStatusError):
+        SpecStreamProvider("ss-k").fetch_page("https://example.com")
 
 
 def test_exa_fetch_page_request_and_response(monkeypatch):
