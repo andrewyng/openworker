@@ -17,7 +17,7 @@ import {
   type ModelFit,
 } from "../../api";
 import { ProviderForm, type ProviderSetupState } from "../../providers/ProviderSetup";
-import { openExternal } from "../../tauri";
+import { openExternal, platformOS } from "../../tauri";
 import { fmtBytes, fmtContext } from "./LocalModels";
 
 const BUSY = new Set(["installing", "downloading", "loading", "checking"]);
@@ -308,7 +308,7 @@ function SetupCard({
           >
             {pickNow && (
               <div className="mt-2">
-                <Group label={t("llamacpp.suggested")} />
+                <Group label={platformOS() === "windows" ? t("llamacpp.suggested_pc") : platformOS() === "linux" ? t("llamacpp.suggested_linux") : t("llamacpp.suggested")} />
                 <div className="rounded-[10px] border border-line">
                   {setup.suggested.map((s) => (
                     <ModelRow
@@ -334,9 +334,13 @@ function SetupCard({
                       }
                     />
                   ))}
-                  {setup.suggested.length === 0 && <p className="px-3 py-2.5 text-meta text-faint">{t("llamacpp.none_fit")}</p>}
+                  {setup.suggested.length === 0 && (
+                    <p className="px-3 py-2.5 text-meta text-faint">
+                      {platformOS() === "windows" ? t("llamacpp.none_fit_pc") : platformOS() === "linux" ? t("llamacpp.none_fit_linux") : t("llamacpp.none_fit")}
+                    </p>
+                  )}
                 </div>
-                <Group label={t("llamacpp.on_this_mac")} />
+                <Group label={platformOS() === "windows" ? t("llamacpp.on_this_pc") : platformOS() === "linux" ? t("llamacpp.on_this_linux") : t("llamacpp.on_this_mac")} />
                 <div className="rounded-[10px] border border-line">
                   {setup.ollama.map((o) => (
                     <ModelRow key={o.name} id={`o:${o.name}`} picked={picked} onPick={setPicked} name={o.name} sub={t("llamacpp.from_ollama")} size={o.size} fit={o.fit} />

@@ -46,7 +46,7 @@ describe("WalletChips", () => {
   it("renders This Mac + machine chips; offline machines are disabled", async () => {
     render(<WalletChips profiles={["provider:openai"]} />);
     await waitFor(() => expect(screen.getByTestId("wallet-chip-demo-vm")).toBeTruthy());
-    expect(screen.getByText("This Mac")).toBeTruthy();
+    expect(screen.getByText(/This (Mac|PC|Linux PC)/)).toBeTruthy();
     expect((screen.getByTestId("wallet-chip-old-macpro") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("wallet-chip-demo-vm") as HTMLButtonElement).disabled).toBe(false);
   });

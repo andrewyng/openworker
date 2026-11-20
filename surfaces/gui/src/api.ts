@@ -2891,11 +2891,17 @@ export interface SystemFacts {
   storage_total_bytes: number | null;
   model_memory_bytes: number | null;
   runs_well_up_to_bytes: number | null;
+  platform?: string;
 }
 
 export async function getSystemFacts(): Promise<SystemFacts> {
   const res = await fetch(`${httpBase()}/v1/system`);
-  return res.json();
+  const data = await res.json();
+  if (data?.platform) {
+    const { setBackendPlatform } = await import("./tauri");
+    setBackendPlatform(data.platform);
+  }
+  return data;
 }
 
 /** One model a local server holds, as the settings table shows it. */
@@ -3956,9 +3962,14 @@ export async function getCloudMachines(): Promise<CloudMachinesInfo> {
  * was removed, a sandbox came up) so pickers elsewhere reload their list. */
 export const MACHINES_CHANGED = "openworker:machines-changed";
 
-export async function getMachines(): Promise<{ machines: Machine[]; armed: boolean }> {
+export async function getMachines(): Promise<{ machines: Machine[]; armed: boolean; platform?: string }> {
   const r = await fetch(`${httpBase()}/v1/machines`);
-  return r.json();
+  const data = await r.json();
+  if (data?.platform) {
+    const { setBackendPlatform } = await import("./tauri");
+    setBackendPlatform(data.platform);
+  }
+  return data;
 }
 
 /** Opening the "Add a machine" card arms enrollment: mints ONE single-use

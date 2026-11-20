@@ -61,6 +61,7 @@ openshell = ["grpcio>=1.60"]
 # board stay runnable as modules (`python -m coworker.server.run`, …) for development.
 [project.scripts]
 openworker = "coworker.cli:main"
+openworker-server = "coworker.server.run:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

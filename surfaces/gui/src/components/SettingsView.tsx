@@ -60,6 +60,7 @@ import {
   setKeepAwake,
   startDictation,
   stopDictation,
+  thisMachineOption,
   verifyDictationModel,
   type DictationDownloadProgress,
   type DictationStatus,
@@ -426,7 +427,7 @@ export function SettingsView({
                   data-testid="machine-scope-picker"
                   aria-label={t("settingsx.machine_scope_aria")}
                 >
-                  {!isCloudMode() && <option value="">{t("settingsx.this_mac_option")}</option>}
+                  {!isCloudMode() && <option value="">{thisMachineOption(t)}</option>}
                   {machines
                     .filter((m) => m.origin !== "cloud")
                     .map((m) => (

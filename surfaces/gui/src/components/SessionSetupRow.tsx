@@ -7,7 +7,7 @@ import {
   type Persona,
   type RecentWorkspace,
 } from "../api";
-import { chooseFolder } from "../tauri";
+import { chooseFolder, onMachineThisMachine } from "../tauri";
 import { fullPersonaName } from "../personaScope";
 import { baseName } from "../paths";
 import { Icon } from "./Icon";
@@ -232,7 +232,7 @@ export function SessionSetupRow(props: Props) {
           <button className={chip} data-testid="runson-chip" onClick={() => toggle("machine")}>
             <span aria-hidden>⌂</span>
             <span className="max-w-[160px] truncate">
-              {currentMachine ? currentMachine.name : props.cloud ? t("onmachine.setup.choose_machine") : t("onmachine.this_mac")}
+              {currentMachine ? currentMachine.name : props.cloud ? t("onmachine.setup.choose_machine") : onMachineThisMachine(t)}
             </span>
             <Icon name="chevronDown" size={12} className="text-faint" />
           </button>
@@ -249,7 +249,7 @@ export function SessionSetupRow(props: Props) {
                     props.onPickMachine!(null);
                   }}
                 >
-                  <span className="block text-ui font-medium text-ink">{t("onmachine.this_mac")}</span>
+                  <span className="block text-ui font-medium text-ink">{onMachineThisMachine(t)}</span>
                 </button>
               )}
               {machines.map((m, i) => (

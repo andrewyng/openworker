@@ -61,13 +61,32 @@ beforeEach(() => {
 });
 
 describe("MachinesSection", () => {
-  it("renders This Mac plus machine rows with presence", async () => {
+  it("renders This PC/Mac plus machine rows with presence", async () => {
     render(<MachinesSection />);
-    expect(screen.getByText("This Mac")).toBeTruthy();
+    expect(screen.getByText(/This (Mac|PC|Linux PC)/)).toBeTruthy();
     await waitFor(() => expect(screen.getByText("hetzner-box")).toBeTruthy());
     expect(screen.getByText(/online/)).toBeTruthy();
     expect(screen.getByText(/last seen/)).toBeTruthy();
     expect(screen.getByText(/v0\.2\.0/)).toBeTruthy();
+  });
+
+  it("detects OS and displays This PC on Windows, This Mac on macOS, This Linux PC on Linux", () => {
+    (globalThis as any).__OCW_PLATFORM__ = "windows";
+    const { unmount: u1 } = render(<MachinesSection />);
+    expect(screen.getByText("This PC")).toBeTruthy();
+    u1();
+
+    (globalThis as any).__OCW_PLATFORM__ = "macos";
+    const { unmount: u2 } = render(<MachinesSection />);
+    expect(screen.getByText("This Mac")).toBeTruthy();
+    u2();
+
+    (globalThis as any).__OCW_PLATFORM__ = "linux";
+    const { unmount: u3 } = render(<MachinesSection />);
+    expect(screen.getByText("This Linux PC")).toBeTruthy();
+    u3();
+
+    delete (globalThis as any).__OCW_PLATFORM__;
   });
 
   it("opening Add a machine arms enrollment and shows the one-liner; closing disarms", async () => {

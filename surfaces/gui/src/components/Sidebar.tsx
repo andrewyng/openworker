@@ -28,6 +28,7 @@ import { Icon, type IconName } from "./Icon";
 import { personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
+import { onMachineThisMachine } from "../tauri";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
@@ -1225,7 +1226,7 @@ export function Sidebar(props: Props) {
                           {/* `k` is the stable group key; only the two built-in labels translate. */}
                           <span>
                             {k === "This Mac"
-                              ? t("onmachine.this_mac")
+                              ? onMachineThisMachine(t)
                               : k === "machine"
                                 ? t("onmachine.machine_fallback")
                                 : k}

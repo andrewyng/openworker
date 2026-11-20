@@ -35,6 +35,7 @@ import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { ConfigurationsSection, type MachineRef } from "./ConfigurationsSection";
 import { SlackHowItWorks } from "./SlackHowItWorks";
+import { platformOS, thisMachineName } from "../../tauri";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, XBTN } from "./ui";
 
 // UX-049 (owner, 2026-09-03/04): the per-connector glance page under Settings ▸ App.
@@ -125,7 +126,7 @@ export function ConnectorGlance({
 
   const title = TITLES[connector] ?? connector;
   const nameOf = (id: string): string => {
-    if (id === "desktop" || !id) return desktop ? t("connglance.this_mac") : t("connglance.the_desktop");
+    if (id === "desktop" || !id) return desktop ? thisMachineName(t) : t("connglance.the_desktop");
     return machines.find((m) => brokerId(m) === id)?.name || id;
   };
   const machineOf = (id: string) => machines.find((m) => brokerId(m) === id);
@@ -259,7 +260,11 @@ export function ConnectorGlance({
         </div>
         {desktop && local && onManage && (
           <button className={PILL_LINE} data-testid={`manage-local-${connector}`} onClick={() => onManage(connector)}>
-            {t("connglance.manage_on_this_mac")}
+            {platformOS() === "windows"
+              ? t("connglance.manage_on_this_pc")
+              : platformOS() === "linux"
+                ? t("connglance.manage_on_this_linux")
+                : t("connglance.manage_on_this_mac")}
           </button>
         )}
         {desktop && local && connector === "slack" && (
@@ -414,7 +419,7 @@ export function ConnectorGlance({
           <div className={ROW} key={`local-${s.session_id}-${s.channel}`} data-testid="listening-local">
             <div className="min-w-0 flex-1">
               <div className="text-ui text-ink truncate">{s.channel_name ? `#${s.channel_name}` : channelLabel(s.channel)}</div>
-              <div className="text-meta text-muted truncate">💻 {t("connglance.this_mac")} · {s.session_title || s.session_id} · {t("connglance.local_only")}</div>
+              <div className="text-meta text-muted truncate">💻 {thisMachineName(t)} · {s.session_title || s.session_id} · {t("connglance.local_only")}</div>
             </div>
             <button className={XBTN} title={t("connector.unsubscribe_title")} onClick={() => void unsubscribeLocal(s)}>
               ×
@@ -475,7 +480,13 @@ function LocalListening({ subs, onChanged }: { subs: Subscription[]; onChanged: 
             <span className="font-medium truncate" title={s.session_id}>{s.session_title || s.session_id}</span>
             <span className="text-faint">←</span>
             <span className="text-muted truncate" title={s.channel}>{s.channel_name ? `#${s.channel_name}` : s.channel}</span>
-            <span className="text-label text-faint">{t("connglance.this_mac_only")}</span>
+            <span className="text-label text-faint">
+              {platformOS() === "windows"
+                ? t("connglance.this_pc_only")
+                : platformOS() === "linux"
+                  ? t("connglance.this_linux_only")
+                  : t("connglance.this_mac_only")}
+            </span>
             <button
               className={XBTN + " ml-auto"}
               title={t("connector.unsubscribe_title")}
