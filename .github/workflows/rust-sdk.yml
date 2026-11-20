@@ -182,6 +182,9 @@ jobs:
         if: matrix.shard == 'workspaces'
         run: |
           python3 -m unittest discover -s ../deploy/workspaces
+          python3 -m venv "$RUNNER_TEMP/modal-tests"
+          "$RUNNER_TEMP/modal-tests/bin/pip" install -r ../deploy/workspaces/modal_provider/requirements.txt
+          (cd ../deploy/workspaces && "$RUNNER_TEMP/modal-tests/bin/python" -m unittest modal_provider.test_backend)
           npm --prefix typescript-sdk ci
           npm --prefix typescript-sdk run build
           cargo test --locked -p openworker-runtime --features workspace-reference --test workspace_provider

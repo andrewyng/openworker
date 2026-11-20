@@ -11,7 +11,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from cluster import Cluster, Failure
+from errors import Failure
 
 
 def identity(prefix):
@@ -34,13 +34,13 @@ def profile(options, default="small"):
 
 
 class Controller:
-    def __init__(self):
+    def __init__(self, backend_factory=None, state_dir="/state"):
         # Recreate deployment plus storage lock prevents simultaneous controllers.
-        self.lock_file = open("/state/writer.lock", "a")
+        self.lock_file = open(os.path.join(state_dir, "writer.lock"), "a")
         fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.lock = threading.Lock()
         self.inflight = {}
-        self.db = sqlite3.connect("/state/workspaces.sqlite", check_same_thread=False)
+        self.db = sqlite3.connect(os.path.join(state_dir, "workspaces.sqlite"), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             PRAGMA foreign_keys=ON;
@@ -55,7 +55,22 @@ class Controller:
         with self.db:
             if not self.row("SELECT id FROM installation"):
                 self.db.execute("INSERT INTO installation VALUES(?)", (uuid.uuid4().hex,))
-        self.cluster = Cluster(self.row("SELECT id FROM installation")["id"])
+        if backend_factory is None:
+            from cluster import Cluster
+            backend_factory = Cluster
+        self.backend = backend_factory(self.row("SELECT id FROM installation")["id"])
+        # Previous releases only supported Kubernetes. Persist the backend identity
+        # so a configuration change cannot silently recreate project data elsewhere.
+        identity = self.backend.identity
+        with self.db:
+            self.db.execute("CREATE TABLE IF NOT EXISTS backend_identity(value TEXT PRIMARY KEY)")
+            stored = self.row("SELECT value FROM backend_identity")
+            if stored is None:
+                if identity != "kubernetes" and self.row("SELECT 1 FROM data LIMIT 1"):
+                    raise ValueError("Existing workspace state belongs to Kubernetes")
+                self.db.execute("INSERT INTO backend_identity VALUES(?)", (identity,))
+            elif stored["value"] != identity:
+                raise ValueError("Workspace backend identity differs from the stored registration")
         self.idle = int(os.getenv("IDLE_SECONDS", "600"))
 
     def row(self, sql, *parameters):
@@ -71,21 +86,21 @@ class Controller:
         data = required(self.row("SELECT * FROM data WHERE id=?", row["data"]))
         if data["deleting"]:
             raise Failure("workspace_in_use", 409)
-        uid = self.cluster.claim(data["id"], data["uid"])
+        uid = self.backend.claim(data["id"], data["uid"])
         if not data["uid"]:
             with self.db:
                 self.db.execute("UPDATE data SET uid=? WHERE id=?", (uid, data["id"]))
         previous = row["uid"]
-        if previous and self.cluster.resource("pod", row["id"], previous) is None:
+        if previous and not self.backend.has_compute(row["id"], previous):
             # The replacement intent is durable before asking Kubernetes to create.
             with self.db:
                 self.db.execute("UPDATE compute SET uid=NULL WHERE id=?", (row["id"],))
             previous = None
-        pod = self.cluster.pod(row["id"], data["id"], row["profile"], previous)
-        if pod.metadata.uid != previous:
+        physical = self.backend.compute(row["id"], data["id"], row["profile"], previous, uid)
+        if physical != previous:
             with self.db:
-                self.db.execute("UPDATE compute SET uid=? WHERE id=?", (pod.metadata.uid, row["id"]))
-        return pod
+                self.db.execute("UPDATE compute SET uid=? WHERE id=?", (physical, row["id"]))
+        return physical
 
     def open(self, req):
         key = req.get("key")
@@ -111,7 +126,7 @@ class Controller:
                     raise Failure("workspace_profile_mismatch", 409)
                 workspace = current["id"]
             else:
-                if (self.cluster.mode == "ReadWriteOncePod" or os.getenv("ALLOW_SHARED_COMPUTE") == "false") and self.row(
+                if self.backend.single_mount and self.row(
                     "SELECT 1 FROM compute c JOIN keys k ON k.key=c.key WHERE k.data=?", data_id):
                     raise Failure("workspace_shared_mount_unsupported", 409)
                 workspace = identity("ws")
@@ -132,7 +147,7 @@ class Controller:
         # Persist intent before dispatch; return busy on timeout so retry operates
         # on the original UID. Background reconciliation resumes interrupted deletes.
         deadline = time.monotonic() + 6
-        while not self.cluster.remove(kind, name, uid):
+        while not self.backend.remove(kind, name, uid):
             if time.monotonic() >= deadline:
                 raise Failure("workspace_in_use", 409)
             time.sleep(.2)
@@ -145,7 +160,7 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE compute SET stopping=1 WHERE id=?", (workspace,))
-        self.drain("pod", workspace, row["uid"])
+        self.drain("compute", workspace, row["uid"])
         with self.db:
             self.db.execute("DELETE FROM compute WHERE id=?", (workspace,))
 
@@ -157,7 +172,7 @@ class Controller:
             raise Failure("workspace_in_use", 409)
         with self.db:
             self.db.execute("UPDATE data SET deleting=1 WHERE id=?", (data,))
-        self.drain("pvc", data, row["uid"])
+        self.drain("data", data, row["uid"])
         with self.db:
             self.db.execute("DELETE FROM data WHERE id=?", (data,))
 
@@ -220,19 +235,19 @@ class Controller:
                 return {}
             if action != "file":
                 raise Failure("invalid_workspace_request", 400)
-            pod = self.provision(row)
+            physical = self.provision(row)
             deadline = time.monotonic() + 15
-            while not any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions or []):
-                if time.monotonic() > deadline:
+            while not self.backend.ready(workspace, physical):
+                if time.monotonic() >= deadline:
                     raise Failure()
                 time.sleep(.2)
-                pod = self.provision(self.compute(workspace))
+                physical = self.provision(self.compute(workspace))
             attachment = (workspace, session)
             self.inflight[attachment] = self.inflight.get(attachment, 0) + 1
         # Admission is fenced by the session attachment; independent operations
         # may now run concurrently. The application coordinates shared edits.
         try:
-            return self.cluster.file(workspace, req["operation"])
+            return self.backend.file(workspace, physical, req["operation"])
         finally:
             with self.lock:
                 self.inflight[attachment] -= 1
@@ -302,17 +317,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(503, {"error": "workspace_provider_unavailable"})
 
 
-if __name__ == "__main__":
-    controller = Controller()
+def serve(backend_factory=None):
+    controller = Controller(backend_factory, state_dir=os.getenv("WORKSPACE_STATE_DIR", "/state"))
     token = os.environ["WORKSPACE_SERVICE_TOKEN"]
     if len(token) < 32:
         raise ValueError("Workspace service requires a secret token")
-    server = Server(("", 8443), Handler)
+    server = Server((os.getenv("WORKSPACE_BIND_HOST", ""), int(os.getenv("WORKSPACE_PORT", "8443"))), Handler)
     server.capacity = threading.BoundedSemaphore(64)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    tls.load_cert_chain("/tls/tls.crt", "/tls/tls.key")
+    tls_dir = os.getenv("WORKSPACE_TLS_DIR", "/tls")
+    tls.load_cert_chain(os.path.join(tls_dir, "tls.crt"), os.path.join(tls_dir, "tls.key"))
     server.tls = tls
     server.auth = "Bearer " + token
     server.controller = controller
     threading.Thread(target=controller.reconcile, daemon=True).start()
     server.serve_forever()
+
+
+if __name__ == "__main__":
+    serve()

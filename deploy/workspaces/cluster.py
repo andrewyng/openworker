@@ -6,13 +6,12 @@ import time
 from kubernetes import client, config, stream
 from kubernetes.client.exceptions import ApiException
 
-
-class Failure(Exception):
-    def __init__(self, code="workspace_provider_unavailable", status=503):
-        self.code, self.status = code, status
+from errors import Failure
 
 
 class Cluster:
+    identity = "kubernetes"
+
     def __init__(self, owner):
         config.load_incluster_config()
         self.api = client.CoreV1Api()
@@ -20,6 +19,7 @@ class Cluster:
         self.owner = owner
         self.image = os.environ["RUNNER_IMAGE"]
         self.mode = os.getenv("DATA_MODE", "ReadWriteMany")
+        self.single_mount = self.mode == "ReadWriteOncePod" or os.getenv("ALLOW_SHARED_COMPUTE") == "false"
         self.node = os.getenv("PIN_NODE")
         self.spread = os.getenv("SPREAD_SHARED_DATA", "false") == "true"
         self.storage_class = os.environ["STORAGE_CLASS"]
@@ -30,6 +30,16 @@ class Cluster:
 
     def metadata(self, name):
         return {"name": name, "labels": {"ow-workspace-owner": self.owner}}
+
+    def has_compute(self, name, uid):
+        return self.resource("pod", name, uid) is not None
+
+    def compute(self, workspace, data, profile, previous_uid, data_uid):
+        return self.pod(workspace, data, profile, previous_uid).metadata.uid
+
+    def ready(self, workspace, uid):
+        pod = self.resource("pod", workspace, uid)
+        return pod is not None and any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions or [])
 
     def resource(self, kind, name, pinned=None):
         read = self.api.read_namespaced_pod if kind == "pod" else self.api.read_namespaced_persistent_volume_claim
@@ -109,6 +119,7 @@ class Cluster:
         return obj
 
     def remove(self, kind, name, uid):
+        kind = {"compute": "pod", "data": "pvc"}[kind]
         obj = self.resource(kind, name, uid)
         if obj is None:
             return True
@@ -122,7 +133,7 @@ class Cluster:
                     raise
         return False
 
-    def file(self, workspace, operation):
+    def file(self, workspace, physical_id, operation):
         # Use a separate API client for exec. The streaming transport temporarily
         # replaces the REST transport on the Kubernetes Python client instance.
         with client.ApiClient() as exec_client:

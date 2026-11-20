@@ -33,10 +33,10 @@ mod workspace_api;
 pub struct Config {
     #[serde(skip)]
     pub workspace_registry: openworker_runtime::workspaces::Registry,
-    #[serde(default)]
+    #[serde(default, alias = "workspace_services")]
     pub kubernetes_workspaces: std::collections::BTreeMap<
         String,
-        openworker_runtime::workspaces::kubernetes::K8sWorkspaceConfig,
+        openworker_runtime::workspaces::http::WorkspaceServiceConfig,
     >,
     /// Principals permitted to use each deployment-owned workspace service.
     #[serde(default)]
@@ -301,7 +301,7 @@ impl Config {
             runtime.workspaces.register(
                 name,
                 Arc::new(
-                    openworker_runtime::workspaces::kubernetes::K8sWorkspaceProvider::new(config)?,
+                    openworker_runtime::workspaces::http::WorkspaceServiceProvider::new(config)?,
                 ),
             )?;
         }

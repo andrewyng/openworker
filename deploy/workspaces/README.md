@@ -130,3 +130,5 @@ To test interrupted provisioning, interrupted deletion and idle reclamation sepa
 The [website builder example](../../harness/typescript-sdk/examples/website-builder/README.md) exercises both reviewer modes, app restart after idle reclamation and separate user projects.
 
 For the EKS website-builder test, set the trial release's `idleSeconds=35` and add `--eks-controller-namespace websites-control` to the physical verifier command in the example. It checks the bound controller PV's EBS driver, each project PV's EFS driver, and two different node names for Alice's separate workspaces. A same-node result fails qualification.
+
+The [Modal workspace provider](modal_provider/README.md) serves the same workspace API using Modal Sandboxes and Volumes.
