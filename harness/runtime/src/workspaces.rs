@@ -5,7 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
-pub mod kubernetes;
+pub mod http;
+pub mod kubernetes {
+    pub use super::http::{
+        WorkspaceServiceConfig as K8sWorkspaceConfig,
+        WorkspaceServiceProvider as K8sWorkspaceProvider,
+    };
+}
 #[cfg(any(test, feature = "workspace-reference"))]
 pub mod reference;
 

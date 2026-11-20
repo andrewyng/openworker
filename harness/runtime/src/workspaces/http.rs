@@ -1,4 +1,4 @@
-//! Native client for the separately deployed Kubernetes workspace service.
+//! HTTPS client for separately deployed workspace services.
 use super::*;
 use futures_util::StreamExt;
 use serde_json::json;
@@ -7,21 +7,21 @@ use zeroize::Zeroizing;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct K8sWorkspaceConfig {
+pub struct WorkspaceServiceConfig {
     pub endpoint: String,
     pub token_env: String,
     pub ca_file: Option<PathBuf>,
 }
 
 #[derive(Clone)]
-pub struct K8sWorkspaceProvider {
+pub struct WorkspaceServiceProvider {
     endpoint: reqwest::Url,
     http: reqwest::Client,
     token: Arc<Zeroizing<String>>,
 }
 
-impl K8sWorkspaceProvider {
-    pub fn new(config: &K8sWorkspaceConfig) -> Result<Self> {
+impl WorkspaceServiceProvider {
+    pub fn new(config: &WorkspaceServiceConfig) -> Result<Self> {
         let endpoint = reqwest::Url::parse(&config.endpoint)?;
         ensure!(
             endpoint.scheme() == "https"
@@ -104,7 +104,7 @@ impl K8sWorkspaceProvider {
         }))
     }
 }
-impl WorkspaceProvider for K8sWorkspaceProvider {
+impl WorkspaceProvider for WorkspaceServiceProvider {
     fn start(&self, options: ProviderOptions) -> ProviderFuture<'_, Arc<dyn WorkspaceClient>> {
         Box::pin(self.client("start", json!({"options":options})))
     }
@@ -123,7 +123,7 @@ impl WorkspaceProvider for K8sWorkspaceProvider {
     }
 }
 struct Client {
-    provider: K8sWorkspaceProvider,
+    provider: WorkspaceServiceProvider,
     profile: String,
 }
 impl WorkspaceClient for Client {

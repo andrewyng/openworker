@@ -3,6 +3,7 @@
 use super::*;
 use openworker_runtime::environment::Binding;
 use openworker_store_postgres::worker::{Factory, Options, Worker};
+use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
 use openworker_runtime::{
@@ -67,10 +68,13 @@ async fn kubernetes_workspace_recovery() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
-#[ignore = "requires a disposable Kubernetes websites registration, PostgreSQL, and physical verifier"]
+#[ignore = "requires a disposable websites registration, PostgreSQL, and physical verifier"]
 async fn website_builder_app() -> Result<()> {
     qualify(
-        Some(std::env::var("OW_K8S_WORKSPACES")?),
+        Some(
+            std::env::var("OW_WORKSPACE_SERVICES")
+                .or_else(|_| std::env::var("OW_K8S_WORKSPACES"))?,
+        ),
         Scenario::WebsiteBuilder,
     )
     .await
@@ -100,9 +104,12 @@ async fn qualify(k8s: Option<String>, scenario: Scenario) -> Result<()> {
             &json!({"version":2,"servers":[{"id":"coding","program":"$OPENWORKER","args":["mcp-coding","--workspace","$WORKSPACE"]}],"bindings":bindings}),
         )?,
     )?;
+    let runner = std::env::var_os("OW_WORKSPACE_TEST_RUNNER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/bin/true"));
     let mut cfg: Config = serde_json::from_value(json!({
         "database_env":"OW_PG_TEST_URL","schema":format!("ow_ws_{}",&id[..20]),"database_loopback_plaintext":true,
-        "state_root":root.path().join("state"),"bundle":bundle,"runner":"/bin/true","scripted":true,"model":"fixture",
+        "state_root":root.path().join("state"),"bundle":bundle,"runner":runner,"scripted":true,"model":"fixture",
         "api_token_file":"unused","actor":"tester","openshell":{"identity":"workspace-test","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"default","image":format!("example.invalid/runner@sha256:{}","a".repeat(64))},
         "service":{"id":"workspace-test","namespace":"test","agent":"base"},
         "reference_workspaces":{"research":root.path().join("research.db")}
