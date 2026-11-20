@@ -34,3 +34,5 @@ dist/
 
 # Reviewer eval run outputs stay local; the study archive lives in ocw-context (OPE-225).
 /reports/
+
+.review/
