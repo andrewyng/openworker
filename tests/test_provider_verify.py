@@ -260,6 +260,25 @@ def test_verify_nvidia_self_hosted_rejected_key_is_invalid(monkeypatch):
     ) == {"ok": False, "error": "Invalid API key."}
 
 
+def test_verify_atlascloud_uses_one_token_completion_probe(monkeypatch):
+    """Atlas Cloud's /models is public and its /chat/completions has no GET route, so the
+    default probes would reject a good key (404 -> "missing /v1")."""
+    cap: dict = {}
+    _patch_post(monkeypatch, status=200, capture=cap)
+
+    assert verify_provider_key("atlascloud", api_key="ac-key") == {"ok": True}
+    assert cap["url"] == "https://api.atlascloud.ai/v1/chat/completions"
+    assert cap["headers"]["Authorization"] == "Bearer ac-key"
+    assert cap["json"]["model"] == "zai-org/glm-5.2"
+    assert cap["json"]["max_tokens"] == 1
+
+    _patch_post(monkeypatch, status=401)
+    assert verify_provider_key("atlascloud", api_key="bad") == {
+        "ok": False,
+        "error": "Invalid API key.",
+    }
+
+
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")
