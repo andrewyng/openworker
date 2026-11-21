@@ -3162,48 +3162,73 @@ const automationMachines = new Map<string, string>();
 // The map is filled by getAutomations(); a call made before the list ever loaded (a reload
 // straight into a remote automation's page) would route to the local engine and 404. So
 // an unknown id loads the list once first (OPE-261).
-async function automationBase(id: string): Promise<string> {
+async function automationRoute(id: string, signal?: AbortSignal) {
+  let canConfirmMissing = true;
   if (!automationMachines.has(id)) {
     try {
-      await getAutomations();
-    } catch {
-      /* offline: fall through to the local engine, as before */
+      const { tasks, complete } = await listAutomations(signal);
+      canConfirmMissing = complete || tasks.some((task) => task.id === id);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      canConfirmMissing = false;
     }
   }
-  return engineBase(automationMachines.get(id) ?? null);
+  return { machineId: automationMachines.get(id) ?? null, canConfirmMissing };
+}
+async function automationBase(id: string, signal?: AbortSignal): Promise<string> {
+  return engineBase((await automationRoute(id, signal)).machineId);
 }
 export function machineOfAutomation(id: string): string | null {
   return automationMachines.get(id) ?? null;
 }
 
-async function machineAutomations(m: Machine): Promise<Automation[]> {
+async function machineAutomations(m: Machine, signal?: AbortSignal): Promise<Automation[] | null> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 4000); // an offline machine must not hold the list
+  const abort = () => ctl.abort();
+  if (signal?.aborted) abort();
+  signal?.addEventListener("abort", abort);
+  const timer = setTimeout(abort, 4000); // an offline machine must not hold the list
   try {
     const res = await fetch(`${engineBase(m.id)}/v1/automations`, { signal: ctl.signal });
-    if (!res.ok) return [];
-    const tasks: Automation[] = (await res.json()).tasks ?? [];
+    if (!res.ok) return null;
+    const { tasks }: { tasks?: Automation[] } = await res.json();
+    if (!Array.isArray(tasks)) return null;
     return tasks.map((t) => ({ ...t, machine_id: m.id, machine_name: m.name }));
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
-export async function getAutomations(): Promise<Automation[]> {
-  const res = await fetch(`${httpBase()}/v1/automations`);
-  const local: Automation[] = (await res.json()).tasks ?? [];
+async function listAutomations(signal?: AbortSignal) {
+  const res = await fetch(`${httpBase()}/v1/automations`, { signal });
+  const localBody: { tasks?: Automation[] } = await res.json();
+  const local = Array.isArray(localBody?.tasks) ? localBody.tasks : [];
+  let complete = res.ok && Array.isArray(localBody?.tasks);
   let machines: Machine[] = [];
   try {
-    machines = ((await getMachines()).machines || []).filter((m) => m.connected);
-  } catch {
-    machines = [];
+    const machineResponse = await fetchMachines(signal);
+    const body: { machines?: Machine[] } = await machineResponse.json();
+    if (Array.isArray(body?.machines)) {
+      machines = body.machines.filter((machine) => machine.connected);
+    }
+    complete = complete && machineResponse.ok && Array.isArray(body?.machines) && machines.length === body.machines.length;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    complete = false;
   }
-  const remote = (await Promise.all(machines.map(machineAutomations))).flat();
+  const remoteResults = await Promise.all(machines.map((machine) => machineAutomations(machine, signal)));
+  const remote = remoteResults.flatMap((tasks) => tasks ?? []);
+  if (signal?.aborted) throw new DOMException("Request aborted", "AbortError");
   for (const t of local) automationMachines.delete(t.id);
   for (const t of remote) if (t.machine_id) automationMachines.set(t.id, t.machine_id);
-  return [...local, ...remote];
+  return { tasks: [...local, ...remote], complete: complete && remoteResults.every((tasks) => tasks !== null) };
+}
+
+export async function getAutomations(): Promise<Automation[]> {
+  return (await listAutomations()).tasks;
 }
 
 // Fired after any automation mutation the sidebar should reflect immediately
@@ -3245,8 +3270,8 @@ export function connectEvents(
 }
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
-export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`${await automationBase(id)}/v1/automations/${id}/seen`, { method: "POST" });
+export async function markAutomationSeen(id: string, signal?: AbortSignal): Promise<{ ok: boolean }> {
+  const res = await fetch(`${await automationBase(id, signal)}/v1/automations/${id}/seen`, { method: "POST", signal });
   return res.json();
 }
 
@@ -3268,14 +3293,33 @@ export async function createAutomation(payload: {
   return res.json();
 }
 
-export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
-  const res = await fetch(`${await automationBase(id)}/v1/automations/${encodeURIComponent(id)}`);
-  const body = await res.json();
+export async function getAutomation(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ task: Automation | null; runs: AutomationRun[]; failed_in_a_row?: FailedInARow | null }> {
+  const { machineId, canConfirmMissing } = await automationRoute(id, signal);
+  const res = await fetch(`${engineBase(machineId)}/v1/automations/${encodeURIComponent(id)}`, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body: {
+    task?: Automation;
+    runs?: AutomationRun[];
+    failed_in_a_row?: FailedInARow | null;
+    error?: string;
+  } | null = await res.json();
+  if (signal?.aborted) throw new DOMException("Request aborted", "AbortError");
+  // The engine reports a deleted automation with a successful JSON response.
+  if (res.status === 200 && body?.task == null && body?.error === "not found") {
+    if (!canConfirmMissing) throw new Error("Automation machine lookup did not complete");
+    return { task: null, runs: [] };
+  }
+  const runs = body?.runs ?? [];
+  if (body?.task?.id !== id || !Array.isArray(runs) || runs.some((run) => !Array.isArray(run?.artifacts))) {
+    throw new Error("Invalid automation detail response");
+  }
   // A remote automation's run sessions live on its machine: route them there.
-  const mid = automationMachines.get(id) ?? null;
-  for (const r of body.runs || []) if (r.session_id) registerSessionMachine(r.session_id, mid);
-  if (body.task && mid) body.task = { ...body.task, machine_id: mid };
-  return body;
+  for (const run of runs) if (run.session_id) registerSessionMachine(run.session_id, machineId);
+  const task = machineId ? { ...body.task, machine_id: machineId } : body.task;
+  return { task, runs, failed_in_a_row: body.failed_in_a_row };
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
@@ -3956,8 +4000,12 @@ export async function getCloudMachines(): Promise<CloudMachinesInfo> {
  * was removed, a sandbox came up) so pickers elsewhere reload their list. */
 export const MACHINES_CHANGED = "openworker:machines-changed";
 
+function fetchMachines(signal?: AbortSignal): Promise<Response> {
+  return fetch(`${httpBase()}/v1/machines`, { signal });
+}
+
 export async function getMachines(): Promise<{ machines: Machine[]; armed: boolean }> {
-  const r = await fetch(`${httpBase()}/v1/machines`);
+  const r = await fetchMachines();
   return r.json();
 }
 

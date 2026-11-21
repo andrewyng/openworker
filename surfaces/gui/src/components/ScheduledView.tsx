@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
   createAutomation,
@@ -21,6 +21,7 @@ import { healthTone } from "../obs3";
 
 // Shared utility strings (the §28 page shell — mirrors IntegrationsView's constants).
 const CARD = "rounded-xl2 border border-line bg-panel";
+const DETAIL_LOAD_TIMEOUT_MS = 15_000;
 
 // Parse a simple "min hour * * dow" cron back into the time + frequency the editor uses.
 // Falls back to 09:00 / daily for anything it doesn't recognize (e.g. agent-written crons).
@@ -117,8 +118,12 @@ export function ScheduledView({ onOpenRun, onRunNow, initialOpenId, onOpenRunSte
   if (openId) {
     return (
       <TaskDetail
+        key={openId}
         id={openId}
-        onBack={() => { setOpenId(null); refresh(); }}
+        onBack={() => {
+          setOpenId((current) => current === openId ? null : current);
+          refresh();
+        }}
         onOpenRun={onOpenRun}
         onRunNow={onRunNow}
         onOpenRunSteps={onOpenRunSteps}
@@ -308,6 +313,9 @@ function TaskDetail({
 }) {
   const { t: tt } = useTranslation();
   const [task, setTask] = useState<Automation | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const detailSignal = useRef<AbortSignal | null>(null);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   const [failedRow, setFailedRow] = useState<FailedInARow | null>(null);
   const [editing, setEditing] = useState(false);
@@ -321,35 +329,73 @@ function TaskDetail({
   // while mark-seen advances the stored one (badge clears; highlights survive).
   const [seenMark, setSeenMark] = useState<number | null>(null);
 
-  const refresh = () =>
-    getAutomation(id)
-      .then((d) => {
-        if (!d.task) {
-          // Deleted (or a stale reopen target): "Loading…" forever is a trap —
-          // fall back to the overview (owner-hit 2026-07-20).
-          onBack();
-          return;
-        }
-        setTask(d.task);
-        setRuns(d.runs || []);
-        setFailedRow(d.failed_in_a_row ?? null);
-        setSeenMark((cur) => (cur === null ? d.task?.seen_runs_at ?? 0 : cur));
+  const refresh = async (initialLoad = false) => {
+    const signal = detailSignal.current;
+    if (!signal || signal.aborted) return false;
+    try {
+      const { task: nextTask, runs: nextRuns, failed_in_a_row } = await getAutomation(id, signal);
+      if (signal.aborted) return false;
+      if (!nextTask) {
+        onBack();
+        return false;
+      }
+      setTask(nextTask);
+      setRuns(nextRuns);
+      setFailedRow(failed_in_a_row ?? null);
+      setSeenMark((cur) => cur ?? nextTask.seen_runs_at ?? 0);
+      return true;
+    } catch {
+      if (initialLoad && !signal.aborted) setLoadFailed(true);
+      return false;
+    }
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    detailSignal.current = controller.signal;
+    const timer = setTimeout(() => {
+      controller.abort();
+      setLoadFailed(true);
+    }, DETAIL_LOAD_TIMEOUT_MS);
+    void refresh(true)
+      .finally(() => clearTimeout(timer))
+      .then(async (loaded) => {
+        // Read the old seen mark with the runs before advancing it (UX-023).
+        if (!loaded || controller.signal.aborted) return;
+        const result = await markAutomationSeen(id, controller.signal);
+        if (result.ok && !controller.signal.aborted) announceAutomationsChanged();
       })
       .catch(() => {});
-  useEffect(() => {
-    setSeenMark(null);
-    refresh();
-    // Opening the detail IS reading it: advance the seen mark and nudge the
-    // sidebar so the badge clears immediately (UX-023).
-    markAutomationSeen(id)
-      .then(() => announceAutomationsChanged())
-      .catch(() => {});
-  }, [id]);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [id, attempt]);
 
+  const back = (
+    <button className="text-ui text-muted hover:text-ink mb-3" onClick={onBack}>
+      {tt("automations.back_to_automations")}
+    </button>
+  );
   if (!task)
     return (
       <Shell>
-        <div className="text-ui text-muted">{tt("automations.loading")}</div>
+        {back}
+        {loadFailed ? (
+          <div>
+            <p className="text-ui text-danger mb-2" role="alert">{tt("automations.load_error")}</p>
+            <button
+              className="btn sm"
+              onClick={() => {
+                setLoadFailed(false);
+                setAttempt((n) => n + 1);
+              }}
+            >
+              {tt("automations.retry_load")}
+            </button>
+          </div>
+        ) : (
+          <div className="text-ui text-muted">{tt("automations.loading")}</div>
+        )}
       </Shell>
     );
 
@@ -387,9 +433,7 @@ function TaskDetail({
 
   return (
     <Shell>
-      <button className="text-ui text-muted hover:text-ink mb-3" onClick={onBack}>
-        {tt("automations.back_to_automations")}
-      </button>
+      {back}
       <div className="sched-detail">
         <div className="sched-detail-head">
           {editing ? (
