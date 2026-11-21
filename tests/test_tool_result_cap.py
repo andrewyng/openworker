@@ -183,3 +183,37 @@ def test_multibyte_cut_fits_at_any_spill_path_length(tmp_path):
         assert len(out.encode()) <= 10_000, n
         result = {"command": "x", "exit_code": 0, "output": text, "truncated": False}
         assert _size(_bounded(result, spill=spill)) <= 10_000, n
+
+
+def test_a_result_whose_bulk_is_not_in_a_string_is_bounded(tmp_path):
+    """A grep result's bulk is a LIST of matches, not a string: without this the cap
+    never applied and the whole payload was re-sent on every later turn."""
+    result = {
+        "engine": "rg",
+        "count": 100,
+        "matches": [{"path": f"src/file{i}.py", "line": i, "text": "x" * 300} for i in range(100)],
+    }
+    out = _bounded(result, spill=tmp_path)
+    assert _size(out) <= 10_000
+    assert out["count"] == 100 and out["engine"] == "rg"  # the small fields are untouched
+    assert isinstance(out["matches"], str)
+    assert "bytes omitted" in out["matches"]
+    # The full field is on disk, so the agent can read it back.
+    spilled = list(tmp_path.iterdir())
+    assert [p.name for p in spilled] == ["0007-run_shell-matches.json"]
+    assert json.loads(spilled[0].read_text())[0]["path"] == "src/file0.py"
+
+
+def test_a_todo_result_is_bounded_too(tmp_path):
+    result = {"count": 120, "todos": [{"content": "y" * 200, "status": "pending"} for _ in range(120)]}
+    out = _bounded(result, spill=tmp_path)
+    assert _size(out) <= 10_000
+    assert out["count"] == 120
+    assert "bytes omitted" in out["todos"]
+
+
+def test_a_structured_result_that_fits_is_untouched(tmp_path):
+    result = {"count": 2, "todos": [{"content": "a", "status": "done"}]}
+    out = _bounded(result, spill=tmp_path)
+    assert out is result
+    assert not list(tmp_path.iterdir())
