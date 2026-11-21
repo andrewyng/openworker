@@ -32,3 +32,24 @@ def test_legacy_items_key_still_executes():
     result, todo = _write(items=[{"content": "b", "status": "done"}])
     assert todo.items == [{"content": "b", "status": "done"}]
     assert result["count"] == 1
+
+
+def test_a_string_argument_is_one_todo_not_one_per_character():
+    # A model that sends `todos="write tests"` instead of a list: the argument was
+    # iterated, so every CHARACTER became its own todo (11 todos for "write tests").
+    result, todo = _write(todos="write tests")
+    assert todo.items == [{"content": "write tests", "status": "pending"}]
+    assert result["count"] == 1
+
+
+def test_a_single_todo_object_is_not_split_into_its_keys():
+    result, todo = _write(todos={"content": "a", "status": "done"})
+    assert todo.items == [{"content": "a", "status": "done"}]
+    assert result["count"] == 1
+
+
+def test_an_empty_argument_clears_the_list_as_before():
+    for empty in (None, [], "", {}):
+        result, todo = _write(todos=empty)
+        assert todo.items == [], empty
+        assert result["count"] == 0, empty
