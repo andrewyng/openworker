@@ -17,12 +17,15 @@ the persona-loading path never touches this file (see ``PERMISSIONS-AND-INBOX.md
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Callable, Optional
 
 from .risk import RiskClass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,18 +44,57 @@ def _specificity(pattern: str) -> int:
 class RiskOverrideStore:
     def __init__(self, path: Optional[str | Path] = None) -> None:
         self.path = Path(path) if path else None
-        # Rules refused at load with the reason why — surfaced to the user instead of
-        # silently shaping permissions differently than their file says.
+        # Rules refused at load, with the reason why. Nothing in the app reads this
+        # today (it is asserted by the tests); the user-visible channel is the logger.
         self.rejected: list[tuple[str, str]] = []  # (pattern, reason)
         # OPE-136 trust rules: exact tool names (the card writes exact names — a button
         # grants precisely what its card showed; globs stay a hand-editing power path).
         self._trust: list[str] = []
         self._rules: list[_Rule] = self._load()
 
+    def _quarantine(self) -> Optional[Path]:
+        """Move an unreadable file aside so the next `save()` cannot overwrite the only
+        copy of it. Returns the path it moved to, or None if the move failed."""
+        if not self.path:
+            return None
+        spare = self.path.with_suffix(self.path.suffix + ".corrupt")
+        try:
+            self.path.replace(spare)
+        except OSError:
+            return None
+        return spare
+
+    def _refuse_file(self, reason: str) -> list[_Rule]:
+        """Load nothing from a file we cannot use, and make that loud and recoverable.
+
+        Starting empty is NOT neutral — a dropped tightening lets a tool fall back to
+        its base risk, and a dropped trust rule starts asking again — so the bytes are
+        kept (moved aside, not deleted) and the path is logged. This is the one store
+        #836 deliberately left out for exactly that reason.
+        """
+        message = f"{self.path}: {reason}; loaded no overrides"
+        spare = self._quarantine()
+        if spare is not None:
+            message += f" (original kept at {spare})"
+        logger.warning(message)
+        self.rejected.append(("*", message))
+        return []
+
     def _load(self) -> list[_Rule]:
         if not (self.path and self.path.is_file()):
             return []
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as e:
+            # A corrupt file must never block startup: `agent.py` constructs this store
+            # for EVERY new session, so one bad file stopped every session from
+            # starting. The sibling stores (mentions.py, model_config.py) degrade the
+            # same way.
+            return self._refuse_file(f"unreadable ({type(e).__name__})")
+        if not isinstance(data, dict):
+            # Valid JSON of the wrong shape (`[]`, `null`, a string): `data.get` would
+            # raise AttributeError out of the constructor the same way.
+            return self._refuse_file("not a JSON object")
         # Trust entries: {"pattern": "..."} dicts (the written form) or bare strings.
         seen: set[str] = set()
         for entry in data.get("trust", []) or []:
@@ -91,20 +133,33 @@ class RiskOverrideStore:
     def save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {
-                    "rules": [
-                        {"pattern": r.pattern, "risk": r.risk.value}
-                        for r in self._rules
-                    ],
-                    "trust": [{"pattern": p} for p in self._trust],
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        # Write a sibling .tmp and rename it over the real file, so a crash mid-write
+        # leaves the previous complete file instead of a truncated one — the same
+        # shape mentions.py uses. (The load side also tolerates a truncated file, for
+        # any that were written before this.)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "rules": [
+                            {"pattern": r.pattern, "risk": r.risk.value}
+                            for r in self._rules
+                        ],
+                        "trust": [{"pattern": p} for p in self._trust],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(self.path)
+        except OSError:
+            # Persistence is best-effort; this process's rules stay in memory.
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
     def set_rule(self, pattern: str, risk: RiskClass | str) -> None:
         """Add/replace a user override (the everyday path writes this from the approval UI).

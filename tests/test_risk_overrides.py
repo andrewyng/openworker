@@ -89,3 +89,57 @@ def test_persona_manifest_cannot_carry_an_override(tmp_path):
     # The override store the engine reads is untouched by loading a persona.
     store = RiskOverrideStore(tmp_path / "ro.json")
     assert store.resolve("anything") is None
+
+
+def test_a_corrupt_file_degrades_to_no_rules_instead_of_crashing(tmp_path, caplog):
+    """A truncated `risk_overrides.json` must not stop the session from starting.
+
+    `agent.py` constructs this store for EVERY new session, so a file left truncated by
+    an interrupted write used to raise JSONDecodeError out of the constructor and stop
+    every session. Starting empty is not neutral (a dropped tightening lets a tool fall
+    back to its base risk), so the bytes are kept aside and the path is logged.
+    """
+    import logging
+
+    path = tmp_path / "ro.json"
+    RiskOverrideStore(path).set_rule("plugin_x_*", "read")
+    text = path.read_text(encoding="utf-8")
+    assert text  # sanity: the file was written
+
+    truncated = text[: len(text) // 2]
+    path.write_text(truncated, encoding="utf-8")  # interrupted write
+    with caplog.at_level(logging.WARNING, logger="coworker.overrides"):
+        store = RiskOverrideStore(path)  # must not raise
+    assert store.resolve("plugin_x_y") is None  # no rules, not a crash
+    assert store.trust_patterns() == []
+    # The only copy of the user's rules is preserved, not overwritten by the next save.
+    spare = path.with_suffix(path.suffix + ".corrupt")
+    assert spare.read_text(encoding="utf-8") == truncated
+    assert not path.exists()
+    # ...and the reason is logged, with where the bytes went.
+    assert any("loaded no overrides" in r.message for r in caplog.records)
+    assert any(str(spare) in r.message for r in caplog.records)
+    assert store.rejected and "ro.json" in store.rejected[0][1]
+
+    # Valid JSON of the wrong shape behaves the same way.
+    path.write_text("[]", encoding="utf-8")
+    store = RiskOverrideStore(path)
+    assert store.resolve("plugin_x_y") is None
+    assert path.with_suffix(path.suffix + ".corrupt").read_text(encoding="utf-8") == "[]"
+
+    # An empty file is unreadable JSON too.
+    path.write_text("", encoding="utf-8")
+    store = RiskOverrideStore(path)
+    assert store.resolve("plugin_x_y") is None
+
+
+def test_a_quarantined_file_does_not_block_a_fresh_save(tmp_path):
+    """After a corrupt load, saving a new rule writes a clean file; the spare stays."""
+    path = tmp_path / "ro.json"
+    path.write_text("{not json", encoding="utf-8")
+    store = RiskOverrideStore(path)
+    store.set_rule("plugin_x_*", "read")
+    assert store.resolve("plugin_x_y") == RiskClass.READ
+    reloaded = RiskOverrideStore(path)
+    assert reloaded.resolve("plugin_x_y") == RiskClass.READ
+    assert (tmp_path / "ro.json.corrupt").read_text(encoding="utf-8") == "{not json"
