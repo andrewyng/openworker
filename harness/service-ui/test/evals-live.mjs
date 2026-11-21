@@ -233,11 +233,17 @@ try {
   await promotion.getByText("Case settings", { exact: true }).click();
   await promotion.getByLabel("Case name", { exact: true }).fill("Failed pricing turn");
   assert.equal(await promotion.getByLabel("Expected response", { exact: true }).inputValue(), "/pricing");
+  await promotion.getByText("Replay workspace files", { exact: true }).click();
+  await promotion.getByRole("button", { name: "Add file", exact: true }).click();
+  await promotion.getByLabel("File path", { exact: true }).fill("fixtures/pricing.txt");
+  await promotion.getByLabel("File contents", { exact: true }).fill("Original pricing link\n");
   await promotion.getByRole("button", { name: "Save case", exact: true }).click();
   await page.getByRole("heading", { name: "Provider regressions" }).waitFor();
   await page.getByText("Failed pricing turn", { exact: true }).click();
   await page.getByText("Edit or archive case", { exact: true }).click();
   await page.getByLabel("Expected response", { exact: true }).fill("/plans");
+  await page.getByText("Replay workspace files", { exact: true }).click();
+  await page.getByLabel("File contents", { exact: true }).fill("Revised plans link\n");
   await page.getByRole("button", { name: "Save revision", exact: true }).click();
   await page.getByText("1 case · Version 2", { exact: true }).waitFor();
   const datasetBase = new URL(page.url()).hash;
@@ -246,6 +252,9 @@ try {
   await page.getByText("1 case · Version 1", { exact: true }).waitFor();
   await page.getByText("Failed pricing turn", { exact: true }).click();
   await page.getByText("/pricing", { exact: true }).waitFor();
+  await page.getByText("Workspace fixture · 1 file", { exact: true }).click();
+  await page.getByText("Original pricing link", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Revised plans link", { exact: true }).count(), 0);
   assert.equal(await page.getByText("Edit or archive case", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("link", { name: "Open source evaluation" }).count(), 1);
   await page.getByRole("link", { name: "Back to latest version" }).click();
@@ -282,7 +291,7 @@ try {
 
   await page.goto(app.url + "/#evals/replays/" + process.env.OW_EVALS_REPLAY_ID);
   await page.getByRole("table", { name: "Replay comparison" }).waitFor();
-  await page.getByText("Regression", { exact: true }).waitFor();
+  await page.getByText("Regression · 2 fixture files", { exact: true }).waitFor();
   assert.equal(await page.getByRole("link", { name: "Open execution" }).count(), 2);
   await capture("eval-replay-comparison");
   await page.goto(app.url + "/#evals/replays/" + process.env.OW_EVALS_INCOMPLETE_REPLAY_ID);

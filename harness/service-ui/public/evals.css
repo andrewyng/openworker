@@ -205,6 +205,10 @@
 .ev-versions input { width: 76px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; }
 .ev-case-edit { margin-top: 12px; }
 .ev-case-edit form { margin-top: 12px; max-width: 540px; }
+.ev-fixture-editor > p { margin: 10px 0; }
+.ev-fixture-file { display: grid; gap: 8px; padding: 10px 0; }
+.ev-fixture-file > button { justify-self: start; }
+.ev-fixture-file + .ev-fixture-file { border-top: 1px solid var(--line); }
 .ev-case-detail a + a { margin-left: 10px; }
 .ev-replay-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
 .ev-replay-row a { color: #425780; font-weight: 600; }

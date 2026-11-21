@@ -8,6 +8,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Extension, Json,
 };
+use openworker_runtime::{
+    environment::{Binding, Provider},
+    replay_fixture::{Fixture, Receipt},
+};
 use openworker_store_postgres::{
     auth::Action,
     eval_replay::{Enqueue, Task},
@@ -81,13 +85,50 @@ async fn launch(app: &App, task: &Task) -> Result<String> {
         environment_id: None,
         integrations: Default::default(),
     };
-    let (_, Json(value)) = crate::management::admit_kind(scoped, headers, admission, "eval-replay")
-        .await
-        .map_err(|e| e.0)?;
+    let (_, Json(value)) = crate::management::admit_with_fixture(
+        scoped,
+        headers,
+        admission,
+        "eval-replay",
+        task.fixture.clone(),
+    )
+    .await
+    .map_err(|e| e.0)?;
     Ok(value["operation"]["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Missing replay operation"))?
         .into())
+}
+
+pub(crate) async fn restore_fixture(
+    provider: &dyn Provider,
+    binding: Binding,
+    fixture: &Fixture,
+    verify_only: bool,
+) -> Result<Receipt> {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let mut connection = provider
+            .attach(
+                binding,
+                uuid::Uuid::new_v4().to_string(),
+                vec![
+                    "/opt/openworker/openworker".into(),
+                    "workspace-stdio".into(),
+                    "--root".into(),
+                    "/sandbox".into(),
+                ],
+            )
+            .await?;
+        let method = if verify_only {
+            "eval/verify-fixture"
+        } else {
+            "eval/restore-fixture"
+        };
+        let response = connection.request(method, json!(fixture)).await;
+        let _ = connection.close().await;
+        Ok(serde_json::from_value(response?)?)
+    })
+    .await?
 }
 
 async fn step(app: &App, task: Task) -> Result<()> {
@@ -108,15 +149,20 @@ async fn step(app: &App, task: Task) -> Result<()> {
         // Only the operation created for this row is eligible. The ordinary
         // lifecycle refuses deletion while any attachment or work is open.
         let closed = op.status == "failed" || app.store.service_close(&op.session_id).is_ok();
-        let key = format!("replay-cleanup-{}-{}", task.replay, task.ordinal);
+        // OpenShell expects a UUID for deletion. Derive the same request ID
+        // every time this replay row runs its cleanup step.
+        let digest = openworker_runtime::bundle::digest(
+            format!("replay-cleanup-{}-{}", task.replay, task.ordinal).as_bytes(),
+        );
+        let key = &digest[..32];
         let cleanup = closed
             && app
                 .store
-                .begin_environment_delete(&op.environment_id, &key, "eval-replay")
+                .begin_environment_delete(&op.environment_id, key, "eval-replay")
                 .is_ok()
             && app
                 .store
-                .service_queue_delete(&op.environment_id, &key)
+                .service_queue_delete(&op.environment_id, key)
                 .is_ok();
         return app.store.update_eval_replay(task, None, None, cleanup);
     }
@@ -131,7 +177,9 @@ async fn step(app: &App, task: Task) -> Result<()> {
             task.check.clone(),
         )?,
         "failed" => Some(
-            json!({"status":"incomplete","reason":"The execution environment could not be provisioned."}),
+            json!({"status":"incomplete","reason":if op.error.as_deref()==Some("Workspace fixture could not be verified") {
+                "The workspace fixture could not be restored and verified."
+            } else {"The execution environment could not be provisioned."}}),
         ),
         _ => None,
     };

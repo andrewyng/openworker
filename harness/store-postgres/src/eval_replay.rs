@@ -6,6 +6,7 @@ use crate::{
     PostgresStore, SubmissionError,
 };
 use anyhow::{ensure, Result};
+use openworker_runtime::replay_fixture::Fixture;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -22,6 +23,7 @@ pub(crate) fn migrate(tx: &mut postgres::Transaction<'_>) -> Result<()> {
         release_id TEXT NOT NULL, operation TEXT, result JSONB,
         lease TEXT, next_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
         cleanup BOOLEAN NOT NULL DEFAULT FALSE, PRIMARY KEY(replay,ordinal));
+      ALTER TABLE eval_replay_runs ADD COLUMN IF NOT EXISTS fixture JSONB;
       CREATE INDEX IF NOT EXISTS eval_replay_pending ON eval_replay_runs(next_at,replay,ordinal)
         WHERE result IS NULL OR (operation IS NOT NULL AND NOT cleanup);",
     )?;
@@ -48,6 +50,7 @@ pub struct Task {
     pub profile: Option<String>,
     pub input: String,
     pub check: Check,
+    pub fixture: Option<Fixture>,
     pub cleanup: bool,
 }
 
@@ -86,7 +89,7 @@ impl PostgresStore {
                     && row.get::<_,Value>(2)==spec,SubmissionError::Conflict);
                 return Ok(json!({"id":id}));
             }
-            let cases=tx.query(&format!("SELECT id,source,evidence->>'input',check_spec FROM ({CASE_SNAPSHOT})
+            let cases=tx.query(&format!("SELECT id,source,evidence->>'input',check_spec,evidence->'workspace_fixture' FROM ({CASE_SNAPSHOT})
                 cases WHERE NOT archived ORDER BY version"),&[&dataset,&request.dataset_version])?;
             ensure!((1..=4).contains(&cases.len()),SubmissionError::InvalidRequest);
             tx.execute("INSERT INTO eval_replays VALUES($1,$2,$3,$4,$5,(extract(epoch FROM clock_timestamp())*1000)::bigint)",
@@ -97,9 +100,13 @@ impl PostgresStore {
                 let mut source:Value=row.get(1);
                 source["case_id"]=json!(row.get::<_,String>(0));
                 let check:Value=row.get(3);
+                let fixture:Option<Value>=row.get(4);
+                if let Some(files)=fixture.as_ref().and_then(Value::as_array) {
+                    source["fixture_files"]=json!(files.len());
+                }
                 for (side,release) in [&request.baseline,&request.candidate].into_iter().enumerate() {
-                    tx.execute("INSERT INTO eval_replay_runs(replay,ordinal,source,input,check_spec,release_id) VALUES($1,$2,$3,$4,$5,$6)",
-                        &[&id,&((index*2+side) as i32),&source,&input,&check,&release])?;
+                    tx.execute("INSERT INTO eval_replay_runs(replay,ordinal,source,input,check_spec,release_id,fixture) VALUES($1,$2,$3,$4,$5,$6,$7)",
+                        &[&id,&((index*2+side) as i32),&source,&input,&check,&release,&fixture])?;
                 }
             }
             tx.commit()?;
@@ -143,13 +150,14 @@ impl PostgresStore {
             ensure!(db.auth.is_none(),auth::Error::Forbidden);
             let mut tx=db.client.transaction()?;
             let Some(r)=tx.query_opt("SELECT t.replay,t.ordinal,r.owner,r.credential,t.operation,t.release_id,
-                r.request->>'profile',t.input,t.check_spec,t.result IS NOT NULL
+                r.request->>'profile',t.input,t.check_spec,t.result IS NOT NULL,t.fixture
                 FROM eval_replay_runs t JOIN eval_replays r ON r.id=t.replay
                 WHERE (t.result IS NULL OR (t.operation IS NOT NULL AND NOT t.cleanup)) AND t.next_at <= clock_timestamp()
                 ORDER BY t.next_at,t.replay,t.ordinal LIMIT 1 FOR UPDATE OF t SKIP LOCKED",&[])? else {return Ok(None)};
             let task=Task { replay:r.get(0),ordinal:r.get(1),owner:r.get(2),credential:r.get(3),operation:r.get(4),
                 release:r.get(5),profile:r.get(6),input:r.get(7),check:serde_json::from_value(r.get(8))?,
-                cleanup:r.get(9),lease:openworker_runtime::id("replay") };
+                cleanup:r.get(9),lease:openworker_runtime::id("replay"),
+                fixture:r.get::<_,Option<Value>>(10).map(serde_json::from_value).transpose()? };
             tx.execute("UPDATE eval_replay_runs SET lease=$3,next_at=clock_timestamp()+INTERVAL '45 seconds'
                 WHERE (replay,ordinal)=($1,$2)",&[&task.replay,&task.ordinal,&task.lease])?;
             tx.commit()?;

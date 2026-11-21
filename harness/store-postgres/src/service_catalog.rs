@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use openworker_runtime::{
     environment::{Phase, Record, Sharing, Spec},
+    replay_fixture,
     store::Session,
 };
 use postgres::Transaction;
@@ -230,6 +231,22 @@ pub struct Admission {
     #[serde(default)]
     pub name: Option<String>,
 }
+
+/// Internal data resolved by the API. This is absent from public admission DTOs.
+pub struct AdmissionPreparation {
+    pub loop_spec: Option<Spec>,
+    pub reviewed: Option<openworker_runtime::connections::Choice>,
+    pub replay_fixture: Option<replay_fixture::Fixture>,
+}
+
+pub enum ReplayPreparation {
+    Ready,
+    Pending,
+    Restore {
+        fixture: replay_fixture::Fixture,
+        verify_only: bool,
+    },
+}
 fn reserve_environment(
     tx: &mut Transaction<'_>,
     operation_id: &str,
@@ -349,6 +366,11 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
         })],
     )?;
     tx.batch_execute("ALTER TABLE service_operations ALTER COLUMN configuration SET NOT NULL")?;
+    tx.batch_execute(
+        "ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture JSONB;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_started TIMESTAMPTZ;
+        ALTER TABLE service_operations ADD COLUMN IF NOT EXISTS replay_fixture_receipt TEXT;",
+    )?;
     Ok(())
 }
 impl PostgresStore {
@@ -542,8 +564,43 @@ impl PostgresStore {
         loop_spec: Option<Spec>,
         reviewed: Option<openworker_runtime::connections::Choice>,
     ) -> Result<Operation> {
-        if let Some(companion) = &loop_spec {
+        self.service_admit_prepared(
+            key,
+            input,
+            release,
+            profile,
+            spec,
+            AdmissionPreparation {
+                loop_spec,
+                reviewed,
+                replay_fixture: None,
+            },
+        )
+    }
+
+    pub fn service_admit_prepared(
+        &self,
+        key: &str,
+        input: Admission,
+        release: Entry,
+        profile: Entry,
+        spec: Spec,
+        mut preparation: AdmissionPreparation,
+    ) -> Result<Operation> {
+        if let Some(companion) = &preparation.loop_spec {
             companion.validate()?;
+        }
+        if let Some(fixture) = &mut preparation.replay_fixture {
+            ensure!(
+                input.project == "eval-replay"
+                    && input.environment_id.is_none()
+                    && input.workspace_id.is_none()
+                    && input.initial_message.is_some(),
+                SubmissionError::InvalidRequest
+            );
+            fixture
+                .normalize()
+                .map_err(|_| SubmissionError::InvalidRequest)?;
         }
         name(&input.project)?;
         ensure!(
@@ -562,8 +619,67 @@ impl PostgresStore {
             crate::submissions::validate_id(text, 32000)?;
         }
         let key = key.to_owned();
+        self.call(move |db| db.service_admit(key, input, release, profile, spec, preparation))
+    }
+
+    /// The first command can write. Later controllers only verify, even after
+    /// the original transport or process exits before the receipt is recorded.
+    pub fn claim_replay_fixture(&self, id: &str) -> Result<ReplayPreparation> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
+        self.call(move|db|{
+            let mut tx=db.client.transaction()?;
+            let row=tx.query_one("SELECT replay_fixture,replay_fixture_receipt,
+                replay_fixture_started IS NOT NULL,
+                COALESCE(replay_fixture_started+INTERVAL '60 seconds'>clock_timestamp(),FALSE),status
+                FROM service_operations WHERE id=$1 FOR UPDATE",&[&id])?;
+            if row.get::<_,String>(4)=="complete" {return Ok(ReplayPreparation::Ready);}
+            ensure!(row.get::<_,String>(4)=="ready",SubmissionError::Conflict);
+            let Some(fixture)=row.get::<_,Option<Value>>(0) else {return Ok(ReplayPreparation::Ready)};
+            if row.get::<_,Option<String>>(1).is_some() {return Ok(ReplayPreparation::Ready);}
+            if row.get::<_,bool>(3) {return Ok(ReplayPreparation::Pending);}
+            let verify_only=row.get::<_,bool>(2);
+            if !verify_only {
+                tx.execute("UPDATE service_operations SET replay_fixture_started=clock_timestamp(),
+                    next_check=clock_timestamp()+INTERVAL '60 seconds' WHERE id=$1",&[&id])?;
+            }
+            tx.commit()?;
+            Ok(ReplayPreparation::Restore{fixture:serde_json::from_value(fixture)?,verify_only})
+        })
+    }
+
+    pub fn complete_replay_fixture(
+        &self,
+        id: &str,
+        receipt: replay_fixture::Receipt,
+    ) -> Result<()> {
+        ensure!(self.auth.is_none(), auth::Error::Forbidden);
+        let id = id.to_owned();
         self.call(move |db| {
-            db.service_admit(key, input, release, profile, spec, loop_spec, reviewed)
+            let mut tx = db.client.transaction()?;
+            let row = tx.query_one(
+                "SELECT replay_fixture,status,replay_fixture_started IS NOT NULL
+                FROM service_operations WHERE id=$1 FOR UPDATE",
+                &[&id],
+            )?;
+            let fixture: replay_fixture::Fixture = serde_json::from_value(row.get(0))?;
+            ensure!(
+                row.get::<_, bool>(2) && fixture.receipt()? == receipt,
+                SubmissionError::Conflict
+            );
+            let status: String = row.get(1);
+            ensure!(
+                matches!(status.as_str(), "ready" | "complete"),
+                SubmissionError::Conflict
+            );
+            if status == "ready" {
+                tx.execute(
+                    "UPDATE service_operations SET replay_fixture_receipt=$2 WHERE id=$1",
+                    &[&id, &receipt.digest],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
         })
     }
     pub fn service_session_identity(&self, sid: &str) -> Result<Option<Value>> {
@@ -825,9 +941,14 @@ impl crate::db::Database {
         release: Entry,
         profile: Entry,
         spec: Spec,
-        loop_spec: Option<Spec>,
-        reviewed: Option<openworker_runtime::connections::Choice>,
+        preparation: AdmissionPreparation,
     ) -> Result<Operation> {
+        let AdmissionPreparation {
+            loop_spec,
+            reviewed,
+            replay_fixture,
+        } = preparation;
+        let fixture = replay_fixture.as_ref().map(|f| json!(f));
         let mut tx = self.client.transaction()?;
         let p = auth::guard(&mut tx, self.auth.as_ref(), Action::Submit, None, None)?
             .ok_or(auth::Error::Unauthorized)?;
@@ -845,7 +966,8 @@ impl crate::db::Database {
         )? {
             ensure!(
                 row.get::<_, Value>("input") == json!(input)
-                    && row.get::<_, String>("principal") == p.principal,
+                    && row.get::<_, String>("principal") == p.principal
+                    && row.get::<_, Option<Value>>("replay_fixture") == fixture,
                 SubmissionError::Conflict
             );
             let o = op(&row);
@@ -999,7 +1121,7 @@ impl crate::db::Database {
                 .map(|e| e.id)
             })
             .transpose()?;
-        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration,loop_environment_id,pinned_model) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured),&loop_id,&pinned_model.as_ref().map(|m|json!(m))])?;
+        let row=tx.query_one("INSERT INTO service_operations(id,request_key,input,principal,credential_id,release_id,profile_id,environment_id,session_id,project,status,configuration,loop_environment_id,pinned_model,replay_fixture) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *",&[&operation_id,&key,&json!(input),&p.principal,&p.credential_id,&rel.id,&prof.id,&environment_id,&session_id,&input.project,&status,&json!(configured),&loop_id,&pinned_model.as_ref().map(|m|json!(m)),&fixture])?;
         auth::audit(&mut tx, Some(&p), Action::Create, None, Some(&key))?;
         let result = op(&row);
         tx.commit()?;
@@ -1072,6 +1194,13 @@ impl crate::db::Database {
             return Ok(());
         }
         ensure!(o.status == "ready", SubmissionError::Conflict);
+        ensure!(
+            row.get::<_, Option<Value>>("replay_fixture").is_none()
+                || row
+                    .get::<_, Option<String>>("replay_fixture_receipt")
+                    .is_some(),
+            SubmissionError::Conflict
+        );
         ensure!(
             o.loop_environment_id.as_ref()
                 == session.loop_environment.as_ref().map(|b| &b.environment_id),

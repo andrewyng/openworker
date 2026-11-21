@@ -9,7 +9,7 @@ export function replayForm() {
   return `<details class="ev-section ev-disclosure ev-run-selection" data-replay-config>
     <summary>Replay and compare releases</summary>
     <form class="ev-capture ev-evaluator-editor">
-      <p class="ev-muted">Replay up to four cases with saved requests. Each execution starts in a fresh workspace.</p>
+      <p class="ev-muted">Replay up to four cases with saved requests. Each sandbox starts with the case’s saved workspace files.</p>
       <label>Baseline release<select name="baseline" required></select></label>
       <label>Candidate release<select name="candidate" required></select></label>
       <label>Runtime profile<select name="runtime_profile"></select></label>
@@ -107,7 +107,8 @@ export async function mountReplays(root,{api,jobId,signal}) {
         const change=baseline.result?.status==="scored" && candidate.result?.status==="scored"
           ? baseline.result.passed===candidate.result.passed ? "No change" : candidate.result.passed ? "Improved" : "Regression"
           : runs[i].result && runs[i+1].result ? "Incomplete" : "Waiting";
-        rows.push(`<tr><th scope="row">${esc(baseline.source.name || "Dataset case")}<small class="ev-table-subtitle">${change}</small></th>
+        const fixtureCount = baseline.source.fixture_files || 0;
+        rows.push(`<tr><th scope="row">${esc(baseline.source.name || "Dataset case")}<small class="ev-table-subtitle">${change}${fixtureCount ? ` · ${fixtureCount} fixture ${fixtureCount === 1 ? "file" : "files"}` : ""}</small></th>
           ${cell(baseline)}${cell(candidate)}</tr>`);
       }
       root.innerHTML = breadcrumb + `<header class="ev-heading"><div><h1>Replay comparison</h1>

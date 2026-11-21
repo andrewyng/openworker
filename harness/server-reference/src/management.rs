@@ -17,7 +17,9 @@ use openworker_runtime::{
     runtime::Runtime,
 };
 use openworker_store_postgres::{
-    service_catalog::{Admission, Entry, Profile, Release},
+    service_catalog::{
+        Admission, AdmissionPreparation, Entry, Profile, Release, ReplayPreparation,
+    },
     PostgresStore, SubmissionError,
 };
 use serde::Deserialize;
@@ -295,8 +297,18 @@ pub(crate) async fn admit(
 pub(crate) async fn admit_kind(
     app: App,
     headers: HeaderMap,
+    input: Admission,
+    kind: &str,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    admit_with_fixture(app, headers, input, kind, None).await
+}
+
+pub(crate) async fn admit_with_fixture(
+    app: App,
+    headers: HeaderMap,
     mut input: Admission,
     kind: &str,
+    replay_fixture: Option<openworker_runtime::replay_fixture::Fixture>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     if input.runtime_profile.is_some() && input.environment_id.is_some() {
         return Err(ApiError(SubmissionError::InvalidRequest.into()));
@@ -425,9 +437,18 @@ pub(crate) async fn admit_kind(
             Management::Harness,
         ))
     };
-    let op = app
-        .store
-        .service_admit_reviewed(&request, input, release, profile, spec, loop_spec, pinned)?;
+    let op = app.store.service_admit_prepared(
+        &request,
+        input,
+        release,
+        profile,
+        spec,
+        AdmissionPreparation {
+            loop_spec,
+            reviewed: pinned,
+            replay_fixture,
+        },
+    )?;
     Ok((
         if op.status == "complete" {
             StatusCode::OK
@@ -482,6 +503,36 @@ async fn control_matching(config: &Config, store: &PostgresStore, installed: &st
         provider
             .inspect(env.binding.clone().context("Environment not ready")?)
             .await?;
+        match store.claim_replay_fixture(&op.id)? {
+            ReplayPreparation::Ready => {}
+            ReplayPreparation::Pending => return Ok(()),
+            ReplayPreparation::Restore {
+                fixture,
+                verify_only,
+            } => {
+                let outcome = crate::eval_replay::restore_fixture(
+                    provider.as_ref(),
+                    env.binding
+                        .clone()
+                        .context("Replay environment not ready")?,
+                    &fixture,
+                    verify_only,
+                )
+                .await;
+                match outcome {
+                    Ok(receipt) => store.complete_replay_fixture(&op.id, receipt)?,
+                    Err(_) if verify_only => {
+                        store.service_update_operation(
+                            &op.id,
+                            "failed",
+                            Some("Workspace fixture could not be verified".into()),
+                        )?;
+                        return Ok(());
+                    }
+                    Err(_) => return Ok(()), // Reconcile only by verifying the original sandbox.
+                }
+            }
+        }
         if let Some(id) = &op.loop_environment_id {
             let settings: Profile = serde_json::from_value(profile.definition.clone())?;
             let loop_provider = config.profile_config(&settings)?.openshell_provider(true)?;

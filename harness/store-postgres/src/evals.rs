@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{ensure, Result};
 use openworker_observability::evaluations::{Evaluator, Input, Score, Source, Status};
+use openworker_runtime::replay_fixture::Fixture;
 use postgres::Transaction;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,6 +98,7 @@ pub struct SaveCase {
     pub include_input: bool,
     pub check: Check,
     pub batch_id: Option<String>,
+    pub workspace_fixture: Option<Fixture>,
 }
 
 #[derive(Deserialize)]
@@ -112,6 +114,27 @@ pub struct ReviseCase {
     pub check: Option<Check>,
     #[serde(default)]
     pub archive: bool,
+    pub workspace_fixture: Option<Fixture>,
+}
+
+fn validate_fixture(fixture: &mut Option<Fixture>) -> Result<()> {
+    if let Some(fixture) = fixture {
+        fixture
+            .normalize()
+            .map_err(|_| SubmissionError::InvalidRequest)?;
+    }
+    Ok(())
+}
+
+fn set_fixture(evidence: &mut Value, fixture: Option<Fixture>) {
+    let Some(fixture) = fixture else { return };
+    if fixture.0.is_empty() {
+        if let Some(data) = evidence.as_object_mut() {
+            data.remove("workspace_fixture");
+        }
+    } else {
+        evidence["workspace_fixture"] = json!(fixture);
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -345,6 +368,7 @@ impl PostgresStore {
             SubmissionError::InvalidRequest
         );
         validate_check(&request.check)?;
+        validate_fixture(&mut request.workspace_fixture)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Submit, Some(&request.turn.session_id))?;
@@ -371,7 +395,8 @@ impl PostgresStore {
             source["name"] = json!(openworker_runtime::telemetry::redact(name.as_deref().unwrap_or(&evidence.name)));
             if let Some(job) = &request.batch_id { source["batch_id"] = json!(job); }
             let check = serde_json::to_value(&request.check)?;
-            let evidence = json!({"input":evidence.input,"output":evidence.output});
+            let mut evidence = json!({"input":evidence.input,"output":evidence.output});
+            set_fixture(&mut evidence, request.workspace_fixture);
             if let Some(existing) = tx.query_opt(
                 "SELECT dataset,version,source,evidence,check_spec FROM eval_cases WHERE id=$1",
                 &[&id],
@@ -403,7 +428,7 @@ impl PostgresStore {
         id: String,
         dataset: String,
         case: String,
-        request: ReviseCase,
+        mut request: ReviseCase,
     ) -> Result<Value> {
         validate_id(&dataset, 100)?;
         validate_id(&case, 100)?;
@@ -415,12 +440,15 @@ impl PostgresStore {
         }
         ensure!(
             if request.archive {
-                request.name.is_none() && request.check.is_none()
+                request.name.is_none()
+                    && request.check.is_none()
+                    && request.workspace_fixture.is_none()
             } else {
                 request.name.is_some() && request.check.is_some()
             },
             SubmissionError::InvalidRequest
         );
+        validate_fixture(&mut request.workspace_fixture)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Submit,None)?;
@@ -432,16 +460,18 @@ impl PostgresStore {
             let mut source: Value = old.get(1);
             let check: Value = match request.check { Some(check)=>json!(check), None=>old.get(3) };
             if let Some(name)=request.name { source["name"]=json!(openworker_runtime::telemetry::redact(name.trim())); }
-            if let Some(row)=tx.query_opt("SELECT version,dataset,case_key,source,check_spec,archived FROM eval_cases WHERE id=$1", &[&id])? {
+            let mut evidence: Value = old.get(2);
+            set_fixture(&mut evidence, request.workspace_fixture);
+            if let Some(row)=tx.query_opt("SELECT version,dataset,case_key,source,check_spec,archived,evidence FROM eval_cases WHERE id=$1", &[&id])? {
                 ensure!(row.get::<_,String>(1)==dataset && row.get::<_,Option<String>>(2).as_deref()==Some(&key)
-                    && row.get::<_,Value>(3)==source && row.get::<_,Value>(4)==check && row.get::<_,bool>(5)==request.archive,
+                    && row.get::<_,Value>(3)==source && row.get::<_,Value>(4)==check && row.get::<_,bool>(5)==request.archive
+                    && row.get::<_,Value>(6)==evidence,
                     SubmissionError::Conflict);
                 return Ok(json!({"id":id,"dataset_version":row.get::<_,i32>(0)}));
             }
             let latest: String = tx.query_one("SELECT id FROM eval_cases WHERE dataset=$1 AND COALESCE(case_key,id)=$2 ORDER BY version DESC LIMIT 1", &[&dataset,&key])?.get(0);
             ensure!(latest==case, SubmissionError::Conflict);
             let version = current.checked_add(1).ok_or(SubmissionError::Busy)?;
-            let evidence: Value = old.get(2);
             tx.execute("INSERT INTO eval_cases(id,dataset,version,source,evidence,check_spec,case_key,archived)
                 VALUES($1,$2,$3,$4,$5,$6,$7,$8)", &[&id,&dataset,&version,&source,&evidence,&check,&key,&request.archive])?;
             tx.execute("UPDATE eval_datasets SET version=$2 WHERE id=$1", &[&dataset,&version])?;

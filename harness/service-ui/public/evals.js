@@ -16,6 +16,38 @@ const textBlock = (text) => text == null
   ? '<p class="ev-muted">Unavailable for capture.</p>'
   : `<pre>${esc(text)}</pre>`;
 const checkLabel = ({ comparison }) => comparison === "equals" ? "Exact match" : "Contains text";
+const fixtureEditor = () => `<details class="ev-disclosure ev-fixture-editor">
+  <summary>Replay workspace files</summary>
+  <p class="ev-muted">Add small UTF-8 files to restore in each sandbox. Paths are relative to its workspace.</p>
+  <div data-fixture-rows></div><button class="button" type="button" data-add-fixture>Add file</button>
+</details>`;
+
+function bindFixtureEditor(form, original = []) {
+  const rows = form.querySelector("[data-fixture-rows]");
+  const add = form.querySelector("[data-add-fixture]");
+  function update() { add.disabled = rows.children.length >= 16; }
+  function append({ path = "", text = "" } = {}) {
+    const row = document.createElement("div");
+    row.className = "ev-fixture-file";
+    row.innerHTML = `<label>File path<input maxlength="200" data-path placeholder="fixtures/input.txt" required></label>
+      <label>File contents<textarea data-text rows="3" maxlength="16384"></textarea></label>
+      <button class="button" type="button" data-remove-fixture>Remove file</button>`;
+    row.querySelector("[data-path]").value = path;
+    row.querySelector("[data-text]").value = text;
+    rows.append(row);
+    update();
+    return row;
+  }
+  original.forEach(append);
+  add.addEventListener("click", () => append().querySelector("[data-path]").focus());
+  rows.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-fixture]");
+    if (button) { button.closest(".ev-fixture-file").remove(); update(); }
+  });
+  return () => [...rows.children].map((row) => ({
+    path: row.querySelector("[data-path]").value.trim(), text: row.querySelector("[data-text]").value,
+  }));
+}
 
 function errorText(error) {
   if (error?.status === 403) return "Your role does not have access to this evaluation.";
@@ -69,6 +101,7 @@ export async function captureEvalCase(root, api, turn, signal, batch) {
           <label>Case name<input name="name" maxlength="100" placeholder="${esc(evidence.name || "Agent response")}"></label>
           <label>Text comparison<select name="comparison"><option value="contains">Contains expected text</option><option value="equals">Matches expected text exactly</option></select></label>
         </details>
+        ${fixtureEditor()}
         ${evidence.output == null ? '<p class="ev-muted">The evaluator will record an error for this case because the final response is unavailable.</p>' : ""}
         <p class="ev-error" role="alert"></p>
         <footer class="ev-actions">
@@ -77,6 +110,7 @@ export async function captureEvalCase(root, api, turn, signal, batch) {
         </footer>
       </form>`;
     const form = body.querySelector("form");
+    const workspaceFiles = bindFixtureEditor(form);
     if (batch?.evaluator.check) {
       form.elements.expected.value = batch.evaluator.check.expected;
       form.elements.comparison.value = batch.evaluator.check.comparison;
@@ -117,6 +151,7 @@ export async function captureEvalCase(root, api, turn, signal, batch) {
       const submit = form.querySelector("[type=submit]");
       if (submit.disabled) return;
       const data = new FormData(form);
+      const fixture = workspaceFiles();
       const payload = {
         dataset: data.get("dataset").trim(),
         name: data.get("name").trim() || null,
@@ -124,6 +159,7 @@ export async function captureEvalCase(root, api, turn, signal, batch) {
         include_input: data.has("include_input"),
         check: { expected: data.get("expected"), comparison: data.get("comparison") },
         ...(batch ? { batch_id: batch.id } : {}),
+        ...(fixture.length ? { workspace_fixture: fixture } : {}),
       };
       const snapshot = JSON.stringify(payload);
       if (previous?.snapshot !== snapshot) previous = { snapshot, key: crypto.randomUUID() };
@@ -189,6 +225,7 @@ function renderDataset(root, dataset, canRun, view) {
 }
 
 function renderCase(target, item, editable) {
+  const fixture = item.evidence.workspace_fixture || [];
   target.innerHTML = `
     <dl><dt>Check</dt><dd>${checkLabel(item.check)}</dd>
         <dt>Expected</dt><dd>${textBlock(item.check.expected)}</dd>
@@ -196,11 +233,14 @@ function renderCase(target, item, editable) {
         ${item.evidence.input == null ? "" : `<dt>Captured request</dt><dd>${textBlock(item.evidence.input)}</dd>`}</dl>
     <a href="${traceLink(item.turn)}">Open source turn ↗</a>
     ${item.turn.batch_id ? `<a href="${jobHref(null, item.turn.batch_id)}">Open source evaluation ↗</a>` : ""}
+    ${fixture.length ? `<details class="ev-disclosure ev-case-edit"><summary>Workspace fixture · ${fixture.length} ${fixture.length === 1 ? "file" : "files"}</summary>
+      <dl>${fixture.map(({ path, text }) => `<dt><code>${esc(path)}</code></dt><dd>${textBlock(text)}</dd>`).join("")}</dl></details>` : ""}
     ${editable ? `<details class="ev-disclosure ev-case-edit"><summary>Edit or archive case</summary>
       <form class="ev-capture">
         <label>Case name<input name="name" maxlength="100" value="${esc(item.turn.name)}" required></label>
         <label>Expected response<textarea name="expected" rows="3" maxlength="4000" required></textarea></label>
         <label>Text comparison<select name="comparison"><option value="contains">Contains text</option><option value="equals">Exact match</option></select></label>
+        ${fixtureEditor()}
         <p class="ev-error" role="alert"></p>
         <footer class="ev-actions"><button class="button" type="submit" value="archive" formnovalidate>Archive case</button>
           <button class="button primary" type="submit">Save revision</button></footer>
@@ -281,6 +321,7 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
           if (!editor) return;
           editor.elements.expected.value = item.check.expected;
           editor.elements.comparison.value = item.check.comparison;
+          const workspaceFiles = bindFixtureEditor(editor, item.evidence.workspace_fixture);
           let previous;
           editor.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -289,6 +330,7 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
             const body = archive ? { archive: true } : {
               name: data.get("name").trim(),
               check: { expected: data.get("expected"), comparison: data.get("comparison") },
+              workspace_fixture: workspaceFiles(),
             };
             const snapshot = JSON.stringify(body);
             if (previous?.snapshot !== snapshot) previous = { snapshot, key: crypto.randomUUID() };

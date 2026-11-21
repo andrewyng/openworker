@@ -218,9 +218,17 @@ Use **View version** to inspect or run a previous snapshot.
 Choose **Replay and compare releases** from a dataset version with saved requests.
 Select two activated release revisions. The service admits up to four cases
 through the normal worker pool, with a separate fresh sandbox for each side of
-each case. The saved plain-text request is the replay fixture. The comparison
+each case. Both releases receive the saved plain-text request. The comparison
 shows score changes, available latency and usage, and links to both executions.
 Interrupted runs or provisioning failures appear as incomplete.
+
+Under **Replay workspace files**, add the UTF-8 files that both releases should
+start with. Use paths relative to the workspace and up to 16 files per case,
+with at most 16 KiB of combined text and 48,000 bytes of encoded data. Each dataset
+version pins its own file contents. Replay restores and verifies that snapshot
+in both fresh workspaces before admitting an agent turn. After an interrupted
+restore, replay checks the existing files and marks the run incomplete if it
+cannot verify them. Install a workspace runner built with fixture support.
 
 ### Model judges and schedules
 

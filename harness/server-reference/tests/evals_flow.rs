@@ -2,6 +2,7 @@ use axum::{extract::Json, routing::post, Router};
 use openworker_runtime::{
     execution::Backend,
     model::Model,
+    replay_fixture,
     runtime::Runtime,
     safety::{Action, Config as SafetyConfig, Guardrails, Rule},
     store::StateStore,
@@ -27,7 +28,7 @@ async fn listen(router: Router) -> (String, tokio::task::JoinHandle<()>) {
     (url, task)
 }
 
-fn bundle(root: &Path, agent: &str) -> std::path::PathBuf {
+fn bundle(root: &Path, agent: &str, with_reader: bool) -> std::path::PathBuf {
     let path = root.join(agent);
     std::fs::create_dir_all(path.join("coworker")).unwrap();
     std::fs::write(
@@ -35,7 +36,16 @@ fn bundle(root: &Path, agent: &str) -> std::path::PathBuf {
         format!("---\nid: {agent}\nname: {agent}\nplanning: false\nmemory: false\nscheduling: false\n---\nEdit the synthetic test page."),
     )
     .unwrap();
-    std::fs::write(path.join("tools.json"), r#"{"version":3,"tools":[]}"#).unwrap();
+    let tools = if with_reader {
+        json!({
+            "version": 2,
+            "servers": [{"id":"coding","program":"$OPENWORKER","args":["mcp-coding","--workspace","$WORKSPACE"]}],
+            "bindings": {"read_file":{"server":"coding","tool":"read_file"}}
+        })
+    } else {
+        json!({"version":3,"tools":[]})
+    };
+    std::fs::write(path.join("tools.json"), serde_json::to_vec(&tools).unwrap()).unwrap();
     path
 }
 
@@ -103,6 +113,39 @@ async fn eval_json(request: reqwest::RequestBuilder, expected_status: u16) -> Va
     let body: Value = response.json().await.unwrap();
     assert_eq!(status, expected_status, "{path}: {body}");
     body
+}
+
+async fn verify_live_replay(connection: &str, schema: &str, store: &PostgresStore) {
+    let (connection, schema) = (connection.to_owned(), schema.to_owned());
+    let receipts = tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&connection, postgres::NoTls).unwrap();
+        pg.query(&format!("SELECT environment_id,replay_fixture_receipt,jsonb_array_length(replay_fixture) FROM {schema}.service_operations WHERE project='eval-replay' ORDER BY environment_id"), &[])
+            .unwrap()
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1), row.get::<_, i32>(2)))
+            .collect::<Vec<_>>()
+    }).await.unwrap();
+    assert_eq!(receipts.len(), 2);
+    assert_ne!(receipts[0].0, receipts[1].0);
+    assert_eq!(receipts[0].2, 2);
+    assert_eq!(receipts[1].2, 2);
+    assert_eq!(receipts[0].1, receipts[1].1);
+    for (id, receipt, count) in receipts {
+        let name = format!("owr-{}", &id.strip_prefix("env_").unwrap()[..15]);
+        println!("Verified {count} workspace files in sandbox {name}, fixture digest {receipt}");
+        tokio::time::timeout(Duration::from_secs(90), async {
+            loop {
+                let environment = store.environment(&id).unwrap();
+                if environment.phase == openworker_runtime::environment::Phase::Deleted {
+                    println!("Deleted replay sandbox {name}");
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
 }
 
 /// Populate a disposable catalog using captured evidence from the two agents.
@@ -187,9 +230,16 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     let label = uuid::Uuid::new_v4().simple().to_string();
     let schema = format!("ow_eval_{}", &label[..12]);
     let recording_schema = format!("ow_eval_obs_{}", &label[..12]);
-    let installed = bundle(&path, "page-editor");
-    let runner = path.join("fixture-runner");
-    std::fs::write(&runner, b"\x7fELF-inert-fixture").unwrap();
+    let installed = bundle(&path.join("service-bundles"), "page-editor", true);
+    let openshell_config = std::env::var_os("OW_EVALS_LIVE_OPENSHELL_CONFIG");
+    let live = openshell_config.is_some();
+    let runner = if live {
+        std::path::PathBuf::from(std::env::var_os("OW_EVALS_LIVE_RUNNER").unwrap())
+    } else {
+        let runner = path.join("fixture-runner");
+        std::fs::write(&runner, b"\x7fELF-inert-fixture").unwrap();
+        runner
+    };
     let safety = SafetyConfig {
         guardrails: Guardrails {
             user_input: vec![
@@ -210,6 +260,9 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         "safety":safety,
         "observability":{"schema":recording_schema,"eval_model_judges":true}
     });
+    if let Some(file) = openshell_config {
+        configuration["openshell"] = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+    }
     let config: Config = serde_json::from_value(configuration.clone()).unwrap();
     let config_path = path.join("eval-service.json");
     std::fs::write(&config_path, configuration.to_string()).unwrap();
@@ -231,6 +284,11 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
                 },
                 token,
                 Grants {
+                    tools: if name == "app_editor" {
+                        vec!["read_file".into()]
+                    } else {
+                        vec![]
+                    },
                     model_profiles: if name == "app_editor" {
                         vec!["judge-fixture".into()]
                     } else {
@@ -246,7 +304,6 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
                     } else {
                         vec![]
                     },
-                    ..Default::default()
                 },
             )
             .unwrap();
@@ -289,6 +346,15 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         "id":"fixture-judge-connection", "provider":"openai", "identity":"local-fixture-v1", "key_env":"OW_EVAL_TEST_MODEL_KEY",
         "endpoint":{"api":"chat-completions","baseUrl":format!("{model_url}/v1"),"allowPrivateHttp":true,"contextLimit":4096}
     }]);
+    if live {
+        let mut route = configuration["model_connections"][0].clone();
+        route["id"] = json!("fixture");
+        route["identity"] = json!("replay-fixture-v1");
+        configuration["model_connections"]
+            .as_array_mut()
+            .unwrap()
+            .push(route);
+    }
     let config: Config = serde_json::from_value(configuration.clone()).unwrap();
     std::fs::write(&config_path, configuration.to_string()).unwrap();
     let manager = openworker_runtime::connections::Manager::in_memory().unwrap();
@@ -328,7 +394,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     let open = |name| {
         let mut runtime = Runtime::open_instrumented_optional_runner(
             &path.join(format!("{name}-runtime")),
-            &bundle(&path, name),
+            &bundle(&path, name, false),
             None,
             Model::new("page-editor".into(), false),
             Backend::Off,
@@ -920,7 +986,7 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         } else {
             "replay-candidate"
         };
-        admin.catalog_put(name,"release",json!({"id":name,"instructions":"Return a pricing link.","tools":[],"subagents":{"enabled":true},
+        admin.catalog_put(name,"release",json!({"id":name,"instructions":"Return a pricing link.","tools":["read_file"],
             "runtimeProfiles":[profile],"defaultRuntimeProfile":profile,"allowedPrincipals":["app_editor"],
             "defaultModel":{"connection":"fixture","model":model}}),&installed).unwrap();
         admin
@@ -936,7 +1002,8 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
         )
         .json(&json!({
             "dataset":"Replay pricing","name":"Pricing regression","turn":pass,"include_input":true,
-            "check":{"comparison":"contains","expected":"/pricing"}
+            "check":{"comparison":"contains","expected":"/pricing"},
+            "workspace_fixture":[{"path":"fixtures/link.txt","text":"/pricing\n"},{"path":"readme.txt","text":"fixture"}]
         })),
         200,
     )
@@ -948,64 +1015,139 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     assert_eq!(eval_json(replay_request, 202).await, replay);
     let replay_path = format!("replays/{}", replay["id"].as_str().unwrap());
     eval_json(get(&replay_path, OTHER), 404).await;
-    let operations = tokio::time::timeout(Duration::from_secs(8), async {
-        let mut operations = Vec::new();
-        while operations.len() < 2 {
-            if let Some((op, create)) = store.service_claim().unwrap() {
-                assert!(create);
-                operations.push(op);
-            } else {
-                tokio::time::sleep(Duration::from_millis(50)).await;
+    let live_roles = live.then(|| {
+        use openworker_server_reference::management::{controller, worker};
+        let controller_store = PostgresStore::open(config.database().unwrap()).unwrap();
+        let worker_store = PostgresStore::open(config.database().unwrap()).unwrap();
+        (
+            tokio::spawn({
+                let (config, stop) = (config.clone(), stop.clone());
+                async move {
+                    controller(config, controller_store, stop)
+                        .await
+                        .expect("Live replay controller")
+                }
+            }),
+            tokio::spawn({
+                let (config, stop) = (config.clone(), stop.clone());
+                async move {
+                    worker(config, worker_store, 2, stop)
+                        .await
+                        .expect("Live replay worker")
+                }
+            }),
+        )
+    });
+    if !live {
+        let operations = tokio::time::timeout(Duration::from_secs(8), async {
+            let mut operations = Vec::new();
+            while operations.len() < 2 {
+                if let Some((op, create)) = store.service_claim().unwrap() {
+                    assert!(create);
+                    operations.push(op);
+                } else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
             }
-        }
-        operations
-    })
-    .await
-    .unwrap();
-    assert!(operations.iter().all(|op| op.project == "eval-replay"));
-    assert_ne!(operations[0].environment_id, operations[1].environment_id);
-    for op in &operations {
-        // The fixture supplies the provisioned environment binding. Admission,
-        // initial task identity and scoring all use the normal service store.
-        let environment = store.clone().environment(&op.environment_id).unwrap();
-        let binding = openworker_runtime::environment::Binding {
-            environment_id: op.environment_id.clone(),
-            spec: environment.spec,
-            remote_id: format!("fixture-{}", op.environment_id),
-            remote_name: op.environment_id.clone(),
-            workspace_scope: "replay-test".into(),
-            policy_hash: "fixture".into(),
-            policy_version: 1,
-        };
-        store
-            .complete_environment(
-                &op.environment_id,
-                environment.revision,
-                Some(binding.clone()),
-            )
-            .unwrap();
-        store
-            .service_update_operation(&op.id, "ready", None)
-            .unwrap();
-        let workspace = tempfile::tempdir_in(&path).unwrap().keep();
-        let session=editor.prepare_session(json!({"name":"Replay fixture","coworker":editor.coworker(),"workspace":workspace,
+            operations
+        })
+        .await
+        .unwrap();
+        assert!(operations.iter().all(|op| op.project == "eval-replay"));
+        assert_ne!(operations[0].environment_id, operations[1].environment_id);
+        for op in &operations {
+            // The fixture supplies the provisioned environment binding. Admission,
+            // initial task identity and scoring all use the normal service store.
+            let environment = store.clone().environment(&op.environment_id).unwrap();
+            let binding = openworker_runtime::environment::Binding {
+                environment_id: op.environment_id.clone(),
+                spec: environment.spec,
+                remote_id: format!("fixture-{}", op.environment_id),
+                remote_name: op.environment_id.clone(),
+                workspace_scope: "replay-test".into(),
+                policy_hash: "fixture".into(),
+                policy_version: 1,
+            };
+            store
+                .complete_environment(
+                    &op.environment_id,
+                    environment.revision,
+                    Some(binding.clone()),
+                )
+                .unwrap();
+            store
+                .service_update_operation(&op.id, "ready", None)
+                .unwrap();
+            let workspace = tempfile::tempdir_in(&path).unwrap().keep();
+            let (fixture, verify_only) = match store.claim_replay_fixture(&op.id).unwrap() {
+                openworker_store_postgres::service_catalog::ReplayPreparation::Restore {
+                    fixture,
+                    verify_only,
+                } => (fixture, verify_only),
+                _ => panic!("Fixture must be included in the durable admission"),
+            };
+            assert!(!verify_only);
+            assert!(matches!(
+                store.claim_replay_fixture(&op.id).unwrap(),
+                openworker_store_postgres::service_catalog::ReplayPreparation::Pending
+            ));
+            let receipt = replay_fixture::restore(&workspace, fixture.clone(), false).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(workspace.join("fixtures/link.txt")).unwrap(),
+                "/pricing\n"
+            );
+            assert_eq!(
+                replay_fixture::restore(&workspace, fixture.clone(), true).unwrap(),
+                receipt
+            );
+            let session=editor.prepare_session(json!({"name":"Replay fixture","coworker":editor.coworker(),"workspace":workspace,
             "model":{"connection":"fixture","model":if op.release_id=="candidate@1" {"replay-candidate"} else {"page-editor"}}})).unwrap();
-        // Use a local disposable workspace after the fake gateway admission.
-        store
-            .service_finish(&op.id, session, "eval-qualification", "test")
-            .unwrap();
-        store.claim(&op.session_id).unwrap();
-        let submitted = store.next_turn(&op.session_id).unwrap().unwrap();
-        editor
-            .dispatch("turn/start", serde_json::to_value(submitted).unwrap())
-            .await
-            .unwrap();
-        let turn = wait_for_turn(&editor, &op.session_id, "completed").await;
-        assert_eq!(turn["turn_id"], op.run_id.as_deref().unwrap());
-        store.release(&op.session_id).unwrap();
+            assert!(store
+                .service_finish(&op.id, session.clone(), "eval-qualification", "test")
+                .is_err());
+            if op.release_id == "candidate@1" {
+                // Model a runner that wrote the files before its receipt was lost.
+                let (connection, schema, id) = (connection.clone(), schema.clone(), op.id.clone());
+                tokio::task::spawn_blocking(move || {
+                    let mut pg = postgres::Client::connect(&connection, postgres::NoTls).unwrap();
+                    assert_eq!(pg.execute(&format!("UPDATE {schema}.service_operations SET replay_fixture_started=clock_timestamp()-interval '61 seconds' WHERE id=$1"), &[&id]).unwrap(), 1);
+                }).await.unwrap();
+                let recovered = store.claim_replay_fixture(&op.id).unwrap();
+                let openworker_store_postgres::service_catalog::ReplayPreparation::Restore {
+                    fixture: pinned,
+                    verify_only: true,
+                } = recovered
+                else {
+                    panic!("Recovery must only verify the first restore");
+                };
+                assert_eq!(pinned, fixture);
+                assert_eq!(
+                    replay_fixture::restore(&workspace, pinned, true).unwrap(),
+                    receipt
+                );
+            }
+            store.complete_replay_fixture(&op.id, receipt).unwrap();
+            // Use a local disposable workspace after the fake gateway admission.
+            store
+                .service_finish(&op.id, session, "eval-qualification", "test")
+                .unwrap();
+            store.claim(&op.session_id).unwrap();
+            let submitted = store.next_turn(&op.session_id).unwrap().unwrap();
+            editor
+                .dispatch("turn/start", serde_json::to_value(submitted).unwrap())
+                .await
+                .unwrap();
+            let turn = wait_for_turn(&editor, &op.session_id, "completed").await;
+            assert_eq!(turn["turn_id"], op.run_id.as_deref().unwrap());
+            store.release(&op.session_id).unwrap();
+        }
     }
-    let comparison = tokio::time::timeout(Duration::from_secs(8), async {
+    let comparison = tokio::time::timeout(Duration::from_secs(if live { 240 } else { 8 }), async {
         loop {
+            if let Some((controller, worker)) = &live_roles {
+                assert!(!controller.is_finished(), "Live replay controller exited");
+                assert!(!worker.is_finished(), "Live replay worker exited");
+            }
             let value = eval_json(get(&replay_path, ADMIN), 200).await;
             if value["runs"]
                 .as_array()
@@ -1020,11 +1162,25 @@ async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
     })
     .await
     .unwrap();
+    if live {
+        println!("OpenShell replay comparison: {comparison}");
+    }
     assert_eq!(comparison["runs"][0]["result"]["passed"], true);
     assert_eq!(comparison["runs"][1]["result"]["passed"], false);
     assert!(comparison["runs"][0]["result"]["latency_ms"].is_number());
     assert_eq!(comparison["runs"][0]["result"]["input_tokens"], 42);
     assert_eq!(comparison["runs"][1]["result"]["output_tokens"], 18);
+    if live {
+        verify_live_replay(&connection, &schema, &store).await;
+        stop.cancel();
+        let (controller, worker) = live_roles.unwrap();
+        controller.await.unwrap();
+        worker.await.unwrap();
+        replay_dispatcher.abort();
+        api_task.abort();
+        model_task.abort();
+        return;
+    }
     let incomplete=eval_json(send(reqwest::Method::POST,format!("datasets/{}/replays",replay_case["dataset_id"].as_str().unwrap()),EDITOR,"incomplete-replay".into()).json(&json!({
         "dataset_version":1,"baseline":"baseline@1","candidate":"candidate@1","runtime_profile":profile
     })),202).await;
