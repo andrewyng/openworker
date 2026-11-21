@@ -58,6 +58,7 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
         ("POST", ["", "v1", "evals", "cases" | "evaluators" | "batches"])
         | ("POST", ["", "v1", "evals", "tags", _])
         | ("POST", ["", "v1", "evals", "tags", _, _])
+        | ("POST", ["", "v1", "evals", "datasets", _, "cases", _])
         | ("POST", ["", "v1", "evals", "datasets", _, "jobs"]) => Some(Action::Submit),
         ("GET" | "POST", ["", "v1", "model-providers"])
         | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
@@ -136,7 +137,7 @@ pub(crate) fn router() -> Router<App> {
         .route("/v1/evals/datasets/:id", get(crate::evals::dataset))
         .route(
             "/v1/evals/datasets/:id/cases/:case",
-            get(crate::evals::case),
+            get(crate::evals::case).post(crate::evals::revise_case),
         )
         .route("/v1/evals/datasets/:id/jobs/:job", get(crate::evals::job))
         .route("/v1/evals/datasets/:id/jobs", post(crate::evals::enqueue))

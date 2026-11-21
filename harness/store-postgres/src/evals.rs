@@ -30,6 +30,9 @@ pub(crate) fn migrate(tx: &mut Transaction<'_>) -> Result<()> {
             version INTEGER NOT NULL, created_ms BIGINT NOT NULL,
             results JSONB
         );
+        ALTER TABLE eval_cases ADD COLUMN IF NOT EXISTS case_key TEXT;
+        ALTER TABLE eval_cases ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS target_count INTEGER;
         ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS processed INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE eval_jobs ADD COLUMN IF NOT EXISTS partial_results JSONB;
         ALTER TABLE eval_jobs ALTER COLUMN dataset DROP NOT NULL;
@@ -83,6 +86,22 @@ pub struct SaveCase {
     pub turn: Turn,
     pub include_input: bool,
     pub check: Check,
+    pub batch_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetVersion {
+    pub version: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviseCase {
+    pub name: Option<String>,
+    pub check: Option<Check>,
+    #[serde(default)]
+    pub archive: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -205,13 +224,54 @@ pub(crate) fn capture(
     })
 }
 
-fn owned_dataset(tx: &mut Transaction<'_>, p: &Identity, id: &str) -> Result<(String, i32)> {
+pub(crate) fn owned_dataset(
+    tx: &mut Transaction<'_>,
+    p: &Identity,
+    id: &str,
+) -> Result<(String, i32)> {
     tx.query_opt(
         "SELECT name,version FROM eval_datasets WHERE id=$1 AND ($2 OR owner=$3)",
         &[&id, &(p.scope == Scope::All), &p.principal],
     )?
     .map(|row| (row.get(0), row.get(1)))
     .ok_or_else(|| SubmissionError::NotFound.into())
+}
+
+// Original rows use their own ID as the case identity. A revision keeps that
+// identity and supplies a new immutable row for the numbered dataset version.
+pub(crate) const CASE_SNAPSHOT: &str = "SELECT DISTINCT ON (COALESCE(case_key,id))
+    id,version,source,evidence,check_spec,archived,COALESCE(case_key,id) AS case_key
+    FROM eval_cases WHERE dataset=$1 AND version<=$2 ORDER BY COALESCE(case_key,id),version DESC";
+
+fn case_count(tx: &mut Transaction<'_>, dataset: &str, version: i32) -> Result<i32> {
+    Ok(tx
+        .query_one(
+            &format!("SELECT count(*)::int FROM ({CASE_SNAPSHOT}) cases WHERE NOT archived"),
+            &[&dataset, &version],
+        )?
+        .get(0))
+}
+
+fn check_name(name: &str) -> Result<()> {
+    ensure!(
+        !name.trim().is_empty() && name.len() <= 400 && !name.chars().any(char::is_control),
+        SubmissionError::InvalidRequest
+    );
+    Ok(())
+}
+
+fn batch_evidence(
+    tx: &mut Transaction<'_>,
+    p: &Identity,
+    job: &str,
+    turn: Turn,
+) -> Result<Evidence> {
+    let row = tx.query_opt("SELECT t.output FROM eval_job_targets t JOIN eval_jobs j ON j.id=t.job
+       WHERE t.job=$1 AND (t.session_id,t.turn_id)=($2,$3) AND ($4 OR j.owner=$5) AND j.results IS NOT NULL",
+       &[&job,&turn.session_id,&turn.turn_id,&(p.scope==Scope::All),&p.principal])?.ok_or(SubmissionError::NotFound)?;
+    let mut evidence = capture(tx, turn, false)?;
+    evidence.output = row.get(0);
+    Ok(evidence)
 }
 
 pub(crate) fn summary(row: &postgres::Row) -> Value {
@@ -234,18 +294,21 @@ pub(crate) fn validate_check(check: &Check) -> Result<()> {
 }
 
 impl PostgresStore {
-    pub fn eval_evidence(&self, turn: Turn) -> Result<Evidence> {
+    pub fn eval_evidence(&self, turn: Turn, batch_id: Option<String>) -> Result<Evidence> {
         validate_id(&turn.session_id, 80)?;
         validate_id(&turn.turn_id, 80)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            identity(
+            let p = identity(
                 &mut tx,
                 db.auth.as_ref(),
                 Action::Read,
                 Some(&turn.session_id),
             )?;
-            let evidence = capture(&mut tx, turn, true)?;
+            let evidence = match batch_id {
+                Some(job) => batch_evidence(&mut tx, &p, &job, turn)?,
+                None => capture(&mut tx, turn, true)?,
+            };
             tx.commit()?;
             Ok(evidence)
         })
@@ -274,9 +337,12 @@ impl PostgresStore {
         validate_check(&request.check)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
-            identity(&mut tx, db.auth.as_ref(), Action::Submit, Some(&request.turn.session_id))?;
+            let p = identity(&mut tx, db.auth.as_ref(), Action::Submit, Some(&request.turn.session_id))?;
             tx.query_one("SELECT pg_advisory_xact_lock(hashtext('eval.case'),hashtext($1))", &[&id])?;
-            let mut evidence = capture(&mut tx, request.turn, true)?;
+            let mut evidence = match &request.batch_id {
+                Some(job) => batch_evidence(&mut tx, &p, job, request.turn)?,
+                None => capture(&mut tx, request.turn, true)?,
+            };
             if !request.include_input {
                 evidence.input = None;
             }
@@ -293,6 +359,7 @@ impl PostgresStore {
             let version: i32 = dataset.get(1);
             let mut source = serde_json::to_value(&evidence.turn)?;
             source["name"] = json!(openworker_runtime::telemetry::redact(name.as_deref().unwrap_or(&evidence.name)));
+            if let Some(job) = &request.batch_id { source["batch_id"] = json!(job); }
             let check = serde_json::to_value(&request.check)?;
             let evidence = json!({"input":evidence.input,"output":evidence.output});
             if let Some(existing) = tx.query_opt(
@@ -309,8 +376,8 @@ impl PostgresStore {
                 tx.commit()?;
                 return Ok(json!({"id":id,"dataset_id":dataset_id,"dataset_version":existing.get::<_, i32>(1)}));
             }
-            ensure!(version < MAX_CASES, SubmissionError::Busy);
-            let version = version + 1;
+            ensure!(case_count(&mut tx,&dataset_id,version)? < MAX_CASES, SubmissionError::Busy);
+            let version = version.checked_add(1).ok_or(SubmissionError::Busy)?;
             tx.execute(
                 "INSERT INTO eval_cases(id,dataset,version,source,evidence,check_spec) VALUES($1,$2,$3,$4,$5,$6)",
                 &[&id, &dataset_id, &version, &source, &evidence, &check],
@@ -318,6 +385,58 @@ impl PostgresStore {
             tx.execute("UPDATE eval_datasets SET version=$2 WHERE id=$1", &[&dataset_id, &version])?;
             tx.commit()?;
             Ok(json!({"id":id,"dataset_id":dataset_id,"dataset_version":version}))
+        })
+    }
+
+    pub fn revise_eval_case(
+        &self,
+        id: String,
+        dataset: String,
+        case: String,
+        request: ReviseCase,
+    ) -> Result<Value> {
+        validate_id(&dataset, 100)?;
+        validate_id(&case, 100)?;
+        if let Some(name) = &request.name {
+            check_name(name)?;
+        }
+        if let Some(check) = &request.check {
+            validate_check(check)?;
+        }
+        ensure!(
+            if request.archive {
+                request.name.is_none() && request.check.is_none()
+            } else {
+                request.name.is_some() && request.check.is_some()
+            },
+            SubmissionError::InvalidRequest
+        );
+        self.call(move |db| {
+            let mut tx = db.client.transaction()?;
+            let p = identity(&mut tx, db.auth.as_ref(), Action::Submit,None)?;
+            let current: i32 = tx.query_opt("SELECT version FROM eval_datasets WHERE id=$1 AND ($2 OR owner=$3) FOR UPDATE",
+                &[&dataset,&(p.scope==Scope::All),&p.principal])?.ok_or(SubmissionError::NotFound)?.get(0);
+            let old = tx.query_opt("SELECT COALESCE(case_key,id),source,evidence,check_spec FROM eval_cases
+                WHERE dataset=$1 AND id=$2 AND NOT archived", &[&dataset,&case])?.ok_or(SubmissionError::NotFound)?;
+            let key: String = old.get(0);
+            let mut source: Value = old.get(1);
+            let check: Value = match request.check { Some(check)=>json!(check), None=>old.get(3) };
+            if let Some(name)=request.name { source["name"]=json!(openworker_runtime::telemetry::redact(name.trim())); }
+            if let Some(row)=tx.query_opt("SELECT version,dataset,case_key,source,check_spec,archived FROM eval_cases WHERE id=$1", &[&id])? {
+                ensure!(row.get::<_,String>(1)==dataset && row.get::<_,Option<String>>(2).as_deref()==Some(&key)
+                    && row.get::<_,Value>(3)==source && row.get::<_,Value>(4)==check && row.get::<_,bool>(5)==request.archive,
+                    SubmissionError::Conflict);
+                return Ok(json!({"id":id,"dataset_version":row.get::<_,i32>(0)}));
+            }
+            let latest: String = tx.query_one("SELECT id FROM eval_cases WHERE dataset=$1 AND COALESCE(case_key,id)=$2 ORDER BY version DESC LIMIT 1", &[&dataset,&key])?.get(0);
+            ensure!(latest==case, SubmissionError::Conflict);
+            let version = current.checked_add(1).ok_or(SubmissionError::Busy)?;
+            let evidence: Value = old.get(2);
+            tx.execute("INSERT INTO eval_cases(id,dataset,version,source,evidence,check_spec,case_key,archived)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8)", &[&id,&dataset,&version,&source,&evidence,&check,&key,&request.archive])?;
+            tx.execute("UPDATE eval_datasets SET version=$2 WHERE id=$1", &[&dataset,&version])?;
+            tx.commit()?;
+            Ok(json!({"id":id,"dataset_version":version}))
         })
     }
 
@@ -331,6 +450,8 @@ impl PostgresStore {
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             let rows = tx.query(
                 "SELECT d.id,d.name,d.owner,d.version,
+                    (SELECT count(*) FROM (SELECT DISTINCT ON (COALESCE(c.case_key,c.id)) c.archived
+                     FROM eval_cases c WHERE c.dataset=d.id ORDER BY COALESCE(c.case_key,c.id),c.version DESC) a WHERE NOT a.archived) AS case_count,
                     (SELECT j.created_ms FROM eval_jobs j WHERE j.dataset=d.id
                      ORDER BY j.created_ms DESC,j.id DESC LIMIT 1) AS last_run_ms
                  FROM eval_datasets d
@@ -346,7 +467,7 @@ impl PostgresStore {
             Ok(json!({"datasets":page.iter().map(|row| json!({
                 "id":row.get::<_, String>(0), "name":row.get::<_, String>(1),
                 "owner":row.get::<_, String>(2), "version":row.get::<_, i32>(3),
-                "last_run_ms":row.get::<_, Option<i64>>(4),
+                "case_count":row.get::<_,i64>(4), "last_run_ms":row.get::<_, Option<i64>>(5),
             })).collect::<Vec<_>>(), "next_cursor":next_cursor}))
         })
     }
@@ -420,14 +541,16 @@ impl PostgresStore {
         })
     }
 
-    pub fn eval_dataset(&self, id: String) -> Result<Value> {
+    pub fn eval_dataset(&self, id: String, requested: Option<i32>) -> Result<Value> {
         validate_id(&id, 100)?;
         self.call(move |db| {
             let mut tx = db.client.transaction()?;
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
-            let (name, version) = owned_dataset(&mut tx, &p, &id)?;
+            let (name, latest) = owned_dataset(&mut tx, &p, &id)?;
+            let version = requested.unwrap_or(latest);
+            ensure!((0..=latest).contains(&version), SubmissionError::NotFound);
             let rows = tx.query(
-                "SELECT id,version,source,check_spec FROM eval_cases WHERE dataset=$1 AND version<=$2 ORDER BY version",
+                &format!("SELECT id,version,source,check_spec FROM ({CASE_SNAPSHOT}) cases WHERE NOT archived ORDER BY version"),
                 &[&id, &version],
             )?;
             let jobs = tx.query(
@@ -435,7 +558,7 @@ impl PostgresStore {
                  ORDER BY created_ms DESC,id DESC LIMIT 50",
                 &[&id],
             )?;
-            Ok(json!({"id":id,"name":name,"version":version,"jobs":jobs.iter().map(summary).collect::<Vec<_>>(),
+            Ok(json!({"id":id,"name":name,"version":version,"latest_version":latest,"jobs":jobs.iter().map(summary).collect::<Vec<_>>(),
                 "cases":rows.iter().map(|row| json!({
                     "id":row.get::<_, String>(0), "version":row.get::<_, i32>(1), "turn":row.get::<_, Value>(2),
                     "check":row.get::<_, Value>(3)
@@ -471,10 +594,12 @@ impl PostgresStore {
             let p = identity(&mut tx, db.auth.as_ref(), Action::Submit, None)?;
             let (_, current) = owned_dataset(&mut tx, &p, &dataset)?;
             ensure!((1..=current).contains(&version), SubmissionError::InvalidRequest);
+            let count=case_count(&mut tx,&dataset,version)?;
+            ensure!(count>0,SubmissionError::InvalidRequest);
             let now = openworker_runtime::store::now_ms() as i64;
             tx.execute(
-                "INSERT INTO eval_jobs(id,dataset,version,created_ms) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING",
-                &[&id, &dataset, &version, &now],
+                "INSERT INTO eval_jobs(id,dataset,version,created_ms,target_count) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING",
+                &[&id, &dataset, &version, &now,&count],
             )?;
             let row = tx.query_one(
                 "SELECT id,version,created_ms,results IS NOT NULL AS ready,dataset FROM eval_jobs WHERE id=$1",
@@ -495,11 +620,11 @@ impl PostgresStore {
             let p = identity(&mut tx, db.auth.as_ref(), Action::Read, None)?;
             owned_dataset(&mut tx, &p, &dataset)?;
             let row = tx.query_opt(
-                "SELECT id,version,created_ms,results IS NOT NULL AS ready,results,processed FROM eval_jobs WHERE dataset=$1 AND id=$2",
+                "SELECT id,version,created_ms,results IS NOT NULL AS ready,results,processed,COALESCE(target_count,version) AS total FROM eval_jobs WHERE dataset=$1 AND id=$2",
                 &[&dataset, &job],
             )?.ok_or(SubmissionError::NotFound)?;
             let mut result = summary(&row);
-            let total: i32 = row.get("version");
+            let total: i32 = row.get("total");
             let processed = if row.get::<_, bool>("ready") { total } else { row.get("processed") };
             result["progress"] = json!({"completed":processed,"total":total});
             result["results"] = row.get::<_, Option<Value>>("results").unwrap_or(Value::Null);
@@ -514,7 +639,7 @@ impl PostgresStore {
             ensure!(db.auth.is_none(), auth::Error::Forbidden);
             let mut tx = db.client.transaction()?;
             let Some(job) = tx.query_opt(
-                "SELECT id,dataset,version,processed,partial_results,evaluator FROM eval_jobs WHERE results IS NULL
+                "SELECT id,dataset,version,processed,partial_results,evaluator,COALESCE(target_count,version) FROM eval_jobs WHERE results IS NULL
                  ORDER BY created_ms,id LIMIT 1 FOR UPDATE SKIP LOCKED",
                 &[],
             )? else {
@@ -523,6 +648,7 @@ impl PostgresStore {
             let id: String = job.get(0);
             let dataset: Option<String> = job.get(1);
             let version: i32 = job.get(2);
+            let total: i32 = job.get(6);
             let mut processed: i32 = job.get(3);
             let mut results = match job.get::<_, Option<Value>>(4) {
                 Some(value) => serde_json::from_value::<Vec<Value>>(value)?,
@@ -531,9 +657,10 @@ impl PostgresStore {
             let evaluator: Option<crate::eval_selection::SavedEvaluator> = job.get::<_, Option<Value>>(5)
                 .map(serde_json::from_value).transpose()?;
             let rows = if let Some(dataset) = dataset {
-                tx.query("SELECT id,version,source,evidence->>'output',check_spec FROM eval_cases
-                 WHERE dataset=$1 AND version>$3 AND version<=$2 ORDER BY version LIMIT $4",
-                 &[&dataset, &version, &processed, &SCORE_BATCH])?
+                tx.query(&format!("SELECT id,ordinal,source,output,check_spec FROM (
+                    SELECT id,row_number() OVER (ORDER BY version)::int AS ordinal,source,evidence->>'output' AS output,check_spec
+                    FROM ({CASE_SNAPSHOT}) cases WHERE NOT archived) ordered WHERE ordinal>$3 ORDER BY ordinal LIMIT $4"),
+                    &[&dataset, &version, &processed, &SCORE_BATCH])?
             } else {
                 tx.query("SELECT NULL::text,ordinal,source,output,NULL::jsonb FROM eval_job_targets
                  WHERE job=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3", &[&id, &processed, &SCORE_BATCH])?
@@ -542,7 +669,7 @@ impl PostgresStore {
             for row in rows {
                 let case = row.get::<_, Option<String>>(0);
                 let ordinal: i32 = row.get(1);
-                ensure!(ordinal == processed + 1, "Evaluation case snapshot is incomplete");
+                ensure!(ordinal == processed + 1 && ordinal <= total, "Evaluation case snapshot is incomplete");
                 processed = ordinal;
                 let output = row.get::<_, Option<String>>(3);
                 let spec: Check = match &evaluator {
@@ -577,8 +704,8 @@ impl PostgresStore {
             tx.execute(
                 "UPDATE eval_jobs SET
                     processed=$3,
-                    results=CASE WHEN $3=version THEN $2::jsonb END,
-                    partial_results=CASE WHEN $3<version THEN $2::jsonb END
+                    results=CASE WHEN $3=COALESCE(target_count,version) THEN $2::jsonb END,
+                    partial_results=CASE WHEN $3<COALESCE(target_count,version) THEN $2::jsonb END
                  WHERE id=$1",
                 &[&id, &json!(results), &processed],
             )?;

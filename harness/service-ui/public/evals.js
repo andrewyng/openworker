@@ -23,7 +23,7 @@ function errorText(error) {
   return "Couldn’t complete the request. Try again.";
 }
 
-export async function captureEvalCase(root, api, turn, signal) {
+export async function captureEvalCase(root, api, turn, signal, batch) {
   if (root.querySelector(".ev-dialog")) return;
   const dialog = document.createElement("dialog");
   dialog.className = "ev-dialog";
@@ -47,7 +47,8 @@ export async function captureEvalCase(root, api, turn, signal) {
   const body = dialog.querySelector(".ev-dialog-body");
   try {
     const { session_id, turn_id } = turn;
-    const evidence = await api(`${endpoint}/evidence/${id(session_id)}/${id(turn_id)}`, "GET", undefined, undefined, signal);
+    const preview = `${endpoint}/evidence/${id(session_id)}/${id(turn_id)}${batch ? "?batch_id=" + id(batch.id) : ""}`;
+    const evidence = await api(preview, "GET", undefined, undefined, signal);
     if (!dialog.open || signal.aborted) return;
     body.innerHTML = `
       <form class="ev-capture">
@@ -74,6 +75,10 @@ export async function captureEvalCase(root, api, turn, signal) {
         </footer>
       </form>`;
     const form = body.querySelector("form");
+    if (batch?.evaluator.check) {
+      form.elements.expected.value = batch.evaluator.check.expected;
+      form.elements.comparison.value = batch.evaluator.check.comparison;
+    }
     form.querySelector("[data-ev-cancel]").addEventListener("click", cancel);
     const datasetInput = form.elements.dataset;
     const suggestions = form.querySelector("datalist");
@@ -116,6 +121,7 @@ export async function captureEvalCase(root, api, turn, signal) {
         turn: { session_id, turn_id },
         include_input: data.has("include_input"),
         check: { expected: data.get("expected"), comparison: data.get("comparison") },
+        ...(batch ? { batch_id: batch.id } : {}),
       };
       const snapshot = JSON.stringify(payload);
       if (previous?.snapshot !== snapshot) previous = { snapshot, key: crypto.randomUUID() };
@@ -159,12 +165,15 @@ function renderDataset(root, dataset, canRun, view) {
     <nav class="ev-breadcrumb" aria-label="Evaluation breadcrumb"><a href="#evals">Evals</a><span aria-hidden="true">/</span><span>${esc(dataset.name)}</span></nav>
     <header class="ev-heading">
       <div><h1>${esc(dataset.name)}</h1><p>${count(dataset.cases.length, "case")} · Version ${dataset.version}</p></div>
-      ${canRun ? '<button class="button primary" type="button" data-ev-run>Run eval</button>' : ""}
+      ${canRun && dataset.cases.length ? '<button class="button primary" type="button" data-ev-run>Run eval</button>' : ""}
     </header>
     <p class="ev-error ev-run-error" role="alert"></p>
     ${evalTabs(view, dataset.id)}
     ${view === "runs" ? '<section class="ev-section" data-eval-list></section>' : `<section class="ev-section" aria-labelledby="ev-cases">
       <div class="ev-section-head"><h2 id="ev-cases">Cases</h2><a href="#observability">Add from trace ↗</a></div>
+      <form class="ev-versions"><label>Dataset version <input type="number" name="version" min="1" max="${dataset.latest_version}" value="${dataset.version}" required></label>
+        <button class="button" type="submit">View version</button>
+        ${dataset.version === dataset.latest_version ? "" : `<a href="${datasetHref(dataset.id)}">Back to latest version</a>`}</form>
       <div class="ev-list">
         ${dataset.cases.map((entry) => `
           <details class="ev-case" data-case="${esc(entry.id)}">
@@ -175,16 +184,26 @@ function renderDataset(root, dataset, canRun, view) {
     </section>`}`;
 }
 
-function renderCase(target, item) {
+function renderCase(target, item, editable) {
   target.innerHTML = `
     <dl><dt>Check</dt><dd>${checkLabel(item.check)}</dd>
         <dt>Expected</dt><dd>${textBlock(item.check.expected)}</dd>
         <dt>Captured response</dt><dd>${textBlock(item.evidence.output)}</dd>
         ${item.evidence.input == null ? "" : `<dt>Captured request</dt><dd>${textBlock(item.evidence.input)}</dd>`}</dl>
-    <a href="${traceLink(item.turn)}">Open source turn ↗</a>`;
+    <a href="${traceLink(item.turn)}">Open source turn ↗</a>
+    ${item.turn.batch_id ? `<a href="${jobHref(null, item.turn.batch_id)}">Open source evaluation ↗</a>` : ""}
+    ${editable ? `<details class="ev-disclosure ev-case-edit"><summary>Edit or archive case</summary>
+      <form class="ev-capture">
+        <label>Case name<input name="name" maxlength="100" value="${esc(item.turn.name)}" required></label>
+        <label>Expected response<textarea name="expected" rows="3" maxlength="4000" required></textarea></label>
+        <label>Text comparison<select name="comparison"><option value="contains">Contains text</option><option value="equals">Exact match</option></select></label>
+        <p class="ev-error" role="alert"></p>
+        <footer class="ev-actions"><button class="button" type="submit" value="archive" formnovalidate>Archive case</button>
+          <button class="button primary" type="submit">Save revision</button></footer>
+      </form></details>` : ""}`;
 }
 
-function renderJob(root, dataset, job) {
+function renderJob(root, dataset, job, canRun) {
   const cases = new Map((dataset?.cases || []).map((entry) => [entry.id, entry]));
   const results = job.results || [];
   const states = results.map(({ result }) => outcome(result)[0]);
@@ -211,7 +230,7 @@ function renderJob(root, dataset, job) {
         <div><span>${label}</span><strong>${states.filter((state) => state === kind).length}</strong></div>`).join("")}</div>
       <section class="ev-section" aria-labelledby="ev-results">
         <div class="ev-section-head"><h2 id="ev-results">Results</h2></div>
-        <div class="ev-list">${results.map(({ turn, result }) => {
+        <div class="ev-list">${results.map(({ turn, result }, index) => {
           const entry = cases.get(result.dataset_case);
           return `<details class="ev-case" ${entry ? `data-case="${esc(entry.id)}"` : ""}>
             <summary><span>${entry ? caseName(entry) : esc(turn.name || "Agent turn")}</span>${pill(...outcome(result))}</summary>
@@ -219,6 +238,7 @@ function renderJob(root, dataset, job) {
               ${result.explanation ? `<p class="ev-result-note">${esc(result.explanation)}</p>` : ""}
               ${turn.status ? `<p class="ev-muted">Turn status · ${esc(turn.status)}</p>` : ""}
               <div data-ev-evidence>${entry ? '<p class="ev-muted" role="status">Loading captured evidence…</p>' : `<a href="${traceLink(turn)}">Open source turn ↗</a>`}</div>
+              ${!dataset && canRun ? `<button class="button ev-case-edit" type="button" data-promote="${index}">Add to dataset</button>` : ""}
             </div>
           </details>`;
         }).join("")}</div>
@@ -238,7 +258,7 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
     if (signal.aborted) return;
     root.innerHTML = `<header class="ev-heading"><div><h1>Evals</h1><p role="alert">${esc(errorText(error))}</p></div><a class="button" href="#observability">Open tracing</a></header>`;
   };
-  function loadCaseEvidence() {
+  function loadCaseEvidence(dataset, editable = false) {
     root.querySelectorAll("details[data-case]").forEach((node) => {
       node.addEventListener("toggle", async () => {
         if (!node.open || node.dataset.loaded) return;
@@ -246,7 +266,37 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
         const detail = node.querySelector("[data-ev-evidence]");
         try {
           const item = await get(`${pathFor(datasetId)}/cases/${id(node.dataset.case)}`);
-          if (!signal.aborted) renderCase(detail, item);
+          if (signal.aborted) return;
+          renderCase(detail, item, editable);
+          const editor = detail.querySelector("form");
+          if (!editor) return;
+          editor.elements.expected.value = item.check.expected;
+          editor.elements.comparison.value = item.check.comparison;
+          let previous;
+          editor.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const archive = event.submitter.value === "archive";
+            const data = new FormData(editor);
+            const body = archive ? { archive: true } : {
+              name: data.get("name").trim(),
+              check: { expected: data.get("expected"), comparison: data.get("comparison") },
+            };
+            const snapshot = JSON.stringify(body);
+            if (previous?.snapshot !== snapshot) previous = { snapshot, key: crypto.randomUUID() };
+            const buttons = [...editor.querySelectorAll("button")];
+            buttons.forEach((button) => button.disabled = true);
+            try {
+              await api(`${pathFor(datasetId)}/cases/${id(node.dataset.case)}`, "POST", body, previous.key, signal);
+              if (!signal.aborted) {
+                if (location.hash === datasetHref(dataset.id)) await load();
+                else location.hash = datasetHref(dataset.id);
+              }
+            } catch (error) {
+              if (!signal.aborted) editor.querySelector("[role=alert]").textContent = errorText(error);
+            } finally {
+              buttons.forEach((button) => button.disabled = false);
+            }
+          }, { signal });
         } catch (error) {
           if (signal.aborted) return;
           detail.textContent = errorText(error);
@@ -267,15 +317,23 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
         return;
       }
       const batch = datasetId === "batch" && jobId;
-      const dataset = batch ? null : await get(pathFor(datasetId));
+      const requestedVersion = query.get("version");
+      const dataset = batch || jobId ? null : await get(pathFor(datasetId) + (requestedVersion ? "?version=" + id(requestedVersion) : ""));
       if (signal.aborted) return;
       if (jobId) {
         const poll = async () => {
           try {
             const job = await get(batch ? `${endpoint}/batches/${id(jobId)}` : `${pathFor(datasetId)}/jobs/${id(jobId)}`);
             if (signal.aborted) return;
-            renderJob(root, dataset, job);
-            if (job.status === "completed") loadCaseEvidence();
+            const snapshot = batch ? null : await get(pathFor(datasetId) + "?version=" + job.dataset_version);
+            if (signal.aborted) return;
+            renderJob(root, snapshot, job, canRun);
+            if (job.status === "completed") {
+              loadCaseEvidence(snapshot);
+              root.querySelectorAll("[data-promote]").forEach((button) => button.addEventListener("click", () => {
+                captureEvalCase(root, api, job.results[Number(button.dataset.promote)].turn, signal, job);
+              }, { signal }));
+            }
             if (job.status !== "completed") timer = setTimeout(poll, 1500);
           } catch (error) { showError(error); }
         };
@@ -284,7 +342,11 @@ export function mountEvals(root, { api, datasetId, jobId, canRun, query }) {
       }
       renderDataset(root, dataset, canRun, view);
       if (view === "runs") loadList();
-      else loadCaseEvidence();
+      else loadCaseEvidence(dataset, canRun && dataset.version === dataset.latest_version);
+      root.querySelector(".ev-versions")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        location.hash = datasetHref(dataset.id) + "?version=" + event.currentTarget.elements.version.value;
+      }, { signal });
       const key = crypto.randomUUID();
       const run = root.querySelector("[data-ev-run]");
       run?.addEventListener("click", async () => {

@@ -20,15 +20,25 @@ fn enabled(app: &App) -> Result<(), ApiError> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CaptureQuery {
+    batch_id: Option<String>,
+}
+
 pub(crate) async fn capture(
     Extension(app): Extension<App>,
     Path((session_id, turn_id)): Path<(String, String)>,
+    Query(query): Query<CaptureQuery>,
 ) -> Result<Json<Value>, ApiError> {
     enabled(&app)?;
-    Ok(Json(json!(app.store.eval_evidence(evals::Turn {
-        session_id,
-        turn_id,
-    })?)))
+    Ok(Json(json!(app.store.eval_evidence(
+        evals::Turn {
+            session_id,
+            turn_id,
+        },
+        query.batch_id
+    )?)))
 }
 
 pub(crate) async fn save(
@@ -60,9 +70,23 @@ pub(crate) async fn runs(
 pub(crate) async fn dataset(
     Extension(app): Extension<App>,
     Path(id): Path<String>,
+    Query(query): Query<evals::DatasetVersion>,
 ) -> Result<Json<Value>, ApiError> {
     enabled(&app)?;
-    Ok(Json(app.store.eval_dataset(id)?))
+    Ok(Json(app.store.eval_dataset(id, query.version)?))
+}
+
+pub(crate) async fn revise_case(
+    Extension(app): Extension<App>,
+    Path((dataset, case)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(request): Json<evals::ReviseCase>,
+) -> Result<Json<Value>, ApiError> {
+    enabled(&app)?;
+    let key = service::key(&app, &headers, "eval.case-revision")?;
+    Ok(Json(
+        app.store.revise_eval_case(key, dataset, case, request)?,
+    ))
 }
 
 pub(crate) async fn case(

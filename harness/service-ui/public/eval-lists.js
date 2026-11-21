@@ -60,7 +60,7 @@ function renderTable(items, runs, withinDataset) {
         <th scope="row"><a class="ev-table-link" href="${datasetHref(dataset.id)}">${esc(dataset.name)}</a>
           <small class="ev-table-subtitle ev-compact">${esc(dataset.owner)}</small></th>
         <td class="ev-optional">${esc(dataset.owner)}</td>
-        <td class="ev-numeric">${dataset.version}</td>
+        <td class="ev-numeric">${dataset.case_count ?? dataset.version}</td>
         <td class="ev-optional">${dataset.last_run_ms == null ? '<span class="ev-muted">—</span>' : time(dataset.last_run_ms)}</td>
       </tr>`).join("");
   return `<div class="ev-table-shell"><table class="ev-table" aria-label="${runs ? 'Evaluation runs' : 'Evaluation datasets'}"><thead><tr>${headings}</tr></thead><tbody>${body}</tbody></table></div>`;

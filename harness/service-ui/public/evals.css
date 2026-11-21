@@ -200,6 +200,11 @@
   margin-top: 16px;
 }
 .ev-run-selection { margin-bottom: 16px; }
+.ev-versions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 12px; }
+.ev-versions input { width: 76px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; }
+.ev-case-edit { margin-top: 12px; }
+.ev-case-edit form { margin-top: 12px; max-width: 540px; }
+.ev-case-detail a + a { margin-left: 10px; }
 .ev-run-selection p { margin: 10px 0; }
 .ev-tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .ev-tag-list > span {

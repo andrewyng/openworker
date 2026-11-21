@@ -42,13 +42,15 @@ export function allowed(method, path) {
   if (u.pathname + u.search !== path) return false;
   const p = u.pathname;
   if (p.startsWith("/v1/evals/")) {
-    if (u.search) return false;
+    if (u.search) return method === "GET" && (
+      new RegExp(`^/v1/evals/datasets/${id}$`).test(p) && /^\?version=\d{1,10}$/.test(u.search) ||
+      new RegExp(`^/v1/evals/evidence/${id}/${id}$`).test(p) && new RegExp(`^\\?batch_id=${id}$`).test(u.search));
     const tags = new RegExp(`^/v1/evals/tags/${id}(?:/${id})?$`).test(p);
     if (method === "GET") {
       return tags || new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id}|batches/${id})$`).test(p);
     }
     return method === "POST" && (tags || ["/v1/evals/cases", "/v1/evals/evaluators", "/v1/evals/batches"].includes(p) ||
-      new RegExp(`^/v1/evals/datasets/${id}/jobs$`).test(p));
+      new RegExp(`^/v1/evals/datasets/${id}/(?:jobs|cases/${id})$`).test(p));
   }
   if (method === "GET") {
     const list = ["/v1/sessions", "/v1/credentials", "/v1/audit"];
