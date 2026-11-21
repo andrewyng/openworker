@@ -90,10 +90,10 @@ const reason = (e) =>
 const button = (action, text, extra = "") =>
   `<button type="button" data-tr="${action}" ${extra}>${text}</button>`;
 const scope = (r) => ({ sessionId: r.session_id, turnId: r.turn_id });
-/** Session-oriented trace browser. No evaluations or combined team view. */
+/** Session-oriented trace browser. */
 export function mountSessionTracing(
   root,
-  { adapter, initialRun = null, onOverview } = {},
+  { adapter, initialRun = null, onOverview, onCapture } = {},
 ) {
   if (!adapter) throw Error("A tracing adapter is required");
   const lifetime = new AbortController(),
@@ -194,7 +194,7 @@ export function mountSessionTracing(
       total?.input?.total != null && total?.output?.total != null
         ? `${count(total.input.total + total.output.total)}${total.input.unknown || total.output.unknown ? " + unknown" : ""}`
         : "Not reported";
-    let html = `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span></div>`;
+    let html = `<div class="tr-turn-metrics"><span>${esc(duration(summary?.wall_elapsed_us))} elapsed</span><span>${tokens} tokens</span><span>${ss.length} steps loaded</span>${onCapture && t.status === "completed" ? button("capture", "Add to dataset", `class="tr-capture" data-turn="${esc(t.turn_id)}"`) : ""}</div>`;
     if (mode === "waterfall")
       html += `<div class="tr-axis">${[0, 1, 2, 3, 4].map((i) => `<span>${i ? esc(duration(((range * i) / 4) * 1000)) : "0 s"}</span>`).join("")}</div>`;
     // Indentation follows recorded parent IDs only. Missing parents are roots;
@@ -452,6 +452,8 @@ export function mountSessionTracing(
         c.open = true;
         render();
       } else await loadTurn(t);
+    } else if (action === "capture" && t?.status === "completed") {
+      await onCapture?.(t, signal);
     } else if (action === "more-steps") await loadTurn(t, true);
     else if (action === "step") {
       const s = cache

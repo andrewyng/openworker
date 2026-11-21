@@ -172,6 +172,22 @@ node harness/service-ui/preview.mjs
 It opens on port 58640. The production UI lives in `public/`; the mock lives in
 `mock/`. Sample records and chart values are never used as a live-data fallback.
 
+## Evals
+
+Enable cluster observability and deploy the API and Management UI from the
+same revision. Run the normal execution store migration before starting the API.
+
+Open a completed turn in **Observability** and choose **Add to dataset**.
+Review the final assistant response, enter an expectation, and choose which
+request text to include. The saved case includes the response and a link to
+the source turn. Attachments and tool payloads stay out of the case.
+
+Open the dataset under **Evals** and choose **Run eval**. The cluster scores
+the saved responses against their expected text and records the results for
+the selected dataset version. **Cases** expands to show the captured evidence.
+**Runs** shows completed and queued jobs. Each result links to its source turn.
+An unavailable final response shows up as an evaluator error.
+
 ## Complete-stack local Kubernetes qualification
 
 `deploy/service/qualify-ui-kubernetes.mjs` drives a real browser against a UI pod,

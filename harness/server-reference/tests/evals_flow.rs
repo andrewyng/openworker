@@ -1,0 +1,388 @@
+use axum::{extract::Json, routing::post, Router};
+use openworker_runtime::{execution::Backend, model::Model, runtime::Runtime};
+use openworker_server_reference::{http::App, Config};
+use openworker_store_postgres::{
+    app_agents::Grants,
+    auth::{Role, Scope, Spec},
+    PostgresStore,
+};
+use serde_json::{json, Value};
+use std::{path::Path, time::Duration};
+use tokio_util::sync::CancellationToken;
+
+const ADMIN: &str = "test-eval-admin-credential-aaaaaaaaaaaa";
+const EDITOR: &str = "test-eval-editor-credential-bbbbbbbbbbb";
+const OTHER: &str = "test-eval-other-credential-cccccccccccc";
+
+async fn listen(router: Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (url, task)
+}
+
+fn bundle(root: &Path, agent: &str) -> std::path::PathBuf {
+    let path = root.join(agent);
+    std::fs::create_dir_all(path.join("coworker")).unwrap();
+    std::fs::write(
+        path.join("coworker/manifest.md"),
+        format!("---\nid: {agent}\nname: {agent}\nplanning: false\nmemory: false\nscheduling: false\n---\nEdit the synthetic test page."),
+    )
+    .unwrap();
+    std::fs::write(path.join("tools.json"), r#"{"version":3,"tools":[]}"#).unwrap();
+    path
+}
+
+async fn run(runtime: &std::sync::Arc<Runtime>, root: &Path, text: &str) -> Value {
+    let workspace = tempfile::tempdir_in(root).unwrap();
+    let session = runtime
+        .dispatch(
+            "session/create",
+            json!({
+                "name":runtime.coworker(),
+                "coworker":runtime.coworker(),
+                "workspace":workspace.path(),
+                "model":{"connection":"fixture","model":"page-editor"},
+            }),
+        )
+        .await
+        .unwrap();
+    let sid = session["session"]["id"].as_str().unwrap();
+    runtime
+        .dispatch(
+            "turn/start",
+            json!({
+                "session_id":sid,
+                "submission_id":"synthetic-task",
+                "text":text,
+            }),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let session = runtime.store.lock().unwrap().metadata(sid).unwrap();
+            if let Some(turn) = session
+                .turn
+                .filter(|turn| openworker_runtime::store::terminal(&turn.status))
+            {
+                assert_eq!(turn.status, "completed");
+                break json!({"session_id": sid, "turn_id": turn.id});
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires isolated OW_PG_TEST_URL and an optional browser fixture"]
+async fn synthetic_agents_capture_and_score_through_the_cluster_api() {
+    let connection = std::env::var("OW_PG_TEST_URL").unwrap();
+    let env = "OW_TEST_EVALS_DATABASE";
+    std::env::set_var(env, &connection);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().canonicalize().unwrap();
+    let label = uuid::Uuid::new_v4().simple().to_string();
+    let schema = format!("ow_eval_{}", &label[..12]);
+    let recording_schema = format!("ow_eval_obs_{}", &label[..12]);
+    let installed = bundle(&path, "page-editor");
+    let runner = path.join("fixture-runner");
+    std::fs::write(&runner, b"\x7fELF-inert-fixture").unwrap();
+    let config: Config = serde_json::from_value(json!({
+        "database_env": env, "schema": schema, "database_loopback_plaintext": true,
+        "state_root":path, "bundle":installed, "runner":runner, "model":"unused",
+        "api_token_file":"unused", "actor":"admin",
+        "openshell":{"identity":"unused","endpoint":"https://127.0.0.1:1","certificates":"unused","workspace":"unused","image":"unused"},
+        "service":{"id":"eval-qualification","namespace":"test","agent":"page-editor"},
+        "observability":{"schema":recording_schema}
+    })).unwrap();
+    let db = config.database().unwrap();
+    PostgresStore::migrate(&db).unwrap();
+    let store = PostgresStore::open(db).unwrap();
+    store.auth_bootstrap(ADMIN, "admin").unwrap();
+    let admin = store.authorized(ADMIN).unwrap();
+    for (name, token) in [("app_editor", EDITOR), ("app_other", OTHER)] {
+        admin
+            .issue_app_token(
+                name,
+                Spec {
+                    principal: name.into(),
+                    role: Role::App,
+                    scope: Scope::Owned,
+                    environments: vec![],
+                    expires_at: Some((openworker_runtime::store::now_ms() / 1000 + 3600) as i64),
+                },
+                token,
+                Grants::default(),
+            )
+            .unwrap();
+    }
+
+    let (model_url, model_task) = listen(Router::new().route("/v1/chat/completions", post(|Json(body): Json<Value>| async move {
+        let request = body["messages"].as_array().unwrap().iter().rev()
+            .find(|item| item["role"] == "user").unwrap()["content"].to_string();
+        let response = if request.contains("OVERSIZE_FIXTURE") {
+            "a".repeat(16500)
+        } else if request.contains("FAIL_FIXTURE") {
+            "<header>Field Notes</header>\n<a href=\"/plans\">Plans</a>".into()
+        } else {
+            "<header>Field Notes</header>\n<a href=\"/pricing\">Plans</a>".into()
+        };
+        let chunk = json!({"choices":[{"index":0,"delta":{"content":response},"finish_reason":"stop"}]});
+        ([("content-type","text/event-stream")], format!("data: {chunk}\n\ndata: [DONE]\n\n"))
+    }))).await;
+
+    let recording_config = config.clone();
+    let started = tokio::task::spawn_blocking(move || {
+        let database = recording_config
+            .observability
+            .as_ref()
+            .unwrap()
+            .database(&recording_config)
+            .unwrap();
+        openworker_observability::postgres::Postgres::migrate(&database).unwrap();
+        openworker_server_reference::recording::start(&recording_config, "worker", true).unwrap()
+    })
+    .await
+    .unwrap();
+    let open = |name| {
+        let runtime = Runtime::open_instrumented_optional_runner(
+            &path.join(format!("{name}-runtime")),
+            &bundle(&path, name),
+            None,
+            Model::new("page-editor".into(), false),
+            Backend::Off,
+            None,
+            None,
+            openworker_tools::ToolRegistry::default(),
+            Some(Box::new(store.clone())),
+            started.telemetry.clone(),
+        )
+        .unwrap();
+        runtime
+            .connections
+            .set(json!({
+                "id":"fixture","label":"Fixture","provider":"openai","api":"chat-completions",
+                "base_url":format!("{model_url}/v1"),"api_key":"temporary-fixture-key",
+                "persistence":"memory"
+            }))
+            .unwrap();
+        runtime
+    };
+    let editor = open("page-editor");
+    let other = open("second-editor");
+    let pass = run(
+        &editor,
+        &path,
+        "Update the Plans link to /pricing. Keep the header intact. sk-synthetic-test-secret",
+    )
+    .await;
+    let fail = run(
+        &editor,
+        &path,
+        "FAIL_FIXTURE: update the Plans link and preserve the header.",
+    )
+    .await;
+    let error = run(
+        &editor,
+        &path,
+        "OVERSIZE_FIXTURE: return a long synthetic document.",
+    )
+    .await;
+    let foreign = run(&other, &path, "Keep this second app's result separate.").await;
+
+    // The disposable embedded runtimes write through the real PostgreSQL
+    // journal. Assign the same ownership rows that service admission creates.
+    let owner_connection = connection.clone();
+    let owner_schema = schema.clone();
+    let owners = [
+        (pass.clone(), "app_editor"),
+        (fail.clone(), "app_editor"),
+        (error.clone(), "app_editor"),
+        (foreign.clone(), "app_other"),
+    ];
+    tokio::task::spawn_blocking(move || {
+        let mut pg = postgres::Client::connect(&owner_connection, postgres::NoTls).unwrap();
+        for (turn, owner) in owners {
+            let sid = turn["session_id"].as_str().unwrap();
+            pg.execute(
+                &format!("INSERT INTO {owner_schema}.api_session_owners VALUES ($1,$2)"),
+                &[&sid, &owner],
+            )
+            .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+
+    let stop = CancellationToken::new();
+    let app = App::new(&config, editor.clone(), store.clone(), stop.clone()).unwrap();
+    let (url, api_task) = listen(app.router()).await;
+    let client = reqwest::Client::new();
+    let send = |method, endpoint: String, key: &str, request_id: String| {
+        client
+            .request(method, format!("{url}/v1/evals/{endpoint}"))
+            .bearer_auth(key)
+            .header("x-openworker-namespace", "test")
+            .header("Idempotency-Key", request_id)
+    };
+    let evidence_path = |turn: &Value| {
+        format!(
+            "evidence/{}/{}",
+            turn["session_id"].as_str().unwrap(),
+            turn["turn_id"].as_str().unwrap()
+        )
+    };
+    let captured = send(
+        reqwest::Method::GET,
+        evidence_path(&pass),
+        EDITOR,
+        "".into(),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(captured.status(), 200);
+    assert_eq!(captured.headers()["cache-control"], "no-store");
+    let captured: Value = captured.json().await.unwrap();
+    assert!(captured["output"].as_str().unwrap().contains("/pricing"));
+    assert!(!captured.to_string().contains("synthetic-test-secret"));
+    assert_eq!(
+        send(reqwest::Method::GET, evidence_path(&pass), OTHER, "".into())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+
+    let mut dataset = String::new();
+    for (idx, turn) in [&pass, &fail, &error].into_iter().enumerate() {
+        let name = [
+            "Update the pricing link",
+            "Reject the old Plans link",
+            "Handle a long response",
+        ][idx];
+        let body = json!({"dataset":"Link edits","name":name,"turn":turn,"include_input":false,
+            "check":{"comparison":"contains","expected":"href=\"/pricing\""}});
+        for _ in 0..2 {
+            let res = send(
+                reqwest::Method::POST,
+                "cases".into(),
+                EDITOR,
+                format!("case-{idx}"),
+            )
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+            let status = res.status();
+            let saved: Value = res.json().await.unwrap();
+            assert_eq!(status, 200, "{saved}");
+            assert_eq!(saved["dataset_version"], idx + 1);
+            dataset = saved["dataset_id"].as_str().unwrap().to_owned();
+        }
+    }
+    let jobs = format!("datasets/{dataset}/jobs");
+    let mut queued = Value::Null;
+    for _ in 0..2 {
+        let response = send(reqwest::Method::POST, jobs.clone(), EDITOR, "run".into())
+            .json(&json!({"dataset_version":3}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 202);
+        queued = response.json().await.unwrap();
+        assert_eq!(queued["status"], "queued");
+    }
+    let jobs = format!("{jobs}/{}", queued["id"].as_str().unwrap());
+    assert_eq!(
+        send(reqwest::Method::GET, jobs.clone(), OTHER, "".into())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+
+    let late_case = send(reqwest::Method::POST, "cases".into(), EDITOR, "late-case".into())
+        .json(&json!({"dataset":"Link edits","turn":pass,"include_input":true,"check":{"comparison":"equals","expected":"Added after the run was queued."}}))
+        .send().await.unwrap();
+    assert_eq!(late_case.status(), 200);
+    assert_eq!(
+        late_case.json::<Value>().await.unwrap()["dataset_version"],
+        4
+    );
+
+    let second_case = send(reqwest::Method::POST, "cases".into(), OTHER, "own-case".into())
+        .json(&json!({"dataset":"Link edits","turn":foreign,"include_input":false,"check":{"comparison":"contains","expected":"Field Notes"}}))
+        .send().await.unwrap();
+    assert_eq!(second_case.status(), 200);
+    let second_case = second_case.json::<Value>().await.unwrap();
+    assert_ne!(second_case["dataset_id"], dataset);
+    let own = send(reqwest::Method::GET, "datasets".into(), OTHER, "".into())
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(own["datasets"].as_array().unwrap().len(), 1);
+    assert_eq!(own["datasets"][0]["id"], second_case["dataset_id"]);
+
+    // Delay starting the worker until the API has persisted the job.
+    let worker = tokio::spawn(openworker_server_reference::evals::run(
+        store.clone(),
+        stop.clone(),
+    ));
+    let finished: Value = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let res = send(reqwest::Method::GET, jobs.clone(), EDITOR, "".into())
+                .send()
+                .await
+                .unwrap();
+            let job: Value = res.json().await.unwrap();
+            if job["status"] == "completed" {
+                break job;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(finished["dataset_version"], 3);
+    assert_eq!(finished["results"].as_array().unwrap().len(), 3);
+    assert_eq!(finished["results"][0]["result"]["score"]["value"], true);
+    assert_eq!(finished["results"][1]["result"]["score"]["value"], false);
+    assert_eq!(finished["results"][2]["result"]["status"], "error");
+
+    if let Ok(playwright) = std::env::var("OW_PLAYWRIGHT_MODULE") {
+        let result = tokio::process::Command::new("node")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../service-ui/test/evals-live.mjs"))
+            .env("OW_PLAYWRIGHT_MODULE", playwright)
+            .env("OW_EVALS_URL", &url)
+            .env("OW_EVALS_TOKEN", EDITOR)
+            .env("OW_EVALS_PASS_TURN", pass.to_string())
+            .env("OW_EVALS_DATASET", &dataset)
+            .env("OW_EVALS_JOB", queued["id"].as_str().unwrap())
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        print!("{}", String::from_utf8_lossy(&result.stdout));
+    }
+
+    stop.cancel();
+    worker.await.unwrap();
+    editor.shutdown().await.unwrap();
+    other.shutdown().await.unwrap();
+    api_task.abort();
+    model_task.abort();
+}

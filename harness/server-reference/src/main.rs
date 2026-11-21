@@ -358,6 +358,7 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
                 bail!("Reference API binds loopback only; place a trusted authenticated TLS ingress in front for deployment");
             }
             let runtime = config.api_runtime(&node, store.clone())?;
+            let eval_store = store.clone();
             let app = openworker_server_reference::http::App::new(
                 &config,
                 runtime.clone(),
@@ -368,6 +369,15 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             println!("API {node} ready at http://{}", listener.local_addr()?);
             let monitor_stop = stop.child_token();
             let _monitor_guard = monitor_stop.clone().drop_guard();
+            let evals = (config.service.is_some()
+                && config.observability.is_some()
+                && !config.recovery_read_only)
+                .then(|| {
+                    tokio::spawn(openworker_server_reference::evals::run(
+                        eval_store,
+                        monitor_stop.clone(),
+                    ))
+                });
             let monitor = config.operational_metrics.clone().map(|options| {
                 tokio::spawn(openworker_server_reference::operations::run(
                     db.clone(),
@@ -388,6 +398,9 @@ async fn run(args: Args, config: Config, telemetry: openworker_telemetry::Teleme
             }
             runtime.shutdown().await?;
             monitor_stop.cancel();
+            if let Some(task) = evals {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(6), task).await;
+            }
             if let Some(task) = monitor {
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(6), task).await;
             }

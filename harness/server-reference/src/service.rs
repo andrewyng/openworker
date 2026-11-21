@@ -49,6 +49,12 @@ pub(crate) fn authority(method: &str, path: &str) -> Option<Action> {
     }
     let p = path.split('/').collect::<Vec<_>>();
     match (method, p.as_slice()) {
+        ("GET", ["", "v1", "evals", "datasets"])
+        | ("GET", ["", "v1", "evals", "datasets", _])
+        | ("GET", ["", "v1", "evals", "datasets", _, "cases" | "jobs", _])
+        | ("GET", ["", "v1", "evals", "evidence", _, _]) => Some(Action::Read),
+        ("POST", ["", "v1", "evals", "cases"])
+        | ("POST", ["", "v1", "evals", "datasets", _, "jobs"]) => Some(Action::Submit),
         ("GET" | "POST", ["", "v1", "model-providers"])
         | ("POST", ["", "v1", "model-providers", _, "rotate" | "disable"])
         | ("PUT", ["", "v1", "model-profiles", _]) => Some(Action::Admin),
@@ -121,6 +127,16 @@ fn check(ok: bool, error: SubmissionError) -> Result<(), ApiError> {
 }
 pub(crate) fn router() -> Router<App> {
     Router::new()
+        .route("/v1/evals/datasets", get(crate::evals::datasets))
+        .route("/v1/evals/datasets/:id", get(crate::evals::dataset))
+        .route(
+            "/v1/evals/datasets/:id/cases/:case",
+            get(crate::evals::case),
+        )
+        .route("/v1/evals/datasets/:id/jobs/:job", get(crate::evals::job))
+        .route("/v1/evals/datasets/:id/jobs", post(crate::evals::enqueue))
+        .route("/v1/evals/evidence/:sid/:turn", get(crate::evals::capture))
+        .route("/v1/evals/cases", post(crate::evals::save))
         .route(
             "/v1/model-providers",
             get(crate::model_registry::catalog).post(crate::model_registry::register),

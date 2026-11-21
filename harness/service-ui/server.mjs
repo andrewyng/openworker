@@ -39,6 +39,15 @@ export function allowed(method, path) {
   const u = new URL(path, "http://local");
   if (u.pathname + u.search !== path) return false;
   const p = u.pathname;
+  if (p.startsWith("/v1/evals/")) {
+    if (u.search) return false;
+    if (method === "GET") {
+      return p === "/v1/evals/datasets" ||
+        new RegExp(`^/v1/evals/(datasets/${id}(?:/(?:cases|jobs)/${id})?|evidence/${id}/${id})$`).test(p);
+    }
+    return method === "POST" && (p === "/v1/evals/cases" ||
+      new RegExp(`^/v1/evals/datasets/${id}/jobs$`).test(p));
+  }
   if (method === "GET") {
     const list = ["/v1/sessions", "/v1/credentials", "/v1/audit"];
     const events = new RegExp(`^/v1/sessions/${id}/events(/page)?$`).test(p);
@@ -488,6 +497,8 @@ export async function start(config) {
         "/compliance.js": ["compliance.js", "text/javascript"],
         "/tracing.js": ["tracing.js", "text/javascript"],
         "/tracing.css": ["tracing.css", "text/css"],
+        "/evals.js": ["evals.js", "text/javascript"],
+        "/evals.css": ["evals.css", "text/css"],
         "/observability.js": ["observability.js", "text/javascript"],
         "/observability-data.js": ["observability-data.js", "text/javascript"],
         "/style.css": ["style.css", "text/css"],

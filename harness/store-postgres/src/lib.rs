@@ -9,6 +9,7 @@ mod compliance;
 mod controls;
 mod db;
 mod environments;
+pub mod evals;
 mod ingress;
 mod input_attachments;
 mod input_safety;

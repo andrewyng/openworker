@@ -1,6 +1,7 @@
 import {renderCompliance} from "./compliance.js";
 import {mountSessionTracing, serviceTracingAdapter} from "./tracing.js";
 import { mountObservability } from "./observability.js";
+import { captureEvalCase, mountEvals } from "./evals.js";
 let disposeObservability = null;
 let safetyActivity = null;
 const paths = {
@@ -298,6 +299,7 @@ const nav = [
   ["sessions", "Sessions", "sessions"],
   ["activity", "Activity", "activity"],
   ["observability", "Observability", "chart"],
+  ["evals", "Evals", "check"],
   ["infrastructure", "Infrastructure", "infra"],
 ];
 $("#nav").innerHTML = nav
@@ -551,7 +553,7 @@ async function render() {
   if (!auth) return;
   const v = ++version;
   stop();
-  const [route = "overview", id] = location.hash.slice(1).split("/");
+  const [route = "overview", id, detailId] = location.hash.slice(1).split("/");
   const page = route || "overview";
   $("#sidebar").classList.remove("open");
   $("#crumb").textContent = page === "operation" ? "Submission" : human(page);
@@ -562,6 +564,10 @@ async function render() {
   }
   main.innerHTML = empty("Loading…");
   try {
+    if (page === "evals") {
+      disposeObservability = mountEvals(main, { api, datasetId: id, jobId: detailId, canRun: can.run() });
+      return;
+    }
     if (page === "observability") {
       const request = (path, signal) =>
         api(path, "GET", undefined, undefined, signal);
@@ -570,6 +576,8 @@ async function render() {
         const view = mountSessionTracing(main, {
           adapter: serviceTracingAdapter(request),
           onOverview: overview,
+          initialRun: id && detailId ? { session_id: id, turn_id: detailId } : null,
+          onCapture: can.run() ? (turn, signal) => captureEvalCase(main, api, turn, signal) : undefined,
         });
         disposeObservability = () => view.dispose();
       };

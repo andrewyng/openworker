@@ -2037,6 +2037,7 @@ dependencies = [
  "anyhow",
  "native-tls",
  "openworker-artifacts",
+ "openworker-observability",
  "openworker-runtime",
  "openworker-tools",
  "postgres",

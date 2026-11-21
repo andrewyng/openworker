@@ -134,7 +134,8 @@ impl App {
 async fn authenticate(State(app): State<App>, request: Request, next: Next) -> Response {
     let recording_route =
         crate::recording_query::authority(request.method().as_str(), request.uri().path())
-            || request.uri().path().starts_with("/v1/compliance/");
+            || request.uri().path().starts_with("/v1/compliance/")
+            || request.uri().path().starts_with("/v1/evals/");
     let span = app
         .runtime
         .telemetry

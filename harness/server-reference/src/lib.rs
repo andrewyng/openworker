@@ -9,6 +9,7 @@ mod agent_teams;
 mod app_agents;
 mod artifacts;
 mod authorization;
+pub mod evals;
 pub mod git_access;
 pub mod http;
 pub mod kubernetes;
